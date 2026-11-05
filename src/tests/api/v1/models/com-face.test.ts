@@ -50,6 +50,7 @@ const stored = {
   lockedProperties: [] as string[],
   deletedAt: null,
   sfwName: null as string | null,
+  sfwCoverImageId: null as number | null,
 };
 
 let row: typeof stored = stored;
@@ -129,6 +130,13 @@ describe('POST /api/v1/models/com-face', () => {
       'skipped',
     ]);
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
+    expect(caller.model.upsert).not.toHaveBeenCalled();
+  });
+
+  it('skips a model that has a .com cover but no .com title, writing nothing', async () => {
+    row = { ...stored, sfwCoverImageId: 5 };
+    const save = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
+    expect([save.statusCode, save.body.code]).toEqual([409, 'skipped']);
     expect(caller.model.upsert).not.toHaveBeenCalled();
   });
 
