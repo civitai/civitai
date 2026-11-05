@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
-  import { invalidate } from '$app/navigation';
+  import { beforeNavigate, invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
   import ApprenticeMeter from './ApprenticeMeter.svelte';
@@ -18,6 +18,7 @@
   import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
   import { heartsLeft, watchStrip } from '$lib/chrome';
+  import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress } from './keys';
   import {
@@ -407,6 +408,13 @@
   };
 
   let strip = $derived(data.mode === 'queue' ? watchStrip(data.daily) : null);
+  let watching = $derived(data.mode === 'queue' && watchInProgress(data.daily));
+
+  beforeNavigate(({ cancel, type, to }) => {
+    const action = leaveAction({ inProgress: watching, type, toPath: to?.url.pathname ?? null });
+    if (action === 'native') cancel();
+    else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
+  });
   let hearts = $derived(heartsLeft(data.status));
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed

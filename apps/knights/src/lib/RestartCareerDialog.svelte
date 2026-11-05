@@ -41,7 +41,7 @@
       if (response.ok && result?.ok && result.to) {
         await invalidateAll();
         onclose();
-        await goto(result.to, { invalidateAll: true });
+        await goto(result.to, { invalidateAll: true, replaceState: true });
         return;
       }
       message = result?.message ?? 'Your career could not be restarted. Try again in a moment.';
