@@ -61,3 +61,21 @@ describe('an HTTP error', () => {
     expect(JSON.stringify(consoleError.mock.calls)).toContain('code=invalid_request');
   });
 });
+
+describe('a successful response whose body is not JSON', () => {
+  it('logs and throws without the body', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue(new Response('PROMPT_ECHO', { status: 200 }));
+
+    const error = await call().then(
+      () => {
+        throw new Error('expected the call to reject');
+      },
+      (e: Error) => e
+    );
+
+    expect(error.message).not.toContain('PROMPT_ECHO');
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain('PROMPT_ECHO');
+    expect(error.message).toMatch(/^Civitai LLM error 200: /);
+  });
+});

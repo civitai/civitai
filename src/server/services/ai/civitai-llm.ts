@@ -149,7 +149,15 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
       throw new Error(`Civitai LLM error ${res.status}: ${reason}`);
     }
 
-    const json = (await res.json()) as ChatCompletionResponse;
+    // Not res.json(): its SyntaxError quotes the body.
+    const raw = await res.text();
+    let json: ChatCompletionResponse;
+    try {
+      json = JSON.parse(raw) as ChatCompletionResponse;
+    } catch {
+      console.error('[civitai-llm] non-JSON response body', { model, length: raw.length });
+      throw new Error(`Civitai LLM error ${res.status}: non-JSON response body`);
+    }
     const choice = json.choices?.[0];
     const content = choice?.message?.content;
 
