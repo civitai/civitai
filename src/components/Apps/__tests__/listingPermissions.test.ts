@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  blockScopeGroupLabels,
+  blockScopeGroups,
   blockScopePermissions,
   connectScopePermissions,
   groupListingPermissions,
 } from '~/components/Apps/listingPermissions';
+import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
  * The store page's permission row model and its ONE grouping/ordering rule (blocking `unit`
@@ -57,5 +61,45 @@ describe('groupListingPermissions — off-site connect scopes', () => {
 
   it('drops a key the TokenScope table does not know', () => {
     expect(ids(connectScopePermissions(['NotAScope', 'ModelsRead']))).toEqual(['ModelsRead']);
+  });
+});
+
+describe('blockScopeGroups — the groups every block-scope renderer draws', () => {
+  it('puts every described scope in exactly one group, sensitive or "Other"', () => {
+    const all = Object.keys(SCOPE_DESCRIPTIONS);
+    expect(all.length, 'SCOPE_DESCRIPTIONS is empty — this checks nothing').toBeGreaterThan(5);
+    for (const scope of all) {
+      const groups = blockScopeGroups([scope]);
+      expect(groups, scope).toHaveLength(1);
+      expect(groups[0].scopes, scope).toEqual([scope]);
+      expect(groups[0].key, scope).toBe(isSensitiveBlockScope(scope) ? 'sensitive' : 'other');
+    }
+    // All at once: the groups partition the input, nothing dropped or duplicated.
+    const flat = blockScopeGroups(all).flatMap((g) => g.scopes);
+    expect([...flat].sort()).toEqual([...all].sort());
+  });
+
+  it('an unknown scope lands in "Other", after the known ones', () => {
+    expect(blockScopeGroups(['zz:not-a-real:scope', 'models:read:self'])).toEqual([
+      {
+        key: 'other',
+        label: 'Other permissions',
+        scopes: ['models:read:self', 'zz:not-a-real:scope'],
+      },
+    ]);
+  });
+});
+
+describe('blockScopeGroupLabels — the ordered group labels for a set of scopes', () => {
+  it('sensitive first, only the groups that have a scope', () => {
+    expect(blockScopeGroupLabels(['models:read:self', 'ai:write:budgeted'])).toEqual([
+      'Sensitive permissions',
+      'Other permissions',
+    ]);
+    expect(blockScopeGroupLabels(['models:read:self', 'zz:not-a-real:scope'])).toEqual([
+      'Other permissions',
+    ]);
+    expect(blockScopeGroupLabels(['social:tip:self'])).toEqual(['Sensitive permissions']);
+    expect(blockScopeGroupLabels([])).toEqual([]);
   });
 });
