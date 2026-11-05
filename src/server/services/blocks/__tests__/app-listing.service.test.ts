@@ -48,8 +48,25 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
+// The Official-badge reads, as PASS-THROUGH spies: every test gets the real reader unless it
+// overrides one call, and a test can identify the read by FUNCTION REFERENCE rather than by
+// the SQL text it happens to contain.
+vi.mock('~/server/services/blocks/app-listing-official.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof OfficialService>();
+  return {
+    ...actual,
+    readListingOfficialForRender: vi.fn(actual.readListingOfficialForRender),
+    readListingOfficialManyForRender: vi.fn(actual.readListingOfficialManyForRender),
+  };
+});
+
 import fs from 'fs';
 import path from 'path';
+import type * as OfficialService from '~/server/services/blocks/app-listing-official.service';
+import {
+  readListingOfficialForRender,
+  readListingOfficialManyForRender,
+} from '~/server/services/blocks/app-listing-official.service';
 import {
   decodeListingCursor,
   encodeListingCursor,
@@ -938,6 +955,8 @@ describe('listAvailableListings — query building + pagination', () => {
     // consume this and the id page would get [].
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 'apl_9', sort_key: '000000240' }]);
     mockDbRead.appListing.findMany.mockResolvedValueOnce([hydratedRow({ id: 'apl_9' })]);
+    vi.mocked(readListingOfficialManyForRender).mockClear();
+    vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set());
     const { items } = await listAvailableListings({
       kind: 'all',
       sort: 'top-rated',
@@ -948,14 +967,11 @@ describe('listAvailableListings — query building + pagination', () => {
     // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped. (The
     // restricted-audience level read is also a `$queryRaw`, but it is skipped for this
     // anonymous, `public`-floor call because it could disclose nothing.) The Official-badge
-    // batch read is a `$queryRaw` that runs AFTER the id page and is not a mean read, so it
-    // is excluded by name rather than by count — and asserted to be the only other call.
-    const rawSql = mockDbRead.$queryRaw.mock.calls.map(
-      (c) => (c[0] as { sql?: string } | undefined)?.sql ?? ''
-    );
-    const nonOfficial = rawSql.filter((sql) => !sql.includes('is_official'));
-    expect(nonOfficial).toHaveLength(1);
-    expect(rawSql.length - nonOfficial.length).toBe(1);
+    // batch read is answered by its spy for this one call (see the `mockResolvedValueOnce`
+    // above), so it issues no `$queryRaw` and the count stays exact; it is pinned by reference.
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(readListingOfficialManyForRender)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual(['apl_9']);
     const idPage = mockDbRead.$queryRaw.mock.calls[0]?.[0] as { sql: string; values: unknown[] };
     expect(idPage.sql).toContain('sort_key');
     // The pinned mean 0.25 is bound into the Bayesian key (C*m term).
@@ -1565,14 +1581,12 @@ describe('the beta projections — flag, note, and the stale-note rule', () => {
 });
 
 describe('the Official flag — card + detail DTOs', () => {
-  /** A `$queryRaw` that answers the Official batch read with `officialIds` and every other raw
-   *  query (the keyset id page excepted) with no rows. */
-  function rawWithOfficial(officialIds: string[], idPage: unknown[] = []) {
+  /** A `$queryRaw` that answers the keyset id page with `idPage` and every other raw query with
+   *  no rows. The Official read is answered through its spy, never by matching SQL text. */
+  function rawIdPage(idPage: unknown[] = []) {
     return async (q: unknown) => {
       const sql = (q as { sql?: string } | undefined)?.sql ?? '';
-      if (sql.includes('is_official')) return officialIds.map((id) => ({ id, isOfficial: true }));
-      if (/al\.status\s*=\s*'approved'/.test(sql)) return idPage;
-      return [];
+      return /al\.status\s*=\s*'approved'/.test(sql) ? idPage : [];
     };
   }
 
@@ -1619,14 +1633,13 @@ describe('the Official flag — card + detail DTOs', () => {
 
   it('the /apps grid marks exactly the listings the Official read returns', async () => {
     mockDbRead.$queryRaw.mockImplementation(
-      rawWithOfficial(
-        ['apl_off'],
-        [
-          { id: 'apl_off', sort_key: 'k0' },
-          { id: 'apl_plain', sort_key: 'k1' },
-        ]
-      )
+      rawIdPage([
+        { id: 'apl_off', sort_key: 'k0' },
+        { id: 'apl_plain', sort_key: 'k1' },
+      ])
     );
+    vi.mocked(readListingOfficialManyForRender).mockClear();
+    vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set(['apl_off']));
     mockDbRead.appListing.findMany.mockResolvedValueOnce([
       hydratedRow({ id: 'apl_off', slug: 'off-app' }),
       hydratedRow({ id: 'apl_plain', slug: 'plain-app' }),
@@ -1643,16 +1656,23 @@ describe('the Official flag — card + detail DTOs', () => {
       ['apl_off', true],
       ['apl_plain', false],
     ]);
+    // Asked about exactly this page's listings.
+    expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual([
+      'apl_off',
+      'apl_plain',
+    ]);
   });
 
   it('the detail read carries true when the Official read says so, false when it does not', async () => {
-    mockDbRead.$queryRaw.mockImplementation(rawWithOfficial(['apl_1']));
+    vi.mocked(readListingOfficialForRender).mockClear();
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(true);
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
     expect((await getListingDetail({ slug: 'cool-app' }, { scope: 'full' }))?.isOfficial).toBe(
       true
     );
+    expect(vi.mocked(readListingOfficialForRender).mock.calls[0][0]).toBe('apl_1');
 
-    mockDbRead.$queryRaw.mockImplementation(rawWithOfficial([]));
+    // The real reader this time, over a raw client that returns no rows.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
     expect((await getListingDetail({ slug: 'cool-app' }, { scope: 'full' }))?.isOfficial).toBe(
       false
@@ -1660,15 +1680,63 @@ describe('the Official flag — card + detail DTOs', () => {
   });
 
   it('a failing Official read degrades to false instead of failing the page', async () => {
-    mockDbRead.$queryRaw.mockImplementation(async (q: unknown) => {
-      const sql = (q as { sql?: string } | undefined)?.sql ?? '';
-      if (sql.includes('is_official')) throw Object.assign(new Error('boom'), { code: '57014' });
-      return [];
-    });
+    // The REAL render reader, handed a client whose query fails — so the degrade path inside
+    // the seam runs, rather than a stub that returns `false` by fiat.
+    const actual = await vi.importActual<typeof OfficialService>(
+      '~/server/services/blocks/app-listing-official.service'
+    );
+    const outage = Object.assign(new Error('boom'), { code: '57014' });
+    vi.mocked(readListingOfficialForRender).mockImplementationOnce((id) =>
+      actual.readListingOfficialForRender(id, { $queryRaw: async () => Promise.reject(outage) })
+    );
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail?.id).toBe('apl_1');
     expect(detail?.isOfficial).toBe(false);
+  });
+});
+
+describe('getListingPreviewForReview carries the Official flag — keyed on the PARENT', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findUnique.mockReset();
+    vi.mocked(readListingOfficialForRender).mockClear();
+  });
+
+  it('an Official listing previews WITH the flag on both the card and the detail', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_live_off',
+      revisionOfId: null,
+    });
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(true);
+    const res = await getListingPreviewForReview({ listingId: 'apl_live_off' });
+    expect(res!.card.isOfficial).toBe(true);
+    expect(res!.detail.isOfficial).toBe(true);
+    expect(vi.mocked(readListingOfficialForRender).mock.calls[0][0]).toBe('apl_live_off');
+  });
+
+  it('a shadow revision reads the flag from its PARENT (the only row the write targets)', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_shadow_off',
+      revisionOfId: 'apl_parent_off',
+    });
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(true);
+    const res = await getListingPreviewForReview({ listingId: 'apl_shadow_off' });
+    expect(vi.mocked(readListingOfficialForRender).mock.calls[0][0]).toBe('apl_parent_off');
+    expect(res!.card.isOfficial).toBe(true);
+  });
+
+  it('a listing that is not Official previews without it', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_live_plain',
+      revisionOfId: null,
+    });
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(false);
+    const res = await getListingPreviewForReview({ listingId: 'apl_live_plain' });
+    expect(res!.card.isOfficial).toBe(false);
+    expect(res!.detail.isOfficial).toBe(false);
   });
 });
 

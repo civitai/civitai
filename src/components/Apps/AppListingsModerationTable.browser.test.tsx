@@ -960,6 +960,58 @@ describe('the moderator Official toggle', () => {
     await vi.waitUntil(() => officialSwitch('untoggle-app')?.checked === false, { timeout: 3000 });
   });
 
+  test('🔴 on → off, then a replica-lagged refetch delivering the stale `true` → stays OFF', async () => {
+    mocks.rows = [
+      offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: false }),
+    ];
+    const ui = <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderWithProviders(ui);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    await vi.waitUntil(() => officialSwitch('lag-app')?.checked === true, { timeout: 3000 });
+    await page.getByRole('switch', { name: 'Official' }).click();
+    await vi.waitUntil(() => officialSwitch('lag-app')?.checked === false, { timeout: 3000 });
+    expect(mocks.mutate.mock.calls.filter((c) => c[0] === 'setListingOfficial')).toEqual([
+      ['setListingOfficial', { appListingId: 'apl_l', isOfficial: true }],
+      ['setListingOfficial', { appListingId: 'apl_l', isOfficial: false }],
+    ]);
+    // The refetch: the replica still serves the value from between the two writes.
+    mocks.rows = [
+      offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: true }),
+    ];
+    await rerender(ui);
+    // That this re-render DOES deliver new rows to the switch is the next test's positive
+    // control: the same rerender flips an untouched row's switch.
+    await expect.element(page.getByText('lag-app')).toBeInTheDocument();
+    expect(officialSwitch('lag-app')?.checked).toBe(false);
+  });
+
+  test('a row the moderator has NOT toggled still follows a refetch', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_f',
+        slug: 'follow-app',
+        name: 'Follow',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    const ui = <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderWithProviders(ui);
+    await expect.element(page.getByTestId('apps-mod-official-follow-app')).toBeInTheDocument();
+    expect(officialSwitch('follow-app')?.checked).toBe(false);
+    mocks.rows = [
+      offsite({
+        id: 'apl_f',
+        slug: 'follow-app',
+        name: 'Follow',
+        status: 'approved',
+        isOfficial: true,
+      }),
+    ];
+    await rerender(ui);
+    await vi.waitUntil(() => officialSwitch('follow-app')?.checked === true, { timeout: 3000 });
+  });
+
   test('a failed update leaves the switch where it was and reports the error', async () => {
     mocks.errorMode = true;
     mocks.rows = [

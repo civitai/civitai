@@ -15,7 +15,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
@@ -633,8 +633,9 @@ export function AppListingsModerationTable({
  * its store card and page). Calls `appListings.setListingOfficial`, which is
  * `moderatorProcedure` and records a `set-official` moderation event.
  *
- * No reason modal: it is a label, not a takedown. It keeps its own `checked` state (synced
- * from the row) instead of invalidating the table, because `invalidate` resets paging and
+ * No reason modal: it is a label, not a takedown. It shows the row's value until this moderator
+ * writes, then the confirmed result (see `written`), instead of invalidating the table, because
+ * `invalidate` resets paging and
  * would throw away every page the moderator loaded for a one-boolean change — the same
  * trade-off the Message owner composer documents.
  */
@@ -647,11 +648,16 @@ function ModListingOfficialSwitch({
   slug: string;
   isOfficial: boolean;
 }) {
-  const [checked, setChecked] = useState(isOfficial);
-  useEffect(() => setChecked(isOfficial), [isOfficial]);
+  // The value THIS moderator last wrote (the server's confirmed result), or `null` before any
+  // write, when the row prop is authoritative. The table reads from a replica, so a refetch after
+  // a write can deliver a pre-write value — including after an on→off pair, where the prop can
+  // briefly read `false`, then a lagged `true`. So once written, the confirmed value wins for the
+  // life of this row; a reload shows the stored value.
+  const [written, setWritten] = useState<boolean | null>(null);
+  const checked = written ?? isOfficial;
   const mutation = trpc.appListings.setListingOfficial.useMutation({
     onSuccess: (result: { isOfficial: boolean }) => {
-      setChecked(result.isOfficial);
+      setWritten(result.isOfficial);
       showSuccessNotification({
         message: result.isOfficial ? 'Marked as Official.' : 'Official mark removed.',
       });

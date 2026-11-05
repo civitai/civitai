@@ -743,11 +743,14 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
   // The civitai.red overrides are THIS row's (a shadow's own go live with it), read through the
   // WRITE client like the rest of the review's media state (`getListingAssets`), so the preview
   // shows what the approve will apply.
-  const [sourceRepo, beta, levels, red] = await Promise.all([
+  // The Official flag is keyed on the PARENT too: the moderator write targets the live listing
+  // only (`revision_of_id IS NULL`), so a shadow's own column is never the source of truth.
+  const [sourceRepo, beta, levels, red, isOfficial] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
     readListingBetaForRender(betaSourceId, dbRead),
     readListingVisibilityManyForRender([betaSourceId], dbRead),
     readListingRedMediaManyForRender(dbWrite, [args.listingId]),
+    readListingOfficialForRender(betaSourceId, dbRead),
   ]);
   // The caller is `moderatorProcedure`, so the viewer IS a moderator — who may always know
   // the level. Stated through the shared rule rather than by passing the raw level through.
@@ -761,7 +764,7 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
   return {
     // 🔴 MODERATOR_REVIEW_MEDIA: the reviewer sees what is attached — including media the
     // public gate would hide (still scanning, flagged, above the rating) — so it can be rejected.
-    card: projectListingCard(row, beta, restrictedAudience, MODERATOR_REVIEW_MEDIA),
+    card: projectListingCard(row, beta, restrictedAudience, MODERATOR_REVIEW_MEDIA, isOfficial),
     detail: projectListingDetail(
       row,
       [],
@@ -769,7 +772,8 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
       beta,
       row.connectRequestedScopes,
       restrictedAudience,
-      MODERATOR_REVIEW_MEDIA
+      MODERATOR_REVIEW_MEDIA,
+      isOfficial
     ),
     media: {
       ...listingReviewMedia(row, red.get(args.listingId)),

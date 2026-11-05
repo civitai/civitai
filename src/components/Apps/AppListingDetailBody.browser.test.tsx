@@ -2335,6 +2335,16 @@ describe('AppListingDetailBody — the Official badge', () => {
     ).toContain('Official');
   });
 
+  test('renders it in the moderator review PREVIEW too (the identity block preview keeps)', async () => {
+    const prev = await renderScoped(
+      <AppListingDetailBody detail={base({ isOfficial: true })} canOpenPage preview />
+    );
+    await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-official-badge"]')
+    ).toHaveLength(1);
+  });
+
   test.each([
     ['false', { isOfficial: false }],
     ['absent', {}],
