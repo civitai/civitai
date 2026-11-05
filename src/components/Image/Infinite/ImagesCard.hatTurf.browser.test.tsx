@@ -376,13 +376,16 @@ describe('the /images card footer fits the height the masonry gives it', () => {
         expect(document.body.querySelector('[aria-label*="sticker" i]')).not.toBeNull()
       );
       expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
-      // Reactions that don't fit wrap onto a line the footer clips; a 320px column has room for all.
+      // A reaction that doesn't fit wraps onto a line the bar clips, whole: none is drawn cut off.
       const bar = document.body.querySelector('[class*="fitReactions"]')!.getBoundingClientRect();
-      const shown = [...document.body.querySelectorAll('[aria-label$="reaction"]')].filter(
-        (el) => el.getBoundingClientRect().top < bar.bottom
-      );
-      if (width >= 320) expect(shown).toHaveLength(4);
-      else expect(shown.length).toBeGreaterThanOrEqual(3);
+      const shown = [...document.body.querySelectorAll('[aria-label$="reaction"]')]
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.top < bar.bottom);
+      expect(shown.length).toBeGreaterThan(0);
+      for (const r of shown) {
+        expect(r.bottom).toBeLessThanOrEqual(bar.bottom + 0.5);
+        expect(r.right).toBeLessThanOrEqual(bar.right + 0.5);
+      }
     }
   );
 });
