@@ -21,7 +21,10 @@ import type * as ImageDetailPageModule from '~/components/Image/Detail/ImageDeta
 import type * as ImageDetailDataModule from '~/server/page-data/image-detail';
 import type * as FliptClient from '~/server/flipt/client';
 import type { QueryClient } from '@tanstack/react-query';
+import { NextRequest } from 'next/server';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 
 const h = vi.hoisted(() => {
   // `serverDomainMap` is built from these at module load. Prod shape: .red is blue AND red.
@@ -130,6 +133,8 @@ vi.mock('~/server/page-data/image-detail', async (importOriginal) => ({
 
 import * as ImagePage from '~/pages/images/[imageId]';
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
+import { botCacheMiddleware } from '~/server/middleware/bot-cache.middleware';
+import { runMiddlewares } from '~/server/middleware/index';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import type { RoutePage, Variant } from './bot-cache-render.harness';
 import {
@@ -287,10 +292,18 @@ describe('a render that must not be stored', () => {
     // then render `/_error`.
     res.statusCode = 500;
     res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
+    // As if the failed run had already set the edge headers: only `_app` can take them off again.
+    res.setHeader('Cloudflare-CDN-Cache-Control', 'public, max-age=300');
+    res.setHeader('Cache-Tag', 'botcache,botcache-images,build-x');
+    const marks = req as unknown as Record<string, unknown>;
+    expect(marks[BOT_CACHE_REQ_KEY], 'precondition: the failed run was marked').toBe('images');
+    for (const name of ['cloudflare-cdn-cache-control', 'cache-tag'])
+      expect(res.getHeaders(), `precondition: ${name}`).toHaveProperty(name);
     await renderPage(IMAGE_PAGE, req, res, thrown as Error);
     const headers = res.getHeaders();
     for (const name of ['cloudflare-cdn-cache-control', 'cache-tag'])
       expect(headers, name).not.toHaveProperty(name);
+    expect(marks[BOT_CACHE_REQ_KEY]).toBeUndefined();
   });
 });
 
@@ -316,5 +329,84 @@ describe('flag evaluation', () => {
       { user: undefined, host: 'civitai.com', req: theRequest },
       { user: undefined, req: theRequest },
     ]);
+  });
+});
+
+describe('origin cache: a stored render is served to the next crawler', () => {
+  const stored = new Map<string, unknown>();
+
+  beforeEach(() => {
+    stored.clear();
+    redisMock.redis.packed.set.mockReset();
+    redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
+      stored.set(key, value);
+      return 'OK';
+    });
+    redisMock.redis.packed.get.mockReset();
+    redisMock.redis.packed.get.mockImplementation(async (key: string) => stored.get(key) ?? null);
+  });
+
+  const proxy = (url: string, variant: Variant = CRAWLER_A) => {
+    const req = makeReq(url, variant);
+    const request = new NextRequest(`https://${req.headers.host}${req.url}`, {
+      headers: req.headers,
+    });
+    return runMiddlewares(request, [botCacheMiddleware]);
+  };
+
+  /** A render, then what Next's `sendRenderResult` does with it (`send-payload.js`, 16.4.3). */
+  async function renderAndSend(url: string, variant: Variant = CRAWLER_A) {
+    const res = makeRes();
+    const html = await renderPage(IMAGE_PAGE, makeReq(url, variant), res);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Length', Buffer.byteLength(html));
+    res.end(html);
+    return { html, res };
+  }
+
+  const storedPaths = () => [...stored.keys()].map((key) => key.split(':').pop());
+
+  it('the first request renders and stores; the second is served the same bytes', async () => {
+    const first = await proxy('/images/1');
+    expect(first.headers.get('x-civ-bot-cache')).toBe('miss');
+    const { html, res } = await renderAndSend('/images/1');
+    await vi.waitFor(() => expect(stored.size).toBe(1));
+
+    const second = await proxy('/images/1');
+    expect(second.headers.get('x-civ-bot-cache')).toBe('hit');
+    expect(await second.text()).toBe(html);
+    expect(second.headers.get('set-cookie')).toBeNull();
+    expect(second.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(second.headers.get('cache-control')).toBe('private, no-store');
+    expect(second.headers.get('cloudflare-cdn-cache-control')).toBe('public, max-age=300');
+    expect(second.headers.get('cache-tag')).toBe(res.getHeader('cache-tag'));
+  });
+
+  it.each<[string, () => void]>([
+    [
+      'a failed prefetch',
+      () => {
+        h.failPrefetch = true;
+      },
+    ],
+    [
+      'a degraded settings bootstrap',
+      () => {
+        h.bootstrap.mockImplementation(async () => {
+          throw new Error('bootstrap down');
+        });
+      },
+    ],
+  ])('%s is not stored', async (_, breakRender) => {
+    breakRender();
+    const broken = await renderAndSend('/images/1');
+    expect(broken.html).toContain('data-testid="bot-cache-page"');
+    h.failPrefetch = false;
+    h.bootstrap.mockImplementation(async () => ({ session: null, liveNow: false }));
+    // INSTRUMENT CHECK: a healthy render sent after it is stored, by the same path.
+    await renderAndSend('/images/2');
+    await vi.waitFor(() => expect(storedPaths()).toContain('/images/2?'));
+    expect(storedPaths()).toEqual(['/images/2?']);
+    expect((await proxy('/images/1')).headers.get('x-civ-bot-cache')).toBe('miss');
   });
 });

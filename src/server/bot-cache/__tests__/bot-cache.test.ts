@@ -88,6 +88,8 @@ describe('botCacheRefusal', () => {
     );
   });
 
+  // A few representatives; that every allowlisted route is a createServerSideProps page is
+  // `bot-cache-routes-pages.test.ts`.
   it.each([
     ['/models/[id]/[[...slug]]', 'models'],
     ['/images/[imageId]', 'images'],
@@ -95,18 +97,7 @@ describe('botCacheRefusal', () => {
     ['/articles/[id]/[[...slug]]', 'articles'],
     ['/user/[username]', 'user'],
     ['/user/[username]/[list]', 'user'],
-    ['/user/[username]/3d-models', 'user'],
-    ['/user/[username]/achievements', 'user'],
-    ['/user/[username]/articles', 'user'],
-    ['/user/[username]/collections', 'user'],
-    ['/user/[username]/comics', 'user'],
-    ['/user/[username]/images', 'user'],
     ['/user/[username]/models', 'user'],
-    ['/user/[username]/posts', 'user'],
-    ['/user/[username]/shop', 'user'],
-    ['/user/[username]/sticker-book', 'user'],
-    ['/user/[username]/storylines', 'user'],
-    ['/user/[username]/videos', 'user'],
   ])('allows the route %s as %s', (pathname, name) => {
     expect(resolveBotCacheRoute(eligible() as never, pathname, { degraded: false })).toBe(name);
   });

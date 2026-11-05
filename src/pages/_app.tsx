@@ -705,9 +705,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     siteAlerts,
   } = settingsBootstrap;
 
-  // Bot HTML edge cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the edge
-  // may store and serve to other crawlers, so nothing below may vary it per request. `_document`
-  // adds the edge headers only once the page rendered.
+  // Bot HTML cache (`~/server/bot-cache/bot-cache`): a verified crawler's render that the cache
+  // may store and serve to other crawlers, so nothing below may vary it per request.
   let botCache: { route: BotCacheRouteName; seed: number } | undefined;
   if (typeof window === 'undefined') {
     const { resolveBotCacheRoute, botCacheSeed } = await import('~/server/bot-cache/bot-cache');

@@ -103,6 +103,7 @@ function isGreenOnlyHost(host: string | undefined) {
 
 function carriesTokenParam(req: BotCacheRequest) {
   const queryString = (req.url ?? '').split('?')[1];
+  // `has`, not the shared helper alone: that treats an empty `?token=` as absent; this refuses it.
   if (queryString && new URLSearchParams(queryString).has('token')) return true;
   return requestCarriesQueryToken(req as never);
 }
@@ -194,8 +195,7 @@ export function botCacheResponseRefusal(
 }
 
 /**
- * Tags a future purge could target: every bot-cached page, one route's, or one build's. No purge
- * exists yet.
+ * Cache-Tag values a purge can target: every bot-cached page, one route, or one build.
  */
 export function botCacheTag(route: BotCacheRouteName) {
   return `botcache,botcache-${route},build-${shellBuildId()}`;
