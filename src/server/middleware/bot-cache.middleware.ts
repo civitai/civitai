@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import type * as BotCacheOrigin from '~/server/bot-cache/bot-cache-origin';
 import { botCacheCandidatePattern } from '~/server/bot-cache/bot-cache-routes';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import { BOT_CACHE_STATUS_HEADER } from '~/shared/constants/bot-cache.constants';
@@ -37,14 +38,18 @@ export const botCacheMiddleware = createMiddleware({
   handler: async ({ request }) => {
     const candidate = botCacheCandidatePattern(request.nextUrl.pathname);
     if (!candidate) return;
-    const { botCacheRefusal } = await import('~/server/bot-cache/bot-cache');
-    const req = asRenderRequest(request);
-    if (botCacheRefusal(req as never, candidate, { degraded: false }) !== null) return;
-
-    const origin = await import('~/server/bot-cache/bot-cache-origin');
+    // Every page request on a candidate path reaches this, signed-in people included, so nothing
+    // here may reject: whatever fails, the request renders as if there were no cache.
+    let origin: typeof BotCacheOrigin | undefined;
     try {
+      const { botCacheRefusal } = await import('~/server/bot-cache/bot-cache');
+      const req = asRenderRequest(request);
+      if (botCacheRefusal(req as never, candidate, { degraded: false }) !== null) return;
+
+      origin = await import('~/server/bot-cache/bot-cache-origin');
       const { pathname, search } = request.nextUrl;
       const key = origin.botCacheKey(req.headers.host ?? '', pathname, search);
+      if (!key) return;
       const entry = await origin.readBotCacheEntry(key);
       if (!entry || botCacheRefusal(req as never, entry.pattern, { degraded: false }) !== null) {
         origin.recordBotCacheOrigin('miss', 'lookup');
@@ -56,6 +61,14 @@ export const botCacheMiddleware = createMiddleware({
       headers.set(BOT_CACHE_STATUS_HEADER, 'hit');
       origin.recordBotCacheOrigin('hit', 'lookup');
       return new NextResponse(html, { status: 200, headers });
+    } catch (error) {
+      if (!origin) return;
+      origin.recordBotCacheOrigin('error', 'lookup');
+      origin.logBotCacheOriginFailure('lookup', error);
+      return renderAsMiss();
+    }
+  },
+});
     } catch (error) {
       origin.recordBotCacheOrigin('error', 'lookup');
       origin.logBotCacheOriginFailure('lookup', error);

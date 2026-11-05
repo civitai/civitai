@@ -11,7 +11,7 @@ import {
 import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
-import { shellBuildId } from '~/server/shell/shell-response';
+import { shellBuildId, UNKNOWN_BUILD_ID } from '~/server/shell/shell-response';
 
 /**
  * Bot HTML origin cache: a cacheable crawler render (`~/server/bot-cache/bot-cache`) is kept in
@@ -57,22 +57,25 @@ function compareEntries([ak, av]: [string, string], [bk, bv]: [string, string]) 
   return 0;
 }
 
+export type BotCacheKey = `${typeof REDIS_KEYS.BOT_CACHE.HTML}:${string}`;
+
 /**
  * `pathname` must be the WHATWG-parsed path with no locale prefix: what `nextUrl.pathname` is in
  * the proxy, and what `new URL(req.url)` gives at render, where Next has already stripped it.
+ * `null` without a real build id: every build would share the one fallback, and a page from one
+ * build would be served after another is deployed.
  */
 export function botCacheKey(
   host: string,
   pathname: string,
   search: string,
   buildId: string = shellBuildId()
-) {
+): BotCacheKey | null {
+  if (!buildId || buildId === UNKNOWN_BUILD_ID) return null;
   const prefix = REDIS_KEYS.BOT_CACHE.HTML;
   const query = new URLSearchParams([...new URLSearchParams(search)].sort(compareEntries));
-  return `${prefix}:${buildId}:${host.toLowerCase()}:${pathname}?${query.toString()}` as const;
+  return `${prefix}:${buildId}:${host.toLowerCase()}:${pathname}?${query.toString()}`;
 }
-
-export type BotCacheKey = ReturnType<typeof botCacheKey>;
 
 export const BOT_CACHE_ORIGIN_METRIC = PROM_PREFIX + 'bot_html_origin_cache_total';
 
@@ -188,6 +191,7 @@ export function captureBotCacheRender(
 ) {
   const { pathname, search } = new URL(req.url ?? '/', 'http://localhost');
   const key = botCacheKey(req.headers.host ?? '', pathname, search);
+  if (!key) return;
   const chunks: Buffer[] = [];
   let size = 0;
   let overflow = false;

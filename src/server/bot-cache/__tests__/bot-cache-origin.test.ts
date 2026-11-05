@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BotCache from '~/server/bot-cache/bot-cache';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ShellResponse from '~/server/shell/shell-response';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
@@ -17,7 +18,7 @@ const h = vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
   process.env.SERVER_DOMAIN_BLUE = 'civitai.red';
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
-  return { flagOn: true, buildId: 'build-a' };
+  return { flagOn: true, buildId: 'build-a', predicateThrows: false };
 });
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -27,6 +28,17 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFliptSync: vi.fn((key: string) => (key === 'bot-html-edge-cache' && h.flagOn ? true : null)),
 }));
 
+vi.mock('~/server/bot-cache/bot-cache', async (importOriginal) => {
+  const actual = await importOriginal<typeof BotCache>();
+  return {
+    ...actual,
+    botCacheRefusal: (...args: Parameters<typeof actual.botCacheRefusal>) => {
+      if (h.predicateThrows) throw new Error('predicate down');
+      return actual.botCacheRefusal(...args);
+    },
+  };
+});
+
 vi.mock('~/server/shell/shell-response', async (importOriginal) => ({
   ...(await importOriginal<typeof ShellResponse>()),
   shellBuildId: () => h.buildId,
@@ -34,7 +46,11 @@ vi.mock('~/server/shell/shell-response', async (importOriginal) => ({
 
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
 import type { BotCacheEntry } from '~/server/bot-cache/bot-cache-origin';
-import { botCacheKey, storeBotCacheRender } from '~/server/bot-cache/bot-cache-origin';
+import {
+  botCacheKey,
+  captureBotCacheRender,
+  storeBotCacheRender,
+} from '~/server/bot-cache/bot-cache-origin';
 import { botCacheCandidatePattern } from '~/server/bot-cache/bot-cache-routes';
 import { botCacheMiddleware } from '~/server/middleware/bot-cache.middleware';
 import { runMiddlewares } from '~/server/middleware/index';
@@ -48,6 +64,13 @@ const STORED_HEADERS = {
 };
 
 const store = new Map<string, unknown>();
+
+/** The key under the current build id; throws when there is none. */
+function keyFor(host: string, pathname: string, search = '') {
+  const key = botCacheKey(host, pathname, search);
+  if (!key) throw new Error('no key: the build id is the fallback');
+  return key;
+}
 
 function crawler(url = 'https://civitai.com/images/1', headers: Record<string, string> = {}) {
   return new NextRequest(url, {
@@ -65,7 +88,7 @@ function crawler(url = 'https://civitai.com/images/1', headers: Record<string, s
 async function seed(url = 'https://civitai.com/images/1', pattern: string = IMAGE_ROUTE) {
   const { host, pathname, search } = new URL(url);
   await storeBotCacheRender(
-    botCacheKey(host, pathname, search),
+    keyFor(host, pathname, search),
     pattern as never,
     STORED_HEADERS,
     Buffer.from(HTML)
@@ -91,6 +114,7 @@ beforeEach(() => {
   setEnv({ CF_VERIFIED_BOT_HEADER_SECRET: SECRET });
   h.flagOn = true;
   h.buildId = 'build-a';
+  h.predicateThrows = false;
   resetBotCacheFlagGateForTests();
   store.clear();
   redisMock.redis.packed.set.mockReset();
@@ -243,7 +267,7 @@ describe('storing', () => {
       Array.from({ length: 300 * 1024 }, () => Math.floor(Math.random() * 256))
     );
     await storeBotCacheRender(
-      botCacheKey('civitai.com', '/images/1', ''),
+      keyFor('civitai.com', '/images/1'),
       IMAGE_ROUTE as never,
       {},
       html
@@ -251,7 +275,7 @@ describe('storing', () => {
     expect(store.size).toBe(0);
     // INSTRUMENT CHECK: a page under the cap is stored by the same call.
     await storeBotCacheRender(
-      botCacheKey('civitai.com', '/images/1', ''),
+      keyFor('civitai.com', '/images/1'),
       IMAGE_ROUTE as never,
       {},
       Buffer.from(HTML)
@@ -266,5 +290,86 @@ describe('storing', () => {
       expect.objectContaining({ pattern: IMAGE_ROUTE }),
       { EX: 300 }
     );
+  });
+});
+
+/** A response `_document` allowed, captured as there, then ended the way Next ends it. */
+function sendThroughCapture(url: string, change: (res: FakeResponse) => void = () => undefined) {
+  const headers = new Map<string, unknown>();
+  const res = {
+    statusCode: 200,
+    setHeader: (name: string, value: unknown) => void headers.set(name.toLowerCase(), value),
+    getHeader: (name: string) => headers.get(name.toLowerCase()),
+    removeHeader: (name: string) => void headers.delete(name.toLowerCase()),
+    end: () => undefined,
+  };
+  captureBotCacheRender(
+    { url, headers: { host: 'civitai.com' } } as never,
+    res as never,
+    IMAGE_ROUTE as never
+  );
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  change(res);
+  (res.end as (chunk: string) => void).call(res, HTML);
+}
+
+type FakeResponse = { statusCode: number; setHeader: (name: string, value: unknown) => void };
+
+describe('capture stores only a response that ends as a 200 without a cookie', () => {
+  it.each<[string, (res: FakeResponse) => void]>([
+    [
+      'a status set to 500 before the end',
+      (res) => {
+        res.statusCode = 500;
+      },
+    ],
+    ['a Set-Cookie added before the end', (res) => res.setHeader('Set-Cookie', ['a=1; Path=/'])],
+  ])('%s is not stored', async (_, change) => {
+    sendThroughCapture('/images/1', change);
+    // INSTRUMENT CHECK: a response ended after it, through the same capture, is stored.
+    sendThroughCapture('/images/2');
+    const control = keyFor('civitai.com', '/images/2');
+    await vi.waitFor(() => expect([...store.keys()]).toContain(control));
+    expect([...store.keys()]).toEqual([control]);
+  });
+});
+
+describe('the middleware never rejects', () => {
+  it('a predicate that throws renders the page as if there were no cache', async () => {
+    await seed();
+    h.predicateThrows = true;
+    const response = await serve(crawler());
+    expectRendered(response);
+    expect(response.headers.get('x-civ-bot-cache')).toBeNull();
+    expect(redisMock.redis.packed.get).not.toHaveBeenCalled();
+  });
+});
+
+describe('without a real build id (the `unknown` fallback)', () => {
+  it('there is no key', () => {
+    h.buildId = 'unknown';
+    expect(botCacheKey('civitai.com', '/images/1', '')).toBeNull();
+    expect(botCacheKey('civitai.com', '/images/1', '', '')).toBeNull();
+  });
+
+  it('nothing is served, though an entry exists under the fallback id', async () => {
+    await seed();
+    store.set('botcache:v1:unknown:civitai.com:/images/1?', [...store.values()][0]);
+    h.buildId = 'unknown';
+    const response = await serve(crawler());
+    expectRendered(response);
+    expect(response.headers.get('x-civ-bot-cache')).toBeNull();
+    expect(redisMock.redis.packed.get).not.toHaveBeenCalled();
+  });
+
+  it('nothing is stored', async () => {
+    h.buildId = 'unknown';
+    sendThroughCapture('/images/1');
+    // INSTRUMENT CHECK: with a build id, the same capture stores.
+    h.buildId = 'build-a';
+    sendThroughCapture('/images/2');
+    const control = keyFor('civitai.com', '/images/2');
+    await vi.waitFor(() => expect([...store.keys()]).toContain(control));
+    expect([...store.keys()]).toEqual([control]);
   });
 });

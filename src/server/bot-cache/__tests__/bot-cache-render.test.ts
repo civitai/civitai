@@ -20,6 +20,7 @@ import type * as TrpcModule from '~/utils/trpc';
 import type * as ImageDetailPageModule from '~/components/Image/Detail/ImageDetailPage';
 import type * as ImageDetailDataModule from '~/server/page-data/image-detail';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ShellResponse from '~/server/shell/shell-response';
 import type { QueryClient } from '@tanstack/react-query';
 import { NextRequest } from 'next/server';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -44,6 +45,12 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ensureFliptInitialized: vi.fn(async () => undefined),
   getFliptClientSync: vi.fn(() => ({})),
   isFliptSync: vi.fn((key: string) => (key === 'bot-html-edge-cache' && h.flagOn ? true : null)),
+}));
+
+// The origin cache stores nothing without a real build id, and a test has no `.next/BUILD_ID`.
+vi.mock('~/server/shell/shell-response', async (importOriginal) => ({
+  ...(await importOriginal<typeof ShellResponse>()),
+  shellBuildId: () => 'bot-cache-render-test-build',
 }));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
