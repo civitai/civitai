@@ -3781,6 +3781,7 @@ export type KnightsQueueItem = {
   applyAttempts: Generated<number>;
   nextAttemptAt: Timestamp | null;
   reason: string | null;
+  escalationReason: string | null;
   prediction: unknown | null;
   /**
    * Yes/no items only (question kind `bool`): the producer's id for the question, unique across items.

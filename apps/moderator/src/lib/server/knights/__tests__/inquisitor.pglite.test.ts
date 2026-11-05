@@ -28,9 +28,13 @@ vi.mock('../../db', () => ({
 }));
 vi.mock('../../image-nsfw-level', () => ({ updateImageNsfwLevel: setLevel }));
 
-const { countInquisitorQueue, getInquisitorQueue, ruleOnInquisitorItem, RULING_LEASE_MS } = await import(
-  '../inquisitor.service'
-);
+const {
+  countInquisitorQueue,
+  countInquisitorQueueByFilter,
+  getInquisitorQueue,
+  ruleOnInquisitorItem,
+  RULING_LEASE_MS,
+} = await import('../inquisitor.service');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -44,11 +48,30 @@ const MOD = 7;
 
 let db: PGlite;
 
-const insertItem = (id: number, imageId: number, status: string, questionKey = Q, priority = 2) =>
+const insertItem = (
+  id: number,
+  imageId: number,
+  status: string,
+  questionKey = Q,
+  priority = 2,
+  {
+    reason = 'blocked',
+    escalationReason = null,
+  }: { reason?: string | null; escalationReason?: string | null } = {}
+) =>
   db.query(
-    `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","createdAt")
-     VALUES ($1,$2,$3,'scan-sample',$4,5,$5,$6,'blocked', now() + ($1::int * interval '1 second'))`,
-    [id, questionKey, imageId, status === 'Inquisitor' ? 'Inquisitor' : 'Knight', priority, status]
+    `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","escalationReason","createdAt")
+     VALUES ($1,$2,$3,'scan-sample',$4,5,$5,$6,$7,$8, now() + ($1::int * interval '1 second'))`,
+    [
+      id,
+      questionKey,
+      imageId,
+      status === 'Inquisitor' ? 'Inquisitor' : 'Knight',
+      priority,
+      status,
+      reason,
+      escalationReason,
+    ]
   );
 
 const insertVote = (
@@ -152,6 +175,57 @@ describe('getInquisitorQueue', () => {
     await insertItem(3, 3, 'Inquisitor', Q, 2);
 
     expect((await getInquisitorQueue()).map((i) => i.id)).toEqual([2, 1, 3]);
+  });
+});
+
+describe('Inquisitor queue filters', () => {
+  const ID = { blocked: 1, pushedDown: 2, noConsensus: 3, writeBack: 4, neither: 5, notWaiting: 6 };
+
+  beforeEach(async () => {
+    await db.exec(`INSERT INTO "Image" ("id","url") VALUES (4,'k4'), (5,'k5'), (6,'k6')`);
+    await insertItem(ID.blocked, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'blocked' });
+    await insertItem(ID.pushedDown, 2, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
+    await insertItem(ID.noConsensus, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await insertItem(ID.writeBack, 4, 'Inquisitor', Q, 2, { reason: 'level-moved' });
+    await insertItem(ID.neither, 5, 'Inquisitor', Q, 2, { reason: null });
+    await insertItem(ID.notWaiting, 6, 'Open', Q, 2, { reason: null, escalationReason: 'blocked' });
+  });
+
+  it.each([
+    ['all', [ID.blocked, ID.pushedDown, ID.noConsensus, ID.writeBack, ID.neither]],
+    ['blocked', [ID.blocked]],
+    ['pushed-down', [ID.pushedDown]],
+    ['no-consensus', [ID.noConsensus]],
+    ['write-back', [ID.writeBack]],
+  ] as const)('lists exactly the %s items', async (filter, ids) => {
+    expect((await getInquisitorQueue(filter)).map((i) => i.id)).toEqual(ids);
+  });
+
+  it('shows an item with neither reason under All only', async () => {
+    for (const filter of ['blocked', 'pushed-down', 'no-consensus', 'write-back'] as const) {
+      expect((await getInquisitorQueue(filter)).map((i) => i.id)).not.toContain(ID.neither);
+    }
+  });
+
+  it('counts each filter from the same rows it lists, with All equal to the sidebar badge', async () => {
+    replica.allowed = true;
+    const counts = await countInquisitorQueueByFilter();
+
+    expect(counts).toEqual({
+      all: 5,
+      blocked: 1,
+      'pushed-down': 1,
+      'no-consensus': 1,
+      'write-back': 1,
+    });
+    expect(counts.all).toBe(await countInquisitorQueue());
+    expect((await getInquisitorQueue()).map((i) => i.escalationReason)).toEqual([
+      'blocked',
+      'pushed-down',
+      'no-consensus',
+      null,
+      null,
+    ]);
   });
 });
 

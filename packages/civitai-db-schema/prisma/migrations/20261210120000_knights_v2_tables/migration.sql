@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "applyAttempts" INTEGER NOT NULL DEFAULT 0,
   "nextAttemptAt" TIMESTAMP(3),
   "reason" TEXT,
+  "escalationReason" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "prediction" JSONB,
@@ -77,6 +78,9 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "voteCount" INTEGER NOT NULL DEFAULT 0,
   "escalatedAt" TIMESTAMP(3)
 );
+
+-- A database that applied an earlier copy of this file has the table without the column, so the guard does not check it.
+ALTER TABLE "KnightsQueueItem" ADD COLUMN IF NOT EXISTS "escalationReason" TEXT;
 
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_minRank_priority_createdAt_idx"
   ON "KnightsQueueItem" ("status", "minRank", "priority", "createdAt");

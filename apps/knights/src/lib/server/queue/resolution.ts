@@ -1,5 +1,8 @@
 import { NsfwLevel } from '@civitai/shared';
-import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
+import {
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  type KnightsWritebackReason,
+} from '@civitai/shared/new-order';
 import { getLevelProgression } from '../progression/levels';
 import { penaltyFactor } from '../progression/config';
 import { RANK_RULES, type Rank } from '../ranks';
@@ -89,7 +92,7 @@ export type WritebackDecision =
   | { kind: 'apply' }
   | { kind: 'already-applied' }
   | { kind: 'missing' }
-  | { kind: 'inquisitor'; reason: 'blocked' | 'level-moved' | 'moderator-locked' }
+  | { kind: 'inquisitor'; reason: KnightsWritebackReason }
   | { kind: 'moderator'; level: number };
 
 /**

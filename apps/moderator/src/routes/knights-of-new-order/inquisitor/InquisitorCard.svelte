@@ -16,6 +16,10 @@
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import {
+    ESCALATION_REASON_LABELS,
+    WRITEBACK_REASON_LABELS,
+  } from '$lib/knights/inquisitor-filters';
   import type { InquisitorItem } from '$lib/server/knights/inquisitor.service';
 
   let { item }: { item: InquisitorItem } = $props();
@@ -47,7 +51,12 @@
         <Badge variant="destructive">Blocked{item.blockedFor ? ` (${item.blockedFor})` : ''}</Badge>
       {/if}
       {#if item.locked}<Badge variant="secondary">Rating locked</Badge>{/if}
-      {#if item.reason}<Badge variant="outline">{item.reason}</Badge>{/if}
+      {#if item.escalationReason}
+        <Badge variant="secondary">{ESCALATION_REASON_LABELS[item.escalationReason]}</Badge>
+      {/if}
+      {#if item.reason}
+        <Badge variant="outline">{WRITEBACK_REASON_LABELS[item.reason]}</Badge>
+      {/if}
     </div>
 
     <p class="text-sm text-dark-2">

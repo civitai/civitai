@@ -3,7 +3,9 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
 import { int4Id, parseForm } from '$lib/server/query';
+import { parseInquisitorFilter } from '$lib/knights/inquisitor-filters';
 import {
+  countInquisitorQueueByFilter,
   getInquisitorQueue,
   INQUISITOR_QUEUE_LIMIT,
   ruleOnInquisitorItem,
@@ -13,7 +15,12 @@ const rulingForm = z.object({ itemId: int4Id, level: z.coerce.number().int() });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
-  return { limit: INQUISITOR_QUEUE_LIMIT, items: await getInquisitorQueue() };
+  const filter = parseInquisitorFilter(url.searchParams.get('filter'));
+  const [items, counts] = await Promise.all([
+    getInquisitorQueue(filter),
+    countInquisitorQueueByFilter(),
+  ]);
+  return { limit: INQUISITOR_QUEUE_LIMIT, filter, counts, items };
 };
 
 export const actions: Actions = {
