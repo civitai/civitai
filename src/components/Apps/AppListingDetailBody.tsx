@@ -1162,7 +1162,6 @@ export function AppListingDetailBody({
                 <Title order={2} className="line-clamp-2">
                   {detail.name}
                 </Title>
-                {/* MODERATOR-SET provenance marker, in the identity block like Beta. */}
                 {detail.isOfficial && <AppListingOfficialBadge />}
                 {detail.isBeta && (
                   <Badge

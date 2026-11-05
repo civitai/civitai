@@ -70,9 +70,11 @@ import {
 import {
   decodeListingCursor,
   encodeListingCursor,
+  getListingCard,
   getListingDetail,
   LISTING_CURSOR_VERSION,
   getListingPreviewForReview,
+  listAllListingsForModeration,
   listAvailableListings,
   listingHydrateSelect,
   moderationStatusWhere,
@@ -1734,6 +1736,65 @@ describe('the Official flag — card + detail DTOs', () => {
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail?.id).toBe('apl_1');
     expect(detail?.isOfficial).toBe(false);
+  });
+
+  it('the moderation table marks exactly the rows the Official read returns', async () => {
+    // Off-site rows, so the on-site pending-request lookup (not mocked here) is skipped.
+    const modRow = (id: string, slug: string) => ({
+      ...hydratedRow({ id, slug, kind: 'offsite' }),
+      status: 'approved',
+      user: { id: 7, username: 'dev', image: null },
+      metric: { installCount: 0, thumbsUpCount: 0, thumbsDownCount: 0 },
+      publishRequests: [],
+    });
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      modRow('apl_mod_off', 'mod-off-app'),
+      modRow('apl_mod_plain', 'mod-plain-app'),
+    ]);
+    vi.mocked(readListingOfficialManyForRender).mockClear();
+    vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set(['apl_mod_off']));
+    const { items } = await listAllListingsForModeration({ limit: 25 });
+    // Positive control first: both rows really came back.
+    expect(items).toHaveLength(2);
+    expect(items.map((r) => [r.id, r.isOfficial])).toEqual([
+      ['apl_mod_off', true],
+      ['apl_mod_plain', false],
+    ]);
+    // Asked about exactly this page's listings.
+    expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual([
+      'apl_mod_off',
+      'apl_mod_plain',
+    ]);
+  });
+
+  it('the single card read carries the flag for ITS listing only', async () => {
+    // Answered by id, so a read keyed on anything but this row's id gets the wrong answer.
+    const byId = async (id: string) => id === 'apl_card_off';
+    vi.mocked(readListingOfficialForRender).mockClear();
+    vi.mocked(readListingOfficialForRender)
+      .mockImplementationOnce(byId)
+      .mockImplementationOnce(byId);
+
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...hydratedRow({ id: 'apl_card_off', slug: 'card-off-app' }),
+      status: 'approved',
+    });
+    const official = await getListingCard({ slug: 'card-off-app' }, { scope: 'full' });
+    expect(official?.id).toBe('apl_card_off');
+    expect(official?.isOfficial).toBe(true);
+
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...hydratedRow({ id: 'apl_card_plain', slug: 'card-plain-app' }),
+      status: 'approved',
+    });
+    const plain = await getListingCard({ slug: 'card-plain-app' }, { scope: 'full' });
+    expect(plain?.id).toBe('apl_card_plain');
+    expect(plain?.isOfficial).toBe(false);
+
+    expect(vi.mocked(readListingOfficialForRender).mock.calls.map((c) => c[0])).toEqual([
+      'apl_card_off',
+      'apl_card_plain',
+    ]);
   });
 });
 
