@@ -36,8 +36,5 @@ export type DeveloperRateCardRow =
   | 'viewer_global'
   | 'platform_default';
 
-/**
- * Rows the developer rate card shows. Goods only at launch: the Buzz-purchase shares are still
- * placeholder percentages that nothing pays out yet. Add a row here once its rate is signed off.
- */
+/** Rows the developer rate card shows. Add a row only once its rate is signed off (see rate-card.ts). */
 export const DEVELOPER_RATE_CARD_SHOWN_ROWS: readonly DeveloperRateCardRow[] = ['goods'];

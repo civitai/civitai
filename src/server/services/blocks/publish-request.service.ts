@@ -2180,7 +2180,7 @@ export async function recordPendingFromPush(args: {
     throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
   }
   // A push has no checkbox, so the app owner, in whose name the request is filed, must have accepted.
-  // Before the refresh and the supersede below: a refused push changes no pending request.
+  // Before the refresh and supersede below, so a refused push leaves pending requests untouched.
   const { assertAcceptedAppDeveloperTerms, hasAcceptedAppDeveloperTerms } = await import(
     './app-developer-terms.service'
   );

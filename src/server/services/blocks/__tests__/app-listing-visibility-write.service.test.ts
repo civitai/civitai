@@ -121,6 +121,7 @@ function installDefaults() {
   mockResolveListingAccess.mockImplementation(async () => ({
     role: 'owner',
     seatListingId: 'apl_1',
+    ownerUserId: 9,
   }));
   // 🔴 THE MODERATION-EVENT CREATE IS RESET HERE TOO, and omitting it cost a debugging round.
   // `clearAllMocks` clears CALLS but not IMPLEMENTATIONS (see `beforeEach`), so the case that
@@ -197,6 +198,35 @@ describe('the OWNER path — authorization', () => {
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("an EDITOR going public while the owner hasn't accepted the terms is refused; nothing is written", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    mockResolveListingAccess.mockImplementation(async () => ({
+      role: 'editor',
+      seatListingId: 'apl_1',
+      ownerUserId: 7,
+    }));
+    vi.mocked(terms.assertOwnerAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' })
+    );
+    await expect(
+      setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' });
+    expect(terms.assertOwnerAcceptedAppDeveloperTerms).toHaveBeenCalledWith(7);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the OWNER going public is not asked for the owner check separately', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    mockResolveListingAccess.mockImplementation(async () => ({
+      role: 'owner',
+      seatListingId: 'apl_1',
+      ownerUserId: 9,
+    }));
+    await setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 });
+    expect(terms.assertOwnerAcceptedAppDeveloperTerms).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('CONTROL: lowering visibility never asks for the terms', async () => {

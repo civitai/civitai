@@ -25,7 +25,6 @@ const db = {
 
 vi.mock('~/env/server', () => ({ env: { NEXTAUTH_URL: 'https://civitai.com' } }));
 const listingOwner = vi.hoisted(() => ({ id: 0 }));
-// Hand-listed: the real module needs a database at load, and this is its only export reached here.
 vi.mock('~/server/services/blocks/app-access.service', () => ({
   resolveListingAccess: vi.fn(async () => ({ ownerUserId: listingOwner.id })),
 }));
