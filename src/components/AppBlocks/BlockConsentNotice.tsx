@@ -1,4 +1,5 @@
 import { Box, Button, Group, Text } from '@mantine/core';
+import type { AnimationEvent } from 'react';
 import clsx from 'clsx';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconShieldCheck, IconShieldExclamation, IconX } from '@tabler/icons-react';
@@ -238,7 +239,7 @@ export function BlockConsentNotice({
       data-variant="warning"
       data-highlight={highlight ? 'true' : undefined}
       className={clsx('@container', highlight && 'motion-safe:animate-attention-flash')}
-      onAnimationEnd={(event) => {
+      onAnimationEnd={(event: AnimationEvent<HTMLDivElement>) => {
         // Only this box's own flash — not an animation bubbling up from a child
         // (the tooltips animate too).
         if (highlight && event.target === event.currentTarget) onHighlightPlayed?.();
