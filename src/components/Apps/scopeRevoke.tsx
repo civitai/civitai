@@ -557,6 +557,8 @@ export function ScopeConsentAction({
         disabled={pendingScope !== null && pendingScope !== scope}
         data-testid="scope-revoke-button"
         data-scope={scope}
+        // The visible word stays first, so the accessible name still contains it.
+        aria-label={`Remove “${blockScopeTitle(scope)}”`}
         onClick={() => onRevoke(scope)}
       >
         Remove

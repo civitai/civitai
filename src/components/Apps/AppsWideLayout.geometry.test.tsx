@@ -1799,13 +1799,9 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
   });
 
   /**
-   * 🔴 THE STRIKE-THROUGH IS A COMPUTED STYLE, AND THIS IS THE ONLY TIER THAT CAN SEE IT.
-   * `line-through` is a Tailwind utility, and the `component` tier loads no Tailwind — so the
-   * component test asserting the CLASS is a claim about the class attribute, not about ink on the
-   * screen. If the utility ever stops being emitted (a dynamically-composed class name, a content-
-   * glob change, a move to an unscanned file) a withdrawn permission would render identically to a
-   * live one on both surfaces, and only this read would notice. Same argument the `sr-only` arm
-   * above makes for the status pill.
+   * The strike-through as a COMPUTED style in the real cascade. The title's `td` prop is an inline
+   * `text-decoration`, which the component tier also reads; this arm adds that nothing in the app
+   * stylesheets overrides it, and that a live row next to it stays unstruck.
    */
   test('🔴 a REVOKED permission is really struck through, not merely flagged', async () => {
     // A LOCAL fixture override — the shared `DATA` row deliberately has an empty `revokedScopes`
