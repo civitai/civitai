@@ -2916,6 +2916,13 @@ export const REDIS_SYS_KEYS = {
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
   },
+  REGISTRY_ADAPTER: {
+    // The served set a registry cursor names — `system:registry-adapter:snapshot:${digest}`, JSON
+    // `{ schema, entries: [urn, rev][] }`, TTL refreshed on every resume. Content-addressed: a
+    // digest always holds the same value. Losing one only expires that cursor (the consumer
+    // re-snapshots), so eviction is safe.
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+  },
 } as const;
 
 // Cached data.
