@@ -79,6 +79,11 @@ export default function Safety({
             <Text ta="center" className={classes.heroText}>
               A summary of our policies, guidelines, and approach to keeping Civitai safe.
             </Text>
+            <Text ta="center" className={classes.heroText}>
+              <Link href="/safety/how-we-keep-it-safe">
+                How we keep generation and sharing safe
+              </Link>
+            </Text>
           </Stack>
         </Container>
       </div>
@@ -120,13 +125,6 @@ export default function Safety({
                   providing feedback. Your involvement is crucial in shaping a safe AI community.
                   Together, we can navigate the exciting world of AI, ensuring that Civitai remains
                   a platform for innovation, creativity, and respect.
-                </p>
-                <p>
-                  For a plain-language overview of what we don&apos;t allow and how we stop it, see{' '}
-                  <Link href="/safety/eu-ai-act">
-                    How Civitai Keeps Generation and Sharing Safe
-                  </Link>
-                  .
                 </p>
                 <Title order={2} id="resource-dev">
                   Responsible Resource Development
@@ -286,6 +284,13 @@ export default function Safety({
                   while empowering users with tools to see content that is the most interesting and
                   relevant to them. We do this through a combination of user controls, automated
                   content labeling, and content moderation.
+                </p>
+                <p>
+                  For how these checks work when you generate, share, upload or train, see{' '}
+                  <Link href="/safety/how-we-keep-it-safe">
+                    How Civitai Keeps Generation and Sharing Safe
+                  </Link>
+                  .
                 </p>
                 <Title order={3}>User Control</Title>
                 <p>

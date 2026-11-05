@@ -8,14 +8,7 @@ Civitai is a place to create with AI and share what you make. We want everyone, 
 
 ## What we don't allow
 
-Some content is never allowed on Civitai, whether you upload it or generate it here:
-
-- **Sexual content involving minors**, or anything that sexualizes children, in any form, real or generated.
-- **Sexual or intimate imagery of real people**, including imagery made with models that depict real, identifiable people.
-- **Content that breaks the law**, including non-consensual intimate imagery, extreme violence and hate content as described in our [Terms of Service](https://civitai.com/content/tos) and [Content Rules](https://civitai.com/safety).
-- **Malicious files** disguised as models.
-
-Mature content that follows our rules is allowed only where viewers have chosen to see it, and it is kept off our general-audience site.
+What isn't allowed on Civitai, whether you upload it or generate it here, is set out in our [Content Policies](/safety#content-policies) and [Terms of Service](https://civitai.com/content/tos).
 
 ## How we stop it
 
