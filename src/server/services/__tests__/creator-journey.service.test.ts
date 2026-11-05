@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chQuery = vi.hoisted(() => vi.fn());
+// `getCreatorScoreUnlocks` reads the announcement and placement configs' KeyValue rows through
+// Kysely: no row, so their compiled defaults apply (the other KeyValue rows stay on Prisma).
+const { configRow } = vi.hoisted(() => ({ configRow: vi.fn(async () => undefined) }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRow,
+}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: { query: chQuery },
@@ -9,6 +16,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import {
   buildActivityProgress,
   buildSecretMilestones,

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 type Row = Record<string, unknown>;
 
@@ -54,7 +55,22 @@ const mockDbReplica = dbMock.dbRead as unknown as Record<string, ReturnType<type
 // Replaces the helper outright rather than spreading the original: the point of this file is
 // that the read and the write disagree, and the real helper decides which client to hand back
 // from replication-lag state at call time.
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbRead }));
+// The image existence check is a Kysely read on the client the same helper picks: answered from
+// the replica's table, so it sees the replica's stale id as the Prisma reads do.
+const { REPLICA_KYSELY } = vi.hoisted(() => ({ REPLICA_KYSELY: { replica: true } }));
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  getDbWithoutLag: async () => dbMock.dbRead,
+  getKyselyWithoutLag: async () => REPLICA_KYSELY,
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImageReactionId: async (db: unknown, key: Row) => {
+    if (db !== REPLICA_KYSELY) throw new Error('the existence check read the wrong client');
+    const table = (dbMock.dbRead as unknown as Record<string, { rows: Row[] }>).imageReaction;
+    const row = table.rows.find(matches(key));
+    return row ? { id: row.id as number } : undefined;
+  },
+}));
 vi.mock('~/server/metrics', () => {
   const metrics = { queueUpdate: mockQueueUpdate };
   return {

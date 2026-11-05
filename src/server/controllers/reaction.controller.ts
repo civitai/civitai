@@ -22,10 +22,8 @@ import { isDefined } from '~/utils/type-guards';
 import type { ReactionType } from '../clickhouse/client';
 import { dbRead, dbWrite } from '../db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readImageNsfwLevelAndOwnerViaKysely,
-  readImageNsfwLevelAndOwnerViaPrisma,
   readImagePostIdViaKysely,
   readImagePostIdViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
@@ -64,14 +62,8 @@ async function getTrackerEvent(
   const action = result === 'created' ? 'Create' : 'Delete';
   switch (input.entityType) {
     case 'image':
-      const image = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-        ? await readImageNsfwLevelAndOwnerViaKysely(
-            (
-              await loadKyselyDb()
-            ).kyselyRead,
-            input.entityId
-          )
-        : await readImageNsfwLevelAndOwnerViaPrisma(dbRead, input.entityId);
+      const { kyselyRead } = await loadKyselyDb();
+      const image = await readImageNsfwLevelAndOwnerViaKysely(kyselyRead, input.entityId);
 
       if (image) {
         return {
@@ -279,10 +271,8 @@ export const toggleReactionHandler = async ({
     if (checkAccess.includes(input.entityType)) {
       // A missing image runs the Prisma read, so its not-found throw is unchanged.
       const readImagePostId = async (imageId: number) => {
-        if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)) {
-          const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);
-          if (row) return row.postId;
-        }
+        const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);
+        if (row) return row.postId;
         return readImagePostIdViaPrisma(dbRead, imageId);
       };
       const entityId =

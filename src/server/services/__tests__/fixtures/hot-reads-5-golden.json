@@ -1,0 +1,309 @@
+{
+  "collaborators:a missing post": null,
+  "collaborators:no collaborators": {
+    "entity": {
+      "userId": 5103
+    },
+    "collaborators": []
+  },
+  "collaborators:one collaborator": {
+    "entity": {
+      "userId": 5101
+    },
+    "collaborators": [
+      {
+        "user": {
+          "id": 5105,
+          "username": "viewer",
+          "deletedAt": null,
+          "image": null,
+          "profilePicture": null,
+          "cosmetics": []
+        },
+        "entityId": 5301,
+        "entityType": "Post",
+        "status": "Approved"
+      }
+    ]
+  },
+  "collaborators:three collaborators, one per status": {
+    "entity": {
+      "userId": 5101
+    },
+    "collaborators": [
+      {
+        "user": {
+          "id": 5102,
+          "username": "alpha",
+          "deletedAt": null,
+          "image": "a.png",
+          "profilePicture": {
+            "id": 5403,
+            "name": "avatar",
+            "url": "u3",
+            "nsfwLevel": 1,
+            "hash": "h3",
+            "userId": 5102,
+            "ingestion": "Scanned",
+            "type": "image",
+            "width": 64,
+            "height": 64,
+            "metadata": {
+              "profile": true
+            }
+          },
+          "cosmetics": [
+            {
+              "data": {
+                "x": 1
+              },
+              "cosmetic": {
+                "id": 5501,
+                "data": {
+                  "url": "b.png"
+                },
+                "type": "Badge",
+                "source": "Trophy",
+                "name": "Badge"
+              }
+            }
+          ]
+        },
+        "entityId": 5305,
+        "entityType": "Post",
+        "status": "Pending"
+      },
+      {
+        "user": {
+          "id": 5103,
+          "username": null,
+          "deletedAt": {
+            "$date": "2026-01-02T03:04:05.678Z"
+          },
+          "image": null,
+          "profilePicture": null,
+          "cosmetics": []
+        },
+        "entityId": 5305,
+        "entityType": "Post",
+        "status": "Rejected"
+      },
+      {
+        "user": {
+          "id": 5104,
+          "username": "gamma",
+          "deletedAt": null,
+          "image": null,
+          "profilePicture": null,
+          "cosmetics": [
+            {
+              "data": null,
+              "cosmetic": {
+                "id": 5502,
+                "data": {
+                  "gradient": [1, 2]
+                },
+                "type": "NamePlate",
+                "source": "Purchase",
+                "name": "Plate"
+              }
+            }
+          ]
+        },
+        "entityId": 5305,
+        "entityType": "Post",
+        "status": "Approved"
+      }
+    ]
+  },
+  "dismissed:a later now": [5601, 5602, 5604, 5606, 5607],
+  "dismissed:a user with none": [],
+  "dismissed:another user": [5601],
+  "dismissed:every domain": [5601, 5602, 5606, 5607, 5608],
+  "dismissed:the blue domain": [5601, 5607, 5608],
+  "dismissed:the green domain": [5601, 5606],
+  "dismissed:the red domain": [5601, 5602, 5607],
+  "file-version:a NULL trained-words list": {
+    "id": 5922,
+    "status": "Published",
+    "model": {
+      "id": 5802,
+      "name": "Taken",
+      "type": "Checkpoint",
+      "publishedAt": null,
+      "status": "Unpublished",
+      "userId": 5102,
+      "mode": "TakenDown",
+      "nsfw": false,
+      "availability": "EarlyAccess",
+      "poi": true
+    },
+    "name": "nw",
+    "trainedWords": [],
+    "createdAt": {
+      "$date": "2026-04-06T00:00:00.000Z"
+    },
+    "requireAuth": false,
+    "usageControl": "Download",
+    "baseModel": "SDXL 1.0"
+  },
+  "file-version:a gated version of a taken-down model": {
+    "id": 5921,
+    "status": "UnpublishedViolation",
+    "model": {
+      "id": 5802,
+      "name": "Taken",
+      "type": "Checkpoint",
+      "publishedAt": null,
+      "status": "Unpublished",
+      "userId": 5102,
+      "mode": "TakenDown",
+      "nsfw": false,
+      "availability": "EarlyAccess",
+      "poi": true
+    },
+    "name": "td",
+    "trainedWords": ["y"],
+    "createdAt": {
+      "$date": "2026-04-05T00:00:00.000Z"
+    },
+    "requireAuth": true,
+    "usageControl": "ExternalGeneration",
+    "baseModel": "Flux.2 Klein 9B"
+  },
+  "file-version:a missing version": null,
+  "file-version:a published version": {
+    "id": 5913,
+    "status": "Published",
+    "model": {
+      "id": 5801,
+      "name": "Model A",
+      "type": "LORA",
+      "publishedAt": {
+        "$date": "2026-04-01T01:02:03.004Z"
+      },
+      "status": "Published",
+      "userId": 5101,
+      "mode": null,
+      "nsfw": true,
+      "availability": "Public",
+      "poi": false
+    },
+    "name": "v1",
+    "trainedWords": ["alpha", "two words"],
+    "createdAt": {
+      "$date": "2026-04-02T00:00:00.123Z"
+    },
+    "requireAuth": false,
+    "usageControl": "Download",
+    "baseModel": "SDXL 1.0"
+  },
+  "file-version:an orphaned version (its model is gone)": null,
+  "keyvalue:array": {
+    "key": "array",
+    "value": [3, 1, 2]
+  },
+  "keyvalue:json-null": {
+    "key": "json-null",
+    "value": null
+  },
+  "keyvalue:missing": null,
+  "keyvalue:number": {
+    "key": "number",
+    "value": 42
+  },
+  "keyvalue:object": {
+    "key": "object",
+    "value": {
+      "a": 1,
+      "f": 1.5,
+      "nested": {
+        "b": [true, null, "x"]
+      }
+    }
+  },
+  "keyvalue:string": {
+    "key": "string",
+    "value": "plain"
+  },
+  "meta:a meta object": {
+    "id": 5801,
+    "meta": {
+      "tags": ["x"],
+      "showcaseCollectionId": 12
+    }
+  },
+  "meta:a missing model": null,
+  "meta:an empty meta": {
+    "id": 5802,
+    "meta": {}
+  },
+  "model3d:a Model3D id pointing at no row": {
+    "model3d": null
+  },
+  "model3d:a deleted Model3D": {
+    "model3d": {
+      "id": 5202,
+      "userId": 5102,
+      "status": "Deleted",
+      "deletedAt": {
+        "$date": "2026-02-03T04:05:06.789Z"
+      }
+    }
+  },
+  "model3d:a missing post": null,
+  "model3d:a visible Model3D": {
+    "model3d": {
+      "id": 5201,
+      "userId": 5101,
+      "status": "Published",
+      "deletedAt": null
+    }
+  },
+  "model3d:no Model3D": {
+    "model3d": null
+  },
+  "nsfw-owner:a missing image": null,
+  "nsfw-owner:an image": {
+    "nsfwLevel": 4,
+    "userId": 5101
+  },
+  "nsfw-owner:another image": {
+    "nsfwLevel": 0,
+    "userId": 5102
+  },
+  "prizes:claimed, voided and open prizes": 3,
+  "prizes:no prizes": 0,
+  "prizes:one open prize": 1,
+  "reaction-id:a missing image": null,
+  "reaction-id:a reaction": {
+    "id": 6202
+  },
+  "reaction-id:another reaction": {
+    "id": 6201
+  },
+  "reaction-id:another user": {
+    "id": 6204
+  },
+  "reaction-id:no such reaction": null,
+  "version-ids:no versions": [],
+  "version-ids:three versions": [
+    {
+      "id": 5911
+    },
+    {
+      "id": 5912
+    },
+    {
+      "id": 5913
+    }
+  ],
+  "version-ids:two versions": [
+    {
+      "id": 5921
+    },
+    {
+      "id": 5922
+    }
+  ]
+}

@@ -952,8 +952,7 @@ const featureFlags = createFeatureFlags({
   // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
   // and no visible count at all when the first `comment.getAll` page holds every comment (the
   // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
-  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Either way the counts read
-  // through Kysely.
+  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF.
   commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 

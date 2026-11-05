@@ -21,16 +21,10 @@ import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelVersionForFileViaKysely,
-  readModelVersionForFileViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readModelVersionForFileViaKysely } from '~/server/services/hot-reads-5.reads';
 import {
   downloadFileSelect,
-  downloadFilesWhere,
   readDownloadFilesViaKysely,
-  readDownloadFilesViaPrisma,
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
@@ -228,12 +222,10 @@ export const getFileForModelVersion = async ({
    */
   attribution: ResolveAttribution;
 }): Promise<ModelVersionFileResult> => {
-  // The version and its model (readModelVersionForFileViaPrisma, hot-reads-5.reads.ts, keeps the
-  // `model: { is: {} }` orphan filter and why it exists). The Kysely read's inner join stands in
-  // for that filter.
-  const modelVersion = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-    ? await readModelVersionForFileViaKysely((await loadKyselyDb()).kyselyRead, modelVersionId)
-    : await readModelVersionForFileViaPrisma(dbRead, modelVersionId);
+  // The version and its model. The read's inner join drops a version whose model row was
+  // hard-deleted (an orphaned foreign key), so that version is `not-found` (404), not a 500.
+  const { kyselyRead } = await loadKyselyDb();
+  const modelVersion = await readModelVersionForFileViaKysely(kyselyRead, modelVersionId);
 
   if (!modelVersion) return { status: 'not-found' };
 
@@ -308,10 +300,7 @@ export const getFileForModelVersion = async ({
   // Get the correct file
   let file: FileResult | null = null;
   let versionFiles: FileResult[] = [];
-  const readFiles = async (where: DownloadFilesWhere) =>
-    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? readDownloadFilesViaKysely((await loadKyselyDb()).kyselyRead, where)
-      : readDownloadFilesViaPrisma(dbRead, downloadFilesWhere(where));
+  const readFiles = (where: DownloadFilesWhere) => readDownloadFilesViaKysely(kyselyRead, where);
   if (fileId) {
     // Direct file lookup by ID — bypasses type-based resolution. Fetched as the whole version's
     // files rather than the one row so the siblings come along; it is the same single query.
