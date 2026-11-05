@@ -7,7 +7,7 @@ import {
 } from '~/shared/constants/bot-cache.constants';
 
 /**
- * `botCacheRefusal`: which requests may get an edge-cacheable render. Every case starts from one
+ * `botCacheRefusal`: which requests may get a cacheable render. Every case starts from one
  * request that gets it and changes ONE fact, so each refusal is reached on its own and must answer
  * with its own reason — a guard that is never reached cannot pass on an earlier one's verdict. The
  * kill switch is the real Flipt gate over a stub that answers per key, so a wrong key reads as off.
@@ -35,7 +35,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import {
-  applyBotCacheEdgeHeaders,
+  applyBotCachePrivateHeaders,
   botCacheRefusal,
   botCacheResponseRefusal,
   botCacheSeed,
@@ -88,6 +88,8 @@ describe('botCacheRefusal', () => {
     );
   });
 
+  // A few representatives; that every allowlisted route is a createServerSideProps page is
+  // `bot-cache-routes-pages.test.ts`.
   it.each([
     ['/models/[id]/[[...slug]]', 'models'],
     ['/images/[imageId]', 'images'],
@@ -95,18 +97,7 @@ describe('botCacheRefusal', () => {
     ['/articles/[id]/[[...slug]]', 'articles'],
     ['/user/[username]', 'user'],
     ['/user/[username]/[list]', 'user'],
-    ['/user/[username]/3d-models', 'user'],
-    ['/user/[username]/achievements', 'user'],
-    ['/user/[username]/articles', 'user'],
-    ['/user/[username]/collections', 'user'],
-    ['/user/[username]/comics', 'user'],
-    ['/user/[username]/images', 'user'],
     ['/user/[username]/models', 'user'],
-    ['/user/[username]/posts', 'user'],
-    ['/user/[username]/shop', 'user'],
-    ['/user/[username]/sticker-book', 'user'],
-    ['/user/[username]/storylines', 'user'],
-    ['/user/[username]/videos', 'user'],
   ])('allows the route %s as %s', (pathname, name) => {
     expect(resolveBotCacheRoute(eligible() as never, pathname, { degraded: false })).toBe(name);
   });
@@ -231,17 +222,16 @@ describe('botCacheResponseRefusal', () => {
   });
 });
 
-describe('applyBotCacheEdgeHeaders', () => {
-  it('edge-cacheable for 5 min, private to browsers, tagged, and drops any cookie', () => {
+describe('applyBotCachePrivateHeaders', () => {
+  it('private to browsers, drops any cookie, and adds no edge-cache directive', () => {
     const res = fakeResponse(200, {
       'Cache-Control': 'private, no-cache, no-store, max-age=0, must-revalidate',
       'Set-Cookie': ['a=1; Path=/'],
     });
-    applyBotCacheEdgeHeaders(res as never, 'images');
-    const headers = res.getHeaders();
-    expect(headers['cloudflare-cdn-cache-control']).toBe('public, max-age=300');
-    expect(headers['cache-control']).toBe('private, no-store');
-    expect(headers['cache-tag']).toMatch(/^botcache,botcache-images,build-[\w-]+$/);
-    expect(headers).not.toHaveProperty('set-cookie');
+    applyBotCachePrivateHeaders(res as never);
+    expect(res.getHeader('Cache-Control')).toBe('private, no-store');
+    expect(res.getHeader('Set-Cookie')).toBeUndefined();
+    expect(res.getHeader('Cloudflare-CDN-Cache-Control')).toBeUndefined();
+    expect(res.getHeader('Cache-Tag')).toBeUndefined();
   });
 });

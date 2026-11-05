@@ -17,6 +17,21 @@ export const SECRET = 'bot-cache-render-secret-91c2';
 
 export type Variant = { url?: string; headers?: Record<string, string> };
 
+/** A cacheable render's response: private to browsers, no cookie, and no edge-cache directive. */
+export function expectCacheable(headers: Record<string, unknown>) {
+  expect(headers['cache-control']).toBe('private, no-store');
+  expect(headers).not.toHaveProperty('set-cookie');
+  expect(headers['cloudflare-cdn-cache-control']).toBeUndefined();
+  expect(headers['cache-tag']).toBeUndefined();
+}
+
+/** An ordinary render's response: none of what `expectCacheable` asserts it gets. */
+export function expectNotCacheable(headers: Record<string, unknown>) {
+  expect(headers['cache-control']).not.toBe('private, no-store');
+  expect(headers['cloudflare-cdn-cache-control']).toBeUndefined();
+  expect(headers['cache-tag']).toBeUndefined();
+}
+
 /** A cookie-less crawler request as the edge forwards it (no `cookie` header at all). */
 export function makeReq(defaultUrl: string, { url = defaultUrl, headers = {} }: Variant = {}) {
   return {
