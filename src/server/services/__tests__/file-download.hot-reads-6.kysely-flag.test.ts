@@ -180,8 +180,10 @@ describe("getFileForModelVersion (the version's files)", () => {
       type: 'Model',
       visibility: 'Public',
     });
+    // The second read is every file on the version, which the download is named against.
+    expect(modelFileFindMany.mock.calls[1][0].where).toEqual({ modelVersionId: 1 });
     expect(resolvedFileIds()).toEqual([offFile.id]);
-    expect(flag.mock.calls.filter(([key]) => key === FLAG)).toEqual([[FLAG]]);
+    expect(flag.mock.calls.filter(([key]) => key === FLAG)).toEqual([[FLAG], [FLAG]]);
     expect(q.listDownloadFiles).not.toHaveBeenCalled();
   });
 
@@ -205,6 +207,7 @@ describe("getFileForModelVersion (the version's files)", () => {
     await getFileForModelVersion({ modelVersionId: 1, type: 'Model', noAuth: true, user: viewer });
     expect(q.listDownloadFiles.mock.calls).toEqual([
       [kyselyRead, { modelVersionId: 1, notReplaced: true, type: 'Model', publicOnly: true }],
+      [kyselyRead, { modelVersionId: 1 }],
     ]);
     expect(q.listDownloadFiles.mock.calls[0][0]).toBe(kyselyRead);
     expect(resolvedFileIds()).toEqual([onFile.id]);
