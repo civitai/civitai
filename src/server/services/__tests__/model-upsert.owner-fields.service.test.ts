@@ -1122,3 +1122,31 @@ describe('a held scan verdict on a model leaving Private', () => {
     expect(mockLeavingPrivate).not.toHaveBeenCalled();
   });
 });
+
+describe('ownerDeclaredFlags is server-owned', () => {
+  const STORED = { ownerDeclaredFlags: { at: '2026-11-01T00:00:00.000Z', flags: ['minor'] } };
+
+  it('cannot be added by an owner save', async () => {
+    mockStored({ meta: null });
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { ownerDeclaredFlags: { at: 'x', flags: ['minor'] }, hideBuzz: true } as never,
+    });
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+
+  it('cannot be cleared or changed by an owner or a moderator save', async () => {
+    for (const isModerator of [false, true]) {
+      vi.clearAllMocks();
+      mockStored({ meta: STORED });
+      await upsert({
+        id: MODEL_ID,
+        userId: isModerator ? MODERATOR_ID : OWNER_ID,
+        isModerator,
+        meta: { ownerDeclaredFlags: { at: 'x', flags: [] }, hideBuzz: true } as never,
+      });
+      expect(updateData().meta).toEqual({ ...STORED, hideBuzz: true });
+    }
+  });
+});

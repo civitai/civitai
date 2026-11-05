@@ -48,6 +48,8 @@ const { resolveRestrictedNsfwVerdict } = await import(
   '~/server/services/text-scan/actions/restricted-nsfw-verdict'
 );
 
+const { rollbackMinorHashAutoFlags } = await import('~/server/services/minor-hash.service');
+
 const MODEL = 41;
 const OWNER = 52;
 const MODERATOR = 3;
@@ -82,6 +84,7 @@ beforeAll(async () => {
   const raw = pgliteRaw(db);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   const tx = { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
@@ -689,6 +692,39 @@ describe("a lead from the owner's flag over the scan's rating", () => {
       expect(after.meta).not.toHaveProperty('ownerFlagOverride');
       expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
       expect(after.nsfw).toBe(false);
+    }
+  );
+
+  it.each([
+    ['keep', undefined],
+    ['dismiss', 'Checked the gallery'],
+  ] as const)(
+    'after %s, a hash rollback from an old snapshot still sees the owner declared minor',
+    async (ruling, reason) => {
+      // An old snapshot: no prevMinor, no minor lock, and a rating no minor flag leaves.
+      const oldSnapshot = {
+        at: '2026-10-01T00:00:00.000Z',
+        source: 'auto',
+        prevNsfw: true,
+        prevSfwOnly: false,
+        prevLockedProperties: ['nsfw'],
+      };
+      await seed({
+        minor: true,
+        locked: ['nsfw', 'minor', 'sfwOnly'],
+        meta: {
+          systemNsfwLock: SYSTEM_LOCK,
+          ownerFlagOverride: override,
+          minorFlagSnapshot: oldSnapshot,
+          ...lead('minor'),
+        },
+      });
+      const rollback = () =>
+        rollbackMinorHashAutoFlags({ dryRun: true, limit: 1, modelIds: [MODEL] });
+      expect((await rollback()).keptMinor).toBe(1);
+      await resolveRestrictedNsfwVerdict({ modelId: MODEL, ruling, reason, userId: MODERATOR });
+      expect((await row()).meta.ownerDeclaredFlags.flags).toEqual(['minor']);
+      expect(await rollback()).toMatchObject({ keptMinor: 1, rolledBack: 0 });
     }
   );
 });
