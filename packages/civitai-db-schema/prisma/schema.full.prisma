@@ -7557,6 +7557,8 @@ enum JobQueueType {
   ImageStorageDelete
   CdnAccessSync
   ImageCdnPersistRetry
+  /// Drained by the csam-archiver CronJob outside this repo, which claims a row by a timestamp in `data`.
+  CsamArchive
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with

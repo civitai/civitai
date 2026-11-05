@@ -50,8 +50,10 @@ CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Tag" ("id" INTEGER PRIMARY KEY, "name" TEXT, "nsfwLevel" INTEGER, "type" TEXT);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "reportSentAt" TIMESTAMP(3), "details" JSONB,
-  "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image', "reportId" INTEGER
+  "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image', "reportId" INTEGER,
+  "archivedAt" TIMESTAMP(3)
 );
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB);
 `;
 
 // The migration itself, so the trigger it installs is the one under test.
@@ -143,6 +145,38 @@ describe('the CSAM queue by user', () => {
       // Secondary on a report is not a report about them.
       { userId: 106, reported: false, sent: null },
     ]);
+  });
+
+  it("rolls each owner's sent reports up to the archive state that most needs a look", async () => {
+    const archive = async () =>
+      (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.map(
+        ({ userId, archiveState }) => ({
+          userId,
+          archiveState,
+        })
+      );
+    // 101 sent reports 1 and 2; 102's was never sent.
+    await db.exec(`
+      UPDATE "CsamReport" SET "archivedAt" = '2026-01-02' WHERE id = 1;
+      INSERT INTO "JobQueue" VALUES
+        ('CsamArchive', 'User', 101, '{"reportIds": [2], "attempts": 1, "lastError": "VerifyFailed"}'),
+        -- Another type's row for the same user is not the archiver's.
+        ('CleanUp', 'User', 103, '{"reportIds": [3], "lastError": "x"}');
+    `);
+    try {
+      expect(await archive()).toEqual([
+        { userId: 101, archiveState: 'failed' },
+        { userId: 102, archiveState: null },
+        { userId: 103, archiveState: null },
+        { userId: 106, archiveState: null },
+      ]);
+      await db.exec(`DELETE FROM "JobQueue" WHERE type = 'CsamArchive'`);
+      expect((await archive())[0]).toEqual({ userId: 101, archiveState: 'not-archived' });
+      await db.exec(`UPDATE "CsamReport" SET "archivedAt" = '2026-02-02' WHERE id = 2`);
+      expect((await archive())[0]).toEqual({ userId: 101, archiveState: 'archived' });
+    } finally {
+      await db.exec(`UPDATE "CsamReport" SET "archivedAt" = NULL; DELETE FROM "JobQueue";`);
+    }
   });
 
   it('says what a bulk clear would take, whatever the level filter, and whom it would refuse', async () => {

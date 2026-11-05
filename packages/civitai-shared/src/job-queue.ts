@@ -51,6 +51,9 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   CdnAccessSync: 15,
   // `cdn-access-sync`, every minute; each row gets one attempt and is removed whatever happens.
   ImageCdnPersistRetry: 15,
+  // The csam-archiver CronJob outside this repo, every 10 minutes. A failed archive keeps its row for
+  // the next claim, so a day-old row means the retries are not succeeding.
+  CsamArchive: MINUTES_PER_DAY,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

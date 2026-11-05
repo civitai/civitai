@@ -118,6 +118,7 @@ export const NAVIGATION: NavLink[] = [
       },
       // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
       { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
+      { path: '/csam/archive', label: 'CSAM Archive' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
       { path: '/images/scan-label-metrics', label: 'Scan Label Metrics' },
       { path: '/images/scan-probe', label: 'Scan Probe' },
