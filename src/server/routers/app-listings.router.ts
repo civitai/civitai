@@ -64,6 +64,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -2206,6 +2207,30 @@ export const appListingsRouter = router({
         appListingId: input.appListingId,
         visibility: input.visibility,
         reason: input.reason,
+        moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * MOD mark / unmark a listing Official ("made by the Civitai team") — the badge on its store
+   * card and page. `moderatorProcedure` + the inner `isModerator` recheck, like `delistListing`;
+   * the acting moderator is bound to `ctx.user.id`. A listing's OWNER has no path to this flag:
+   * it is not a key of any author input schema, and the column is absent from the Prisma client
+   * every author write goes through. One `set-official` moderation event per change, written in
+   * the same transaction as the flag.
+   */
+  setListingOfficial: moderatorProcedure
+    .input(setListingOfficialSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Marking apps as Official is restricted to civitai team');
+      }
+      const { setListingOfficialAsModerator } = await import(
+        '~/server/services/blocks/app-listing-official.service'
+      );
+      return setListingOfficialAsModerator({
+        appListingId: input.appListingId,
+        isOfficial: input.isOfficial,
         moderatorUserId: ctx.user.id,
       });
     }),

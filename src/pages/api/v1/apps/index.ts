@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import {
   getAppListingsListQuery,
-  withoutViewerScopedFields,
+  withoutUndocumentedRestFields,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
@@ -141,7 +141,7 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     });
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({
-      items: items.map(withoutViewerScopedFields),
+      items: items.map(withoutUndocumentedRestFields),
       metadata: { nextCursor, nextPage },
     });
   } catch (e) {

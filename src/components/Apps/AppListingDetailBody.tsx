@@ -56,6 +56,7 @@ import {
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
+import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
@@ -1085,6 +1086,8 @@ export function AppListingDetailBody({
                 <Title order={2} className="line-clamp-2">
                   {detail.name}
                 </Title>
+                {/* MODERATOR-SET provenance marker, in the identity block like Beta. */}
+                {detail.isOfficial && <AppListingOfficialBadge />}
                 {detail.isBeta && (
                   <Badge
                     color="violet"

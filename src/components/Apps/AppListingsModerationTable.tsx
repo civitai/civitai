@@ -8,13 +8,14 @@ import {
   NumberInput,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
@@ -401,6 +402,11 @@ export function AppListingsModerationTable({
                         “{row.betaMessage}”
                       </Text>
                     )}
+                    <ModListingOfficialSwitch
+                      appListingId={row.id}
+                      slug={row.slug}
+                      isOfficial={row.isOfficial}
+                    />
                   </Table.Td>
                   <Table.Td>
                     <Text size="xs">
@@ -619,6 +625,50 @@ export function AppListingsModerationTable({
         onDone={invalidate}
       />
     </Stack>
+  );
+}
+
+/**
+ * The moderator's "Official" toggle for one listing ("made by the Civitai team" — the badge on
+ * its store card and page). Calls `appListings.setListingOfficial`, which is
+ * `moderatorProcedure` and records a `set-official` moderation event.
+ *
+ * No reason modal: it is a label, not a takedown. It keeps its own `checked` state (synced
+ * from the row) instead of invalidating the table, because `invalidate` resets paging and
+ * would throw away every page the moderator loaded for a one-boolean change — the same
+ * trade-off the Message owner composer documents.
+ */
+function ModListingOfficialSwitch({
+  appListingId,
+  slug,
+  isOfficial,
+}: {
+  appListingId: string;
+  slug: string;
+  isOfficial: boolean;
+}) {
+  const [checked, setChecked] = useState(isOfficial);
+  useEffect(() => setChecked(isOfficial), [isOfficial]);
+  const mutation = trpc.appListings.setListingOfficial.useMutation({
+    onSuccess: (result: { isOfficial: boolean }) => {
+      setChecked(result.isOfficial);
+      showSuccessNotification({
+        message: result.isOfficial ? 'Marked as Official.' : 'Official mark removed.',
+      });
+    },
+    onError: (e: { message: string }) =>
+      showErrorNotification({ title: 'Official update failed', error: new Error(e.message) }),
+  });
+  return (
+    <Switch
+      mt={4}
+      size="xs"
+      label="Official"
+      checked={checked}
+      disabled={mutation.isPending}
+      onChange={(e) => mutation.mutate({ appListingId, isOfficial: e.currentTarget.checked })}
+      data-testid={`apps-mod-official-${slug}`}
+    />
   );
 }
 
