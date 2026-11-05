@@ -146,6 +146,7 @@ import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
+import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -226,6 +227,7 @@ export const jobs: Job[] = [
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
+  comFaceRecheckJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,

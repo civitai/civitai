@@ -233,6 +233,7 @@ import {
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -314,6 +315,7 @@ import {
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
+import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import {
   isModelNameTooLong,
@@ -3893,6 +3895,9 @@ export const upsertModel = async (
       sfwName: storedSfwName,
       sfwDescription:
         data.sfwDescription !== undefined ? data.sfwDescription : beforeUpdate?.sfwDescription,
+      name: data.name ?? beforeUpdate?.name ?? '',
+      description: data.description !== undefined ? data.description : beforeUpdate?.description,
+      modelId: id,
       userId,
     });
   if (coverChanged) {
@@ -4189,6 +4194,21 @@ export const upsertModel = async (
           throw throwBadRequestError('A model’s availability changes only through its own flows.');
         const flags = locked ? assertAllowedContentFlags(locked, data) : undefined;
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
+        // The cover gate compared against the first read; a cover written since then (the listing
+        // re-check clearing it) would be overwritten without the gate running.
+        const lockedCover =
+          !isModerator && data.sfwCoverImageId !== undefined
+            ? await tx.model.findUnique({ where: { id }, select: { sfwCoverImageId: true } })
+            : null;
+        if (lockedCover && lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null))
+          throw throwConflictError(
+            'This model’s civitai.com card changed while you were editing. Reload and save again.'
+          );
+        // A .com cover this save changed (through the gate, for an owner) ends the re-check's removal.
+        if (coverChanged && data.sfwCoverImageId) {
+          const { comFaceRemoved: _removed, ...rest } = mergedMeta;
+          mergedMeta = rest;
+        }
         // A save that leaves neither flag has ruled on the override, so a later flag cannot revive it.
         if (flags && !flags.minor && !flags.poi) {
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
@@ -4398,6 +4418,14 @@ export const upsertModel = async (
       },
       { maxWait: 10000, timeout: 30000 }
     );
+    // First after commit, so a later post-save step that throws cannot drop it. Re-checked even when
+    // the gate ran: it read the description before blurb expansion, not the text stored.
+    const listingChanged =
+      (data.name !== undefined && data.name !== beforeUpdate.name) ||
+      (data.description !== undefined && data.description !== beforeUpdate.description);
+    const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
+    if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
+      await queueComFaceRecheck(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
@@ -4660,6 +4688,8 @@ export async function applyModelContentChange({
       }`;
     if (expectedDescription !== undefined && !affected) return false;
     await preventReplicationLag('model', id);
+    // A changed description is part of the listing the .com face re-check reads.
+    if (affected) await queueComFaceRecheck(id);
 
     // A caller passing `context` has already written the body AND already run this gate on it.
     // This branch is the fan-out, which has neither — and the text it just wrote is text the

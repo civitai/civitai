@@ -109,7 +109,7 @@ const post = (overrides: Partial<{ publishedAt: Date | null }> = {}) =>
   });
 
 /** sysRedis as a key-value store with NX, so a repeat sees what the first call stored. */
-function useMemoryRedis() {
+function memoryRedis() {
   const store = new Map<string, string>();
   redisMock.sysRedis.set.mockImplementation((async (
     key: string,
@@ -131,7 +131,7 @@ function useMemoryRedis() {
 beforeEach(() => {
   vi.clearAllMocks();
   h.blocked.clear();
-  useMemoryRedis();
+  memoryRedis();
   h.stage.mockResolvedValue({
     url: STORE_KEY,
     mimeType: 'image/png',
@@ -255,6 +255,80 @@ describe('createHeadlessPost', () => {
     expect(second).toEqual({ ...first, deduped: true });
     expect(h.createPost).toHaveBeenCalledTimes(1);
     expect(h.stage).toHaveBeenCalledTimes(1);
+  });
+
+  describe('when the result for repeats cannot be stored', () => {
+    /** Every write of a result (not the pending marker) fails while `failing(value)` holds. */
+    function failResultWrites(failing: (value: string) => boolean) {
+      const store = memoryRedis();
+      const write = redisMock.sysRedis.set.getMockImplementation()!;
+      redisMock.sysRedis.set.mockImplementation((async (
+        key: string,
+        value: string,
+        opts?: { NX?: boolean }
+      ) => {
+        if (!opts?.NX && failing(value)) throw new Error('redis write failed');
+        return write(key, value, opts as never);
+      }) as never);
+      return store;
+    }
+    const paid = { hostImageId: HOST_IMAGE_ID, method: 'paid', expectedPrice: 50 } as const;
+
+    it('posts, but charges no gallery a repeat could not see', async () => {
+      const store = failResultWrites(() => true);
+
+      const result = await post({ remixGallery: paid } as never);
+
+      expect(result).toMatchObject({ postId: POST_ID, gallery: { submitted: false } });
+      expect(h.submitGallery).not.toHaveBeenCalled();
+      // POSITIVE CONTROL: the post was made; only the charge was held back.
+      expect(h.createPost).toHaveBeenCalledTimes(1);
+      expect([...store.values()]).toEqual(['pending']);
+    });
+
+    it('a repeat after a lost gallery result posts nothing new and resends the same image', async () => {
+      // The post is recorded; the write after the gallery charge is the one that fails.
+      failResultWrites((value) => value.includes('gallery'));
+
+      await post({ remixGallery: paid } as never);
+      const repeat = await post({ remixGallery: paid } as never);
+
+      expect(repeat).toMatchObject({ postId: POST_ID, deduped: true });
+      expect(h.createPost).toHaveBeenCalledTimes(1);
+      // The gallery takes one image once (a unique index), so the resend cannot charge twice.
+      expect(h.submitGallery.mock.calls.map(([args]) => args.imageId)).toEqual([1, 1]);
+    });
+  });
+
+  it('a repeat Post sends the gallery choice made on the repeat, to the first post', async () => {
+    const first = await post();
+    expect(first.gallery).toBeUndefined();
+
+    const repeat = await post({
+      remixGallery: { hostImageId: HOST_IMAGE_ID, method: 'free' },
+    } as never);
+
+    expect(repeat).toMatchObject({ postId: POST_ID, deduped: true, gallery: { submitted: true } });
+    expect(h.createPost).toHaveBeenCalledTimes(1);
+    expect(h.submitGallery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ imageId: 1, free: true })
+    );
+    // And the next repeat returns that outcome without sending again.
+    await post({ remixGallery: { hostImageId: HOST_IMAGE_ID, method: 'free' } } as never);
+    expect(h.submitGallery).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a gallery failure that isn't one of its refusals as a fixed message", async () => {
+    h.submitGallery.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.1:5432'));
+
+    const result = await post({
+      remixGallery: { hostImageId: HOST_IMAGE_ID, method: 'free' },
+    } as never);
+
+    expect(result.gallery).toEqual({
+      submitted: false,
+      reason: 'It was not sent to the Remix gallery. Post again to send it.',
+    });
   });
 
   it('frees the key when the post fails, so a retry can post', async () => {
