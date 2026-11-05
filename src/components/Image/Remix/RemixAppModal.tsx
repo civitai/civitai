@@ -5,6 +5,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RemixResultLine } from '~/components/Image/Remix/RemixResultLine';
 import { isRunningWorkflow, useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
@@ -118,7 +119,7 @@ function AskStep({
               onClick={() => onAnswer(index)}
               className="overflow-hidden rounded-md"
             >
-              <img src={image.url} alt="" className="w-full object-cover" />
+              <EdgeMedia2 src={image.url} type="image" alt="" className="w-full object-cover" />
             </UnstyledButton>
           ))}
         </div>
@@ -396,7 +397,14 @@ export function RemixAppModalContent({
       {phase.kind === 'done' && (
         <div className="grid grid-cols-1 gap-2">
           {phase.outputs.map((output) => (
-            <img key={output.url} src={output.url} alt="" className="w-full rounded-md" />
+            // Whole image at its own aspect ratio, never taller than the screen leaves room for.
+            <EdgeMedia2
+              key={output.url}
+              src={output.url}
+              type="image"
+              alt=""
+              className="max-h-[60dvh] w-full rounded-md object-contain"
+            />
           ))}
           {!phase.outputs.length && (
             <Text size="sm" c="dimmed">

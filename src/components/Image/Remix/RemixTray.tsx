@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { RemixRun } from '~/components/Image/Remix/useRemixRuns';
 import { useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
 import { openRemixAppModal } from '~/components/Dialog/triggers/remix-app';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const statusLabel: Record<RemixRun['status'], string> = {
@@ -50,7 +51,12 @@ export function RemixTrayView({
                 >
                   <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-2 dark:bg-dark-5">
                     {run.thumbnailUrl ? (
-                      <img src={run.thumbnailUrl} alt="" className="size-full object-cover" />
+                      <EdgeMedia2
+                        src={run.thumbnailUrl}
+                        type="image"
+                        alt=""
+                        className="size-full object-cover"
+                      />
                     ) : run.status === 'running' ? (
                       <Loader size="xs" />
                     ) : (

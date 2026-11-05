@@ -246,6 +246,53 @@ describe('RemixAppModal', () => {
     expect(second).not.toBe(first);
   });
 
+  test('a retry after a failed Run repeats the same tap, so it can only make one run', async () => {
+    h.start.mockRejectedValueOnce(new Error('network'));
+    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await runButton().click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
+    // POSITIVE CONTROL: the failure left the offer on screen, ready to retry.
+    await expect.element(runButton()).toBeEnabled();
+
+    await runButton().click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(2));
+    const [first, second] = h.start.mock.calls.map(([input]) => input.nonce);
+    expect(first).toEqual(expect.any(String));
+    expect(second).toBe(first);
+  });
+
+  test('a second tap while the first is starting sends nothing', async () => {
+    let release = () => undefined as void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    h.start.mockImplementationOnce(async () => {
+      await held;
+      h.items = [workflow('wf-0', 'processing')];
+      return { status: 'running', runId: RUN, workflowId: 'wf-0' };
+    });
+    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await runButton().click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
+    (runButton().element() as HTMLElement).click();
+    release();
+    await expect.element(page.getByTestId('remix-running')).toBeVisible();
+    expect(h.start).toHaveBeenCalledTimes(1);
+  });
+
+  test('each opening of the modal is a new tap', async () => {
+    const first = await renderWithProviders(
+      <RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />
+    );
+    await runButton().click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
+    await first.unmount();
+
+    await renderWithProviders(<RemixAppModalContent app={animeIt} imageId={5} onClose={onClose} />);
+    await runButton().click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(2));
+    const [a, b] = h.start.mock.calls.map(([input]) => input.nonce);
+    expect(b).not.toBe(a);
+  });
+
   test('an ask is answered without spending, then the next step runs at the price shown', async () => {
     h.items = [workflow('wf-0', 'succeeded')];
     h.advance
