@@ -128,7 +128,8 @@ export function SemanticImageSearch() {
         <MultiSelect
           label="Media type"
           placeholder="All types"
-          data={[MediaType.image, MediaType.video]}
+          // No video until the index embeds videos (VECTOR_EMBED_VIDEO).
+          data={[MediaType.image]}
           value={types}
           onChange={(v) => setTypes(v as MediaType[])}
           clearable

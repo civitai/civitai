@@ -10,15 +10,21 @@ import {
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
-import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/server/trpc';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
-const semanticSearchProcedure = protectedProcedure.use(isFlagProtected('semanticImageSearch'));
+const semanticSearchProcedure = publicProcedure.use(isFlagProtected('semanticImageSearch'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
-    .use(rateLimit({ limit: 60, period: 60 }))
+    // Signed-out visitors share an IP bucket, so theirs is lower.
+    .use(
+      rateLimit([
+        { limit: 20, period: 60 },
+        { limit: 60, period: 60, userReq: () => true },
+      ])
+    )
     .input(semanticImageSearchSchema)
     .query(async ({ input, ctx }) => {
       const started = Date.now();

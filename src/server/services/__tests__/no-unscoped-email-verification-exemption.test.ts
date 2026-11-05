@@ -110,7 +110,8 @@ const DERIVED_BASES: Record<string, string> = {
   orchestratorProcedure: 'protectedProcedure',
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
-  semanticSearchProcedure: 'protectedProcedure',
+  // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
+  semanticSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',

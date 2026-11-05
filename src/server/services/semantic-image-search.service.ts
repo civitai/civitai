@@ -11,8 +11,13 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
+import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { dbRead } from '~/server/db/client';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsArray,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -109,6 +114,9 @@ type CandidateFilter = {
   excludedTagIds?: number[];
   baseModels?: string[];
   types?: string[];
+  userIds?: number[];
+  postedAfter?: Date;
+  postedBefore?: Date;
   excludedUserIds?: number[];
   excludedImageIds?: number[];
 };
@@ -124,8 +132,22 @@ export function buildCandidateFilter(f: CandidateFilter) {
   for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
   if (f.baseModels?.length) must.push({ key: 'baseModels', match: { any: f.baseModels } });
   if (f.types?.length) must.push({ key: 'type', match: { any: f.types } });
+  if (f.userIds?.length) must.push({ key: 'userId', match: { any: f.userIds } });
+  if (f.postedAfter || f.postedBefore)
+    must.push({
+      key: 'sortAt',
+      range: { gte: f.postedAfter?.toISOString(), lte: f.postedBefore?.toISOString() },
+    });
 
-  const must_not: Record<string, unknown>[] = [];
+  const must_not: Record<string, unknown>[] = [
+    // As the image search index: no NSFW images made with a base model whose license forbids it.
+    {
+      must: [
+        { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
+        { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
+      ],
+    },
+  ];
   if (f.excludedTagIds?.length) must_not.push({ key: 'tagIds', match: { any: f.excludedTagIds } });
   if (f.excludedUserIds?.length)
     must_not.push({ key: 'userId', match: { any: f.excludedUserIds } });
@@ -208,6 +230,14 @@ export async function collectPage({
   return { items, nextCursor };
 }
 
+async function resolveUserIds(usernames: string[]) {
+  const users = await dbRead.user.findMany({
+    where: { username: { in: usernames } },
+    select: { id: true },
+  });
+  return users.map((x) => x.id);
+}
+
 export async function searchSemanticImages({
   input,
   user,
@@ -215,15 +245,18 @@ export async function searchSemanticImages({
   candidateSource = qdrantCandidates,
 }: {
   input: SemanticImageSearchInput;
-  user: SessionUser;
+  // Signed out: the site defaults for hidden tags and browsing add-ons.
+  user?: SessionUser;
   domain?: DomainColor;
   candidateSource?: CandidateSource;
 }) {
-  const [hidden, addonData, blockedTags] = await Promise.all([
-    getAllHiddenForUser({ userId: user.id }),
+  const [hidden, addonData, blockedTags, userIds] = await Promise.all([
+    getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
     getBlockedBrowsingTags(),
+    input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
   ]);
+  if (userIds && !userIds.length) return { items: [], nextCursor: undefined };
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
   const strip = stripBlockedTagIds(
     input.tagIds,
@@ -233,7 +266,7 @@ export async function searchSemanticImages({
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
   const addons = resolveBrowsingSettingsAddons(addonData, input.browsingLevel, {
-    isModerator: user.isModerator,
+    isModerator: user?.isModerator,
   });
   const excludedUserIds = [
     ...new Set(
@@ -254,6 +287,9 @@ export async function searchSemanticImages({
     excludedTagIds,
     baseModels: input.baseModels,
     types: input.types,
+    userIds,
+    postedAfter: input.postedAfter,
+    postedBefore: input.postedBefore,
     excludedUserIds,
     excludedImageIds,
   });

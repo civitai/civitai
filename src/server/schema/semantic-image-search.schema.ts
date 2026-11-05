@@ -15,6 +15,10 @@ export const semanticImageSearchSchema = baseQuerySchema
     excludedTagIds: z.number().int().array().max(50).optional(),
     baseModels: z.string().array().max(20).optional(),
     types: z.enum(MediaType).array().optional(),
+    usernames: z.string().trim().min(1).array().max(20).optional(),
+    // Bounds on `sortAt`, the publish time for a published image.
+    postedAfter: z.coerce.date().optional(),
+    postedBefore: z.coerce.date().optional(),
     limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
     // Offset into the ranked candidate list.
     cursor: z.number().int().min(0).optional(),

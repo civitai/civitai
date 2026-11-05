@@ -11,7 +11,8 @@ test surface for now, shown only to those with the `semanticImageSearch` feature
   open it to testers, create the flag and add `fliptKey: 'semantic-image-search'`. Flipt then
   overrides the static list in both directions, so add moderators to the Flipt rule too.
 - The page's `getServerSideProps` and both procedures (`semanticImageSearch.search`, `.feedback`)
-  check the same flag, and both procedures require a signed-in user.
+  check the same flag. Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
+  60 for signed-in users); feedback requires a signed-in user.
 - Env: `QDRANT_URL`, `QDRANT_API_KEY`. A read-only key is enough. When the variables are unset,
   the procedure fails with a clear error.
 
@@ -31,8 +32,11 @@ Code: `src/server/services/semantic-image-search.service.ts`.
    - the chosen tags: every chosen tag must be present
    - excluded tags
    - base models
-   - media type
+   - media type (the page offers images only until videos are embedded)
+   - the chosen users, by username (none found returns nothing)
+   - a posted-date range on `sortAt`
    - the viewer's hidden and blocked users
+   - never an NSFW image on a base model whose license forbids NSFW, as on the image search index
 3. **Hydration.** The candidate ids go through `getAllImages` with `ids`, the same database path
    the image feed uses. The page is returned in Qdrant's order. Qdrant's payload can lag Postgres,
    so it only proposes candidates: whatever hydration drops never reaches the page.
@@ -42,6 +46,7 @@ Code: `src/server/services/semantic-image-search.service.ts`.
 
 Tags that cannot be browsed are dropped from the tag filter, as on the image feed, and a filter
 made only of such tags returns nothing. "More like this" refuses an image the viewer cannot see.
+A signed-out visitor gets the site defaults for hidden tags and browsing add-ons.
 The search applies the viewer's hidden images, tags and users, and the browsing-settings add-ons
 (person-of-interest, minor and excluded tags), on the server. The image feed applies those in the
 browser.

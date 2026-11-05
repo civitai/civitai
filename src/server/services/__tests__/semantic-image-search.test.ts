@@ -9,6 +9,7 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import type { SessionUser } from '~/types/session';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
@@ -385,6 +386,65 @@ describe.each([
     expect(values).toContainEqual(expect.arrayContaining([901, 902, 903]));
     expect(values).toEqual(expect.arrayContaining([801, 701]));
     expect(values).not.toContain(802);
+  });
+});
+
+describe('filters', () => {
+  const textQuery = (over: Partial<SemanticImageSearchInput> = {}) =>
+    input({ imageId: undefined, query: 'a red fox', ...over });
+
+  it('searches for a signed-out visitor', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
+    const { source } = rankedSource([101, 102, 103]);
+    const { items } = await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    expect(items.map((x) => x.id)).toEqual([101, 103]);
+  });
+
+  it("narrows to the chosen users' images", async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 31 }, { id: 32 }]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const { source, calls } = rankedSource([101]);
+    await searchSemanticImages({
+      input: textQuery({ usernames: ['fox', 'vixen'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.must).toContainEqual({ key: 'userId', match: { any: [31, 32] } });
+  });
+
+  it('returns nothing, without asking the index, when no chosen user exists', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([]);
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      input: textQuery({ usernames: ['nobody'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('bounds the posted date', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: textQuery({ postedAfter: new Date('2026-01-01T00:00:00Z') }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.must).toContainEqual({
+      key: 'sortAt',
+      range: { gte: '2026-01-01T00:00:00.000Z', lte: undefined },
+    });
+  });
+
+  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    const restricted = calls[0].filter.must_not.find((c) => 'must' in c) as
+      | { must: { key: string; match: { any: unknown[] } }[] }
+      | undefined;
+    expect(restricted?.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
+    expect(restricted?.must[1].match.any.length).toBeGreaterThan(0);
   });
 });
 

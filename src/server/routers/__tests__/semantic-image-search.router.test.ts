@@ -29,10 +29,17 @@ vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
 
 import { semanticImageSearchRouter } from '~/server/routers/semantic-image-search.router';
 
-const caller = () =>
+const VIEWER = {
+  id: 7,
+  isModerator: false,
+  muted: false,
+  onboarding: 0x1f,
+  emailVerified: new Date(),
+};
+const caller = (user: typeof VIEWER | null = VIEWER) =>
   semanticImageSearchRouter.createCaller({
     acceptableOrigin: true,
-    user: { id: 7, isModerator: false, muted: false, onboarding: 0x1f, emailVerified: new Date() },
+    user: user ?? undefined,
     tokenScope: TokenScope.Full,
     req: { headers: {} },
     features: {},
@@ -56,6 +63,19 @@ describe('semanticImageSearch router', () => {
     h.flagOn = false;
     await expect(caller().feedback({ rating: 'up' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(h.createFeedback).not.toHaveBeenCalled();
+  });
+
+  it('serves search to a signed-out visitor with the flag', async () => {
+    h.flagOn = true;
+    await caller(null).search({ query: 'fox' });
+    expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ user: undefined }));
+  });
+
+  it('refuses feedback from a signed-out visitor', async () => {
+    h.flagOn = true;
+    await expect(caller(null).feedback({ rating: 'up' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
   });
 
   it('serves both with the flag', async () => {
