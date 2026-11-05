@@ -1,0 +1,35 @@
+# apps/search-service is Python, so no pnpm job sees it: the root lint and typecheck take only
+# .ts/.tsx, and apps.yml runs vitest projects and workspace members, which this is neither.
+# This job is its only CI.
+name: search-service
+
+on:
+  pull_request:
+    paths:
+      - 'apps/search-service/**'
+      - '.github/workflows/search-service.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/search-service/**'
+      - '.github/workflows/search-service.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/search-service
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pytest==8.3.4
+      - run: python -m pytest
+      - name: openapi.json is current
+        run: python scripts/export_openapi.py --check
