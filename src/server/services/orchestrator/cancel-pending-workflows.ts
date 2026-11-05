@@ -1,86 +1,59 @@
-import { updateWorkflow as clientUpdateWorkflow } from '@civitai/orchestration-client';
+import { env } from '~/env/server';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { createOrchestratorClient } from '~/server/services/orchestrator/client';
-import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 
-const PENDING_STATUSES = new Set(['unassigned', 'preparing', 'scheduled', 'processing']);
-const LOOKBACK_MS = 2 * 24 * 60 * 60 * 1000;
-const PAGE_SIZE = 100;
-const MAX_PAGES = 5;
 const CANCEL_ATTEMPTS = 2;
-/** The caller's wait. Cancels still running past it finish in the background. */
+/** The caller's wait. A cancel still running past it finishes in the background. */
 export const CANCEL_PENDING_DEADLINE_MS = 5_000;
+// Long, not the caller's wait: aborting the request stops the orchestrator part-way through the
+// account's workflows. Calling again is safe.
+const REQUEST_TIMEOUT_MS = 60_000;
 
-function log(name: string, fields: Record<string, unknown>) {
-  Promise.resolve()
-    .then(() => logToAxiom({ name, type: 'error', ...fields }))
-    .catch(() => undefined);
-}
+const CANCEL_PATCH = JSON.stringify([{ op: 'replace', path: '/status', value: 'canceled' }]);
 
-async function cancelOne(token: string, userId: number, workflowId: string) {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= CANCEL_ATTEMPTS; attempt++) {
-    try {
-      // The generated client resolves on an HTTP error, so `error` is the failure signal.
-      const { error } = await clientUpdateWorkflow({
-        client: createOrchestratorClient(token),
-        path: { workflowId },
-        body: { status: 'canceled' },
-      });
-      if (!error) return;
-      lastError = error;
-    } catch (thrown) {
-      lastError = thrown;
+async function requestCancel(userId: number) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw new Error('The orchestrator is not configured');
+  const response = await fetch(
+    `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/users/${userId}/workflows`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json-patch+json',
+      },
+      body: CANCEL_PATCH,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }
-  }
-  log('mute.cancel-workflow-failed', { userId, workflowId, error: safeError(lastError) });
+  );
+  if (!response.ok) throw new Error(`Orchestrator answered ${response.status}`);
 }
 
 async function cancelAll(userId: number) {
-  // The token the orchestrator already accepts for this account, never a new one: a key minted now
-  // would be checked against the restricted standing and refused. Server-side only.
-  const token = await getOrchestratorToken(userId, undefined, {
-    allowRestricted: true,
-    existingOnly: true,
-  });
-  const fromDate = new Date(Date.now() - LOOKBACK_MS);
-  const cancels: Promise<void>[] = [];
-  let cursor: string | undefined;
-  let pages = 0;
-  try {
-    for (; pages < MAX_PAGES; pages++) {
-      // `hideMatureContent: false`: a pending mature workflow must be listed too.
-      const { items, nextCursor } = await queryWorkflows({
-        token,
-        take: PAGE_SIZE,
-        cursor,
-        tags: [],
-        fromDate,
-        hideMatureContent: false,
-      });
-      // Cancelled page by page, so a later page failing loses only what it held.
-      for (const workflow of items)
-        if (workflow.id && PENDING_STATUSES.has(workflow.status ?? ''))
-          cancels.push(cancelOne(token, userId, workflow.id));
-      if (!nextCursor || !items.length) break;
-      cursor = nextCursor;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= CANCEL_ATTEMPTS; attempt++) {
+    try {
+      return await requestCancel(userId);
+    } catch (error) {
+      lastError = error;
     }
-    if (pages === MAX_PAGES) log('mute.cancel-workflows-list-truncated', { userId, pages });
-  } finally {
-    await Promise.all(cancels);
   }
+  await Promise.resolve()
+    .then(() =>
+      logToAxiom({
+        name: 'mute.cancel-workflows-failed',
+        type: 'error',
+        userId,
+        error: safeError(lastError),
+      })
+    )
+    .catch(() => undefined);
 }
 
 /**
- * Cancels the account's pending generations. For a mute: it must run before the account's
- * orchestrator tokens are revoked, since a restricted identity can neither list nor cancel after.
- * Never throws, and waits at most `CANCEL_PENDING_DEADLINE_MS`.
+ * Cancels every one of the account's workflows not yet finished. Jobs already running may still
+ * complete. Never throws, and waits at most `CANCEL_PENDING_DEADLINE_MS`.
  */
 export async function cancelPendingWorkflows(userId: number): Promise<void> {
-  const work = cancelAll(userId).catch((error) =>
-    log('mute.cancel-workflows-list-failed', { userId, error: safeError(error) })
-  );
-  await withTimeoutFallback(work, CANCEL_PENDING_DEADLINE_MS, undefined);
+  await withTimeoutFallback(cancelAll(userId), CANCEL_PENDING_DEADLINE_MS, undefined);
 }

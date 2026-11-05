@@ -636,9 +636,8 @@ export async function setMuted(input: {
 
   if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'User not found.' };
 
-  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The cancel comes
-  // first because a restricted identity can no longer cancel; the revoke comes last because the
-  // orchestrator re-validates against the session's standing.
+  // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
+  // last because the orchestrator re-validates against the session's standing.
   // The cookie is read now because the repeat below runs after this request has ended.
   let cookie: string | undefined;
   try {
@@ -646,20 +645,6 @@ export async function setMuted(input: {
   } catch {
     cookie = undefined;
   }
-  // Best-effort and bounded: the mute stands whatever this returns.
-  const cancelled = await postJson({
-    path: '/api/mod/user/cancel-pending-workflows',
-    body: { userId: input.userId },
-    label: 'Cancel pending generations',
-    auth: 'session',
-    timeoutMs: 8_000,
-    cookie,
-  });
-  if (!cancelled.ok)
-    void logAxiomError(new Error(cancelled.error), {
-      name: 'mute.cancel-pending-workflows-failed',
-      userId: input.userId,
-    });
   const bustStanding = () =>
     bustKeyBestEffort(
       `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
@@ -670,6 +655,24 @@ export async function setMuted(input: {
       }
     );
   await bustStanding();
+  // After the bust, from which the main app refuses new submits. Best-effort and bounded: the mute
+  // stands whatever this returns.
+  const cancelPending = async () => {
+    const cancelled = await postJson({
+      path: '/api/mod/user/cancel-pending-workflows',
+      body: { userId: input.userId },
+      label: 'Cancel pending generations',
+      auth: 'session',
+      timeoutMs: 8_000,
+      cookie,
+    });
+    if (!cancelled.ok)
+      void logAxiomError(new Error(cancelled.error), {
+        name: 'mute.cancel-pending-workflows-failed',
+        userId: input.userId,
+      });
+  };
+  await cancelPending();
   try {
     await invalidateUserSessions(input.userId);
   } finally {
@@ -694,10 +697,13 @@ export async function setMuted(input: {
     };
     await expireGenerationCredentials();
     await revokeOrchestratorUserTokens(input.userId);
+    // The repeat cancels again once its revoke has landed.
     setTimeout(() => {
       void bustStanding()
         .then(expireGenerationCredentials)
-        .finally(() => revokeOrchestratorUserTokens(input.userId));
+        .finally(() => revokeOrchestratorUserTokens(input.userId))
+        .finally(cancelPending)
+        .catch(() => undefined);
     }, ACCOUNT_STANDING_REBUST_MS).unref?.();
   }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);

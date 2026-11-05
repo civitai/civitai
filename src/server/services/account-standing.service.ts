@@ -121,10 +121,10 @@ async function bustStanding(userId: number) {
   }
 }
 
+/** Not awaited by callers: the orchestrator call has a 5 s timeout and runs inside job loops.
+ *  `revokeCivitaiUserTokens` logs its own failures. Never rejects. */
 function startRevoke(userId: number) {
-  // Not awaited: the orchestrator call has a 5 s timeout and runs inside job loops.
-  // `revokeCivitaiUserTokens` logs its own failures.
-  void Promise.resolve()
+  return Promise.resolve()
     .then(() => revokeCivitaiUserTokens({ userId }))
     .catch(() => false);
 }
@@ -143,19 +143,19 @@ export async function afterAccountBanChanged(userId: number): Promise<void> {
 export type StandingSessionStep = { kind: 'refresh' | 'invalidate'; caller: SessionStateCaller };
 
 /**
- * Run after a mute or unmute has committed: on a mute, first cancels the account's pending
- * generations; then drops the cached standing, takes the caller's session step, then revokes the
- * orchestrator's cached tokens, and repeats the last three after `ACCOUNT_STANDING_REBUST_MS`. The
- * revoke comes last because the orchestrator re-validates through `/api/v1/me`, and the cancel comes
- * before all of it because a restricted identity can no longer cancel. Never throws; returns whether
- * the session step succeeded, for a caller that must report a failed one.
+ * Run after a mute or unmute has committed: drops the cached standing, so new submits are refused
+ * from here; on a mute, cancels the account's pending generations; then takes the caller's session
+ * step and revokes the orchestrator's cached tokens, and repeats the bust, session and revoke after
+ * `ACCOUNT_STANDING_REBUST_MS`. The revoke comes last because the orchestrator re-validates through
+ * `/api/v1/me`. Never throws; returns whether the session step succeeded, for a caller that must
+ * report a failed one.
  */
 export async function afterAccountStandingChanged(
   userId: number,
   session: StandingSessionStep
 ): Promise<boolean> {
-  await cancelPendingWorkflowsIfMuted(userId);
   await bustStanding(userId);
+  await cancelPendingWorkflowsIfMuted(userId);
   let sessionStepped = false;
   try {
     const { invalidateSession, refreshSession } = await import(
@@ -208,5 +208,6 @@ async function repeatStandingChange(userId: number) {
   }
   // Again: a key minted between the first expire and the cache settling would otherwise outlive the mute.
   await expireGenerationCredentialsIfMuted(userId);
-  startRevoke(userId);
+  // Cancels again once the revoke has landed.
+  void startRevoke(userId).then(() => cancelPendingWorkflowsIfMuted(userId));
 }

@@ -19,11 +19,6 @@ const ALLOWED = {
     ],
   },
   'src/server/services/orchestrator/poll-iteration.ts': { allowRestricted: 1, procedures: [] },
-  // A mute cancelling the account's own pending generations, before its tokens are revoked.
-  'src/server/services/orchestrator/cancel-pending-workflows.ts': {
-    allowRestricted: 1,
-    procedures: [],
-  },
   // The retention job's read of a run, for an owner who may since have been restricted.
   'src/server/services/orchestrator/training/studio-dataset-archive.service.ts': {
     allowRestricted: 1,

@@ -4,9 +4,10 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
-// A mute cancels the account's pending generations BEFORE its session step and token revoke: once
-// the orchestrator sees a restricted identity, the account's token can neither list nor cancel.
-// Do not move the cancel after the revoke, and do not let its failure stop the rest of the mute.
+// A mute drops the cached standing FIRST, so a submit during the cancel is refused and cannot land
+// after it; then cancels the pending generations; then takes its session step and revokes the
+// tokens. Do not move the cancel before the bust or after the revoke, and do not let its failure
+// stop the rest of the mute.
 
 const order = vi.hoisted(() => [] as string[]);
 const cancelPendingWorkflows = vi.hoisted(() =>
@@ -31,7 +32,11 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   }),
 }));
 
-const { afterAccountStandingChanged } = await import('~/server/services/account-standing.service');
+const { ACCOUNT_STANDING_REBUST_MS, afterAccountStandingChanged, getAccountStanding } =
+  await import('~/server/services/account-standing.service');
+const { assertAccountNotRestricted } = await import(
+  '~/server/services/account-restriction.service'
+);
 
 const USER = 42;
 const MUTE = { kind: 'refresh', caller: 'moderation' } as const;
@@ -60,6 +65,23 @@ describe('a mute and the account’s pending generations', () => {
     expect(order).toEqual(['cancel', 'session', 'revoke']);
   });
 
+  it('refuses a submit made while the cancel runs, the standing still cached as unmuted', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false } as never);
+    expect((await getAccountStanding(USER)).muted).toBe(false);
+    // The mute commits; the cache still holds the unmuted standing read before it.
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
+    let submitDuringCancel: 'allowed' | 'refused' | undefined;
+    cancelPendingWorkflows.mockImplementationOnce(async () => {
+      submitDuringCancel = await assertAccountNotRestricted(USER).then(
+        () => 'allowed' as const,
+        () => 'refused' as const
+      );
+      order.push('cancel');
+    });
+    await afterAccountStandingChanged(USER, MUTE);
+    expect(submitDuringCancel).toBe('refused');
+  });
+
   it('still takes the session step and revokes when the cancel fails', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
     cancelPendingWorkflows.mockImplementationOnce(async () => {
@@ -68,6 +90,17 @@ describe('a mute and the account’s pending generations', () => {
     await expect(afterAccountStandingChanged(USER, MUTE)).resolves.toBe(true);
     await vi.waitFor(() => expect(order).toContain('revoke'));
     expect(order).toEqual(['session', 'revoke']);
+  });
+
+  it('cancels again in the delayed repeat, after its revoke has landed', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
+    await afterAccountStandingChanged(USER, MUTE);
+    await vi.waitFor(() => expect(order).toContain('revoke'));
+    order.length = 0;
+    await vi.advanceTimersByTimeAsync(ACCOUNT_STANDING_REBUST_MS);
+    await vi.waitFor(() => expect(order).toContain('cancel'));
+    expect(order).toEqual(['revoke', 'cancel']);
+    expect(cancelPendingWorkflows).toHaveBeenCalledTimes(2);
   });
 
   it('cancels nothing on an unmute', async () => {
