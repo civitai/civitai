@@ -287,6 +287,26 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // 50 tests across 2 files were failing in CI this way, invisibly, because this
         // tier was report-only AND could not run on the dev host.
         setListingVisibilityAsModerator: { useMutation: mutation('setVisibilityAsModerator') },
+        // The Official toggle's proc RESOLVES WITH A VALUE (`{ isOfficial }`) that its success
+        // handler reads, so — like `messageAppOwner` below — it cannot use the shared factory.
+        setListingOfficial: {
+          useMutation: (opts?: {
+            onSuccess?: (r: {
+              appListingId: string;
+              isOfficial: boolean;
+              changed: boolean;
+            }) => void;
+            onError?: (e: { message: string }) => void;
+          }) => ({
+            mutate: (vars: { appListingId: string; isOfficial: boolean }) => {
+              mocks.mutate('setListingOfficial', vars);
+              if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
+              else opts?.onSuccess?.({ ...vars, changed: true });
+            },
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
         // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
         // composer's success handler reads, so it cannot use the shared `mutation`
         // factory above — that one calls `onSuccess()` with no argument, which would
@@ -871,5 +891,83 @@ describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
     );
     expect(cell?.textContent).toContain('[here](https://evil.example)');
     expect(cell?.querySelectorAll('a, strong, img')).toHaveLength(0);
+  });
+});
+
+describe('the moderator Official toggle', () => {
+  function officialSwitch(slug: string) {
+    return document.querySelector<HTMLInputElement>(`[data-testid="apps-mod-official-${slug}"]`);
+  }
+
+  test('reflects the row flag: ON for an official listing, OFF for one that is not', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_on',
+        slug: 'on-app',
+        name: 'On App',
+        status: 'approved',
+        isOfficial: true,
+      }),
+      offsite({
+        id: 'apl_off',
+        slug: 'off-app',
+        name: 'Off App',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect.element(page.getByTestId('apps-mod-official-on-app')).toBeInTheDocument();
+    expect(officialSwitch('on-app')?.checked).toBe(true);
+    expect(officialSwitch('off-app')?.checked).toBe(false);
+  });
+
+  test('turning it ON calls setListingOfficial with that listing and true', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_t',
+        slug: 'toggle-app',
+        name: 'Toggle',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('setListingOfficial', {
+      appListingId: 'apl_t',
+      isOfficial: true,
+    });
+    await vi.waitUntil(() => officialSwitch('toggle-app')?.checked === true, { timeout: 3000 });
+  });
+
+  test('turning it OFF calls setListingOfficial with false', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_u',
+        slug: 'untoggle-app',
+        name: 'Untoggle',
+        status: 'approved',
+        isOfficial: true,
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('setListingOfficial', {
+      appListingId: 'apl_u',
+      isOfficial: false,
+    });
+    await vi.waitUntil(() => officialSwitch('untoggle-app')?.checked === false, { timeout: 3000 });
+  });
+
+  test('a failed update leaves the switch where it was and reports the error', async () => {
+    mocks.errorMode = true;
+    mocks.rows = [
+      offsite({ id: 'apl_e', slug: 'err-app', name: 'Err', status: 'approved', isOfficial: false }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(showError).toHaveBeenCalled();
+    expect(officialSwitch('err-app')?.checked).toBe(false);
   });
 });

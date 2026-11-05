@@ -1514,6 +1514,29 @@ describe('AppListingCard — the beta badge', () => {
   });
 });
 
+describe('AppListingCard — the Official badge', () => {
+  test('renders the Official badge when the moderator flag is set', async () => {
+    renderWithProviders(<AppListingCard card={base({ isOfficial: true })} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-official-badge')).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-testid="apps-listing-official-badge"]')?.textContent
+    ).toContain('Official');
+  });
+
+  test.each([
+    ['false', { isOfficial: false }],
+    ['absent', {}],
+  ])('renders NO Official badge when the flag is %s', async (_label, over) => {
+    renderWithProviders(<AppListingCard card={base(over)} canOpenPage />);
+    // Positive control FIRST: the card really did render.
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-testid="apps-listing-official-badge"]')).toHaveLength(
+      0
+    );
+    expect(document.body.textContent).not.toContain('Official');
+  });
+});
+
 /**
  * The RESTRICTED-VISIBILITY badge ("Testers only" / "Moderators only" / "Unlisted").
  *

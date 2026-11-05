@@ -60,9 +60,11 @@ import {
   moderationStatusWhere,
   projectListingCard,
   projectListingDetail,
+  projectModerationListing,
   recommendRollup,
 } from '../app-listing.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
+import { SFW_PUBLIC_MEDIA } from '~/server/services/blocks/listing-media-audience';
 
 const SEP = String.fromCharCode(31);
 
@@ -252,6 +254,9 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         // that field's presence and this list asserts its absence, which is the pair that
         // pins the split.
         'isBeta',
+        // The MODERATOR-SET provenance badge ("made by Civitai"). Card AND detail; stripped
+        // from the public REST responses (`withoutUndocumentedRestFields`).
+        'isOfficial',
         'kind',
         'kindData',
         'name',
@@ -495,6 +500,7 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         // note's absence.
         'betaMessage',
         'isBeta',
+        'isOfficial',
         'kind',
         'kindData',
         'name',
@@ -1548,6 +1554,114 @@ describe('the beta projections — flag, note, and the stale-note rule', () => {
     expect(projectListingCard(hydratedRow() as never, OFF).isBeta).toBe(
       projectListingCard(hydratedRow() as never).isBeta
     );
+  });
+});
+
+describe('the Official flag — card + detail DTOs', () => {
+  /** A `$queryRaw` that answers the Official batch read with `officialIds` and every other raw
+   *  query (the keyset id page excepted) with no rows. */
+  function rawWithOfficial(officialIds: string[], idPage: unknown[] = []) {
+    return async (q: unknown) => {
+      const sql = (q as { sql?: string } | undefined)?.sql ?? '';
+      if (sql.includes('is_official')) return officialIds.map((id) => ({ id, isOfficial: true }));
+      if (/al\.status\s*=\s*'approved'/.test(sql)) return idPage;
+      return [];
+    };
+  }
+
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockDbRead.appListing.findMany.mockReset();
+    mockDbRead.appListing.findMany.mockResolvedValue([]);
+    mockDbRead.appListing.findFirst.mockReset();
+  });
+
+  it('projects true onto the CARD and the DETAIL when passed, false by default', () => {
+    expect(
+      projectListingCard(hydratedRow() as never, undefined, null, SFW_PUBLIC_MEDIA, true).isOfficial
+    ).toBe(true);
+    expect(projectListingCard(hydratedRow() as never).isOfficial).toBe(false);
+    const detail = projectListingDetail(
+      hydratedRow() as never,
+      [],
+      null,
+      undefined,
+      null,
+      null,
+      SFW_PUBLIC_MEDIA,
+      true
+    );
+    expect(detail.isOfficial).toBe(true);
+    expect(projectListingDetail(hydratedRow() as never).isOfficial).toBe(false);
+  });
+
+  it('projects true / false onto the MODERATION row', () => {
+    const modRow = {
+      ...hydratedRow(),
+      status: 'approved',
+      user: { id: 7, username: 'dev', image: null },
+      metric: { installCount: 0, thumbsUpCount: 0, thumbsDownCount: 0 },
+      publishRequests: [],
+    };
+    expect(projectModerationListing(modRow as never, new Set(), undefined, true).isOfficial).toBe(
+      true
+    );
+    expect(projectModerationListing(modRow as never).isOfficial).toBe(false);
+  });
+
+  it('the /apps grid marks exactly the listings the Official read returns', async () => {
+    mockDbRead.$queryRaw.mockImplementation(
+      rawWithOfficial(
+        ['apl_off'],
+        [
+          { id: 'apl_off', sort_key: 'k0' },
+          { id: 'apl_plain', sort_key: 'k1' },
+        ]
+      )
+    );
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      hydratedRow({ id: 'apl_off', slug: 'off-app' }),
+      hydratedRow({ id: 'apl_plain', slug: 'plain-app' }),
+    ]);
+    const { items } = await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      { scope: 'full' }
+    );
+    // Positive control first: both rows really came back.
+    expect(items).toHaveLength(2);
+    expect(
+      (items as Array<{ id: string; isOfficial?: boolean }>).map((c) => [c.id, c.isOfficial])
+    ).toEqual([
+      ['apl_off', true],
+      ['apl_plain', false],
+    ]);
+  });
+
+  it('the detail read carries true when the Official read says so, false when it does not', async () => {
+    mockDbRead.$queryRaw.mockImplementation(rawWithOfficial(['apl_1']));
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    expect((await getListingDetail({ slug: 'cool-app' }, { scope: 'full' }))?.isOfficial).toBe(
+      true
+    );
+
+    mockDbRead.$queryRaw.mockImplementation(rawWithOfficial([]));
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    expect((await getListingDetail({ slug: 'cool-app' }, { scope: 'full' }))?.isOfficial).toBe(
+      false
+    );
+  });
+
+  it('a failing Official read degrades to false instead of failing the page', async () => {
+    mockDbRead.$queryRaw.mockImplementation(async (q: unknown) => {
+      const sql = (q as { sql?: string } | undefined)?.sql ?? '';
+      if (sql.includes('is_official')) throw Object.assign(new Error('boom'), { code: '57014' });
+      return [];
+    });
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+    expect(detail?.id).toBe('apl_1');
+    expect(detail?.isOfficial).toBe(false);
   });
 });
 
