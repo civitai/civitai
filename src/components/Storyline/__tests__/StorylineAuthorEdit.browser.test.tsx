@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
+import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
 
 /**
@@ -9,20 +10,26 @@ import { StorylineStageOverlay } from '~/components/Storyline/StorylineDetail';
  * title in place, through the same writes the post editor uses. Nobody else sees the controls.
  */
 
-type MutationOptions = { onSuccess?: (data: unknown, vars: unknown) => unknown };
+type MutationOptions = {
+  onSuccess?: (data: unknown, vars: unknown) => unknown;
+  onError?: (error: Error) => unknown;
+};
 
 const mocks = vi.hoisted(() => ({
   userId: 1 as number | undefined,
   captions: {} as Record<number, string>,
   setCaption: vi.fn(),
   updatePost: vi.fn(),
+  fail: false,
+  notifyError: vi.fn(),
 }));
 
 function mutation(spy: (vars: unknown) => void) {
   return (options: MutationOptions) => ({
     mutate: (vars: unknown) => {
       spy(vars);
-      void options.onSuccess?.(null, vars);
+      if (mocks.fail) void options.onError?.(new Error('nope'));
+      else void options.onSuccess?.(null, vars);
     },
     isPending: false,
   });
@@ -38,6 +45,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     }),
   };
 });
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  showErrorNotification: mocks.notifyError,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => (mocks.userId ? { id: mocks.userId } : null),
 }));
@@ -71,7 +82,14 @@ beforeEach(() => {
   mocks.captions = { 7: 'They reach the gate.' };
   mocks.setCaption.mockReset();
   mocks.updatePost.mockReset();
+  mocks.fail = false;
+  mocks.notifyError.mockReset();
 });
+
+const captionBox = () => page.getByRole('textbox', { name: 'Caption (shown in the story)' });
+const titleBox = () => page.getByRole('textbox', { name: 'Chapter title' });
+const save = () => page.getByRole('button', { name: 'Save' });
+const cancel = () => page.getByRole('button', { name: 'Cancel' });
 
 describe('StorylineStageOverlay: who sees the edit controls', () => {
   test('the chapter author sees Edit caption and Edit title', async () => {
@@ -147,5 +165,99 @@ describe('StorylineStageOverlay: saving', () => {
 
     expect(mocks.setCaption).not.toHaveBeenCalled();
     await expect.element(page.getByText('They reach the gate.')).toBeVisible();
+  });
+});
+
+describe('StorylineStageOverlay: caption save branches', () => {
+  test('a cleared caption is sent empty, which removes it', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editCaption().click();
+    await userEvent.clear(captionBox());
+    await save().click();
+
+    expect(mocks.setCaption).toHaveBeenCalledExactlyOnceWith({ imageId: 7, content: '' });
+  });
+
+  test('unchanged text sends nothing and closes the editor', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editCaption().click();
+    await save().click();
+
+    await expect.element(editCaption()).toBeVisible();
+    expect(captionBox().elements()).toHaveLength(0);
+    expect(mocks.setCaption).not.toHaveBeenCalled();
+  });
+
+  test('a failed save keeps the editor open with the text', async () => {
+    mocks.fail = true;
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editCaption().click();
+    await userEvent.type(captionBox(), ' Again.');
+    await save().click();
+
+    expect(mocks.setCaption).toHaveBeenCalledOnce();
+    expect(mocks.notifyError).toHaveBeenCalledOnce();
+    await expect.element(captionBox()).toHaveValue('They reach the gate. Again.');
+  });
+});
+
+describe('StorylineStageOverlay: title save branches', () => {
+  test('a blank title is saved as null and the editor closes', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editTitle().click();
+    await userEvent.clear(titleBox());
+    await save().click();
+
+    expect(mocks.updatePost).toHaveBeenCalledExactlyOnceWith({ id: 41, title: null });
+    await expect.element(editTitle()).toBeVisible();
+    expect(titleBox().elements()).toHaveLength(0);
+  });
+
+  test('Cancel closes the title editor without saving', async () => {
+    renderWithProviders(<StorylineStageOverlay isLastImage={false} imageId={7} />);
+    await editTitle().click();
+    await userEvent.type(titleBox(), ' Two');
+    await cancel().click();
+
+    await expect.element(editTitle()).toBeVisible();
+    expect(mocks.updatePost).not.toHaveBeenCalled();
+  });
+});
+
+describe('StorylineStageOverlay: Escape inside the reader', () => {
+  // The reader is a Mantine modal that closes on any Escape it sees on the window.
+  function renderInReader() {
+    const onClose = vi.fn();
+    renderWithProviders(
+      <PageModal opened onClose={onClose} withinPortal={false}>
+        <StorylineStageOverlay isLastImage={false} imageId={7} />
+      </PageModal>
+    );
+    return onClose;
+  }
+
+  test.each([
+    ['caption', () => editCaption().click(), captionBox],
+    ['title', () => editTitle().click(), titleBox],
+  ])('Escape in the %s editor cancels it and leaves the reader open', async (_n, open, box) => {
+    const onClose = renderInReader();
+    await open();
+    await userEvent.type(box(), ' edited');
+    await userEvent.keyboard('{Escape}');
+
+    await expect.element(editCaption()).toBeVisible();
+    expect(box().elements()).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mocks.setCaption).not.toHaveBeenCalled();
+    expect(mocks.updatePost).not.toHaveBeenCalled();
+  });
+
+  // Positive control: the same modal does close on an Escape from outside an editor.
+  test('Escape outside an editor closes the reader', async () => {
+    const onClose = renderInReader();
+    await expect.element(editCaption()).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+
+    expect(onClose).toHaveBeenCalled();
   });
 });

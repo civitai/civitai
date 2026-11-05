@@ -24,8 +24,6 @@ const CARD = clsx(
 function cancelOnEscape(cancel: () => void) {
   return (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
-    event.preventDefault();
-    event.stopPropagation();
     cancel();
   };
 }
@@ -125,6 +123,11 @@ function CaptionEditor({
         minRows={2}
         maxRows={8}
         autoFocus
+        // Editing an existing caption carries on from its end, not its first letter.
+        onFocus={(event) => {
+          const end = event.currentTarget.value.length;
+          event.currentTarget.setSelectionRange(end, end);
+        }}
         data-mantine-stop-propagation
       />
       <Group justify="space-between" gap="xs">
