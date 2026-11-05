@@ -41,7 +41,11 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   });
   const [open, setOpen] = useState(false);
   const leader = summary ? badgeLeader(summary) : null;
-  const shownCount = summary && leader ? summary.counted[leader] : null;
+  // A hatted image scores for its hat's team alone; a different leader's count is shown as blocked.
+  const guard = summary?.hatted ? summary.hattedTeam : null;
+  const holder = guard ?? leader;
+  const blocked = guard && leader && leader !== guard ? leader : null;
+  const shownCount = summary && holder ? summary.counted[holder] ?? 0 : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
   const [seenCount, setSeenCount] = useState(shownCount);
@@ -55,8 +59,6 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
-  // A protected image is held by its hat's team, whoever leads the count.
-  const holder = summary.hatted && summary.hattedTeam ? summary.hattedTeam : leader;
   const discColor = holder ? colorOf(holder) : undefined;
 
   const label = `${standingsLabel(summary, feed.team)}${
@@ -67,9 +69,10 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
       : ''
   }`;
   // Digits beyond one don't fit the dial; the count goes beside it.
-  const countInside = !!leader && count < 10;
-  const countBeside = !!leader && !countInside;
-  const countEl = leader && (
+  const hasCount = !!holder && count > 0;
+  const countInside = hasCount && count < 10;
+  const countBeside = hasCount && !countInside;
+  const countEl = hasCount && (
     <span
       key={count}
       className={clsx(classes.count, countInside && classes.countInside, bump && classes.bump)}
@@ -115,6 +118,17 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
         </span>
       </span>
       {countBeside && countEl}
+      {blocked && (
+        <span className={classes.blocked} data-testid="hat-turf-blocked" data-team={blocked}>
+          <span className={classes.blockedDot} style={{ backgroundColor: colorOf(blocked) }} />
+          <span
+            className={clsx(classes.count, classes.struck)}
+            data-testid="hat-turf-blocked-count"
+          >
+            {abbreviateNumber(summary.counted[blocked] ?? 0)}
+          </span>
+        </span>
+      )}
       {summary.hatted && (
         <span className={classes.lock} data-testid="hat-turf-badge-lock">
           <IconLock stroke={2.5} />

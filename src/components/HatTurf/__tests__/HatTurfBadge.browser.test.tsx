@@ -243,21 +243,83 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(badge()!.textContent).toBe('6');
   });
 
-  test('a protected image fills the disc with the holding team; the ring still shows the leader', async () => {
+  const blockedParts = () => {
+    const el = badge()!;
+    const blocked = el.querySelector('[data-testid="hat-turf-blocked"]') as HTMLElement | null;
+    const lock = el.querySelector('[data-testid="hat-turf-badge-lock"]') as HTMLElement | null;
+    return { blocked, lock };
+  };
+
+  test('a guarded image scores for the guard alone: its count in its colour, the leader’s struck through, then the lock', async () => {
     renderCard({
-      feed: feedWith({ 1: standing({ hatted: true, hattedTeam: 'pink' }) }, 'blue'),
+      feed: feedWith(
+        {
+          1: standing({
+            counted: { blue: 2, pink: 1 },
+            shown: { blue: 2, pink: 1 },
+            hatted: true,
+            hattedTeam: 'pink',
+          }),
+        },
+        'blue'
+      ),
     });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { el, disc, arc, count, discFill } = parts();
+    const { blocked, lock } = blockedParts();
     expect(el.dataset.leader).toBe('blue');
-    expect(count!.textContent).toBe('6');
+    expect(disc.contains(count)).toBe(true);
+    expect(count!.textContent).toBe('1');
     expect(discFill()).toBe(arc('pink'));
+    expect(blocked!.dataset.team).toBe('blue');
+    const struck = blocked!.querySelector('[data-testid="hat-turf-blocked-count"]') as HTMLElement;
+    expect(struck.textContent).toBe('2');
+    expect(getComputedStyle(struck).textDecorationLine).toBe('line-through');
+    expect(Number(getComputedStyle(struck).opacity)).toBeLessThan(1);
+    const dot = blocked!.firstElementChild as HTMLElement;
+    expect(getComputedStyle(dot).backgroundColor).toBe(arc('blue'));
     expect(el.getAttribute('aria-label')).toContain('A pink hat protects this image');
-    // The lock sits beside the dial, in the badge's chip.
-    const lock = el.querySelector('[data-testid="hat-turf-badge-lock"]')!.getBoundingClientRect();
-    expect(disc.contains(el.querySelector('[data-testid="hat-turf-badge-lock"]'))).toBe(false);
-    expect(lock.left).toBeGreaterThanOrEqual(disc.getBoundingClientRect().right);
+    // Dial, then the blocked leader, then the lock, all in the chip.
+    expect(blocked!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      disc.getBoundingClientRect().right
+    );
+    expect(lock!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
+      blocked!.getBoundingClientRect().right
+    );
     expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+    expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
+  });
+
+  test('a guard that also leads shows its own count and the lock, with nothing struck', async () => {
+    renderCard({
+      feed: feedWith({ 1: standing({ hatted: true, hattedTeam: 'blue' }) }, 'pink'),
+    });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const { count, arc, discFill } = parts();
+    const { blocked, lock } = blockedParts();
+    expect(count!.textContent).toBe('6');
+    expect(discFill()).toBe(arc('blue'));
+    expect(blocked).toBeNull();
+    expect(lock).not.toBeNull();
+  });
+
+  test('a guard with no counted hats of its own puts the hat in its disc', async () => {
+    renderCard({
+      feed: feedWith({
+        1: standing({
+          counted: { blue: 2 },
+          shown: { blue: 2, pink: 1 },
+          hatted: true,
+          hattedTeam: 'pink',
+        }),
+      }),
+    });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const { count, disc } = parts();
+    expect(count).toBeNull();
+    expect(disc.querySelector('svg')).not.toBeNull();
+    expect(blockedParts().blocked!.textContent).toBe('2');
   });
 
   test('an unprotected image fills the disc with the leader', async () => {
@@ -344,6 +406,9 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     renderCard({ feed: feedWith({ 1: standing({ hatted: true }) }, 'pink', 'badge-popover') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).not.toBeNull();
+    // No team known for the hat: the leader keeps the disc and nothing is struck.
+    expect(badge()!.querySelector('[data-testid="hat-turf-count"]')!.textContent).toBe('6');
+    expect(badge()!.querySelector('[data-testid="hat-turf-blocked"]')).toBeNull();
     expect(badge()!.getAttribute('aria-label')).toContain('A hat protects this image');
     badge()!.click();
     await vi.waitFor(() =>
@@ -357,6 +422,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     renderCard({ feed: feedWith({ 1: standing() }) });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).toBeNull();
+    expect(badge()!.querySelector('[data-testid="hat-turf-blocked"]')).toBeNull();
   });
 
   // The card itself must be on screen first, or "no badge" would also pass for a card that never rendered.

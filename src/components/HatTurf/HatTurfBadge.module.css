@@ -102,6 +102,25 @@
   animation: bump 0.55s ease;
 }
 
+.blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 1px;
+}
+
+.blockedDot {
+  flex: none;
+  width: max(6px, calc(var(--dial) * 0.2));
+  height: max(6px, calc(var(--dial) * 0.2));
+  border-radius: 50%;
+}
+
+.struck {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
 .lock {
   display: grid;
   place-items: center;
