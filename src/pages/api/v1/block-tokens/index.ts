@@ -15,6 +15,7 @@ export const config = {
     bodyParser: { sizeLimit: '8kb' },
   },
 };
+import { isSystemAccountMeta } from '@civitai/auth';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
@@ -1146,12 +1147,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
-  // feature flag, evaluated for THIS caller (possibly anon). Today the flag is
-  // `availability: ['mod']`, so this is behaviour-identical to the previous
-  // hardcoded `isModerator` check — anon/non-mod callers fail the flag and are
-  // refused. When the flag is later widened (preview/GA → `['user']`/`['public']`
-  // via Flipt or the registry), anon/non-mod callers start passing here and the
-  // anon-scope stripping below keeps the issued token safe (no money/self scope).
+  // feature flag, evaluated for THIS caller (possibly anon), and system accounts
+  // are refused whatever the flag says. Today the flag is `availability: ['mod']`,
+  // so anon/non-mod callers fail the flag and are refused. When the flag is later
+  // widened (preview/GA → `['user']`/`['public']` via Flipt or the registry),
+  // anon/non-mod callers start passing here and the anon-scope stripping below
+  // keeps the issued token safe (no money/self scope).
   //
   // Block tokens are the linchpin — the entire block-token runtime (workflow
   // submit/poll/cancel/estimate, KV storage, /blocks/me) is reachable only with
@@ -1161,7 +1162,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // resolveBlockInstance DB read) so a refused caller can't probe install
   // existence or consume those buckets.
   const appBlocksAvailable = getFeatureFlags({ user: session?.user, req }).appBlocks;
-  if (!appBlocksAvailable) {
+  if (!appBlocksAvailable || isSystemAccountMeta(session?.user?.meta)) {
     res.status(403).json({ error: 'Apps are not available to this account' });
     return;
   }
