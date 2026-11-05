@@ -23,4 +23,55 @@ describe('HighlightedBadgesInput', () => {
     await expect.element(page.getByRole('button', { name: 'One' })).toHaveTextContent('2');
     await expect.element(page.getByRole('button', { name: 'Two' })).toHaveTextContent('3');
   });
+
+  // Placer (10) and Maker (11) share an image, so the picker offers one tile for the pair.
+  const siblings = [
+    { id: 10, name: 'Placer', data: { url: 'sticker.png' } },
+    { id: 11, name: 'Maker', data: { url: 'sticker.png' } },
+    { id: 12, name: 'Other', data: { url: 'other.png' } },
+  ];
+
+  test('one tile per image; it shows pinned when only the sibling is pinned', async () => {
+    await renderWithProviders(
+      <HighlightedBadgesInput badges={siblings} value={[11]} onChange={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Placer' })).toHaveTextContent('1');
+    expect(page.getByRole('button').elements()).toHaveLength(2);
+  });
+
+  test('clicking the tile unpins a pinned sibling and keeps other pins', async () => {
+    const onChange = vi.fn();
+    await renderWithProviders(
+      <HighlightedBadgesInput badges={siblings} value={[12, 11]} onChange={onChange} />
+    );
+    await page.getByRole('button', { name: 'Placer' }).click();
+    expect(onChange).toHaveBeenCalledWith([12]);
+  });
+
+  test('unpin clears every sibling id and leaves an unowned id alone', async () => {
+    const onChange = vi.fn();
+    await renderWithProviders(
+      <HighlightedBadgesInput badges={siblings} value={[99, 10, 11]} onChange={onChange} />
+    );
+    await page.getByRole('button', { name: 'Placer' }).click();
+    expect(onChange).toHaveBeenCalledWith([99]);
+  });
+
+  test('pinning an unpinned tile adds only its first id', async () => {
+    const onChange = vi.fn();
+    await renderWithProviders(
+      <HighlightedBadgesInput badges={siblings} value={[12]} onChange={onChange} />
+    );
+    await page.getByRole('button', { name: 'Placer' }).click();
+    expect(onChange).toHaveBeenCalledWith([12, 10]);
+  });
+
+  test('hide variant: unhiding clears every hidden sibling id', async () => {
+    const onChange = vi.fn();
+    await renderWithProviders(
+      <HighlightedBadgesInput variant="hide" badges={siblings} value={[11]} onChange={onChange} />
+    );
+    await page.getByRole('button', { name: 'Placer' }).click();
+    expect(onChange).toHaveBeenCalledWith([]);
+  });
 });
