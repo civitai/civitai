@@ -1185,7 +1185,7 @@ describe('withdrawCash', () => {
     let table: ReturnType<typeof installPayoutReviewTable>;
     beforeEach(() => {
       table = installPayoutReviewTable();
-      mockDbWrite.user.findUnique.mockResolvedValue({ id: userId });
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: userId });
       mockCachedObject.fetch.mockResolvedValue({
         [userId]: {
           id: userId,
@@ -1196,6 +1196,7 @@ describe('withdrawCash', () => {
           paymentMethod: 'ACH',
         },
       });
+      // WITHDRAWAL_FEES has no 'Wire' entry, so the success half needs a supported method.
       mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
         userId,
         tipaltiPaymentsEnabled: true,
@@ -1212,6 +1213,7 @@ describe('withdrawCash', () => {
       );
 
       await expect(withdrawCash(userId, 10000)).rejects.toThrow('on hold');
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
       expect(mockDbWrite.cashWithdrawal.create).not.toHaveBeenCalled();
       expect(mockPayToTipaltiAccount).not.toHaveBeenCalled();
 

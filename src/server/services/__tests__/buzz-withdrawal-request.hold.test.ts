@@ -18,13 +18,19 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { createBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
+import {
+  createBuzzWithdrawalRequest,
+  updateBuzzWithdrawalRequest,
+} from '~/server/services/buzz-withdrawal-request.service';
 import {
   decidePayoutReview,
   openPayoutHold,
 } from '~/server/services/creator-program-prepayout-review/hold';
 import { installPayoutReviewTable } from '~/server/services/creator-program-prepayout-review/__tests__/payout-review-fake';
-import { UserPaymentConfigurationProvider } from '~/shared/utils/prisma/enums';
+import {
+  BuzzWithdrawalRequestStatus,
+  UserPaymentConfigurationProvider,
+} from '~/shared/utils/prisma/enums';
 
 const userId = 77;
 const request = () =>
@@ -68,5 +74,41 @@ describe('createBuzzWithdrawalRequest with a payout-review hold', () => {
 
     await expect(request()).resolves.toEqual({ id: 'req-1' });
     expect(mocks.createBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('updateBuzzWithdrawalRequest with a payout-review hold', () => {
+  let table: ReturnType<typeof installPayoutReviewTable>;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    table = installPayoutReviewTable();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: userId });
+    dbMock.dbRead.buzzWithdrawalRequest.findMany.mockResolvedValue([
+      {
+        id: 'req-0',
+        userId,
+        status: BuzzWithdrawalRequestStatus.Requested,
+        requestedToProvider: UserPaymentConfigurationProvider.Tipalti,
+        requestedBuzzAmount: 5000,
+        platformFeeRate: 3000,
+        buzzWithdrawalTransactionId: 'tx-0',
+        metadata: {},
+      },
+    ]);
+  });
+  afterEach(() => table.uninstall());
+
+  const approve = (by: number) =>
+    updateBuzzWithdrawalRequest({
+      requestIds: ['req-0'],
+      status: BuzzWithdrawalRequestStatus.Approved,
+      userId: by,
+    });
+
+  it('refuses a moderator approval of a request filed before the hold', async () => {
+    await openPayoutHold({ userId, ground: 'investigation', reason: 'test hold' }, 'user:1');
+
+    await expect(approve(1)).rejects.toThrow('active payout hold');
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
   });
 });

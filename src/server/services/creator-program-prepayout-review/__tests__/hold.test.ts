@@ -5,9 +5,12 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { decidePayoutReview, getSettlementHolds, hasPayoutHold, openPayoutHold } from '../hold';
 import { installPayoutReviewTable } from './payout-review-fake';
 
+const { createNotification } = vi.hoisted(() => ({
+  createNotification: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
-  createNotification: vi.fn().mockResolvedValue(undefined),
+  createNotification,
 }));
 
 const reviews = dbMock.dbWrite.creatorProgramPayoutReview;
@@ -193,8 +196,15 @@ describe('openPayoutHold', () => {
   it('holds a creator the detector never flagged, recording ground, reason and who', async () => {
     const hold = await open();
 
-    expect(hold).toMatchObject({ period: '2026-11', status: 'open' });
+    expect(hold).toMatchObject({ period: '2026-10', status: 'open' });
     expect(await hasPayoutHold(9)).toBe(true);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 9,
+        type: 'creators-program-cash-out-on-hold',
+        key: `creators-program-cash-out-on-hold:${hold.id}:${hold.version}`,
+      })
+    );
     expect(table.rows[0].decisions).toEqual([
       expect.objectContaining({
         action: 'opened',
@@ -213,7 +223,7 @@ describe('openPayoutHold', () => {
 
   it('reopens a review cleared earlier in the same period', async () => {
     table.rows.push(
-      review({ period: '2026-11', status: 'cleared', hold: false, signals: ['x'], version: 4 })
+      review({ period: '2026-10', status: 'cleared', hold: false, signals: ['x'], version: 4 })
     );
 
     const hold = await open();
@@ -227,8 +237,58 @@ describe('openPayoutHold', () => {
     expect(await hasPayoutHold(9)).toBe(true);
   });
 
+  it('refuses when the cleared review changes between read and write', async () => {
+    table.rows.push(
+      review({ period: '2026-10', status: 'cleared', hold: false, signals: [], version: 4 })
+    );
+    const write = reviews.updateMany.getMockImplementation()!;
+    reviews.updateMany.mockImplementationOnce(async (args: unknown) => {
+      table.rows[0].status = 'escalated';
+      return write(args);
+    });
+
+    await expect(open()).rejects.toThrow('changed while opening a hold');
+    expect(table.rows[0].status).toBe('escalated');
+  });
+
+  it('files a period-scoped row once and reports a concurrent filing as a conflict', async () => {
+    reviews.findUnique.mockResolvedValueOnce(null);
+    table.rows.push(review({ period: '2026-10', status: 'cleared', hold: false, signals: [] }));
+
+    await expect(open()).rejects.toThrow('was filed meanwhile');
+  });
+
   it('refuses an unknown user', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
     await expect(open()).rejects.toThrow('No user 9');
+  });
+});
+
+describe('hasPayoutHold', () => {
+  let table: ReturnType<typeof installPayoutReviewTable>;
+  beforeEach(() => {
+    table = installPayoutReviewTable();
+  });
+  afterEach(() => table.uninstall());
+
+  it.each([
+    ['an escalated review', [{ period: '2026-10', status: 'escalated', hold: true }], true],
+    [
+      'a withhold that is the latest review',
+      [{ period: '2026-10', status: 'withheld', hold: true }],
+      true,
+    ],
+    [
+      'a withhold a later review cleared',
+      [
+        { period: '2026-09', status: 'withheld', hold: true },
+        { period: '2026-10', status: 'cleared', hold: false },
+      ],
+      false,
+    ],
+    ["another user's hold", [{ period: '2026-10', status: 'open', hold: true, userId: 10 }], false],
+  ])('%s → %s', async (_label, rows, held) => {
+    for (const [i, r] of rows.entries()) table.rows.push(review({ id: 100 + i, userId: 9, ...r }));
+    expect(await hasPayoutHold(9)).toBe(held);
   });
 });

@@ -1,12 +1,18 @@
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 type Row = Record<string, any>;
 type Where = Record<string, any> | undefined;
 
 const matches = (r: Row, where: Where) =>
-  Object.entries(where ?? {}).every(([k, v]) =>
-    v && typeof v === 'object' && 'in' in v ? (v.in as unknown[]).includes(r[k]) : r[k] === v
-  );
+  Object.entries(where ?? {}).every(([k, v]) => {
+    if (v === null || typeof v !== 'object') return r[k] === v;
+    if (Object.keys(v).length === 1 && 'in' in v) return (v.in as unknown[]).includes(r[k]);
+    throw new Error(`payout-review fake: unsupported filter on ${k}: ${JSON.stringify(v)}`);
+  });
+
+const project = (r: Row, select?: Record<string, boolean>) =>
+  structuredClone(select ? Object.fromEntries(Object.keys(select).map((k) => [k, r[k]])) : r);
 
 /**
  * An in-memory `creatorProgramPayoutReview` table on `dbMock.dbWrite`, so a hold opened and then
@@ -18,19 +24,28 @@ export function installPayoutReviewTable() {
   const rows: Row[] = [];
   let nextId = 1;
 
-  reviews.findMany.mockImplementation(async (args?: { where?: Where }) =>
-    rows.filter((r) => matches(r, args?.where)).map((r) => structuredClone(r))
+  reviews.findMany.mockImplementation(
+    async (args?: { where?: Where; select?: Record<string, boolean> }) =>
+      rows.filter((r) => matches(r, args?.where)).map((r) => project(r, args?.select))
   );
-  reviews.findUnique.mockImplementation(async ({ where }: { where: Row }) => {
-    const key = where.period_userId ?? where;
-    const row = rows.find((r) => matches(r, key));
-    return row ? structuredClone(row) : null;
-  });
-  reviews.create.mockImplementation(async ({ data }: { data: Row }) => {
-    const row = { id: nextId++, status: 'open', hold: true, version: 1, decisions: [], ...data };
-    rows.push(row);
-    return structuredClone(row);
-  });
+  reviews.findUnique.mockImplementation(
+    async ({ where, select }: { where: Row; select?: Record<string, boolean> }) => {
+      const row = rows.find((r) => matches(r, where.period_userId ?? where));
+      return row ? project(row, select) : null;
+    }
+  );
+  reviews.create.mockImplementation(
+    async ({ data, select }: { data: Row; select?: Record<string, boolean> }) => {
+      if (rows.some((r) => r.period === data.period && r.userId === data.userId))
+        throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        });
+      const row = { id: nextId++, status: 'open', hold: true, version: 1, decisions: [], ...data };
+      rows.push(row);
+      return project(row, select);
+    }
+  );
   reviews.updateMany.mockImplementation(async ({ where, data }: { where: Where; data: Row }) => {
     const hit = rows.filter((r) => matches(r, where));
     for (const r of hit)

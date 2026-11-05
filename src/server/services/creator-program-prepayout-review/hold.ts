@@ -5,7 +5,9 @@ import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
+import { reviewPeriod } from './run';
 import { Flags } from '~/shared/utils/flags';
+import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 
 const HOLDING_STATUSES = ['open', 'escalated', 'withheld'];
 
@@ -47,6 +49,12 @@ export async function hasPayoutHold(userId: number) {
     return resolveHolds(rows).heldUserIds.has(userId);
   } catch (e) {
     if (!isMissingTable(e)) throw e;
+    await logToAxiom({
+      name: 'creator-program-payout-hold-unchecked',
+      type: 'error',
+      userId,
+      message: 'Payout review table missing; cash-out hold not checked',
+    }).catch(() => undefined);
     return false;
   }
 }
@@ -227,7 +235,9 @@ export async function openPayoutHold(input: OpenPayoutHold, openedBy: string, no
   if (await hasPayoutHold(input.userId))
     throw conflict(`User ${input.userId} already has a payout hold`);
 
-  const period = now.toISOString().slice(0, 7);
+  // The detector's period, so a manual hold and a detector flag for one cycle share a row and a
+  // cleared manual hold is never newer than a withhold from the same cycle.
+  const period = reviewPeriod(now);
   const existing = await dbWrite.creatorProgramPayoutReview.findUnique({
     where: { period_userId: { period, userId: input.userId } },
   });
@@ -253,7 +263,7 @@ export async function openPayoutHold(input: OpenPayoutHold, openedBy: string, no
           userId: input.userId,
           signals: [signal],
           payoutCents: 0,
-          evidence: { ground: input.ground, reason: input.reason },
+          evidence: { manual: { ground: input.ground, reason: input.reason } },
           askRef: input.askRef ?? null,
           decisions: [entry] as Prisma.InputJsonValue,
         },
@@ -297,5 +307,31 @@ export async function openPayoutHold(input: OpenPayoutHold, openedBy: string, no
     details: {},
   }).catch(() => undefined);
 
-  return { id: review.id, period, status: 'open', version: review.version };
+  const [cashWithdrawals, buzzWithdrawalRequests] = await Promise.all([
+    dbWrite.cashWithdrawal.findMany({
+      where: { userId: input.userId, status: { notIn: SETTLED_CASH_STATUSES } },
+      select: { id: true, status: true, amount: true, createdAt: true },
+    }),
+    dbWrite.buzzWithdrawalRequest.findMany({
+      where: { userId: input.userId, status: BuzzWithdrawalRequestStatus.Requested },
+      select: { id: true, status: true, requestedBuzzAmount: true, createdAt: true },
+    }),
+  ]);
+
+  // Withdrawals requested before the hold are not stopped by it; the caller decides each one.
+  return {
+    id: review.id,
+    period,
+    status: 'open',
+    version: review.version,
+    inFlight: { cashWithdrawals, buzzWithdrawalRequests },
+  };
 }
+
+const SETTLED_CASH_STATUSES = [
+  CashWithdrawalStatus.Paid,
+  CashWithdrawalStatus.Rejected,
+  CashWithdrawalStatus.Canceled,
+  CashWithdrawalStatus.FailedFee,
+  CashWithdrawalStatus.Reclaimed,
+];
