@@ -10,7 +10,6 @@
  *
  * Lives outside `src/pages`: Next treats every file there as a route.
  */
-import { renderToHTML } from 'next/dist/server/render';
 import { createElement } from 'react';
 import type { ComponentType } from 'react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -129,118 +128,28 @@ vi.mock('~/server/page-data/image-detail', async (importOriginal) => ({
   ),
 }));
 
-import AppWithTRPC from '~/pages/_app';
-import AppDocument from '~/pages/_document';
 import * as ImagePage from '~/pages/images/[imageId]';
-import ErrorPage from '~/pages/_error';
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
+import type { RoutePage, Variant } from './bot-cache-render.harness';
+import {
+  CRAWLER_A,
+  CRAWLER_B,
+  CRAWLER_C,
+  makeReq,
+  makeRes,
+  NOW,
+  render as renderRoute,
+  renderPage,
+  SECRET,
+} from './bot-cache-render.harness';
 
-const ROUTE = '/images/[imageId]';
-const BUILD_ID = 'bot-cache-render-test-build';
-const NOW = Date.UTC(2026, 10, 5, 12, 0, 30);
-const SECRET = 'bot-cache-render-secret-91c2';
-
-type Variant = { url?: string; headers?: Record<string, string> };
-
-/** A cookie-less crawler request as the edge forwards it (no `cookie` header at all). */
-function makeReq({ url = '/images/1', headers = {} }: Variant = {}) {
-  return {
-    method: 'GET',
-    url,
-    headers: {
-      host: 'civitai.com',
-      'user-agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-      'cf-connecting-ip': '66.249.66.1',
-      'x-forwarded-for': '66.249.66.1',
-      'cf-ipcountry': 'US',
-      'accept-language': 'en-US',
-      'x-civ-cf-verified-bot': SECRET,
-      ...headers,
-    },
-  };
-}
-
-function makeRes() {
-  const headers = new Map<string, unknown>();
-  return {
-    statusCode: 200,
-    headersSent: false,
-    finished: false,
-    setHeader: (name: string, value: unknown) => void headers.set(name.toLowerCase(), value),
-    getHeader: (name: string) => headers.get(name.toLowerCase()),
-    removeHeader: (name: string) => void headers.delete(name.toLowerCase()),
-    getHeaders: () => Object.fromEntries(headers),
-    hasHeader: (name: string) => headers.has(name.toLowerCase()),
-    writeHead: () => undefined,
-    end: () => undefined,
-  };
-}
-
-type Req = ReturnType<typeof makeReq>;
-type Res = ReturnType<typeof makeRes>;
-
-function routeQuery(url: string) {
-  const [path, search = ''] = url.split('?');
-  const imageId = path!.split('/').pop()!;
-  return {
-    params: { imageId },
-    query: { ...Object.fromEntries(new URLSearchParams(search)), imageId },
-  };
-}
-
-/** One `renderToHTML` of `/images/[imageId]`, or of `/_error` with `err` as Next renders it. */
-async function renderPage(req: Req, res: Res, url: string, err?: Error) {
-  const { params, query } = routeQuery(url);
-  const page = err ? '/_error' : ROUTE;
-  const result = await renderToHTML(
-    req as never,
-    res as never,
-    page,
-    err ? {} : query,
-    {
-      Component: err ? ErrorPage : ImagePage.default,
-      App: AppWithTRPC,
-      Document: AppDocument,
-      getServerSideProps: err ? undefined : ImagePage.getServerSideProps,
-      err,
-      buildManifest: {
-        pages: { '/_app': [], [ROUTE]: [], '/_error': [] },
-        devFiles: [],
-        ampDevFiles: [],
-        polyfillFiles: [],
-        lowPriorityFiles: [],
-        rootMainFiles: [],
-        ampFirstPages: [],
-      },
-      reactLoadableManifest: {},
-      dynamicCssManifest: [],
-      pageConfig: {},
-      params: err ? undefined : params,
-      resolvedUrl: url,
-      page,
-      experimental: {},
-      isNextDataRequest: false,
-    } as never,
-    { buildId: BUILD_ID } as never,
-    { isFallback: false } as never
-  );
-  return result.toUnchunkedString();
-}
-
-function nextDataOf(html: string) {
-  const match = html.match(
-    /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
-  );
-  expect(match, 'the render carries __NEXT_DATA__').toBeTruthy();
-  return JSON.parse(match![1]!) as { props: { pageProps: Record<string, unknown> } };
-}
-
-async function render(variant: Variant = {}) {
-  const req = makeReq(variant);
-  const res = makeRes();
-  const html = await renderPage(req, res, req.url);
-  return { html, headers: res.getHeaders(), pageProps: nextDataOf(html).props.pageProps };
-}
+const IMAGE_PAGE: RoutePage = {
+  route: '/images/[imageId]',
+  Component: ImagePage.default as never,
+  getServerSideProps: ImagePage.getServerSideProps,
+  params: (path) => ({ imageId: path.split('/').pop()! }),
+};
+const render = (variant: Variant = {}) => renderRoute(IMAGE_PAGE, '/images/1', variant);
 
 function setFlag(on: boolean) {
   h.flagOn = on;
@@ -269,27 +178,8 @@ beforeEach(() => {
   h.bootstrap.mockImplementation(async () => ({ session: null, liveNow: false }));
 });
 
-/** Two crawlers that differ in every requester fact: agent, IP, country, state. */
-const CRAWLER_A: Variant = {};
-const CRAWLER_B: Variant = {
-  headers: {
-    'user-agent': 'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)',
-    'cf-connecting-ip': '157.55.39.1',
-    'x-forwarded-for': '157.55.39.1',
-    'cf-ipcountry': 'US',
-    'cf-region-code': 'CA',
-    'accept-language': 'de-DE,de;q=0.9',
-  },
-};
-const CRAWLER_C: Variant = {
-  headers: {
-    'user-agent': 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko) Applebot/0.1',
-    'cf-connecting-ip': '17.58.101.1',
-    'x-forwarded-for': '17.58.101.1',
-    'cf-ipcountry': 'DE',
-    'cf-region-code': 'BY',
-  },
-};
+/** What the bot-detection middleware adds for an IP-verified Googlebot on this path. */
+const GOOGLEBOT: Variant = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
 
 describe('flag on: an edge-cacheable render is one object for every crawler', () => {
   it('is edge-cacheable for 6 h, private to browsers, tagged, and sets no cookie', async () => {
@@ -302,6 +192,7 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
   });
 
   it.each([
+    ['the IP-verified Googlebot', GOOGLEBOT],
     ['another crawler, IP, US state and language', CRAWLER_B],
     ['another crawler, IP, country and region', CRAWLER_C],
   ])('byte-identical HTML for %s, and no cookie', async (_, variant) => {
@@ -312,10 +203,10 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
     expect(other.html).toBe(a.html);
   });
 
-  it('carries no region, a per-URL seed, one verifiedBot value and region-free flags', async () => {
-    const { pageProps } = await render(CRAWLER_B);
+  it('carries no region, a per-URL seed, no verifiedBot and region-free flags', async () => {
+    const { pageProps } = await render({ headers: { ...CRAWLER_B.headers, ...GOOGLEBOT.headers } });
     expect(pageProps).not.toHaveProperty('region');
-    expect(pageProps.verifiedBot).toBe('edge-crawler');
+    expect(pageProps.verifiedBot).toBeNull();
     expect(pageProps.seed).not.toBe(NOW);
     expect(pageProps.flags).not.toHaveProperty('perRequestFlagLeak');
   });
@@ -331,12 +222,12 @@ describe('flag on: an edge-cacheable render is one object for every crawler', ()
 describe('flag off: nothing changes', () => {
   it('no edge-cache header, and the render keeps its per-request region, seed and verifiedBot', async () => {
     setFlag(false);
-    const b = await render(CRAWLER_B);
+    const b = await render({ headers: { ...CRAWLER_B.headers, ...GOOGLEBOT.headers } });
     for (const name of ['cloudflare-cdn-cache-control', 'cache-tag'])
       expect(b.headers, name).not.toHaveProperty(name);
     expect(b.pageProps.region).toMatchObject({ countryCode: 'US', regionCode: 'CA' });
     expect(b.pageProps.seed).toBe(NOW);
-    expect(b.pageProps.verifiedBot).toBeNull();
+    expect(b.pageProps.verifiedBot).toBe('googlebot');
     expect(b.pageProps.flags).toHaveProperty('perRequestFlagLeak', true);
   });
 
@@ -379,12 +270,12 @@ describe('a render that must not be stored', () => {
   });
 
   it('a page that throws: the error page carries none of the edge-cache headers', async () => {
-    const req = makeReq(CRAWLER_A);
+    const req = makeReq('/images/1', CRAWLER_A);
     const res = makeRes();
     h.throwInPage = true;
     let thrown: unknown;
     try {
-      await renderPage(req, res, req.url);
+      await renderPage(IMAGE_PAGE, req, res);
     } catch (e) {
       thrown = e;
     } finally {
@@ -395,7 +286,7 @@ describe('a render that must not be stored', () => {
     // then render `/_error`.
     res.statusCode = 500;
     res.setHeader('Cache-Control', 'private, no-cache, no-store, max-age=0, must-revalidate');
-    await renderPage(req, res, req.url, thrown as Error);
+    await renderPage(IMAGE_PAGE, req, res, thrown as Error);
     const headers = res.getHeaders();
     for (const name of ['cloudflare-cdn-cache-control', 'cache-tag'])
       expect(headers, name).not.toHaveProperty(name);

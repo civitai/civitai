@@ -25,7 +25,7 @@ import {
 /**
  * Bot HTML edge cache: whether a verified crawler's full page render may be stored by the edge and
  * served to other crawlers. The render is the anonymous one, made viewer-independent by `_app`
- * (no region, a per-URL seed, one `verifiedBot` value), so only request facts that are part of the
+ * (no region, a per-URL seed, no `verifiedBot`), so only request facts that are part of the
  * edge's cache key, or that the edge rule also requires, may decide it.
  *
  * Green (civitai.com) only: on a mature-capable host a verified bot's render carries content an
@@ -37,6 +37,21 @@ export const BOT_CACHE_ROUTES = {
   '/images/[imageId]': 'images',
   '/posts/[postId]/[[...postSlug]]': 'posts',
   '/articles/[id]/[[...slug]]': 'articles',
+  // The profile and its public tabs. Not `manage-categories` (owner only) or `shop/manage`.
+  '/user/[username]': 'user',
+  '/user/[username]/[list]': 'user',
+  '/user/[username]/3d-models': 'user',
+  '/user/[username]/achievements': 'user',
+  '/user/[username]/articles': 'user',
+  '/user/[username]/collections': 'user',
+  '/user/[username]/comics': 'user',
+  '/user/[username]/images': 'user',
+  '/user/[username]/models': 'user',
+  '/user/[username]/posts': 'user',
+  '/user/[username]/shop': 'user',
+  '/user/[username]/sticker-book': 'user',
+  '/user/[username]/storylines': 'user',
+  '/user/[username]/videos': 'user',
 } as const;
 
 export type BotCacheRoutePattern = keyof typeof BOT_CACHE_ROUTES;
@@ -178,7 +193,10 @@ export function botCacheResponseRefusal(
   return null;
 }
 
-/** The purge tags: every bot-cached page, this route's, and this build's. */
+/**
+ * Tags a future purge could target: every bot-cached page, one route's, or one build's. No purge
+ * exists yet.
+ */
 export function botCacheTag(route: BotCacheRouteName) {
   return `botcache,botcache-${route},build-${shellBuildId()}`;
 }

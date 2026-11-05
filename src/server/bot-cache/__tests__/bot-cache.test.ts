@@ -93,6 +93,20 @@ describe('botCacheRefusal', () => {
     ['/images/[imageId]', 'images'],
     ['/posts/[postId]/[[...postSlug]]', 'posts'],
     ['/articles/[id]/[[...slug]]', 'articles'],
+    ['/user/[username]', 'user'],
+    ['/user/[username]/[list]', 'user'],
+    ['/user/[username]/3d-models', 'user'],
+    ['/user/[username]/achievements', 'user'],
+    ['/user/[username]/articles', 'user'],
+    ['/user/[username]/collections', 'user'],
+    ['/user/[username]/comics', 'user'],
+    ['/user/[username]/images', 'user'],
+    ['/user/[username]/models', 'user'],
+    ['/user/[username]/posts', 'user'],
+    ['/user/[username]/shop', 'user'],
+    ['/user/[username]/sticker-book', 'user'],
+    ['/user/[username]/storylines', 'user'],
+    ['/user/[username]/videos', 'user'],
   ])('allows the route %s as %s', (pathname, name) => {
     expect(resolveBotCacheRoute(eligible() as never, pathname, { degraded: false })).toBe(name);
   });
@@ -104,7 +118,9 @@ describe('botCacheRefusal', () => {
   it.each<[string, Req, string?, boolean?]>([
     ['method', eligible({ method: 'HEAD' })],
     ['method', eligible({ method: 'POST' })],
-    ['route', eligible(), '/user/[username]'],
+    ['route', eligible(), '/user/[username]/manage-categories'],
+    ['route', eligible(), '/user/[username]/shop/manage'],
+    ['route', eligible(), '/user/[username]/[[...slug]]'],
     ['route', eligible(), '/models/[id]/reviews'],
     ['route', eligible(), '/_error'],
     ['route', eligible(), '/404'],

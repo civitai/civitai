@@ -20,7 +20,7 @@ import {
   SHELL_REQ_KEY,
 } from '~/shared/constants/shell.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
-import { BOT_CACHE_REQ_KEY, BOT_CACHE_VERIFIED_BOT } from '~/shared/constants/bot-cache.constants';
+import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
@@ -173,7 +173,7 @@ type CustomAppProps = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
-  verifiedBot: VerifiedBot | typeof BOT_CACHE_VERIFIED_BOT | null;
+  verifiedBot: VerifiedBot | null;
   adsGated?: boolean;
   /** Set by a static-shell render: the viewer's data comes from page data after hydration. */
   shell?: boolean;
@@ -863,7 +863,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
-      verifiedBot: botCache ? BOT_CACHE_VERIFIED_BOT : verifiedBot,
+      // Which crawler asked is not part of the edge's cache key.
+      verifiedBot: botCache ? null : verifiedBot,
     },
     ...appProps,
   };

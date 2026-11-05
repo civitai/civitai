@@ -4,7 +4,6 @@ import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { TosMeta } from '~/server/services/content.service';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
-import type { BOT_CACHE_VERIFIED_BOT } from '~/shared/constants/bot-cache.constants';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { trpc } from '~/utils/trpc';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
@@ -58,7 +57,7 @@ type AppProviderProps = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
-  verifiedBot: VerifiedBot | typeof BOT_CACHE_VERIFIED_BOT | null;
+  verifiedBot: VerifiedBot | null;
   // Whether the request is from a logged-in user (`!!session || hasAuthCookie`,
   // computed in _app). AppProvider sits ABOVE SessionProvider so it can't use
   // `useSession()` — this prop is its only auth signal. Used to gate the ambient
@@ -88,7 +87,7 @@ type AppContext = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
-  verifiedBot: VerifiedBot | typeof BOT_CACHE_VERIFIED_BOT | null;
+  verifiedBot: VerifiedBot | null;
   announcements?: AnnouncementsSeed;
   announcementsDismissed?: DismissedByType;
   navBannersDismissed?: string[];
