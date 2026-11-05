@@ -279,6 +279,8 @@ export async function submitPresetImageGen({
   track,
   remixOfId,
   externalId,
+  sourceProvenance,
+  remixRun,
 }: PresetGenArgs & {
   isGreen?: boolean;
   allowMatureContent?: boolean;
@@ -286,6 +288,8 @@ export async function submitPresetImageGen({
   remixOfId?: number;
   /** The orchestrator dedupes on (user, externalId), so a repeated submit returns one workflow. */
   externalId?: string;
+  sourceProvenance?: string[];
+  remixRun?: Record<string, unknown>;
 }) {
   const versionId = versionIdOverride ?? modelConfig.versionId;
   const cappedImages = images ? capReferenceImages(images, modelConfig.maxReferenceImages) : null;
@@ -324,6 +328,8 @@ export async function submitPresetImageGen({
     track,
     remixOfId,
     externalId,
+    sourceProvenance,
+    remixRun,
     inputGate: 'checked-by-caller',
   });
 }
