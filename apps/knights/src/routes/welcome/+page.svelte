@@ -85,7 +85,7 @@
     min-height: 100vh;
     min-height: 100dvh;
     overflow: hidden;
-    /* Decorative photo under a bottom-up scrim; the full-bleed box carries it, the centred .frame carries the content. */
+    /* Background lives here, not on .frame: .frame is max-width-capped, so the photo would stop short of the viewport edges. */
     background:
       linear-gradient(to top, #14110df5, #14110de0 50%, #14110d99),
       url('/images/welcome-cathedral.webp') center / cover no-repeat var(--io-bg);

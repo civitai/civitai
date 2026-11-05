@@ -1,6 +1,6 @@
 export type Notice = { title: string; message: string };
 
-/** Players know these as skill checks (the original game called them sanity checks). Shown on the next page after the answer. */
+/** Player-facing name is "skill check"; "hidden check" stays internal. */
 export const WARNING_NOTICE: Notice = {
   title: '⚠️ Skill check failed',
   message:
