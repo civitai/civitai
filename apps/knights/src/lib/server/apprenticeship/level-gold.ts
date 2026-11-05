@@ -6,7 +6,6 @@ import { APPRENTICE } from './config';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
-/** The Acolyte levels a rise from `before` to `after` gains: 2 up to the knight level, no more. */
 export function acolyteLevelsGained(before: number, after: number): number[] {
   const levels: number[] = [];
   for (
@@ -19,11 +18,7 @@ export function acolyteLevelsGained(before: number, after: number): number[] {
   return levels;
 }
 
-/**
- * Pays gold for each Acolyte level the rise gains that was never paid to this player, and returns the gold paid. The
- * (player, level) key makes it once per level for good: a career restart keeps the rows, so re-levelling pays nothing.
- * Run it in the transaction that moves the XP.
- */
+/** Keyed (player, level) for good: a career restart keeps the rows, so re-levelling pays nothing. */
 export async function grantAcolyteLevelGold(
   trx: Transaction<DB>,
   input: { playerId: number; before: number; after: number; now: Date }
@@ -50,7 +45,7 @@ export async function grantAcolyteLevelGold(
   return total;
 }
 
-/** Gold paid for levels in (from, to] since the player's current career began, for the level-up notice. */
+// Career-scoped: rows from before the last restart are excluded.
 export async function acolyteLevelGoldSince(
   db: Executor,
   playerId: number,

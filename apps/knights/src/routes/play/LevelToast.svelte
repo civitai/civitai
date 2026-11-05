@@ -23,7 +23,6 @@
     /** Over the top of the image stage; otherwise it sits in the page flow. */
     floating?: boolean;
     milestone?: string | null;
-    /** Gold the level-ups in this notice paid. */
     gold?: number;
   } = $props();
 </script>

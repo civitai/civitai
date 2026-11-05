@@ -8224,7 +8224,7 @@ model KnightsApprenticeAnswer {
   @@index([playerId, id])
 }
 
-/// The gold paid for an Acolyte level, once per player and level for good: a career restart keeps these rows so a level already paid is never paid again. `gold` is what it paid at the time.
+/// One row per paid Acolyte level; kept across career restarts so a level never pays twice. `gold` is the amount paid at the time.
 model KnightsAcolyteLevelGold {
   playerId  Int
   level     Int
