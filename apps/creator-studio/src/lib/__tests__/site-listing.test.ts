@@ -7,8 +7,11 @@ const published = {
   status: 'Published',
   availability: 'Public',
   nsfwLevel: level(NsfwLevel.PG),
+  mode: null,
   poi: false,
   minor: false,
+  hasPeopleTag: false,
+  hasChildTag: false,
 };
 
 describe('siteListing', () => {
@@ -26,14 +29,20 @@ describe('siteListing', () => {
     ).toMatchObject({ com: true, red: true });
   });
 
-  it('keeps a minor-flagged model off .red', () => {
+  it('keeps a minor-flagged or child-tagged model off .red', () => {
     expect(siteListing({ ...published, minor: true })).toMatchObject({ com: true, red: false });
+    expect(siteListing({ ...published, hasChildTag: true })).toMatchObject({
+      com: true,
+      red: false,
+    });
   });
 
   it.each([
     ['a draft', { status: 'Draft' }],
     ['a private model', { availability: 'Private' }],
+    ['an archived model', { mode: 'Archived' }],
     ['a POI model', { poi: true }],
+    ['a model tagged as a real person', { hasPeopleTag: true }],
     ['an unrated model', { nsfwLevel: 0 }],
     ['a Blocked-only model', { nsfwLevel: level(NsfwLevel.Blocked) }],
   ])('lists %s on neither site', (_, override) => {

@@ -891,20 +891,20 @@
                       class={site === 'com'
                         ? 'border-blue-4/30 bg-blue-4/10 text-blue-3'
                         : 'border-red-5/30 bg-red-5/10 text-red-4'}
-                      title={model.listing.note ?? `View on civitai.${site}`}
+                      title="View on civitai.{site}"
+                      aria-label="View {model.name} on civitai.{site} (opens in a new tab)"
                     >
                       .{site}
                     </Badge>
                   {/if}
                 {/each}
               {:else}
-                <Badge
-                  variant="outline"
-                  class="border-dark-4 bg-dark-6 text-dark-2"
-                  title={model.listing.note}
-                >
+                <Badge variant="outline" class="border-dark-4 bg-dark-6 text-dark-2">
                   Not listed
                 </Badge>
+              {/if}
+              {#if model.listing.note}
+                <span class="text-xs text-dark-2">{model.listing.note}</span>
               {/if}
               {#if model.poi}
                 <Badge

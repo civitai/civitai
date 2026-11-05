@@ -11,7 +11,12 @@ import {
   type PaidAccessConfig,
 } from '$lib/monetization/paid-access';
 import { saleEligibleFilter } from '$lib/server/monetization/sale-eligibility';
-import { allBrowsingLevelsFlag, sfwBrowsingLevelsFlag } from '@civitai/shared';
+import {
+  allBrowsingLevelsFlag,
+  childBrowsingTagIds,
+  peopleBrowsingTagIds,
+  sfwBrowsingLevelsFlag,
+} from '@civitai/shared';
 import { siteListing, type SiteFilter, type SiteListing } from '$lib/site-listing';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
@@ -31,14 +36,20 @@ function feeFilter(alias: string, mode: 'set' | 'off') {
     : sql<boolean>`(${f} is null or ${f} <= 0)`;
 }
 
+function hasTagSql(alias: string, tagIds: number[]) {
+  const ids = sql.join(tagIds.map((id) => sql.lit(id)));
+  return sql<boolean>`exists (select 1 from "TagsOnModels" tom where tom."modelId" = ${sql.raw(alias)}."id" and tom."tagId" in (${ids}))`;
+}
+
 // The SQL twin of `siteListing`: a change to one is a change to both.
 function siteFilterSql(alias: string, site: SiteFilter) {
   const m = sql.raw(`${alias}.`);
-  const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and not ${m}"poi" and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
+  const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and (${m}"mode" is null or ${m}"mode" != 'Archived') and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
   const onCom = sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`;
-  if (site === 'both') return sql<boolean>`(${listed} and ${onCom} and not ${m}"minor")`;
-  if (site === 'com') return sql<boolean>`(${listed} and ${onCom} and ${m}"minor")`;
-  return sql<boolean>`(${listed} and not ${onCom} and not ${m}"minor")`;
+  const hiddenOnRed = sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`;
+  if (site === 'both') return sql<boolean>`(${listed} and ${onCom} and not ${hiddenOnRed})`;
+  if (site === 'com') return sql<boolean>`(${listed} and ${onCom} and ${hiddenOnRed})`;
+  return sql<boolean>`(${listed} and not ${onCom} and not ${hiddenOnRed})`;
 }
 
 // Rebuild the UI-facing PaidAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
@@ -307,7 +318,22 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi', 'minor', 'availability'])
+      .select([
+        'id',
+        'name',
+        'type',
+        'status',
+        'nsfw',
+        'nsfwLevel',
+        'poi',
+        'minor',
+        'availability',
+        'mode',
+      ])
+      .select([
+        hasTagSql('"Model"', peopleBrowsingTagIds).as('hasPeopleTag'),
+        hasTagSql('"Model"', childBrowsingTagIds).as('hasChildTag'),
+      ])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -468,9 +494,12 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       listing: siteListing({
         status: m.status,
         availability: m.availability,
+        mode: m.mode,
         nsfwLevel: Number(m.nsfwLevel ?? 0),
         poi: !!m.poi,
         minor: !!m.minor,
+        hasPeopleTag: !!m.hasPeopleTag,
+        hasChildTag: !!m.hasChildTag,
       }),
       versions: byModel.get(m.id) ?? [],
     })),
