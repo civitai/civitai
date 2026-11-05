@@ -286,17 +286,39 @@ describe('createHeadlessPost', () => {
       expect([...store.values()]).toEqual(['pending']);
     });
 
-    it('a repeat after a lost gallery result posts nothing new and resends the same image', async () => {
+    it('a repeat after a charged but unrecorded gallery submit is refused, with no second charge', async () => {
       // The post is recorded; the write after the gallery charge is the one that fails.
       failResultWrites((value) => value.includes('gallery'));
+      // The gallery's own contract: an image is taken once per gallery, and a repeat is refused
+      // before anything is charged.
+      const placed = new Set<string>();
+      let charges = 0;
+      h.submitGallery.mockImplementation(
+        async ({ hostImageId, imageId }: { hostImageId: number; imageId: number }) => {
+          const slot = `${hostImageId}:${imageId}`;
+          if (placed.has(slot))
+            throw new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'remix gallery: that image is already in this gallery',
+            });
+          placed.add(slot);
+          charges++;
+          return { id: 1 };
+        }
+      );
 
-      await post({ remixGallery: paid } as never);
+      const first = await post({ remixGallery: paid } as never);
       const repeat = await post({ remixGallery: paid } as never);
 
-      expect(repeat).toMatchObject({ postId: POST_ID, deduped: true });
+      // POSITIVE CONTROL: the first submit was charged.
+      expect(first).toMatchObject({ postId: POST_ID, gallery: { submitted: true } });
+      expect(charges).toBe(1);
+      expect(repeat).toMatchObject({
+        postId: POST_ID,
+        deduped: true,
+        gallery: { submitted: false, reason: 'That image is already in this gallery' },
+      });
       expect(h.createPost).toHaveBeenCalledTimes(1);
-      // The gallery takes one image once (a unique index), so the resend cannot charge twice.
-      expect(h.submitGallery.mock.calls.map(([args]) => args.imageId)).toEqual([1, 1]);
     });
   });
 
