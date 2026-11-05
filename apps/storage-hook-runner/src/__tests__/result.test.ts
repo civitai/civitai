@@ -19,7 +19,6 @@ describe('validateHookReturn', () => {
     ['{"allow":false,"reason":"x","extra":1}'],
     ['{"allow":false,"reason":"   "}'],
     ['{"allow":false,"reason":"\\u0000\\u0001"}'],
-    [`{"allow":false,"reason":"${'r'.repeat(201)}"}`],
     ['{}'],
     ['[]'],
     ['true'],
@@ -34,25 +33,59 @@ describe('validateHookReturn', () => {
     expect(validateHookReturn(undefined)).toMatchObject({ cause: 'invalid_result' });
   });
 
-  it('counts the reason in code points, not UTF-16 units', () => {
+  // Over-long reasons are TRUNCATED to 200 code points (operator decision), not refused. The
+  // kept and dropped parts use different characters so a cut from the wrong end, or at the
+  // wrong length, shows.
+  it('truncates a reason over 200 code points to its first 200', () => {
+    const reason = `${'a'.repeat(200)}${'b'.repeat(50)}`;
+    expect(validateHookReturn(JSON.stringify({ allow: false, reason }))).toEqual({
+      allow: false,
+      cause: 'denied',
+      reason: 'a'.repeat(200),
+    });
+  });
+
+  it('keeps a reason of exactly 200 code points whole', () => {
+    const reason = `${'a'.repeat(199)}z`;
+    expect(validateHookReturn(JSON.stringify({ allow: false, reason }))).toEqual({
+      allow: false,
+      cause: 'denied',
+      reason,
+    });
+  });
+
+  it('counts code points, not UTF-16 units, when truncating', () => {
     const emoji200 = '\u{1F512}'.repeat(200); // 400 UTF-16 units
     expect(validateHookReturn(JSON.stringify({ allow: false, reason: emoji200 }))).toEqual({
       allow: false,
       cause: 'denied',
       reason: emoji200,
     });
-    expect(
-      validateHookReturn(JSON.stringify({ allow: false, reason: `${emoji200}x` }))
-    ).toMatchObject({ cause: 'invalid_result' });
+    expect(validateHookReturn(JSON.stringify({ allow: false, reason: `${emoji200}x` }))).toEqual({
+      allow: false,
+      cause: 'denied',
+      reason: emoji200,
+    });
   });
 
-  it('measures the length after stripping control characters', () => {
-    const reason = `${'r'.repeat(200)}\u0000\u0007`;
+  it('strips control characters BEFORE truncating', () => {
+    // Truncating first would keep 195 a's; stripping first keeps 200.
+    const reason = `${'\u0000'.repeat(5)}${'a'.repeat(200)}b`;
     expect(validateHookReturn(JSON.stringify({ allow: false, reason }))).toEqual({
       allow: false,
       cause: 'denied',
-      reason: 'r'.repeat(200),
+      reason: 'a'.repeat(200),
     });
+  });
+
+  it('a reason that is blank after stripping is invalid_result "deny reason is empty"', () => {
+    for (const reason of ['', '   ', '\u0000\u0007', '\u202e \n']) {
+      expect(validateHookReturn(JSON.stringify({ allow: false, reason }))).toEqual({
+        allow: false,
+        cause: 'invalid_result',
+        detail: 'deny reason is empty',
+      });
+    }
   });
 });
 

@@ -301,7 +301,6 @@ describe('author faults are distinct causes', () => {
   it.each([
     ['{allow:"yes"}', '({ allow: "yes" })'],
     ['{allow:false} without a reason', '({ allow: false })'],
-    ['a 201-character reason', '({ allow: false, reason: "r".repeat(201) })'],
     ['an empty reason', '({ allow: false, reason: "" })'],
     ['a non-string reason', '({ allow: false, reason: 5 })'],
     ['{allow:true} with an extra key', '({ allow: true, extra: 1 })'],
@@ -336,6 +335,13 @@ describe('author faults are distinct causes', () => {
       cause: 'invalid_result',
       detail: 'hook returned a Promise (v1 hooks are synchronous)',
     });
+  });
+
+  it('a 250-character reason is truncated to its first 200 characters', async () => {
+    const { result } = await run(
+      'export default function check() { return { allow: false, reason: "a".repeat(200) + "b".repeat(50) }; }'
+    );
+    expect(result).toEqual({ allow: false, cause: 'denied', reason: 'a'.repeat(200) });
   });
 
   it('a 200-character reason is accepted (the boundary)', async () => {
