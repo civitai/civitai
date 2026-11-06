@@ -37,7 +37,7 @@ vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: vi.f
 vi.mock('~/components/Login/requireLogin', () => ({ requireLogin: vi.fn() }));
 vi.mock('~/components/Collections/CollectionEditModal', () => ({
   default: function CollectionEditModal() {
-    return null;
+    return <div>collection-editor</div>;
   },
 }));
 vi.mock('~/components/Collections/CollectionCollaborators/CollectionInvitesButton', () => ({
@@ -131,11 +131,17 @@ describe('/collections', () => {
     });
 
     test('Create collection opens the collection editor', async () => {
+      // Desktop: on a phone the auto-opened drawer would cover the button.
+      state.isMobile = false;
       renderWithProviders(<CollectionsHome />);
       await userEvent.click(page.getByRole('button', { name: 'Create collection' }));
-      expect(dialogStore.trigger).toHaveBeenCalledWith(
-        expect.objectContaining({ component: expect.anything() })
-      );
+      expect(dialogStore.trigger).toHaveBeenCalledTimes(1);
+
+      const { component: Editor } = vi.mocked(dialogStore.trigger).mock.calls[0][0] as {
+        component: React.ComponentType;
+      };
+      renderWithProviders(<Editor />);
+      await expect.element(page.getByText('collection-editor')).toBeVisible();
     });
 
     test('signed in with no collections: explains collections and offers Create', async () => {
@@ -144,6 +150,7 @@ describe('/collections', () => {
       await expect.element(page.getByText('No collections yet')).toBeVisible();
       await expect.element(page.getByText('Collections let you save')).toBeVisible();
       await expect.element(page.getByRole('button', { name: 'Create collection' })).toBeVisible();
+      expect(page.getByRole('button', { name: 'Sign in' }).elements()).toHaveLength(0);
     });
 
     test('signed out: explains collections and the button goes through login, not Create', async () => {
