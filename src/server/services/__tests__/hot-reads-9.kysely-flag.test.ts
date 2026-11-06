@@ -36,8 +36,7 @@ import { userWithProfileSelect } from '~/server/selectors/user.selector';
  * `getUserWithProfile` behind `kysely-hot-reads-9`: the flag is evaluated by its key, with no
  * entity or context, once per call; OFF reads through Prisma on the primary only, exactly as
  * before; ON reads through the one Kysely statement on the PRIMARY client and returns a value that
- * can only have come from the Kysely row (the ON fixture differs from the OFF one); inside a
- * caller's transaction the flag is not asked and the transaction's Prisma client reads. Row parity
+ * can only have come from the Kysely row (the ON fixture differs from the OFF one). Row parity
  * against a real database is in hot-reads-9.kysely-parity.test.ts.
  */
 
@@ -232,20 +231,6 @@ describe('getUserWithProfile', () => {
     expect(q.getUserWithProfileRow).toHaveBeenCalledTimes(2);
     // The flag is asked once per call, not once per read.
     expect(flag).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbWrite.user.findUniqueOrThrow).not.toHaveBeenCalled();
-  });
-
-  it("inside a caller's transaction: that client's Prisma read, and the flag is not asked", async () => {
-    flag.mockResolvedValue(true);
-    const tx = {
-      user: { findUniqueOrThrow: vi.fn(async () => prismaUser('from the transaction')) },
-      userProfile: { upsert: vi.fn() },
-    };
-    const user = await (await load())({ id: USER, tx: tx as never });
-    expect(user.profile.bio).toBe('from the transaction');
-    expect(tx.user.findUniqueOrThrow).toHaveBeenCalledTimes(1);
-    expect(flag).not.toHaveBeenCalled();
-    expectNoKyselyRead();
     expect(dbMock.dbWrite.user.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 });

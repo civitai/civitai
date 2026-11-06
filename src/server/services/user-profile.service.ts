@@ -91,33 +91,29 @@ export const getUserContentOverview = async ({
 export const getUserWithProfile = async ({
   username,
   id,
-  tx,
   isModerator,
   sessionUserId,
   eventViewer = { id: sessionUserId, isModerator },
   domain,
 }: GetUserProfileSchema & {
-  tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
   /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
   eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
-  const dbClient = tx ?? dbWrite;
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
   if (!username && !id) {
     throwBadRequestError('Either username or id must be provided');
   }
-  // Inside a caller's transaction the read stays on that transaction's Prisma client. Otherwise
   // `kysely-hot-reads-9` picks the path once per call: Prisma on the primary, or the one-statement
   // Kysely twin on the primary too.
-  const viaKysely = !tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9));
+  const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
     const user = viaKysely
       ? await readUserWithProfileViaKysely(kyselyWrite, { id, username })
-      : await readUserWithProfileViaPrisma(dbClient, { id, username });
+      : await readUserWithProfileViaPrisma(dbWrite, { id, username });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
@@ -219,7 +215,7 @@ export const getUserWithProfile = async ({
 
   if (!user.profile?.userId) {
     // First time visit to this user's profile. Create base profile:
-    await dbClient.userProfile.upsert({
+    await dbWrite.userProfile.upsert({
       where: { userId: user.id },
       create: {
         userId: user.id,
