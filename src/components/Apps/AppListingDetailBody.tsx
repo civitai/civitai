@@ -765,7 +765,6 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   );
 }
 
-/** Jump target for the Details panel's link to the related-apps rail at the foot of the page. */
 const RELATED_RAIL_ANCHOR_ID = 'app-listing-related';
 
 /**
@@ -1565,11 +1564,7 @@ export function AppListingDetailBody({
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
       )}
 
-      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link, LAST on
-          the page, after this app's own reviews and comments. The comment thread above it
-          is unbounded, so the Details panel links here (`RELATED_RAIL_ANCHOR_ID`) to keep
-          the rail reachable without scrolling past it. Omitted in read-only preview — it
-          is a live, tRPC-backed surface. */}
+      {/* `id` is the target of the Details panel's related-rail link (RELATED_RAIL_ANCHOR_ID). Omitted in preview: live, tRPC-backed surface. */}
       {!preview && (
         <Stack gap="lg" id={RELATED_RAIL_ANCHOR_ID}>
           <Divider />

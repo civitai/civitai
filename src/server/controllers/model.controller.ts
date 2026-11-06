@@ -221,6 +221,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -1230,6 +1231,7 @@ export const getDownloadCommandHandler = async ({
     const fileWhere: Prisma.ModelFileWhereInput = {};
     if (type) fileWhere.type = type;
     if (format) fileWhere.metadata = { path: ['format'], equals: format };
+    if (!ctx.user?.isModerator) fileWhere.NOT = failedScanFileWhere;
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },

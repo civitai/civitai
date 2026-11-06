@@ -39,8 +39,9 @@ Comments on this plan: `@dev:` inline; mine are `@ai:`.
   the old entities.
 - **Article writes, then every read, then the other surfaces' writes** (2026-10-30, Briant).
   Stage B ships as built. Next, one read flip moves every other surface's section and every
-  remaining reader of the old tables to `CommentV3`. Once nothing reads the old tables, the
-  old-row sync is removed and each other surface's writes flip without it. A comment written after
+  remaining reader of the old tables to `CommentV3`. Once nothing reads the old tables, every
+  other surface's writes flip at once (`comments-v3-write-flip.md`); the old-row sync stays until
+  Phase 6 (revised 2026-11-03). A comment written after
   the article flip has no `CommentV2` row; the sync keeps the row of an older one in step, so that
   a reader still on the old tables does not serve it after it is deleted or removed, and an
   old-table update does not make the mirror copy it back. Stage B already gives the block checks,
@@ -289,7 +290,8 @@ comment's surface. What it covers, beyond the SQL itself:
   chain resolves the same owners when there is one.
 - Counts: `comment-v3.ts` counts every comment on a write surface, whichever table it was written
   to, and `comment-v2.ts` skips those surfaces, so either service can deploy first; a test holds
-  the event engine's surface list to `v3WriteSurfaces`. `articleStatCache` needs nothing new: the
+  the event engine's surface list to the surfaces CommentV3 serves (`v3ReadSurfaces` since the
+  write flip's release 1). `articleStatCache` needs nothing new: the
   article metrics job already counts from CommentV3 and purges it.
 - Text-scan: `CommentV3` follows the `CommentV2` rollout until it is given its own. Verdicts are
   not aliased across the two types: an article comment edited after the flip is scanned afresh
@@ -328,6 +330,5 @@ Before the deploy, in this order:
    cross-surface readers, in one PR; image and post queries timed on the production replica
    first. A surface goes back to the old reads by leaving `v3ReadSurfaces`. Built 2026-11-02 for
    all but model discussion ("Read flip as built").
-4. Remove the old-row sync (`syncOldRows` and its callers), since nothing reads the old tables.
-5. Each other surface's write flip, one at a time and with no sync, comic chapters and model
-   comments last.
+4. The write flip for every read-flipped surface at once, in two releases
+   (`comments-v3-write-flip.md`); the old-row sync stays until Phase 6. Model comments flip last.

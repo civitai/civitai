@@ -128,8 +128,7 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
   {
     file: 'src/pages/_app.tsx',
     spec: '~/server/bot-cache/bot-cache',
-    reason:
-      'whether a verified crawler render may be edge-cached, read after the bootstrap; server-only because it reads the server env and Flipt.',
+    reason: 'server-only: reads the server env and Flipt.',
   },
   {
     file: 'src/pages/_app.tsx',

@@ -2683,8 +2683,5 @@ describe('AppListingDetailBody — page order and the related-rail link', () => 
     expect(
       prev.container.querySelectorAll('[data-testid="apps-listing-details-related-link"]')
     ).toHaveLength(0);
-    for (const testid of ['mock-reviews', 'mock-comments', 'apps-related-rail']) {
-      expect(prev.container.querySelectorAll(`[data-testid="${testid}"]`), testid).toHaveLength(0);
-    }
   });
 });

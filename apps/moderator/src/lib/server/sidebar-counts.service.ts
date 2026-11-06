@@ -1,6 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
-import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import {
+  APPS_PLATFORM_FEEDBACK_AREA,
+  ORCHESTRATION_FEEDBACK_AREA,
+} from '@civitai/shared/feedback.constants';
 import { prefixCacheKey, type RedisKeyTemplateCache } from '@civitai/redis';
 import { createCache } from './cache';
 import { dbRead } from './db';
@@ -123,6 +126,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     ingestionErrors,
     feedbackNew,
     feedbackAppsPlatformNew,
+    feedbackOrchestrationNew,
     removedAppeals,
     reRemovals,
     minorQueue,
@@ -167,6 +171,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // nothing.
     countNewFeedback(),
     countNewFeedback(APPS_PLATFORM_FEEDBACK_AREA),
+    countNewFeedback(ORCHESTRATION_FEEDBACK_AREA),
     countRemovedAppeals(),
     countPendingRemovalConfirmations(),
     // Waited on for a second at most: every verdict busts their cache and a fill takes ~10s.
@@ -231,6 +236,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
       ratingReviews: ratingReviews.Pending,
       feedbackNew,
       feedbackAppsPlatformNew,
+      feedbackOrchestrationNew,
       removedAppeals,
       reRemovals,
       modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),

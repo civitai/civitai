@@ -1520,7 +1520,7 @@ export async function upsertChallenge({
           // KNOWN, MEASURED, AND DELIBERATELY NOT FIXED: this is a stale full-column replace.
           // `existingMetadata` comes from the REPLICA read above, so a SAME-status write committing
           // between that read and this one is dropped. The status predicate on this updateMany does
-          // not cover that; only a jsonb `||` merge (as backfill-theme-elements.ts uses) would.
+          // not cover that; only a jsonb `||` merge would.
           //
           // It is not worth the second raw-SQL write inside this transaction, because both the
           // probability and the consequence are near zero:

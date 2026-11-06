@@ -319,6 +319,8 @@ export function listDownloadFiles(db: Kysely<DB>, where: DownloadFilesWhere) {
       'ModelFile.type',
       'ModelFile.metadata',
       'ModelFile.sizeKB',
+      'ModelFile.pickleScanResult',
+      'ModelFile.virusScanResult',
       jsonArrayFrom(
         eb
           .selectFrom('ModelFileHash')
