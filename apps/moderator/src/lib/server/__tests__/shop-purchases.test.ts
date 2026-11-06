@@ -269,6 +269,7 @@ describe('shop_purchases item summary', () => {
     const top = Array.from({ length: 25 }, (_, i) =>
       purchase(itemCharge(`k${i}`), { shopItemId: i + 100, unitAmount: 1000 })
     );
+    // The rollup starts from its largest item, so the earliest and latest dates sit on the others.
     const tail = [
       purchase(itemCharge('a'), {
         shopItemId: 1,
@@ -277,21 +278,29 @@ describe('shop_purchases item summary', () => {
       }),
       purchase(itemCharge('b'), {
         shopItemId: 2,
+        unitAmount: 30,
+        purchasedAt: new Date('2026-11-02T00:00:00Z'),
+      }),
+      purchase(itemCharge('c'), {
+        shopItemId: 3,
         unitAmount: 20,
         refunded: true,
         purchasedAt: new Date('2026-11-03T00:00:00Z'),
       }),
     ];
-    const legs = [leg(`${itemCharge('a')}-User`, { fromAccountType: 'blue', amount: '10' })];
+    const legs = [
+      leg(`${itemCharge('a')}-User`, { fromAccountType: 'blue', amount: '10' }),
+      leg(`${itemCharge('b')}-User`, { fromAccountType: 'yellow', amount: '30' }),
+    ];
     const { other } = summarize([...top, ...tail], legs);
     expect(other).toEqual({
-      items: 2,
-      count: 2,
-      buzz: 30,
+      items: 3,
+      count: 3,
+      buzz: 60,
       refunded: 1,
       firstAt: new Date('2026-11-01T00:00:00Z'),
       lastAt: new Date('2026-11-03T00:00:00Z'),
-      paidFrom: { blue: 10 },
+      paidFrom: { blue: 10, yellow: 30 },
       noChargeFound: 1,
     });
   });
