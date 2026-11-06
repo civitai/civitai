@@ -20,6 +20,7 @@ import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-ho
 import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
+import { MATURE_LOCK_ATTRIBUTION_KEYS } from '~/shared/constants/mature-lock-reason.constants';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 type LockReviewDb = Pick<typeof dbRead, 'model' | 'appeal'>;
@@ -254,7 +255,7 @@ export async function resolveLockReviewAppeal({
       await tx.$executeRaw`
         UPDATE "Model"
         SET meta = jsonb_set(meta, ARRAY[${SYSTEM_NSFW_LOCK_META_KEY}::text],
-          (meta -> ${SYSTEM_NSFW_LOCK_META_KEY}::text) - 'fields' - 'category' - 'textHash')
+          (meta -> ${SYSTEM_NSFW_LOCK_META_KEY}::text) - ${MATURE_LOCK_ATTRIBUTION_KEYS}::text[])
         WHERE id = ${modelId}
           AND jsonb_typeof(meta -> ${SYSTEM_NSFW_LOCK_META_KEY}::text) = 'object'
       `;

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ProfanitySimple from '~/libs/profanity-simple';
 
 // A stand-in filter: any text holding the placeholder token counts as a match, and so does a phrase
 // that only exists once the two fields are joined.
 const TOKEN = 'PLACEHOLDER_TOKEN';
 const SPANNING = ['PLACEHOLDER_HALF_A', 'PLACEHOLDER_HALF_B'] as const;
-vi.mock('~/libs/profanity-simple', () => ({
+vi.mock('~/libs/profanity-simple', async (importOriginal) => ({
+  ...(await importOriginal<typeof ProfanitySimple>()),
   createProfanityFilter: () => ({
     evaluateContent: (text: string) => {
       const matchCount = text.split(TOKEN).length - 1 + (text.includes(SPANNING.join(' ')) ? 1 : 0);
