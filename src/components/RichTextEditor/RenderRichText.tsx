@@ -20,6 +20,10 @@ import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
+import { collectCivitaiEmbedIds } from '~/shared/tiptap/civitai-embed.utils';
+import { CivitaiEmbedBlock } from '~/components/CivitaiEmbed/CivitaiEmbedBlock';
+import { CivitaiEmbedProvider } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
@@ -35,6 +39,7 @@ const extensions = [
   StrawPollNode,
   TimestampNode,
   BlurbNode,
+  CivitaiEmbedNode,
 ];
 
 type JsonNode = {
@@ -67,6 +72,7 @@ export function RenderRichText({
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const toCurrentDomain = useCurrentDomainHref();
+  const embedIds = useMemo(() => collectCivitaiEmbedIds(content), [content]);
   const memoized = useMemo(() => {
     try {
       const el = renderToReactElement({
@@ -93,6 +99,7 @@ export function RenderRichText({
                 }}
               />
             ),
+            civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
             // For unconsented CA visitors, replace third-party embed nodes with a
             // placeholder so the iframe is never inserted in the DOM.
             ...(!allowed && {
@@ -117,11 +124,18 @@ export function RenderRichText({
 
   if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
 
-  return (
+  const body = (
     <TypographyStylesWrapper className={classes.htmlRenderer}>
       <div ref={contentRef}>{memoized.el}</div>
       <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>
+  );
+  if (!embedIds.modelIds.length && !embedIds.imageIds.length) return body;
+
+  return (
+    <CivitaiEmbedProvider modelIds={embedIds.modelIds} imageIds={embedIds.imageIds}>
+      {body}
+    </CivitaiEmbedProvider>
   );
 }
 

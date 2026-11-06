@@ -53,7 +53,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
 ];
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
-  a: ['rel', 'href', 'target'],
+  a: ['rel', 'href', 'target', 'data-entity', 'data-id', 'data-version-id'],
   img: ['src', 'alt', 'width', 'height'],
   iframe: [
     'src',

@@ -42,6 +42,7 @@ import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbContr
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 import { BlurbEditNode, BlurbEditorProvider } from '~/components/TipTap/BlurbNode';
+import { CivitaiEmbedEditNode } from '~/components/TipTap/CivitaiEmbedEditNode';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -151,6 +152,8 @@ export function RichTextEditor({
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
   const addBlurbs = includeControls.includes('blurb');
+  const civitaiCardPaste =
+    !!useFeatureFlags().articleCivitaiCards && includeControls.includes('civitaiEmbed');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
@@ -268,9 +271,12 @@ export function RichTextEditor({
     // rendering it and having it vanish on save.
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
+    // Registered everywhere, like the timestamp node, so content holding cards survives a save.
+    arr.push(CivitaiEmbedEditNode.configure({ pasteToCard: civitaiCardPaste }));
 
     return arr;
   }, [
+    civitaiCardPaste,
     addStickers,
     addBlurbs,
     addList,
@@ -585,7 +591,8 @@ type ControlType =
   | 'colors'
   | 'timestamp'
   | 'sticker'
-  | 'blurb';
+  | 'blurb'
+  | 'civitaiEmbed';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
