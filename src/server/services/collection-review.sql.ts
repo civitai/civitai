@@ -16,7 +16,8 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  * - Model: `getModelsRaw` reads `ModelMetric`'s denormalized status/mode/nsfwLevel (Published, not
  *   Archived) and leaves out Private models; `getModelsWithImagesAndModelVersions` drops TakenDown.
  * - Image: `getAllImages` with `pending` and `reviewCollectionId` keeps the collection's unrated
- *   images, with the same image and post filters as any read of the image.
+ *   and `acceptableMinor` images only when their uploader submitted them, with the same image and
+ *   post filters as any read of the image.
  * - Post: `getPostsInfinite` without a `username` keeps published, non-Private posts.
  * - Article: `getArticles` requires Published with a publish date, and a finished scan.
  * - Model3D: no branch. The queue never selects `model3dId`, so it shows none of them.
@@ -58,6 +59,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
       AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
       AND (rv_i."nsfwLevel" = 0 OR ${imageReviewedSql('rv_i')})
       AND rv_i."needsReview" IS NULL
+      AND ((rv_i."nsfwLevel" != 0 AND NOT rv_i."acceptableMinor") OR ci."addedById" = rv_i."userId")
       AND rv_i."ingestion" != 'Blocked'::"ImageIngestionStatus"
       AND rv_i."blockedFor" IS NULL
       AND rv_ip."availability" != 'Private'::"Availability"
@@ -77,23 +79,15 @@ END)`;
 
 type ReviewViewer = { collectionId: number; userId: number };
 
-// `i` is a REVIEW or REJECTED item of the collection, and the viewer owns it or has MANAGE on it.
-// `byUploader` also requires that the image's own uploader added it: a real submission, not an
-// item an owner saved from someone else's images.
-const reviewSubmissionSql = (
-  { collectionId, userId }: ReviewViewer,
-  { byUploader = false } = {}
-) => Prisma.sql`EXISTS (
+// `i` is a REVIEW or REJECTED submission of the collection, added by the image's own uploader, and
+// the viewer owns the collection or has MANAGE on it.
+const reviewSubmissionSql = ({ collectionId, userId }: ReviewViewer) => Prisma.sql`EXISTS (
   SELECT 1 FROM "CollectionItem" rci
   JOIN "Collection" rc ON rc.id = rci."collectionId"
   WHERE rci."imageId" = i.id
     AND rci."collectionId" = ${collectionId}
-    AND rci."status" IN ('REVIEW', 'REJECTED')${
-      byUploader
-        ? Prisma.sql`
-    AND rci."addedById" = i."userId"`
-        : Prisma.empty
-    }
+    AND rci."status" IN ('REVIEW', 'REJECTED')
+    AND rci."addedById" = i."userId"
     AND (rc."userId" = ${userId} OR EXISTS (
       SELECT 1 FROM "CollectionContributor" rcc
       WHERE rcc."collectionId" = rc.id AND rcc."userId" = ${userId}
@@ -103,7 +97,7 @@ const reviewSubmissionSql = (
 
 /**
  * The images a collection's reviewer may see before they are rated: those that are REVIEW or
- * REJECTED submissions of that collection, when the viewer owns it or has MANAGE on it. Used as an
+ * REJECTED submissions of that collection by their uploader, when the viewer owns it or has MANAGE on it. Used as an
  * arm of `getAllImages`' pending filter over `Image` aliased `i`; every other filter of that read
  * still applies.
  */
@@ -119,9 +113,9 @@ export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
  * Two widenings, both scoped to collections the viewer manages:
  * - a post in a collection they MANAGE shows its rated, reviewed images above `browsingLevel`
  *   (never unrated or Blocked ones);
- * - with the server-set `reviewCollectionId`, that collection's REVIEW and REJECTED items show
- *   unrated, and `acceptableMinor` ones submitted by their uploader show too, so a judge can reject
- *   them. That exception does not reach above `browsingLevel`.
+ * - with the server-set `reviewCollectionId`, that collection's REVIEW and REJECTED submissions by
+ *   their uploader show unrated, and `acceptableMinor` ones show too, so a judge can reject them.
+ *   That exception does not reach above `browsingLevel`.
  */
 export const pendingViewerImageSql = ({
   userId,
@@ -136,7 +130,7 @@ export const pendingViewerImageSql = ({
   const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
   return Prisma.sql`((i."needsReview" IS NULL OR ${own})
     AND (i."acceptableMinor" = FALSE OR ${own}${
-    review ? Prisma.sql` OR ${reviewSubmissionSql(review, { byUploader: true })}` : Prisma.empty
+    review ? Prisma.sql` OR ${reviewSubmissionSql(review)}` : Prisma.empty
   })
     AND (${own} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})
     AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${

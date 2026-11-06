@@ -9,6 +9,7 @@ const UPLOADER = 1;
 const STRANGER = 2;
 const MANAGER = 3;
 const COLLECTION_OWNER = 4;
+const OTHER_MANAGER = 5;
 const COLLECTION = 50;
 const OTHER_COLLECTION = 60;
 const PG = 1;
@@ -38,7 +39,8 @@ beforeAll(async () => {
     INSERT INTO "Collection" VALUES (${COLLECTION}, ${COLLECTION_OWNER}), (${OTHER_COLLECTION}, ${COLLECTION_OWNER});
     INSERT INTO "CollectionContributor" VALUES
       (${COLLECTION}, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[]),
-      (${COLLECTION}, ${STRANGER}, ARRAY['ADD']::"CollectionContributorPermission"[]);
+      (${COLLECTION}, ${STRANGER}, ARRAY['ADD']::"CollectionContributorPermission"[]),
+      (${OTHER_COLLECTION}, ${OTHER_MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[]);
     INSERT INTO "Post" VALUES (100, NULL), (200, ${COLLECTION});
 
     INSERT INTO "Image" (id, "postId", "userId", "nsfwLevel", ingestion, "acceptableMinor", "needsReview") VALUES
@@ -58,13 +60,15 @@ beforeAll(async () => {
       (24, 100, ${UPLOADER}, 4, 'Scanned', false, NULL),  -- REVIEW submission, above the level
       (25, 100, ${UPLOADER}, 1, 'Scanned', true, NULL),   -- REJECTED, added by the collection owner
       (26, 200, ${UPLOADER}, 4, 'Scanned', true, NULL),   -- REVIEW submission, managed post, above the level
+      (27, 100, ${UPLOADER}, 0, 'Pending', false, NULL),  -- REVIEW, unrated, added by the collection owner
       (30, 100, ${UPLOADER}, 1, 'Scanned', true, NULL);   -- REVIEW submission of another collection
 
     INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES
       (${COLLECTION}, 'REVIEW', 20, ${UPLOADER}), (${COLLECTION}, 'REVIEW', 21, ${UPLOADER}),
       (${COLLECTION}, 'ACCEPTED', 22, ${UPLOADER}), (${COLLECTION}, 'REJECTED', 23, ${UPLOADER}),
       (${COLLECTION}, 'REVIEW', 24, ${UPLOADER}), (${COLLECTION}, 'REJECTED', 25, ${COLLECTION_OWNER}),
-      (${COLLECTION}, 'REVIEW', 26, ${UPLOADER}), (${OTHER_COLLECTION}, 'REVIEW', 30, ${UPLOADER});
+      (${COLLECTION}, 'REVIEW', 26, ${UPLOADER}),
+      (${COLLECTION}, 'REVIEW', 27, ${COLLECTION_OWNER}), (${OTHER_COLLECTION}, 'REVIEW', 30, ${UPLOADER});
   `);
 });
 afterAll(() => db.close());
@@ -85,7 +89,7 @@ describe('a pending image read by a signed-in non-moderator', () => {
   });
 
   it('shows the uploader all of their own images within the level, plus their unrated ones', async () => {
-    expect(await visibleTo(UPLOADER)).toEqual([1, 2, 3, 4, 11, 20, 21, 22, 23, 25, 30]);
+    expect(await visibleTo(UPLOADER)).toEqual([1, 2, 3, 4, 11, 20, 21, 22, 23, 25, 27, 30]);
   });
 
   it("shows a collection manager the collection's reviewed images above the level, and no unrated, Blocked or acceptableMinor ones", async () => {
@@ -94,8 +98,9 @@ describe('a pending image read by a signed-in non-moderator', () => {
 
   // A choice, not an accident: a judge must see a submission that is acceptable only in their
   // collection to reject it. The exception rides on `reviewCollectionId`, which only the review
-  // queue sets, and stops at REVIEW and REJECTED items its uploader submitted to a collection the
-  // viewer manages, within the viewer's level.
+  // queue sets, and stops at REVIEW and REJECTED items their uploader submitted to a collection the
+  // viewer manages, within the viewer's level. Image 27 (unrated, not submitted by its uploader) and
+  // 25 stay out.
   it("shows a judge the collection's acceptableMinor and unrated submissions in the review queue", async () => {
     expect(await visibleTo(MANAGER, COLLECTION)).toEqual([2, 10, 20, 21, 23]);
     expect(await visibleTo(COLLECTION_OWNER, COLLECTION)).toEqual([2, 20, 21, 23]);
@@ -104,6 +109,11 @@ describe('a pending image read by a signed-in non-moderator', () => {
   it("hides the same submissions from the judge's reads outside the review queue", async () => {
     expect(await visibleTo(MANAGER)).not.toContain(20);
     expect(await visibleTo(COLLECTION_OWNER)).not.toContain(20);
+  });
+
+  it('gives the manager of a different collection nothing extra, in or out of the review queue', async () => {
+    expect(await visibleTo(OTHER_MANAGER)).toEqual([2]);
+    expect(await visibleTo(OTHER_MANAGER, COLLECTION)).toEqual([2]);
   });
 
   it('gives a contributor without MANAGE nothing extra, in or out of the review queue', async () => {

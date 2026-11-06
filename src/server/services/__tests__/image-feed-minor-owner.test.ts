@@ -52,6 +52,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 
 import {
   getAllImages,
+  getImagesForModelVersion,
   getImagesForPosts,
   getImagesFromSearchPostFilter,
   getImagesFromSearchPreFilter,
@@ -180,18 +181,38 @@ describe('getImagesForPosts minor exclusion', () => {
   });
 });
 
-describe('getImagesForPosts pending read by a signed-in non-moderator', () => {
+describe.each([
+  [
+    'getImagesForPosts',
+    () =>
+      getImagesForPosts({
+        postIds: [1],
+        pending: true,
+        browsingLevel: 1,
+        user: { id: STRANGER, isModerator: false } as never,
+      }),
+  ],
+  [
+    'getImagesForModelVersion',
+    () =>
+      getImagesForModelVersion({
+        modelVersionIds: [1],
+        pending: true,
+        browsingLevel: 1,
+        user: { id: STRANGER, isModerator: false } as never,
+      }),
+  ],
+] as const)('%s pending read by a signed-in non-moderator', (name, read) => {
   async function pendingStatement() {
-    await getImagesForPosts({
-      postIds: [1],
-      pending: true,
-      browsingLevel: 1,
-      user: { id: STRANGER, isModerator: false } as never,
-    });
+    dbMock.dbRead.$queryRaw.mockClear();
+    await read();
     const call = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
-    expect(call, 'getImagesForPosts no longer reaches dbRead.$queryRaw').toBeDefined();
-    const [strings, ...values] = call as unknown as [TemplateStringsArray, ...unknown[]];
-    return Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    expect(call, `${name} no longer reaches dbRead.$queryRaw`).toBeDefined();
+    const [first, ...values] = call as unknown as [TemplateStringsArray | Prisma.Sql, ...unknown[]];
+    // getImagesForPosts tags the template; getImagesForModelVersion passes a built Prisma.Sql.
+    return Array.isArray(first)
+      ? Prisma.sql(first as TemplateStringsArray, ...(values as Prisma.Sql[]))
+      : (first as Prisma.Sql);
   }
   const boundTo = (stmt: Prisma.Sql, re: RegExp) => {
     const m = stmt.text.match(re);
