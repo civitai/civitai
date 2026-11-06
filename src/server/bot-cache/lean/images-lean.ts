@@ -38,7 +38,8 @@ import { getDisplayName, getInitials, getModelUrl, slugit } from '~/utils/string
  * for everything else, so the full render keeps answering every case this file does not draw. Each
  * function below names the component whose server output it reproduces, down to the text of
  * buttons that do nothing without scripts: `bot-lean-images-parity.test.ts` renders both and fails
- * on any difference a crawler can read.
+ * on any difference a crawler can read. Its markup adds no semantics the full render lacks (no
+ * headings, no landmarks but `<main>`, lists only where the full render has them).
  */
 
 type Ssg = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
@@ -138,10 +139,10 @@ function creatorCard(image: ImageRow) {
   // `UserProfileLink`'s `/user/<username>`, as Next's `Link` resolves it (`new URL`).
   const profile = username ? new URL(`/user/${username}`, 'http://n').pathname : null;
   return (
-    '<section><img src="/images/civitai-default-account-bg.png"' +
+    '<div><img src="/images/civitai-default-account-bg.png"' +
     ' alt="default creator card background decoration">' +
     (profile ? `<a href="${esc(profile)}">${inner}</a>` : inner) +
-    '<button type="button">Follow</button></section>'
+    '<button type="button">Follow</button></div>'
   );
 }
 
@@ -151,13 +152,13 @@ function processCard(data: GenerationData) {
   if (!tools.length && !techniques.length) return '';
   // A tool's link is the `as` path, `/tools/<slug>`; its notes are in a closed popover.
   const tool = ({ name }: { name: string }) =>
-    `<li><a href="/tools/${esc(slugit(name))}">${esc(name)}</a></li>`;
+    `<span><a href="/tools/${esc(slugit(name))}">${esc(name)}</a></span>`;
   const technique = ({ name, notes }: { name: string; notes: string | null }) =>
     `<li><p>${esc(name)}</p>${notes ? `<p>${esc(notes)}</p>` : ''}</li>`;
-  const toolList = tools.length ? `<h3>Tools</h3><ul>${tools.map(tool).join('')}</ul>` : '';
+  const toolList = tools.length ? `<p>Tools</p><div>${tools.map(tool).join('')}</div>` : '';
   const techniqueItems = techniques.map(technique).join('');
-  const techniqueList = techniques.length ? `<h3>Techniques</h3><ul>${techniqueItems}</ul>` : '';
-  return `<section><h2>Process</h2>${toolList}${techniqueList}</section>`;
+  const techniqueList = techniques.length ? `<p>Techniques</p><ul>${techniqueItems}</ul>` : '';
+  return `<div><p>Process</p>${toolList}${techniqueList}</div>`;
 }
 
 const RESOURCE_LIMIT = 3;
@@ -189,7 +190,7 @@ function resourcesList(data: GenerationData) {
     resources.length > RESOURCE_LIMIT
       ? `<p>Show ${resources.length - RESOURCE_LIMIT} more</p>`
       : '';
-  return `<h3>Resources used</h3><ul>${html.join('')}</ul>${more}`;
+  return `<p>Resources used</p><ul>${html.join('')}</ul>${more}`;
 }
 
 /** `ImageMeta`'s "Other metadata" entries. */
@@ -224,23 +225,23 @@ function generationCard(data: GenerationData) {
     const prompt = meta.prompt as string | undefined;
     const negative = meta.negativePrompt as string | undefined;
     const others = simpleMeta(data)
-      .map(({ key, value }) => `<li><span>${esc(key)}:</span><span>${esc(value)}</span></li>`)
+      .map(({ key, value }) => `<span><span>${esc(key)}:</span><span>${esc(value)}</span></span>`)
       .join('');
     metaHtml =
-      (prompt ? `<h3>Prompt</h3>${badges}<p>${esc(prompt)}</p>` : badges) +
-      (negative ? `<h3>Negative prompt</h3><p>${esc(negative)}</p>` : '') +
-      (others ? `<h3>Other metadata</h3><ul>${others}</ul>` : '');
+      (prompt ? `<p>Prompt</p>${badges}<p>${esc(prompt)}</p>` : badges) +
+      (negative ? `<p>Negative prompt</p><p>${esc(negative)}</p>` : '') +
+      (others ? `<p>Other metadata</p><div>${others}</div>` : '');
   }
   const copyAll = meta ? '<button type="button">COPY ALL</button>' : '';
-  return `<section><h2>Generation data</h2>${copyAll}${resources}${metaHtml}</section>`;
+  return `<div><p>Generation data</p>${copyAll}${resources}${metaHtml}</div>`;
 }
 
 /** The "Discussion" card for a signed-out reader: the comment list is still loading. */
 function discussionCard(imageId: number) {
   return (
-    `<section><h2>Discussion</h2><p>You must ` +
+    `<div><p>Discussion</p><p>You must ` +
     `<a href="/login?returnUrl=/images/${esc(imageId)}" rel="nofollow">sign in</a>` +
-    ` to add a comment</p></section>`
+    ` to add a comment</p></div>`
   );
 }
 
@@ -364,7 +365,7 @@ export async function renderImageDetailLean({
 
   const body =
     `<main><div>${controls}</div><div>${mainImage}</div>${reactions(image)}</main>` +
-    `<aside>${sidebar}</aside>`;
+    `<div>${sidebar}</div>`;
 
   return {
     html: `<!DOCTYPE html><html lang="en"><head>${head}</head><body>${body}</body></html>`,
