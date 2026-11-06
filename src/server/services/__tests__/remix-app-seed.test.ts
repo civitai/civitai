@@ -193,7 +193,7 @@ describe('remix app seed', () => {
     );
     const rows = [
       ...sql.matchAll(
-        /\('(apb_remix_[a-z_]+)', '([a-z-]+)', '([0-9.]+)', \$json\$(.*?)\$json\$::jsonb, '(pg|x)', (\d+)\)/g
+        /\('(ab_rx_[a-z_]+)', '([a-z-]+)', '([0-9.]+)', \$json\$(.*?)\$json\$::jsonb, '(pg|x)', (\d+)\)/g
       ),
     ].map(([, id, blockId, version, manifest, contentRating, order]) => ({
       id,

@@ -59,9 +59,12 @@ export function remixBlockId(slug: string) {
   return REMIX_BLOCK_ID_PREFIX + slug;
 }
 
+/**
+ * `app_blocks_id_length_check` holds every id to 28-40 chars. A slug is 3-34 chars and never ends
+ * in a hyphen, so `ab_rx_` + slug fits under 40, and padding with `_` to 28 cannot collide.
+ */
 export function remixAppBlockRowId(slug: string) {
-  // `apb_` like every block id; App Block ids allow only [A-Za-z0-9_].
-  return `apb_remix_${slug.replaceAll('-', '_')}`;
+  return `ab_rx_${slug.replaceAll('-', '_')}`.padEnd(28, '_');
 }
 
 export const runVersionOf = (manifest: Pick<RemixManifest, 'version'>) =>

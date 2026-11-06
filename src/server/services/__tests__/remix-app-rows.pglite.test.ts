@@ -4,7 +4,9 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import { remixAppBlockRowId, saveRemixApp } from '~/server/services/remix-app-registry.service';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 
@@ -14,10 +16,35 @@ import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
  * rows live in `app_blocks` but must never reach any of them.
  */
 
-const MIGRATION = path.join(
-  process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261225120200_remix_apps_as_rows/migration.sql'
-);
+const migrationSql = (name: string) =>
+  readFileSync(
+    path.join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql'),
+    'utf8'
+  );
+const MIGRATION = '20261225120200_remix_apps_as_rows';
+/** Run before the seed in every writable env; prod's status CHECK rejects 'remix' without them. */
+const SCHEMA_MIGRATIONS = [
+  '20261225120130_app_blocks_status_allow_remix',
+  '20261225120140_validate_app_blocks_status_allow_remix',
+];
+
+/**
+ * The app_blocks CHECKs as prod has them, read from the migration that created them, so a row the
+ * seed or a mod write makes is held to the same rules. Throws if one is no longer found there.
+ */
+const PROD_CHECKS = [
+  'app_blocks_status_check',
+  'app_blocks_content_rating_check',
+  'app_blocks_id_length_check',
+];
+const prodChecks = () => {
+  const sql = migrationSql('20260524120000_app_blocks_initial');
+  return PROD_CHECKS.map((name) => {
+    const check = sql.match(new RegExp(`CONSTRAINT "${name}"\\s+CHECK (\\(.+\\))[,;]?$`, 'm'))?.[1];
+    if (!check) throw new Error(`${name} not found in 20260524120000_app_blocks_initial`);
+    return `ALTER TABLE app_blocks ADD CONSTRAINT "${name}" CHECK ${check};`;
+  }).join('\n');
+};
 
 // The columns the migration and the reads under test touch, with the schema's defaults.
 const DDL = `
@@ -43,7 +70,7 @@ const DDL = `
 `;
 
 let db: PGlite;
-const migrate = () => db.exec(readFileSync(MIGRATION, 'utf8'));
+const migrate = () => db.exec(migrationSql(MIGRATION));
 const rows = async () =>
   (
     await db.query<{ id: string; status: string; featured_order: number }>(
@@ -54,6 +81,8 @@ const rows = async () =>
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(DDL);
+  await db.exec(prodChecks());
+  for (const name of SCHEMA_MIGRATIONS) await db.exec(migrationSql(name));
   await db.exec(`INSERT INTO "User" (id) VALUES (-1)`);
 });
 afterAll(async () => {
@@ -70,7 +99,7 @@ describe('remix apps seed migration', () => {
     await migrate();
     expect(await rows()).toEqual(
       SEED_REMIX_APPS.map((app, order) => ({
-        id: expect.stringContaining('apb_remix_'),
+        id: remixAppBlockRowId(app.slug),
         status: 'remix',
         featured_order: order,
       }))
@@ -99,6 +128,57 @@ describe('remix apps seed migration', () => {
     ).rows;
     expect(anime).toEqual({ status: 'remix_disabled', name: 'Edited' });
     expect(await rows()).toHaveLength(SEED_REMIX_APPS.length);
+  });
+
+  it('holds the prod CHECKs: a bad status or a short id is rejected', async () => {
+    // POSITIVE CONTROL: the CHECKs are applied, so the passes above are not a table without them.
+    await expect(
+      db.exec(`UPDATE app_blocks SET status = 'bogus' WHERE block_id = 'remix-anime-it'`)
+    ).rejects.toThrow(/app_blocks_status_check/);
+    await expect(
+      db.exec(`UPDATE app_blocks SET id = 'ab_short' WHERE block_id = 'remix-anime-it'`)
+    ).rejects.toThrow(/app_blocks_id_length_check/);
+  });
+});
+
+describe('saveRemixApp against the prod CHECKs', () => {
+  it('creates a new app as a disabled row', async () => {
+    // The slug at its longest makes the longest id.
+    const slug = 'a'.repeat(34);
+    dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ id: 'civitai-remix-apps' } as never);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.appBlock.aggregate.mockResolvedValue({ _max: { featuredOrder: 7 } } as never);
+    dbMock.dbWrite.appBlock.create.mockImplementation((async ({
+      data,
+    }: {
+      data: Record<string, unknown>;
+    }) =>
+      db.query(
+        `INSERT INTO app_blocks (id, app_id, block_id, version, manifest, status, content_rating, featured_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          data.id,
+          data.appId,
+          data.blockId,
+          data.version,
+          JSON.stringify(data.manifest),
+          data.status,
+          data.contentRating,
+          data.featuredOrder,
+        ]
+      )) as never);
+    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
+
+    await saveRemixApp({ ...SEED_REMIX_APPS[0], slug });
+    const [row] = (
+      await db.query<{ id: string; status: string }>(
+        `SELECT id, status FROM app_blocks WHERE block_id = $1`,
+        [`remix-${slug}`]
+      )
+    ).rows;
+    expect(row).toEqual({ id: remixAppBlockRowId(slug), status: 'remix_disabled' });
+    expect(row.id).toHaveLength(40);
+    await db.exec(`DELETE FROM app_blocks WHERE block_id = 'remix-${slug}'`);
   });
 });
 
@@ -129,8 +209,8 @@ describe('App Blocks reads that serve apps', () => {
     // POSITIVE CONTROL: the same row with an approved status is listed and featured, so the
     // empty lists above are the status, not a query that sees nothing.
     await dressUp('approved');
-    expect(await listed()).toEqual(['apb_remix_restyle']);
-    expect(await featured()).toEqual(['apb_remix_restyle']);
+    expect(await listed()).toEqual([remixAppBlockRowId('restyle')]);
+    expect(await featured()).toEqual([remixAppBlockRowId('restyle')]);
     await dressUp('remix');
   });
 
