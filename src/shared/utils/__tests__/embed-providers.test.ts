@@ -168,6 +168,11 @@ describe('sanitizeHtml embed iframes', () => {
     'https:\\\\player.vimeo.com/video/1',
     // Scheme-less: once passed the player check, then threw in embedRenderSrc and blanked the page.
     'player.twitch.tv/?video=v1',
+    // Read as absolute by sanitize-html's host gate, as a same-origin path by a browser.
+    'https:/x.hf.space/../../user/account',
+    'https:x.hf.space/../../../user/account',
+    'https:open.spotify.com/login',
+    '/ /x.hf.space/../../user/account',
     // Lookalike hosts: sanitize-html's host list already removes the src.
     'https://w.soundcloud.com.evil.test/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb',
     'https://player.vimeo.com.evil.test/video/1',

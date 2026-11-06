@@ -347,17 +347,23 @@ export function isAllowedPlayerUrl(src: string | undefined | null): EmbedProvide
 /** True when the iframe host belongs to one of the new providers (and so must pass the full check). */
 export function isEmbedPlayerHost(src: string | undefined | null): boolean {
   if (!src) return false;
-  // Resolve the way a browser (and sanitize-html's host gate) would: protocol-relative and
-  // backslash forms included. `new URL(src)` alone throws on `//x.hf.space/p`, which would let
-  // that iframe skip the exact check entirely.
-  let host: string;
-  try {
-    const normalized = src.trim().replace(/\\/g, '/');
-    host = new URL(normalized, 'https://relative.invalid').hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  return oneOf(host, EMBED_PLAYER_HOSTS) || host === 'hf.space' || host.endsWith('.hf.space');
+  // True if EITHER reading of `src` lands on a provider host: the browser's (https page base)
+  // or sanitize-html's own host gate (a non-special `relative:` base, after its `//` rewrite).
+  // They disagree on forms like `//x.hf.space/p` and `https:x.hf.space/p`; whichever one admits
+  // the host, the exact player check must then run.
+  const hosts: string[] = [];
+  const read = (value: string, base: string) => {
+    try {
+      hosts.push(new URL(value, base).hostname.toLowerCase());
+    } catch {
+      // unparseable under this reading
+    }
+  };
+  read(src.trim().replace(/\\/g, '/'), 'https://relative.invalid');
+  read(src.replace(/^(\w+:)?\s*[\\/]\s*[\\/]/, '$1//'), 'relative://relative-site/0');
+  return hosts.some(
+    (host) => oneOf(host, EMBED_PLAYER_HOSTS) || host === 'hf.space' || host.endsWith('.hf.space')
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
