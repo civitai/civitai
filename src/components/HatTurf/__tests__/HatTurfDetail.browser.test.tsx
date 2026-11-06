@@ -719,12 +719,13 @@ describe('Hat Turf on image detail', () => {
     }
   });
 
-  test('Leave Hat Turf turns it off', async () => {
+  // Product decision (2026-11-06): leaving is on the event page's Hat Turf section only.
+  // Don't add a Leave button back to this popover without that decision being reversed.
+  test('the hat popover has no Leave: leaving is on the event page', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     click(q('hat-turf-detail-badge'));
-    await vi.waitFor(() => expect(text(/Leave Hat Turf/)).toBeTruthy());
-    click(text(/Leave Hat Turf/));
-    expect(h.optIn).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: false });
+    await vi.waitFor(() => expect(q('hat-turf-panel')?.textContent).toMatch(/Show hats/));
+    expect(q('hat-turf-panel')!.textContent).not.toMatch(/Leave/);
   });
 });
