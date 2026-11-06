@@ -11,6 +11,10 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
+import {
+  getEnabledRemixApps,
+  getRemixAppRegistry,
+} from '~/server/services/remix-app-registry.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
@@ -24,8 +28,6 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GenerationAspectRatio } from '~/shared/constants/generation.constants';
 import {
-  getSystemRemixApp,
-  SYSTEM_REMIX_APPS,
   TEAM_REMIX_SLUG,
   teamRemixApp,
   type RemixAppDefinition,
@@ -35,7 +37,6 @@ import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-
 import { firstAnswer } from '~/shared/remix-apps/mock-host';
 import { type RemixLogEntry, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
-import { REMIX_MENU_APPS, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
 import {
   getRemixSourceUrl,
   REMIX_FALLBACK_DIMENSIONS,
@@ -61,14 +62,20 @@ const ASPECT_BUCKETS: GenerationAspectRatio[] = [
 /** One source image per run; a cap above it would let a definition change send more. */
 const MAX_REFERENCE_IMAGES = 1;
 
-export function listRemixApps() {
-  return REMIX_MENU_APPS.map(({ slug, name, icon, description }) => ({
-    slug,
-    name,
-    icon,
-    description,
-    output: 'image' as const,
-  }));
+/** Every remix app, disabled ones too, so the tray can name a run of one; the menu lists `enabled`. */
+export async function listRemixApps() {
+  return (await getRemixAppRegistry()).map(
+    ({ slug, name, icon, description, target, enabled, app }) => ({
+      slug,
+      name,
+      icon,
+      description,
+      target,
+      enabled,
+      engine: app.engine,
+      output: 'image' as const,
+    })
+  );
 }
 
 export function snapAspectRatio(dims: { width?: number | null; height?: number | null }) {
@@ -326,10 +333,10 @@ export async function quoteRemixApps({
   await assertInputsUsable([getRemixSourceUrl(image)], caller, 'remixAppQuote');
   const pricing = await pricingFor(caller);
 
-  const prices = await Promise.all([
-    ...SYSTEM_RUNTIME_APPS.map((app) => quoteRuntimeApp(app, image, caller, pricing)),
-    ...SYSTEM_REMIX_APPS.map((app) => quoteApp(app, image, caller, pricing)),
-  ]);
+  const apps = (await getEnabledRemixApps()).filter((entry) => entry.target === 'image.remix');
+  const prices = await Promise.all(
+    apps.map(({ app }) => quoteRuntimeApp(app, image, caller, pricing))
+  );
   return { prices };
 }
 
@@ -526,7 +533,7 @@ export async function runRemixApp({
   quote: number;
   caller: RemixAppCaller;
 }) {
-  let app: RemixAppDefinition | undefined;
+  let app: RemixAppDefinition;
   let image: RemixSourceImage;
   if (slug === TEAM_REMIX_SLUG) {
     const offer = await resolveTeamRemix(imageId, caller, { onPrimary: true });
@@ -534,9 +541,11 @@ export async function runRemixApp({
     app = offer.app;
     image = await readSource(imageId);
   } else {
-    app = getSystemRemixApp(slug);
-    if (!app) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
-    image = await loadSource(imageId, caller, true);
+    // Every menu app runs through `start` now; a page loaded before that change still calls this.
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Remix apps were updated. Reload the page and run it again.',
+    });
   }
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertInputsUsable([run.sourceUrl], caller, 'remixAppRun');
@@ -549,7 +558,7 @@ export async function runRemixApp({
 
   // A one-segment run, so the tray lists it beside the runtime apps' runs.
   const runId = remixRunId({ userId: caller.user.id, slug, imageId: image.id, nonce });
-  const tags = remixRunTags({ slug: app.slug, runId, segment: 0 });
+  const tags = remixRunTags({ slug: app.slug, runId, segment: 0, runtime: false });
   const result = await submitPresetImageGen({
     ...run.submit,
     ...remixSubmitArgs(caller, tags, currencies),

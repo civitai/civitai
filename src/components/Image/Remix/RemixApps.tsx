@@ -14,7 +14,7 @@ import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/Ci
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openRemixAppModal } from '~/components/Dialog/triggers/remix-app';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { REMIX_MENU_APPS, type RemixMenuApp } from '~/shared/remix-apps/system-apps';
+import { type RemixListedApp, useRemixAppList } from '~/components/Image/Remix/useRemixAppList';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 import { trpc } from '~/utils/trpc';
@@ -33,14 +33,22 @@ const icons: Record<string, typeof IconSparkles> = {
   palette: IconPalette,
 };
 
+type RemixMenuApp = RemixListedApp;
+
 /** The remix apps this viewer can run on this image: the same rule the server applies. */
 export function useRemixApps(image: RemixSourceImage): RemixMenuApp[] {
   const features = useOptionalFeatureFlags();
   // The session's showNsfw, which the server reads too; `CurrentUser` leaves it out.
   const session = useOptionalCivitaiSessionContext();
+  const apps = useRemixAppList();
   if (!features?.remixApps || session?.type !== 'authed') return [];
   const viewer = { isGreen: !!features.isGreen, showNsfw: !!session.showNsfw };
-  return REMIX_MENU_APPS.filter((app) => !('refusal' in resolveRemixAppEngine(app, image, viewer)));
+  return apps.filter(
+    (app) =>
+      app.enabled &&
+      app.target === 'image.remix' &&
+      !('refusal' in resolveRemixAppEngine(app, image, viewer))
+  );
 }
 
 function RemixAppItem({
@@ -77,7 +85,7 @@ function RemixAppItem({
       onClick={() => {
         onRun?.();
         openRemixAppModal({
-          app: { slug: app.slug, name: app.name, runtime: app.runtime },
+          app: { slug: app.slug, name: app.name, runtime: true },
           imageId,
         });
       }}

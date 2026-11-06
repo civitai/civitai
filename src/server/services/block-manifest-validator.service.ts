@@ -4,6 +4,7 @@
 // `auth: "oauth"` means. It is read from the SHARED module, not from
 // `~/server/services/blocks/block-oauth-scope` (which re-exports it), to keep this file
 // client-bundle-safe — see the notes on the imports below.
+import { REMIX_BLOCK_ID_PREFIX } from '~/shared/remix-apps/row.schema';
 import {
   appStorageScopesIn,
   isKnownBlockScope,
@@ -469,6 +470,9 @@ export class BlockManifestValidator {
       errors.push(
         'blockId must be 3–40 chars, lowercase, start with a letter, and contain only a–z, 0–9, hyphen (it becomes <blockId>.civit.ai)'
       );
+    } else if (m.blockId.startsWith(REMIX_BLOCK_ID_PREFIX)) {
+      // The system remix apps' rows: blockId is unique, so an app here would take a remix slug.
+      errors.push(`blockId must not start with "${REMIX_BLOCK_ID_PREFIX}"`);
     }
     // version must be a semantic version (canonical rule, single-sourced).
     if (typeof m.version !== 'string') {

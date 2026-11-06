@@ -7,11 +7,14 @@ import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const h = vi.hoisted(() => ({
+  seedApps: (): Record<string, unknown>[] => [],
   startRemix: vi.fn(() => Promise.resolve()),
   openModal: vi.fn(),
   flags: { remixApps: true, isGreen: false } as Record<string, boolean>,
   user: { id: 9, showNsfw: true } as { id: number; showNsfw: boolean } | null,
   quoteEnabled: [] as boolean[],
+  /** What `remixApp.list` serves; null = the seed apps, all listed. */
+  apps: null as null | Record<string, unknown>[],
   /** What the open menu's quote returns; the default prices both kinds of app at 25. */
   quote: null as null | {
     isLoading: boolean;
@@ -48,6 +51,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...original,
     trpc: makeTrpcProxy(
       {
+        'remixApp.list': {
+          useQuery: () => ({ data: h.apps ?? h.seedApps() }),
+        },
         'remixApp.quote': {
           useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
             h.quoteEnabled.push(opts.enabled);
@@ -76,7 +82,21 @@ import { Menu } from '@mantine/core';
 import { RemixAppsSection } from '~/components/Image/Remix/RemixApps';
 import { RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import type { RemixSourceImage } from '~/components/Image/Remix/remix.utils';
-import { REMIX_MENU_APPS } from '~/shared/remix-apps/system-apps';
+import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
+import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
+
+/** The seed as `remixApp.list` returns it before any row exists. */
+const REMIX_MENU_APPS = SEED_REMIX_APPS.map(({ slug, name, description, target, spec }) => ({
+  slug,
+  name,
+  description,
+  target,
+  icon: spec.icon,
+  enabled: true,
+  engine: 'engine' in spec ? spec.engine : DEFAULT_ENGINE,
+  output: 'image',
+}));
+h.seedApps = () => REMIX_MENU_APPS;
 
 const video: RemixSourceImage = {
   id: 1,
@@ -86,8 +106,8 @@ const video: RemixSourceImage = {
   ingestion: 'Scanned',
   hasPositivePrompt: false,
 };
-const firstApp = REMIX_MENU_APPS.find((app) => !app.runtime)!;
-const runtimeApp = REMIX_MENU_APPS.find((app) => app.runtime)!;
+const firstApp = REMIX_MENU_APPS.find((app) => app.slug === 'make-it-real')!;
+const runtimeApp = REMIX_MENU_APPS.find((app) => app.slug === 'anime-it')!;
 
 const renderMenu = (image: RemixSourceImage) =>
   renderWithProviders(
@@ -102,6 +122,7 @@ beforeEach(() => {
   h.user = { id: 9, showNsfw: true };
   h.quoteEnabled = [];
   h.quote = null;
+  h.apps = null;
 });
 
 describe('Remix apps in the Remix menu', () => {
@@ -116,6 +137,27 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.quoteEnabled.at(-1)).toBe(true);
     for (const app of REMIX_MENU_APPS)
       await expect.element(page.getByRole('menuitem', { name: app.name })).toBeVisible();
+  });
+
+  test('lists neither a disabled app nor one for videos', async () => {
+    h.apps = [
+      { ...firstApp, enabled: false },
+      { ...runtimeApp, target: 'video.remix' },
+      { ...REMIX_MENU_APPS[2] },
+    ];
+    renderMenu(video);
+    await page.getByRole('button', { name: 'Remix' }).click();
+
+    // POSITIVE CONTROL: the enabled image app beside them is listed.
+    await expect
+      .element(page.getByRole('menuitem', { name: REMIX_MENU_APPS[2].name }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole('menuitem', { name: firstApp.name }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole('menuitem', { name: runtimeApp.name }))
+      .not.toBeInTheDocument();
   });
 
   test('with the flag off the sole option runs without a menu', async () => {

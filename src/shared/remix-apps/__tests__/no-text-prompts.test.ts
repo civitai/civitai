@@ -1,39 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import { SYSTEM_REMIX_APPS } from '~/shared/constants/remix-apps.constants';
+import { compileRemixApp } from '~/shared/remix-apps/compile';
+import type { RemixAsk } from '~/shared/remix-apps/define';
 import { dryRunRemixApp } from '~/shared/remix-apps/mock-host';
-import {
-  RESTYLE_STYLES,
-  SYSTEM_RUNTIME_APPS,
-  restylePrompt,
-} from '~/shared/remix-apps/system-apps';
+import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
+import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 
 const NO_TEXT = "Don't add any text";
+const source = { imageId: 7, url: 'https://image.example/s.png', width: 800, height: 800 };
 
-describe('system remix app prompts forbid added text', () => {
-  it.each(SYSTEM_REMIX_APPS.map((app) => [app.slug, app.prompt]))('%s', (_, prompt) => {
-    expect(prompt).toContain(NO_TEXT);
-  });
+const SEED_APPS = SEED_REMIX_APPS.map(({ slug, name, spec }) =>
+  'code' in spec ? CODE_REMIX_APPS[spec.code] : compileRemixApp({ slug, name, version: 1 }, spec)
+);
+const restyle = SEED_APPS.find((app) => app.slug === 'restyle')!;
 
-  it.each(SYSTEM_RUNTIME_APPS.map((app) => [app.slug, app] as const))(
-    'runtime app %s',
-    async (_, app) => {
-      const source = { imageId: 7, url: 'https://image.example/s.png', width: 800, height: 800 };
-      const { trace } = await dryRunRemixApp(app, source);
-      const prompts = trace.flatMap((step) =>
-        step.type === 'workflow' && step.request.kind === 'image' ? [step.request.prompt] : []
-      );
-      expect(prompts.length).toBeGreaterThan(0);
-      for (const prompt of prompts) expect(prompt).toContain(NO_TEXT);
-    }
+/** The image prompts a run sends, answering text asks with `extra` and choices with `option`. */
+async function promptsOf(app: (typeof SEED_APPS)[number], extra = '', option?: string) {
+  const answer = (spec: RemixAsk) =>
+    spec.kind === 'text' ? extra : spec.kind === 'pick' ? 0 : option ?? spec.options[0].value;
+  const { trace } = await dryRunRemixApp(app, source, { answer });
+  return trace.flatMap((step) =>
+    step.type === 'workflow' && step.request.kind === 'image' ? [step.request.prompt] : []
   );
+}
 
-  it.each(RESTYLE_STYLES.map((s) => s.value))('restyle %s, with and without an extra', (style) => {
-    expect(restylePrompt(style, '')).toContain(NO_TEXT);
-    expect(restylePrompt(style, 'a red paper umbrella')).toMatch(/Don't add any text[^.]*\.$/);
+describe('seeded remix app prompts forbid added text', () => {
+  it.each(SEED_APPS.map((app) => [app.slug, app] as const))('%s', async (_, app) => {
+    const prompts = await promptsOf(app);
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const prompt of prompts) expect(prompt).toContain(NO_TEXT);
   });
 
-  it('ukiyo-e also forbids seals and stamps', () => {
-    expect(restylePrompt('ukiyo-e', '')).toMatch(
+  const STYLES = ['watercolor', 'oil-painting', 'ukiyo-e', 'cyberpunk-neon', 'claymation'];
+  it.each(STYLES)('restyle %s, with and without an extra', async (style) => {
+    expect((await promptsOf(restyle, '', style))[0]).toContain(NO_TEXT);
+    expect((await promptsOf(restyle, 'a red paper umbrella', style))[0]).toMatch(
+      /Don't add any text[^.]*\.$/
+    );
+  });
+
+  it('ukiyo-e also forbids seals and stamps', async () => {
+    expect((await promptsOf(restyle, '', 'ukiyo-e'))[0]).toMatch(
       /Don't add any text, lettering, seals or stamps\.$/
     );
   });
