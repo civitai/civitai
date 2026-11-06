@@ -24,7 +24,7 @@ import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
@@ -53,7 +53,6 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
-import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readCollectionByIdViaKysely,
@@ -706,7 +705,7 @@ export const getCollectionById = async ({
   // `kysely-hot-reads-10` picks the path once per call: the Prisma read, or its one-statement Kysely
   // twin on the matching pool (the primary when the lag check chose the primary, else the replica).
   const collection = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_10))
-    ? await readCollectionByIdViaKysely(db === dbWrite ? kyselyWrite : kyselyRead, id)
+    ? await readCollectionByIdViaKysely(kyselyMatching(db), id)
     : await readCollectionByIdViaPrisma(db, id);
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
 
