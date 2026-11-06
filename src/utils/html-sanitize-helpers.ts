@@ -307,3 +307,36 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       : undefined,
   });
 }
+
+const TEXT_STYLE_ATTR_PROPERTIES = {
+  color: 'color',
+  backgroundColor: 'background-color',
+  fontFamily: 'font-family',
+  fontSize: 'font-size',
+  lineHeight: 'line-height',
+} as const;
+
+type TiptapJSON = {
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
+  content?: TiptapJSON[];
+};
+
+/**
+ * Applies SPAN_ALLOWED_STYLES to the textStyle marks of a Tiptap JSON doc, in place: an attribute
+ * whose value a span style would not keep is cleared. For docs parsed from stored HTML.
+ */
+export function boundTextStyleMarks<T extends TiptapJSON>(node: T): T {
+  for (const mark of node.marks ?? []) {
+    if (mark.type !== 'textStyle' || !mark.attrs) continue;
+    for (const [attr, property] of Object.entries(TEXT_STYLE_ATTR_PROPERTIES)) {
+      const value = mark.attrs[attr];
+      if (value == null) continue;
+      const allowed =
+        typeof value === 'string' &&
+        SPAN_ALLOWED_STYLES[property].some((pattern) => pattern.test(value.trim()));
+      if (!allowed) mark.attrs[attr] = null;
+    }
+  }
+  node.content?.forEach(boundTextStyleMarks);
+  return node;
+}
