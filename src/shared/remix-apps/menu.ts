@@ -1,6 +1,6 @@
 import { readRemixTag, REMIX_APP_TAG } from '~/shared/remix-apps/tags';
 
-/** App rows the Remix menu shows before "See more". */
+/** App rows the Remix menu shows; "See more" lists them all. */
 export const REMIX_MENU_ROWS = 5;
 
 /** The most apps a viewer can pin; settings ride every signed-in render, so it stays bounded. */
@@ -28,8 +28,7 @@ export function orderRemixMenuApps<T extends { slug: string }>({
     const app = bySlug.get(slug);
     if (app && !ordered.has(slug)) ordered.set(slug, app);
   }
-  const all = [...ordered.values()];
-  return { shown: all.slice(0, rows), hasMore: all.length > rows };
+  return [...ordered.values()].slice(0, rows);
 }
 
 /** Distinct app slugs from the viewer's remix workflows, newest first, as the queue lists them. */

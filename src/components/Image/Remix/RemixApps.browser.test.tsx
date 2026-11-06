@@ -318,13 +318,23 @@ describe('Remix apps in the Remix menu', () => {
       expect(h.openPicker.mock.calls[0][0]).toMatchObject({ apps: many, imageId: video.id });
     });
 
-    test('no See more while every app fits', async () => {
-      h.apps = many.slice(0, 5);
+    test('See more is offered even when every app fits, since pinning lives there', async () => {
+      h.apps = many.slice(0, 2);
       renderMenu(video);
       await page.getByRole('button', { name: 'Remix' }).click();
-      await expect.element(page.getByRole('menuitem', { name: 'App five' })).toBeVisible();
+      await expect.element(page.getByRole('menuitem', { name: 'See more' })).toBeVisible();
+    });
+
+    test('an unpinned row has no pin target, so a tap there opens the app', async () => {
+      h.apps = many.slice(0, 2);
+      h.settings = { remixApps: { pinned: ['app-two'] } };
+      renderMenu(video);
+      await page.getByRole('button', { name: 'Remix' }).click();
       await expect
-        .element(page.getByRole('menuitem', { name: 'See more' }))
+        .element(page.getByRole('menuitem', { name: 'App two' }).getByTitle('Unpin'))
+        .toBeVisible();
+      await expect
+        .element(page.getByRole('menuitem', { name: 'App one' }).getByTitle(/pin/i))
         .not.toBeInTheDocument();
     });
 

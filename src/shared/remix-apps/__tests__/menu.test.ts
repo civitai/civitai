@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { orderRemixMenuApps, recentRemixAppSlugs } from '~/shared/remix-apps/menu';
 
 const apps = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((slug) => ({ slug }));
-const slugsOf = (result: { shown: { slug: string }[] }) => result.shown.map((app) => app.slug);
+const slugsOf = (apps: { slug: string }[]) => apps.map((app) => app.slug);
 
 describe('orderRemixMenuApps', () => {
   it('puts pins first in pin order, tops up with recents, then the registry order', () => {
     const result = orderRemixMenuApps({ apps, pinned: ['f', 'c'], recent: ['g', 'c', 'a'] });
     expect(slugsOf(result)).toEqual(['f', 'c', 'g', 'a', 'b']);
-    expect(result.hasMore).toBe(true);
   });
 
   it('skips a pinned or recent slug this viewer cannot run here, without failing the rest', () => {
@@ -18,16 +17,6 @@ describe('orderRemixMenuApps', () => {
       recent: ['disabled', 'c'],
     });
     expect(slugsOf(result)).toEqual(['b', 'c', 'a']);
-    expect(result.hasMore).toBe(false);
-  });
-
-  it('offers See more only when an app is left out', () => {
-    expect(orderRemixMenuApps({ apps: apps.slice(0, 5), pinned: [], recent: [] }).hasMore).toBe(
-      false
-    );
-    expect(orderRemixMenuApps({ apps: apps.slice(0, 6), pinned: [], recent: [] }).hasMore).toBe(
-      true
-    );
   });
 });
 

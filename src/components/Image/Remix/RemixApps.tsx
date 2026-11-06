@@ -90,7 +90,6 @@ function RemixAppItem({
   imageId,
   price,
   loading,
-  pinned,
   onTogglePin,
   onRun,
 }: {
@@ -98,7 +97,7 @@ function RemixAppItem({
   imageId: number;
   price?: RemixAppPrice;
   loading: boolean;
-  pinned: boolean;
+  /** Present on a pinned row: the menu unpins, the picker pins. */
   onTogglePin?: () => void;
   onRun?: () => void;
 }) {
@@ -123,17 +122,16 @@ function RemixAppItem({
           )}
           {onTogglePin && (
             <span
-              // Not its own tab stop: the row is the menu item, and `P` pins it from the keyboard.
+              // Not its own tab stop: the row is the menu item, and `P` unpins it from the keyboard.
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 onTogglePin();
               }}
               className="flex cursor-pointer items-center p-0.5"
-              title={pinned ? 'Unpin' : 'Pin'}
+              title="Unpin"
             >
-              {/* A pin always shows, so it can be unpinned here; an unpinned row reveals it on hover. */}
-              <PinGlyph pinned={pinned} touch={pinned} />
+              <PinGlyph pinned touch />
             </span>
           )}
         </span>
@@ -173,7 +171,7 @@ export function RemixAppsSection({
   // Mounted only while the menu is open, so a card that is merely rendered fetches nothing.
   const { data: workflows } = useRemixWorkflows();
   const recent = useMemo(() => recentRemixAppSlugs(workflows), [workflows]);
-  const { shown, hasMore } = orderRemixMenuApps({ apps, pinned: pins, recent });
+  const shown = orderRemixMenuApps({ apps, pinned: pins, recent });
 
   return (
     <>
@@ -186,21 +184,20 @@ export function RemixAppsSection({
           imageId={imageId}
           price={priceOf(app.slug)}
           loading={loading}
-          pinned={pins.includes(app.slug)}
-          onTogglePin={canEdit ? () => toggle(app.slug) : undefined}
+          // Pinning is the picker's, so no hidden target on a touch screen pins by accident.
+          onTogglePin={canEdit && pins.includes(app.slug) ? () => toggle(app.slug) : undefined}
           onRun={onRun}
         />
       ))}
-      {hasMore && (
-        <Menu.Item
-          className="rounded-md px-2 py-1.5"
-          onClick={() => openRemixAppPicker({ apps, imageId, onRun })}
-        >
-          <Text size="sm" c="dimmed">
-            See more
-          </Text>
-        </Menu.Item>
-      )}
+      {/* Always: the picker is where apps are pinned, and where a pin on an unpriced row comes off. */}
+      <Menu.Item
+        className="rounded-md px-2 py-1.5"
+        onClick={() => openRemixAppPicker({ apps, imageId, onRun })}
+      >
+        <Text size="sm" c="dimmed">
+          See more
+        </Text>
+      </Menu.Item>
     </>
   );
 }
