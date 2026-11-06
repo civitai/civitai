@@ -47,6 +47,9 @@ const { updateArticleNsfwLevels } = await import('~/server/services/nsfwLevels.s
 const { recomputeArticleIngestionInTx, getArticleById } = await import(
   '~/server/services/article.service'
 );
+const { computeArticleDerivedNsfwLevel, evaluateAutoApproveGate } = await import(
+  '~/server/services/article-rating-review.helpers'
+);
 
 const ARTICLE_ID = 1;
 const OWNER = 7;
@@ -76,9 +79,8 @@ describe('article nsfwLevel recompute', () => {
       CREATE TABLE "ArticleReport" ("articleId" int, "reportId" int);
     `);
     const raw = pgliteRaw(db);
-    (dbMock.dbWrite.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-      raw.queryRaw
-    );
+    for (const client of [dbMock.dbWrite, dbMock.dbRead])
+      (client.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
   });
 
   beforeEach(async () => {
@@ -110,6 +112,11 @@ describe('article nsfwLevel recompute', () => {
     expect(await levelAfterRecompute({ nsfwLevel: NsfwLevel.X, ingestion: 'Scanned' })).toBe(
       NsfwLevel.X
     );
+  });
+
+  it("counts a scanned X banner in a rating dispute's derived level", async () => {
+    await levelAfterRecompute({ nsfwLevel: NsfwLevel.X, ingestion: 'Scanned' });
+    expect(await computeArticleDerivedNsfwLevel(ARTICLE_ID)).toBe(NsfwLevel.X);
   });
 
   it('takes a blocked banner to Blocked, as a blocked cover does', async () => {
@@ -155,10 +162,11 @@ describe('article ingestion recompute', () => {
       tx as unknown as Prisma.TransactionClient,
       ARTICLE_ID
     );
-    // The last write is the ingestion UPDATE; its first bound value is the new state.
+    const update = writes.find((w) => w.sql.includes('ingestion ='));
     return {
-      ingestion: writes.at(-1)?.values[0],
+      ingestion: update?.values[0],
       published: result.publishedNotificationUserId != null,
+      blockedImages: result.problemsNotification?.blockedImages ?? 0,
     };
   };
 
@@ -166,18 +174,56 @@ describe('article ingestion recompute', () => {
     expect(await recompute('Pending')).toEqual({
       ingestion: ArticleIngestionStatus.Pending,
       published: false,
+      blockedImages: 0,
     });
   });
 
-  it('blocks the article when its banner is blocked', async () => {
-    expect((await recompute('Blocked')).ingestion).toBe(ArticleIngestionStatus.Blocked);
+  it('blocks the article, and tells the author, when its banner is blocked', async () => {
+    expect(await recompute('Blocked')).toEqual({
+      ingestion: ArticleIngestionStatus.Blocked,
+      published: false,
+      blockedImages: 1,
+    });
   });
 
   it('publishes once the cover and banner are both scanned', async () => {
     expect(await recompute('Scanned')).toEqual({
       ingestion: ArticleIngestionStatus.Scanned,
       published: true,
+      blockedImages: 0,
     });
+  });
+});
+
+describe('rating dispute auto-approve gate', () => {
+  const gate = (bannerIngestion: string) => {
+    dbMock.dbRead.image.findMany.mockImplementation((async ({ where }: any) =>
+      where.id.in.map((id: number) => ({
+        ingestion: id === BANNER ? bannerIngestion : 'Scanned',
+      }))) as never);
+    dbMock.dbRead.imageConnection.count.mockResolvedValue(0 as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ derived: NsfwLevel.PG }] as never);
+    return evaluateAutoApproveGate({
+      article: {
+        id: ARTICLE_ID,
+        status: ArticleStatus.Published,
+        ingestion: ArticleIngestionStatus.Scanned,
+        nsfwLevel: NsfwLevel.R,
+        moderatorNsfwLevel: NsfwLevel.R,
+        moderatorNsfwLevelBasis: NsfwLevel.R,
+        coverId: COVER,
+        bannerId: BANNER,
+      },
+      suggestedLevel: NsfwLevel.PG,
+    });
+  };
+
+  it('will not auto-approve a lower rating while the banner is unscanned', async () => {
+    expect(await gate('Pending')).toMatchObject({ eligible: false });
+  });
+
+  it('auto-approves once the banner is scanned too', async () => {
+    expect(await gate('Scanned')).toMatchObject({ eligible: true });
   });
 });
 

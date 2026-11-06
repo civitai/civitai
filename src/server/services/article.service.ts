@@ -1400,15 +1400,14 @@ export const upsertArticle = async ({
       }
     }
 
-    // A replaced or cleared banner. Omitted (`bannerId === undefined`) leaves it in place.
-    if (
-      bannerId !== undefined &&
-      article.bannerId &&
-      article.bannerId !== bannerId &&
-      article.bannerId !== result.coverId
-    ) {
-      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.bannerId });
-      if (isImgOwner) await deleteImageById({ id: article.bannerId });
+    // A replaced or cleared banner. Omitted (`bannerId === undefined`) leaves it in place. A banner
+    // set by id can be an image shown elsewhere (another article's cover), so only an unused one goes.
+    if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
+      const unused = await dbWrite.image.findFirst({
+        where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
+        select: { id: true },
+      });
+      if (unused) await deleteImageById({ id: unused.id });
     }
 
     await applyArticleContentChange({
@@ -2286,7 +2285,10 @@ export async function linkArticleContentImages({
 
       // --- Orphan detection (always runs) ---
 
-      const excludeImageIds = [...contentImageIds, ...articleOwnImageIds({ coverId, bannerId })];
+      const excludeImageIds = [
+        ...contentImageIds,
+        ...articleOwnImageIds({ coverId: coverId ?? null, bannerId: bannerId ?? null }),
+      ];
 
       // Get orphaned connections for this article
       const orphanedConnections = await tx.imageConnection.findMany({

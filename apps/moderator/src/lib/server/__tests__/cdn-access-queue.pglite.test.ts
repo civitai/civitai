@@ -274,6 +274,24 @@ describe('a delete whose follow-up cannot be queued', () => {
     });
 
     expect(await imageExists(3)).toBe(false);
+    expect((await queueRow('CdnAccessSync', 3))?.data).toMatchObject({
+      url: uuid(3),
+      moderatorDelete: true,
+    });
+  });
+
+  it("keeps a deleted article's cover that is still another article's banner", async () => {
+    await articleWithCover(10, 1);
+    await db.query(`INSERT INTO "Article" ("id", "userId", "bannerId") VALUES (12, $1, 1)`, [
+      OWNER,
+    ]);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await articleExists(10)).toBe(false);
+    expect(await imageExists(1)).toBe(true);
   });
 
   it('fails an article delete and keeps the article, its connection and its cover', async () => {

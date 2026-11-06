@@ -57,8 +57,8 @@ export function deriveArticleIngestionState({
  * image, so every path that folds in "the cover" must fold in this list instead.
  */
 export function articleOwnImageIds(article: {
-  coverId?: number | null;
-  bannerId?: number | null;
+  coverId: number | null;
+  bannerId: number | null;
 }): number[] {
   const ids = [article.coverId, article.bannerId].filter((id): id is number => id != null);
   return [...new Set(ids)];

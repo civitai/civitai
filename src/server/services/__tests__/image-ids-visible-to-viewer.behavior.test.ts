@@ -193,3 +193,23 @@ describe('an image a moderator article delete keeps for a CSAM review or block',
     await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);
   });
 });
+
+describe('a postless article banner', () => {
+  it('is public once its article is, and owner-only while the article is a draft', async () => {
+    const seed = `
+      INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel", ingestion, "needsReview", "nsfwLevelLocked") VALUES
+        (301, ${OWNER}, NULL, 1, 'Scanned', NULL, false),
+        (302, ${OWNER}, NULL, 1, 'Scanned', NULL, false);
+      INSERT INTO "Article" (id, status, "publishedAt", ingestion, "bannerId") VALUES
+        (3, 'Published', now() - interval '1 day', 'Scanned', 301),
+        (4, 'Draft', NULL, 'Scanned', 302);`;
+    await Promise.all([replica.exec(seed), primary.exec(seed)]);
+
+    expect([...(await getImageIdsVisibleToViewer({ ids: [301, 302], userId: VIEWER }))]).toEqual([
+      301,
+    ]);
+
+    const cleanup = `TRUNCATE "Article";`;
+    await Promise.all([replica.exec(cleanup), primary.exec(cleanup)]);
+  });
+});

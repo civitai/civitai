@@ -331,11 +331,23 @@ async function deleteArticle(id: number): Promise<KeptImage[]> {
     await trx.deleteFrom('Article').where('id', '=', id).execute();
 
     // "Orphaned" means no remaining ImageConnection; a post membership (postId) does NOT keep an image alive.
-    const toDelete = [
+    const ownImageIds = [
       ...new Set([article.coverId, article.bannerId].filter((x): x is number => x != null)),
     ];
+    // A cover or banner set by id can also be another article's cover or banner.
+    const stillShown = ownImageIds.length
+      ? await trx
+          .selectFrom('Article')
+          .select(['coverId', 'bannerId'])
+          .where((eb) =>
+            eb.or([eb('coverId', 'in', ownImageIds), eb('bannerId', 'in', ownImageIds)])
+          )
+          .execute()
+      : [];
+    const shownIds = new Set(stillShown.flatMap((a) => [a.coverId, a.bannerId]));
+    const toDelete = ownImageIds.filter((imageId) => !shownIds.has(imageId));
 
-    const orphanCandidates = contentImageIds.filter((imageId) => !toDelete.includes(imageId));
+    const orphanCandidates = contentImageIds.filter((imageId) => !ownImageIds.includes(imageId));
     if (orphanCandidates.length) {
       const orphaned = await trx
         .selectFrom('Image')
