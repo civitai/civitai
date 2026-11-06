@@ -16,10 +16,15 @@ const state = vi.hoisted(() => ({ session: null as null | { user: Record<string,
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => state.session),
 }));
-// The flag guard reads the context's own flags (`trpcFlagGuardPerRequest`, on for everyone), and
-// the appeal form's flag is a user-segmented rollout: on only for a signed-in user.
+// The appeal form's flag stands in for a rollout segmented by user: on only for a signed-in one.
+// `trpcFlagGuardPerRequest` picks where the flag guard reads it: the context's own flags (on), or a
+// fresh evaluation against the context's current `user` (off).
+const guard = vi.hoisted(() => ({ perRequest: true }));
 const flagsFor = (user: unknown) =>
-  ({ trpcFlagGuardPerRequest: true, ...(user ? { siteAppealForm: true } : {}) } as never);
+  ({
+    trpcFlagGuardPerRequest: guard.perRequest,
+    ...(user ? { siteAppealForm: true } : {}),
+  } as never);
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlagsLazy: vi.fn(({ user }: { user?: unknown }) => flagsFor(user)),
@@ -81,6 +86,7 @@ async function apiCaller(user: Record<string, unknown>) {
 
 beforeEach(() => {
   state.session = null;
+  guard.perRequest = true;
 });
 
 describe('tRPC over a cookie session', () => {
@@ -102,12 +108,19 @@ describe('tRPC over a cookie session', () => {
     });
   });
 
-  // The appeal form's procedures are flag-gated, so the flags come from the full session: a
-  // banned account evaluated as signed-out would lose the form it is meant to use.
-  it('lets a banned session reach the site appeal form, flag gate included', async () => {
-    const { caller } = await apiCaller(BANNED);
-    await expect(caller.appealState()).resolves.toBe(BANNED.id);
-  });
+  // The appeal form's procedures are flag-gated, so the context's flags come from the full session:
+  // a banned account evaluated as signed-out would lose the form it is meant to use.
+  it.each([
+    ['from the context', true],
+    ['evaluated per call', false],
+  ])(
+    'lets a banned session past the site appeal form flag gate, flags read %s',
+    async (_, perRequest) => {
+      guard.perRequest = perRequest;
+      const { caller } = await apiCaller(BANNED);
+      await expect(caller.appealState()).resolves.toBe(BANNED.id);
+    }
+  );
 
   // A banned session still reads its own appeal state, so its responses must stay out of the
   // shared cache, as any signed-in session's do.
