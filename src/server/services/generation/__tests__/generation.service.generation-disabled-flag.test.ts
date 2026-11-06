@@ -345,8 +345,7 @@ describe('moderator flag writes', () => {
     const SQL =
       'UPDATE "ModelVersion" SET flags = (flags & ~($1::int)) | $2::int WHERE id = $3 RETURNING "modelId", flags';
 
-    // Both bits are cleared and the requested ones set in one statement, so a stale menu
-    // can never leave trains set on a version whose partner bit was just cleared.
+    // Clear and set in one statement: a read-then-write could leave trains set after a concurrent clear of partner.
     it.each([
       [false, false, 0],
       [true, false, PartnerService],
@@ -366,6 +365,18 @@ describe('moderator flag writes', () => {
         values: [PartnerService | PartnerTrains, bits, VERSION_ID],
       });
       expect(bustMvCache).toHaveBeenCalledWith(VERSION_ID, MODEL_ID);
+    });
+
+    it('reports the stored bits, not the request', async () => {
+      returning(PartnerService);
+      expect(
+        await setPartnerDisclosure({
+          id: VERSION_ID,
+          partnerService: true,
+          partnerTrains: true,
+          isModerator: true,
+        })
+      ).toEqual({ id: VERSION_ID, partnerService: true, partnerTrains: false });
     });
 
     it('refuses trains without partner service, without writing', async () => {

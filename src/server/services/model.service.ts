@@ -2015,7 +2015,7 @@ export const getModelsWithImagesAndModelVersions = async ({
               ? null
               : rank?.[`tippedAmountCount${input.period}`] ?? 0,
           },
-          version,
+          version: { ...version, flags: toPublicApiVersionFlags(version.flags) },
           // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))

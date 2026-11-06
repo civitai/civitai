@@ -79,7 +79,6 @@ export const isAdditionalResourceFeeWaived = (flags: number) =>
 
 export type PartnerDisclosure = { partnerService: boolean; partnerTrains: boolean };
 
-/** Trains is never shown without the partner bit: a stray PartnerTrains alone discloses nothing. */
 export const getPartnerDisclosure = (flags: number): PartnerDisclosure => {
   const partnerService = Flags.hasFlag(flags, ModelVersionFlag.PartnerService);
   return {
@@ -88,9 +87,6 @@ export const getPartnerDisclosure = (flags: number): PartnerDisclosure => {
   };
 };
 
-/**
- * `flags` as the public REST API has always served it. The partner bits are published as
- * booleans where the generator needs them, never inside this raw number.
- */
+/** The public REST API's `flags` value is a stable contract: strip bits added after it shipped. */
 export const toPublicApiVersionFlags = (flags: number) =>
   flags & ~(ModelVersionFlag.PartnerService | ModelVersionFlag.PartnerTrains);

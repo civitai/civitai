@@ -41,9 +41,8 @@ export function PartnerDisclosureIcons({
   );
 }
 
-// Hover alone leaves touch users without the text, so a tap opens it too. A tap pins it open
-// until a tap outside. A span, not a button: the icons sit inside buttons and options, and
-// their taps stop here so they don't select the thing they sit in.
+// A span, not a button: these sit inside buttons and options, so taps stop here rather than select them.
+// A tap also pins the popover open, since touch has no hover.
 function DisclosureIcon({ icon: Icon, text, size }: { icon: Icon; text: string; size: number }) {
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);

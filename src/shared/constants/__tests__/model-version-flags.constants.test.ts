@@ -15,7 +15,7 @@ describe('ModelVersionFlag', () => {
     expect(ModelVersionFlag.GenerationDisabled).toBe(2);
     expect(ModelVersionFlag.NotDerivative).toBe(4);
     expect(ModelVersionFlag.NotEvictable).toBe(8);
-    // Written by a hand-run backfill; renumbering repoints the rows it set.
+    // Persisted in ModelVersion.flags rows; renumbering silently repoints them.
     expect(ModelVersionFlag.PartnerService).toBe(32);
     expect(ModelVersionFlag.PartnerTrains).toBe(64);
   });

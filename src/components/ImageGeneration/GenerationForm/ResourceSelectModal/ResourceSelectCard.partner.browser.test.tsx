@@ -41,7 +41,7 @@ const version = (id: number, name: string, extra: object) => ({
   ...extra,
 });
 
-// Made-up ids. The first version (the one the card opens on) runs at a partner that trains.
+// Made-up ids.
 const hit = {
   id: 9001,
   name: 'Test Model',
@@ -68,5 +68,20 @@ describe('ResourceSelectCard partner icons', () => {
     await expect
       .element(page.getByRole('button', { name: TRAINS, exact: true }))
       .toBeInTheDocument();
+  });
+
+  test('a version no partner runs shows neither icon', async () => {
+    renderWithProviders(
+      <ResourceSelectCard
+        data={{ ...hit, version: hit.versions[1], versions: [hit.versions[1]] } as never}
+        selectSource="generation"
+        compact
+      />
+    );
+    await expect.element(page.getByText('Test Model')).toBeInTheDocument();
+    expect(document.querySelectorAll('[role="button"][aria-label^="A partner"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[role="button"][aria-label^="This partner"]')).toHaveLength(
+      0
+    );
   });
 });
