@@ -12,6 +12,7 @@ import {
   embedRenderAttrs,
   embedRenderSrc,
   isAllowedPlayerUrl,
+  isEmbedPlayerHost,
 } from '~/shared/utils/embed-providers';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
@@ -99,7 +100,12 @@ export function RenderHtml({
         iframe: function (_tagName, { allow: _allow, sandbox: _sandbox, ...attribs }) {
           if (thirdPartyAllowed) {
             const provider = isAllowedPlayerUrl(attribs.src);
-            if (!provider) return { tagName: 'iframe', attribs };
+            if (!provider) {
+              // Second line behind sanitizeHtml's filter: a provider host that is not an exact
+              // player URL never loads, so it can never load without its sandbox.
+              if (isEmbedPlayerHost(attribs.src)) delete attribs.src;
+              return { tagName: 'iframe', attribs };
+            }
             return {
               tagName: 'iframe',
               attribs: {

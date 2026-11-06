@@ -240,6 +240,26 @@ export function parseEmbedUrl(input: string): ParsedEmbed | null {
   );
 }
 
+/** Dialog preview for the legacy kinds; their nodes build the stored embed URL themselves. */
+export function legacyPreviewSrc(kind: LegacyEmbedKind, input: string): string | null {
+  const url = parseUrl(input, { allowHttp: true });
+  if (!url) return null;
+  const id = (re: RegExp) => re.exec(url.pathname)?.[1];
+  if (kind === 'youtube') {
+    const v =
+      url.hostname === 'youtu.be'
+        ? id(/^\/([\w-]{6,})/)
+        : url.searchParams.get('v') ?? id(/^\/(?:shorts|embed|live)\/([\w-]{6,})/);
+    return v && /^[\w-]+$/.test(v) ? `https://www.youtube.com/embed/${v}` : null;
+  }
+  if (kind === 'instagram') {
+    const m = /^\/(p|reel)\/([\w-]+)/.exec(url.pathname);
+    return m ? `https://www.instagram.com/${m[1]}/${m[2]}/embed` : null;
+  }
+  const poll = id(/^\/(?:polls\/|embed\/)?([\w-]+)\/?$/);
+  return poll ? `https://www.strawpoll.com/embed/${poll}` : null;
+}
+
 /** Bandcamp page URL check for the server lookup: https only, bandcamp hosts only. */
 export function parseBandcampPageUrl(input: string): URL | null {
   const url = parseUrl(input, { allowHttp: false });
@@ -266,7 +286,9 @@ function onlyParams(url: URL, allowed: string[]) {
  * Whatever is stored is overwritten at render, so a stored value is inert.
  */
 export function isAllowedPlayerUrl(src: string | undefined | null): EmbedProvider | null {
-  if (!src) return null;
+  // Absolute https only. A browser resolves `//host/x` or `/\host/x` against the page, so a
+  // relative form would be a second way to spell a URL that this check never saw.
+  if (!src || !/^https:\/\/[^/\\]/i.test(src)) return null;
   const url = parseUrl(src, { allowHttp: false });
   if (!url || url.hash) return null;
   const { hostname: host, pathname: path } = url;
@@ -325,9 +347,13 @@ export function isAllowedPlayerUrl(src: string | undefined | null): EmbedProvide
 /** True when the iframe host belongs to one of the new providers (and so must pass the full check). */
 export function isEmbedPlayerHost(src: string | undefined | null): boolean {
   if (!src) return false;
+  // Resolve the way a browser (and sanitize-html's host gate) would: protocol-relative and
+  // backslash forms included. `new URL(src)` alone throws on `//x.hf.space/p`, which would let
+  // that iframe skip the exact check entirely.
   let host: string;
   try {
-    host = new URL(src).hostname.toLowerCase();
+    const normalized = src.trim().replace(/\\/g, '/');
+    host = new URL(normalized, 'https://relative.invalid').hostname.toLowerCase();
   } catch {
     return false;
   }
@@ -347,7 +373,12 @@ const FALLBACK_PARENT = 'civitai.com';
  */
 export function embedRenderSrc(provider: EmbedProvider, src: string, host?: string | null) {
   if (provider !== 'twitch') return src;
-  const url = new URL(src);
+  let url: URL;
+  try {
+    url = new URL(src);
+  } catch {
+    return src;
+  }
   const parent = host?.split(':')[0] || FALLBACK_PARENT;
   url.searchParams.set('parent', parent);
   return url.toString();

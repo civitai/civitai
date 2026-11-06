@@ -9,10 +9,11 @@ import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { embedIframeAttrs } from '~/shared/tiptap/embed.node';
-import type { EmbedProvider, ParsedEmbed } from '~/shared/utils/embed-providers';
+import type { EmbedProvider, LegacyEmbedKind, ParsedEmbed } from '~/shared/utils/embed-providers';
 import {
   EMBED_PROVIDER_LABELS,
   isAllowedPlayerUrl,
+  legacyPreviewSrc,
   parseEmbedUrl,
 } from '~/shared/utils/embed-providers';
 import { isValidURL } from '~/utils/type-guards';
@@ -58,8 +59,12 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
   const lookup = trpc.content.resolveBandcampEmbed.useMutation();
   const bandcampPage = detected?.kind === 'bandcamp-lookup' ? detected.pageUrl : null;
 
+  // Debounced: a slug typed by hand matches the Bandcamp shape after its first letter, and each
+  // lookup is an outbound fetch and a rate-limit slot.
   useEffect(() => {
-    if (bandcampPage) lookup.mutate({ url: bandcampPage });
+    if (!bandcampPage) return;
+    const timer = setTimeout(() => lookup.mutate({ url: bandcampPage }), 500);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandcampPage]);
 
@@ -93,11 +98,12 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
     dialog.onClose();
   };
 
-  const waiting = !!bandcampPage && lookup.isPending;
-  const legacyLabel =
+  const waiting = !!bandcampPage && (lookup.isPending || lookup.variables?.url !== bandcampPage);
+  const legacy =
     detected && detected.kind !== 'embed' && detected.kind !== 'bandcamp-lookup'
-      ? EMBED_PROVIDER_LABELS[detected.kind]
+      ? { kind: detected.kind, src: legacyPreviewSrc(detected.kind, detected.url) }
       : null;
+  const legacyLabel = legacy ? EMBED_PROVIDER_LABELS[legacy.kind] : null;
 
   return (
     <Modal title={controlTitle} size="lg" {...dialog}>
@@ -116,7 +122,7 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
         {value.trim() && (
           <EmbedStatus
             player={player}
-            legacyLabel={legacyLabel}
+            legacy={legacy}
             waiting={waiting}
             lookupFailed={lookupFailed}
             canLink={canLink}
@@ -137,13 +143,13 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
 
 function EmbedStatus({
   player,
-  legacyLabel,
+  legacy,
   waiting,
   lookupFailed,
   canLink,
 }: {
   player: { provider: EmbedProvider; src: string } | null;
-  legacyLabel: string | null;
+  legacy: { kind: LegacyEmbedKind; src: string | null } | null;
   waiting: boolean;
   lookupFailed: boolean;
   canLink: boolean;
@@ -164,11 +170,14 @@ function EmbedStatus({
         <EmbedPreview provider={player.provider} src={player.src} />
       </Stack>
     );
-  if (legacyLabel)
+  if (legacy)
     return (
-      <Text size="sm" fw={600}>
-        Detected: {legacyLabel}
-      </Text>
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Detected: {EMBED_PROVIDER_LABELS[legacy.kind]}
+        </Text>
+        {legacy.src && <LegacyPreview kind={legacy.kind} src={legacy.src} />}
+      </Stack>
     );
   if (lookupFailed)
     return (
@@ -190,4 +199,17 @@ function EmbedPreview({ provider, src }: { provider: EmbedProvider; src: string 
   if (!allowed) return <ConsentBlockedEmbed kind={provider} />;
   const { allowfullscreen, ...attrs } = embedIframeAttrs(provider, src, window.location.hostname);
   return <iframe {...attrs} allowFullScreen={!!allowfullscreen} className="rounded border-0" />;
+}
+
+function LegacyPreview({ kind, src }: { kind: LegacyEmbedKind; src: string }) {
+  const { allowed } = useThirdPartyConsent();
+  if (!allowed) return <ConsentBlockedEmbed kind={kind} />;
+  return (
+    <iframe
+      src={src}
+      width="100%"
+      height={kind === 'youtube' ? 315 : 450}
+      className="rounded border-0"
+    />
+  );
 }

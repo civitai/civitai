@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  embedRenderAttrs,
   embedRenderSrc,
   isAllowedPlayerUrl,
+  legacyPreviewSrc,
   parseBandcampPageUrl,
   parseEmbedUrl,
 } from '~/shared/utils/embed-providers';
@@ -22,10 +24,7 @@ const SITES = [
       'https://soundcloud.com.evil.test/forss/flickermood',
       'https://soundcloud.com@evil.test/forss/flickermood',
     ],
-    badPlayers: [
-      'https://w.soundcloud.com.evil.test/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb',
-      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fevil.test%2Fa%2Fb',
-    ],
+    badPlayers: ['https://w.soundcloud.com/player/?url=https%3A%2F%2Fevil.test%2Fa%2Fb'],
   },
   {
     provider: 'spotify',
@@ -50,10 +49,7 @@ const SITES = [
       'https://vimeo.com.evil.test/76979871',
       'https://vimeo.com@evil.test/76979871',
     ],
-    badPlayers: [
-      'https://player.vimeo.com/redirect?to=evil',
-      'https://player.vimeo.com.evil.test/video/1',
-    ],
+    badPlayers: ['https://player.vimeo.com/redirect?to=evil'],
   },
   {
     provider: 'twitch',
@@ -64,10 +60,7 @@ const SITES = [
       'https://twitch.tv.evil.test/videos/1234567890',
       'https://twitch.tv@evil.test/videos/1234567890',
     ],
-    badPlayers: [
-      'https://player.twitch.tv/?video=v1&channel=x',
-      'https://player.twitch.tv.evil.test/?video=v1',
-    ],
+    badPlayers: ['https://player.twitch.tv/?video=v1&channel=x'],
   },
   {
     provider: 'huggingface',
@@ -79,7 +72,7 @@ const SITES = [
       'https://x.hf.space.evil.test/',
       'https://huggingface.co@evil.test/spaces/a/b',
     ],
-    badPlayers: ['https://a.b.hf.space/', 'https://evilhf.space/', 'https://x.hf.space/login'],
+    badPlayers: ['https://a.b.hf.space/', 'https://x.hf.space/login'],
   },
 ] as const;
 
@@ -141,24 +134,55 @@ describe('parseEmbedUrl', () => {
 });
 
 describe('sanitizeHtml embed iframes', () => {
-  it.each(SITES)('$provider: keeps the real player iframe', (site) => {
-    expect(sanitizeHtml(iframe(site.player))).toContain(
-      `src="${site.player.replace(/&/g, '&amp;')}"`
-    );
+  const kept = (src: string) =>
+    expect(sanitizeHtml(iframe(src))).toContain(`src="${src.replace(/&/g, '&amp;')}"`);
+
+  it.each(SITES)('$provider: keeps the real player iframe', (site) => kept(site.player));
+
+  it('keeps the other real player shapes', () => {
+    kept('https://bandcamp.com/EmbeddedPlayer/track=12345/size=large/tracklist=false/');
+    kept('https://bandcamp.com/EmbeddedPlayer/v=2/album=9/size=large/');
+    kept('https://clips.twitch.tv/embed?clip=FunnyClipSlug-abc');
   });
 
-  it('keeps a real Bandcamp player iframe', () => {
-    const src = 'https://bandcamp.com/EmbeddedPlayer/track=12345/size=large/tracklist=false/';
-    expect(sanitizeHtml(iframe(src))).toContain(src);
+  // A real provider host at a non-player path: only the exact-player filter can refuse these
+  // (sanitize-html's host list admits them), and it drops the iframe whole.
+  it.each([
+    ...SITES.flatMap((s) => s.badPlayers.map((url) => ({ provider: s.provider, url }))),
+    { provider: 'bandcamp', url: 'https://bandcamp.com/login' },
+    { provider: 'bandcamp', url: 'https://bandcamp.com/EmbeddedPlayer/track=1/?x=1' },
+    { provider: 'twitch', url: 'https://clips.twitch.tv/other?clip=x' },
+  ])('$provider: drops non-player $url', ({ url }) => {
+    expect(sanitizeHtml(iframe(url))).toBe('');
   });
 
-  it.each(
-    SITES.flatMap((s) => s.badPlayers.map((url) => ({ provider: s.provider, url }))).concat([
-      { provider: 'bandcamp', url: 'https://bandcamp.com/login' },
-      { provider: 'bandcamp', url: 'https://bandcamp.com.evil.test/EmbeddedPlayer/track=1/' },
-    ] as never)
-  )('$provider: strips lookalike player $url', ({ url }) => {
-    expect(sanitizeHtml(iframe(url))).not.toContain('src=');
+  // Each of these resolves in a browser to a provider host. `new URL(src)` with no base throws
+  // on them, which once let them skip the exact check and render without the HF sandbox.
+  it.each([
+    '//civitai-login.hf.space/signin',
+    '//x.hf.space/',
+    '  //w.soundcloud.com/signin',
+    '/\\bandcamp.com/login',
+    '//player.vimeo.com/video/1',
+    '&#x2f;&#x2f;open.spotify.com/login',
+    'https:\\\\player.vimeo.com/video/1',
+    // Scheme-less: once passed the player check, then threw in embedRenderSrc and blanked the page.
+    'player.twitch.tv/?video=v1',
+    // Lookalike hosts: sanitize-html's host list already removes the src.
+    'https://w.soundcloud.com.evil.test/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb',
+    'https://player.vimeo.com.evil.test/video/1',
+    'https://player.twitch.tv.evil.test/?video=v1',
+    'https://evilhf.space/',
+  ])('drops relative, backslash or lookalike src %s', (src) => {
+    expect(sanitizeHtml(iframe(src))).not.toMatch(/src=/);
+  });
+
+  it('keeps a twitch player after the render-time parent is added', () => {
+    for (const src of [
+      'https://player.twitch.tv/?video=v1234567890',
+      'https://clips.twitch.tv/embed?clip=abc',
+    ])
+      kept(embedRenderSrc('twitch', src, 'civitai.red'));
   });
 
   it('strips stored allow and sandbox attributes', () => {
@@ -182,6 +206,43 @@ describe('embedRenderSrc', () => {
     ).toBe('https://player.twitch.tv/?video=v1&parent=civitai.red');
     expect(embedRenderSrc('twitch', 'https://clips.twitch.tv/embed?clip=x', undefined)).toBe(
       'https://clips.twitch.tv/embed?clip=x&parent=civitai.com'
+    );
+  });
+});
+
+// Decided with the Articles lead: a Space is an arbitrary third-party app, so it may run
+// scripts but never submit forms in our page or navigate it. Do not add either flag back
+// without that decision being revisited.
+describe('embedRenderAttrs', () => {
+  it('sandboxes Hugging Face Spaces without forms or top navigation', () => {
+    const { sandbox, allow } = embedRenderAttrs('huggingface');
+    expect(allow).toBeUndefined();
+    expect(sandbox.split(' ').sort()).toEqual(
+      ['allow-downloads', 'allow-popups', 'allow-same-origin', 'allow-scripts'].sort()
+    );
+  });
+
+  it('gives the media players permissions but no sandbox', () => {
+    for (const provider of ['bandcamp', 'soundcloud', 'spotify', 'vimeo', 'twitch'] as const) {
+      expect(embedRenderAttrs(provider).sandbox).toBeUndefined();
+      expect(embedRenderAttrs(provider).allow).toContain('encrypted-media');
+    }
+  });
+});
+
+describe('legacyPreviewSrc', () => {
+  it('builds the official embed URL for the dialog preview', () => {
+    expect(legacyPreviewSrc('youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe(
+      'https://www.youtube.com/embed/dQw4w9WgXcQ'
+    );
+    expect(legacyPreviewSrc('youtube', 'https://youtu.be/dQw4w9WgXcQ')).toBe(
+      'https://www.youtube.com/embed/dQw4w9WgXcQ'
+    );
+    expect(legacyPreviewSrc('instagram', 'https://www.instagram.com/p/COZ3QqYhZ5I')).toBe(
+      'https://www.instagram.com/p/COZ3QqYhZ5I/embed'
+    );
+    expect(legacyPreviewSrc('strawpoll', 'https://strawpoll.com/polls/rae5gcp1')).toBe(
+      'https://www.strawpoll.com/embed/rae5gcp1'
     );
   });
 });
