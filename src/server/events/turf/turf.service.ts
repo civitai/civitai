@@ -29,6 +29,7 @@ import {
 } from '~/server/events/turf/turf-map';
 import { markTurfWatched, pushTurfCounts, type TurfPush } from '~/server/events/turf/turf-watch';
 import { logToAxiom } from '~/server/logging/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { sysRedis } from '~/server/redis/client';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
@@ -141,13 +142,7 @@ function cachedTeamPoints(event: TurfEvent, now: Date) {
   const cached = teamPointsCache.get(event.name);
   if (cached && now.getTime() - cached.at < TEAM_POINTS_TTL_MS) return cached.points;
   const points = getTeamPoints(event, now).catch((error: unknown) => {
-    void logToAxiom({
-      type: 'warning',
-      name: 'event-turf',
-      message: 'team points read failed; no catch-up',
-      event: event.name,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logSysRedisFailOpen('read-degraded', 'turf.cachedTeamPoints', error, { event: event.name });
     return null;
   });
   teamPointsCache.set(event.name, { at: now.getTime(), points });
@@ -198,8 +193,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
   const catchUp = stepAt(event.turf.catchUp ?? [], now)
     ? event
         .getUserTeam(userId)
+        .catch(() => null)
         .then((team) => turfCatchUpAt(event, team, now))
-        .catch(() => 1)
     : 1;
   const [row, [user], multiplier] = await Promise.all([
     dbRead.eventTurfStock.findUnique({

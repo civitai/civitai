@@ -69,7 +69,7 @@ export function catchUpMultiplier(step: CatchUpStep | undefined, points: number,
 
 /**
  * The supply schedule with every step's rate and cap scaled by `multiplier`. Caps stay whole
- * stickers, rounded down; the epsilon keeps 0.7 x 50 from flooring to 34.
+ * stickers, rounded down; the epsilon keeps 0.58 x 50 (28.999...) from flooring to 28.
  */
 export function scaleSupply(
   steps: readonly SupplyStep[],

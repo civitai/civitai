@@ -90,7 +90,8 @@ beforeAll(async () => {
     INSERT INTO "Post" VALUES (1, '2026-10-01', 'Public');
     INSERT INTO "Image" (id, "userId", "postId") VALUES (${IMAGE}, 7, 1);
     INSERT INTO "Cosmetic" VALUES (11, 'ContentDecoration', '{"event": "e", "team": "Blue"}');
-    INSERT INTO "UserCosmetic" VALUES (${TRAILING}, 11);
+    INSERT INTO "Cosmetic" VALUES (12, 'ContentDecoration', '{"event": "e", "team": "Pink"}');
+    INSERT INTO "UserCosmetic" VALUES (${TRAILING}, 11), (${LEADING}, 12);
   `);
 });
 afterAll(async () => db.close());
@@ -127,6 +128,17 @@ beforeEach(async () => {
 
 const setStock = (userId: number, stock: number, refilledAt: Date) =>
   db.query(`INSERT INTO "EventTurfStock" VALUES ('e', $1, $2, $3)`, [userId, stock, refilledAt]);
+const place = (userId: number, now: Date) =>
+  placeTurfSticker(
+    {
+      event: 'e',
+      userId,
+      imageId: IMAGE,
+      cosmeticId: userId === TRAILING ? 11 : 12,
+      data: { x: 0.5, y: 0.5, scale: 1, rotation: 0, flip: false },
+    },
+    now
+  );
 const storedStock = async (userId: number) =>
   (
     await db.query<{ stock: number }>(`SELECT stock FROM "EventTurfStock" WHERE "userId" = $1`, [
@@ -166,17 +178,33 @@ describe('Hat Turf catch-up supply', () => {
 
   it("a trailing team's first placement opens a bucket at the raised cap and spends from it", async () => {
     override = CATCH_UP;
-    await placeTurfSticker(
-      {
-        event: 'e',
-        userId: TRAILING,
-        imageId: IMAGE,
-        cosmeticId: 11,
-        data: { x: 0.5, y: 0.5, scale: 1, rotation: 0, flip: false },
-      },
-      later()
-    );
+    await place(TRAILING, later());
     expect(await storedStock(TRAILING)).toBe(99);
+  });
+
+  it("a trailing team's placement refills an existing bucket at the raised rate", async () => {
+    override = CATCH_UP;
+    const now = later();
+    await setStock(TRAILING, 10, new Date(now.getTime() - 2 * 3600_000));
+    await place(TRAILING, now);
+    // 10 + 2h at 20/h (10/h x 2) - 1 placed.
+    expect(await storedStock(TRAILING)).toBe(49);
+  });
+
+  it("a leading team's placement refills an existing bucket at the lowered rate and cap", async () => {
+    override = CATCH_UP;
+    let now = later();
+    await setStock(LEADING, 10, new Date(now.getTime() - 2 * 3600_000));
+    await place(LEADING, now);
+    // 10 + 2h at 5/h (10/h x 0.5) - 1 placed.
+    expect(await storedStock(LEADING)).toBe(19);
+
+    now = later();
+    await db.exec(`DELETE FROM "EventTurfStock"`);
+    await setStock(LEADING, 20, new Date(now.getTime() - 4 * 3600_000));
+    await place(LEADING, now);
+    // 20 + 4h at 5/h = 40, held to the cap of 25 (50 x 0.5) - 1 placed.
+    expect(await storedStock(LEADING)).toBe(24);
   });
 
   it('a later step takes over at its own minute, not before', async () => {
@@ -205,5 +233,15 @@ describe('Hat Turf catch-up supply', () => {
       perHour: 10,
       cap: 50,
     });
+  });
+
+  it('team totals that cannot be read leave a placement at supply as written', async () => {
+    override = CATCH_UP;
+    teamPointsFail = true;
+    const now = later();
+    await setStock(TRAILING, 10, new Date(now.getTime() - 2 * 3600_000));
+    await place(TRAILING, now);
+    // 10 + 2h at 10/h - 1 placed.
+    expect(await storedStock(TRAILING)).toBe(29);
   });
 });

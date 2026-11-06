@@ -135,7 +135,8 @@ describe('refillStock with a catch-up multiplier', () => {
   });
 
   it('caps stay whole stickers, rounded down', () => {
-    expect(scaleSupply([{ ...ONE[0], cap: 50 }], 0.7)[0].cap).toBe(35);
+    // 50 x 0.58 is 28.999... in floating point.
+    expect(scaleSupply([{ ...ONE[0], cap: 50 }], 0.58)[0].cap).toBe(29);
     expect(scaleSupply([{ ...ONE[0], cap: 50 }], 0.875)[0].cap).toBe(43);
   });
 });
