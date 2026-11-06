@@ -8,7 +8,7 @@ export default defineModeratorEndpoint('model.resolveLockReview', {
   returns: '{ modelId, approved, unlocked }',
   notes: [
     'Approving unlocks only the settings the owner named that are still locked; their values are left as they are.',
-    "Approving refuses while the owner's account is under an evidence hold, or once the model is flagged as a real person or a minor. Rejecting is always allowed.",
+    "Approving refuses while the owner's account is under an evidence hold, once the model is flagged as a real person or a minor, or while such a detection waits for a moderator. Rejecting is always allowed.",
     '`resolvedReason`, when sent, must be a `lockReview` reason for the verdict.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },

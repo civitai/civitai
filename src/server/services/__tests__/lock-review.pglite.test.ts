@@ -67,6 +67,7 @@ const {
   resolveLockReviewAppeal,
   getLockReviewState,
   latestModelAppealOfKind,
+  LOCK_REVIEW_DETECTION_HELD,
   LOCK_REVIEW_HELD,
   LOCK_REVIEW_UNAVAILABLE,
 } = await import('~/server/services/lock-review.service');
@@ -313,6 +314,29 @@ describe('approving a lock review', () => {
       nsfw: true,
     });
     expect((await appealRow()).status).toBe('Approved');
+  });
+
+  const heldDetection = (label: string) => ({
+    textScanFlags: { [label]: { redetected: { kind: 'redetected', textHash: 'held' } } },
+  });
+
+  it.each(['poi', 'minor'])(
+    'refuses while a %s detection is held for a moderator, and changes nothing',
+    async (label) => {
+      await seed({ locked: ['poi', 'minor', 'nsfw'], meta: heldDetection(label) });
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+      expect((await modelRow()).lockedProperties).toEqual(['poi', 'minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    }
+  );
+
+  it('still lets the review be rejected while a detection is held', async () => {
+    await seed({ locked: ['poi', 'nsfw'], meta: heldDetection('poi') });
+
+    await reject();
+
+    expect((await appealRow()).status).toBe('Rejected');
   });
 
   it('refuses a request filed by someone who no longer owns the model', async () => {

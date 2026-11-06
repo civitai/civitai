@@ -18,6 +18,7 @@ import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
+import { TEXT_SCAN_FLAGS_KEY } from '~/server/services/text-scan/flag-snapshot';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
 import { MATURE_LOCK_ATTRIBUTION_KEYS } from '~/shared/constants/mature-lock-reason.constants';
@@ -36,6 +37,9 @@ export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.
 /** Moderators only; never shown to the owner. */
 export const LOCK_REVIEW_HELD =
   "The owner's account is under an evidence hold, so this review can't be approved now.";
+/** Moderators only. */
+export const LOCK_REVIEW_DETECTION_HELD =
+  'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
 
 export async function getLockReviewState({
   modelId,
@@ -206,10 +210,13 @@ export async function resolveLockReviewAppeal({
         minor: boolean;
         held: boolean;
         ownerFiled: boolean;
+        detectionHeld: boolean;
       }[]
     >`
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
         a."userId" = m."userId" AS "ownerFiled",
+        COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
+          OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected', FALSE) AS "detectionHeld",
         ${
           approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
         } AS held
@@ -236,6 +243,7 @@ export async function resolveLockReviewAppeal({
         throw throwBadRequestError(
           'This model is now flagged as a real person or a minor; its locks stay. Reject the review instead.'
         );
+      if (row.detectionHeld) throw throwBadRequestError(LOCK_REVIEW_DETECTION_HELD);
       lift = locksToLift(asked.locks, locked);
       if (lift.length)
         await tx.model.update({
