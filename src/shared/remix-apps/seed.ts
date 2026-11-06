@@ -29,7 +29,7 @@ const restyleOption = (value: string, label: string, look: string, noText = NO_T
 
 /**
  * The system apps as rows, in menu order. The seed migration inserts exactly these
- * (`20261106120000_remix_apps_as_rows`), and `getRemixAppRegistry` serves them until it has.
+ * (`20261225120000_remix_apps_as_rows`), and `getRemixAppRegistry` serves them until it has.
  */
 export const SEED_REMIX_APPS: RemixAppInput[] = [
   edit(

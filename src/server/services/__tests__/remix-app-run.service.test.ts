@@ -153,7 +153,7 @@ vi.mock('~/server/services/image-visibility.service', async (importOriginal) => 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   fetchThroughCache: async (_key: string, fetch: () => Promise<unknown>) => fetch(),
-  bustFetchThroughCache: async () => undefined,
+  setFetchThroughCache: async () => undefined,
 }));
 vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) => {
   const real = await importOriginal<typeof Registry>();
@@ -413,7 +413,7 @@ beforeEach(() => {
   h.workflows = [];
   h.price = 30;
   // No rows yet: the registry serves the seed.
-  dbMock.dbRead.appBlock.findMany.mockResolvedValue([]);
+  dbMock.dbWrite.appBlock.findMany.mockResolvedValue([]);
   dbMock.dbRead.image.findUnique.mockImplementation(
     async ({ where }: { where: { id: number } }) => h.images.get(where.id) ?? null
   );
@@ -1361,7 +1361,7 @@ describe('a row-defined app', () => {
     };
   };
   const serve = (...rows: ReturnType<typeof row>[]) =>
-    dbMock.dbRead.appBlock.findMany.mockResolvedValue(rows as never);
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue(rows as never);
   const start = (answers: string[], quote?: number, nonce = 'nonce-comic', allowDisabled = false) =>
     startRemixRun({
       slug: 'comic-it',
@@ -1446,10 +1446,11 @@ describe('a row-defined app', () => {
 
   it('skips a stored row that no longer validates, and lists the others', async () => {
     const broken = row();
-    (broken.manifest.remix.engine.safe as { versionId: number }).versionId = 999999;
+    // An engine off the allowlist still serves (checked on save only); a row with no steps does not.
+    (broken.manifest.remix as { steps: unknown[] }).steps = [];
     serve(broken);
     await expect(start(['golden'], h.price)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    // POSITIVE CONTROL: the same row with a known engine runs.
+    // POSITIVE CONTROL: the same row with its steps runs.
     serve(row());
     await expect(start(['golden'], h.price, 'nonce-ok')).resolves.toMatchObject({
       status: 'running',

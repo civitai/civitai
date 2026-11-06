@@ -47,11 +47,14 @@ const ASPECT_RATIOS = [
   '9:16',
 ] as const satisfies readonly GenerationAspectRatio[];
 
-/** The engines a row may name: the remix edit engines. Mature only on one built for mature input. */
-const engineKey = (e: { ecosystemKey: string; modelVersionId: number }) =>
-  `${e.ecosystemKey}:${e.modelVersionId}`;
-const SAFE_ENGINES = new Set(Object.values(REMIX_ENGINES.edit).map(engineKey));
-const MATURE_ENGINES = new Set([engineKey(REMIX_ENGINES.edit.mature)]);
+/**
+ * The engine a saved row may name for each tier: the remix edit engine of that tier. Only the
+ * safe one runs safe sources under a provider policy, which a free-text ask relies on.
+ */
+const ENGINE_FOR_TIER = {
+  safe: REMIX_ENGINES.edit.safe,
+  mature: REMIX_ENGINES.edit.mature,
+} as const;
 
 const engine = z.strictObject({
   ecosystem: z.string().min(1).max(64),
@@ -125,16 +128,33 @@ export function placeholdersOf(prompt: string) {
   return [...prompt.matchAll(PLACEHOLDER)].map((m) => m[1]);
 }
 
-export const remixAppSpecSchema = z.union([declarativeSpec, codeSpec]).superRefine((spec, ctx) => {
+/**
+ * Where `spec` names an engine other than today's remix edit engine for its tier. Checked on save
+ * only: a stored row keeps serving after an engine version bump moves the allowlist on.
+ */
+export function remixEngineIssues(spec: RemixAppSpec) {
+  if ('code' in spec) return [];
+  const issues: { path: (string | number)[]; message: string }[] = [];
+  for (const tier of ['safe', 'mature'] as const) {
+    const named = spec.engine[tier];
+    const allowed = ENGINE_FOR_TIER[tier];
+    if (
+      named &&
+      (named.ecosystem !== allowed.ecosystemKey || named.versionId !== allowed.modelVersionId)
+    )
+      issues.push({
+        path: ['engine', tier],
+        message: `Use the remix ${tier} engine: ${allowed.ecosystemKey} ${allowed.modelVersionId}`,
+      });
+  }
+  return issues;
+}
+
+/** A spec's shape and wiring, without the engine allowlist: what a stored row must satisfy. */
+const storedSpecSchema = z.union([declarativeSpec, codeSpec]).superRefine((spec, ctx) => {
   if ('code' in spec) return;
   const issue = (path: (string | number)[], message: string) =>
     ctx.addIssue({ code: 'custom', path, message });
-
-  const { safe, mature } = spec.engine;
-  if (!SAFE_ENGINES.has(`${safe.ecosystem}:${safe.versionId}`))
-    issue(['engine', 'safe'], 'Not a remix engine');
-  if (mature && !MATURE_ENGINES.has(`${mature.ecosystem}:${mature.versionId}`))
-    issue(['engine', 'mature'], 'Not a remix engine for mature images');
 
   // Every name in use, and whether a prompt can fill it: a choice's own id fills nothing.
   const names = new Map<string, boolean>();
@@ -164,6 +184,12 @@ export const remixAppSpecSchema = z.union([declarativeSpec, codeSpec]).superRefi
     for (const name of placeholdersOf(step.prompt))
       if (!names.get(name)) issue(['steps', s, 'prompt'], `{{${name}}} is not an ask or fragment`);
   });
+});
+
+/** What a save must satisfy: the stored shape, on today's engines. */
+export const remixAppSpecSchema = storedSpecSchema.superRefine((spec, ctx) => {
+  for (const { path, message } of remixEngineIssues(spec))
+    ctx.addIssue({ code: 'custom', path, message });
 });
 
 export type RemixAppSpec = z.infer<typeof remixAppSpecSchema>;
@@ -196,6 +222,6 @@ export const remixManifestSchema = z.object({
   /** `<run version>.0.0`: semver like every block's, with the run version as its major. */
   version: z.string().regex(/^[1-9][0-9]*\.0\.0$/),
   targets: z.tuple([z.object({ slotId: z.enum(REMIX_SLOT_IDS) })]),
-  remix: remixAppSpecSchema,
+  remix: storedSpecSchema,
 });
 export type RemixManifest = z.infer<typeof remixManifestSchema>;

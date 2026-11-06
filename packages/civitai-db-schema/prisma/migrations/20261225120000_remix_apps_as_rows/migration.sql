@@ -12,9 +12,10 @@
 -- status is 'remix' (listed) or 'remix_disabled', never 'approved', so no App Blocks read that
 -- serves third-party apps (store, token mint, health, analytics) sees these rows.
 --
--- Until this runs, the registry serves the same apps from the seed constants, so it can be applied
--- before or after the deploy. Once it runs, a cached empty registry may be served for up to an
--- hour; a mod save busts it at once.
+-- Until this runs, the registry finds no rows and serves the same apps from the seed constants,
+-- so it can be applied before or after the deploy. Once it runs, a server may keep serving the
+-- seed (the same apps) from a cached empty read for up to an hour; the first mod write recaches
+-- the rows at once.
 --
 -- IDEMPOTENT: ON CONFLICT DO NOTHING, so re-applying never overwrites a mod's edits.
 --

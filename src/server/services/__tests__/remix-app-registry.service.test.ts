@@ -1,19 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
+// The registry's one entry, as Redis holds it.
+const cache = vi.hoisted(() => ({
+  entry: undefined as { data: unknown; stale: boolean } | undefined,
+}));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  fetchThroughCache: async (_key: string, fetch: () => Promise<unknown>) => fetch(),
-  bustFetchThroughCache: vi.fn(async () => undefined),
+  fetchThroughCache: async (_key: string, fetch: () => Promise<unknown>) => {
+    if (!cache.entry || cache.entry.stale) cache.entry = { data: await fetch(), stale: false };
+    return cache.entry.data;
+  },
+  setFetchThroughCache: vi.fn(async (_key: string, data: unknown) => {
+    cache.entry = { data, stale: false };
+  }),
+  // A bust only marks the entry stale, so the next read refetches.
+  bustFetchThroughCache: vi.fn(async () => {
+    if (cache.entry) cache.entry.stale = true;
+  }),
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  getRegisteredRemixApp,
+  getRemixAppRegistry,
+  listRemixAppsForAdmin,
   manifestOf,
   saveRemixApp,
+  setRemixAppEnabled,
   type RemixAppRow,
 } from '~/server/services/remix-app-registry.service';
-import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { RemixAppInput } from '~/shared/remix-apps/row.schema';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 
@@ -31,6 +47,7 @@ const written = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  cache.entry = undefined;
   dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ id: 'civitai-remix-apps' } as never);
 });
 
@@ -46,7 +63,6 @@ describe('saveRemixApp', () => {
       spec: { ...spec, steps: [{ ...spec.steps[0], quantity: 2 } as (typeof spec.steps)[0]] },
     });
     expect(written().data.version).toBe('4.0.0');
-    expect(bustFetchThroughCache).toHaveBeenCalledTimes(2);
   });
 
   it('adds a new app disabled and last', async () => {
@@ -72,5 +88,41 @@ describe('saveRemixApp', () => {
     dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue(null);
     await expect(saveRemixApp(pixelArt)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(dbMock.dbWrite.appBlock.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('the registry after a mod write', () => {
+  it('serves a disabled app as disabled at once, though the replica still has it enabled', async () => {
+    dbMock.dbRead.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1, 'remix')] as never);
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1, 'remix')] as never);
+    expect((await getRegisteredRemixApp('pixel-art', { allowDisabled: false })).enabled).toBe(true);
+
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+      stored(pixelArt, 1, 'remix_disabled'),
+    ] as never);
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+
+    await expect(
+      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await listRemixAppsForAdmin())[0]).toMatchObject({ slug: 'pixel-art', enabled: false });
+  });
+});
+
+describe('a stored row whose engine has left the allowlist', () => {
+  it('still serves, so an engine version bump does not empty the menu', async () => {
+    const spec = pixelArt.spec as Extract<RemixAppInput['spec'], { steps: unknown }>;
+    // The version the row was saved on, before the constant moved on.
+    const saved = {
+      ...pixelArt,
+      spec: { ...spec, engine: { safe: { ...spec.engine.safe, versionId: 1 } } },
+    };
+    dbMock.dbRead.appBlock.findMany.mockResolvedValue([stored(saved, 1)] as never);
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(saved, 1)] as never);
+
+    const registry = await getRemixAppRegistry();
+    expect(registry.map((app) => app.slug)).toEqual(['pixel-art']);
+    expect(registry[0].spec).toMatchObject({ engine: { safe: { versionId: 1 } } });
   });
 });

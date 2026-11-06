@@ -1,16 +1,17 @@
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
 import {
   REMIX_BLOCK_ID_PREFIX,
   REMIX_STATUS,
   REMIX_STATUSES,
+  remixEngineIssues,
   remixManifestSchema,
   type RemixAppInput,
   type RemixAppSpec,
@@ -95,6 +96,16 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
     return null;
   }
   const manifest = parsed.data;
+  // Saves check the engine; a stored row keeps serving after the allowlist moves on.
+  const engineIssues = remixEngineIssues(manifest.remix);
+  if (engineIssues.length)
+    logToAxiom({
+      name: 'remix-app-registry',
+      type: 'warning',
+      message: 'A remix app row names an engine no longer on the allowlist',
+      blockId: row.blockId,
+      issues: engineIssues,
+    }).catch(() => undefined);
   return register({
     slug: row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length),
     name: manifest.name,
@@ -114,8 +125,14 @@ function seedRegistry() {
   );
 }
 
+const REGISTRY_TTL = CacheTTL.hour;
+
+/**
+ * On the primary: a mod's write is followed by this read, and a lagging replica would cache the
+ * old row for the whole TTL. It runs once per TTL and once per mod write.
+ */
 export async function readRemixAppRows(): Promise<RemixAppRow[]> {
-  return dbRead.appBlock.findMany({
+  return dbWrite.appBlock.findMany({
     where: { status: { in: REMIX_STATUSES } },
     select: remixAppRowSelect,
   });
@@ -127,7 +144,7 @@ export async function readRemixAppRows(): Promise<RemixAppRow[]> {
  */
 export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
   const rows = await fetchThroughCache(REDIS_KEYS.CACHES.REMIX_APP_REGISTRY, readRemixAppRows, {
-    ttl: CacheTTL.hour,
+    ttl: REGISTRY_TTL,
   });
   if (!rows.length) return seedRegistry();
   return rows
@@ -136,8 +153,11 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
     .sort((a, b) => a.order - b.order || a.slug.localeCompare(b.slug));
 }
 
-export async function bustRemixAppRegistry() {
-  await bustFetchThroughCache(REDIS_KEYS.CACHES.REMIX_APP_REGISTRY);
+/** Caches the rows as written, so no reader is served the old ones while a refill runs. */
+export async function refreshRemixAppRegistry() {
+  await setFetchThroughCache(REDIS_KEYS.CACHES.REMIX_APP_REGISTRY, await readRemixAppRows(), {
+    ttl: REGISTRY_TTL,
+  });
 }
 
 /** The apps the menu lists and the quote prices. */
@@ -160,7 +180,7 @@ export async function getRegisteredRemixApp(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Mod writes. Each one busts the registry, so every server reads the change on its next request.
+// Mod writes. Each one recaches the registry, so every server reads the change on its next request.
 
 /** The fields a change to which makes recorded runs mean something else. */
 function runShape(spec: RemixAppSpec) {
@@ -242,7 +262,7 @@ export async function saveRemixApp(input: RemixAppInput) {
       },
     });
   }
-  await bustRemixAppRegistry();
+  await refreshRemixAppRegistry();
   return { slug: input.slug, version: runVersion };
 }
 
@@ -252,7 +272,7 @@ export async function setRemixAppEnabled({ slug, enabled }: { slug: string; enab
     data: { status: enabled ? REMIX_STATUS.enabled : REMIX_STATUS.disabled },
   });
   if (!count) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
-  await bustRemixAppRegistry();
+  await refreshRemixAppRegistry();
 }
 
 /** `slugs` in menu order; apps it leaves out keep their place after these. */
@@ -265,16 +285,12 @@ export async function orderRemixApps(slugs: string[]) {
       })
     )
   );
-  await bustRemixAppRegistry();
+  await refreshRemixAppRegistry();
 }
 
 /** Every row as stored, with why it is skipped when it no longer validates: the mod list. */
 export async function listRemixAppsForAdmin() {
-  const rows = await dbRead.appBlock.findMany({
-    where: { status: { in: REMIX_STATUSES } },
-    select: remixAppRowSelect,
-  });
-  return rows
+  return (await readRemixAppRows())
     .map((row) => {
       const parsed = remixManifestSchema.safeParse(row.manifest);
       const slug = row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length);

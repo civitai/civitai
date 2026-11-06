@@ -5,6 +5,7 @@ import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
+import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 
 /**
  * `remixApp.admin.*` through the real router and middleware: only a moderator with the remix apps
@@ -119,6 +120,17 @@ describe('remixApp.admin', () => {
             input: 'source',
           },
         ],
+      },
+    ],
+    [
+      'the mature engine on safe sources, which no provider policy covers',
+      {
+        engine: {
+          safe: {
+            ecosystem: REMIX_ENGINES.edit.mature.ecosystemKey,
+            versionId: REMIX_ENGINES.edit.mature.modelVersionId,
+          },
+        },
       },
     ],
     ['a field the schema does not know', { webhook: 'https://example.com' }],

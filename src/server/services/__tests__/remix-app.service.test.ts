@@ -179,7 +179,7 @@ const submitted = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.appBlock.findMany.mockResolvedValue([]);
+  dbMock.dbWrite.appBlock.findMany.mockResolvedValue([]);
   dbMock.dbRead.image.findUnique.mockImplementation(
     async ({ where }: { where: { id: number } }) => h.images.get(where.id) ?? null
   );
@@ -521,7 +521,7 @@ describe('remixApp.quote', () => {
       featuredOrder: order,
     });
     const [disabled, video, ...listed] = MENU_APPS;
-    dbMock.dbRead.appBlock.findMany.mockResolvedValue([
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
       rowOf(disabled, 0, 'remix_disabled'),
       rowOf({ ...video, target: 'video.remix' }, 1),
       ...listed.map((app, i) => rowOf(app, i + 2)),
