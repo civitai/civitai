@@ -1,4 +1,5 @@
 import { Switch } from '@mantine/core';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import { showErrorNotification } from '~/utils/notifications';
@@ -31,9 +32,17 @@ export function useHatTurfOwnerSwitch() {
   if (!user || !event || !stock || stock.mode === 'off') return null;
 
   return {
-    description: stock.optedIn
-      ? 'Leave Hat Turf first'
-      : "Off hides team hats on your images and they stop counting. They're back if you turn it on.",
+    description: stock.optedIn ? (
+      <>
+        Leave Hat Turf on the{' '}
+        <NextLink href={`/events/${event}#hat-turf`} className="underline">
+          event page
+        </NextLink>{' '}
+        first
+      </>
+    ) : (
+      "Off hides team hats on your images and they stop counting. They're back if you turn it on."
+    ),
     switchProps: {
       name: 'hatTurfOwner',
       checked: !stock.ownerOff,
