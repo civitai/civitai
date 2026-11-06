@@ -17,8 +17,16 @@ vi.mock('~/components/Sticker/sticker.util', async (orig) => ({
 vi.mock('~/components/UserAvatar/UserHoverCard', async (orig) => ({
   ...(await orig<object>()),
   useHoverCapable: () => true,
-  HoverCreatorCard: ({ username }: { username: string | null }) => (
-    <div data-testid="creator-card">{username}</div>
+  HoverCreatorCard: ({
+    username,
+    expectUsername,
+  }: {
+    username: string | null;
+    expectUsername?: string;
+  }) => (
+    <div data-testid="creator-card" data-expect={expectUsername}>
+      {username}
+    </div>
   ),
 }));
 
@@ -75,6 +83,21 @@ describe('description mentions', () => {
     await expect
       .poll(() => document.querySelector('[data-testid="creator-card"]'), { timeout: 5000 })
       .not.toBeNull();
+    // The card is keyed on the id, so the stored label (a pre-rename name) must not gate it.
+    expect(
+      document.querySelector('[data-testid="creator-card"]')?.hasAttribute('data-expect')
+    ).toBe(false);
+  });
+
+  test('a label link still makes the card check the name', async () => {
+    await render('Alpha');
+    await userEvent.hover(document.querySelector<HTMLElement>('a[data-type="mention"]')!);
+    await expect
+      .poll(() => document.querySelector('[data-testid="creator-card"]'), { timeout: 5000 })
+      .not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="creator-card"]')?.getAttribute('data-expect')
+    ).toBe('Alpha');
   });
 
   test('no card when an id link points at a different user', async () => {
