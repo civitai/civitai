@@ -365,14 +365,11 @@ describe('textScan.resolveCsamHold', () => {
       });
 
       // A Draft or Unpublished one records its status, so a moderator's restore returns it to its
-      // author instead of publishing it. Processing was a publish the author asked for.
+      // author instead of publishing it. Processing and a scheduled Draft were publishes the author
+      // asked for.
       it.each([
         ['a draft', { status: 'Draft', scheduledAt: null }, { statusBeforeViolation: 'Draft' }],
-        [
-          'a scheduled draft',
-          { status: 'Draft', scheduledAt: new Date('2027-01-01') },
-          { statusBeforeViolation: 'Draft' },
-        ],
+        ['a scheduled draft', { status: 'Draft', scheduledAt: new Date('2027-01-01') }, {}],
         ['a processing article', { status: 'Processing', scheduledAt: null }, {}],
         [
           'an owner-unpublished article',
@@ -419,6 +416,7 @@ describe('textScan.resolveCsamHold', () => {
         "revokes a %s article's share links in the transaction that takes it down",
         async (status) => {
           useTxClients();
+          const locks = recordTx(dbMock.dbWrite.$executeRaw, 0);
           const revokes = recordTx(dbMock.dbWrite.accessToken.updateMany, { count: 1 });
           const writes = recordTx(articleUpdate(), { count: 1 });
           const reads = recordTx(dbMock.dbWrite.article.findUnique, { status, metadata: {} });
@@ -430,16 +428,37 @@ describe('textScan.resolveCsamHold', () => {
           expect(revokes[0]).toBeGreaterThan(0);
           expect(revokes[0]).toBe(reads[0]);
           if (status === 'Draft') expect(revokes[0]).toBe(writes[0]);
-          // The share-link lock, in that transaction, before the article is read.
-          const tokenLock = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(
-            (c: unknown[]) => c[1] === 0x41544b && c[2] === 55
+          // The share-link lock in that transaction, after the ingestion lock (the order every
+          // holder of both takes them in) and before the article is read.
+          const raw = dbMock.dbWrite.$executeRaw.mock;
+          const tokenLock = raw.calls.findIndex((c: unknown[]) => c[1] === 0x41544b && c[2] === 55);
+          const ingestionLock = raw.calls.findIndex(
+            (c: unknown[]) => c.length === 2 && c[1] === 55
           );
-          expect(tokenLock).toBeGreaterThanOrEqual(0);
-          expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[tokenLock]).toBeLessThan(
+          expect([tokenLock, ingestionLock].every((i) => i >= 0)).toBe(true);
+          expect(locks[tokenLock]).toBe(reads[0]);
+          expect(locks[ingestionLock]).toBe(reads[0]);
+          expect(raw.invocationCallOrder[ingestionLock]).toBeLessThan(
+            raw.invocationCallOrder[tokenLock]
+          );
+          expect(raw.invocationCallOrder[tokenLock]).toBeLessThan(
             dbMock.dbWrite.article.findUnique.mock.invocationCallOrder[0]
           );
         }
       );
+
+      // Else the next restore would send a published article back to its author.
+      it('drops the status an earlier block recorded when it unpublishes a published article', async () => {
+        dbMock.dbWrite.article.findUnique.mockResolvedValue({
+          status: 'Published',
+          scheduledAt: null,
+          metadata: { foo: 1, statusBeforeViolation: 'Draft' },
+        });
+        await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+        expect(mocks.unpublishArticleById).toHaveBeenCalledWith(
+          expect.objectContaining({ metadata: { foo: 1 } })
+        );
+      });
 
       it.each([
         ['already removed', { status: 'UnpublishedViolation', metadata: {} }],

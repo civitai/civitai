@@ -109,6 +109,9 @@ async function unpublishArticle(
       customMessage,
       unpublishedAt: new Date().toISOString(),
       unpublishedBy: moderatorId,
+      // Only a Published article gets here: a restore must publish it again, whatever an earlier
+      // block recorded.
+      statusBeforeViolation: undefined,
     };
     await trx
       .updateTable('Article')

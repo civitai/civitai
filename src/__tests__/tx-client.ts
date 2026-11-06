@@ -27,7 +27,10 @@ const txClient = (id: number) =>
   new Proxy(dbMock.dbWrite as object, {
     get(target, prop) {
       const member = Reflect.get(target, prop);
-      if (typeof prop === 'string' && prop.startsWith('$')) return through(id, member);
+      // A symbol (pretty-format printing the client) or a non-object passes through as it is.
+      if (typeof prop !== 'string' || (typeof member !== 'object' && typeof member !== 'function'))
+        return member;
+      if (prop.startsWith('$')) return through(id, member);
       return new Proxy(member, {
         get: (model, method) => {
           const fn = Reflect.get(model, method);

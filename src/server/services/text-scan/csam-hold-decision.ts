@@ -168,11 +168,14 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
         await lockAccessTokens(tx, entityId);
         const article = await tx.article.findUnique({
           where: { id: entityId },
-          select: { status: true, metadata: true },
+          select: { status: true, scheduledAt: true, metadata: true },
         });
         if (!article || article.status === ArticleStatus.UnpublishedViolation) return null;
         await revokeActiveAccessTokens('Article', entityId, tx);
-        const metadata = (article.metadata as ArticleMetadata | null) || {};
+        const metadata = violationMetadata(
+          article,
+          (article.metadata as ArticleMetadata | null) || {}
+        );
         if (article.status === ArticleStatus.Published) return { metadata };
         // unpublishArticleById refuses anything not Published. The violation status is what stops
         // ingestion, the scheduler or the owner from publishing it later; it is not in search now.
@@ -181,7 +184,7 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
           data: {
             status: ArticleStatus.UnpublishedViolation,
             metadata: {
-              ...violationMetadata(article.status, metadata),
+              ...metadata,
               unpublishedReason: ARTICLE_UNPUBLISH_REASON,
               unpublishedAt: new Date().toISOString(),
               unpublishedBy: actor.id,

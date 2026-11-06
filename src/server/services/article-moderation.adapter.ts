@@ -10,8 +10,8 @@ import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { applyRatingFloor, readRatedEntity } from '~/server/services/text-scan/rated-entities';
 import {
+  blockReturnsToAuthor,
   isPublicArticle,
-  isShareableArticleStatus,
   violationMetadata,
 } from '~/server/services/text-scan/public-content';
 import {
@@ -76,28 +76,32 @@ export const articleModerationAdapter: ModerationAdapter = {
     }
 
     // If blocked, auto-unpublish and notify. Its share links end in the same write, under the
-    // lock a link being created takes, so none outlives the block.
+    // lock a link being created takes, so none outlives the block. The row lock keeps an unpublish
+    // racing this from being overwritten with what was read before it.
     if (blocked) {
       const article = await dbWrite.$transaction(async (tx) => {
         await lockAccessTokens(tx, entityId);
-        const article = await tx.article.findUnique({
-          where: { id: entityId },
-          select: { status: true, userId: true, metadata: true },
-        });
+        const [article] = await tx.$queryRaw<
+          {
+            status: ArticleStatus;
+            userId: number;
+            scheduledAt: Date | null;
+            metadata: ArticleMetadata | null;
+          }[]
+        >`SELECT status, "userId", "scheduledAt", metadata FROM "Article" WHERE id = ${entityId} FOR UPDATE`;
         if (!article || article.status === ArticleStatus.UnpublishedViolation) return null;
-        const metadata = (article.metadata as ArticleMetadata | null) ?? {};
         await tx.article.update({
           where: { id: entityId },
           data: {
             status: ArticleStatus.UnpublishedViolation,
-            metadata: violationMetadata(article.status, metadata),
+            metadata: violationMetadata(article, article.metadata ?? {}),
           },
         });
         await revokeActiveAccessTokens('Article', entityId, tx);
         return article;
       });
-      // A Draft or Unpublished article was not live, so the block unpublished nothing to tell of.
-      if (article && !isShareableArticleStatus(article.status)) {
+      // One its author had not sent live was not unpublished, so there is nothing to tell.
+      if (article && !blockReturnsToAuthor(article)) {
         await createNotification({
           userId: article.userId,
           category: NotificationCategory.System,

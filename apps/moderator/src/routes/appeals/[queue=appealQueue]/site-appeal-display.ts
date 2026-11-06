@@ -63,7 +63,8 @@ export function approvalEffect(
 const LIFTED: Record<SiteAppealLift, string> = {
   ban: 'unbanned',
   mute: 'unmuted',
-  article: 'article republished',
+  // A blocked draft goes back to its author unpublished, so not 'republished'.
+  article: 'article restored',
   model: 'model republished',
 };
 

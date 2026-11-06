@@ -115,12 +115,14 @@ describe('articleModerationAdapter — text scan', () => {
 });
 
 describe('articleModerationAdapter — a block', () => {
+  type Row = { status: string; userId: number; scheduledAt?: Date | null; metadata: object | null };
   // A transaction client distinct from dbWrite, so a call made outside the transaction cannot
   // pass for one made inside it.
-  const block = async (article: { status: string; userId: number; metadata: object | null }) => {
+  const block = async (row: Row) => {
     const tx = {
       $executeRaw: vi.fn(async () => 0),
-      article: { findUnique: vi.fn(async () => article), update: vi.fn(async () => ({})) },
+      $queryRaw: vi.fn(async () => [{ scheduledAt: null, ...row }]),
+      article: { update: vi.fn(async () => ({})) },
       accessToken: { updateMany: vi.fn(async () => ({ count: 1 })) },
     };
     dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (c: unknown) => unknown) =>
@@ -136,12 +138,21 @@ describe('articleModerationAdapter — a block', () => {
     where: { resourceType: 'Article', resourceId: 4, revokedAt: null },
     data: { revokedAt: expect.any(Date) },
   };
+  const written = (tx: Awaited<ReturnType<typeof block>>) =>
+    (tx.article.update.mock.calls[0] as unknown as [{ data: unknown }])[0].data;
 
   // A shared draft is scanned, so it can be blocked. The status it had lets a moderator's restore
   // return it to its author instead of publishing it, and its links end with the block.
   it('takes a shared draft down with its links in one transaction, recording its status', async () => {
     const tx = await block({ status: 'Draft', userId: 9, metadata: { theme: 'x' } });
     expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual([0x41544b, 4]);
+    // The row is read under the share-link lock, and locked for the write.
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[0]
+    );
+    expect((tx.$queryRaw.mock.calls[0] as unknown as [string[]])[0].join('?')).toMatch(
+      /FOR UPDATE$/
+    );
     expect(tx.article.update).toHaveBeenCalledWith({
       where: { id: 4 },
       data: {
@@ -154,18 +165,21 @@ describe('articleModerationAdapter — a block', () => {
     expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
   });
 
-  it('tells no draft author their article was unpublished', async () => {
+  it('tells no author of an article they had not sent live that it was unpublished', async () => {
     await block({ status: 'Draft', userId: 9, metadata: null });
     await block({ status: 'Unpublished', userId: 9, metadata: null });
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('tells a published article author, and records no draft status to restore to', async () => {
-    const tx = await block({ status: 'Published', userId: 9, metadata: null });
-    expect(tx.article.update).toHaveBeenCalledWith({
-      where: { id: 4 },
-      data: { status: 'UnpublishedViolation', metadata: {} },
-    });
+  // Scheduling is the author asking for it to go live, so it is a publish taken down, as before
+  // share links: the author is told, and a restore publishes it.
+  it.each([
+    ['published', { status: 'Published' }],
+    ['scheduled', { status: 'Draft', scheduledAt: new Date('2027-01-01') }],
+  ])('tells the author of a %s article, and records no status to restore to', async (_, row) => {
+    const tx = await block({ userId: 9, metadata: { statusBeforeViolation: 'Draft' }, ...row });
+    // A status an earlier block left goes too, or the next restore would unpublish it.
+    expect(written(tx)).toEqual({ status: 'UnpublishedViolation', metadata: {} });
     expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
   });
 });

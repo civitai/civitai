@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { ArticleMetadata } from '~/server/schema/article.schema';
 import { ArticleStatus, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 // Scheduled counts as public so the verdict exists by the time the content goes live.
@@ -36,13 +37,27 @@ export function isShareableArticleStatus(status: ArticleStatus) {
 }
 
 /**
- * A block moving an article to UnpublishedViolation records a draft's status, so a moderator's
- * restore returns the draft to its author instead of publishing it.
+ * A block took this article down before its author asked for it to go live (an unscheduled Draft,
+ * or Unpublished), so a moderator's restore must return it to its author, not publish it.
+ * Processing and a scheduled Draft are publishes the author asked for, as before share links.
  */
-export function violationMetadata<T extends object>(status: ArticleStatus, metadata: T) {
-  return isShareableArticleStatus(status)
-    ? { ...metadata, statusBeforeViolation: status }
-    : metadata;
+export function blockReturnsToAuthor(article: { status: ArticleStatus; scheduledAt: Date | null }) {
+  return isShareableArticleStatus(article.status) && !isPublicArticle(article);
+}
+
+/**
+ * The metadata a block moving an article to UnpublishedViolation writes: the status the restore
+ * returns it to, when `blockReturnsToAuthor`, and never a status an earlier block left behind.
+ */
+export function violationMetadata(
+  article: { status: ArticleStatus; scheduledAt: Date | null },
+  metadata: ArticleMetadata
+): ArticleMetadata {
+  const rest = { ...metadata };
+  delete rest.statusBeforeViolation;
+  return blockReturnsToAuthor(article)
+    ? { ...rest, statusBeforeViolation: article.status as 'Draft' | 'Unpublished' }
+    : rest;
 }
 
 // Processing and a scheduled Draft go live only once the text verdict is in.

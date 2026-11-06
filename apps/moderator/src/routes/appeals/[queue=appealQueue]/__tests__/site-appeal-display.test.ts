@@ -67,6 +67,13 @@ describe('outcomeLabel', () => {
     ).toBe('Appeal approved: unbanned, unmuted');
   });
 
+  // A lifted article may be a blocked draft, which goes back to its author unpublished.
+  it('says an article was restored, not republished', () => {
+    expect(
+      outcomeLabel({ type: 'success', status: 200, data: { lifted: ['article'] } }, 'Approved')
+    ).toBe('Approved: article restored');
+  });
+
   it('keeps the plain outcome when nothing was lifted or the action failed', () => {
     expect(
       outcomeLabel({ type: 'success', status: 200, data: { lifted: [] } }, 'Appeal rejected')

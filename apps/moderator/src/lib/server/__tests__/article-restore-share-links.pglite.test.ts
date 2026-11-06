@@ -132,6 +132,23 @@ describe("a moderator's article restore", () => {
     expect(await row()).toEqual({ status: 'Unpublished', publishedAt, metadata: {} });
   });
 
+  // A moderator's unpublish takes down a published article: a status an earlier block recorded
+  // must not send it to its author on the next restore.
+  it("restores a moderator's unpublish as published, whatever an earlier block recorded", async () => {
+    await db.exec(`UPDATE "Article" SET status = 'Published',
+      metadata = '{"statusBeforeViolation":"Draft"}' WHERE id = ${ARTICLE}`);
+    const unpublish = await moderateArticle({
+      action: 'unpublish',
+      articleId: ARTICLE,
+      userId: 1,
+      reason: 'mature-real-person',
+      customMessage: null,
+    });
+    expect(unpublish).toEqual({ ok: true });
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    expect((await row()).status).toBe('Published');
+  });
+
   it('leaves the links alone when the restore is refused', async () => {
     await db.exec(`UPDATE "Article" SET status = 'Published' WHERE id = ${ARTICLE}`);
     expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual({

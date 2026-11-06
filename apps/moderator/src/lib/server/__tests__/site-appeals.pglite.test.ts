@@ -212,6 +212,17 @@ describe('site appeal queues', () => {
     expect([last.items.map((r) => r.id), last.hasMore]).toEqual([[112], false]);
   });
 
+  // The preview reads this: approving a blocked draft must not promise to publish it.
+  it('says a blocked draft goes back to its author, not live', async () => {
+    await pg.exec(
+      `UPDATE "Article" SET metadata = '{"statusBeforeViolation":"Draft"}' WHERE id = 20`
+    );
+    const articles = await getSiteAppealQueue({ category: 'Article', limit: 10, offset: 0 });
+    expect(articles.items.find((r) => r.id === 102)!.subject).toMatchObject({
+      restoresTo: 'Draft',
+    });
+  });
+
   it('counts each queue', async () => {
     expect(await countSiteAppeals()).toEqual({ Account: 4, Article: 3, Model: 2, Other: 2 });
   });
