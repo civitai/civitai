@@ -131,6 +131,13 @@ describe('getEmbedAvailability', () => {
 });
 
 describe('getEmbedAvailability input', () => {
+  it('answers a repeated id once', async () => {
+    feeds([{ id: 1, nsfwLevel: NsfwLevel.PG }], []);
+    const { models } = await run({ modelIds: [1, 1, 2, 1] }, signedOut);
+
+    expect(models.map((m) => m.id)).toEqual([1, 2]);
+  });
+
   it('refuses more ids per type than one card request can hold', () => {
     const ids = Array.from({ length: 101 }, (_, i) => i + 1);
     expect(getEmbedAvailabilitySchema.safeParse({ modelIds: ids }).success).toBe(false);

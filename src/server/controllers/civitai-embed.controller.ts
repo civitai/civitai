@@ -45,6 +45,8 @@ export async function getEmbedAvailabilityHandler({
             ...filters,
             ids: input.imageIds,
             limit: input.imageIds.length,
+            // Only id and nsfwLevel are read, so skip the default cosmetics hydration.
+            include: [],
           }),
           ctx: anonymous,
         }).then((r) => r.items)
