@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
@@ -7,7 +8,7 @@ import { seedPlayer, setGold } from '../../../test/seed';
 import { getGoldBalance } from './balance';
 import type { BuzzGrant, BuzzPort } from './buzz';
 import { BuzzRejectedError } from './buzz';
-import { convertGold, markConversionPaid, retryPendingConversions } from './convert';
+import { markConversionPaid, retryPendingConversions, settleConversion } from './convert';
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 
@@ -48,6 +49,38 @@ const row = async (userId: number) =>
 const conversions = async () =>
   (await pg.query<Record<string, unknown>>(`SELECT * FROM "KnightsGoldConversion" ORDER BY id`))
     .rows;
+
+/** Reserves gold the way a shop Buzz pack does: a pending conversion plus the gold added to goldConverted, in one transaction. */
+async function reserve(playerId: number, gold: number) {
+  return db.transaction().execute(async (trx) => {
+    const conversion = await trx
+      .insertInto('KnightsGoldConversion')
+      .values({
+        playerId,
+        gold,
+        buzz: gold / 20,
+        status: 'pending',
+        externalTransactionId: `knights-gold-conversion:${randomUUID()}`,
+        createdAt: sql<Date>`clock_timestamp()`,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await trx
+      .updateTable('NewOrderPlayer')
+      .set({ goldConverted: sql<number>`"goldConverted" + ${gold}` })
+      .where('userId', '=', playerId)
+      .execute();
+    return conversion;
+  });
+}
+/** Reserves, then asks Buzz once, like the shop's purchase path. */
+async function reserveAndSettle(
+  port: BuzzPort,
+  { gold = 10_000, log }: { gold?: number; log?: (e: Record<string, unknown>) => unknown } = {}
+) {
+  const conversion = await reserve(1, gold);
+  return settleConversion(db, port, conversion, { now: NOW, log });
+}
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -123,141 +156,6 @@ describe('gold balance', () => {
   });
 });
 
-describe('convertGold', () => {
-  it('pays the whole Buzz in the convertible gold and records the transaction', async () => {
-    const buzz = fakeBuzz();
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 12_510 });
-
-    const result = await convertGold(db, buzz.port, { playerId: 1, now: NOW });
-
-    expect(result).toEqual({ status: 'converted', gold: 12_500, buzz: 625, transactionId: 'tx-1' });
-    expect(buzz.grantYellow).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 1, amount: 625 })
-    );
-    expect(await row(1)).toEqual({ goldConverted: 12_500 });
-    expect(await conversions()).toEqual([
-      expect.objectContaining({
-        playerId: 1,
-        gold: 12_500,
-        buzz: 625,
-        status: 'paid',
-        buzzTransactionId: 'tx-1',
-      }),
-    ]);
-    expect(await getGoldBalance(db, 1)).toMatchObject({ convertible: 10 });
-  });
-
-  it('refuses below the minimum and asks Buzz for nothing', async () => {
-    const buzz = fakeBuzz();
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 99 });
-
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toEqual({
-      status: 'refused',
-      reason: 'below-minimum',
-    });
-    expect(buzz.grantYellow).not.toHaveBeenCalled();
-    expect(await conversions()).toEqual([]);
-  });
-
-  it('converts gold as soon as it is earned, with no check run in between', async () => {
-    const buzz = fakeBuzz();
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 50_000 });
-
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
-      status: 'converted',
-      gold: 50_000,
-      buzz: 2_500,
-    });
-  });
-
-  it('refuses a held player with gold to convert, and keeps the gold for when they are released', async () => {
-    const buzz = fakeBuzz();
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 20_000 });
-    await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-19' WHERE "userId"=1`);
-
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toEqual({
-      status: 'refused',
-      reason: 'held',
-    });
-    expect(buzz.grantYellow).not.toHaveBeenCalled();
-
-    await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"=NULL WHERE "userId"=1`);
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
-      status: 'converted',
-      buzz: 1_000,
-    });
-  });
-
-  it('refuses a player with no row', async () => {
-    expect(await convertGold(db, fakeBuzz().port, { playerId: 5, now: NOW })).toEqual({
-      status: 'refused',
-      reason: 'no-player',
-    });
-  });
-
-  it('pays once when the same conversion is submitted again', async () => {
-    const buzz = fakeBuzz();
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 10_000 });
-
-    await convertGold(db, buzz.port, { playerId: 1, now: NOW });
-    const again = await convertGold(db, buzz.port, { playerId: 1, now: NOW });
-
-    expect(again).toEqual({ status: 'refused', reason: 'below-minimum' });
-    expect(buzz.paid.size).toBe(1);
-    expect(await row(1)).toEqual({ goldConverted: 10_000 });
-  });
-
-  it('keeps the gold reserved when Buzz fails, and a retry pays it once with the same key', async () => {
-    const buzz = fakeBuzz({ failFirst: true });
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 10_000 });
-
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toEqual({
-      status: 'pending',
-      gold: 10_000,
-      buzz: 500,
-    });
-    expect(buzz.paid.size).toBe(0);
-    const [pending] = await conversions();
-    expect(pending).toMatchObject({ status: 'pending', gold: 10_000, buzzTransactionId: null });
-
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
-      status: 'converted',
-      buzz: 500,
-    });
-    expect(buzz.paid.size).toBe(1);
-    expect(await conversions()).toHaveLength(1);
-    expect(buzz.grantYellow.mock.calls[0][0].externalTransactionId).toBe(
-      buzz.grantYellow.mock.calls[1][0].externalTransactionId
-    );
-    expect(await row(1)).toEqual({ goldConverted: 10_000 });
-  });
-
-  it('pays once when Buzz paid but its answer was lost', async () => {
-    const buzz = fakeBuzz({ lostAnswer: true });
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 10_000 });
-
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
-      status: 'pending',
-    });
-    const retried = await retryPendingConversions(db, buzz.port, {
-      now: new Date(NOW.getTime() + 120_000),
-    });
-
-    expect(retried).toEqual({ retried: 1, paid: 1, failed: 0 });
-    expect(buzz.paid.size).toBe(1);
-    expect(await conversions()).toEqual([expect.objectContaining({ status: 'paid' })]);
-  });
-});
-
 describe('a definitive Buzz rejection', () => {
   it('fails the conversion, gives the gold back and logs it', async () => {
     const buzz = fakeBuzz({ reject: true });
@@ -265,7 +163,7 @@ describe('a definitive Buzz rejection', () => {
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
 
-    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW, log })).toEqual({
+    expect(await reserveAndSettle(buzz.port, { log })).toEqual({
       status: 'failed',
       gold: 10_000,
       buzz: 500,
@@ -284,9 +182,9 @@ describe('a definitive Buzz rejection', () => {
     const buzz = fakeBuzz({ reject: true });
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
-    await convertGold(db, buzz.port, { playerId: 1, now: NOW });
+    await reserveAndSettle(buzz.port);
 
-    const next = await convertGold(db, fakeBuzz().port, { playerId: 1, now: NOW });
+    const next = await reserveAndSettle(fakeBuzz().port);
 
     expect(next).toMatchObject({ status: 'converted', buzz: 500 });
     expect(await row(1)).toEqual({ goldConverted: 10_000 });
@@ -295,7 +193,7 @@ describe('a definitive Buzz rejection', () => {
   it('is released by the tick retry too, once', async () => {
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
-    await convertGold(db, fakeBuzz({ failFirst: true }).port, { playerId: 1, now: NOW });
+    await reserveAndSettle(fakeBuzz({ failFirst: true }).port);
     const later = new Date(NOW.getTime() + 3_600_000);
 
     expect(
@@ -320,11 +218,7 @@ describe('a definitive Buzz rejection', () => {
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
 
-    const result = await convertGold(db, fakeBuzz({ failFirst: true }).port, {
-      playerId: 1,
-      now: NOW,
-      log,
-    });
+    const result = await reserveAndSettle(fakeBuzz({ failFirst: true }).port, { log });
 
     expect(result.status).toBe('pending');
     expect(log).toHaveBeenCalledWith(
@@ -379,7 +273,7 @@ describe('a career reset', () => {
     async (_when, createdAt, forfeits) => {
       await seedPlayer(pg, 1);
       await setGold(pg, 1, { earned: 10_000 });
-      await convertGold(db, fakeBuzz({ failFirst: true }).port, { playerId: 1, now: NOW });
+      await reserveAndSettle(fakeBuzz({ failFirst: true }).port);
       await pg.query(`UPDATE "KnightsGoldConversion" SET "createdAt" = $1::timestamp`, [createdAt]);
       await reset(1);
 
@@ -395,12 +289,14 @@ describe('a career reset', () => {
   it('reports a forfeited refusal to the player', async () => {
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
-    await convertGold(db, fakeBuzz({ failFirst: true }).port, { playerId: 1, now: NOW });
+    await reserveAndSettle(fakeBuzz({ failFirst: true }).port);
     await pg.exec(`UPDATE "KnightsGoldConversion" SET "createdAt" = '2026-12-24'`);
     await reset(1);
 
+    const [pending] = await db.selectFrom('KnightsGoldConversion').selectAll().execute();
+
     expect(
-      await convertGold(db, fakeBuzz({ reject: true }).port, { playerId: 1, now: NOW })
+      await settleConversion(db, fakeBuzz({ reject: true }).port, pending, { now: NOW })
     ).toMatchObject({
       status: 'failed',
       forfeited: true,
@@ -410,7 +306,7 @@ describe('a career reset', () => {
   it('does not give back a before-reset conversion that Buzz later refuses', async () => {
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
-    await convertGold(db, fakeBuzz({ failFirst: true }).port, { playerId: 1, now: NOW });
+    await reserveAndSettle(fakeBuzz({ failFirst: true }).port);
     await pg.exec(`UPDATE "KnightsGoldConversion" SET "createdAt" = '2026-12-24'`);
     await reset(1);
 
@@ -571,7 +467,7 @@ describe('retryPendingConversions', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await seedPlayer(pg, 1);
     await setGold(pg, 1, { earned: 10_000 });
-    await convertGold(db, buzz.port, { playerId: 1, now: NOW });
+    await reserveAndSettle(buzz.port);
     const later = new Date(NOW.getTime() + 3_600_000);
 
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-19' WHERE "userId"=1`);
