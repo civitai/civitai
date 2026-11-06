@@ -14,7 +14,7 @@ import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/se
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
-const semanticSearchProcedure = publicProcedure.use(isFlagProtected('semanticImageSearch'));
+const semanticSearchProcedure = publicProcedure.use(isFlagProtected('imageSearch'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -50,7 +50,7 @@ export const semanticImageSearchRouter = router({
     }),
 
   feedback: guardedProcedure
-    .use(isFlagProtected('semanticImageSearch'))
+    .use(isFlagProtected('imageSearch'))
     .use(rateLimit({ limit: 30, period: 60 * 60 }))
     .input(semanticSearchFeedbackSchema)
     .mutation(async ({ input, ctx }) => {

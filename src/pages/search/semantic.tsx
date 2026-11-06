@@ -8,7 +8,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    if (!features?.semanticImageSearch) return { notFound: true };
+    if (!features?.imageSearch) return { notFound: true };
   },
 });
 

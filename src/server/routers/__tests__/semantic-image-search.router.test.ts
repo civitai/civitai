@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
-  getFeatureFlags: () => ({ semanticImageSearch: h.flagOn }),
+  getFeatureFlags: () => ({ imageSearch: h.flagOn }),
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SemanticSearch>()),

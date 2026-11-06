@@ -3,15 +3,16 @@
 `/search/semantic` searches images by meaning: a text query, or "more like this" from an image
 (an item in the image card menu, shown with the flag). It
 reads the vector index described in [semantic-image-search.md](semantic-image-search.md). It is a
-test surface for now, shown only to those with the `semanticImageSearch` feature flag.
+test surface for now, shown only to those with the `imageSearch` feature flag.
 
 ## Access
 
-- Flag `semanticImageSearch`: moderators only. It has no Flipt key (no flag was ever created); to
-  open it to testers, create the flag and add `fliptKey: 'semantic-image-search'`. Flipt then
-  overrides the static list in both directions, so add moderators to the Flipt rule too.
+- One flag, `imageSearch`, gates all of image search: this page, /search/images and the Images
+  entry, "more like this", and both procedures. Its Flipt key is `semantic-image-search`; until that
+  flag exists it falls back to moderators only. Once it exists, Flipt overrides the static list in
+  both directions, so keep moderators in its rule.
 - The page's `getServerSideProps` and both procedures (`semanticImageSearch.search`, `.feedback`)
-  check the same flag. Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
+  check that flag. Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
   60 for signed-in users); feedback requires a signed-in user.
 - Env: `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_TOKEN`, pointing at the search service, a read-only
   layer over Qdrant that runs in the cluster outside this repository (ask an infra owner for access).
@@ -71,9 +72,8 @@ shape, and every other index passes through to Meilisearch.
 - An empty query shows a prompt instead of results, and a request refined by a filter the index
   cannot apply yet (aspect ratio, tools, techniques) returns nothing. The sidebar offers browsing
   level, posted date, users, tags and base model.
-- `imageSearch` gates these surfaces: the Images entry in the pickers and tabs, and the search
-  itself (without it, /search/images redirects to /search/models). It follows
-  `semanticImageSearch`'s audience.
+- `imageSearch` gates these surfaces too: without it the Images entry is not offered and
+  /search/images redirects to /search/models.
 
 ## Feedback and logging
 

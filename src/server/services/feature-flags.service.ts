@@ -422,12 +422,11 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Image search on /search/images, the header and the quick search: the Images entry in the
-  // pickers and tabs, and the search itself (without it, /search/images redirects to models). It
-  // answers from the semantic search, never Meilisearch: `withSemanticImageSearch` routes every
-  // images-index request. Same audience as `semanticImageSearch` until the tester rollout gives
-  // both a Flipt key.
-  imageSearch: { availability: ['mod'] },
+  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
+  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
+  // does, Flipt decides both ways, so keep mods in its rule.
+  imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -466,8 +465,6 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
-  // The /search/semantic page and its procedures. Moderators only: no Flipt flag exists for it.
-  semanticImageSearch: { availability: ['mod'] },
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
