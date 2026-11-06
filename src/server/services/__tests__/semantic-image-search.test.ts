@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as ImageService from '~/server/services/image.service';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
@@ -8,6 +8,7 @@ import type * as UserPreferences from '~/server/services/user-preferences.servic
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
@@ -101,7 +102,7 @@ function rankedSource(ranking: number[]) {
   const source: CandidateSource = async (args) => {
     const { offset, limit } = args;
     calls.push(args);
-    return ranking.slice(offset, offset + limit);
+    return { ids: ranking.slice(offset, offset + limit) };
   };
   return { source, calls };
 }
@@ -372,12 +373,106 @@ describe('filters', () => {
   });
 });
 
+describe('the search service call', () => {
+  type SentBody = {
+    query: unknown;
+    filter: { must: unknown[]; must_not: unknown[] };
+  } & Record<string, unknown>;
+  type Sent = { url: string; auth: string | null; body: SentBody };
+  function stubService(respond: (url: string) => Response) {
+    const sent: Sent[] = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push({
+        url,
+        auth: new Headers(init.headers).get('authorization'),
+        body: JSON.parse(String(init.body)),
+      });
+      return respond(url);
+    });
+    return sent;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    setEnv({ SEARCH_SERVICE_URL: 'http://search.test/', SEARCH_SERVICE_TOKEN: 'tok' });
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102]));
+  });
+
+  it('sends text, the token and the Qdrant filter, and returns the spelling correction', async () => {
+    const sent = stubService(() =>
+      Response.json({
+        query: 'batmen',
+        corrected: 'batman',
+        changes: [{ from: 'batmen', to: 'batman', distance: 1 }],
+        hits: [
+          { id: 101, score: 0.7 },
+          { id: 102, score: 0.6 },
+        ],
+      })
+    );
+    const result = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'batmen', tagIds: [42] }),
+      user: VIEWER,
+    });
+
+    expect(result.items.map((x) => x.id)).toEqual([101, 102]);
+    expect(result.correctedQuery).toBe('batman');
+    expect(sent[0].url).toBe('http://search.test/v1/search');
+    expect(sent[0].auth).toBe('Bearer tok');
+    expect(sent[0].body).toMatchObject({ collection: 'images', query: 'batmen', offset: 0 });
+    expect(sent[0].body.filter.must).toEqual(
+      expect.arrayContaining([
+        { key: 'nsfwLevel', match: { any: [PG] } },
+        { key: 'tagIds', match: { value: 42 } },
+      ])
+    );
+    // The base-model license rule, as a nested must_not.
+    expect(sent[0].body.filter.must_not).toContainEqual(
+      expect.objectContaining({ must: expect.any(Array) })
+    );
+  });
+
+  it('reports no correction when the service changed nothing', async () => {
+    stubService(() => Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] }));
+    const result = await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox' }),
+      user: VIEWER,
+    });
+    expect(result.correctedQuery).toBeUndefined();
+  });
+
+  it('asks "more like this" through the Qdrant pass-through, without the source image', async () => {
+    const sent = stubService(() => Response.json({ result: { points: [{ id: 101 }] } }));
+    await searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER });
+
+    expect(sent[0].url).toBe('http://search.test/qdrant/collections/images/points/query');
+    expect(sent[0].body.query).toBe(ANCHOR);
+    expect(sent[0].body.filter.must_not).toContainEqual({ has_id: [ANCHOR] });
+  });
+
+  it('answers NOT_FOUND for an image the index does not hold', async () => {
+    stubService(() => new Response('{}', { status: 404 }));
+    await expect(
+      searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('answers BAD_GATEWAY when the service fails', async () => {
+    stubService(() => new Response('{}', { status: 503 }));
+    await expect(
+      searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
+    ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+  });
+});
+
 describe('collectPage', () => {
   it('stops after a bounded number of rounds when nothing hydrates', async () => {
     const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
     const page = await collectPage({
-      candidates: (offset, limit) =>
-        source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit }),
+      candidates: async (offset, limit) =>
+        (
+          await source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit })
+        ).ids,
       hydrate: async () => [],
       offset: 0,
       limit: 10,
@@ -389,8 +484,8 @@ describe('collectPage', () => {
 
   it('stops paging at the candidate offset cap', async () => {
     const { source, calls } = rankedSource(Array.from({ length: 5000 }, (_, i) => i + 1));
-    const candidates = (offset: number, limit: number) =>
-      source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit });
+    const candidates = async (offset: number, limit: number) =>
+      (await source({ query: { similarTo: 1 }, filter: { nsfwLevels: [1] }, offset, limit })).ids;
     const hydrate = async (ids: number[]) => ids.map((id) => ({ id })) as never;
 
     const last = await collectPage({

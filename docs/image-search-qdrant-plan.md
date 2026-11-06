@@ -7,11 +7,12 @@ test page in [features/semantic-image-search-page.md](features/semantic-image-se
 
 Decisions taken:
 
-- **A search service in front of Qdrant** (`apps/search`, Fastify; contract and client in
-  `@civitai/search`). It is shared: images first, model and the other text indexes later. It returns
-  ranked entity ids only; the site always loads them through its own fetch path, because the index
-  updates asynchronously and may still hold removed images. Viewer policy (browsing level, hidden
-  users, tags and images, the base-model license rule) is decided by the site and sent as values.
+- **A search service in front of Qdrant**, run in the cluster outside this repository: a thin
+  read-only layer with SymSpell spelling correction and query embedding, shared by image and model
+  search. The site asks it for ranked ids only and always loads them through its own fetch path,
+  because the index updates asynchronously and may still hold removed images. Viewer policy
+  (browsing level, hidden users, tags and images, the base-model license rule) is decided by the
+  site and sent as a Qdrant filter.
 
 - **Surface:** `/search/images` and the Images entry (header, quick search, `/search` tabs) come
   back and render semantic results. `/search/semantic` redirects to `/search/images`, keeping its
@@ -84,8 +85,8 @@ tester feedback.
 
 ## Server changes
 
-Done: the search service serves `POST /images/search`, and the site's
-`semantic-image-search.service.ts` calls it instead of Qdrant and the orchestrator.
+Done: the site's `semantic-image-search.service.ts` calls the search service (`/v1/search` for
+text, its Qdrant pass-through for "more like this") instead of Qdrant and the orchestrator.
 
 - `semantic-image-search.router.ts`: `search` moves from `protectedProcedure` to a public
   procedure with the same flag check. Rate limits: keep 60/min for signed-in users and add a
@@ -114,15 +115,15 @@ Done: the search service serves `POST /images/search`, and the site's
 ## Order of work
 
 1. Server: public procedure, optional viewer, restricted-base-model filter, users and date range.
-   The search service, and the site calling it. (Done.)
+   The site calling the search service. (Done.)
 2. Page: `/search/images` on the search chrome with the filters already covered, and the redirect from
    `/search/semantic`. Ship behind the tester flag.
-3. Event engine: the three payload fields and indexes, then the payload pass. The search service
-   gains the matching filter clauses.
+3. Event engine: the three payload fields and indexes, then the payload pass. The site's filter
+   builder gains the matching clauses.
 4. Aspect ratio, tools and techniques filters on once the pass is complete.
 5. Sorts by re-ranking; tune N and the similarity floor from tester feedback. Re-ranking needs the
    metrics, which the site has at hydration, so it runs on the site over the service's ids.
-6. Deploy the search service and set `SEARCH_SERVICE_URL` / `SEARCH_SERVICE_TOKEN` (ask an infra owner).
+6. Set `SEARCH_SERVICE_URL` / `SEARCH_SERVICE_TOKEN` for the site (ask an infra owner).
 7. Open the flag to everyone.
 
 ## Latency (measured from a developer machine, 2026-11-05)
@@ -132,7 +133,7 @@ Done: the search service serves `POST /images/search`, and the site's
 - Cold: the first query of a filter shape Qdrant has not served recently can take 3 to 10 s, because
   vectors, the HNSW graph and the payload indexes are on disk. The base-model license clause (a nested
   `must_not` over NSFW levels and 11 base models) roughly triples that first cost (about 10 s against
-  3.8 s without it). The service waits 20 s for Qdrant and the client 25 s, for the tester phase.
+  3.8 s without it). The site waits 20 s for the search service, for the tester phase.
 - To fix before going public: store the license rule as one boolean payload field at index time
   (`nsfwRestrictedBaseModel`), so the clause becomes a single indexed match; and decide with the index
   owners whether the payload indexes or the graph can sit in RAM.

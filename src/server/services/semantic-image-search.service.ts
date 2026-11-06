@@ -1,10 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import {
-  createSearchClient,
-  SearchServiceError,
-  type ImageSearchFilter,
-  type ImageSearchQuery,
-} from '@civitai/search';
 import { env } from '~/env/server';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
@@ -28,45 +22,127 @@ const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
 // The ceiling of an `ids` batch on the image fetch path (IMAGE_IDS_BATCH_CAP's reasoning).
 const MAX_HYDRATION_BATCH = 100;
-// The search service's paging cap (IMAGE_SEARCH_MAX_OFFSET).
+// The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
+// The search service's collection name for the image vectors.
+const IMAGE_COLLECTION = 'images';
+// A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
+// and payload indexes are on disk), then well under 1 s.
+const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
 
 type HydratedImage = Awaited<ReturnType<typeof getAllImages>>['items'][number];
 
+export type SearchQuery = { text: string } | { similarTo: number };
+
+/** Viewer policy and the chosen filters, decided here; the search service applies them as given. */
+export type CandidateFilter = {
+  nsfwLevels: number[];
+  tagIds?: number[];
+  excludedTagIds?: number[];
+  baseModels?: string[];
+  types?: string[];
+  userIds?: number[];
+  excludedUserIds?: number[];
+  excludedImageIds?: number[];
+  postedAfter?: string;
+  postedBefore?: string;
+  // Images at these NSFW levels made with any of these base models are excluded.
+  restrictedBaseModels?: { nsfwLevels: number[]; baseModels: string[] };
+};
+
+export function buildQdrantFilter(f: CandidateFilter) {
+  const must: Record<string, unknown>[] = [{ key: 'nsfwLevel', match: { any: f.nsfwLevels } }];
+  // Every listed tag, not any of them: each added tag narrows the results.
+  for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
+  if (f.baseModels?.length) must.push({ key: 'baseModels', match: { any: f.baseModels } });
+  if (f.types?.length) must.push({ key: 'type', match: { any: f.types } });
+  if (f.userIds?.length) must.push({ key: 'userId', match: { any: f.userIds } });
+  if (f.postedAfter || f.postedBefore)
+    must.push({ key: 'sortAt', range: { gte: f.postedAfter, lte: f.postedBefore } });
+
+  const must_not: Record<string, unknown>[] = [];
+  if (f.excludedTagIds?.length) must_not.push({ key: 'tagIds', match: { any: f.excludedTagIds } });
+  if (f.excludedUserIds?.length)
+    must_not.push({ key: 'userId', match: { any: f.excludedUserIds } });
+  if (f.excludedImageIds?.length) must_not.push({ has_id: f.excludedImageIds });
+  if (f.restrictedBaseModels)
+    must_not.push({
+      must: [
+        { key: 'nsfwLevel', match: { any: f.restrictedBaseModels.nsfwLevels } },
+        { key: 'baseModels', match: { any: f.restrictedBaseModels.baseModels } },
+      ],
+    });
+
+  return { must, must_not };
+}
+
+/** Ranked image ids, and the query as the service's spelling correction rewrote it, if it did. */
 export type CandidateSource = (args: {
-  query: ImageSearchQuery;
-  filter: ImageSearchFilter;
+  query: SearchQuery;
+  filter: CandidateFilter;
   offset: number;
   limit: number;
-}) => Promise<number[]>;
+}) => Promise<{ ids: number[]; correctedQuery?: string }>;
 
-const TRPC_CODE_BY_SERVICE_CODE = {
-  invalid: 'BAD_REQUEST',
-  unauthorized: 'INTERNAL_SERVER_ERROR',
-  'not-found': 'NOT_FOUND',
-  'not-ready': 'PRECONDITION_FAILED',
-  upstream: 'BAD_GATEWAY',
-  unavailable: 'BAD_GATEWAY',
-} as const;
-
-let searchClient: ReturnType<typeof createSearchClient> | undefined;
-const serviceCandidates: CandidateSource = async (args) => {
+async function searchServiceRequest<T>(path: string, body: unknown): Promise<T> {
   if (!env.SEARCH_SERVICE_URL)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Semantic search is not set up' });
-  searchClient ??= createSearchClient({
-    endpoint: env.SEARCH_SERVICE_URL,
-    token: env.SEARCH_SERVICE_TOKEN,
+  const res = await fetch(`${env.SEARCH_SERVICE_URL.replace(/\/+$/, '')}${path}`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(env.SEARCH_SERVICE_TOKEN ? { authorization: `Bearer ${env.SEARCH_SERVICE_TOKEN}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(SEARCH_SERVICE_TIMEOUT_MS),
+  }).catch((err) => {
+    throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Search is unavailable', cause: err });
   });
-  try {
-    const { ids } = await searchClient.images.search(args);
-    return ids;
-  } catch (err) {
-    if (!(err instanceof SearchServiceError)) throw err;
-    throw new TRPCError({
-      code: TRPC_CODE_BY_SERVICE_CODE[err.code],
-      message: err.code === 'not-found' ? 'Image not found' : err.message,
+  // Only "more like this" can 404: the image is not in the index.
+  if (res.status === 404) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+  if (!res.ok)
+    throw new TRPCError({ code: 'BAD_GATEWAY', message: `Search service error (${res.status})` });
+  return (await res.json()) as T;
+}
+
+/**
+ * The cluster search service: text through `/v1/search` (embedding and spelling correction are
+ * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
+ * the index lags Postgres, so hydration decides what is shown.
+ */
+const searchServiceCandidates: CandidateSource = async ({ query, filter, offset, limit }) => {
+  const qdrantFilter = buildQdrantFilter(filter);
+  if ('similarTo' in query) {
+    // The source image is always its own best match.
+    qdrantFilter.must_not.push({ has_id: [query.similarTo] });
+    const { result } = await searchServiceRequest<{
+      result: { points: { id: number | string }[] };
+    }>(`/qdrant/collections/${IMAGE_COLLECTION}/points/query`, {
+      query: query.similarTo,
+      filter: qdrantFilter,
+      offset,
+      limit,
+      params: { quantization: { rescore: true, oversampling: 2 } },
+      with_payload: false,
     });
+    return { ids: result.points.map((p) => Number(p.id)) };
   }
+
+  const { corrected, changes, hits } = await searchServiceRequest<{
+    corrected: string;
+    changes: unknown[];
+    hits: { id: number | string }[];
+  }>('/v1/search', {
+    collection: IMAGE_COLLECTION,
+    query: query.text,
+    filter: qdrantFilter,
+    offset,
+    limit,
+  });
+  return {
+    ids: hits.map((h) => Number(h.id)),
+    correctedQuery: changes.length ? corrected : undefined,
+  };
 };
 
 export type Hydrate = (ids: number[]) => Promise<HydratedImage[]>;
@@ -136,7 +212,7 @@ export async function searchSemanticImages({
   input,
   user,
   domain,
-  candidateSource = serviceCandidates,
+  candidateSource = searchServiceCandidates,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
@@ -150,13 +226,14 @@ export async function searchSemanticImages({
     getBlockedBrowsingTags(),
     input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
   ]);
-  if (userIds && !userIds.length) return { items: [], nextCursor: undefined };
+  if (userIds && !userIds.length)
+    return { items: [], nextCursor: undefined, correctedQuery: undefined };
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
   const strip = stripBlockedTagIds(
     input.tagIds,
     blockedTags.map((t) => t.id)
   );
-  if (strip.emptyResult) return { items: [], nextCursor: undefined };
+  if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
   const addons = resolveBrowsingSettingsAddons(addonData, input.browsingLevel, {
@@ -175,7 +252,7 @@ export async function searchSemanticImages({
     .filter((x) => !x.tagId || hiddenTagIds.includes(x.tagId))
     .map((x) => x.id);
 
-  const filter: ImageSearchFilter = {
+  const filter: CandidateFilter = {
     nsfwLevels: Flags.instanceToArray(input.browsingLevel || publicBrowsingLevelsFlag),
     tagIds,
     excludedTagIds,
@@ -224,15 +301,21 @@ export async function searchSemanticImages({
     const [anchor] = await fetchVisible([input.imageId], { excludedTagIds: viewerExcludedTagIds });
     if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
   }
-  const query: ImageSearchQuery = input.imageId
+  const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
 
-  return collectPage({
-    candidates: (offset, limit) => candidateSource({ query, filter, offset, limit }),
+  let correctedQuery: string | undefined;
+  const page = await collectPage({
+    candidates: async (offset, limit) => {
+      const result = await candidateSource({ query, filter, offset, limit });
+      correctedQuery ??= result.correctedQuery;
+      return result.ids;
+    },
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
+  return { ...page, correctedQuery };
 }

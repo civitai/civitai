@@ -51,6 +51,7 @@ export function SemanticImageSearch() {
     });
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const latencyMs = data?.pages[0]?.latencyMs;
+  const correctedQuery = data?.pages[0]?.correctedQuery;
 
   const searchKey = JSON.stringify(input);
   const [feedbackSentFor, setFeedbackSentFor] = useState<string>();
@@ -144,6 +145,12 @@ export function SemanticImageSearch() {
           </Link>
           .
         </Alert>
+      )}
+
+      {correctedQuery && !isError && (
+        <Text size="sm">
+          Showing results for <strong>{correctedQuery}</strong>
+        </Text>
       )}
 
       {enabled && !isLoading && !isError && (
