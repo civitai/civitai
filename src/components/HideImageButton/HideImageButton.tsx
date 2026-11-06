@@ -6,7 +6,8 @@ import type { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
-import { showSuccessNotification } from '~/utils/notifications';
+import { showImageHiddenNotification } from '~/components/HideImageButton/showImageHiddenNotification';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props }: Props) {
   const images = useHiddenPreferencesData().hiddenImages;
@@ -18,10 +19,22 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
   const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleHiddenMutation.mutateAsync({ kind: 'image', data: [{ id: imageId }] }).then(() => {
-      showSuccessNotification({
-        title: `Image ${alreadyHiding ? 'unhidden' : 'hidden'}`,
-        message: `This image will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
+    const data = [{ id: imageId }];
+    toggleHiddenMutation.mutateAsync({ kind: 'image', data }).then(() => {
+      if (alreadyHiding) {
+        showSuccessNotification({
+          title: 'Image unhidden',
+          message: 'This image will show up in your feed',
+        });
+        return;
+      }
+      showImageHiddenNotification({
+        imageId,
+        onUndo: () =>
+          toggleHiddenMutation.mutate(
+            { kind: 'image', data, hidden: false },
+            { onError: (error) => showErrorNotification({ error, title: 'Could not undo' }) }
+          ),
       });
     });
 
