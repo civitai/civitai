@@ -12,8 +12,7 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
-import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
+import { InsertEmbedControl } from '~/components/RichTextEditor/InsertEmbedControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -21,7 +20,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageSizeMenu } from './ImageSizeMenu';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
-import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
 import clsx from 'clsx';
@@ -33,6 +31,7 @@ import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
+import { EmbedNode } from '~/shared/tiptap/embed.node';
 import { SizedImage } from '~/shared/tiptap/sized-image.node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
@@ -257,7 +256,8 @@ export function RichTextEditor({
             ];
           },
         }),
-        InstagramNode
+        InstagramNode,
+        EmbedNode
       );
     }
     if (addMentions)
@@ -506,13 +506,12 @@ export function RichTextEditor({
                   ) : addImages ? (
                     <InsertImageControlLegacy maxFileSize={constants.richTextEditor.maxFileSize} />
                   ) : null}
-                  <InsertYoutubeVideoControl />
-                  <InsertInstagramEmbedControl />
+                  <InsertEmbedControl />
                 </RTE.ControlsGroup>
               )}
-              {addPolls && (
+              {addPolls && !addMedia && (
                 <RTE.ControlsGroup>
-                  <InsertStrawPollControl />
+                  <InsertEmbedControl />
                 </RTE.ControlsGroup>
               )}
               {addTimestamp && (

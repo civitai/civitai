@@ -82,6 +82,11 @@ export type SafeFetchOptions = {
   connectTimeoutMs?: number;
   /** A tighter cap chosen from the body's first bytes (e.g. by file type), applied as it streams. */
   capFromHead?: { headBytes: number; maxBytes: (head: Buffer) => number };
+  /**
+   * Narrows which URLs may be fetched, checked on EVERY hop before DNS or any socket. For a
+   * fetch that must stay on one site (e.g. Bandcamp), so a redirect cannot leave it.
+   */
+  allowUrl?: (url: URL) => boolean;
 };
 
 export type SafeFetchResult = {
@@ -334,6 +339,9 @@ export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<Sa
 
   for (let hop = 0; ; hop++) {
     const parsed = assertLexicallySafe(currentUrl);
+    if (opts.allowUrl && !opts.allowUrl(parsed)) {
+      throw new SafeFetchError('blocked_host', 'URL outside the allowed set');
+    }
     const validated = await resolveAndValidateHost(parsed.hostname);
 
     const controller = new AbortController();

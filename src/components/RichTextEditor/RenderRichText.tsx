@@ -21,6 +21,9 @@ import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { EmbedNode, embedIframeAttrs } from '~/shared/tiptap/embed.node';
+import { isAllowedPlayerUrl } from '~/shared/utils/embed-providers';
+import { useMaybeAppContext } from '~/providers/AppProvider';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
@@ -37,6 +40,7 @@ const extensions = [
   StrawPollNode,
   TimestampNode,
   BlurbNode,
+  EmbedNode,
   TextAlignExtension,
 ];
 
@@ -72,6 +76,7 @@ export function RenderRichText({
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const toCurrentDomain = useCurrentDomainHref();
+  const host = useMaybeAppContext()?.host;
   const memoized = useMemo(() => {
     try {
       const el = renderToReactElement({
@@ -98,6 +103,18 @@ export function RenderRichText({
                 }}
               />
             ),
+            embed: ({ node }) => {
+              const src = node.attrs.src as string | null;
+              const provider = isAllowedPlayerUrl(src);
+              if (!src || !provider) return null;
+              if (!allowed) return <ConsentBlockedEmbed kind={provider} />;
+              const { allowfullscreen, ...attrs } = embedIframeAttrs(provider, src, host);
+              return (
+                <div data-type="embed" data-provider={provider}>
+                  <iframe {...attrs} allowFullScreen={!!allowfullscreen} />
+                </div>
+              );
+            },
             // For unconsented CA visitors, replace third-party embed nodes with a
             // placeholder so the iframe is never inserted in the DOM.
             ...(!allowed && {
@@ -118,7 +135,7 @@ export function RenderRichText({
       // sync with `tiptapExtensions` by hand, so treat drift as reachable.
       return { ok: false as const };
     }
-  }, [content, allowed, toCurrentDomain]);
+  }, [content, allowed, toCurrentDomain, host]);
 
   if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
 
