@@ -162,7 +162,7 @@ export function createDocFeed(opts: DocFeedOptions) {
     if (state.v !== STATE_FORMAT || state.schema !== schema) {
       throw cursorExpired('the cursor belongs to another stream');
     }
-    await opts.store.put(digest, raw, schema);
+    await opts.store.touch(digest, schema);
     return state;
   };
 

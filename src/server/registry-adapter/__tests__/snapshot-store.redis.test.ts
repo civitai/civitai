@@ -17,11 +17,12 @@ function fakeRedis() {
   const strings = new Map<string, string>();
   const lists = new Map<string, string[]>();
   const ttl = new Map<string, number>();
-  const counts = { exec: 0, listOpsOutsideMulti: 0 };
+  const counts = { exec: 0, listOpsOutsideMulti: 0, sets: 0 };
   const range = (l: string[], start: number, stop: number) =>
     l.slice(start, stop < 0 ? l.length + stop + 1 : stop + 1);
   const ops = {
     set: (k: string, v: string, o?: { EX?: number }) => {
+      counts.sets++;
       strings.set(k, v);
       if (o?.EX) ttl.set(k, o.EX);
       return 'OK';
@@ -132,7 +133,24 @@ describe('createRedisSnapshotStore', () => {
     const r = fakeRedis();
     const store = createRedisSnapshotStore(r.client, 2);
     for (const d of ['d1', 'd2', 'd3', 'd2']) await store.put(d, `state-${d}`, S1);
-    expect(r.counts).toEqual({ exec: 4, listOpsOutsideMulti: 0 });
+    expect(r.counts).toEqual({ exec: 4, listOpsOutsideMulti: 0, sets: 4 });
+  });
+
+  it('🔴 touch refreshes a held state without rewriting it, in one MULTI', async () => {
+    const r = fakeRedis();
+    const store = createRedisSnapshotStore(r.client, 2);
+    await store.put('d1', 'state-d1', S1);
+    await store.put('d2', 'state-d2', S1);
+    r.ttl.clear();
+    const before = { ...r.counts };
+    await store.touch('d1', S1);
+    expect(r.counts).toEqual({ ...before, exec: before.exec + 1 });
+    expect(await store.get('d1')).toBe('state-d1');
+    expect(r.lists.get(streamStatesKey(S1))).toEqual(['d1', 'd2']);
+    expect([r.ttl.get(snapshotKey('d1')), r.ttl.get(streamStatesKey(S1))]).toEqual([
+      SNAPSHOT_RETENTION_SECONDS,
+      SNAPSHOT_RETENTION_SECONDS,
+    ]);
   });
 
   it("one stream's bound never evicts another stream's states", async () => {

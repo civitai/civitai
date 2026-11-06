@@ -33,25 +33,33 @@ export function createRedisSnapshotStore(
   client: SnapshotRedis = sysRedis,
   keep: number = STATES_KEPT_PER_STREAM
 ): SnapshotStore {
+  /**
+   * One MULTI: write the snapshot (or, with `value` null, only refresh its TTL), move its digest to
+   * the head of the stream's list, read and trim what falls past the bound, refresh the list's TTL.
+   */
+  async function retain(digest: string, stream: string, value: string | null): Promise<void> {
+    const states = streamStatesKey(stream);
+    const tx = client.multi();
+    if (value === null) tx.expire(snapshotKey(digest), SNAPSHOT_RETENTION_SECONDS);
+    else tx.set(snapshotKey(digest), value, { EX: SNAPSHOT_RETENTION_SECONDS });
+    tx.lRem(states, 0, digest);
+    tx.lPush(states, digest);
+    tx.lRange(states, keep, -1);
+    tx.lTrim(states, 0, keep - 1);
+    tx.expire(states, SNAPSHOT_RETENTION_SECONDS);
+    const results = await withSysReadDeadline(tx.exec());
+    const evicted = Array.isArray(results?.[3]) ? (results[3] as unknown[]) : [];
+    for (const old of evicted) {
+      const d = String(decodeRedisString(old as string));
+      if (d !== digest) await client.del(snapshotKey(d));
+    }
+  }
+
   return {
     async get(digest) {
       return decodeRedisString(await withSysReadDeadline(client.get(snapshotKey(digest)))) ?? null;
     },
-    async put(digest, value, stream) {
-      const states = streamStatesKey(stream);
-      const tx = client.multi();
-      tx.set(snapshotKey(digest), value, { EX: SNAPSHOT_RETENTION_SECONDS });
-      tx.lRem(states, 0, digest);
-      tx.lPush(states, digest);
-      tx.lRange(states, keep, -1);
-      tx.lTrim(states, 0, keep - 1);
-      tx.expire(states, SNAPSHOT_RETENTION_SECONDS);
-      const results = await withSysReadDeadline(tx.exec());
-      const evicted = Array.isArray(results?.[3]) ? (results[3] as unknown[]) : [];
-      for (const old of evicted) {
-        const d = String(decodeRedisString(old as string));
-        if (d !== digest) await client.del(snapshotKey(d));
-      }
-    },
+    put: (digest, value, stream) => retain(digest, stream, value),
+    touch: (digest, stream) => retain(digest, stream, null),
   };
 }

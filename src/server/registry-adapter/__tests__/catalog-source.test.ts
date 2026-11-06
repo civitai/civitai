@@ -21,7 +21,6 @@ const listing = (over: Partial<CatalogListing>): CatalogListing => ({
   tagline: null,
   category: null,
   contentRating: 'x',
-  iconUrl: null,
   creatorUsername: 'maker-k',
   appBlockId: 'ab_orbit',
   externalUrl: null,
@@ -63,6 +62,7 @@ function deps(over: Partial<CatalogReadDeps> & { calls?: string[] } = {}): Catal
     ],
     loadSourceRepoUrls: async () => new Map(),
     loadForkParents: async () => new Map(),
+    loadIconUrls: async () => new Map(),
     ...over,
   };
 }
@@ -113,11 +113,22 @@ describe('listingFromCard', () => {
       tagline: 'Sketch comets',
       category: 'art-k2',
       contentRating: 'r',
-      iconUrl: 'https://img.example/comet.png',
       creatorUsername: 'comet-maker',
       appBlockId: 'ab_comet_3',
       externalUrl: null,
     });
+  });
+
+  it("🔴 never carries the store card's icon, whose ceiling follows the reader's levels", () => {
+    const out = listingFromCard(
+      card({
+        kind: 'onsite',
+        appBlockId: 'ab_comet_3',
+        hasPage: true,
+        liveUrl: 'https://c.example',
+      })
+    );
+    expect(JSON.stringify(out)).not.toContain('comet.png');
   });
 
   it('an off-site card names its link, and no block; the creator id never leaves', () => {
@@ -230,6 +241,26 @@ describe('readCatalog — the public-catalog decision comes first', () => {
       null,
       [],
       'https://tide.example',
+    ]);
+  });
+});
+
+describe('readCatalog — the published icon', () => {
+  it('is the gated icon the icon lookup returns for each listing, and null when it has none', async () => {
+    const apps = await readCatalog(
+      deps({
+        listPage: async () => ({
+          items: [
+            listing({ id: 'apl_icon_1', slug: 'icon-one', kind: 'offsite', appBlockId: null }),
+            listing({ id: 'apl_icon_2', slug: 'icon-two', kind: 'offsite', appBlockId: null }),
+          ],
+        }),
+        loadIconUrls: async () => new Map([['apl_icon_1', 'https://img.example/icon-one.png']]),
+      })
+    );
+    expect(apps.map((a) => [a.listing.slug, a.listing.iconUrl])).toEqual([
+      ['icon-one', 'https://img.example/icon-one.png'],
+      ['icon-two', null],
     ]);
   });
 });

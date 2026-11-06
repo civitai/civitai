@@ -5,8 +5,8 @@
  *
  * Environment: the app's server env (database read client, Redis, and the App Blocks datastore
  * connection for the shared-document feed), plus
- *   REGISTRY_ADAPTER_PORT          listen port (default 7130)
- *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog (default 60)
+ *   REGISTRY_ADAPTER_PORT          listen port
+ *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';

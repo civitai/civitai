@@ -255,8 +255,8 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
       ['delete', urn('n2')],
     ]);
     expect(changes[1].cursor).toBe(EMPTY_CURSOR);
-    // The resume itself refreshes the state it read; nothing else is written.
-    expect(store.puts() - before).toBe(1);
+    // The resume only refreshes the state it read (a touch); nothing is written.
+    expect([store.puts() - before, store.touches()]).toEqual([0, 1]);
   });
 
   it('a stream resumed from the constant cursor picks up a collection published since', async () => {
@@ -324,14 +324,48 @@ describe('🔴 an empty published stream reads incrementally', () => {
 describe('a poll with nothing new', () => {
   // Invariant guard: true before the unchanged-state shortcut too; it pins that the shortcut
   // keeps it so.
-  it('writes no state and reads no documents', async () => {
-    const { store, make } = setup();
-    const h = make([() => undefined, () => undefined, () => undefined]);
-    const { cursor } = await h.feed.snapshot(V2);
-    const before = store.puts();
-    expect(await h.drain(V2, cursor)).toEqual([]);
-    // The resume refreshes the state it read, once; the four polls after it write nothing.
-    expect(store.puts() - before).toBe(1);
+  it('writes no state, and reads no documents or changes', async () => {
+    const cat: FixtureCatalog = {
+      listings: [],
+      documents: [doc('n1', 'short', 3), doc('n2', 'a much longer title', 5)],
+      lastSeq: { ab_orbit_7: 5 },
+    };
+    const base = fixtureDocSource(() => cat);
+    const reads = { documents: 0, changes: 0 };
+    let polls = 0;
+    const abort = new AbortController();
+    const store = createMemorySnapshotStore();
+    const feed = createDocFeed({
+      source: {
+        ...base,
+        documents: (...args) => {
+          reads.documents++;
+          return base.documents(...args);
+        },
+        changes: (...args) => {
+          reads.changes++;
+          return base.changes(...args);
+        },
+      },
+      resolve: async () => ({
+        appId: 'ab_orbit_7',
+        slug: 'orbit-notes',
+        collection: 'notes',
+        family: TWO_MAJORS,
+      }),
+      store,
+      pollMs: 1,
+      sleep: async () => {
+        if (++polls >= 4) abort.abort();
+      },
+    });
+    const { cursor } = await feed.snapshot(V2);
+    const after = { puts: store.puts(), reads: { ...reads } };
+    const out: Change[] = [];
+    for await (const c of feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
+    expect(out).toEqual([]);
+    expect(polls).toBe(4);
+    expect([store.puts() - after.puts, reads]).toEqual([0, after.reads]);
   });
 });
 

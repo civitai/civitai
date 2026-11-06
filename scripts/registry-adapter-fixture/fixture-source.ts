@@ -24,6 +24,8 @@ export type FixtureCatalog = {
   blocks?: CatalogBlock[];
   approved?: Array<Omit<CatalogApprovedRequest, 'reviewedAt'> & { reviewedAt: string | null }>;
   sourceRepoUrls?: Record<string, string>;
+  /** Listing id → the icon url its app publishes (already gated in the fixture). */
+  icons?: Record<string, string>;
   /** Fork listing id → the listing id it was forked from (which need not be in `listings`). */
   forkOf?: Record<string, string>;
   /** App Storage rows, as the store holds them: every namespace and key space. */
@@ -120,6 +122,7 @@ export function fixtureCatalogDeps(read: () => FixtureCatalog): CatalogReadDeps 
         .map((r) => ({ ...r, reviewedAt: r.reviewedAt ? new Date(r.reviewedAt) : null })),
     loadSourceRepoUrls: async (ids) =>
       new Map(ids.map((id) => [id, read().sourceRepoUrls?.[id] ?? null])),
+    loadIconUrls: async (ids) => new Map(ids.map((id) => [id, read().icons?.[id] ?? null])),
     loadForkParents: async (ids) =>
       new Map(ids.flatMap((id) => (read().forkOf?.[id] ? [[id, read().forkOf![id]]] : []))),
   };
@@ -131,24 +134,34 @@ export function fixtureFile(path: string): () => FixtureCatalog {
 
 /**
  * The in-memory {@link SnapshotStore}, with the same per-stream bound as the Redis one. Fixture
- * mode runs on it, and so do the adapter's tests: `puts`, `size` and `clear` are for them.
+ * mode runs on it, and so do the adapter's tests: `puts`, `touches`, `size` and `clear` are for
+ * them.
  */
 export function createMemorySnapshotStore(
   keep: number = STATES_KEPT_PER_STREAM
-): SnapshotStore & { puts(): number; size(): number; clear(): void } {
+): SnapshotStore & { puts(): number; touches(): number; size(): number; clear(): void } {
   const sets = new Map<string, string>();
   const streams = new Map<string, string[]>();
   let puts = 0;
+  let touches = 0;
+  const retain = (digest: string, stream: string) => {
+    const { list, evicted } = retainLatest(streams.get(stream) ?? [], digest, keep);
+    streams.set(stream, list);
+    for (const old of evicted) sets.delete(old);
+  };
   return {
     get: async (digest) => sets.get(digest) ?? null,
     put: async (digest, value, stream) => {
       puts++;
       sets.set(digest, value);
-      const { list, evicted } = retainLatest(streams.get(stream) ?? [], digest, keep);
-      streams.set(stream, list);
-      for (const old of evicted) sets.delete(old);
+      retain(digest, stream);
+    },
+    touch: async (digest, stream) => {
+      touches++;
+      retain(digest, stream);
     },
     puts: () => puts,
+    touches: () => touches,
     size: () => sets.size,
     clear: () => {
       sets.clear();

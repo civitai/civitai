@@ -18,7 +18,6 @@ export type CatalogListing = {
   tagline: string | null;
   category: string | null;
   contentRating: string | null;
-  iconUrl: string | null;
   creatorUsername: string | null;
   appBlockId: string | null;
   externalUrl: string | null;
@@ -34,7 +33,6 @@ export function listingFromCard(card: ListingCard): CatalogListing {
     tagline: card.tagline,
     category: card.category,
     contentRating: card.contentRating,
-    iconUrl: card.iconUrl,
     creatorUsername: card.creator?.username ?? null,
     appBlockId: card.kindData.kind === 'onsite' ? card.kindData.appBlockId : null,
     externalUrl: card.kindData.kind === 'offsite' ? card.kindData.externalUrl : null,
@@ -61,6 +59,12 @@ export type CatalogReadDeps = {
    * Ids only: never used to read a parent.
    */
   loadForkParents: (listingIds: string[]) => Promise<Map<string, string>>;
+  /**
+   * Listing id → the icon its app entity publishes, gated at the listing's own rating
+   * (`registryIconUrl`); absent means none. Never the store card's icon, whose ceiling follows
+   * the reader's levels.
+   */
+  loadIconUrls: (listingIds: string[]) => Promise<Map<string, string | null>>;
 };
 
 /** Pages the catalog may take before the read fails. A truncated catalog would read as deletes. */
@@ -111,9 +115,17 @@ export async function readCatalog(deps: CatalogReadDeps): Promise<CatalogApp[]> 
 
   // One query each for the whole catalog, keyed by listing id, as the blocks and requests are.
   const listingIds = listings.map((l) => l.id);
-  const [sourceRepoUrls, forkParents] = listingIds.length
-    ? await Promise.all([deps.loadSourceRepoUrls(listingIds), deps.loadForkParents(listingIds)])
-    : [new Map<string, string | null>(), new Map<string, string>()];
+  const [sourceRepoUrls, forkParents, iconUrls] = listingIds.length
+    ? await Promise.all([
+        deps.loadSourceRepoUrls(listingIds),
+        deps.loadForkParents(listingIds),
+        deps.loadIconUrls(listingIds),
+      ])
+    : [
+        new Map<string, string | null>(),
+        new Map<string, string>(),
+        new Map<string, string | null>(),
+      ];
 
   const apps: CatalogApp[] = [];
   for (const l of listings) {
@@ -127,7 +139,7 @@ export async function readCatalog(deps: CatalogReadDeps): Promise<CatalogApp[]> 
         tagline: l.tagline,
         category: l.category,
         contentRating: l.contentRating,
-        iconUrl: l.iconUrl,
+        iconUrl: iconUrls.get(l.id) ?? null,
         creatorUsername: l.creatorUsername,
         externalUrl: l.kind === 'offsite' ? l.externalUrl : null,
         sourceRepoUrl: sourceRepoUrls.get(l.id) ?? null,

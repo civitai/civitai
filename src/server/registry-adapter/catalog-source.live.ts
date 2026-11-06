@@ -5,6 +5,8 @@
 import { dbRead } from '~/server/db/client';
 import type { CatalogReadDeps } from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
+import { registryIconUrl } from '~/server/registry-adapter/catalog-media';
+import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
 import { readListingForkParents } from '~/server/services/blocks/app-fork.service';
@@ -78,5 +80,15 @@ export function liveCatalogReadDeps(): CatalogReadDeps {
 
     // The listings' own fork pointers only; readCatalog decides whether a parent may be named.
     loadForkParents: (listingIds) => readListingForkParents(listingIds, dbRead),
+
+    // The listings' own icons with the gate's columns, gated at each listing's own rating; the
+    // civitai.red overrides are never read.
+    async loadIconUrls(listingIds) {
+      const rows = await dbRead.appListing.findMany({
+        where: { id: { in: listingIds } },
+        select: { id: true, contentRating: true, icon: { select: listingMediaImageSelect } },
+      });
+      return new Map(rows.map((r) => [r.id, registryIconUrl(r)]));
+    },
   };
 }

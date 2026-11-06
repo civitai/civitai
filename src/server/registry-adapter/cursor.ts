@@ -22,6 +22,8 @@ export interface SnapshotStore {
    * {@link STATES_KEPT_PER_STREAM} ({@link retainLatest}).
    */
   put(digest: string, value: string, stream: string): Promise<void>;
+  /** What `put` does for a state already held, without rewriting its value: on a resume. */
+  touch(digest: string, stream: string): Promise<void>;
 }
 
 /**
@@ -116,7 +118,7 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
     if (set.schema !== schema || !Array.isArray(set.entries)) {
       throw cursorExpired('the cursor belongs to another schema');
     }
-    await opts.store.put(digest, raw, schema);
+    await opts.store.touch(digest, schema);
     return new Map(set.entries);
   };
 
