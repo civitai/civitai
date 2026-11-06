@@ -116,7 +116,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER);
+CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
@@ -262,6 +262,18 @@ describe('a delete whose follow-up cannot be queued', () => {
       url: uuid(1),
       moderatorDelete: true,
     });
+  });
+
+  it('deletes the banner of a deleted article with it', async () => {
+    await articleWithCover(10, 1);
+    await blockedImage(3);
+    await db.query(`UPDATE "Article" SET "bannerId" = 3 WHERE id = 10`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await imageExists(3)).toBe(false);
   });
 
   it('fails an article delete and keeps the article, its connection and its cover', async () => {

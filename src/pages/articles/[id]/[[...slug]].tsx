@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Center,
-  Container,
   Divider,
   Group,
   LoadingOverlay,
@@ -37,7 +36,6 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { Collection } from '~/components/Collection/Collection';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { safeSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { env } from '~/env/client';
@@ -51,6 +49,8 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import { ArticleBanner } from '~/components/Article/Detail/ArticleBanner';
+import { ArticleDetailLayout } from '~/components/Article/Detail/ArticleDetailLayout';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
@@ -246,14 +246,15 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   };
 
   const memoizedImageData = useMemo(
-    () => [article?.coverImage].filter(isDefined),
-    [article?.coverImage]
+    () => [article?.coverImage, article?.bannerImage].filter(isDefined),
+    [article?.coverImage, article?.bannerImage]
   );
   const { items } = useApplyHiddenPreferences({
     type: 'images',
     data: memoizedImageData,
   });
-  const [image] = items;
+  const image = items.find((item) => item.id === article?.coverImage?.id);
+  const banner = items.find((item) => item.id === article?.bannerImage?.id);
 
   if (isLoading) return <PageLoader />;
   if (!article) {
@@ -356,6 +357,242 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       : undefined,
   };
 
+  const headerBlock = (
+    <Stack gap={8} mb="xl">
+      <Group justify="space-between" wrap="nowrap">
+        <Title fw="bold" className={classes.title} order={1}>
+          {article.title}
+        </Title>
+        <Group align="center" className={classes.titleWrapper} wrap="nowrap">
+          {!mobile && actionButtons}
+          <ArticleContextMenu article={article} />
+        </Group>
+      </Group>
+      <Group gap={8}>
+        <UserAvatar user={article.user} withUsername linkToProfile />
+        <Divider orientation="vertical" />
+        <Text c="dimmed" size="sm">
+          {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
+        </Text>
+        {article.publishedAt &&
+          article.updatedAt &&
+          dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
+            <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
+              <Text size="sm" c="dimmed" className="cursor-default">
+                (Updated: {dayjs().to(dayjs(article.updatedAt))})
+              </Text>
+            </Tooltip>
+          )}
+        {article.isOfficial && (
+          <>
+            <Divider orientation="vertical" />
+            <OfficialArticleBadge />
+          </>
+        )}
+        {category && (
+          <>
+            <Divider orientation="vertical" />
+            <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
+              <Badge
+                component="a"
+                size="sm"
+                variant="gradient"
+                gradient={{ from: 'cyan', to: 'blue' }}
+                style={{ cursor: 'pointer' }}
+              >
+                {category.name}
+              </Badge>
+            </Link>
+          </>
+        )}
+        {!!tags.length && (
+          <>
+            <Divider orientation="vertical" />
+            <Collection
+              items={tags}
+              renderItem={(tag) => (
+                <Link
+                  legacyBehavior
+                  key={tag.id}
+                  href={`/articles?view=feed&tags=${tag.id}`}
+                  passHref
+                >
+                  <Badge
+                    component="a"
+                    color="gray"
+                    variant={colorScheme === 'dark' ? 'filled' : undefined}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {tag.name}
+                  </Badge>
+                </Link>
+              )}
+              grouped
+            />
+          </>
+        )}
+      </Group>
+      {article.status === ArticleStatus.Unpublished && isOwner && (
+        <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
+          <div>
+            This article has been unpublished.{' '}
+            <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
+              Click here
+            </Anchor>{' '}
+            to publish it again or make changes to it before publishing.
+          </div>
+        </AlertWithIcon>
+      )}
+      {article.scheduledAt && isOwner && (
+        <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="blue" iconColor="blue">
+          <div>
+            This article is scheduled to publish {formatDate(article.scheduledAt, 'lll')} your time.
+            It stays hidden until then.
+          </div>
+        </AlertWithIcon>
+      )}
+      {article.status === ArticleStatus.UnpublishedViolation && (
+        <ArticleUnpublishedAlert
+          reason={article.metadata?.unpublishedReason}
+          customMessage={article.metadata?.customMessage}
+          showSupportHint={!isModerator}
+        />
+      )}
+      {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
+        <ArticleScanStatus
+          articleId={article.id}
+          onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
+        />
+      )}
+      <OwnerRatingControls entityType="Article" entityId={article.id} isOwner={!!isActualOwner} />
+      {article.status === ArticleStatus.Published && (
+        <FirstPublishCard
+          entityType="article"
+          entityId={article.id}
+          ownerId={article.user.id}
+          publishedAt={article.publishedAt}
+        />
+      )}
+    </Stack>
+  );
+
+  const coverBlock = image && (
+    <AspectRatio ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}>
+      {/*
+        AspectRatio sizes every direct child, and ImageGuard2 renders
+        the blur explainer as a sibling of its content — so the guard
+        goes inside this div rather than around it, or the explainer
+        becomes a second sized child positioned against the page
+        instead of the cover. It is also the box the sticker overlay
+        measures the media against, which needs one shared offset
+        parent.
+      */}
+      <div className="relative size-full">
+        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+          {(safe) => (
+            <>
+              <RoutedDialogLink
+                name="imageDetail"
+                state={{ imageId: image.id }}
+                className="block size-full cursor-pointer"
+              >
+                <Center className="size-full">
+                  <div className="relative size-full">
+                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                    <ImageContextMenu
+                      image={image}
+                      noDelete={true}
+                      className="absolute right-2 top-2 z-10"
+                    />
+                    {!safe ? (
+                      <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                        <MediaHash {...image} />
+                      </div>
+                    ) : (
+                      <EdgeMedia
+                        src={image.url}
+                        className="h-full rounded-lg object-cover"
+                        name={image.name}
+                        alt={article.title}
+                        type={image.type}
+                        width={MAX_WIDTH}
+                        anim={safe}
+                      />
+                    )}
+                  </div>
+                </Center>
+              </RoutedDialogLink>
+              <ArticleCoverStickers imageId={image.id} safe={safe} />
+            </>
+          )}
+        </ImageGuard2>
+      </div>
+    </AspectRatio>
+  );
+
+  const bodyBlock = (
+    <>
+      {article.contentJson && (
+        <article>
+          <RenderRichText
+            content={article.contentJson}
+            fallbackHtml={article.content}
+            className={features.articleTypography ? articleBodyClasses.articleBody : undefined}
+          />
+        </article>
+      )}
+      <Divider />
+      <Group justify="space-between">
+        <Reactions
+          entityType="article"
+          reactions={article.reactions}
+          entityId={article.id}
+          metrics={{
+            likeCount: article.stats?.likeCountAllTime,
+            dislikeCount: article.stats?.dislikeCountAllTime,
+            heartCount: article.stats?.heartCountAllTime,
+            laughCount: article.stats?.laughCountAllTime,
+            cryCount: article.stats?.cryCountAllTime,
+          }}
+          targetUserId={article.user.id}
+        />
+        {actionButtons}
+      </Group>
+    </>
+  );
+
+  const sidebarBlock = (
+    <Sidebar
+      creator={article.user}
+      attachments={article.attachments}
+      articleId={article.id}
+      hiddenNotice={
+        isOwner &&
+        (article.ingestion === ArticleIngestionStatus.Error ||
+          article.ingestion === ArticleIngestionStatus.Blocked) ? (
+          <AlertWithIcon
+            align="center"
+            color="red"
+            iconColor="red"
+            icon={<IconAlertCircle size={28} />}
+            title="This article isn't visible to the public"
+            size="sm"
+          >
+            {article.ingestion === ArticleIngestionStatus.Blocked
+              ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
+              : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+          </AlertWithIcon>
+        ) : null
+      }
+    />
+  );
+
+  const commentsBlock = (
+    <div id="comments">
+      <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+    </div>
+  );
+
   return (
     <Gated
       contentNsfwLevel={article.nsfwLevel}
@@ -378,247 +615,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       }}
     >
       <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
-      <Container size="xl" pos="relative">
-        <LoadingOverlay visible={isRefetching || upsertArticleMutation.isPending} />
-        <Stack gap={8} mb="xl">
-          <Group justify="space-between" wrap="nowrap">
-            <Title fw="bold" className={classes.title} order={1}>
-              {article.title}
-            </Title>
-            <Group align="center" className={classes.titleWrapper} wrap="nowrap">
-              {!mobile && actionButtons}
-              <ArticleContextMenu article={article} />
-            </Group>
-          </Group>
-          <Group gap={8}>
-            <UserAvatar user={article.user} withUsername linkToProfile />
-            <Divider orientation="vertical" />
-            <Text c="dimmed" size="sm">
-              {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
-            </Text>
-            {article.publishedAt &&
-              article.updatedAt &&
-              dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
-                <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
-                  <Text size="sm" c="dimmed" className="cursor-default">
-                    (Updated: {dayjs().to(dayjs(article.updatedAt))})
-                  </Text>
-                </Tooltip>
-              )}
-            {article.isOfficial && (
-              <>
-                <Divider orientation="vertical" />
-                <OfficialArticleBadge />
-              </>
-            )}
-            {category && (
-              <>
-                <Divider orientation="vertical" />
-                <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
-                  <Badge
-                    component="a"
-                    size="sm"
-                    variant="gradient"
-                    gradient={{ from: 'cyan', to: 'blue' }}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {category.name}
-                  </Badge>
-                </Link>
-              </>
-            )}
-            {!!tags.length && (
-              <>
-                <Divider orientation="vertical" />
-                <Collection
-                  items={tags}
-                  renderItem={(tag) => (
-                    <Link
-                      legacyBehavior
-                      key={tag.id}
-                      href={`/articles?view=feed&tags=${tag.id}`}
-                      passHref
-                    >
-                      <Badge
-                        component="a"
-                        color="gray"
-                        variant={colorScheme === 'dark' ? 'filled' : undefined}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        {tag.name}
-                      </Badge>
-                    </Link>
-                  )}
-                  grouped
-                />
-              </>
-            )}
-          </Group>
-          {article.status === ArticleStatus.Unpublished && isOwner && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
-              <div>
-                This article has been unpublished.{' '}
-                <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
-                  Click here
-                </Anchor>{' '}
-                to publish it again or make changes to it before publishing.
-              </div>
-            </AlertWithIcon>
-          )}
-          {article.scheduledAt && isOwner && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="blue" iconColor="blue">
-              <div>
-                This article is scheduled to publish {formatDate(article.scheduledAt, 'lll')} your
-                time. It stays hidden until then.
-              </div>
-            </AlertWithIcon>
-          )}
-          {article.status === ArticleStatus.UnpublishedViolation && (
-            <ArticleUnpublishedAlert
-              reason={article.metadata?.unpublishedReason}
-              customMessage={article.metadata?.customMessage}
-              showSupportHint={!isModerator}
-            />
-          )}
-          {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
-            <ArticleScanStatus
-              articleId={article.id}
-              onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
-            />
-          )}
-          <OwnerRatingControls
-            entityType="Article"
-            entityId={article.id}
-            isOwner={!!isActualOwner}
-          />
-          {article.status === ArticleStatus.Published && (
-            <FirstPublishCard
-              entityType="article"
-              entityId={article.id}
-              ownerId={article.user.id}
-              publishedAt={article.publishedAt}
-            />
-          )}
-        </Stack>
-        <ContainerGrid2 gutter="xl">
-          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
-            <Stack gap="xs">
-              {image && (
-                <AspectRatio
-                  ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
-                >
-                  {/*
-                    AspectRatio sizes every direct child, and ImageGuard2 renders
-                    the blur explainer as a sibling of its content — so the guard
-                    goes inside this div rather than around it, or the explainer
-                    becomes a second sized child positioned against the page
-                    instead of the cover. It is also the box the sticker overlay
-                    measures the media against, which needs one shared offset
-                    parent.
-                  */}
-                  <div className="relative size-full">
-                    <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                      {(safe) => (
-                        <>
-                          <RoutedDialogLink
-                            name="imageDetail"
-                            state={{ imageId: image.id }}
-                            className="block size-full cursor-pointer"
-                          >
-                            <Center className="size-full">
-                              <div className="relative size-full">
-                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                                <ImageContextMenu
-                                  image={image}
-                                  noDelete={true}
-                                  className="absolute right-2 top-2 z-10"
-                                />
-                                {!safe ? (
-                                  <div className="relative h-full overflow-hidden rounded-lg object-cover">
-                                    <MediaHash {...image} />
-                                  </div>
-                                ) : (
-                                  <EdgeMedia
-                                    src={image.url}
-                                    className="h-full rounded-lg object-cover"
-                                    name={image.name}
-                                    alt={article.title}
-                                    type={image.type}
-                                    width={MAX_WIDTH}
-                                    anim={safe}
-                                  />
-                                )}
-                              </div>
-                            </Center>
-                          </RoutedDialogLink>
-                          <ArticleCoverStickers imageId={image.id} safe={safe} />
-                        </>
-                      )}
-                    </ImageGuard2>
-                  </div>
-                </AspectRatio>
-              )}
-
-              {article.contentJson && (
-                <article>
-                  <RenderRichText
-                    content={article.contentJson}
-                    fallbackHtml={article.content}
-                    className={
-                      features.articleTypography ? articleBodyClasses.articleBody : undefined
-                    }
-                  />
-                </article>
-              )}
-              <Divider />
-              <Group justify="space-between">
-                <Reactions
-                  entityType="article"
-                  reactions={article.reactions}
-                  entityId={article.id}
-                  metrics={{
-                    likeCount: article.stats?.likeCountAllTime,
-                    dislikeCount: article.stats?.dislikeCountAllTime,
-                    heartCount: article.stats?.heartCountAllTime,
-                    laughCount: article.stats?.laughCountAllTime,
-                    cryCount: article.stats?.cryCountAllTime,
-                  }}
-                  targetUserId={article.user.id}
-                />
-                {actionButtons}
-              </Group>
-            </Stack>
-          </ContainerGrid2.Col>
-          <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
-            <Sidebar
-              creator={article.user}
-              attachments={article.attachments}
-              articleId={article.id}
-              hiddenNotice={
-                isOwner &&
-                (article.ingestion === ArticleIngestionStatus.Error ||
-                  article.ingestion === ArticleIngestionStatus.Blocked) ? (
-                  <AlertWithIcon
-                    align="center"
-                    color="red"
-                    iconColor="red"
-                    icon={<IconAlertCircle size={28} />}
-                    title="This article isn't visible to the public"
-                    size="sm"
-                  >
-                    {article.ingestion === ArticleIngestionStatus.Blocked
-                      ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-                      : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
-                  </AlertWithIcon>
-                ) : null
-              }
-            />
-          </ContainerGrid2.Col>
-        </ContainerGrid2>
-        <div id="comments">
-          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-        </div>
-      </Container>
+      <ArticleDetailLayout
+        banner={
+          banner && <ArticleBanner image={banner} articleId={article.id} title={article.title} />
+        }
+        overlay={<LoadingOverlay visible={isRefetching || upsertArticleMutation.isPending} />}
+        header={headerBlock}
+        cover={coverBlock}
+        body={bodyBlock}
+        sidebar={sidebarBlock}
+        comments={commentsBlock}
+      />
     </Gated>
   );
 }

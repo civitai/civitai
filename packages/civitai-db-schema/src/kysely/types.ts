@@ -807,6 +807,7 @@ export type Article = {
   content: string;
   cover: string | null;
   coverId: number | null;
+  bannerId: number | null;
   publishedAt: Timestamp | null;
   scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;

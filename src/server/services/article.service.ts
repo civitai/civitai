@@ -38,7 +38,10 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
+import {
+  articleOwnImageIds,
+  deriveArticleIngestionState,
+} from '~/server/services/article-ingestion.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -771,6 +774,8 @@ export const getArticleById = async ({
       // field doesn't flow into external webhook / search-index payloads.
       select: {
         ...articleDetailSelect,
+        // Page-only: kept out of the shared select so the webhook and search payloads are unchanged.
+        bannerImage: { select: imageSelect },
         moderatorNsfwLevel: true,
         scheduledAt: true,
         reactions: viewerReactionsSelect(userId),
@@ -799,20 +804,9 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
-    const coverImage = article.coverImage
-      ? {
-          ...article.coverImage,
-          nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
-          meta: article.coverImage.meta as ImageMetaProps,
-          metadata: article.coverImage.metadata as ImageMetadata,
-          tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
-        }
-      : undefined;
-
-    const canViewCoverImage =
-      isModerator ||
-      userId === article.userId ||
-      (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
+    const isOwnerOrMod = isModerator || userId === article.userId;
+    const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
+    const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
 
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
@@ -832,7 +826,8 @@ export const getArticleById = async ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
-      coverImage: canViewCoverImage ? coverImage : undefined,
+      coverImage,
+      bannerImage,
       contentJson,
       contentImages: imageConnections.map((conn) => conn.image),
       metadata: (article.metadata as ArticleMetadata) ?? null,
@@ -843,6 +838,24 @@ export const getArticleById = async ({
   }
 };
 
+type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
+
+/**
+ * The cover or banner as a reader may see it: owners and moderators always, anyone else only once
+ * the image has been scanned and is not waiting on review.
+ */
+function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
+  if (!image) return undefined;
+  if (!isOwnerOrMod && (image.ingestion !== 'Scanned' || image.needsReview)) return undefined;
+  return {
+    ...image,
+    nsfwLevel: image.nsfwLevel as NsfwLevel,
+    meta: image.meta as ImageMetaProps,
+    metadata: image.metadata as ImageMetadata,
+    tags: image.tags.flatMap((x) => x.tag.id),
+  };
+}
+
 const ARTICLE_VIOLATION_STATUS_LOCKED_MESSAGE =
   'This article was unpublished for violating Terms of Service and its status cannot be changed. Please contact support if you believe this was in error.';
 
@@ -852,6 +865,7 @@ export const upsertArticle = async ({
   tags: inputTags,
   attachments,
   coverImage,
+  bannerImage,
   isModerator,
   scanContent,
   scheduledAt,
@@ -880,6 +894,7 @@ export const upsertArticle = async ({
       title: string;
       cover: string | null;
       coverId: number | null;
+      bannerId: number | null;
       userId: number;
       publishedAt: Date | null;
       status: string;
@@ -898,6 +913,7 @@ export const upsertArticle = async ({
           title: true,
           cover: true,
           coverId: true,
+          bannerId: true,
           userId: true,
           publishedAt: true,
           status: true,
@@ -1000,6 +1016,21 @@ export const upsertArticle = async ({
       });
     }
 
+    // undefined leaves the column alone, null clears it.
+    let bannerId: number | null | undefined = bannerImage === null ? null : undefined;
+    if (bannerImage) {
+      bannerId = await resolveCoverImageId({
+        coverImage: bannerImage,
+        userId,
+        currentCoverId: article?.bannerId,
+        assertOwnership: async (imageId) => {
+          if (article != null && imageId === article.bannerId) return;
+          const isImgOwner = await isImageOwner({ userId, isModerator, imageId });
+          if (!isImgOwner) throw throwAuthorizationError('Invalid banner image');
+        },
+      });
+    }
+
     if (!id) {
       // Set publishedAt based on status
       // - Published: Set to now (appears at top of feed)
@@ -1019,6 +1050,7 @@ export const upsertArticle = async ({
             publishedAt,
             scheduledAt: scheduledAtWrite,
             coverId,
+            bannerId,
             userId,
             tags: tags
               ? {
@@ -1081,6 +1113,7 @@ export const upsertArticle = async ({
             userId,
             ownerId: result.userId,
             coverId: result.coverId,
+            bannerId: result.bannerId,
           });
 
           // Mark scan as requested after successfully linking images
@@ -1282,6 +1315,7 @@ export const upsertArticle = async ({
           publishedAt,
           scheduledAt: scheduledAtWrite,
           coverId,
+          bannerId,
           tags: tags
             ? {
                 deleteMany: {
@@ -1359,11 +1393,22 @@ export const upsertArticle = async ({
     await userArticleCountCache.refresh(result.userId);
 
     // remove old cover image
-    if (article.coverId !== coverId && article.coverId) {
+    if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
       const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
       if (isImgOwner) {
         await deleteImageById({ id: article.coverId });
       }
+    }
+
+    // A replaced or cleared banner. Omitted (`bannerId === undefined`) leaves it in place.
+    if (
+      bannerId !== undefined &&
+      article.bannerId &&
+      article.bannerId !== bannerId &&
+      article.bannerId !== result.coverId
+    ) {
+      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.bannerId });
+      if (isImgOwner) await deleteImageById({ id: article.bannerId });
     }
 
     await applyArticleContentChange({
@@ -1376,6 +1421,7 @@ export const upsertArticle = async ({
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
         coverId: coverId ?? article.coverId,
+        bannerId: result.bannerId,
         publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
     });
@@ -1423,6 +1469,7 @@ type ArticleContentChangeContext = {
   title: string | null;
   previousContent: string | null;
   coverId: number | null;
+  bannerId: number | null;
   publication: { status: ArticleStatus; scheduledAt: Date | null };
 };
 
@@ -1473,6 +1520,7 @@ export async function applyArticleContentChange({
         title: true,
         content: true,
         coverId: true,
+        bannerId: true,
         status: true,
         scheduledAt: true,
       },
@@ -1483,10 +1531,11 @@ export async function applyArticleContentChange({
       title: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
+      bannerId: stored.bannerId,
       publication: { status: stored.status, scheduledAt: stored.scheduledAt },
     };
   }
-  const { ownerId, title, previousContent, coverId, publication } = resolved;
+  const { ownerId, title, previousContent, coverId, bannerId, publication } = resolved;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1519,6 +1568,7 @@ export async function applyArticleContentChange({
           userId,
           ownerId,
           coverId,
+          bannerId,
           cleanupOnly: !scanContent,
         });
 
@@ -1636,6 +1686,7 @@ export const unusedAuthorImage = (ownerId: number) =>
     blockedFor: null,
     reports: { none: {} },
     article: { is: null },
+    articleBanner: { is: null },
     assignedUser: { is: null },
     connections: { none: {} },
     collectionItems: { none: {} },
@@ -1759,7 +1810,7 @@ export const deleteArticleById = async ({
       await tx.$executeRaw`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`;
       const article = await tx.article.delete({
         where: { id },
-        select: { coverId: true },
+        select: { coverId: true, bannerId: true },
       });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
@@ -1774,11 +1825,11 @@ export const deleteArticleById = async ({
     // already gone, so the pre-delete snapshot is the only record left.
     await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
 
-    // The cover goes through the same checks as the content images: it can be someone else's
-    // upload, or still shown elsewhere.
+    // The cover and banner go through the same checks as the content images: either can be
+    // someone else's upload, or still shown elsewhere.
     const imageIds = [
       ...new Set([
-        ...(deleted.coverId ? [deleted.coverId] : []),
+        ...articleOwnImageIds(deleted),
         ...contentImageConnections.map((conn) => conn.imageId),
       ]),
     ];
@@ -1803,6 +1854,8 @@ export const deleteArticleById = async ({
               error,
               imageId === deleted.coverId
                 ? 'article-cover-image-cleanup'
+                : imageId === deleted.bannerId
+                ? 'article-banner-image-cleanup'
                 : 'article-content-image-cleanup',
               { articleId: id, imageId }
             );
@@ -2108,6 +2161,7 @@ export async function linkArticleContentImages({
   userId,
   ownerId,
   coverId,
+  bannerId,
   cleanupOnly,
   now = new Date(),
   relinks = 0,
@@ -2117,6 +2171,7 @@ export async function linkArticleContentImages({
   userId: number;
   ownerId: number;
   coverId?: number | null;
+  bannerId?: number | null;
   cleanupOnly?: boolean;
   now?: Date;
   /** How many times this call has re-run over content a later save wrote. */
@@ -2231,9 +2286,7 @@ export async function linkArticleContentImages({
 
       // --- Orphan detection (always runs) ---
 
-      // Build exclusion list: content images + cover image
-      const excludeImageIds = [...contentImageIds];
-      if (coverId) excludeImageIds.push(coverId);
+      const excludeImageIds = [...contentImageIds, ...articleOwnImageIds({ coverId, bannerId })];
 
       // Get orphaned connections for this article
       const orphanedConnections = await tx.imageConnection.findMany({
@@ -2292,6 +2345,7 @@ export async function linkArticleContentImages({
         userId,
         ownerId,
         coverId,
+        bannerId,
         now,
         relinks: relinks + 1,
       });
@@ -2409,7 +2463,14 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
     dbRead.article.findUnique({
       where: { id },
-      select: { title: true, content: true, coverId: true, status: true, scheduledAt: true },
+      select: {
+        title: true,
+        content: true,
+        coverId: true,
+        bannerId: true,
+        status: true,
+        scheduledAt: true,
+      },
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
@@ -2417,12 +2478,13 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
   ]);
 
-  // Cover lives on `Article.coverId`, not in `ImageConnection`, so a cover-only
-  // problem (no content images) would otherwise render nothing. Fold it into the
-  // scannable set, deduped against any connection that also references it.
-  const cover = article?.coverId
-    ? await dbRead.image.findUnique({
-        where: { id: article.coverId },
+  // Cover and banner live on `Article`, not in `ImageConnection`, so a cover- or banner-only
+  // problem (no content images) would otherwise render nothing. Fold them into the
+  // scannable set, deduped against any connection that also references them.
+  const ownImageIds = article ? articleOwnImageIds(article) : [];
+  const ownImages = ownImageIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: ownImageIds } },
         select: {
           id: true,
           url: true,
@@ -2432,10 +2494,10 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
           scanJobs: true,
         },
       })
-    : null;
+    : [];
 
   const images = connections.map((c) => c.image);
-  if (cover && !images.some((image) => image.id === cover.id)) images.push(cover);
+  for (const own of ownImages) if (!images.some((image) => image.id === own.id)) images.push(own);
 
   const total = images.length;
   const scannedImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Scanned);
@@ -2638,23 +2700,24 @@ export async function recomputeArticleIngestionInTx(
       title: true,
       content: true,
       coverId: true,
+      bannerId: true,
       moderatorNsfwLevel: true,
     },
   });
   const hold = await getContentLinkHold(tx, articleId);
 
-  const coverIngestion = current.coverId
-    ? (
-        await tx.image.findUnique({
-          where: { id: current.coverId },
-          select: { ingestion: true },
-        })
-      )?.ingestion ?? null
-    : null;
+  // The banner is gated exactly like the cover.
+  const ownImageIds = articleOwnImageIds(current);
+  const ownImages = ownImageIds.length
+    ? await tx.image.findMany({
+        where: { id: { in: ownImageIds } },
+        select: { ingestion: true },
+      })
+    : [];
 
   const imageStates: ImageIngestionStatus[] = [
     ...connections.map((c) => c.image.ingestion),
-    ...(coverIngestion ? [coverIngestion] : []),
+    ...ownImages.map((image) => image.ingestion),
   ];
 
   const totalImages = imageStates.length;
@@ -2859,14 +2922,17 @@ export async function resolveArticleImageScan({
   // unrelated image: the image must be this article's cover or one of its
   // content-image connections.
   const [article, connection] = await Promise.all([
-    dbRead.article.findUnique({ where: { id: articleId }, select: { coverId: true } }),
+    dbRead.article.findUnique({
+      where: { id: articleId },
+      select: { coverId: true, bannerId: true },
+    }),
     dbRead.imageConnection.findFirst({
       where: { entityId: articleId, entityType: ImageConnectionType.Article, imageId },
       select: { imageId: true },
     }),
   ]);
   if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
-  if (article.coverId !== imageId && !connection)
+  if (!articleOwnImageIds(article).includes(imageId) && !connection)
     throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
 
   await resolveIngestionError({ id: imageId, nsfwLevel, userId });
@@ -2951,6 +3017,7 @@ export async function rescanArticle({
       content: true,
       title: true,
       coverId: true,
+      bannerId: true,
       status: true,
       scheduledAt: true,
     },
@@ -2988,6 +3055,7 @@ export async function rescanArticle({
       userId: article.userId,
       ownerId: article.userId,
       coverId: article.coverId,
+      bannerId: article.bannerId,
     });
   }
 
@@ -3002,17 +3070,19 @@ export async function rescanArticle({
     },
   });
 
-  // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
-  // cover would never be re-queued without folding it in here.
-  const cover = article.coverId
-    ? await dbWrite.image.findUnique({
-        where: { id: article.coverId },
+  // Cover and banner live on `Article`, not in `ImageConnection`, so a broken
+  // one would never be re-queued without folding it in here.
+  const ownImageIds = articleOwnImageIds(article);
+  const ownImages = ownImageIds.length
+    ? await dbWrite.image.findMany({
+        where: { id: { in: ownImageIds } },
         select: rescanImageSelect,
       })
-    : null;
+    : [];
 
   const candidates = connections.map((conn) => conn.image);
-  if (cover && !candidates.some((image) => image.id === cover.id)) candidates.push(cover);
+  for (const own of ownImages)
+    if (!candidates.some((image) => image.id === own.id)) candidates.push(own);
 
   const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
 
@@ -3116,15 +3186,15 @@ export async function rescanArticleImage({
   const db = await getDbWithoutLag('article', articleId);
   const article = await db.article.findUnique({
     where: { id: articleId },
-    select: { userId: true, coverId: true },
+    select: { userId: true, coverId: true, bannerId: true },
   });
   if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
   if (article.userId !== userId && !isModerator)
     throw throwAuthorizationError('You cannot perform this action');
 
-  // Image must belong to the article: its cover or a content-image connection.
+  // Image must belong to the article: its cover, its banner or a content-image connection.
   const belongs =
-    article.coverId === imageId ||
+    articleOwnImageIds(article).includes(imageId) ||
     !!(await dbRead.imageConnection.findFirst({
       where: { entityId: articleId, entityType: ImageConnectionType.Article, imageId },
       select: { imageId: true },

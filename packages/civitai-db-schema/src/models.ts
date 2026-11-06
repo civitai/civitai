@@ -1757,6 +1757,7 @@ export interface Image {
   clubTierCover?: ClubTier[];
   clubPostCoverImage?: ClubPost[];
   article?: Article | null;
+  articleBanner?: Article | null;
   purchasableRewards?: PurchasableReward[];
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
@@ -3817,6 +3818,8 @@ export interface Article {
   cover: string | null;
   coverId: number | null;
   coverImage?: Image | null;
+  bannerId: number | null;
+  bannerImage?: Image | null;
   publishedAt: Date | null;
   scheduledAt: Date | null;
   contentScannedAt: Date | null;
