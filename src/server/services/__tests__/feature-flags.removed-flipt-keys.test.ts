@@ -86,7 +86,8 @@ const EXPECTED: Record<string, Row> = {
   cashManagement: GRANTED,
   generationAirResources: MOD,
   ideogram4Training: MOD,
-  imageSearch: DARK,
+  // Mods since image search moved to the semantic backend; still static, no Flipt key.
+  imageSearch: MOD,
   imageTraining: USER,
   imageTrainingResults: USER,
   meshyV7Generator: MOD,

@@ -116,8 +116,8 @@ text, its Qdrant pass-through for "more like this") instead of Qdrant and the or
 
 1. Server: public procedure, optional viewer, restricted-base-model filter, users and date range.
    The site calling the search service. (Done.)
-2. Page: `/search/images` on the search chrome with the filters already covered, and the redirect from
-   `/search/semantic`. Ship behind the tester flag.
+2. Page: `/search/images`, the header and the quick search on the semantic search, with the filters
+   already covered. (Done, for moderators.) Then the tester flag.
 3. Event engine: the three payload fields and indexes, then the payload pass. The site's filter
    builder gains the matching clauses.
 4. Aspect ratio, tools and techniques filters on once the pass is complete.

@@ -54,6 +54,26 @@ browser.
 
 Moderators get the image feed's moderator view, which is wider than a regular viewer's.
 
+## On /search/images, the header and the quick search
+
+The original image search surfaces answer from the same search. `withSemanticImageSearch`
+(`src/components/Search/semanticImageSearchClient.ts`) wraps their InstantSearch clients: a request
+for the images index becomes a `semanticImageSearch.search` call, answered in Meilisearch's response
+shape, and every other index passes through to Meilisearch.
+
+- The browsing level comes from the `nsfwLevel=…` clauses `BrowsingLevelFilter` writes; base model,
+  tags (by name), users (by username) and the posted-date range come from the widgets' refinements.
+- InstantSearch pages by number, the search by an offset into its ranking, so the client remembers
+  the offset each page starts at.
+- There are no facet counts in a vector search. The widgets get choices only: every base model, and
+  the tags and users already chosen; typing in the Tags or Users picker searches `tag.getAll` and
+  `user.getAll`.
+- An empty query shows a prompt instead of results, and a request refined by a filter the index
+  cannot apply yet (aspect ratio, tools, techniques) returns nothing. The sidebar offers browsing
+  level, posted date, users, tags and base model.
+- `imageSearch` and `imageSearchEntry` gate these surfaces; both follow `semanticImageSearch`'s
+  audience.
+
 ## Feedback and logging
 
 - Every first page is logged to ClickHouse through `Tracker.search`, with index `images_semantic`.

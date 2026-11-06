@@ -412,32 +412,14 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served. Static
-  // availability is empty so image search is off for everyone.
-  // MEASURED 2026-10-03: the index holds 0 documents and `[]` filterable attributes. That is an
-  // observation with a date on it, NOT a consequence of `retired` — 🔴 nothing holds it that way.
-  // `retired` only stops the processor writing and syncing, so no `reset` runs to configure
-  // settings ("the index is stale for as long as it is retired",
-  // `src/server/search-index/base.search-index.ts`); an index that was set up before retirement
-  // keeps the settings and documents it had. And this one is still writable from outside the
-  // processor: `src/pages/api/mod/search/images-update.ts` writes to it without consulting
-  // `retired`, as the entry note in `src/server/meilisearch/util.ts` records. So re-measure before
-  // acting on the figures above; do not infer them from the flag.
-  // 🔴 This is NO LONGER a safe no-deploy toggle, and it fails quietly rather than loudly.
-  // Re-adding an `image-search` Flipt key here and turning that flag on would point image search
-  // at that index: filtered or sorted queries error, and the rest return zero hits.
-  // Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
-  // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
-  // several days and badly degrades search for every other index while it runs. Measured on the
-  // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
-  // So: treat re-enabling as a planned project, not a flag flip.
-  imageSearch: { availability: [] },
-  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
-  // (which gates whether image search actually RUNS) so the entry could stay visible with a
-  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
-  // Now [] : the entry is hidden from the header search, the quick-search pickers and the /search
-  // tabs, and /search/images redirects to /search/models. Set to ['public'] to show the notice again.
-  imageSearchEntry: [],
+  // Image search on /search/images, the header and the quick search. It answers from the semantic
+  // search (the cluster search service over Qdrant), never the retired `images_v6` Meilisearch
+  // index: `withSemanticImageSearch` routes every images-index request. Same audience as
+  // `semanticImageSearch` until the tester rollout gives both a Flipt key.
+  imageSearch: { availability: ['mod'] },
+  // Whether the Images entry appears in the search pickers and tabs. Without it, /search/images
+  // redirects to /search/models.
+  imageSearchEntry: ['mod'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
