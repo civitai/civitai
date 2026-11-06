@@ -433,37 +433,19 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
       (counter) => counter.key === 'prisma_datasource_queries_total'
     )?.value ?? 0;
 
-  it.each(Array.from({ length: 20 }, (_, i) => i + 1))(
-    'one statement where Prisma issues one per relation (run %i of 20)',
-    async () => {
-      prismaStatements.length = 0;
-      const before = await datasourceQueries();
-      await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
-      const prismaCount = (await datasourceQueries()) - before;
-      kyselyStatements.length = 0;
-      await readUserWithProfileViaKysely(logged, { username: 'full-profile' });
-      expect(kyselyStatements).toHaveLength(1);
-      // A counter that no longer exists reads 0 - 0, never 13.
-      expect(prismaCount).toBeGreaterThan(0);
-      // The user, its picture, cosmetics, their cosmetics, links, rank, profile, and each cover image
-      // with its tags and their tags.
-      expect(prismaCount, prismaStatements.join('\n')).toBe(13);
-    }
-  );
-
-  it('TEMP CONTROL (b): the metric delta is measured, not 0', async () => {
+  it('one statement where Prisma issues one per relation', async () => {
+    prismaStatements.length = 0;
     const before = await datasourceQueries();
     await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
-    expect((await datasourceQueries()) - before).toBe(999);
-  });
-
-  it('TEMP CONTROL (c): a missing counter fails the > 0 guard', async () => {
-    const missing = async () =>
-      (await prisma.$metrics.json()).counters.find((counter) => counter.key === 'no_such_counter')
-        ?.value ?? 0;
-    const before = await missing();
-    await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
-    expect((await missing()) - before).toBeGreaterThan(0);
+    const prismaCount = (await datasourceQueries()) - before;
+    kyselyStatements.length = 0;
+    await readUserWithProfileViaKysely(logged, { username: 'full-profile' });
+    expect(kyselyStatements).toHaveLength(1);
+    // A counter that no longer exists reads 0 - 0, never 13.
+    expect(prismaCount).toBeGreaterThan(0);
+    // The user, its picture, cosmetics, their cosmetics, links, rank, profile, and each cover image
+    // with its tags and their tags.
+    expect(prismaCount, prismaStatements.join('\n')).toBe(13);
   });
 
   // "TagsOnImageDetails" is a VIEW. It is a per-row projection (no GROUP BY, no UNION), so Postgres
