@@ -1,16 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as Caches from '~/server/redis/caches';
 import type * as ImageService from '~/server/services/image.service';
 import type * as TagService from '~/server/services/tag.service';
 import type { SessionUser } from '~/types/session';
 
-const { getImageMetricsObject } = vi.hoisted(() => ({ getImageMetricsObject: vi.fn() }));
+const { getImageMetricsObject, getPostDetailRow, getUserWithCosmetics } = vi.hoisted(() => ({
+  getImageMetricsObject: vi.fn(),
+  getPostDetailRow: vi.fn(),
+  getUserWithCosmetics: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getPostDetailRow,
+  getUserWithCosmetics,
+}));
 
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
+  getKyselyWithoutLag: vi.fn(async () => (await import('~/server/db/kyselyDb')).kyselyRead),
 }));
 vi.mock('~/server/services/tag.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TagService>()),
@@ -28,7 +39,11 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
   };
 });
 
-import { getPostEditImages, withReactionCounts } from '~/server/services/post.service';
+import {
+  getPostEditDetail,
+  getPostEditImages,
+  withReactionCounts,
+} from '~/server/services/post.service';
 
 const metric = (imageId: number, like: number | null, heart: number | null) => ({
   imageId,
@@ -64,10 +79,10 @@ describe('withReactionCounts', () => {
   });
 });
 
-describe('upload path', () => {
+describe('combinePostEditImageData, shared with the upload path', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('getPostEditImages, which shares combinePostEditImageData with uploads, reads no metrics', async () => {
+  it('reads no metrics through getPostEditImages (addPostImage itself is not run here)', async () => {
     vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([
       { id: 1, index: 1, tools: [], techniques: [] },
     ] as never);
@@ -75,6 +90,51 @@ describe('upload path', () => {
     const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
 
     expect(images).toHaveLength(1);
+    expect(getImageMetricsObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPostEditDetail', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const givenPost = (publishedAt: Date | null) => {
+    getPostDetailRow.mockResolvedValue({
+      id: 1,
+      publishedAt,
+      modelVersionId: null,
+      publishedModelVersionId: null,
+      userId: 7,
+      tags: [],
+    });
+    getUserWithCosmetics.mockResolvedValue({
+      id: 7,
+      username: 'owner',
+      deletedAt: null,
+      image: null,
+      profilePictureId: null,
+      cosmetics: [],
+    });
+    vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([
+      { id: 1, index: 1, tools: [], techniques: [] },
+    ] as never);
+  };
+  const owner = { id: 7, isModerator: false } as SessionUser;
+
+  it('puts the reaction count on each image of a published post', async () => {
+    givenPost(past);
+    getImageMetricsObject.mockResolvedValue({ 1: metric(1, 4, 1) });
+
+    const post = await getPostEditDetail({ id: 1, user: owner });
+
+    expect(post.images[0].reactionCount).toBe(5);
+  });
+
+  it('reads no metrics for a draft', async () => {
+    givenPost(null);
+
+    const post = await getPostEditDetail({ id: 1, user: owner });
+
+    expect(post.images[0].reactionCount).toBeUndefined();
     expect(getImageMetricsObject).not.toHaveBeenCalled();
   });
 });
