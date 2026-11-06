@@ -33,16 +33,20 @@ export type RetryUploadPromptScansDeps = {
   isCanceled?: () => boolean;
 };
 
-const defaultDeps: RetryUploadPromptScansDeps = {
-  take: (limit) => takeDueUploadPromptRetries({ limit }),
-  loadImages: (ids) => dbRead.$queryRaw<ImageRow[]>`
+/** The images still due a prompt scan, of `ids`, with their prompts. */
+export const loadRetryImages = (ids: number[]) =>
+  dbRead.$queryRaw<ImageRow[]>`
     SELECT id, "userId", meta->>'prompt' AS prompt, meta->>'negativePrompt' AS "negativePrompt"
     FROM "Image"
     WHERE id = ANY(${ids}::int[])
       -- Ingestion scans only R and above; an image rated down or blocked since has no scan due.
       AND ("nsfwLevel" & ${NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX}) <> 0
       AND ingestion <> 'Blocked'::"ImageIngestionStatus"
-  `,
+  `;
+
+const defaultDeps: RetryUploadPromptScansDeps = {
+  take: (limit) => takeDueUploadPromptRetries({ limit }),
+  loadImages: loadRetryImages,
   label: labelUploadPrompt,
   requeue: queueUploadPromptRetry,
   now: Date.now,

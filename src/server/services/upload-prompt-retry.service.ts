@@ -2,9 +2,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
- * Scans an upload prompt gets after the first one ends with no verdict. The entry for the last
- * retry is not re-queued, so one scan request (one delivery of the image scan webhook) leads to at
- * most `1 + UPLOAD_PROMPT_MAX_RETRIES` scans. A redelivered webhook starts its own count.
+ * Scans an upload prompt gets after the first one ends with no verdict. A retry with no verdict
+ * queues the next one until this cap; past it, a scan with no verdict queues nothing further. So one
+ * scan request (one delivery of the image scan webhook) leads to at most
+ * `1 + UPLOAD_PROMPT_MAX_RETRIES` scans. A redelivered webhook starts its own count.
  */
 export const UPLOAD_PROMPT_MAX_RETRIES = 3;
 /** The wait before retry n (index n - 1). Together they outlast an orchestrator outage of hours. */

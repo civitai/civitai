@@ -47,17 +47,23 @@ function fakeStore() {
       return 1;
     },
     zRem: async (_key: string, member: string) => (zset.delete(member) ? 1 : 0),
+    // BY: 'SCORE' reads min/max as scores; without it Redis reads them as ranks (positions).
     zRange: async (
       _key: string,
       min: number,
       max: number,
-      opts: { LIMIT: { offset: number; count: number } }
-    ) =>
-      [...zset]
-        .filter(([, score]) => score >= min && score <= max)
-        .sort((a, b) => a[1] - b[1])
-        .slice(opts.LIMIT.offset, opts.LIMIT.offset + opts.LIMIT.count)
-        .map(([member]) => Buffer.from(member)),
+      opts?: { BY?: string; LIMIT?: { offset: number; count: number } }
+    ) => {
+      const sorted = [...zset].sort((a, b) => a[1] - b[1]);
+      const inRange =
+        opts?.BY === 'SCORE'
+          ? sorted.filter(([, score]) => score >= min && score <= max)
+          : sorted.slice(min, max === -1 ? undefined : max + 1);
+      const limit = opts?.LIMIT;
+      return (limit ? inRange.slice(limit.offset, limit.offset + limit.count) : inRange).map(
+        ([member]) => Buffer.from(member)
+      );
+    },
   };
   return { zset, hash, store: store as unknown as UploadPromptRetryStore, raw: store };
 }
@@ -70,7 +76,10 @@ describe('upload prompt retry queue', () => {
     expect(await queueUploadPromptRetry({ imageId: 5, attempt: 1, now: T0, store })).toBe(true);
 
     expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + 60_000, store })).toEqual([]);
-    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + HOUR, store })).toEqual([
+    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + 14 * 60_000, store })).toEqual(
+      []
+    );
+    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + 15 * 60_000, store })).toEqual([
       { imageId: 5, attempt: 1 },
     ]);
     expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + HOUR, store })).toEqual([]);
@@ -78,9 +87,19 @@ describe('upload prompt retry queue', () => {
 
   it('waits longer before each later retry', async () => {
     const { store } = fakeStore();
+    await queueUploadPromptRetry({ imageId: 4, attempt: 2, now: T0, store });
+    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + 59 * 60_000, store })).toEqual(
+      []
+    );
+    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + HOUR, store })).toEqual([
+      { imageId: 4, attempt: 2 },
+    ]);
+
     await queueUploadPromptRetry({ imageId: 5, attempt: 3, now: T0, store });
 
-    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + 2 * HOUR, store })).toEqual([]);
+    expect(
+      await takeDueUploadPromptRetries({ limit: 10, now: T0 + 4 * HOUR - 60_000, store })
+    ).toEqual([]);
     expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + 4 * HOUR, store })).toEqual([
       { imageId: 5, attempt: 3 },
     ]);
