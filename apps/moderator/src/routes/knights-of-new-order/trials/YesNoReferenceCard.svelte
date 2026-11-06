@@ -11,6 +11,7 @@
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import YesNoPicker from './YesNoPicker.svelte';
   import type { YesNoReferenceItem } from '$lib/server/knights/yesno-reference.service';
 
@@ -60,11 +61,13 @@
       {#if !item.prompt}<Badge variant="outline">No question text</Badge>{/if}
     </div>
     {#if item.prompt}
-      <p class="text-sm">{item.prompt}</p>
+      <p class="text-sm text-dark-0">{item.prompt}</p>
     {:else}
       <p class="text-sm text-dark-2">
-        No question text. Acolytes see the generic prompt: "{item.questionPrompt}". Edit this pair
-        to write one.
+        No question text. Acolytes see the generic prompt: "{item.questionPrompt}".
+        {item.answers === 0
+          ? 'Edit this pair to write one.'
+          : "It can't be edited now that Acolytes have answered it; deactivate it instead."}
       </p>
     {/if}
     <p class="text-xs text-dark-2">{item.questionKey}</p>
@@ -80,7 +83,7 @@
         <Input
           name="prompt"
           required
-          maxlength={600}
+          maxlength={YESNO_PROMPT_MAX}
           placeholder="The question Acolytes are asked about this image"
           value={ask ?? item.prompt ?? ''}
           oninput={(e) => (ask = e.currentTarget.value)}

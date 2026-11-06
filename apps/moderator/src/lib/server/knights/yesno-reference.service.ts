@@ -1,6 +1,7 @@
 import type { ExpressionBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
+import { YESNO_PROMPT_MAX } from '../../knights/trials-limits';
 import { dbWrite } from '../db';
 import { CORESET, FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
 import { unservableReason, type Outcome } from './coreset.service';
@@ -26,6 +27,14 @@ export type YesNoReferenceItem = {
 
 const GONE = 'This pair is no longer available. Reload the page.';
 const NEEDS_PROMPT = 'Write the question Acolytes will be asked about this image.';
+const PROMPT_TOO_LONG = `Keep the question to ${YESNO_PROMPT_MAX} characters or fewer.`;
+
+/** The trimmed question, or the reason it cannot be used. */
+function checkedPrompt(raw: string): { prompt: string } | { error: string } {
+  const prompt = raw.trim();
+  if (!prompt) return { error: NEEDS_PROMPT };
+  return prompt.length > YESNO_PROMPT_MAX ? { error: PROMPT_TOO_LONG } : { prompt };
+}
 
 /** Yes/no questions a pair can be written for, inactive ones included so a pair can be prepared early. */
 export async function getYesNoQuestions(): Promise<YesNoQuestion[]> {
@@ -50,7 +59,7 @@ export async function getYesNoReferences(
     return query.imageId === undefined ? base : base.where('r.imageId', '=', query.imageId);
   };
   const counted = await filtered()
-    .select(sql<string>`count(*)`.as('count'))
+    .select((eb) => eb.fn.countAll<string>().as('count'))
     .executeTakeFirstOrThrow();
   const total = Number(counted.count);
   const { page, offset, limit } = pageWindow(query.page, total, pageSize);
@@ -82,7 +91,7 @@ export async function getYesNoReferences(
 export async function getYesNoReferenceCount(): Promise<number> {
   const row = await dbWrite
     .selectFrom('KnightsYesNoReference')
-    .select(sql<string>`count(*)`.as('count'))
+    .select((eb) => eb.fn.countAll<string>().as('count'))
     .where('active', '=', true)
     .executeTakeFirstOrThrow();
   return Number(row.count);
@@ -96,8 +105,9 @@ export async function addYesNoReference(input: {
   explanation: string;
   createdBy: number;
 }): Promise<Outcome> {
-  const prompt = input.prompt.trim();
-  if (!prompt) return { ok: false, error: NEEDS_PROMPT };
+  const checked = checkedPrompt(input.prompt);
+  if ('error' in checked) return { ok: false, error: checked.error };
+  const { prompt } = checked;
   const question = await dbWrite
     .selectFrom('KnightsQuestion')
     .select('kind')
@@ -170,24 +180,36 @@ async function whyUntouched(id: number, verb: string): Promise<Outcome> {
     : { ok: false, error: GONE };
 }
 
-/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, so an edit would contradict it; the question text is frozen with them. */
+/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, and answers were given to this question text. */
 export async function updateYesNoReference(
   id: number,
   input: { answer: boolean; explanation: string; prompt: string }
 ): Promise<Outcome> {
-  const prompt = input.prompt.trim();
-  if (!prompt) return { ok: false, error: NEEDS_PROMPT };
-  const updated = await dbWrite
-    .updateTable('KnightsYesNoReference')
-    .set({
-      answer: input.answer,
-      explanation: input.explanation.trim() || null,
-      prompt,
-      updatedAt: utc(new Date()),
-    })
-    .where('id', '=', id)
-    .where(hasNoAnswers)
-    .executeTakeFirst();
+  const checked = checkedPrompt(input.prompt);
+  if ('error' in checked) return { ok: false, error: checked.error };
+  const { prompt } = checked;
+  const updated = await dbWrite.transaction().execute(async (trx) => {
+    // Takes the lock an Acolyte's answer holds while it grades. The UPDATE alone is not enough: the answer's
+    // foreign key takes only a weak lock on this row, and an UPDATE judges "no answers" against the snapshot it
+    // began with. Run after the lock, it sees every committed answer.
+    await trx
+      .selectFrom('KnightsYesNoReference')
+      .select('id')
+      .where('id', '=', id)
+      .forUpdate()
+      .executeTakeFirst();
+    return trx
+      .updateTable('KnightsYesNoReference')
+      .set({
+        answer: input.answer,
+        explanation: input.explanation.trim() || null,
+        prompt,
+        updatedAt: utc(new Date()),
+      })
+      .where('id', '=', id)
+      .where(hasNoAnswers)
+      .executeTakeFirst();
+  });
   return Number(updated.numUpdatedRows) > 0 ? { ok: true } : whyUntouched(id, 'edited');
 }
 

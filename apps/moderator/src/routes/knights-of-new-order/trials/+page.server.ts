@@ -16,6 +16,7 @@ import {
   type Outcome,
 } from '$lib/server/knights/coreset.service';
 import { CORESET, type ListPage, type ListQuery } from '$lib/server/knights/coreset.config';
+import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
 import { BAD_IMAGE, imageRef, parseImageRef } from './image-ref';
 import {
   addYesNoReference,
@@ -32,7 +33,11 @@ type Tab = (typeof TABS)[number];
 
 const level = z.coerce.number().int();
 const why = z.string().max(2000);
-const question = z.string().trim().min(1, 'Write the question Acolytes will be asked.').max(600);
+const question = z
+  .string()
+  .trim()
+  .min(1, 'Write the question Acolytes will be asked.')
+  .max(YESNO_PROMPT_MAX);
 
 const yesNo = z.enum(['yes', 'no']).transform((value) => value === 'yes');
 
@@ -55,7 +60,7 @@ const forms = {
     explanation: why.optional().default(''),
   }),
   deleteYesNo: z.object({ id: int4Id }),
-  add: z.object({ imageId: int4Id, level, explanation: why }),
+  add: z.object({ image: imageRef, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
   retire: z.object({ id: int4Id }),
   promote: z.object({ id: int4Id, explanation: why.optional().default('') }),
@@ -79,11 +84,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const read = <T>(wanted: Tab, get: (q: ListQuery) => Promise<ListPage<T>>) =>
     tab === wanted && !searchError ? get(list) : Promise.resolve(blank<T>());
 
-  const [counts, yesNoCount] = await Promise.all([getCoreSetCounts(), getYesNoReferenceCount()]);
-  const core = await read('core', getCoreItems);
-  const fresh = await read('fresh', getFreshItems);
-  const spotCheck = await read('spot-check', getSpotCheckItems);
-  const yesNo = await read('yes-no', getYesNoReferences);
+  const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions] = await Promise.all([
+    getCoreSetCounts(),
+    getYesNoReferenceCount(),
+    read('core', getCoreItems),
+    read('fresh', getFreshItems),
+    read('spot-check', getSpotCheckItems),
+    read('yes-no', getYesNoReferences),
+    tab === 'yes-no' ? getYesNoQuestions() : Promise.resolve([]),
+  ]);
   const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo }[tab];
   return {
     tab,
@@ -94,7 +103,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     flagRule: { minAnswers: CORESET.flagMinAnswers, failureRate: CORESET.flagFailureRate },
     items: tab === 'core' ? core.items : fresh.items,
     spotCheck: spotCheck.items,
-    yesNo: { items: yesNo.items, questions: tab === 'yes-no' ? await getYesNoQuestions() : [] },
+    yesNo: { items: yesNo.items, questions },
   };
 };
 
@@ -120,7 +129,10 @@ async function run<S extends z.ZodType>(
 }
 
 export const actions: Actions = {
-  add: (event) => run(event, forms.add, 'add the image', addCoreImage),
+  add: (event) =>
+    run(event, forms.add, 'add the image', ({ image, ...rest }) =>
+      addCoreImage({ ...rest, imageId: image })
+    ),
   update: (event) => run(event, forms.update, 'save the change', updateCoreItem),
   retire: (event) => run(event, forms.retire, 'retire the image', ({ id }) => retireReference(id)),
   promote: (event) => run(event, forms.promote, 'promote the image', promoteToCore),

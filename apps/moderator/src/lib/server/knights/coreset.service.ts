@@ -55,7 +55,10 @@ const flaggedSql = (config: CoreSetConfig) =>
 type ReferenceQuery = ReturnType<typeof references>;
 
 const countOf = async (query: ReferenceQuery) =>
-  Number((await query.select(sql<string>`count(*)`.as('count')).executeTakeFirstOrThrow()).count);
+  Number(
+    (await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirstOrThrow())
+      .count
+  );
 
 const forImage = (query: ReferenceQuery, { imageId }: ListQuery) =>
   imageId === undefined ? query : query.where('r.imageId', '=', imageId);
@@ -151,7 +154,7 @@ export async function getSpotCheckItems(
 export async function getCoreSetCounts() {
   const rows = await dbWrite
     .selectFrom('KnightsReferenceImage')
-    .select(['source', 'pool', 'status', sql<string>`count(*)`.as('count')])
+    .select((eb) => ['source', 'pool', 'status', eb.fn.countAll<string>().as('count')])
     .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .groupBy(['source', 'pool', 'status'])
     .execute();

@@ -33,7 +33,7 @@ describe('Knights of New Order Trials actions', () => {
 
   it.each([
     ['add without an image id', 'add', { level: '4', explanation: 'why' }],
-    ['add with a malformed image id', 'add', { imageId: 'abc', level: '4', explanation: 'why' }],
+    ['add with a malformed image id', 'add', { image: 'abc', level: '4', explanation: 'why' }],
     ['update without a level', 'update', { id: '3', explanation: 'why' }],
     ['retire with a malformed id', 'retire', { id: '-1' }],
     ['spot-check without a level', 'spotCheck', { id: '3' }],
@@ -42,11 +42,15 @@ describe('Knights of New Order Trials actions', () => {
     for (const fn of Object.values(svc)) expect(fn).not.toHaveBeenCalled();
   });
 
-  it('adds a core image with the typed level and why', async () => {
-    svc.addCoreImage.mockResolvedValueOnce({ ok: true });
+  it('adds a core image from an id or a pasted URL, with the typed level and why', async () => {
+    svc.addCoreImage.mockResolvedValue({ ok: true });
     expect(
-      await actions.add(formEvent({ imageId: '12', level: '8', explanation: 'because' }))
+      await actions.add(formEvent({ image: '12', level: '8', explanation: 'because' }))
     ).toMatchObject({ success: true });
+    await actions.add(
+      formEvent({ image: 'https://civitai.com/images/12', level: '8', explanation: 'because' })
+    );
+    expect(svc.addCoreImage).toHaveBeenCalledTimes(2);
     expect(svc.addCoreImage).toHaveBeenCalledWith({
       imageId: 12,
       level: 8,

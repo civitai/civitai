@@ -14,12 +14,10 @@
     noun,
   }: { text: string; error: string | null; total: number; noun: string } = $props();
 
-  let draft = $state<string | null>(null);
-  const value = $derived(draft ?? text);
+  // Writable derived: typing overrides it, and a new `text` from the URL (Back, pager, Clear) resets it.
+  let value = $derived(text);
 
-  /** A new search is a new list, so it starts on page 1. */
   function search(q: string) {
-    draft = null;
     void goto(urlWith(page.url, { q: q.trim(), page: null }), { keepFocus: true, noScroll: true });
   }
 </script>
@@ -34,7 +32,7 @@
   <Input
     name="q"
     {value}
-    oninput={(e) => (draft = e.currentTarget.value)}
+    oninput={(e) => (value = e.currentTarget.value)}
     class="w-80"
     placeholder="Search by image id or URL"
     aria-label="Search by image id or URL"
@@ -43,9 +41,11 @@
   {#if text}
     <Button type="button" size="sm" variant="ghost" onclick={() => search('')}>Clear</Button>
   {/if}
-  <span class="text-sm text-dark-2">
-    {num(total)}
-    {noun}{text && !error ? ' found' : ''}
-  </span>
+  {#if !error}
+    <span class="text-sm text-dark-2">
+      {num(total)}
+      {noun}{text ? ' found' : ''}
+    </span>
+  {/if}
 </form>
 {#if error}<ErrorAlert class="mb-3" message={error} />{/if}

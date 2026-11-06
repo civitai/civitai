@@ -1,15 +1,17 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { goto, invalidateAll } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import YesNoPicker from './YesNoPicker.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
+  import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import { urlWith } from '$lib/url';
   import { FormState } from '$lib/form-state.svelte';
   import CoreItemCard from './CoreItemCard.svelte';
@@ -52,17 +54,20 @@
 
   let level = $state<number | null>(null);
   let answer = $state<'yes' | 'no' | null>(null);
+  let questionKey = $state('');
+  const pickedQuestion = $derived(data.yesNo.questions.find((q) => q.key === questionKey));
   const addYesNo = new FormState({
+    reload: true,
     onSuccess: () => {
       answer = null;
-      void invalidateAll();
+      questionKey = '';
       toast.success('Pair added');
     },
   });
   const add = new FormState({
+    reload: true,
     onSuccess: () => {
       level = null;
-      void invalidateAll();
       toast.success('Added to the core set');
     },
   });
@@ -86,8 +91,8 @@
     {#if add.error}<ErrorAlert class="mb-2" message={add.error} />{/if}
     <form method="POST" action="?/add" use:enhance={add.enhance} class="flex flex-col gap-2">
       <label class="flex items-center gap-2 text-sm text-dark-2">
-        Image id
-        <Input name="imageId" inputmode="numeric" required class="w-40" />
+        Image id or URL
+        <Input name="image" required class="w-80" placeholder="123 or https://civitai.com/images/123" />
       </label>
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-sm text-dark-2">Answer</span>
@@ -121,23 +126,28 @@
       </label>
       <label class="flex items-center gap-2 text-sm text-dark-2">
         Question
-        <select
-          name="questionKey"
-          required
-          class="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="">Pick a question</option>
-          {#each data.yesNo.questions as q (q.key)}
-            <option value={q.key}>{q.prompt} ({q.key}{q.active ? '' : ', inactive'})</option>
-          {/each}
-        </select>
+        <Select.Root type="single" bind:value={questionKey}>
+          <Select.Trigger class="min-w-0 flex-1">
+            {pickedQuestion
+              ? `${pickedQuestion.prompt} (${pickedQuestion.key}${pickedQuestion.active ? '' : ', inactive'})`
+              : 'Pick a question'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each data.yesNo.questions as q (q.key)}
+              <Select.Item value={q.key}>
+                {q.prompt} ({q.key}{q.active ? '' : ', inactive'})
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <input type="hidden" name="questionKey" value={questionKey} />
       </label>
       <label class="flex items-center gap-2 text-sm text-dark-2">
         Acolytes are asked
         <Input
           name="prompt"
           required
-          maxlength={600}
+          maxlength={YESNO_PROMPT_MAX}
           class="min-w-0 flex-1"
           placeholder="The yes/no question about this image, e.g. Is a weapon being held?"
         />
@@ -152,13 +162,17 @@
         placeholder="Optional: why this is the answer, shown to Acolytes after they answer"
       />
       <div>
-        <Button type="submit" size="sm" disabled={addYesNo.submitting || answer === null}>Add</Button>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={addYesNo.submitting || answer === null || !questionKey}>Add</Button
+        >
       </div>
     </form>
   </section>
   <ListSearch {...searchProps} />
   {#if data.yesNo.items.length === 0}
-    <p class="text-sm text-dark-2">{data.search.text ? noMatch : empty['yes-no']}</p>
+    {#if !data.search.error}<p class="text-sm text-dark-2">{data.search.text ? noMatch : empty['yes-no']}</p>{/if}
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.yesNo.items as item (item.id)}
@@ -173,7 +187,7 @@
   </p>
   <ListSearch {...searchProps} />
   {#if data.spotCheck.length === 0}
-    <p class="text-sm text-dark-2">{data.search.text ? noMatch : empty['spot-check']}</p>
+    {#if !data.search.error}<p class="text-sm text-dark-2">{data.search.text ? noMatch : empty['spot-check']}</p>{/if}
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.spotCheck as item (item.id)}
@@ -191,7 +205,7 @@
   {/if}
   {#key data.tab}<ListSearch {...searchProps} />{/key}
   {#if data.items.length === 0}
-    <p class="text-sm text-dark-2">{data.search.text ? noMatch : empty[data.tab]}</p>
+    {#if !data.search.error}<p class="text-sm text-dark-2">{data.search.text ? noMatch : empty[data.tab]}</p>{/if}
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.items as item (item.id)}

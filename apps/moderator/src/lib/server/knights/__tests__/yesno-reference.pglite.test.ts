@@ -30,6 +30,8 @@ const {
   updateYesNoReference,
 } = await import('../yesno-reference.service');
 
+import { YESNO_PROMPT_MAX } from '../../../knights/trials-limits';
+
 const MIGRATIONS = path.resolve(
   __dirname,
   '../../../../../../../packages/civitai-db-schema/prisma/migrations'
@@ -137,6 +139,19 @@ describe('addYesNoReference', () => {
       error: expect.stringContaining('question'),
     });
     expect(await rows()).toEqual([]);
+  });
+
+  it('refuses a question longer than the limit, trimmed', async () => {
+    await seedImage(1);
+    await seedQuestion('q.safe');
+    expect(await addYesNoReference({ ...pair, prompt: 'x'.repeat(YESNO_PROMPT_MAX + 1) })).toEqual({
+      ok: false,
+      error: expect.stringContaining(String(YESNO_PROMPT_MAX)),
+    });
+    expect(await rows()).toEqual([]);
+    expect(
+      await addYesNoReference({ ...pair, prompt: ` ${'x'.repeat(YESNO_PROMPT_MAX)} ` })
+    ).toEqual({ ok: true });
   });
 
   it('refuses an image that does not exist', async () => {
@@ -307,6 +322,17 @@ describe('updateYesNoReference', () => {
     ).toMatchObject({
       ok: false,
     });
+    expect((await rows())[0].prompt).toBe('Is anything unsafe shown?');
+  });
+
+  it('will not save a question longer than the limit', async () => {
+    expect(
+      await updateYesNoReference(1, {
+        answer: true,
+        explanation: '',
+        prompt: 'x'.repeat(YESNO_PROMPT_MAX + 1),
+      })
+    ).toMatchObject({ ok: false });
     expect((await rows())[0].prompt).toBe('Is anything unsafe shown?');
   });
 
