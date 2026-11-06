@@ -54,6 +54,7 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
 import {
   parseManifestAnalytics,
   type DeclaredEventProperty,
@@ -91,14 +92,15 @@ import { trpc } from '~/utils/trpc';
  * it exactly as before (zero behaviour change).
  */
 
-export type ManifestDiffSummary =
+export type ManifestDiffSummary = (
   | { kind: 'first-version'; fields: string[] }
   | {
       kind: 'update';
       added: string[];
       removed: string[];
       changed: Array<{ field: string; from: unknown; to: unknown }>;
-    };
+    }
+) & { registryExports?: RegistryExportDiff };
 
 export type FileSummary = {
   files: Array<{ path: string; sha256: string; sizeBytes: number }>;
@@ -439,7 +441,43 @@ export function ReviewManifestDiffSection({
       ) : (
         <ManifestDiffPreview diff={mds} />
       )}
+      {mds.registryExports && <RegistryExportsNotice exports={mds.registryExports} />}
     </Stack>
+  );
+}
+
+/**
+ * The collections this version publishes to registries — outside Civitai, to anyone who
+ * follows them — shown on its own because the generic diff only says `storage` changed.
+ */
+export function RegistryExportsNotice({ exports }: { exports: RegistryExportDiff }) {
+  return (
+    <Alert color="orange" variant="light" p="xs" title="Published to registries">
+      <Stack gap={4}>
+        {exports.exported.map((name) => (
+          <Group key={`e:${name}`} gap={6}>
+            <Code style={{ fontSize: 11 }}>{name}</Code>
+            {exports.added.includes(name) && (
+              <Badge size="xs" color="orange">
+                new in this version
+              </Badge>
+            )}
+          </Group>
+        ))}
+        {exports.removed.map((name) => (
+          <Group key={`r:${name}`} gap={6}>
+            <Code style={{ fontSize: 11 }}>{name}</Code>
+            <Badge size="xs" color="gray">
+              no longer published
+            </Badge>
+          </Group>
+        ))}
+        <Text size="xs" c="dimmed">
+          Visible shared documents of these collections become readable by anyone through a
+          registry. Private and hidden documents never leave.
+        </Text>
+      </Stack>
+    </Alert>
   );
 }
 

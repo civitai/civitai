@@ -14,6 +14,7 @@ import type {
   CatalogReadDeps,
 } from '~/server/registry-adapter/catalog-source';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
+import type { SharedDocSource } from '~/server/registry-adapter/doc-feed';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
 export type FixtureCatalog = {
@@ -22,7 +23,88 @@ export type FixtureCatalog = {
   blocks?: CatalogBlock[];
   approved?: Array<Omit<CatalogApprovedRequest, 'reviewedAt'> & { reviewedAt: string | null }>;
   sourceRepoUrls?: Record<string, string>;
+  /** App Storage rows, as the store holds them: every namespace and key space. */
+  documents?: Array<{
+    appId: string;
+    ns: string;
+    coll: string;
+    scopeUid: number;
+    key: string;
+    data: Record<string, unknown>;
+    version: number;
+    seq: number;
+    hidden?: boolean;
+  }>;
+  tombstones?: Array<{
+    appId: string;
+    ns: string;
+    coll: string;
+    scopeUid: number;
+    key: string;
+    seq: number;
+  }>;
+  /** Each app's production namespace `last_seq`. */
+  lastSeq?: Record<string, number>;
 };
+
+/**
+ * The store's feed reads over the fixture rows, with the same predicates the store's SQL fixes:
+ * the production namespace and the shared key space only.
+ */
+export function fixtureDocSource(read: () => FixtureCatalog): SharedDocSource {
+  const shared = (appId: string, coll: string) => {
+    const c = read();
+    const mine = <T extends { appId: string; ns: string; coll: string; scopeUid: number }>(
+      rows: T[] = []
+    ) =>
+      rows.filter(
+        (r) => r.appId === appId && r.ns === 'prod' && r.coll === coll && r.scopeUid === 0
+      );
+    return { docs: mine(c.documents), tombs: mine(c.tombstones) };
+  };
+  const strip = <
+    T extends { key: string; data: Record<string, unknown>; version: number; seq: number }
+  >(
+    d: T
+  ) => ({
+    key: d.key,
+    data: d.data,
+    version: d.version,
+    seq: d.seq,
+  });
+  return {
+    head: async (appId) => read().lastSeq?.[appId] ?? 0,
+    changes: async (appId, coll, after, upTo, limit) => {
+      const { docs, tombs } = shared(appId, coll);
+      const inRange = (seq: number) => seq > after && seq <= upTo;
+      return {
+        docs: docs
+          .filter((d) => inRange(d.seq))
+          .sort((a, b) => a.seq - b.seq)
+          .slice(0, limit)
+          .map((d) => ({ ...strip(d), hidden: d.hidden === true })),
+        tombs: tombs
+          .filter((t) => inRange(t.seq))
+          .sort((a, b) => a.seq - b.seq)
+          .slice(0, limit)
+          .map((t) => ({ key: t.key, seq: t.seq })),
+      };
+    },
+    documents: async (appId, coll, afterKey, upTo, limit) =>
+      shared(appId, coll)
+        .docs.filter((d) => !d.hidden && d.seq <= upTo && d.key > afterKey)
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+        .slice(0, limit)
+        .map(strip),
+    witness: async (appId, coll, key) => {
+      const { docs, tombs } = shared(appId, coll);
+      return {
+        docSeq: docs.find((d) => d.key === key)?.seq ?? null,
+        tombSeq: tombs.find((t) => t.key === key)?.seq ?? null,
+      };
+    },
+  };
+}
 
 export function fixtureCatalogDeps(read: () => FixtureCatalog): CatalogReadDeps {
   return {

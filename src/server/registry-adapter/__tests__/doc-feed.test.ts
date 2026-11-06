@@ -1,0 +1,238 @@
+import { describe, expect, it } from 'vitest';
+import type { SnapshotStore } from '~/server/registry-adapter/cursor';
+import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import type { FixtureCatalog } from '~/server/registry-adapter/fixture/fixture-source';
+import { fixtureDocSource } from '~/server/registry-adapter/fixture/fixture-source';
+import type { Change, Entity } from '~/server/registry-adapter/protocol';
+import { ProtocolError } from '~/server/registry-adapter/protocol';
+
+const V1 = 'urn:schema:civitai-apps:orbit-notes/notes@v1';
+const V2 = 'urn:schema:civitai-apps:orbit-notes/notes@v2';
+const DIALECT = 'https://json-schema.org/draft/2020-12/schema';
+const title = (maxLength: number) => ({
+  type: 'object',
+  properties: { title: { type: 'string', maxLength } },
+});
+const ONE_MAJOR: CollectionStream['family'] = [
+  { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1 } },
+];
+const TWO_MAJORS: CollectionStream['family'] = [
+  { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1, 'x-successor': V2 } },
+  { urn: V2, body: { ...title(100), $schema: DIALECT, $id: V2 } },
+];
+
+const urn = (key: string) => `urn:civitai-apps:orbit-notes/notes/${key}`;
+const doc = (key: string, t: string, seq: number, extra: Record<string, unknown> = {}) => ({
+  appId: 'ab_orbit_7',
+  ns: 'prod',
+  coll: 'notes',
+  scopeUid: 0,
+  key,
+  data: { title: t },
+  version: 1,
+  seq,
+  ...extra,
+});
+
+function memoryStore(): SnapshotStore & { clear(): void } {
+  const m = new Map<string, string>();
+  return {
+    get: async (k) => m.get(k) ?? null,
+    put: async (k, v) => void m.set(k, v),
+    clear: () => m.clear(),
+  };
+}
+
+/**
+ * A feed over a catalog the test edits between polls. `world.stream` is what the resolver
+ * answers (null: not published); `edits[i]` runs before poll i+1 of `changes`. The sleep stops
+ * the subscription after `edits.length + 1` polls, so every drain ends on its own.
+ */
+function setup(store = memoryStore()) {
+  const world: { cat: FixtureCatalog; stream: CollectionStream | null } = {
+    cat: {
+      listings: [],
+      documents: [doc('n1', 'short', 3), doc('n2', 'a much longer title', 5)],
+      tombstones: [],
+      lastSeq: { ab_orbit_7: 5 },
+    },
+    stream: { appId: 'ab_orbit_7', slug: 'orbit-notes', collection: 'notes', family: TWO_MAJORS },
+  };
+  const make = (edits: Array<() => void> = []) => {
+    let polls = 0;
+    const abort = new AbortController();
+    const feed = createDocFeed({
+      source: fixtureDocSource(() => world.cat),
+      resolve: async () => world.stream,
+      store,
+      pollMs: 1,
+      sleep: async () => {
+        if (polls >= edits.length) abort.abort();
+        else edits[polls]();
+        polls++;
+      },
+    });
+    const drain = async (schema: string, cursor: string) => {
+      const out: Change[] = [];
+      for await (const c of feed.changes(schema, cursor, { signal: abort.signal })) out.push(c);
+      return out;
+    };
+    return { feed, drain, signal: abort.signal };
+  };
+  return { world, store, make };
+}
+
+const shape = (c: Change) => ('upsert' in c ? ['upsert', c.upsert.urn] : ['delete', c.delete]);
+async function codeOf(p: Promise<unknown>) {
+  try {
+    await p;
+    return 'resolved';
+  } catch (err) {
+    return err instanceof ProtocolError ? `${err.code}: ${err.message}` : `other: ${String(err)}`;
+  }
+}
+
+describe('multi-major claims', () => {
+  it('🔴 a document claims every major it satisfies, and a major streams only those', async () => {
+    const { make } = setup();
+    const v1 = await make().feed.snapshot(V1);
+    const v2 = await make().feed.snapshot(V2);
+    expect(v1.entities.map((e) => [e.urn, e.schemas])).toEqual([[urn('n1'), [V1, V2]]]);
+    expect(v2.entities.map((e) => [e.urn, e.schemas])).toEqual([
+      [urn('n1'), [V1, V2]],
+      [urn('n2'), [V2]],
+    ]);
+    expect((v2.entities as Entity[])[1].body).toEqual({ title: 'a much longer title' });
+  });
+
+  it('🔴 a mint brings unchanged documents into the new major, with no write', async () => {
+    const { world, make } = setup();
+    world.stream!.family = ONE_MAJOR;
+    const h = make([() => (world.stream!.family = TWO_MAJORS)]);
+    const before = await h.feed.snapshot(V2);
+    expect(before.entities).toEqual([]);
+    expect((await h.drain(V2, before.cursor)).map(shape)).toEqual([
+      ['upsert', urn('n1')],
+      ['upsert', urn('n2')],
+    ]);
+  });
+});
+
+describe('the cursor', () => {
+  it('🔴 is opaque: a fixed-size digest whatever it names, never the seq', async () => {
+    const { world, make } = setup();
+    const small = await make().feed.snapshot(V2);
+    world.cat.documents!.push(doc('n3', 'third', 4711));
+    world.cat.lastSeq = { ab_orbit_7: 4711 };
+    const large = await make().feed.snapshot(V2);
+    for (const c of [small.cursor, large.cursor]) expect(c).toMatch(/^f1\.[0-9a-f]{32}$/);
+    expect(small.cursor).not.toBe(large.cursor);
+  });
+
+  it('round trip: a new process resumes it, and only what changed since arrives', async () => {
+    const { world, store, make } = setup();
+    const { cursor } = await make().feed.snapshot(V2);
+    expect(await setup(store).make().drain(V2, cursor)).toEqual([]);
+    world.cat.documents![0] = doc('n1', 'short, edited', 6, { version: 2 });
+    world.cat.lastSeq = { ab_orbit_7: 6 };
+    const resumed = setup(store);
+    resumed.world.cat = world.cat;
+    expect((await resumed.make().drain(V2, cursor)).map(shape)).toEqual([['upsert', urn('n1')]]);
+  });
+
+  it.each([
+    ['garbage', 'not-a-cursor'],
+    ['an entity cursor', `c1.${'a'.repeat(32)}`],
+    ['an unknown digest', `f1.${'b'.repeat(32)}`],
+  ])('cursor_expired for %s', async (_name, cursor) => {
+    expect(await codeOf(setup().make().drain(V2, cursor))).toMatch(/^cursor_expired/);
+  });
+
+  it('cursor_expired for a cursor of another stream', async () => {
+    const { make } = setup();
+    const { cursor } = await make().feed.snapshot(V1);
+    expect(await codeOf(make().drain(V2, cursor))).toMatch(
+      /^cursor_expired: the cursor belongs to another stream/
+    );
+  });
+});
+
+describe('cursor_expired on a history it cannot trust', () => {
+  it('🔴 the namespace seq went back (reset)', async () => {
+    const { world, make } = setup();
+    const { cursor } = await make().feed.snapshot(V2);
+    world.cat.lastSeq = { ab_orbit_7: 2 };
+    expect(await codeOf(make().drain(V2, cursor))).toBe(
+      'cursor_expired: the namespace seq went back'
+    );
+  });
+
+  it('🔴 a purge written over past the old seq: the witness is gone without a tombstone', async () => {
+    const { world, make } = setup();
+    const { cursor } = await make().feed.snapshot(V2);
+    world.cat.documents = [doc('z9', 'after the purge', 40)];
+    world.cat.lastSeq = { ab_orbit_7: 40 };
+    expect(await codeOf(make().drain(V2, cursor))).toBe(
+      'cursor_expired: a document this cursor served is gone without a trace'
+    );
+  });
+
+  it('positive control: the same document deleted WITH a tombstone is an ordinary delete', async () => {
+    const { world, make } = setup();
+    const { cursor } = await make().feed.snapshot(V2);
+    world.cat.documents = [doc('n1', 'short', 3)];
+    world.cat.tombstones = [
+      { appId: 'ab_orbit_7', ns: 'prod', coll: 'notes', scopeUid: 0, key: 'n2', seq: 9 },
+    ];
+    world.cat.lastSeq = { ab_orbit_7: 9 };
+    expect((await make().drain(V2, cursor)).map(shape)).toEqual([['delete', urn('n2')]]);
+  });
+
+  it('🔴 the slug now names a different app (re-created)', async () => {
+    const { world, make } = setup();
+    const { cursor } = await make().feed.snapshot(V2);
+    world.stream = { ...world.stream!, appId: 'ab_orbit_8' };
+    expect(await codeOf(make().drain(V2, cursor))).toBe(
+      'cursor_expired: the collection now belongs to a different app'
+    );
+  });
+});
+
+describe('deletes', () => {
+  it('🔴 a hidden document arrives as a delete', async () => {
+    const { world, make } = setup();
+    const h = make([
+      () => {
+        world.cat.documents![0] = doc('n1', 'short', 3, { hidden: true });
+        world.cat.tombstones = [
+          { appId: 'ab_orbit_7', ns: 'prod', coll: 'notes', scopeUid: 0, key: 'n1', seq: 6 },
+        ];
+        world.cat.lastSeq = { ab_orbit_7: 6 };
+      },
+    ]);
+    const { cursor } = await h.feed.snapshot(V2);
+    expect((await h.drain(V2, cursor)).map(shape)).toEqual([['delete', urn('n1')]]);
+  });
+
+  it('🔴 an app that leaves the published set: a delete for everything served, no tombstone needed', async () => {
+    const { world, make } = setup();
+    const h = make([
+      () => {
+        world.stream = null;
+        world.cat.documents = [];
+      },
+    ]);
+    const { cursor } = await h.feed.snapshot(V2);
+    expect((await h.drain(V2, cursor)).map(shape)).toEqual([
+      ['delete', urn('n1')],
+      ['delete', urn('n2')],
+    ]);
+  });
+
+  it('a collection that is not published streams nothing', async () => {
+    const { world, make } = setup();
+    world.stream = null;
+    expect((await make().feed.snapshot(V2)).entities).toEqual([]);
+  });
+});

@@ -2,7 +2,8 @@
  * Entrypoint of the registry adapter for Civitai apps: a process of its own, separate from the
  * web tier, serving the registry source protocol over HTTP/SSE. `pnpm run registry-adapter`.
  *
- * Environment: the app's server env (database read client, Redis), plus
+ * Environment: the app's server env (database read client, Redis, and the App Blocks datastore
+ * connection for the shared-document feed), plus
  *   REGISTRY_ADAPTER_PORT          listen port (default 7130)
  *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog (default 60)
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
@@ -10,6 +11,9 @@
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
 import { abortableSleep, createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
+import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
@@ -31,19 +35,26 @@ function main() {
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
-  const read = sharedRead(
-    async () => buildEntities(await readCatalog(deps), { baseUrl }),
-    pollMs / 2
-  );
-  const adapter = createPollingAdapter({
+  const readApps = sharedRead(() => readCatalog(deps), pollMs / 2);
+  const store = createRedisSnapshotStore();
+  const entities = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
     serves: SERVED_SCHEMAS,
-    read,
-    store: createRedisSnapshotStore(),
+    read: async () => buildEntities(await readApps(), { baseUrl }),
+    store,
     pollMs,
     sleep: abortableSleep,
     onError,
   });
+  const docs = createDocFeed({
+    source: liveSharedDocSource(),
+    resolve: resolveFromCatalog(readApps),
+    store,
+    pollMs,
+    sleep: abortableSleep,
+    onError,
+  });
+  const adapter = composeAdapter(entities, docs);
 
   const server = createRegistryServer(adapter, { onError });
   server.listen(port, () =>

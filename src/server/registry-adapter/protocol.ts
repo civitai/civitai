@@ -62,7 +62,8 @@ export interface AdapterContext {
 
 export interface Adapter {
   namespace: string;
-  serves: string[];
+  /** Whether a subscription to `schema` is this source's to answer; any other gets `end`. */
+  serves(schema: string): boolean;
   snapshot(
     schema: string,
     ctx: AdapterContext

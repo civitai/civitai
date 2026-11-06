@@ -17,12 +17,15 @@ export type UrnRef =
   | { kind: 'app'; slug: string }
   | { kind: 'release'; slug: string; version: string }
   | { kind: 'collection-schema'; slug: string; collection: string; major: number }
+  | { kind: 'document'; slug: string; collection: string; key: string }
   | { kind: 'runtime'; name: string; major: number };
 
 // A segment never contains `:`, `/` or `@`, so every URN parses back unambiguously.
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 const COLLECTION_RE = /^[a-z][a-z0-9_]*$/;
 const VERSION_RE = /^[0-9A-Za-z.+-]+$/;
+// The store's own key shape: no `/` or `@`, so a document URN still parses back.
+const KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 function segment(value: string, re: RegExp, what: string): string {
   if (!re.test(value)) throw new Error(`registry urn: invalid ${what} ${JSON.stringify(value)}`);
@@ -50,9 +53,26 @@ export function registryUrn(ref: UrnRef): string {
         COLLECTION_RE,
         'collection'
       )}@v${major(ref.major)}`;
+    case 'document':
+      return `urn:${REGISTRY_NAMESPACE}:${segment(ref.slug, SLUG_RE, 'slug')}/${segment(
+        ref.collection,
+        COLLECTION_RE,
+        'collection'
+      )}/${segment(ref.key, KEY_RE, 'key')}`;
     case 'runtime':
       return `urn:${REGISTRY_NAMESPACE}:runtime/${segment(ref.name, SLUG_RE, 'runtime')}@${major(
         ref.major
       )}`;
   }
+}
+
+/** The parts of a collection-schema URN this adapter would issue, or null for any other URN. */
+export function parseCollectionSchemaUrn(
+  urn: string
+): { slug: string; collection: string; major: number } | null {
+  const prefix = `urn:schema:${REGISTRY_NAMESPACE}:`;
+  if (!urn.startsWith(prefix)) return null;
+  const m = /^([^/@]+)\/([^/@]+)@v([1-9][0-9]{0,8})$/.exec(urn.slice(prefix.length));
+  if (!m || !SLUG_RE.test(m[1]) || !COLLECTION_RE.test(m[2])) return null;
+  return { slug: m[1], collection: m[2], major: Number(m[3]) };
 }

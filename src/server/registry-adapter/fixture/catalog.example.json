@@ -58,8 +58,14 @@
               "write": "own",
               "schema": {
                 "type": "object",
-                "properties": { "title": { "type": "string", "maxLength": 200 } }
-              }
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              },
+              "registry": "public"
             }
           }
         }
@@ -74,7 +80,13 @@
       "manifest": {
         "blockId": "ember-cards",
         "version": "0.3.0",
-        "storage": { "collections": { "decks": { "visibility": "private" } } }
+        "storage": {
+          "collections": {
+            "decks": {
+              "visibility": "private"
+            }
+          }
+        }
       }
     }
   ],
@@ -88,8 +100,12 @@
         "version": "1.0.0",
         "name": "Orbit Notes",
         "contentRating": "pg",
-        "scopes": ["apps:storage"],
-        "iframe": { "src": "https://fixture.example/bundle" },
+        "scopes": [
+          "apps:storage"
+        ],
+        "iframe": {
+          "src": "https://fixture.example/bundle"
+        },
         "storage": {
           "collections": {
             "notes": {
@@ -97,7 +113,12 @@
               "write": "own",
               "schema": {
                 "type": "object",
-                "properties": { "title": { "type": "string", "maxLength": 100 } }
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
               }
             }
           }
@@ -117,7 +138,9 @@
         "version": "1.1.0",
         "name": "Orbit Notes",
         "contentRating": "pg",
-        "scopes": ["apps:storage"],
+        "scopes": [
+          "apps:storage"
+        ],
         "storage": {
           "collections": {
             "notes": {
@@ -125,7 +148,12 @@
               "write": "own",
               "schema": {
                 "type": "object",
-                "properties": { "title": { "type": "string", "maxLength": 200 } }
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
               }
             }
           }
@@ -145,8 +173,16 @@
         "version": "0.3.0",
         "name": "Ember Cards",
         "contentRating": "x",
-        "scopes": ["apps:storage"],
-        "storage": { "collections": { "decks": { "visibility": "private" } } }
+        "scopes": [
+          "apps:storage"
+        ],
+        "storage": {
+          "collections": {
+            "decks": {
+              "visibility": "private"
+            }
+          }
+        }
       },
       "bundleSha256": "0011223344556677889900112233445566778899001122334455667788990011",
       "commitSha": null,
@@ -154,5 +190,96 @@
       "reviewedAt": "2026-09-15T10:00:00.000Z"
     }
   ],
-  "sourceRepoUrls": { "apl_fixture_orbit": "https://git.example/orbit-notes" }
+  "sourceRepoUrls": {
+    "apl_fixture_orbit": "https://git.example/orbit-notes"
+  },
+  "documents": [
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n1",
+      "data": {
+        "title": "Short note"
+      },
+      "version": 1,
+      "seq": 3
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n2",
+      "data": {
+        "title": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+      },
+      "version": 2,
+      "seq": 7
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n3",
+      "data": {
+        "title": "Hidden by a moderator"
+      },
+      "version": 1,
+      "seq": 5,
+      "hidden": true
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 101,
+      "key": "p1",
+      "data": {
+        "title": "PRIVATE-FIXTURE-CANARY"
+      },
+      "version": 1,
+      "seq": 8
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "dev:101",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "d1",
+      "data": {
+        "title": "DEV-FIXTURE-CANARY"
+      },
+      "version": 1,
+      "seq": 2
+    },
+    {
+      "appId": "ab_fixture_ember",
+      "ns": "prod",
+      "coll": "decks",
+      "scopeUid": 101,
+      "key": "k1",
+      "data": {
+        "name": "NOT-OPTED-IN-CANARY"
+      },
+      "version": 1,
+      "seq": 1
+    }
+  ],
+  "tombstones": [
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n3",
+      "seq": 6
+    }
+  ],
+  "lastSeq": {
+    "ab_fixture_orbit": 8,
+    "ab_fixture_ember": 1
+  }
 }

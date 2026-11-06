@@ -84,7 +84,7 @@ export function handleRequest(
       const { schema, cursor, urns, filter } = parseSubscribeQuery(url.searchParams);
       const matches = compileFilter(filter) ?? (() => true);
       const stream = openStream(req, res);
-      if (!adapter.serves.includes(schema)) return stream.send({ type: 'end' });
+      if (!adapter.serves(schema)) return stream.send({ type: 'end' });
       const wanted = (urn: string) => urns.length === 0 || urns.includes(urn);
       const ctx = { signal: stream.signal };
 

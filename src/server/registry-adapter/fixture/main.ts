@@ -10,10 +10,13 @@
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
 import {
   createMemorySnapshotStore,
   fixtureCatalogDeps,
+  fixtureDocSource,
   fixtureFile,
 } from '~/server/registry-adapter/fixture/fixture-source';
 import {
@@ -33,17 +36,28 @@ function main() {
   const pollMs = Number(process.env.REGISTRY_ADAPTER_POLL_SECONDS || 1) * 1000;
   const onError = (err: unknown) => console.error('registry-adapter (fixture):', err);
 
-  const deps = fixtureCatalogDeps(fixtureFile(path));
-  const adapter = createPollingAdapter({
+  const file = fixtureFile(path);
+  const deps = fixtureCatalogDeps(file);
+  const readApps = () => readCatalog(deps);
+  const store = createMemorySnapshotStore();
+  const entities = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
     serves: SERVED_SCHEMAS,
-    read: async () =>
-      buildEntities(await readCatalog(deps), { baseUrl: 'https://civitai.example' }),
-    store: createMemorySnapshotStore(),
+    read: async () => buildEntities(await readApps(), { baseUrl: 'https://civitai.example' }),
+    store,
     pollMs,
     sleep: abortableSleep,
     onError,
   });
+  const docs = createDocFeed({
+    source: fixtureDocSource(file),
+    resolve: resolveFromCatalog(readApps),
+    store,
+    pollMs,
+    sleep: abortableSleep,
+    onError,
+  });
+  const adapter = composeAdapter(entities, docs);
   createRegistryServer(adapter, { onError }).listen(port, () =>
     console.log(`registry-adapter (fixture ${path}) on :${port}`)
   );

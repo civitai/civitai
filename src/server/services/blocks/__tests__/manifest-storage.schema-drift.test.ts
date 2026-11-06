@@ -27,6 +27,7 @@ import {
   APP_STORAGE_MIGRATION_PATH_MAX_LENGTH,
   APP_STORAGE_MIGRATION_PATH_PATTERN,
   APP_STORAGE_OWNED_POINTER_PATTERN,
+  APP_STORAGE_REGISTRY_AUDIENCES,
   APP_STORAGE_RESERVED_INDEX_NAMES,
   APP_STORAGE_SCHEMA_KEYWORDS,
   APP_STORAGE_SCHEMA_PATTERN_MAX_LENGTH,
@@ -214,6 +215,7 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['kind log with maxEntries 10000', priv({ kind: 'log', maxEntries: 10000 }), true, true],
   ['ttlSeconds 60', priv({ ttlSeconds: 60 }), true, true],
   ['ttlSeconds 31536000', priv({ ttlSeconds: 31536000 }), true, true],
+  ['registry public on shared', shared({ registry: 'public' }), true, true],
   ['write owner', shared({ write: 'owner', counters: ['plays'] }), true, true],
   // reject — containers
   ['storage null', null, false],
@@ -248,6 +250,9 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ['unknown import key', imports(imp({ mode: 'x' })), false],
   ['imports beside empty collections', { collections: {}, ...imports(imp()) }, false],
   ['exportable string', priv({ exportable: 'no' }), false],
+  ['registry on private', priv({ registry: 'public' }), false],
+  ['registry with an unknown audience', shared({ registry: 'everyone' }), false],
+  ['registry boolean', shared({ registry: true }), false],
   // reject — names
   ['uppercase collection', { collections: { Prefs: { visibility: 'private' } } }, false],
   ['leading digit collection', { collections: { '1x': { visibility: 'private' } } }, false],
@@ -553,6 +558,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
 
     expect(p.kind.enum).toEqual([...APP_STORAGE_KINDS]);
     expect(p.exportable.type).toBe('boolean');
+    expect(p.registry.enum).toEqual([...APP_STORAGE_REGISTRY_AUDIENCES]);
     expect(p.visibility.enum).toEqual([...APP_STORAGE_VISIBILITIES]);
     expect(p.write.enum).toEqual([...APP_STORAGE_WRITE_POLICIES]);
 

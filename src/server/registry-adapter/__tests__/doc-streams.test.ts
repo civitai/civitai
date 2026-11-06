@@ -1,0 +1,139 @@
+import { describe, expect, it } from 'vitest';
+import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import type { CatalogApp } from '~/server/registry-adapter/entities';
+import type { Adapter } from '~/server/registry-adapter/protocol';
+
+const notes = (maxLength: number, extra: Record<string, unknown> = {}) => ({
+  visibility: 'shared',
+  write: 'own',
+  schema: { type: 'object', properties: { title: { type: 'string', maxLength } } },
+  ...extra,
+});
+const manifest = (collections: Record<string, unknown>) => ({
+  blockId: 'orbit-notes',
+  storage: { collections },
+});
+
+function app(
+  head: Record<string, unknown>,
+  over: Partial<NonNullable<CatalogApp['block']>> = {}
+): CatalogApp {
+  return {
+    listing: {
+      slug: 'orbit-notes',
+      kind: 'onsite',
+      name: 'Orbit Notes',
+      tagline: null,
+      category: null,
+      contentRating: 'pg',
+      iconUrl: null,
+      creatorUsername: null,
+      externalUrl: null,
+      sourceRepoUrl: null,
+    },
+    block: {
+      id: 'ab_orbit_31',
+      blockId: 'orbit-notes',
+      version: '1.1.0',
+      status: 'approved',
+      contentRating: 'pg',
+      manifest: manifest(head),
+      ...over,
+    },
+    approved: [
+      {
+        id: 'pubreq_orbit_1',
+        version: '1.0.0',
+        manifest: manifest({ notes: notes(100, { registry: 'public' }), drafts: notes(50) }),
+        bundleSha256: null,
+        commitSha: null,
+        sourceCommit: null,
+        reviewedAt: null,
+      },
+    ],
+  };
+}
+
+const V = (coll: string, n: number) => `urn:schema:civitai-apps:orbit-notes/${coll}@v${n}`;
+const OPTED_IN = { notes: notes(200, { registry: 'public' }), drafts: notes(50) };
+
+describe('resolveFromCatalog', () => {
+  const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps);
+
+  it('an opted-in collection of a listed, approved app: its app and every major', async () => {
+    const stream = await resolve([app(OPTED_IN)])(V('notes', 1));
+    expect(stream && { ...stream, family: stream.family.map((f) => f.urn) }).toEqual({
+      appId: 'ab_orbit_31',
+      slug: 'orbit-notes',
+      collection: 'notes',
+      family: [V('notes', 1), V('notes', 2)],
+    });
+  });
+
+  it('a major past the newest is not published', async () => {
+    expect(await resolve([app(OPTED_IN)])(V('notes', 3))).toBeNull();
+  });
+
+  it('🔴 a collection that is not opted in is never published', async () => {
+    expect(await resolve([app(OPTED_IN)])(V('drafts', 1))).toBeNull();
+  });
+
+  it('🔴 the opt-in is read from the enforced manifest: dropping it there unpublishes', async () => {
+    expect(
+      await resolve([app({ notes: notes(200), drafts: notes(50) })])(V('notes', 1))
+    ).toBeNull();
+  });
+
+  it('🔴 a private collection is never published, whatever it declares', async () => {
+    const priv = { notes: { visibility: 'private', registry: 'public' } };
+    expect(await resolve([app(priv)])(V('notes', 1))).toBeNull();
+  });
+
+  it('a block that is not approved, or an app not in the catalog, is not published', async () => {
+    expect(await resolve([app(OPTED_IN, { status: 'suspended' })])(V('notes', 1))).toBeNull();
+    expect(await resolve([])(V('notes', 1))).toBeNull();
+  });
+
+  it('a URN that is not a collection schema of this namespace resolves to nothing', async () => {
+    const r = resolve([app(OPTED_IN)]);
+    expect(await r('urn:schema:civitai-schemas:app@v1')).toBeNull();
+    expect(await r('urn:schema:other-ns:orbit-notes/notes@v1')).toBeNull();
+  });
+});
+
+describe('composeAdapter', () => {
+  const APPS = 'urn:schema:civitai-schemas:app@v1';
+  const entities: Adapter = {
+    namespace: 'civitai-apps',
+    serves: (s) => s === APPS,
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+    snapshot: async () => ({ cursor: 'entity-cursor', entities: [] }),
+    // eslint-disable-next-line require-yield
+    async *changes() {
+      return;
+    },
+  };
+  const docs = {
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+    snapshot: async () => ({ cursor: 'doc-cursor', entities: [] }),
+    // eslint-disable-next-line require-yield
+    async *changes() {
+      return;
+    },
+  };
+  const adapter = composeAdapter(entities, docs as never);
+  const ctx = { signal: new AbortController().signal };
+
+  it('serves the entity schemas and every collection-schema URN, nothing else', () => {
+    expect(
+      [APPS, V('notes', 1), 'urn:schema:civitai-schemas:model@v1', 'urn:schema:x:y@v1'].map(
+        adapter.serves
+      )
+    ).toEqual([true, true, false, false]);
+  });
+
+  it('routes each stream to its own source', async () => {
+    expect((await adapter.snapshot(APPS, ctx)).cursor).toBe('entity-cursor');
+    expect((await adapter.snapshot(V('notes', 2), ctx)).cursor).toBe('doc-cursor');
+  });
+});

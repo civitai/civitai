@@ -612,6 +612,38 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
   ORDER BY d.coll
   LIMIT 2`;
 
+// REGISTRY FEED (`createDocStoreFeed`): the SHARED documents (`scope_uid = 0`) of one collection
+// of one app namespace, read by seq range, read only. Private documents are never selected: the
+// key space is a literal here, never a parameter. Hidden rows come back flagged from the seq read
+// (a hide writes a tombstone and leaves the row), and are left out of the full read.
+// $1 app, $2 ns
+const SQL_FEED_HEAD = `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2`;
+// $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
+const SQL_FEED_DOCS_SINCE = `SELECT d.key, d.data, d.version, d.seq, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
+const SQL_FEED_TOMBS_SINCE = `SELECT tb.key, tb.seq FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0
+    AND tb.seq > $4::bigint AND tb.seq <= $5::bigint
+  ORDER BY tb.seq
+  LIMIT $6::int`;
+// Every visible shared document, keyset by key. $1 app, $2 ns, $3 coll, $4 after key, $5 up to
+// seq (inclusive), $6 limit
+const SQL_FEED_DOCS_ALL = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
+
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
 const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key, kind, name, count)
@@ -1153,6 +1185,33 @@ export function createDocStoreLookup(deps: DocStoreDeps) {
   return buildDocStore(deps).lookup;
 }
 export type DocStoreLookup = ReturnType<typeof createDocStoreLookup>;
+
+/**
+ * REGISTRY FEED — the shared documents of one app's production namespace, by seq, read only, for
+ * the registry adapter. Private documents and every other namespace are out of its reach: each
+ * statement fixes `scope_uid = 0`, and the context fixes the production namespace.
+ */
+export function createDocStoreFeed(deps: DocStoreDeps) {
+  return buildDocStore(deps).feed;
+}
+export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
+
+/** Most rows one feed page may ask for. */
+export const FEED_MAX_PAGE = 1000;
+
+/** A shared document as the feed reads it. */
+export type FeedDocument = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  seq: number;
+};
+
+/** One page of `feedChanges`. */
+export type FeedChangesPage = {
+  docs: Array<FeedDocument & { hidden: boolean }>;
+  tombs: Array<{ key: string; seq: number }>;
+};
 
 /**
  * VIEWER DATA — a signed-in user's own production data across apps, for their account settings:
@@ -2475,9 +2534,120 @@ function buildDocStore(deps: DocStoreDeps) {
     }));
   }
 
+  /**
+   * The registry feed's context: the production namespace of one app, no viewer. Collection
+   * names, keys and seq bounds are checked here, before any of them reaches SQL.
+   */
+  function feedCtx(appId: string, coll: string): DocStoreContext {
+    if (!B.collectionName.test(coll)) throw invalid('feed: malformed collection name');
+    return { appId, ns: PUBLISHED_NS, viewerUid: null };
+  }
+  const feedSeq = (n: number) => {
+    if (!Number.isSafeInteger(n) || n < 0) throw invalid('feed: malformed seq');
+    return n;
+  };
+  const feedLimit = (n: number) => {
+    if (!Number.isSafeInteger(n) || n < 1 || n > FEED_MAX_PAGE)
+      throw invalid('feed: bad page size');
+    return n;
+  };
+  const seqOf = (v: unknown) => Number(v);
+
+  /** The namespace's newest seq, or 0 when it has no usage row (nothing was ever written). */
+  async function feedHead(appId: string): Promise<number> {
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const row = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_FEED_HEAD, [ctx.appId, ctx.ns])).rows[0]
+    );
+    return row ? seqOf(row.last_seq) : 0;
+  }
+
+  /**
+   * One page of what changed in a shared collection in the seq range (`after`, `upTo`]:
+   * documents written (hidden ones flagged) and tombstones, each in seq order. One transaction,
+   * one app namespace.
+   */
+  async function feedChanges(
+    appId: string,
+    coll: string,
+    after: number,
+    upTo: number,
+    limit: number
+  ): Promise<FeedChangesPage> {
+    const ctx = feedCtx(appId, coll);
+    const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
+    return withTx(ctx, async (c) => {
+      const docs = (await c.query(SQL_FEED_DOCS_SINCE, params)).rows;
+      const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
+      return {
+        docs: docs.map((r) => ({
+          key: r.key as string,
+          data: r.data as Record<string, unknown>,
+          version: Number(r.version),
+          seq: seqOf(r.seq),
+          hidden: r.hidden === true,
+        })),
+        tombs: tombs.map((r) => ({ key: r.key as string, seq: seqOf(r.seq) })),
+      };
+    });
+  }
+
+  /** One page of a shared collection's visible documents at or below `upTo`, by key. */
+  async function feedDocuments(
+    appId: string,
+    coll: string,
+    afterKey: string,
+    upTo: number,
+    limit: number
+  ): Promise<FeedDocument[]> {
+    const ctx = feedCtx(appId, coll);
+    if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    const rows = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(SQL_FEED_DOCS_ALL, [
+            ctx.appId,
+            ctx.ns,
+            coll,
+            afterKey,
+            feedSeq(upTo),
+            feedLimit(limit),
+          ])
+        ).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      data: r.data as Record<string, unknown>,
+      version: Number(r.version),
+      seq: seqOf(r.seq),
+    }));
+  }
+
+  /** Where one shared key stands now: its document's seq and its tombstone's, each or null. */
+  async function feedWitness(
+    appId: string,
+    coll: string,
+    key: string
+  ): Promise<{ docSeq: number | null; tombSeq: number | null }> {
+    const ctx = feedCtx(appId, coll);
+    if (!B.key.test(key)) throw invalid('feed: malformed key');
+    return withTx(ctx, async (c) => {
+      const params = [ctx.appId, ctx.ns, coll, key];
+      const doc = (await c.query(SQL_FEED_WITNESS_DOC, params)).rows[0];
+      const tomb = (await c.query(SQL_FEED_WITNESS_TOMB, params)).rows[0];
+      return {
+        docSeq: doc ? seqOf(doc.seq) : null,
+        tombSeq: tomb ? seqOf(tomb.seq) : null,
+      };
+    });
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
+    feed: { feedHead, feedChanges, feedDocuments, feedWitness },
     moderation: createModeration({ withTx, charge }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
     viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },

@@ -99,7 +99,7 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
 
   return {
     namespace: opts.namespace,
-    serves: [...opts.serves],
+    serves: (schema) => opts.serves.includes(schema),
 
     async snapshot(schema) {
       const entities = await current(schema);

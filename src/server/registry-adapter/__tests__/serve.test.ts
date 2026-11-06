@@ -17,7 +17,7 @@ const one: Entity = {
 function adapter(over: Partial<Adapter> = {}): Adapter {
   return {
     namespace: 'civitai-apps',
-    serves: [APPS],
+    serves: (schema) => schema === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [one] }),
     async *changes(): AsyncGenerator<Change> {

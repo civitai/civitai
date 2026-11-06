@@ -1,0 +1,345 @@
+/**
+ * The shared-document feed: one stream per collection major
+ * (`urn:schema:civitai-apps:<slug>/<coll>@vN`), carrying every visible shared document of that
+ * collection that satisfies the major. Each document claims every major of its collection it
+ * satisfies, so a mint brings unchanged documents into the new major's stream.
+ *
+ * A cursor is the digest of the stream's state — the app it was read from, the seq position, the
+ * collection's schemas, a witness document and every (urn, rev) served — and that state is written
+ * to the {@link SnapshotStore} before the cursor is handed out. So the seq never appears in a
+ * cursor (private writes share it, and a raw seq would tell their volume), a resume diffs against
+ * exactly what the consumer was told, and an app that leaves the public set has its documents
+ * deleted from that record, with no tombstone needed.
+ *
+ * `cursor_expired` when the stream's history cannot be trusted any more: the slug now names a
+ * different app (re-created), the namespace's seq is behind the cursor's (reset), or the witness
+ * — the newest document the cursor served — has neither a document nor a tombstone at or past the
+ * seq it was served at (purged and written again).
+ */
+import type { ValidateFunction } from 'ajv';
+import type { SnapshotStore } from '~/server/registry-adapter/cursor';
+import { newValidator } from '~/server/registry-adapter/json-schema';
+import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
+import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
+import { canonicalJson, sha256Hex } from '~/server/registry-adapter/release';
+import { registryUrn } from '~/server/registry-adapter/urn';
+
+export type FeedDocument = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  seq: number;
+};
+
+/** The reads the feed makes, all of one app's production namespace, shared documents only. */
+export type SharedDocSource = {
+  head(appId: string): Promise<number>;
+  changes(
+    appId: string,
+    coll: string,
+    after: number,
+    upTo: number,
+    limit: number
+  ): Promise<{
+    docs: Array<FeedDocument & { hidden: boolean }>;
+    tombs: Array<{ key: string; seq: number }>;
+  }>;
+  documents(
+    appId: string,
+    coll: string,
+    afterKey: string,
+    upTo: number,
+    limit: number
+  ): Promise<FeedDocument[]>;
+  witness(
+    appId: string,
+    coll: string,
+    key: string
+  ): Promise<{ docSeq: number | null; tombSeq: number | null }>;
+};
+
+/** A collection major that is published now: its app, and every major of the collection. */
+export type CollectionStream = {
+  appId: string;
+  slug: string;
+  collection: string;
+  /** Every major's schema document, `@v1` first. */
+  family: Array<{ urn: string; body: Record<string, unknown> }>;
+};
+
+/** The published collection a stream schema names, or null when it is not published now. */
+export type ResolveStream = (schema: string) => Promise<CollectionStream | null>;
+
+export const FEED_PAGE = 500;
+const STATE_FORMAT = 'f1';
+const CURSOR_RE = /^f1\.([0-9a-f]{32})$/;
+
+type Served = { rev: string; seq: number };
+type FeedState = {
+  v: typeof STATE_FORMAT;
+  schema: string;
+  appId: string | null;
+  seq: number;
+  family: string | null;
+  witness: { key: string; seq: number } | null;
+  served: Array<[urn: string, rev: string, seq: number]>;
+};
+
+const docRev = (d: FeedDocument) =>
+  sha256Hex(canonicalJson({ version: d.version, data: d.data })).slice(0, 16);
+
+/**
+ * Validators for one collection's family, compiled once per distinct family. A document claims
+ * every major whose schema it satisfies.
+ */
+export function createClaimer(maxFamilies = 200) {
+  const cache = new Map<string, Array<{ urn: string; validate: ValidateFunction }>>();
+  return (family: CollectionStream['family'], digest: string) => {
+    let validators = cache.get(digest);
+    if (!validators) {
+      if (cache.size >= maxFamilies) cache.clear();
+      const ajv = newValidator();
+      validators = family.map(({ urn, body }) => ({ urn, validate: ajv.compile(body) }));
+      cache.set(digest, validators);
+    }
+    const compiled = validators;
+    return (data: unknown) => compiled.filter((v) => v.validate(data) === true).map((v) => v.urn);
+  };
+}
+
+export function familyDigest(family: CollectionStream['family']): string {
+  return sha256Hex(canonicalJson(family)).slice(0, 32);
+}
+
+export type DocFeedOptions = {
+  source: SharedDocSource;
+  resolve: ResolveStream;
+  store: SnapshotStore;
+  pollMs: number;
+  sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  onError?: (err: unknown) => void;
+};
+
+export function createDocFeed(opts: DocFeedOptions) {
+  const claimer = createClaimer();
+
+  const save = async (state: FeedState): Promise<string> => {
+    const raw = canonicalJson(state);
+    const digest = sha256Hex(raw).slice(0, 32);
+    await opts.store.put(digest, raw);
+    return `${STATE_FORMAT}.${digest}`;
+  };
+
+  const load = async (schema: string, cursor: string): Promise<FeedState> => {
+    const digest = CURSOR_RE.exec(cursor)?.[1];
+    if (!digest) throw cursorExpired('not a cursor this source issued');
+    const raw = await opts.store.get(digest);
+    if (raw === null) throw cursorExpired('the state this cursor names is no longer held');
+    let state: FeedState;
+    try {
+      state = JSON.parse(raw) as FeedState;
+    } catch {
+      throw cursorExpired('the state this cursor names is unreadable');
+    }
+    if (state.v !== STATE_FORMAT || state.schema !== schema) {
+      throw cursorExpired('the cursor belongs to another stream');
+    }
+    await opts.store.put(digest, raw);
+    return state;
+  };
+
+  /** Every visible document of the collection at or below `upTo`, paged by key. */
+  async function readAll(appId: string, coll: string, upTo: number): Promise<FeedDocument[]> {
+    const out: FeedDocument[] = [];
+    let after = '';
+    for (;;) {
+      const page = await opts.source.documents(appId, coll, after, upTo, FEED_PAGE);
+      out.push(...page);
+      if (page.length < FEED_PAGE) return out;
+      after = page[page.length - 1].key;
+    }
+  }
+
+  /**
+   * The newest event of each key in the seq range (`after`, `upTo`]: the document as written
+   * (null when it was deleted or hidden). Pages through documents and tombstones together, so
+   * a key's events are always compared in seq order.
+   */
+  async function readChanged(
+    appId: string,
+    coll: string,
+    after: number,
+    upTo: number
+  ): Promise<Map<string, FeedDocument | null>> {
+    const latest = new Map<string, { seq: number; doc: FeedDocument | null }>();
+    const note = (key: string, seq: number, doc: FeedDocument | null) => {
+      const at = latest.get(key);
+      if (!at || at.seq < seq) latest.set(key, { seq, doc });
+    };
+    let from = after;
+    while (from < upTo) {
+      const page = await opts.source.changes(appId, coll, from, upTo, FEED_PAGE);
+      // A full page may stop short of a later event of the other kind, so only the range both
+      // pages cover is settled.
+      let frontier = upTo;
+      if (page.docs.length === FEED_PAGE)
+        frontier = Math.min(frontier, page.docs[page.docs.length - 1].seq);
+      if (page.tombs.length === FEED_PAGE)
+        frontier = Math.min(frontier, page.tombs[page.tombs.length - 1].seq);
+      for (const d of page.docs) {
+        if (d.seq > frontier) continue;
+        const { hidden, ...doc } = d;
+        note(d.key, d.seq, hidden ? null : doc);
+      }
+      for (const t of page.tombs) if (t.seq <= frontier) note(t.key, t.seq, null);
+      from = frontier;
+    }
+    return new Map([...latest].map(([key, { doc }]) => [key, doc]));
+  }
+
+  /** The stream's state now, from `prev` (null for a snapshot), and the entities to upsert. */
+  async function advance(
+    schema: string,
+    prev: FeedState | null
+  ): Promise<{ next: FeedState; entities: Map<string, Entity> }> {
+    const stream = await opts.resolve(schema);
+    if (!stream) {
+      return {
+        next: {
+          v: STATE_FORMAT,
+          schema,
+          appId: null,
+          seq: 0,
+          family: null,
+          witness: null,
+          served: [],
+        },
+        entities: new Map(),
+      };
+    }
+    const { appId, slug, collection, family } = stream;
+    if (prev?.appId && prev.appId !== appId) {
+      throw cursorExpired('the collection now belongs to a different app');
+    }
+    const head = await opts.source.head(appId);
+    const same = prev !== null && prev.appId === appId;
+    if (same && head < prev.seq) throw cursorExpired('the namespace seq went back');
+    if (same && prev.witness) {
+      const w = await opts.source.witness(appId, collection, prev.witness.key);
+      const since = prev.witness.seq;
+      if (!((w.docSeq ?? -1) >= since || (w.tombSeq ?? -1) >= since)) {
+        throw cursorExpired('a document this cursor served is gone without a trace');
+      }
+    }
+
+    const digest = familyDigest(family);
+    const claims = claimer(family, digest);
+    const entityOf = (d: FeedDocument): Entity | null => {
+      const schemas = claims(d.data);
+      if (!schemas.includes(schema)) return null;
+      return {
+        urn: registryUrn({ kind: 'document', slug, collection, key: d.key }),
+        schemas,
+        rev: docRev(d),
+        body: d.data,
+      };
+    };
+
+    const served = new Map<string, Served>();
+    const entities = new Map<string, Entity>();
+    const keep = (d: FeedDocument) => {
+      const e = entityOf(d);
+      if (!e) return;
+      served.set(e.urn, { rev: e.rev, seq: d.seq });
+      entities.set(e.urn, e);
+    };
+
+    const full = !same || prev.family !== digest || prev.served.length === 0;
+    if (full) {
+      for (const d of await readAll(appId, collection, head)) keep(d);
+    } else {
+      for (const [urn, rev, seq] of prev.served) served.set(urn, { rev, seq });
+      for (const [key, doc] of await readChanged(appId, collection, prev.seq, head)) {
+        served.delete(registryUrn({ kind: 'document', slug, collection, key }));
+        if (doc) keep(doc);
+      }
+    }
+
+    let witness: FeedState['witness'] = null;
+    for (const [urn, s] of served) {
+      if (!witness || s.seq > witness.seq)
+        witness = { key: urn.slice(urn.lastIndexOf('/') + 1), seq: s.seq };
+    }
+    return {
+      next: {
+        v: STATE_FORMAT,
+        schema,
+        appId,
+        // With nothing served there is no witness to catch a purge, so the next read starts over.
+        seq: served.size > 0 ? head : 0,
+        family: digest,
+        witness,
+        served: [...served]
+          .map(([urn, s]) => [urn, s.rev, s.seq] as [string, string, number])
+          .sort(),
+      },
+      entities,
+    };
+  }
+
+  const guarded = async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof ProtocolError) throw err;
+      opts.onError?.(err);
+      throw new ProtocolError('unavailable', 'the document feed could not be read');
+    }
+  };
+
+  return {
+    async snapshot(schema: string) {
+      const { next, entities } = await guarded(() => advance(schema, null));
+      return { cursor: await save(next), entities: [...entities.values()] };
+    },
+
+    async *changes(
+      schema: string,
+      cursor: string,
+      { signal }: AdapterContext
+    ): AsyncGenerator<Change> {
+      let state = await guarded(() => load(schema, cursor));
+      let position = cursor;
+      while (!signal.aborted) {
+        const before = state;
+        const { next, entities } = await guarded(() => advance(schema, before));
+        const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
+        const deletes = [...was.keys()]
+          .filter((urn) => !next.served.some(([u]) => u === urn))
+          .sort();
+        const upserts = next.served
+          .filter(([urn, rev]) => was.get(urn) !== rev)
+          .map(([urn]) => entities.get(urn))
+          .filter((e): e is Entity => e !== undefined);
+        const diff: Array<{ delete: string } | { upsert: Entity }> = [
+          ...deletes.map((urn) => ({ delete: urn })),
+          ...upserts.map((upsert) => ({ upsert })),
+        ];
+        if (diff.length > 0) {
+          const nextCursor = await save(next);
+          for (let i = 0; i < diff.length; i++) {
+            if (signal.aborted) return;
+            const at = i === diff.length - 1 ? nextCursor : position;
+            const c = diff[i];
+            yield 'upsert' in c
+              ? { upsert: c.upsert, cursor: at }
+              : { delete: c.delete, cursor: at };
+          }
+          position = nextCursor;
+        }
+        state = next;
+        await opts.sleep(opts.pollMs, signal);
+      }
+    },
+  };
+}
