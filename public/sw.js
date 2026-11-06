@@ -1,6 +1,94 @@
-// Web-push-only service worker. Deliberately has NO fetch handler — a caching SW on a Next.js app
-// can serve stale HTML/JS to every visitor and a broken one keeps running after the fix ships.
-// Do not expand this file's job beyond push.
+// Service worker: web push, an offline fallback page, and a cache for hashed static assets.
+//
+// What it must never do: cache page HTML, tRPC/API responses, feeds or image-CDN data (all go to the
+// network untouched), or run a non-GET, cross-origin or /api/ request through respondWith (downloads
+// need Range/streaming). A buggy copy of this file keeps running in browsers after the fix ships.
+//
+// KILL SWITCH: ship a sw.js with no `fetch` listener whose `activate` deletes every cache and calls
+// `self.registration.unregister()`. Browsers re-check this file on navigation (at most every 24h) and
+// /sw.js is deliberately revalidate-always, so it reaches clients without a cache purge. To retire
+// only the caches, bump VERSION: `activate` deletes every cache not named for the current version.
+
+const VERSION = 'v1';
+const SHELL_CACHE = `civitai-shell-${VERSION}`;
+const STATIC_CACHE = `civitai-static-${VERSION}`;
+const OFFLINE_URL = '/offline.html';
+const STATIC_PREFIX = '/_next/static/';
+const STATIC_MAX_ENTRIES = 200;
+
+self.addEventListener('install', (event) => {
+  // addAll rejects if the page cannot be fetched, which fails the install and leaves the previous
+  // worker (or none) in charge, i.e. today's behavior.
+  event.waitUntil(
+    caches
+      .open(SHELL_CACHE)
+      .then((cache) => cache.addAll([OFFLINE_URL]))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    (async () => {
+      const keep = [SHELL_CACHE, STATIC_CACHE];
+      const names = await caches.keys();
+      await Promise.all(names.filter((name) => !keep.includes(name)).map((n) => caches.delete(n)));
+      // Without preload, a worker-controlled navigation waits for the worker to boot before the
+      // request leaves; with it, online navigations cost what they did before.
+      if (self.registration.navigationPreload) await self.registration.navigationPreload.enable();
+      await self.clients.claim();
+    })()
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  if (request.mode === 'navigate') {
+    if (url.pathname.startsWith('/api/')) return;
+    if (!(request.headers.get('accept') || '').includes('text/html')) return;
+    event.respondWith(networkFirstWithOfflineFallback(event));
+    return;
+  }
+
+  if (url.pathname.startsWith(STATIC_PREFIX) && !request.headers.has('range')) {
+    event.respondWith(cacheFirstStatic(event));
+  }
+});
+
+// Only a thrown fetch (no network) shows the fallback. Any HTTP response, including 5xx, is the
+// server's answer and passes through. No timeout: slow is not offline.
+async function networkFirstWithOfflineFallback(event) {
+  try {
+    return (await event.preloadResponse) || (await fetch(event.request));
+  } catch {
+    const cached = await caches.match(OFFLINE_URL, { cacheName: SHELL_CACHE });
+    return cached || Response.error();
+  }
+}
+
+// Safe to cache forever: Next content-hashes these file names.
+async function cacheFirstStatic(event) {
+  const cache = await caches.open(STATIC_CACHE);
+  const hit = await cache.match(event.request);
+  if (hit) return hit;
+  const response = await fetch(event.request);
+  if (response.status === 200 && response.type === 'basic') {
+    event.waitUntil(
+      cache.put(event.request, response.clone()).then(() => trimCache(cache, STATIC_MAX_ENTRIES))
+    );
+  }
+  return response;
+}
+
+// cache.keys() is in insertion order, so this drops the oldest entries first.
+async function trimCache(cache, max) {
+  const keys = await cache.keys();
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - max)).map((k) => cache.delete(k)));
+}
 
 self.addEventListener('push', (event) => {
   if (!event.data) return;
