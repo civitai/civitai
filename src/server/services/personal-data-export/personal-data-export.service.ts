@@ -118,6 +118,15 @@ export async function claimNextExport(): Promise<ExportRow | null> {
   return row ?? null;
 }
 
+function reviewHoldSql(userId: Prisma.Sql) {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+    WHERE ur."userId" = ${userId}
+      AND r.status IN ('Actioned', 'Unactioned')
+      AND r.reason IN ('CSAM', 'Automated')
+  )`;
+}
+
 /**
  * Returns the account's legal-hold reasons, if any: `legs` (`['unconfirmed']` when they cannot be
  * read) and `markerView` (for `accountHoldSql`).
@@ -127,15 +136,16 @@ export async function exportHoldReasons(
 ): Promise<{ legs: string[]; markerView: boolean }> {
   try {
     const hold = await getAccountLegalHold(userId);
-    const [safety] = await dbWrite.$queryRaw<{ present: unknown }[]>(
+    const [safety] = await dbWrite.$queryRaw<{ present: unknown; review: unknown }[]>(
       Prisma.sql`SELECT EXISTS (
         SELECT 1 FROM "Image" WHERE "Image"."userId" = ${userId}::int AND ${Prisma.raw(
         IMAGE_SAFETY_CONDITION
       )}
-      ) AS present`
+      ) AS present, ${reviewHoldSql(Prisma.sql`${userId}::int`)} AS review`
     );
     const legs: string[] = [...hold.legs];
     if (safety?.present !== false) legs.push('safety-content');
+    if (safety?.review !== false) legs.push('review');
     return { legs, markerView: hold.markerView };
   } catch (e) {
     logToAxiom({
@@ -484,6 +494,7 @@ export async function releaseExport({
         SELECT 1 FROM "Image" WHERE "Image"."userId" = ${row.userId}::int
           AND ${Prisma.raw(IMAGE_SAFETY_CONDITION)}
       )
+      AND NOT ${reviewHoldSql(Prisma.sql`${row.userId}::int`)}
   `;
   // Zero rows: another press claimed it first, or a hold landed after the check above.
   if (claimed !== 1) return { ok: false, reason: 'not-releasable' };

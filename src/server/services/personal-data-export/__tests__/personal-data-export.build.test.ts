@@ -119,7 +119,7 @@ beforeEach(() => {
     .mockImplementation((async (q: { sql?: string } | string[]) => {
       const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
       if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
-      return [{ present: false }];
+      return [{ present: false, review: false }];
     }) as never);
 });
 
@@ -144,6 +144,19 @@ describe('buildExport', () => {
     expect(await buildExport(row, deps)).toBe('held');
     expect(m.builtSend.mock.calls[0][0]).toMatchObject({ held: true });
     expect(m.readySend).not.toHaveBeenCalled();
+  });
+
+  it('marks an account held when a decided case puts it under a hold', async () => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
+      const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
+      if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
+      return [{ present: false, review: true }];
+    }) as never);
+    expect(await buildExport(row, deps)).toBe('held');
+    expect(m.builtSend.mock.calls[0][0]).toMatchObject({ held: true });
+    expect(
+      writes().some((c) => c.slice(1).some((v) => Array.isArray(v) && v.includes('review')))
+    ).toBe(true);
   });
 
   it('writes the notes file with staff redacted, and never puts a note count in the archive', async () => {
@@ -173,7 +186,7 @@ describe('buildExport', () => {
       vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
         const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
         if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
-        return [{ present: legs.includes('safety-content') }];
+        return [{ present: legs.includes('safety-content'), review: false }];
       }) as never);
       await buildExport(row, deps);
       expect(m.manifest).toMatchObject({ files: expect.arrayContaining([expect.anything()]) });

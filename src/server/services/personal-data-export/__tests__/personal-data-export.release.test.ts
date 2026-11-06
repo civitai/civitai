@@ -56,7 +56,7 @@ beforeEach(() => {
   // No hold.
   vi.mocked(dbMock.dbWrite.$queryRaw)
     .mockReset()
-    .mockResolvedValue([{ present: false }] as never);
+    .mockResolvedValue([{ present: false, review: false }] as never);
 });
 
 /** The claim UPDATE: its SQL and the values bound into it. */
@@ -119,14 +119,17 @@ describe('releaseExport', () => {
     expect(claim[at + 1]).toBe(9);
   });
 
-  it('refuses when the account is under a hold', async () => {
-    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ present: true }] as never);
-    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
-      ok: false,
-      reason: 'held',
-    });
-    expect(mocks.readySend).not.toHaveBeenCalled();
-  });
+  it.each([[{ present: true, review: false }], [{ present: false, review: true }]])(
+    'refuses when the account is under a hold (#%#)',
+    async (found) => {
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([found] as never);
+      expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+        ok: false,
+        reason: 'held',
+      });
+      expect(mocks.readySend).not.toHaveBeenCalled();
+    }
+  );
 
   it('keeps the export released when only the expiry write fails after sending', async () => {
     vi.mocked(dbMock.dbWrite.$executeRaw)

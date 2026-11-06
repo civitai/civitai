@@ -27,7 +27,7 @@ vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportBuiltEmail: { send: vi.fn() },
 }));
 
-import { releaseExport } from '../personal-data-export.service';
+import { exportHoldReasons, releaseExport } from '../personal-data-export.service';
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -53,6 +53,8 @@ beforeAll(async () => {
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "blockedFor" text, "needsReview" text,
       minor boolean DEFAULT false, ingestion text DEFAULT 'Scanned');
     CREATE TABLE "CsamReport" (id int, "userId" int, images jsonb);
+    CREATE TABLE "Report" (id int PRIMARY KEY, reason text, status text);
+    CREATE TABLE "UserReport" ("reportId" int, "userId" int);
   `);
 });
 afterAll(() => db?.close());
@@ -60,7 +62,9 @@ afterAll(() => db?.close());
 beforeEach(async () => {
   m.readySend.mockReset().mockResolvedValue(undefined);
   m.accountHeld = false;
-  await db.exec(`DELETE FROM "Image"; DELETE FROM "PersonalDataExport";`);
+  await db.exec(
+    `DELETE FROM "Image"; DELETE FROM "Report"; DELETE FROM "UserReport"; DELETE FROM "PersonalDataExport";`
+  );
   await db.query(
     `INSERT INTO "PersonalDataExport" (id, "userId", "requestedById", status, "archiveKey", "builtAt")
      VALUES (5, $1, 9, 'built', 'exports/5/k.zip', $2)`,
@@ -81,7 +85,7 @@ beforeEach(async () => {
   // The check before the claim saw nothing: what the claim itself finds decides.
   vi.mocked(dbMock.dbWrite.$queryRaw)
     .mockReset()
-    .mockResolvedValue([{ present: false }] as never);
+    .mockResolvedValue([{ present: false, review: false }] as never);
   // Every raw write runs, for real, against Postgres.
   vi.mocked(dbMock.dbWrite.$executeRaw)
     .mockReset()
@@ -96,6 +100,45 @@ const status = async () =>
     (await db.query<{ status: string }>(`SELECT status FROM "PersonalDataExport" WHERE id = 5`))
       .rows[0] ?? { status: '' }
   ).status;
+
+const caseAbout = async (userId: number, id: number, reason: string, state: string) => {
+  await db.query(`INSERT INTO "Report" (id, reason, status) VALUES ($1, $2, $3)`, [
+    id,
+    reason,
+    state,
+  ]);
+  await db.query(`INSERT INTO "UserReport" ("reportId", "userId") VALUES ($1, $2)`, [id, userId]);
+};
+
+describe('hold check, run', () => {
+  // The check reads Postgres for real here, so the SQL itself decides.
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: Prisma.Sql) => {
+      return (await db.query(q.text, q.values as unknown[])).rows;
+    }) as never);
+  });
+
+  it.each([
+    ['CSAM', 'Actioned'],
+    ['CSAM', 'Unactioned'],
+    ['Automated', 'Actioned'],
+    ['Automated', 'Unactioned'],
+  ])(
+    'puts the account under a hold for a decided case of a held kind (#%#)',
+    async (reason, state) => {
+      await caseAbout(OWNER, 1, reason, state);
+      expect((await exportHoldReasons(OWNER)).legs).toEqual(['review']);
+    }
+  );
+
+  it('puts no hold for an undecided case, another kind, or another account', async () => {
+    await caseAbout(OWNER, 1, 'CSAM', 'Pending');
+    await caseAbout(OWNER, 2, 'Automated', 'Processing');
+    await caseAbout(OWNER, 3, 'Spam', 'Actioned');
+    await caseAbout(OWNER + 1, 4, 'CSAM', 'Actioned');
+    expect((await exportHoldReasons(OWNER)).legs).toEqual([]);
+  });
+});
 
 describe('release claim, run', () => {
   it('claims nothing, and sends nothing, when the account is under a hold', async () => {
@@ -126,6 +169,26 @@ describe('release claim, run', () => {
     });
     expect(m.readySend).not.toHaveBeenCalled();
     expect(await status()).toBe('built');
+  });
+
+  it('claims nothing, and sends nothing, when a decided case puts the account under a hold', async () => {
+    await caseAbout(OWNER, 1, 'CSAM', 'Actioned');
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+      ok: false,
+      reason: 'not-releasable',
+    });
+    expect(m.readySend).not.toHaveBeenCalled();
+    expect(await status()).toBe('built');
+  });
+
+  it('claims past a case that puts no hold on the account (control)', async () => {
+    await caseAbout(OWNER, 1, 'CSAM', 'Pending');
+    await caseAbout(OWNER, 2, 'Spam', 'Actioned');
+    await caseAbout(OWNER + 1, 3, 'CSAM', 'Actioned');
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toMatchObject({
+      ok: true,
+    });
+    expect(await status()).toBe('released');
   });
 
   it('clears the error a failed earlier release left on the row', async () => {
