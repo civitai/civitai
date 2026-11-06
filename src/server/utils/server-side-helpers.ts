@@ -40,7 +40,11 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
 import type { BotLeanResult } from '~/server/bot-cache/bot-lean';
-import { isBotLeanCandidate, sendBotLeanRender } from '~/server/bot-cache/bot-lean';
+import {
+  botLeanMode,
+  sendBotLeanRender,
+  shadowBotLeanRender,
+} from '~/server/bot-cache/bot-lean';
 import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache-routes';
 
 /**
@@ -297,13 +301,18 @@ export function createServerSideProps<P>({
     }
 
     // A verified crawler's bot-cache render, answered from the same query cache without the React
-    // render (`~/server/bot-cache/bot-lean`). `false` from the send: the page renders as always.
-    if (botLean && ssg && isBotLeanCandidate(context.req, botLean.route)) {
-      const sent = await sendBotLeanRender(botLean.route, context.req, context.res, () =>
-        botLean.render({ req: context.req, query: context.query, ssg, features })
-      );
-      // Next returns without rendering once the response is sent (`render.js`, `isResSent`).
-      if (sent) return { props: {} as NonNullable<P> };
+    // render, or (shadow) compared with it (`~/server/bot-cache/bot-lean`). Unsent: the page renders
+    // as always.
+    const leanMode = botLean && ssg ? botLeanMode(context.req, botLean.route) : null;
+    if (botLean && ssg && leanMode) {
+      const { route, allowedQuery = [] } = botLean;
+      const render = () => botLean.render({ req: context.req, query: context.query, ssg, features });
+      if (leanMode === 'shadow') {
+        await shadowBotLeanRender(route, context.req, context.res, allowedQuery, render);
+      } else if (await sendBotLeanRender(route, context.req, context.res, allowedQuery, render)) {
+        // Next returns without rendering once the response is sent (`render.js`, `isResSent`).
+        return { props: {} as NonNullable<P> };
+      }
     }
 
     const adsGated = resolveAdsGated(result, features);
@@ -348,9 +357,12 @@ type CreateServerSidePropsProps<P> = {
    *  every other response. */
   shell?: ShellRouteName;
   /** The page's bot lean renderer (`~/server/bot-cache/bot-lean`), run after the resolver for a
-   *  request `_app` marked as this route's bot-cache render, when `bot-lean-render` is on. */
+   *  request `_app` marked as this route's bot-cache render, when `bot-lean-render` (serve) or
+   *  `bot-lean-render-shadow` is on. */
   botLean?: {
     route: BotCacheRouteName;
+    /** Query keys the renderer reads; a request carrying any other gets the full render. */
+    allowedQuery?: readonly string[];
     render: (args: {
       req: GetServerSidePropsContext['req'];
       query: GetServerSidePropsContext['query'];

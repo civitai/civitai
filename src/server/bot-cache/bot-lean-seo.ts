@@ -1,8 +1,9 @@
 /**
- * What a crawler reads from a page, extracted from its HTML, for the lean-render parity test
- * (`bot-lean-images-parity.test.ts`): the head's SEO tags, the JSON-LD (parsed), the body's
- * visible text, its `<img>`s and its links. Two renders that extract equal are the same page to a
- * crawler that does not run scripts.
+ * What a crawler reads from a page, extracted from its HTML, for the bot lean render
+ * (`~/server/bot-cache/bot-lean`): the head's SEO tags, the JSON-LD (parsed), the body's headings,
+ * visible text, `<img>`s and links. Two renders that extract equal are the same page to a crawler
+ * that does not run scripts. The parity tests compare it, and shadow mode compares it in
+ * production (`diffSeo`).
  *
  * Parsed with htmlparser2 (entities decoded), not with regexes: the full render and the lean page
  * serialise the same content differently (attribute order, quoting, `&amp;` vs `&#x27;`, React's
@@ -31,7 +32,9 @@ export type SeoExtract = {
    */
   text: string[];
   images: SeoImage[];
-  /** Every `<a href>`, sorted, duplicates kept once. */
+  /** Every heading, as `h<level>: <text>`, in document order. */
+  headings: string[];
+  /** Every `<a href>`, sorted, duplicates kept once; ` [nofollow]` when its `rel` says so. */
   links: string[];
   /** Whether the page carries the React data blob (the lean page must not). */
   hasNextData: boolean;
@@ -45,6 +48,15 @@ export function normaliseText(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+/** A block that does not parse is compared as its text, so it still differs from a good one. */
+function parseJsonLd(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { unparsed: text };
+  }
+}
+
 export function extractSeo(html: string): SeoExtract {
   const out: SeoExtract = {
     title: [],
@@ -54,6 +66,7 @@ export function extractSeo(html: string): SeoExtract {
     jsonLd: [],
     text: [],
     images: [],
+    headings: [],
     links: [],
     hasNextData: false,
   };
@@ -67,6 +80,8 @@ export function extractSeo(html: string): SeoExtract {
   const stack: string[] = [];
   let titleBuf: string | null = null;
   let jsonLdBuf: string | null = null;
+  // The open heading: its level and the text read inside it so far.
+  let heading: { level: string; text: string; depth: number } | null = null;
 
   const inside = (names: Set<string>) => stack.some((name) => names.has(name));
 
@@ -96,12 +111,18 @@ export function extractSeo(html: string): SeoExtract {
             srcset: attrs.srcset ?? null,
           });
         }
-        if (name === 'a' && attrs.href !== undefined) links.add(attrs.href);
+        if (name === 'a' && attrs.href !== undefined) {
+          const nofollow = /(^|\s)nofollow(\s|$)/i.test(attrs.rel ?? '');
+          links.add(nofollow ? `${attrs.href} [nofollow]` : attrs.href);
+        }
+        if (/^h[1-6]$/.test(name) && !heading && !stack.includes('head'))
+          heading = { level: name, text: '', depth: stack.length };
       },
       ontext(data) {
         if (titleBuf !== null) titleBuf += data;
         if (jsonLdBuf !== null) jsonLdBuf += data;
         if (!inside(SKIP_TEXT)) run += data;
+        if (heading) heading.text += data;
       },
       onclosetag(name) {
         flush();
@@ -110,12 +131,16 @@ export function extractSeo(html: string): SeoExtract {
           titleBuf = null;
         }
         if (name === 'script' && jsonLdBuf !== null) {
-          out.jsonLd.push(JSON.parse(jsonLdBuf));
+          out.jsonLd.push(parseJsonLd(jsonLdBuf));
           jsonLdBuf = null;
         }
         // Void and unclosed elements: pop back to the matching open tag.
         const at = stack.lastIndexOf(name);
         if (at !== -1) stack.length = at;
+        if (heading && stack.length < heading.depth) {
+          out.headings.push(`${heading.level}: ${normaliseText(heading.text)}`);
+          heading = null;
+        }
       },
     },
     { decodeEntities: true, lowerCaseTags: true, lowerCaseAttributeNames: true }
@@ -132,4 +157,14 @@ export function extractSeo(html: string): SeoExtract {
 export function seoOf(html: string) {
   const { hasNextData: _, ...seo } = extractSeo(html);
   return seo;
+}
+
+export type SeoFields = ReturnType<typeof seoOf>;
+export type SeoField = keyof SeoFields;
+
+/** The fields on which two extracts differ, in a fixed order. Empty: the same page. */
+export function diffSeo(expected: SeoFields, actual: SeoFields): SeoField[] {
+  return (Object.keys(expected) as SeoField[]).filter(
+    (field) => JSON.stringify(expected[field]) !== JSON.stringify(actual[field])
+  );
 }

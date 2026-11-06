@@ -162,6 +162,7 @@ import { getDefaultModelVersion } from '~/server/services/model-version.service'
 import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { renderModelDetailLean } from '~/server/bot-cache/lean/models-lean';
 import {
   getIsSafeBrowsingLevel,
   publicBrowsingLevelsFlag,
@@ -219,6 +220,8 @@ const isNotFoundError = (error: unknown) => {
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
+  // A verified crawler's cacheable render, as a lean HTML page; see `~/server/bot-cache/bot-lean`.
+  botLean: { route: 'models', allowedQuery: ['modelVersionId'], render: renderModelDetailLean },
   resolver: async ({ ssg, ctx, session, features }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
