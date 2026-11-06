@@ -1,5 +1,9 @@
-import { MEMBERSHIP_DAYS } from '@civitai/shared/knights-shop';
+import * as knightsShop from '@civitai/shared/knights-shop';
 import { stickerUses } from './cosmetics';
+
+// tsx (the seed:shop script) loads CommonJS-scoped workspace modules as one `default` object.
+const { MEMBERSHIP_DAYS } =
+  (knightsShop as { default?: typeof knightsShop }).default ?? knightsShop;
 
 /** Dev catalog. Prices live in `KnightsShopItem`, so changing one is an UPDATE, not a deploy; the seed never overwrites an existing row. */
 export type SeedItem = {
