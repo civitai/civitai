@@ -22,6 +22,7 @@ import {
 } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import { getPlacementFlows } from '../placement-flows.service';
+import { getShopPurchaseSummary, SHOP_PURCHASE_KINDS } from '../shop-purchases.service';
 import {
   getReportsOnUser,
   getReportsReceived,
@@ -634,6 +635,27 @@ export const TOOLS = [
         rows: flows.flows.length,
         truncated: flows.truncated,
         sources: [...new Set([...userIds, ...counterparties])].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'shop_purchases',
+    description:
+      "What a set of accounts bought from the Creator Shop (1-25 accounts), per account and per item: title, kind (a cosmetic type, 'pack' or 'box'), count, Buzz, refunded count, first and last time, and paidFrom, the Buzz paid by account type from the ledger (blue = reward Buzz). noChargeFound counts paid purchases with no ledger charge; purchases from before about 2026-10-08 used another charge format and always count there. When ledgerCapped is true the ledger read hit its cap for that account: noChargeFound is null, and paidFrom and topUps may be partial. The top 25 items by Buzz are listed and the rest rolled into other. topUps are sticker use top-ups, from the ledger alone: charges and Buzz per sticker; how many uses each bought is not recorded.",
+    input: z.object({
+      userIds: userIdList(25),
+      days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(30),
+      kind: z.enum(SHOP_PURCHASE_KINDS).optional(),
+    }),
+    requires: [LOOKUP],
+    run: async ({ userIds, days, kind }) => {
+      const data = await getShopPurchaseSummary(userIds, days, kind);
+      return {
+        data,
+        rows: data.accounts.reduce((n, a) => n + a.items.length + a.topUps.length, 0),
+        truncated: data.truncated,
+        sources: data.accounts.map((a) => userSource(a.userId, a.username)),
       };
     },
   }),
