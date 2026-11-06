@@ -97,9 +97,18 @@ function createContestCollectionItemsCache() {
     key: REDIS_KEYS.CACHES.CONTEST_COLLECTION_ITEMS,
     idKey: 'imageId',
     ttl: CONTEST_COLLECTION_ITEMS_TTL,
-    // A bust has to take effect on the next read: a reviewer who rejects an entry and reloads must
-    // not be served the old status while a revalidation runs.
+    // No stale-while-revalidate: after a bust the cached entry is gone, not served while a
+    // revalidation runs.
     staleWhileRevalidate: false,
+    // What a bust guarantees. bust() writes a debounce marker for `debounceTime` seconds; inside it
+    // every read goes to the lookup (the replica) and writes nothing back. A fill whose lookup began
+    // BEFORE the bust is a SET NX (`fillIfAbsent`), so it loses to the marker instead of caching the
+    // pre-write value. Not guaranteed: a read inside the window can still show the replica's lagging
+    // state (uncached), and a fill whose lookup plus replica lag outlasts the window can still cache
+    // a pre-write value, until the TTL. 10s rather than the helper's 2s default for that margin; each
+    // busted image costs one replica read per view for those 10s.
+    fillIfAbsent: true,
+    debounceTime: 10,
     // Most images are in no contest; those are cached as notFound markers (the default) for the
     // same TTL, and a bust replaces the marker like any other entry.
     lookupFn: async (ids) => {

@@ -259,6 +259,42 @@ describe('contest collection items: shared cache parity', () => {
   });
 });
 
+// Rejects entry 78 of `imageId` through the real write path, as the AI review job does.
+async function rejectThroughWritePath(imageId: number) {
+  dbMock.dbWrite.collection.findUnique.mockResolvedValue({
+    id: COLLECTION_ID,
+    type: 'Image',
+    mode: 'Contest',
+    name: 'Test Contest',
+    metadata: {},
+  });
+  // Both the prior-state read and the bust's id lookup; no submitter, so no notification.
+  dbMock.dbWrite.collectionItem.findMany.mockResolvedValue([
+    {
+      id: 78,
+      addedById: null,
+      status: 'ACCEPTED',
+      rejectionReason: null,
+      rejectionDetail: null,
+      imageId,
+      articleId: null,
+      modelId: null,
+      postId: null,
+    },
+  ]);
+
+  await updateCollectionItemsStatus({
+    input: {
+      collectionId: COLLECTION_ID,
+      collectionItemIds: [78],
+      status: CollectionItemStatus.REJECTED,
+      rejectionReason: CollectionItemRejectionReason.Duplicate,
+    },
+    userId: SYSTEM_REVIEWER_ID,
+    isSystem: true,
+  });
+}
+
 describe('contest collection items: bust on a status write', () => {
   it('reflects a status change made through updateCollectionItemsStatus on the next read', async () => {
     const id = nextImageId++;
@@ -274,38 +310,43 @@ describe('contest collection items: bust on a status write', () => {
     const [stale] = await getImageContestCollectionDetails({ id });
     expect(stale.status).toBe('ACCEPTED');
 
-    dbMock.dbWrite.collection.findUnique.mockResolvedValue({
-      id: COLLECTION_ID,
-      type: 'Image',
-      mode: 'Contest',
-      name: 'Test Contest',
-      metadata: {},
-    });
-    // Both the prior-state read and the bust's id lookup; no submitter, so no notification.
-    dbMock.dbWrite.collectionItem.findMany.mockResolvedValue([
-      {
-        id: 78,
-        addedById: null,
-        status: 'ACCEPTED',
-        rejectionReason: null,
-        rejectionDetail: null,
-        imageId: id,
-        articleId: null,
-        modelId: null,
-        postId: null,
-      },
-    ]);
+    await rejectThroughWritePath(id);
 
-    await updateCollectionItemsStatus({
-      input: {
-        collectionId: COLLECTION_ID,
-        collectionItemIds: [78],
-        status: CollectionItemStatus.REJECTED,
-        rejectionReason: CollectionItemRejectionReason.Duplicate,
-      },
-      userId: SYSTEM_REVIEWER_ID,
-      isSystem: true,
-    });
+    const [after] = await getImageContestCollectionDetails({ id });
+    expect(after.status).toBe('REJECTED');
+  });
+
+  it('does not let a fill whose lookup read before the bust overwrite it', async () => {
+    const id = nextImageId++;
+    rows = [{ ...entriesFor(id)[1], addedById: null }];
+    flag(true);
+
+    // Hold the first lookup after it has read: it saw ACCEPTED (the replica before the write) and
+    // has not written its fill yet.
+    const snapshot = structuredClone(rows);
+    let started = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const passThrough = dbMock.dbRead.$queryRaw.getMockImplementation()!;
+    dbMock.dbRead.$queryRaw.mockImplementationOnce(
+      async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (!sqlOf(strings).includes('"CollectionItem" ci')) return passThrough(strings, ...values);
+        started = true;
+        await gate;
+        return snapshot;
+      }
+    );
+
+    const slowRead = getImageContestCollectionDetails({ id });
+    await vi.waitFor(() => expect(started).toBe(true));
+
+    rows[0].status = 'REJECTED';
+    await rejectThroughWritePath(id);
+
+    release();
+    const [slow] = await slowRead;
+    // Control: the held fill really carried the pre-write value.
+    expect(slow.status).toBe('ACCEPTED');
 
     const [after] = await getImageContestCollectionDetails({ id });
     expect(after.status).toBe('REJECTED');

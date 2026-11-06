@@ -55,8 +55,10 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
   },
   'src/server/services/auto-feature-images.service.ts': {
     writes: 1,
-    busts: 1,
-    why: 'auto-featured picks: busted (a featured collection, not a contest, but cheap)',
+    busts: 0,
+    why:
+      'auto-featured picks go into the configured featured collection, which is not a contest, so ' +
+      'its rows are not in the cached value',
   },
   'src/server/jobs/job-queue.ts': {
     writes: 4,

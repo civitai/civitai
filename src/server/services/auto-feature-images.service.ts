@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import type { AutoFeatureSchema } from '~/server/schema/home-block.schema';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
@@ -416,7 +415,6 @@ export async function runAutoFeatureImages({
     skipDuplicates: true,
   });
 
-  await bustContestCollectionItemsCache(picks.map((p) => p.imageId));
   await homeBlockCacheBust(HomeBlockType.Collection, config.collectionId);
 
   return summary;

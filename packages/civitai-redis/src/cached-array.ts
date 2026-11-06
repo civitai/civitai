@@ -35,6 +35,14 @@ export type CachedLookupOptions<T extends object> = {
   // a stale value is served while a background revalidate runs. Defaults to `ttl`, reproducing the
   // historical `ttl * 2` physical expiry. Only consulted when `staleWhileRevalidate` is true.
   staleWhileRevalidateTtl?: number;
+  // Opt-in, for a non-SWR cache whose writers bust(). A miss fill's lookup can read the origin (often a
+  // replica) BEFORE a bust and write AFTER it; a plain SET then overwrites the bust's debounce marker
+  // with the pre-write value, which is served until `ttl`. With this set the fill is a SET NX, so it
+  // loses to any key already there: the marker of a bust that landed during its lookup, or a
+  // concurrent fill. The guarantee lasts as long as the marker, so pair it with a `debounceTime` that
+  // outlasts the lookup plus replica lag. Not for an SWR cache, whose revalidate overwrites a
+  // present, stale entry by design.
+  fillIfAbsent?: boolean;
   // --- In-process (per-pod) L1 in front of the Redis per-id cache -----------------------------------
   // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also held in a bounded per-pod
   // LRU. An L1 hit skips the Redis read for that id entirely — the win on hot feed hydration.
@@ -213,6 +221,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     dontCacheFn,
     staleWhileRevalidate = true,
     staleWhileRevalidateTtl,
+    fillIfAbsent = false,
     localTtl,
     localMax = 10000,
     localMaxBytes,
@@ -556,7 +565,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
                   redis.packed.set(
                     `${key}:${id}` as RedisKeyTemplateCache,
                     value,
-                    { EX },
+                    fillIfAbsent ? { EX, NX: true } : { EX },
                     packedOptions
                   )
                 )
