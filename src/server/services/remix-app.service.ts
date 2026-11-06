@@ -172,8 +172,7 @@ export function buildRuntimeRequest({
   };
 }
 
-/** The workflow a runtime app runs first, or `null` when it asks something before any spend. */
-/** The first workflow the app runs, through any asks before it on their first answers. */
+/** The first workflow the app runs, through any asks before it on their first answers; `null` if none is reached. */
 export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
   const log: RemixLogEntry[] = [];
   // Bounded: an app that only ever asks has no first workflow to price.
