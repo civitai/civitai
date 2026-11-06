@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   ecosystemById,
   getEcosystemGroup,
@@ -260,21 +260,32 @@ test.describe('generation cost quote (gold)', () => {
    * Make `target` the form's ecosystem the way a user does: open the picker, search,
    * click the entry. The trigger's own label is then the proof the selection took.
    * Every step has its own timeout so a stuck step fails by name, not as the test's.
+   *
+   * The clicks are DISPATCHED, not pointer clicks: the shared gold fixture gets the
+   * generator's guided tour, whose overlay covers the page and swallows pointer clicks
+   * (measured: `react-joyride__overlay … intercepts pointer events` on the trigger).
+   * Dismissing the tour instead would persist tour state on a fixture every preview
+   * shares, so the test leaves it alone and delivers the click to the control itself.
    */
   async function selectEcosystem(page: Page, target: PickableEcosystem) {
-    await ecosystemTrigger(page).click({ timeout: 15_000 });
+    const click = async (locator: Locator) => {
+      await locator.waitFor({ state: 'visible', timeout: 15_000 });
+      await locator.dispatchEvent('click');
+    };
+    await click(ecosystemTrigger(page));
     await page
       .getByPlaceholder('Search ecosystems...')
       .filter({ visible: true })
       .first()
       .fill(target.pickerName, { timeout: 15_000 });
-    await page
-      .getByRole('button')
-      .filter({ has: page.getByText(target.pickerName, { exact: true }) })
-      .filter({ hasNotText: 'Change' })
-      .filter({ visible: true })
-      .first()
-      .click({ timeout: 15_000 });
+    await click(
+      page
+        .getByRole('button')
+        .filter({ has: page.getByText(target.pickerName, { exact: true }) })
+        .filter({ hasNotText: 'Change' })
+        .filter({ visible: true })
+        .first()
+    );
     await expect(
       ecosystemTrigger(page, target.pickerName),
       `ecosystem picker switched the form to ${target.key}`
