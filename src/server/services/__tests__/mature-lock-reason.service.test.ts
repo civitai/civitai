@@ -114,4 +114,20 @@ describe('getMatureLockReason', () => {
     dbMock.dbRead.ratingReview.findFirst.mockResolvedValue({ id: 5 });
     expect(await reason()).toBeNull();
   });
+
+  it("counts only this model's lock reviews and rating reviews ruled at or after the lock", async () => {
+    await reason();
+    const since = { gte: new Date(LOCKED_AT) };
+    expect(dbMock.dbRead.appeal.findMany.mock.calls[0][0].where).toStrictEqual({
+      entityType: 'Model',
+      entityId: 1,
+      resolvedAt: since,
+      context: { path: ['kind'], equals: 'lock-review' },
+    });
+    expect(dbMock.dbRead.ratingReview.findFirst.mock.calls[0][0].where).toStrictEqual({
+      entityType: 'Model',
+      entityId: 1,
+      resolvedAt: since,
+    });
+  });
 });
