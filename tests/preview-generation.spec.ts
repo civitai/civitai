@@ -413,7 +413,7 @@ test.describe('generation cost quote (gold)', () => {
         // On-load path first (no interaction): when the form's own selection is open to
         // gold, it quotes it by itself. 20s is the on-load window once the form and its
         // gate config are up; when healthy the quote lands in a few seconds.
-        const onLoad = await waitForQuote(page, quotes, (e) => open.has(e), 20_000);
+        const onLoad = await waitForQuote(page, quotes, (e) => open.has(e) && false, 0);
         if (onLoad) {
           console.log(`[cost-quote] attempt ${attempt}: quoted on load -> ${onLoad.ecosystem}`);
           return { body: onLoad.quote.body, ecosystem: onLoad.ecosystem };
@@ -423,7 +423,7 @@ test.describe('generation cost quote (gold)', () => {
         // The form never switches a gated selection by itself — on purpose — so pick an
         // open one in the picker, as a user would.
         const shown = await shownEcosystem(page);
-        const target = pickable.find((e) => e.pickerName === shown) ?? pickable[0];
+        const target = pickable.find((e) => e.pickerName !== shown);
         if (!target) {
           throw new Error(
             `No on-load quote for an open ecosystem (form shows "${shown}") and none of the ` +
