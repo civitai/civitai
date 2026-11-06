@@ -52,11 +52,13 @@ import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  collectionSelect,
-  collectionWithoutImageSelect,
-} from '~/server/selectors/collection.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+  readCollectionByIdViaKysely,
+  readCollectionByIdViaPrisma,
+} from '~/server/services/hot-reads-10.reads';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getModeratedTags } from '~/server/services/system-cache';
@@ -701,13 +703,11 @@ export const getCollectionById = async ({
 }) => {
   const { id } = input;
   const db = await getDbWithoutLag('collection', id);
-  const collection = await db.collection.findUnique({
-    where: { id },
-    select: {
-      ...collectionSelect,
-      user: { select: userWithCosmeticsSelect },
-    },
-  });
+  // `kysely-hot-reads-10` picks the path once per call: the Prisma read, or its one-statement Kysely
+  // twin on the matching pool (the primary when the lag check chose the primary, else the replica).
+  const collection = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_10))
+    ? await readCollectionByIdViaKysely(db === dbWrite ? kyselyWrite : kyselyRead, id)
+    : await readCollectionByIdViaPrisma(db, id);
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
 
   const coverServable =
