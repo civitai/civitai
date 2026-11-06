@@ -68,6 +68,22 @@ const claimCall = () =>
     );
 
 describe('releaseExport', () => {
+  it('sends the owner the archive link only, never the internal notes file', async () => {
+    vi.mocked(dbMock.dbWrite.personalDataExport.findUnique).mockResolvedValue({
+      ...built,
+      modNotesKey: 'exports/5/n-internal-notes.csv',
+    } as never);
+    await releaseExport({ exportId: 5, actorId: 9, bucket, now });
+    expect(mocks.readySend).toHaveBeenCalledTimes(1);
+    const sent = JSON.stringify(mocks.readySend.mock.calls[0][0]);
+    expect(sent).toContain('exports/5/k.zip');
+    expect(sent).not.toContain('internal-notes');
+    // The release never even reads which notes object an export has.
+    expect(dbMock.dbWrite.personalDataExport.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.not.objectContaining({ modNotesKey: true }) })
+    );
+  });
+
   it("sends the cover note to the owner's registered email with a 48-hour link", async () => {
     const result = await releaseExport({ exportId: 5, actorId: 9, bucket, now });
     expect(result).toMatchObject({ ok: true, userId: 42 });
