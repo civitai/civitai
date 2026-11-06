@@ -16,7 +16,7 @@ const m = vi.hoisted(() => ({
   deleteComments: vi.fn(async () => [] as unknown[]),
   setCommentFlags: vi.fn<typeof WriteService.setCommentFlags>(async () => []),
   isCommentWriteLocked: vi.fn(async () => false),
-  visible: vi.fn(async (_: unknown) => undefined),
+  visible: vi.fn(async (_: unknown, _ctx?: unknown) => undefined),
   access: vi.fn(async (_: unknown) => [{ hasAccess: true }]),
   blocklist: vi.fn(async (_: unknown) => undefined),
   blockOwners: vi.fn(async (_: unknown) => [] as number[]),

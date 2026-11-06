@@ -8,6 +8,7 @@ import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-hel
 import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
+import { ModelModifier } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
 const createCaller = createCallerFactory(appRouter);
@@ -49,7 +50,7 @@ export default AuthedEndpoint(
         poi: true,
         minor: true,
         sfwOnly: true,
-        lockedProperties: true,
+        mode: true,
         deletedAt: true,
         sfwName: true,
         sfwDescription: true,
@@ -59,12 +60,10 @@ export default AuthedEndpoint(
     if (!model || model.deletedAt) return res.status(404).json({ error: 'Model not found' });
     if (model.userId !== user.id)
       return res.status(403).json({ error: 'You do not own this model' });
-    if (model.nsfw && model.lockedProperties.includes('nsfw'))
-      return res.status(409).json({
-        error:
-          'A moderator has locked this model as mature, so it cannot get a civitai.com version. You can dispute the lock from the model page.',
-        code: 'locked',
-      });
+    if (model.minor || model.poi || model.sfwOnly || model.mode === ModelModifier.TakenDown)
+      return res
+        .status(409)
+        .json({ error: "This model can't get a civitai.com version.", code: 'skipped' });
     // Bulk only fills a missing face: an existing one may be hand-written, and the editor owns it.
     if (model.sfwName != null || model.sfwDescription != null || model.sfwCoverImageId != null)
       return res.status(409).json({

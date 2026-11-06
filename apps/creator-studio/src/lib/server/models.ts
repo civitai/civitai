@@ -108,8 +108,6 @@ export type CreatorModel = {
   listing: SiteListing;
   /** Has its own civitai.com title, which a fresh draft would replace. */
   hasComFace: boolean;
-  /** A moderator locked it as mature, so it cannot get a civitai.com face. */
-  lockedMature: boolean;
   versions: CreatorModelVersion[];
 };
 
@@ -334,7 +332,6 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         'nsfw',
         'nsfwLevel',
         'poi',
-        'lockedProperties',
         'sfwName',
         'minor',
         'availability',
@@ -514,7 +511,6 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         hasChildTag: !!m.hasChildTag,
       }),
       hasComFace: m.sfwName != null,
-      lockedMature: !!m.nsfw && (m.lockedProperties ?? []).includes('nsfw'),
       versions: byModel.get(m.id) ?? [],
     })),
     total,

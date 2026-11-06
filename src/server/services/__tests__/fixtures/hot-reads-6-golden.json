@@ -60,6 +60,8 @@
       "type": "Model",
       "metadata": {},
       "sizeKB": 1,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     }
   ],
@@ -75,6 +77,8 @@
         "size": "full"
       },
       "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-MODEL"
@@ -89,6 +93,8 @@
       "type": "Config",
       "metadata": null,
       "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     },
     {
@@ -99,6 +105,8 @@
       "type": "Model",
       "metadata": {},
       "sizeKB": 99,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     },
     {
@@ -109,6 +117,8 @@
       "type": "Model",
       "metadata": {},
       "sizeKB": 2048,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-SENSITIVE"
@@ -128,6 +138,8 @@
         "size": "full"
       },
       "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-MODEL"
@@ -142,6 +154,8 @@
       "type": "Model",
       "metadata": {},
       "sizeKB": 99,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     }
   ],
@@ -154,6 +168,8 @@
       "type": "Config",
       "metadata": null,
       "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     }
   ],
@@ -170,6 +186,8 @@
         "size": "full"
       },
       "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-MODEL"
@@ -184,6 +202,8 @@
       "type": "Config",
       "metadata": null,
       "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     },
     {
@@ -194,6 +214,8 @@
       "type": "Model",
       "metadata": {},
       "sizeKB": 2048,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-SENSITIVE"
@@ -213,6 +235,8 @@
         "size": "full"
       },
       "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-MODEL"
@@ -227,6 +251,8 @@
       "type": "Config",
       "metadata": null,
       "sizeKB": 0.25,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": []
     },
     {
@@ -237,6 +263,8 @@
       "type": "Model",
       "metadata": {},
       "sizeKB": 2048,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-SENSITIVE"
@@ -256,6 +284,8 @@
         "size": "full"
       },
       "sizeKB": 1234.5,
+      "pickleScanResult": "Pending",
+      "virusScanResult": "Pending",
       "hashes": [
         {
           "hash": "SHA-MODEL"
