@@ -383,12 +383,14 @@ describe('the render after a failed lookup is not stored', () => {
   });
 
   it('INSTRUMENT CHECK: the render after a plain miss is stored', async () => {
-    const request = crawler();
+    // Its own URL, and its own key awaited: a store an earlier case wrongly started can land here.
+    const request = crawler('https://civitai.com/images/3');
     const response = await serve(request);
     expect(response.headers.get('x-civ-bot-cache')).toBe('miss');
-    sendThroughCapture('/images/1', undefined, renderRequestHeaders(request, response));
-    await vi.waitFor(() => expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1));
-    expect([...store.keys()]).toEqual([keyFor('civitai.com', '/images/1')]);
+    sendThroughCapture('/images/3', undefined, renderRequestHeaders(request, response));
+    expect(brotliCompress).toHaveBeenCalledTimes(1);
+    const control = keyFor('civitai.com', '/images/3');
+    await vi.waitFor(() => expect([...store.keys()]).toContain(control));
   });
 });
 
