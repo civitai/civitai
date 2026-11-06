@@ -24,6 +24,8 @@ export type AutoNsfwMetaPatch = {
   profanityEvaluation: { reason: string; metrics: ProfanityEvaluation['metrics'] };
 };
 
+// Not textScanTextHash: that trims, skips empty fields and follows the scan profile's headings.
+// This one must change exactly when the stored name or description does.
 export function autoNsfwTextHash(name?: string | null, description?: string | null) {
   return createHash('sha256')
     .update(JSON.stringify([name ?? '', description ?? '']))

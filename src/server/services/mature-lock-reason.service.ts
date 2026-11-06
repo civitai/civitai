@@ -26,7 +26,7 @@ type MatureLockSubject = {
 };
 
 const MATURE_LOCK_FIELDS: readonly string[] = ['name', 'description'] satisfies MatureLockField[];
-/** Any of these on the model means the owner hears only "a review is needed". */
+/** Locks with their own owner-facing explanation. */
 const OTHER_SAFETY_LOCKS = ['minor', 'poi', 'sfwOnly'];
 
 /**

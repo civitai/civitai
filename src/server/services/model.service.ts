@@ -4007,7 +4007,6 @@ export const upsertModel = async (
   // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
   let nsfwBeforeProfanity: boolean | undefined;
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
-    // The lock decision is made below against the stored row; only the detection is shared.
     const evaluation = evaluateAutoNsfw({
       name: data.name,
       description: data.description,

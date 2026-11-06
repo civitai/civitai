@@ -81,8 +81,8 @@ beforeEach(() => {
   });
 });
 
-const read = (user?: { id: number; isModerator: boolean }) =>
-  getModelHandler({ input: { id: 1, forEditor: true }, ctx: { user, features: {} } } as never);
+const read = (user?: { id: number; isModerator: boolean }, forEditor = true) =>
+  getModelHandler({ input: { id: 1, forEditor }, ctx: { user, features: {} } } as never);
 
 describe('model.getById mature lock reason', () => {
   it('gives the owner the field and category, and the payload no matched text or hash', async () => {
@@ -103,5 +103,9 @@ describe('model.getById mature lock reason', () => {
     ['a moderator', { id: 30, isModerator: true }],
   ])('gives %s no reason', async (_, user) => {
     expect((await read(user)).matureLockReason).toBeNull();
+  });
+
+  it('gives the owner no reason on the public model page', async () => {
+    expect((await read({ id: OWNER, isModerator: false }, false)).matureLockReason).toBeNull();
   });
 });

@@ -3,7 +3,7 @@ export type MatureLockField = 'name' | 'description';
 /** Fixed owner-facing wording per category; the filter's own output never reaches the owner. */
 const MATURE_LOCK_CATEGORY_SENTENCES = {
   'mature-language': (field: string) =>
-    `Words in this model's ${field} matched our mature-content filter, so the model is marked mature. If you think that's wrong, you can request a review.`,
+    `Words in this model's ${field} matched our mature-content filter, so the model is marked mature.`,
 } as const;
 
 export type MatureLockCategory = keyof typeof MATURE_LOCK_CATEGORY_SENTENCES;

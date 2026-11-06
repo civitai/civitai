@@ -577,7 +577,6 @@ export const getModelHandler = async ({
         })
       : null;
 
-    // The editor only, for the owner only: a moderator's view has the full detection already.
     const matureLockReason = forEditor
       ? await getMatureLockReason({
           model: { ...model, userId: model.user.id },
