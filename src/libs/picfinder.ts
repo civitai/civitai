@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import { env } from '~/env/client';
 import { hashify } from '~/utils/string-helpers';
 
@@ -99,7 +98,7 @@ const getRequestOffset = (request: GetImageRequest) => {
 };
 
 const requestImage = (taskUUID: string, imageRequest: GetImageRequest) => {
-  taskUUID = taskUUID ?? uuidv4();
+  taskUUID = taskUUID ?? crypto.randomUUID();
 
   const numberResults = imageRequest.numberResults ?? 1;
   socketRequest({
@@ -132,7 +131,7 @@ function requestImages(
 ) {
   if (Object.keys(imageRequests).length > REQUEST_LIMIT) throw new Error('Too many requests');
 
-  const taskUUID = uuidv4();
+  const taskUUID = crypto.randomUUID();
   let attemptCount = 0;
   let imagesRemaining = imageRequest.numberResults ?? 1;
   const requestTimeout = setTimeout(() => {

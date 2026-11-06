@@ -1,7 +1,5 @@
 import fs from 'fs';
-import fsAsync from 'fs/promises';
 import JSZip from 'jszip';
-import type { Readable } from 'stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CybertiplineTools from '@civitai/cybertipline-tools';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -25,7 +23,7 @@ const {
   finishReport,
   cancelReport,
   getObject,
-  fetchBlobAsFile,
+  generatedFile,
   getFileForModelVersion,
 } = vi.hoisted(() => ({
   getStatus: vi.fn(),
@@ -35,7 +33,7 @@ const {
   finishReport: vi.fn(),
   cancelReport: vi.fn(),
   getObject: vi.fn(),
-  fetchBlobAsFile: vi.fn(),
+  generatedFile: vi.fn(),
 }));
 
 vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
@@ -67,11 +65,6 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
     backend: 'backblaze',
     s3: { send: () => getObject() },
   }),
-}));
-
-vi.mock('~/utils/file-utils', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  fetchBlobAsFile,
 }));
 
 vi.mock('~/server/services/file.service', async (importOriginal) => ({
@@ -137,13 +130,17 @@ beforeEach(() => {
   uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
   finishReport.mockReset().mockResolvedValue({});
   cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
-  fetchBlobAsFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
+  generatedFile.mockReset().mockResolvedValue(new File(['generated'], 'generated.png'));
   getObject.mockReset().mockImplementation(async () => ({
     Body: { transformToByteArray: async () => new Uint8Array(stored) },
     ContentType: 'image/png',
     ContentLength: stored.length,
   }));
-  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
+  // Each generated-image URL answers with `generatedFile`'s file, or an error response for null.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const file = await generatedFile(String(input));
+    return file ? new Response(file) : new Response(null, { status: 404 });
+  });
   dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
     where.id === 10
       ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
@@ -361,7 +358,7 @@ describe('the claim', () => {
   });
 });
 
-describe('deleting a report the send finds nothing to send for', () => {
+describe('a report the send cannot file', () => {
   it.each([
     ['Image', { images: [{ id: 601 }] }, { images: [{ id: 601 }, { id: 501 }] }],
     [
@@ -377,9 +374,6 @@ describe('deleting a report the send finds nothing to send for', () => {
   ])(
     'deletes no %s report that evidence was folded into after the run read it',
     async (type, runCopy, primaryCopy) => {
-      // No training-data directory is made or removed on disk.
-      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-      vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
       const runStart = { ...report, type, ...runCopy } as unknown as CsamReportProps;
       primaryRow = { ...report, type, ...primaryCopy } as unknown as CsamReportProps;
 
@@ -402,34 +396,84 @@ describe('deleting a report the send finds nothing to send for', () => {
     expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
     expect(submitReport).not.toHaveBeenCalled();
     expect(lines('send-no-files')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
+      expect.objectContaining({ type: 'error', reportId: 1, case: 'no-files' }),
+    ]);
+    expect(writesWith('details').map(({ data }) => data.details.sendHold)).toEqual([
+      { case: 'no-files', reason: expect.stringContaining('report 1'), at: expect.any(String) },
     ]);
   });
 
-  it.each([['ExternalLink', { userId: null, details: {} }]])(
-    'deletes a %s report only under the claim',
-    async (type, copy) => {
+  it.each([
+    ['Image', 'the reported user is gone', { userId: 404 }],
+    ['Image', 'the report names no reported user', { userId: null }],
+    ['Image', 'the reporting user is gone', { reportedById: 404 }],
+    ['ExternalLink', 'the report names no reported user', { userId: null, details: {} }],
+    ['ExternalLink', 'the reporting user has no email', { details: {} }, null],
+  ])(
+    'keeps a %s report unsent and marked for a decision when %s',
+    async (type, _why, copy, reporterEmail: string | null = 'mod@example.invalid') => {
       primaryRow = { ...report, type, ...copy } as unknown as CsamReportProps;
+      dbMock.dbRead.user.findUnique.mockImplementation(
+        async ({ where }: { where: { id: number } }) =>
+          where.id === 10
+            ? { id: 10, email: reporterEmail, name: 'Mod', isModerator: true }
+            : where.id === 20
+            ? { id: 20, email: 'user@example.invalid', name: 'User', username: 'user' }
+            : null
+      );
 
       await processCsamReport(primaryRow);
 
-      expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledWith({
-        where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
-      });
+      expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
       expect(submitReport).not.toHaveBeenCalled();
-      expect(releases()).toEqual([]);
+      const held = expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user' });
+      expect(lines('send-held')).toEqual([held]);
+      expect(lines('send-decision-needed')).toEqual([held]);
+      expect(writesWith('details')).toEqual([
+        {
+          where: { id: 1, sendClaimId: expect.any(String), reportSentAt: null },
+          data: {
+            details: expect.objectContaining({
+              sendHold: {
+                case: 'missing-user',
+                reason: expect.any(String),
+                at: expect.any(String),
+              },
+            }),
+          },
+        },
+      ]);
+      expect(releases()).toHaveLength(1);
     }
   );
 
-  it('logs the report id when the delete is refused because the claim was lost', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue(null);
-    dbMock.dbWrite.csamReport.deleteMany.mockResolvedValue({ count: 0 });
+  it.each([
+    ['leaves a hold of the same case as it is', 'missing-user', []],
+    ['rewrites a hold of another case', 'no-files', ['missing-user']],
+  ])('%s', async (_, seeded, written) => {
+    const sendHold = { case: seeded, reason: 'earlier run', at: '2026-01-01T00:00:00.000Z' };
+    primaryRow = { ...report, userId: 404, details: { sendHold } } as unknown as CsamReportProps;
+    // The reported user is gone.
+    dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+      where.id === 10
+        ? { id: 10, email: 'mod@example.invalid', name: 'Mod', isModerator: true }
+        : null
+    );
 
-    await processCsamReport(report);
+    await processCsamReport(primaryRow);
 
-    expect(lines('send-delete-refused')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
-    ]);
+    expect(lines('send-held')).toHaveLength(1);
+    expect(writesWith('details').map(({ data }) => data.details.sendHold.case)).toEqual(written);
+  });
+
+  it('removes the hold when the report is sent', async () => {
+    const sendHold = { case: 'no-files', reason: 'earlier run', at: '2026-01-01T00:00:00.000Z' };
+    primaryRow = { ...report, details: { sendHold } } as unknown as CsamReportProps;
+
+    await processCsamReport(primaryRow);
+
+    expect(stamps()).toHaveLength(1);
+    expect(stamps()[0].data.details).not.toHaveProperty('sendHold');
   });
 });
 
@@ -538,16 +582,43 @@ describe('a stored CyberTip id NCMEC answers for', () => {
 
 describe('a report that may have a CyberTip at NCMEC', () => {
   it.each([
-    ['cancelled', answering(0)],
-    ['already retracted', answering(5101)],
-  ])('is deleted for having nothing to send once its stored CyberTip is %s', async (_, answer) => {
-    cancelReport.mockResolvedValue(answer);
-    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
+    ['a stored CyberTip', { reportId: 77 }, { ncmecReportId: 77 }],
+    [
+      'a possible duplicate noted',
+      { details: { possibleDuplicateReportIds: [6] } },
+      { possibleDuplicateReportIds: [6] },
+    ],
+  ])(
+    'keeps a report with %s and no reported user over two runs, opening and cancelling nothing',
+    async (_, held, named) => {
+      primaryRow = { ...report, userId: null, ...held } as unknown as CsamReportProps;
 
-    await processCsamReport(report);
+      await processCsamReport(report);
+      await processCsamReport(report);
 
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
-  });
+      expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
+      expect(submitReport).not.toHaveBeenCalled();
+      expect(cancelReport).not.toHaveBeenCalled();
+      const hold = expect.objectContaining({
+        type: 'error',
+        reportId: 1,
+        case: 'missing-user',
+        ...named,
+      });
+      expect(lines('send-held')).toEqual([hold, hold]);
+      // Each run releases its claim, so the next run takes the report up again.
+      expect(releases()).toEqual([
+        {
+          where: { id: 1, sendClaimId: claimWrites()[0].data.sendClaimId },
+          data: { sendClaimId: null, sendClaimedAt: null },
+        },
+        {
+          where: { id: 1, sendClaimId: expect.any(String) },
+          data: { sendClaimId: null, sendClaimedAt: null },
+        },
+      ]);
+    }
+  );
 
   it('names a CyberTip an earlier run left open when the report waits for having no file', async () => {
     primaryRow = {
@@ -562,16 +633,6 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     expect(lines('send-no-files')).toEqual([expect.objectContaining({ ncmecReportId: 77 })]);
   });
 
-  it('is not deleted when its stored CyberTip cannot be cancelled', async () => {
-    cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
-    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
-
-    await processCsamReport(report);
-
-    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-    expect(lines('send-delete-held')).toHaveLength(1);
-  });
-
   it('is kept, waiting, when a generated-image report names no generated-image list', async () => {
     primaryRow = { ...report, type: 'GeneratedImage', details: {} } as unknown as CsamReportProps;
 
@@ -581,39 +642,6 @@ describe('a report that may have a CyberTip at NCMEC', () => {
     expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
     expect(lines('send-no-files')).toEqual([
       expect.objectContaining({ type: 'error', reportId: 1 }),
-    ]);
-  });
-
-  it('has a stored CyberTip cancelled before it is deleted for having nothing to send', async () => {
-    primaryRow = { ...report, userId: null, reportId: 77 } as CsamReportProps;
-
-    await processCsamReport(report);
-
-    expect(cancelReport).toHaveBeenCalledWith({ id: 77 });
-    expect(order(cancelReport)).toBeLessThan(
-      dbMock.dbWrite.csamReport.deleteMany.mock.invocationCallOrder[0]
-    );
-    expect(dbMock.dbWrite.csamReport.deleteMany).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ['a stored CyberTip NCMEC says is finished', { reportId: 77 }],
-    ['a possible duplicate noted', { details: { possibleDuplicateReportIds: [6] } }],
-  ])('is not deleted when it has %s and nothing to send', async (_, held) => {
-    cancelReport.mockResolvedValue(answering(5102));
-    primaryRow = { ...report, userId: null, ...held } as unknown as CsamReportProps;
-
-    await processCsamReport(report);
-
-    expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
-    expect(lines('send-delete-held')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1 }),
-    ]);
-    expect(releases()).toEqual([
-      {
-        where: { id: 1, sendClaimId: theClaim() },
-        data: { sendClaimId: null, sendClaimedAt: null },
-      },
     ]);
   });
 });
@@ -733,19 +761,6 @@ describe('sending each type of report', () => {
         url: 'https://example.invalid/td.zip',
       });
       vi.mocked(globalThis.fetch).mockResolvedValue(new Response(new Uint8Array(zip)));
-      // The zip passes through the job's disk; here, through memory.
-      let written = Buffer.alloc(0);
-      vi.spyOn(fs, 'existsSync').mockReturnValue(true);
-      vi.spyOn(fs, 'rmSync').mockReturnValue(undefined);
-      vi.spyOn(fsAsync, 'writeFile').mockImplementation(async (_, data) => {
-        const chunks: Buffer[] = [];
-        for await (const chunk of data as Readable) chunks.push(Buffer.from(chunk));
-        written = Buffer.concat(chunks);
-      });
-      vi.spyOn(fs, 'readFile').mockImplementation(((
-        _: unknown,
-        done: (e: Error | null, data: Buffer) => void
-      ) => done(null, written)) as never);
     }
     const trainingReport = {
       ...report,
@@ -772,7 +787,7 @@ describe('sending each type of report', () => {
       await processCsamReport(trainingReport);
 
       expect(getFileForModelVersion).toHaveBeenCalledTimes(1);
-      expect(fsAsync.writeFile).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('opens no CyberTip for a zip with no image in it', async () => {
@@ -794,31 +809,27 @@ describe('sending each type of report', () => {
 
       await processCsamReport(trainingReport);
 
-      expect(uploadFile).toHaveBeenCalledTimes(2);
+      expect(uploadFile).toHaveBeenCalledTimes(1);
       expect(Math.max(...uploadFile.mock.invocationCallOrder)).toBeLessThan(order(cancelReport));
       expect(stamps()).toEqual([]);
     });
 
-    it('cancels only once an upload already in flight has finished', async () => {
-      await serveZip(['a.png', 'b.png']);
-      let inFlightDone = false;
-      uploadFile
-        .mockRejectedValueOnce(new Error('synthetic upload failure'))
-        .mockImplementationOnce(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          inFlightDone = true;
-          return { data: { fileId: 'file-2', hash: 'ncmec-md5' } };
-        });
-      let doneAtCancel: boolean | undefined;
-      cancelReport.mockImplementation(async () => {
-        doneAtCancel = inFlightDone;
-        return answering(0);
-      });
+    it('uploads one file at a time, since each upload holds its file whole', async () => {
+      await serveZip(['a.png', 'b.png', 'c.png']);
       primaryRow = trainingReport;
+      let inFlight = 0;
+      let most = 0;
+      uploadFile.mockImplementation(async () => {
+        most = Math.max(most, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+      });
 
-      await processCsamReport(trainingReport);
+      await processCsamReport(primaryRow);
 
-      expect(doneAtCancel).toBe(true);
+      expect(uploadFile.mock.calls.length).toBeGreaterThan(1);
+      expect(most).toBe(1);
     });
 
     it('opens no CyberTip when the training data cannot be downloaded', async () => {
@@ -839,12 +850,19 @@ describe('sending each type of report', () => {
       await serveZip(['a.png']);
       arrange();
       primaryRow = trainingReport;
+      const made = vi.spyOn(fs, 'mkdirSync');
+      let scratch: string | undefined;
+      getFileForModelVersion.mockImplementation(async () => {
+        scratch = made.mock.calls
+          .map(([dir]) => String(dir))
+          .find((dir) => /training-data\/1-/.test(dir));
+        return { status: 'success', url: 'https://example.invalid/td.zip' };
+      });
 
       await processCsamReport(trainingReport).catch(() => undefined);
 
-      expect(fs.rmSync).toHaveBeenCalledWith(expect.stringMatching(/training-data\/1$/), {
-        recursive: true,
-      });
+      expect(scratch && fs.existsSync(scratch)).toBe(false);
+      expect(scratch).toBeDefined();
     });
   });
 
@@ -859,7 +877,7 @@ describe('sending each type of report', () => {
   ])(
     'opens no CyberTip for a generated-image report a job of which has no file: the fetch %s',
     async (_, gone) => {
-      fetchBlobAsFile.mockImplementation(async (url: string) =>
+      generatedFile.mockImplementation(async (url: string) =>
         url === 'blob-gone' ? gone() : new File(['generated'], 'generated.png')
       );
       primaryRow = {
@@ -882,7 +900,7 @@ describe('sending each type of report', () => {
         JSON.stringify({ 'blob-gone': 1 })
       );
       // An error response must come back as no file, not as the file.
-      expect(fetchBlobAsFile).toHaveBeenCalledWith('blob-gone', undefined, { requireOk: true });
+      expect(generatedFile).toHaveBeenCalledWith('blob-gone');
     }
   );
 
@@ -901,7 +919,7 @@ describe('sending each type of report', () => {
         },
       } as unknown as CsamReportProps);
     beforeEach(() =>
-      fetchBlobAsFile.mockImplementation(async (url: string) =>
+      generatedFile.mockImplementation(async (url: string) =>
         url === 'blob-gone' ? null : new File(['generated'], 'generated.png')
       )
     );
@@ -954,7 +972,7 @@ describe('sending each type of report', () => {
       ['second', [true, false]],
     ])('sends a URL the filing names twice when only its %s fetch failed', async (_, fetched) => {
       let fetches = 0;
-      fetchBlobAsFile.mockImplementation(async () =>
+      generatedFile.mockImplementation(async () =>
         fetched[fetches++] ? new File(['generated'], 'generated.png') : null
       );
       primaryRow = {
@@ -978,26 +996,22 @@ describe('sending each type of report', () => {
       expect(stamps()[0].data.details).not.toHaveProperty(['readFailures', 'blob-twice']);
     });
 
-    it('waits for an upload in flight before cancelling', async () => {
-      fetchBlobAsFile.mockResolvedValue(new File(['generated'], 'generated.png'));
-      let inFlightDone = false;
-      uploadFile
-        .mockRejectedValueOnce(new Error('synthetic upload failure'))
-        .mockImplementationOnce(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          inFlightDone = true;
-          return { data: { fileId: 'file-2', hash: 'ncmec-md5' } };
-        });
-      let doneAtCancel: boolean | undefined;
-      cancelReport.mockImplementation(async () => {
-        doneAtCancel = inFlightDone;
-        return answering(0);
-      });
+    it('uploads one file at a time, since each upload holds its file whole', async () => {
       primaryRow = twoJobs(1);
+      generatedFile.mockResolvedValue(new File(['generated'], 'generated.png'));
+      let inFlight = 0;
+      let most = 0;
+      uploadFile.mockImplementation(async () => {
+        most = Math.max(most, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return { data: { fileId: 'file-1', hash: 'ncmec-md5' } };
+      });
 
       await processCsamReport(primaryRow);
 
-      expect(doneAtCancel).toBe(true);
+      expect(uploadFile.mock.calls.length).toBeGreaterThan(1);
+      expect(most).toBe(1);
     });
 
     it('holds the report at the short-send limit on the first failed fetch of that file', async () => {
@@ -1009,7 +1023,7 @@ describe('sending each type of report', () => {
     });
 
     it('keeps a report none of whose generated images can be fetched, waiting', async () => {
-      fetchBlobAsFile.mockResolvedValue(null);
+      generatedFile.mockResolvedValue(null);
       primaryRow = twoJobs(CSAM_SEND_SHORT_AFTER_HOURS, { 'blob-1': 5, 'blob-gone': 5 });
 
       await processCsamReport(primaryRow);

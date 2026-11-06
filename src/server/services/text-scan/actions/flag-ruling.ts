@@ -23,7 +23,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 const FLAG_CHANGED = 'The flag changed while you were ruling. Reload and review it again.';
 
-export type FlagRulingOutcome = 'kept' | 'lifted';
+export type FlagRulingOutcome = 'kept' | 'lifted' | 'keptMinor';
 
 /**
  * A moderator's call on a standing text-scan flag outside an appeal: keep it or lift it, recording
@@ -97,14 +97,19 @@ async function rule({
   }
 
   if (label === 'minor') {
+    // The ruling undoes the automation and is recorded on the text. Minor stays, and the result says
+    // so, when it was minor before the automation or a moderator set or confirmed it.
+    let keptMinor = false;
     const meta = model.meta as Record<string, unknown> | null;
     if (meta?.[MINOR_FLAG_SNAPSHOT_KEY]) {
       const report = await revertMinorHashAutoFlag({
         modelId,
         userId,
         recordTextScanRuling: false,
+        keepWhenRefused: true,
       });
-      if (report.rolledBack !== 1)
+      keptMinor = report.keptMinor === 1;
+      if (report.rolledBack !== 1 && !keptMinor)
         throw throwBadRequestError('The flag could not be lifted. Reload and try again.');
     } else
       await setModelMinor({
@@ -143,6 +148,7 @@ async function rule({
       liftedLabels: ['minor'],
       recordRulings: false,
     });
+    if (keptMinor) return { ruled: 'keptMinor' as const, label, modelId };
   } else {
     const granted = await grantModelTextScanPoi({
       modelId,

@@ -1,9 +1,17 @@
 <script lang="ts">
   import { cn } from '@civitai/ui/utils.js';
+  import HighlightedText from '$lib/components/restrictions/HighlightedText.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
+  import { quotedPhrases } from '$lib/quoted-phrases';
   import type { ScannedText } from '$lib/server/rating-reviews.service';
 
-  let { text, entityLabel }: { text: ScannedText; entityLabel: string } = $props();
+  let {
+    text,
+    entityLabel,
+    reason,
+  }: { text: ScannedText; entityLabel: string; reason?: string | null } = $props();
+
+  const phrases = $derived(reason ? quotedPhrases(reason) : []);
 
   let box = $state<HTMLElement | null>(null);
   let open = $state(false);
@@ -23,7 +31,11 @@
     {#each text.fields as field, i (i)}
       <div>
         <p class="m-0 text-[11px] font-semibold text-dark-2">{field.heading}</p>
-        <p class="m-0 wrap-anywhere whitespace-pre-wrap">{field.text}</p>
+        <HighlightedText
+          class="m-0 text-[13px] leading-[inherit] wrap-anywhere"
+          text={field.text}
+          highlight={phrases}
+        />
       </div>
     {/each}
   </div>

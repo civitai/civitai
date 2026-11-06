@@ -53,13 +53,12 @@ const published = (entity: (typeof PUBLISHED_ENTITIES)[number]): MilestoneRegist
   launchedAt: ACTIVITY_LAUNCHED_AT,
 });
 
-// Quiet at launch by product decision. Announcing it later starts a new watermark, so that first run
-// grants silently instead of notifying everyone already past a tier.
+// Quiet at launch, announced since 2026-10-26. The change started a new watermark, so its first run
+// granted silently instead of notifying everyone already past a tier.
 const downloads = (): MilestoneRegistryEntry => ({
   detector: 'modelDownloads',
   params: {},
   launchedAt: ACTIVITY_LAUNCHED_AT,
-  silent: true,
 });
 
 const userMetric = (metric: (typeof USER_METRICS)[number]): MilestoneRegistryEntry => ({

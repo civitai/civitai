@@ -9,6 +9,7 @@ import type * as RedisCaches from '~/server/redis/caches';
 import type * as ModelModerationAdapter from '~/server/services/model-moderation.adapter';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as AutoNsfw from '~/server/services/auto-nsfw';
+import type * as ComFaceRecheck from '~/server/services/model-com-face-recheck.service';
 
 // The Model half of the blurb save path, run against the REAL `upsertModel` /
 // `applyModelContentChange`. Only the blurb modules, the blocklist guard and the Redis-backed
@@ -25,6 +26,7 @@ const {
   submitModelTextModeration,
   preventReplicationLag,
   evaluateAutoNsfw,
+  writeAutoNsfw,
 } = vi.hoisted(() => ({
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
@@ -33,6 +35,7 @@ const {
   submitModelTextModeration: vi.fn(),
   preventReplicationLag: vi.fn(async () => undefined),
   evaluateAutoNsfw: vi.fn(),
+  writeAutoNsfw: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -52,10 +55,16 @@ vi.mock('~/server/services/model-moderation.adapter', async (importOriginal) => 
 vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
   ...(await importOriginal<typeof AutoNsfw>()),
   evaluateAutoNsfw,
+  writeAutoNsfw,
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventReplicationLag,
+}));
+const { queueComFaceRecheck } = vi.hoisted(() => ({ queueComFaceRecheck: vi.fn() }));
+vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ComFaceRecheck>()),
+  queueComFaceRecheck,
 }));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
@@ -358,6 +367,21 @@ describe('applyModelContentChange', () => {
     expect(descriptionSql()).toEqual([]);
   });
 
+  it('queues the .com face re-check for the description it wrote', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(queueComFaceRecheck).toHaveBeenCalledTimes(1);
+    expect(queueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('does not queue the re-check when the write matched no row', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+
+    expect(queueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
   it('runs the follow-up work a content change implies', async () => {
     await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
 
@@ -403,30 +427,28 @@ describe('applyModelContentChange — the auto-NSFW gate', () => {
     });
   });
 
-  it('🔴 marks the model nsfw and locks it when the gate fires', async () => {
-    evaluateAutoNsfw.mockReturnValue(FLAGGED);
+  // What the write does on each row (lock, detection only, held lead) is pinned against a real row in
+  // auto-nsfw.write.behavior.test.ts; here, that the gate hands it the verdict on the primary.
+  it.each([true, false])(
+    '🔴 hands the verdict to the rating write on the primary (lock: %s)',
+    async (lock) => {
+      evaluateAutoNsfw.mockReturnValue({ ...FLAGGED, lock });
 
-    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+      await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
 
-    const [{ data }] = dbMock.dbWrite.model.update.mock.calls[0];
-    expect(data.nsfw).toBe(true);
-    expect(data.lockedProperties).toEqual(['nsfw']);
-    expect(data.meta).toMatchObject({ profanityMatches: ['x'] });
-  });
-
-  it('records the detection but never overturns a moderator lock', async () => {
-    evaluateAutoNsfw.mockReturnValue({ ...FLAGGED, lock: false });
-
-    await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
-
-    const [{ data }] = dbMock.dbWrite.model.update.mock.calls[0];
-    expect(data.nsfw).toBeUndefined();
-    expect(data.lockedProperties).toBeUndefined();
-    expect(data.meta).toMatchObject({ profanityMatches: ['x'] });
-  });
+      expect(writeAutoNsfw).toHaveBeenCalledTimes(1);
+      expect(writeAutoNsfw).toHaveBeenCalledWith(dbMock.dbWrite, {
+        id: MODEL_ID,
+        ...FLAGGED,
+        lock,
+      });
+      expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    }
+  );
 
   it('writes nothing when the gate does not fire', async () => {
     await applyModelContentChange({ id: MODEL_ID, description: EXPANDED_HTML });
+    expect(writeAutoNsfw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
   });
 
@@ -440,6 +462,6 @@ describe('applyModelContentChange — the auto-NSFW gate', () => {
     });
 
     expect(evaluateAutoNsfw).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    expect(writeAutoNsfw).not.toHaveBeenCalled();
   });
 });

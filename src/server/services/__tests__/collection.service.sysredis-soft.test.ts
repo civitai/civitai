@@ -23,6 +23,12 @@ const mockGet = redisMock.sysRedis.get;
 const mockSet = redisMock.sysRedis.set;
 const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparked: vi.fn(),
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
 // @civitai/db's index re-exports ./kysely, whose top-level `import 'kysely'` is

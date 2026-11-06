@@ -98,6 +98,9 @@ describe('appListings.startFork', () => {
         listingId: 'apl_router_6001',
         scope: 'public-external',
         redCapable: true,
+        // 🔴 The viewer's own browsing level (signed in, no mature opt-in here → PG|PG13 = 3):
+        // starting a fork of an R/X listing needs that rating in it.
+        viewerBrowsingLevel: 3,
       })
     );
   });
@@ -110,7 +113,14 @@ describe('appListings.startFork', () => {
       ...({ forkOfAppBlockId: 'ab_forged_6002', forkOfCommitSha: 'c'.repeat(40) } as object),
     } as never);
     const arg = mocks.startAppFork.mock.calls[0][0] as Record<string, unknown>;
-    expect(Object.keys(arg).sort()).toEqual(['listingId', 'redCapable', 'req', 'scope', 'user']);
+    expect(Object.keys(arg).sort()).toEqual([
+      'listingId',
+      'redCapable',
+      'req',
+      'scope',
+      'user',
+      'viewerBrowsingLevel',
+    ]);
   });
 });
 

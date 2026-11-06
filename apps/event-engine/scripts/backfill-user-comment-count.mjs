@@ -104,8 +104,6 @@ const SURFACES = [
   { key: 'model3d', fk: 'model3dId', table: '"Model3D"', owner: 'e."userId"' },
   { key: 'model3dReview', fk: 'model3dReviewId', table: '"Model3DReview"', owner: 'e."userId"' },
   { key: 'modelV2', fk: 'modelId', table: '"Model"', owner: 'e."userId"' },
-  { key: 'question', fk: 'questionId', table: '"Question"', owner: 'e."userId"' },
-  { key: 'answer', fk: 'answerId', table: '"Answer"', owner: 'e."userId"' },
   {
     key: 'appListing',
     fk: 'appListingId',

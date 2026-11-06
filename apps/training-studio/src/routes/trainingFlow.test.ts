@@ -4,12 +4,16 @@ import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
   buildTrainingRuns,
+  stampMature,
   captionTriggerHit,
   compareFileNames,
   defaultRunParams,
+  networkDimSizeHint,
   newRun,
   nextImgId,
+  optimizerLrParams,
   paramDeviations,
+  paramHelpText,
   promptHasTrigger,
   runExtraCapabilities,
   sampleImagesProblem,
@@ -323,6 +327,12 @@ describe('retired cards', () => {
   it('still resolves a past Hunyuan run to its card', () => {
     expect(cardByType('hunyuan')?.name).toBe('Hunyuan');
   });
+
+  it('offers no Ideogram 4 card to anyone, but still resolves past runs', () => {
+    const everyFlag = new Set(MODEL_CARDS.flatMap((c) => (c.flagKey ? [c.flagKey] : [])));
+    expect(cardsForMedia('image', everyFlag).map((c) => c.type)).not.toContain('ideogram4');
+    expect(cardByType('ideogram4')?.name).toBe('Ideogram 4');
+  });
 });
 
 describe('sample input images', () => {
@@ -379,5 +389,87 @@ describe('sample input images', () => {
   it('has nothing to flag when every prompt or none has an image', () => {
     expect(sampleImagesProblem(prompts(['a', 'a.png'], ['b', 'b.png'], ['']))).toBeNull();
     expect(sampleImagesProblem(prompts(['a'], ['b']))).toBeNull();
+  });
+});
+
+describe('optimizer learning-rate coupling', () => {
+  it('puts both rates at 1 when Prodigy is picked', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
+    expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '1' });
+  });
+
+  it('leaves a locked text-encoder rate at 0 under Prodigy', () => {
+    const krea = run('krea2');
+    const params = { ...defaultRunParams(krea), optimizer: 'Prodigy' };
+    expect(optimizerLrParams(krea, params)).toMatchObject({ unetLr: '1' });
+    expect(Number(optimizerLrParams(krea, params).textEncoderLr)).toBe(0);
+  });
+
+  it('resets Prodigy-level rates to the model defaults when switching away', () => {
+    const r = run('sdxl');
+    const d = defaultRunParams(r);
+    const params = { ...d, optimizer: 'AdamW8Bit', unetLr: '1', textEncoderLr: '1' };
+    expect(optimizerLrParams(r, params)).toEqual({
+      unetLr: d.unetLr,
+      textEncoderLr: d.textEncoderLr,
+    });
+  });
+
+  it('keeps a rate the user picked below the Prodigy level', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Adafactor', unetLr: '0.0002' };
+    expect(optimizerLrParams(r, params).unetLr).toBe('0.0002');
+  });
+});
+
+describe('network dim size hint', () => {
+  it('names the file size for measured cards, which must still exist', () => {
+    for (const type of ['sdxl', 'illustrious', 'pony', 'flux', 'sd15']) {
+      expect(cardByType(type), type).toBeDefined();
+      expect(networkDimSizeHint(type, 32), type).toMatch(/about \d+MB/);
+    }
+    expect(networkDimSizeHint('illustrious', 8)).toBe(
+      ' At dim 8 the file is about 54MB (≈6.8MB per dim).'
+    );
+    expect(networkDimSizeHint('flux', 32)).toBe(
+      ' At dim 32 the file is about 328MB (≈10.3MB per dim).'
+    );
+  });
+
+  it('says nothing for unmeasured cards or a cleared field', () => {
+    expect(networkDimSizeHint('wan', 32)).toBe('');
+    expect(networkDimSizeHint('sdxl', '')).toBe('');
+    expect(networkDimSizeHint('sdxl', 0)).toBe('');
+    expect(networkDimSizeHint('sdxl', -8)).toBe('');
+  });
+
+  it('sizes the help text for the dim the user entered, not the recommended one', () => {
+    const run = newRun(cardByType('sdxl')!);
+    const defaults = defaultRunParams(run, '');
+    const help = paramHelpText('networkDim', 'sdxl', defaults, { ...defaults, networkDim: 128 });
+    expect(help).toContain('Recommended for this model: 32.');
+    expect(help).toContain('At dim 128 the file is about 870MB');
+    expect(paramHelpText('networkAlpha', 'sdxl', defaults, defaults)).not.toContain('MB');
+  });
+});
+
+describe('stampMature', () => {
+  const run = { meta: { name: 'a' }, currencies: ['blue'] } as unknown as Parameters<
+    typeof stampMature
+  >[0][number];
+
+  it('puts one confirm and the mature count on every run of a sweep', () => {
+    const out = stampMature([run, { ...run, meta: { name: 'b' } }], true, 3);
+    expect(out.map((r) => [r.matureAck, r.meta.matureCount, r.meta.name])).toEqual([
+      [true, 3, 'a'],
+      [true, 3, 'b'],
+    ]);
+  });
+
+  it('sends no confirm when the user gave none, but still stamps the count', () => {
+    const [out] = stampMature([run], false, 2);
+    expect('matureAck' in out!).toBe(false);
+    expect(out!.meta.matureCount).toBe(2);
   });
 });

@@ -42,7 +42,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
     // deposit that hasn't settled by then won't.
     const candidates = await dbRead.cryptoDeposit.findMany({
       where: {
-        status: { notIn: ['finished', ...UNVERIFIED_DEPOSIT_STATUSES] },
+        status: { notIn: ['finished', 'held', ...UNVERIFIED_DEPOSIT_STATUSES] },
         stuckNotifiedAt: null,
         createdAt: { gte: dayjs.utc().subtract(14, 'day').toDate() },
       },

@@ -8,11 +8,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { unpublishArticleById } from '~/server/services/article.service';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
+import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
   MATURE_UNDERAGE_REASON,
@@ -52,6 +52,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',
@@ -78,11 +79,8 @@ export const CSAM_HOLD_DECISION_GRANTS: Partial<
 
 type DecideArgs = {
   holdId: number;
-  /**
-   * The text hash the moderator reviewed; a rescan may have replaced the held text since. Optional while a
-   * client built before the guard rolls out: without it the decision is guarded against the hash read here.
-   */
-  textHash?: string;
+  /** The text hash the moderator reviewed; a rescan may have replaced the held text since. */
+  textHash: string;
   decision: CsamHoldDecision;
   note?: string;
   actor: { id: number; ip?: string };
@@ -116,6 +114,9 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
     case 'CommentV2':
       await bulkSetCommentV2TosViolation({ ids: [entityId], actor });
       return;
+    case 'CommentV3':
+      await bulkSetCommentV3TosViolation({ ids: [entityId], actor });
+      return;
     case 'UserProfile':
       await clearUserProfileFields({ userId: entityId });
       return;
@@ -143,13 +144,12 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
     case 'Model': {
       const model = await dbWrite.model.findUnique({
         where: { id: entityId },
-        select: { meta: true, nsfw: true },
+        select: { nsfw: true },
       });
       if (!model) return;
       await unpublishModelById({
         id: entityId,
         reason: MODEL_UNPUBLISH_REASON,
-        meta: (model.meta as ModelMeta | null) || {},
         userId: actor.id,
         isModerator: true,
       });
@@ -262,9 +262,7 @@ export async function decideCsamHold(args: DecideArgs) {
   });
   if (!hold || hold.status !== 'Pending')
     throw throwConflictError('Hold already decided or missing.');
-  if (textHash !== undefined && hold.textHash !== textHash)
-    throw throwConflictError(STALE_HOLD_MESSAGE);
-  const expectedHash = textHash ?? hold.textHash;
+  if (hold.textHash !== textHash) throw throwConflictError(STALE_HOLD_MESSAGE);
 
   if (plan.remove && !isRemovable(hold.entityType))
     throw throwBadRequestError(
@@ -278,7 +276,7 @@ export async function decideCsamHold(args: DecideArgs) {
     UPDATE "TextScanHold"
     SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
       || jsonb_build_object('decisionClaim', jsonb_build_object('by', ${actor.id}::int, 'at', now()))
-    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${expectedHash}
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${textHash}
       AND ("meta"->'decisionClaim' IS NULL
         OR ("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '5 minutes')
     RETURNING "meta"->'decisionClaim'->>'at' AS "at"
@@ -298,7 +296,7 @@ export async function decideCsamHold(args: DecideArgs) {
       // Same lock a new detection takes, so the two never interleave.
       if (hold.entityType !== 'ChatMessage') await lockCsamHold(tx, hold.entityType, hold.entityId);
       const { count } = await tx.textScanHold.updateMany({
-        where: { id: holdId, label: 'csam', status: 'Pending', textHash: expectedHash },
+        where: { id: holdId, label: 'csam', status: 'Pending', textHash },
         data: {
           status,
           decidedAt,
@@ -356,11 +354,10 @@ const note = z.string().trim().max(500).optional();
 export const resolveCsamHoldInput = z
   .object({
     holdId: holdId.optional().describe('The hold to decide. Give this or `holds`, not both.'),
-    // Optional for the rollout only: make it required once the moderator release that sends it is live.
     textHash: textHash
       .optional()
       .describe(
-        'The text hash of the hold as the moderator saw it; a hold whose text changed since is refused. Omitted only by clients that predate the guard, which then decide against the text as stored now.'
+        'Required with `holdId`: the text hash of the hold as the moderator saw it; a hold whose text changed since is refused.'
       ),
     holds: z
       .array(z.object({ holdId, textHash }))
@@ -376,6 +373,12 @@ export const resolveCsamHoldInput = z
   .superRefine((input, ctx) => {
     if ((input.holdId === undefined) === (input.holds === undefined))
       ctx.addIssue({ code: 'custom', message: 'Give exactly one of `holdId` and `holds`.' });
+    if (input.holdId !== undefined && input.textHash === undefined)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['textHash'],
+        message: '`textHash` is required with `holdId`.',
+      });
     if (input.holds && !(BATCH_DECISIONS as readonly string[]).includes(input.decision))
       ctx.addIssue({
         code: 'custom',

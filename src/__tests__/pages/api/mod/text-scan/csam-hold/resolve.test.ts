@@ -146,9 +146,18 @@ describe('textScan.resolveCsamHold', () => {
     expect(updateMany).not.toHaveBeenCalled();
   });
 
-  // Older moderator builds send no hash while the two apps roll out.
-  it('accepts a decision without the text hash', async () => {
+  it('refuses a single-hold decision without the text hash', async () => {
     const { status } = await call({ holdId: 12, decision: 'dismiss' });
+    expect(status).toBe(400);
+    expect(findFirst).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('accepts a batch whose holds carry their own text hash, with none at the top level', async () => {
+    const { status } = await call({
+      holds: [{ holdId: 12, textHash: 'h-1' }],
+      decision: 'dismiss',
+    });
     expect(status).toBe(200);
   });
 

@@ -19,7 +19,8 @@
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
   import { isFlagOnlyRemaining } from '$lib/image-review';
-  import { reportDetailEntries, reportedPlacementId } from '$lib/reports';
+  import { ReportEntity, reportDetailEntries, reportedPlacementId } from '$lib/reports';
+  import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
   import StickerPlacementRemove from '$lib/components/report-queue/StickerPlacementRemove.svelte';
   import type { ImageQueueData } from '$lib/server/image-queue';
   import { denied } from '$lib/permissions';
@@ -131,7 +132,7 @@
     const key = Number(formData.get('reportId') ?? formData.get('imageId'));
     const a = action.search;
     const verdict = a.includes('dismissFlag')
-      ? 'Flag dismissed'
+      ? 'Dismissed'
       : a.includes('accept')
         ? acceptedVerdict
         : a.includes('block')
@@ -203,7 +204,11 @@
   tagOptions={data.tagOptions}
   {itemKeys}
   {selected}
-/>
+>
+  {#snippet meta()}
+    {#if reported}<LastWorked entity={ReportEntity.Image} />{/if}
+  {/snippet}
+</QueueHeader>
 
 {#if data.view === 'csam'}
   {@const filteredUserId = data.kind === 'review' ? data.userId : null}

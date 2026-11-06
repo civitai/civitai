@@ -58,6 +58,7 @@ vi.mock('~/server/services/model.service', () => ({
   setModelMinor: vi.fn(),
   applyModelFlagSideEffects: vi.fn(),
   clearPoiHashMeta: vi.fn(),
+  restoreOwnerFlagOverride: vi.fn(),
 }));
 vi.mock('~/server/services/minor-hash.service', () => ({
   confirmMinorHashAutoFlag: vi.fn(),
@@ -92,6 +93,7 @@ const { resolveTextScanRedetection } = await import(
   '~/server/services/text-scan/actions/redetection'
 );
 const { ruleModelTextScanFlag } = await import('~/server/services/text-scan/actions/flag-ruling');
+const { revertMinorHashAutoFlag } = await import('~/server/services/minor-hash.service');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 
 const MODEL = 7;
@@ -236,6 +238,34 @@ describe('a moderator ruling on a text-scan model flag is recorded as a label', 
     expect(await labels()).toMatchObject([
       { question: 'text_scan.model.minor', value: 'clear', labellerKind: 'moderator' },
     ]);
+  });
+
+  // The lift undoes the automation; a minor flag from before it stays, and the ruling says so.
+  it.each([
+    [{ rolledBack: 0, keptMinor: 1, failed: 0 }, 'keptMinor'],
+    [{ rolledBack: 1, keptMinor: 0, failed: 0 }, 'lifted'],
+  ])('rule lift over a flag snapshot: a revert reporting %o rules %s', async (report, ruled) => {
+    await seed({ minor: true, flags: { minor: verdict } });
+    await holder.db.query(
+      `UPDATE "Model" SET meta = meta || '{"minorFlagSnapshot": {"source": "text-scan"}}' WHERE id = $1`,
+      [MODEL]
+    );
+    vi.mocked(revertMinorHashAutoFlag).mockResolvedValueOnce({
+      candidates: 1,
+      skipped: 0,
+      sample: [],
+      ...report,
+    });
+
+    const result = await ruleModelTextScanFlag({
+      modelId: MODEL,
+      label: 'minor',
+      keep: false,
+      textHash: SCANNED,
+      userId: MOD,
+    });
+
+    expect(result).toMatchObject({ ruled, label: 'minor', modelId: MODEL });
   });
 
   it('confirm: signs the minor flag off as a moderator keep', async () => {

@@ -367,8 +367,11 @@ describe('the moderator preview carries every image with its level, overrides in
 describe('P3 — the page’s social image is per host, never mature, never a red override', () => {
   const OWN_R = img(31, 'or.png', R);
   const SHOT_PG = img(14, 's.png', PG);
-  const social = (redCapable: boolean) =>
-    getListingSocialImage({ slug: 'red-seam' }, { redCapable, scope: 'full', floor: 'public' });
+  const social = (redCapable: boolean, viewerBrowsingLevel?: number) =>
+    getListingSocialImage(
+      { slug: 'red-seam' },
+      { redCapable, scope: 'full', floor: 'public', viewerBrowsingLevel }
+    );
 
   it('🔴 civitai.com never emits a mature image: an R own cover falls to the next SFW image', async () => {
     row = { ...listingRow(), cover: OWN_R };
@@ -423,9 +426,18 @@ describe('P3 — the page’s social image is per host, never mature, never a re
   it('a listing the detail read would refuse yields no image (shared gates)', async () => {
     // A mature listing off a red host is not served at all, so it has no preview there either.
     row = listingRow({ contentRating: 'r' });
-    expect(await social(false)).toBeNull();
-    // Positive control: the same listing on a red host is served, with its SFW cover.
-    expect(await social(true)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+    expect(await social(false, ALL_VIEWER)).toBeNull();
+    // Positive control: the same listing on a red host, to an R viewer, is served with its SFW
+    // cover.
+    expect(await social(true, R_VIEWER)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
+  });
+
+  it('🔴 an R listing yields no image to a requester whose browsing level excludes R', async () => {
+    row = listingRow({ contentRating: 'r' });
+    expect(await social(true, PG | PG13)).toBeNull();
+    expect(await social(true)).toBeNull();
+    // Positive control: the same request with R enabled gets it.
+    expect(await social(true, R_VIEWER)).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
   it('🔴 the level travels with the image: a PG-13 cover on a pg13 listing carries PG-13', async () => {
@@ -506,7 +518,14 @@ describe('P3 — the page’s social image is per host, never mature, never a re
 });
 
 describe('P3 — the listing page SSR wiring', () => {
-  const VIEWER = { id: 77, username: 'viewer' } as never;
+  // Signed in with R enabled, so the detail gate's browsing level admits an `r` listing on a
+  // red host and the host is what these cases observe.
+  const VIEWER = {
+    id: 77,
+    username: 'viewer',
+    showNsfw: true,
+    browsingLevel: R_VIEWER,
+  } as never;
   // The page's resolver arguments, in the shape `createServerSideProps` hands them over.
   const page = (
     host: string | undefined,
@@ -516,6 +535,7 @@ describe('P3 — the listing page SSR wiring', () => {
     resolveListingPageSocialImage({
       ctx: { params: params as Record<string, string>, req: { headers: { host } } },
       session: { user: VIEWER },
+      features: { canViewNsfw: true },
       isClient,
     });
 
@@ -525,6 +545,21 @@ describe('P3 — the listing page SSR wiring', () => {
     row = listingRow({ contentRating: 'r' });
     expect(await page('civitai.red')).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
     expect(await page('civitai.com')).toBeNull();
+  });
+
+  it('🔴 a signed-out request (a link unfurler) gets no image for an `r` listing on civitai.red', async () => {
+    row = listingRow({ contentRating: 'r' });
+    const signedOut = () =>
+      resolveListingPageSocialImage({
+        ctx: { params: { slug: 'red-seam' }, req: { headers: { host: 'civitai.red' } } },
+        session: null,
+        features: { canViewNsfw: true },
+        isClient: false,
+      } as never);
+    expect(await signedOut()).toBeNull();
+    // Control: a `g` listing still has its image for the same request.
+    row = listingRow();
+    expect(await signedOut()).toEqual({ url: 'edge:a.png@1200', nsfwLevel: PG });
   });
 
   it('🔴 civitai.red never offers its SFW cover override as the og image', async () => {

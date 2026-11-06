@@ -2,11 +2,12 @@ import { PROVIDER_OPTIONS } from '@civitai/components-chat/core';
 import { jsonSchema, streamText, tool } from 'ai';
 import { describe, expect, it } from 'vitest';
 
-import type { Logger, ModelContext, ModelProvider } from '../interfaces';
+import type { Logger, ModelContext, ModelProvider } from '../core/interfaces';
 import type { TokenSource } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { OrchestrationModels } from '../orchestration-model';
-import { carriesOnSteps } from '../runner';
+import { carriesOnSteps } from '../core/runner';
+import { callKey } from '../model-calls';
 import { FakeChatOrchestration } from '../test-support/fake-chat-orchestration';
 import { MemoryModelCalls } from '../test-support/memory-model-calls';
 
@@ -383,5 +384,57 @@ describe('which retries may take an earlier run’s answer', () => {
     expect(carriesOnSteps(true, { messages: [], steps: 0 } as never)).toBe(false);
     expect(carriesOnSteps(true, undefined)).toBe(false);
     expect(carriesOnSteps(false, { messages: [step], steps: 1 } as never)).toBe(false);
+  });
+});
+
+describe('callKey and tool images', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const steps = [
+    { role: 'system', content: 'Today is 2026-10-27.' },
+    { role: 'user', content: 'What colour is the logo badge?' },
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        {
+          id: 'call-9f2',
+          type: 'function',
+          function: { name: 'sandbox__preview_check', arguments: '{"screenshot":true}' },
+        },
+      ],
+    },
+    { role: 'tool', tool_call_id: 'call-9f2', content: 'render: ok\n[image/png image: sent]' },
+  ];
+  const body = (...extra: object[]) => ({ model: 'm-1', messages: [...steps, ...extra] });
+
+  it('keys a step shown its tool images like the same step rebuilt from saved steps without them', () => {
+    const shown = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Returned by sandbox__preview_check (call-9f2):' },
+        { type: 'image_url', image_url: { url: PNG } },
+      ],
+    };
+    expect(callKey(body())).toBeDefined();
+    expect(callKey(body(shown))).toBe(callKey(body()));
+  });
+
+  it('keeps a viewer message with an image in the key', () => {
+    const attached = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Make it look like this' },
+        { type: 'image_url', image_url: { url: PNG } },
+      ],
+    };
+    expect(callKey(body(attached))).not.toBe(callKey(body()));
+  });
+
+  it('keeps a user message of only "Returned by" text in the key (no image, not a tool-image message)', () => {
+    const words = {
+      role: 'user',
+      content: [{ type: 'text', text: 'Returned by sandbox__preview_check (call-9f2):' }],
+    };
+    expect(callKey(body(words))).not.toBe(callKey(body()));
   });
 });

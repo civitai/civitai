@@ -25,8 +25,11 @@ const PUBLISHED = 'BLOCK_PUBLISHED_APP_ID_META_KEY';
 const UPLOADED = 'BLOCK_UPLOADED_APP_ID_META_KEY';
 const POSTABLE = 'BLOCK_POSTABLE_APP_ID_META_KEYS';
 const POST_MARKER = 'BLOCK_POST_APP_ID_META_KEY';
-const KEY_IDENTIFIERS = new Set([PUBLISHED, UPLOADED, POSTABLE, POST_MARKER]);
-const KEY_LITERALS = new Set(['blockPublishedAppId', 'blockUploadedAppId']);
+const POST_ITEM_MARKER = 'BLOCK_POST_SUB_LISTING_ID_META_KEY';
+const KEY_IDENTIFIERS = new Set([PUBLISHED, UPLOADED, POSTABLE, POST_MARKER, POST_ITEM_MARKER]);
+// `Post.metadata` only, so not in the Image strip list (`BLOCK_PROVENANCE_METADATA_KEYS`).
+const POST_ONLY_LITERALS = ['blockPublishedSubListingId'];
+const KEY_LITERALS = new Set(['blockPublishedAppId', 'blockUploadedAppId', ...POST_ONLY_LITERALS]);
 
 type Role =
   /** Declares a key constant. */
@@ -38,7 +41,17 @@ type Role =
   /** Reads Image provenance for the CROSS-USER gated read. */
   | 'gated-reader'
   /** `Post.metadata` attribution (a different table), never Image provenance. */
-  | 'post-attribution';
+  | 'post-attribution'
+  /**
+   * Reads Image provenance to DISPLAY a "Published with <app>" credit on an image the viewer
+   * was already authorised to open. A display read, never an access decision.
+   */
+  | 'image-attribution'
+  /**
+   * Selects stamped rows for a one-off admin repair that writes only non-provenance keys
+   * (the blurhash placeholder). Never returns a row to an app, never an access decision.
+   */
+  | 'backfill-selector';
 
 const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-image-upload.service.ts#BLOCK_PUBLISHED_APP_ID_META_KEY':
@@ -55,8 +68,15 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds':
     'gated-reader',
   'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_APP_ID_META_KEY': 'declaration',
+  'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_SUB_LISTING_ID_META_KEY':
+    'declaration',
   'src/server/services/blocks/block-post.service.ts#writeBlockPost': 'post-attribution',
+  'src/server/services/post-intent/post-intent.service.ts#publishIntent': 'post-attribution',
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedAppId': 'post-attribution',
+  'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedSubListingId':
+    'post-attribution',
+  'src/server/services/blocks/image-app-chip.service.ts#readImageAppChip': 'image-attribution',
+  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#selectCandidates': 'backfill-selector',
   // The server-owned key list `createImage` and the image input schemas strip client copies
   // against. It decides what is DROPPED, never what an app may read.
   'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS': 'declaration',
@@ -190,6 +210,16 @@ describe('App Blocks image provenance-key sites', () => {
     }
   });
 
+  it('the image-detail credit reads the PUBLISHED key only', () => {
+    // It credits what an app PUBLISHED. An in-tab bytes upload is not that, and the uploaded
+    // key is confined to its declaration and the server-owned list (pinned below).
+    const readers = Object.entries(LEDGER).filter(([, r]) => r === 'image-attribution');
+    expect(readers.length).toBe(1);
+    for (const [site] of readers) {
+      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED]);
+    }
+  });
+
   it('only the bytes-upload writer stamps the uploaded key', () => {
     const stampers = [...sites.entries()]
       .filter(([site, tokens]) => LEDGER[site] === 'writer' && tokens.has(UPLOADED))
@@ -213,7 +243,9 @@ describe('App Blocks image provenance-key sites', () => {
   it('the keys this ledger tracks are exactly the server-owned provenance keys', () => {
     // A key added to the shared list without this ledger learning it would have readers this
     // file cannot see; a key tracked here but missing from the list would not be server-owned.
-    expect([...KEY_LITERALS].sort()).toEqual([...BLOCK_PROVENANCE_METADATA_KEYS].sort());
+    expect([...KEY_LITERALS].sort()).toEqual(
+      [...BLOCK_PROVENANCE_METADATA_KEYS, ...POST_ONLY_LITERALS].sort()
+    );
   });
 
   it('sees every spelling of a read, on synthetic sources (so each branch of the derivation is exercised)', () => {

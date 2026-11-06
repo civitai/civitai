@@ -8,17 +8,14 @@ import {
   Center,
   Divider,
   Group,
-  HoverCard,
-  Menu,
-  Popover,
   Progress,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -64,6 +61,7 @@ import {
   resolveImageCollectionSort,
   toSortMenuOptions,
 } from '~/components/Collections/collection-sort';
+import { useRememberCollectionFilters } from '~/components/Collections/useRememberCollectionFilters';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
 import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
@@ -95,10 +93,13 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import type { ImageSort } from '~/server/common/enums';
+import { ArticleSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
@@ -133,6 +134,11 @@ const ModelCollection = ({
 }) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'models',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestModelSorts) : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
@@ -232,6 +238,11 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
+  useRememberCollectionFilters({
+    type: 'images',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = resolveImageCollectionSort({
     querySort: query.sort,
     isContest: isContestCollection,
@@ -378,7 +389,12 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
+            <ImagesInfinite
+              filters={filters}
+              disableStoreFilters
+              collectionId={collection.id}
+              hideHatTurf={collectionHidesHatTurf(collection)}
+            />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -389,6 +405,11 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'posts',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
@@ -441,6 +462,11 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const { replace, query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'articles',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection
     ? getRandom(contestArticleSorts)
     : query.sort ?? ArticleSort.Newest;
@@ -523,6 +549,7 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const { userBrowsingLevel } = useBrowsingLevelContext();
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
@@ -801,21 +828,16 @@ export function Collection({
                         [CollectionType.Image, CollectionType.Post].some(
                           (x) => x === collection.type
                         ) ? (
-                          <HoverCard
-                            width={300}
-                            disabled={!currentUser?.meta?.contestBanDetails}
-                            withArrow
-                            withinPortal
-                          >
+                          <HoverCard width={300} disabled={!isContestBanned} withArrow withinPortal>
                             <HoverCard.Target>
                               {/* Required div to display hovercard even when button is disabled */}
                               <div>
                                 <Button
                                   color="blue"
                                   radius="xl"
-                                  disabled={!!currentUser?.meta?.contestBanDetails}
+                                  disabled={isContestBanned}
                                   onClick={() => {
-                                    if (currentUser?.meta?.contestBanDetails) {
+                                    if (isContestBanned) {
                                       return;
                                     }
 
@@ -839,7 +861,7 @@ export function Collection({
                               </div>
                             </HoverCard.Target>
                             <HoverCard.Dropdown px="md" py={8}>
-                              {currentUser?.meta?.contestBanDetails && (
+                              {isContestBanned && (
                                 <Text>
                                   Due to breaking the rules in the past, you are ineligible for
                                   participation in this event.

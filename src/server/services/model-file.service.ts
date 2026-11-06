@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { deleteUnlessHeld, modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -24,15 +25,17 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { inferComponentType } from '~/server/utils/model-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import {
   ModelFileVisibility,
   ModelHashType,
   ModelStatus,
   ModelUploadType,
-  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
+import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -42,6 +45,10 @@ import {
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
+import {
+  liveRunDatasetTrainingStatuses,
+  reviewedDatasetTrainingStatuses,
+} from '~/shared/constants/training.constants';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -156,6 +163,8 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   isModerator,
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
+  if (data.overrideName !== undefined)
+    data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
   // `name` is the uploaded file name, which some model types publish as the download name.
   await throwOnBlockedUserContent([data.overrideName, data.name], {
@@ -210,6 +219,14 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
+  // Skip a re-sent stored name: sanitising it would make it look changed and rescan it against
+  // the blocklist.
+  if (inputData.overrideName != null && inputData.overrideName !== modelFile.overrideName)
+    inputData.overrideName = sanitizeOverrideName(
+      inputData.overrideName,
+      inputData.name ?? modelFile.name
+    );
+
   // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
   // would leave a file whose name trips a list impossible to edit in any other way.
   const changedNames = [
@@ -241,6 +258,11 @@ export async function updateFile({
     });
   }
 
+  const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
+  // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
+  // write derives only the new one. Never throws.
+  if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
+
   const { count } = await dbWrite.modelFile.updateMany({
     where: { id },
     data: { ...inputData, metadata },
@@ -248,6 +270,20 @@ export async function updateFile({
   // Replaced or deleted since the lookup above: nothing was written.
   if (count === 0) throw throwNotFoundError();
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+  // GenerationCoverage decides by file type, so the version's cached coverage is stale.
+  if (typeChanged)
+    await Promise.all([
+      resourceDataCache.bust([modelFile.modelVersionId]),
+      bustOrchestratorModelCache(modelFile.modelVersionId),
+      bustVersionScannedFileAirs(modelFile.modelVersionId, modelFile.modelVersion),
+    ]).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-type-change',
+        message: `Failed to bust resource caches for file ${id}`,
+        error,
+      }).catch(() => undefined)
+    );
 
   // Merge committed updates back into the snapshot so the returned record
   // reflects post-update state. `updateMany` doesn't return the updated row,
@@ -337,15 +373,28 @@ async function replaceFileContent({
     if (!version) throw throwNotFoundError();
     assertVersionAcceptsNewUpload(version, file.type);
 
-    const removed = await tx.modelFile.deleteMany({
-      where: {
-        id: file.id,
-        url: file.url,
-        modelVersion: { model: !isModerator ? { userId } : undefined },
-      },
-    });
+    // A held owner's file is not replaced: the replace deletes the old row and its bytes.
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
+      DELETE FROM "ModelFile" mf
+      USING "ModelVersion" mv, "Model" m
+      WHERE mf.id = ${file.id}
+        AND mf.url = ${file.url}
+        AND mv.id = mf."modelVersionId"
+        AND m.id = mv."modelId"
+        ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+        AND NOT ${modelRowHeldSql()}
+    `,
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: fileOwnerSql(file.id, isModerator ? undefined : userId),
+        held: modelRowHeldSql(),
+      }
+    );
     // Another writer replaced or removed the file since we read it.
-    if (removed.count === 0)
+    if (outcome === 'short')
       throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
 
     const row = await tx.modelFile.create({
@@ -439,7 +488,16 @@ async function replaceFileContent({
   };
 }
 
-const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
+/** The file `id` with its model owner as `m."userId"`, for `ownerHeld`; only `userId`'s when given. */
+function fileOwnerSql(id: number, userId?: number) {
+  return Prisma.sql`
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf.id = ${id}
+    ${userId === undefined ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+  `;
+}
 
 export async function deleteFile({
   id,
@@ -471,11 +529,21 @@ export async function deleteFile({
   if (
     file.type === 'Training Data' &&
     file.modelVersion.trainingStatus &&
-    reviewedDatasetStatuses.includes(file.modelVersion.trainingStatus) &&
+    reviewedDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
     !isModerator
   )
     throw throwBadRequestError(
       "Training data for a training run under review or denied can't be deleted."
+    );
+
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    liveRunDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
+    !isModerator
+  )
+    throw throwBadRequestError(
+      "Training data can't be deleted while its training run is in progress or awaiting review."
     );
 
   const modelStatus = file.modelVersion.model.status;
@@ -489,27 +557,40 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number; url: string }[]>`
+  let rows: { modelVersionId: number; modelId: number; url: string }[] = [];
+  // A held owner's file is refused. Scoped to the caller's own files, so a stranger cannot tell a
+  // held file from a missing one.
+  await deleteUnlessHeld(
+    dbWrite.$queryRaw<typeof rows>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
+    AND NOT ${modelRowHeldSql()}
     ${
-      // Repeats the check above at delete time, in case the run was moved to review in between.
+      // Repeats the checks above at delete time, in case the run moved on in between.
       isModerator
         ? Prisma.empty
         : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
           Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
-            reviewedDatasetStatuses
+            [...reviewedDatasetTrainingStatuses, ...liveRunDatasetTrainingStatuses]
           )}))`
     }
     RETURNING
       mv.id as "modelVersionId",
       m.id as "modelId",
       mf.url as "url"
-  `;
+  `.then((deleted) => (rows = deleted).length),
+    {
+      expected: 1,
+      isModerator,
+      db: dbWrite,
+      ownerFrom: fileOwnerSql(id, isModerator ? undefined : userId),
+      held: modelRowHeldSql(),
+    }
+  );
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);

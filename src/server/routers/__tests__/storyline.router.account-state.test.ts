@@ -5,8 +5,8 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * A muted or banned account cannot write to a storyline: start one, edit it, add or insert a
- * chapter, pick the canon branch, join two branches, add or remove a collaborator, or caption a
+ * A muted or banned account cannot write to a storyline: start, edit or delete one, choose its first
+ * chapter, add or insert a chapter, pick the canon branch, join two branches, add or remove a collaborator, or caption a
  * chapter image.
  *
  * Every one of those changes what other people read or who can post into the story, so a muted
@@ -19,9 +19,14 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const writers = vi.hoisted(() => ({
   createStoryline: vi.fn(async () => ({ id: 1 })),
   updateStoryline: vi.fn(async () => ({ id: 1 })),
+  deleteStoryline: vi.fn(async () => ({ id: 1 })),
+  setFirstChapter: vi.fn(async () => ({ storylineId: 10, chapterId: 1 })),
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
+  addOwnerChapterAtEnd: vi.fn(async () => ({ id: 1 })),
   insertStorylineChapter: vi.fn(async () => ({ chapterId: 1 })),
   moveStorylineChapter: vi.fn(async () => ({ chapterIds: [1] })),
+  removeStorylineChapter: vi.fn(async () => ({ storylineId: 10, chapterId: 4 })),
+  acceptStorylineInvite: vi.fn(async () => ({})),
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
   linkStorylineChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
@@ -51,10 +56,21 @@ const WRITE_CALLS = [
     input: { postId: 11, title: 'A story', maxNsfwLevel: 1 },
   },
   { name: 'update', writer: writers.updateStoryline, input: { id: 10, title: 'Renamed' } },
+  { name: 'delete', writer: writers.deleteStoryline, input: { id: 10 } },
+  {
+    name: 'setFirstChapter',
+    writer: writers.setFirstChapter,
+    input: { storylineId: 10, postId: 12 },
+  },
   {
     name: 'addChapter',
     writer: writers.addOwnerChapter,
     input: { parentChapterId: 3, postId: 12 },
+  },
+  {
+    name: 'addChapterAtEnd',
+    writer: writers.addOwnerChapterAtEnd,
+    input: { storylineId: 10, postId: 12 },
   },
   {
     name: 'insertChapter',
@@ -67,6 +83,7 @@ const WRITE_CALLS = [
     input: { storylineId: 10, chapterId: 4, afterChapterId: 6 },
   },
   { name: 'setCanon', writer: writers.setCanonChapter, input: { chapterId: 3 } },
+  { name: 'removeChapter', writer: writers.removeStorylineChapter, input: { chapterId: 4 } },
   {
     name: 'linkChapter',
     writer: writers.linkStorylineChapter,
@@ -77,6 +94,7 @@ const WRITE_CALLS = [
     writer: writers.addStorylineCollaborator,
     input: { storylineId: 10, userId: 77 },
   },
+  { name: 'acceptInvite', writer: writers.acceptStorylineInvite, input: { storylineId: 10 } },
   {
     name: 'removeCollaborator',
     writer: writers.removeStorylineCollaborator,
@@ -171,6 +189,15 @@ describe('storyline router — account state refuses a storyline write', () => {
       expect(writer).toHaveBeenCalledTimes(1);
     });
   }
+
+  // The end-of-chapter card's join check: zod drops a key the schema does not name, which would
+  // turn the server's end check off with every other test still green.
+  it('passes the at-end check of a join through to the service', async () => {
+    await callerFor().linkChapter({ parentChapterId: 3, chapterId: 7, atEnd: true });
+    expect(writers.linkStorylineChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ parentChapterId: 3, chapterId: 7, atEnd: true })
+    );
+  });
 });
 
 describe('storyline router — stepping down and taking down', () => {
@@ -202,4 +229,15 @@ describe('storyline router — stepping down and taking down', () => {
     await callerFor({ isModerator: true }).setTakedown({ id: 10, takenDown: true });
     expect(writers.setStorylineTakedown).toHaveBeenCalledWith({ id: 10, takenDown: true });
   });
+
+  // The service lets a moderator remove any storyline's chapter only when told the caller is one.
+  it.each([true, false])(
+    'passes isModerator %s through to removing a chapter',
+    async (isModerator) => {
+      await callerFor({ isModerator }).removeChapter({ chapterId: 4 });
+      expect(writers.removeStorylineChapter).toHaveBeenCalledWith(
+        expect.objectContaining({ chapterId: 4, isModerator })
+      );
+    }
+  );
 });

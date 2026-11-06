@@ -105,6 +105,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'app_listing_reviews',
   'app_listing_screenshots',
   'app_listings',
+  'app_post_intents',
   'app_review_agent_reports',
   'app_sub_listing_parents',
   'app_sub_listings',

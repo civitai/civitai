@@ -1206,6 +1206,13 @@ const SCOPE_INVOCATION_MAX_LIMIT = 100;
 export async function listMyScopeInvocations(opts: {
   userId: number;
   appBlockId?: string;
+  /**
+   * One PRE-APPROVAL dev app's rows (`ephemeral-<slug>`): they carry `appBlockId: null` and this id
+   * in `syntheticAppId` (see the synthetic-retry path in `recordScopeInvocation`), so an
+   * `appBlockId` filter never finds them. Ignored when `appBlockId` is given. The id is not unique
+   * across users (`ephemeral-<slug>`); the `userId` filter is what scopes it.
+   */
+  syntheticAppId?: string;
   limit?: number;
   cursor?: string;
 }): Promise<ScopeInvocationPage> {
@@ -1253,7 +1260,11 @@ export async function listMyScopeInvocations(opts: {
     // client types (CI-regenerated; may lag locally).
     where: {
       userId: opts.userId,
-      ...(opts.appBlockId ? { appBlockId: opts.appBlockId } : GLOBAL_SCOPE_ACTIVITY_OR),
+      ...(opts.appBlockId
+        ? { appBlockId: opts.appBlockId }
+        : opts.syntheticAppId
+        ? { syntheticAppId: opts.syntheticAppId }
+        : GLOBAL_SCOPE_ACTIVITY_OR),
     } as unknown as Prisma.BlockScopeInvocationWhereInput,
     orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
     take: cappedLimit + 1,

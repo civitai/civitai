@@ -1,4 +1,5 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 import type * as DevTunnelFrameService from '~/server/services/blocks/dev-tunnel-frame.service';
 
 /**
@@ -68,7 +69,11 @@ vi.mock('~/server/services/blocks/dev-tunnel-dns.service', () => ({
 }));
 // Real dev-tunnel-session (pure) — signs a real token + validates the host.
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
+// The real module spread in: the run page also reads the maturity rule (`isMatureContentRating`).
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
+  ratingAllowedOnHost: () => true,
+}));
 
 // Heavy component deps stubbed so importing the page modules doesn't pull a DOM.
 vi.mock('@mantine/core', () => ({
@@ -163,9 +168,8 @@ async function loadRunResolver() {
 }
 
 describe('/apps/dev/[blockId] SSR resolver', () => {
-  const prev = process.env.NEXTAUTH_SECRET;
   beforeEach(() => {
-    process.env.NEXTAUTH_SECRET = SECRET;
+    vi.stubEnv('NEXTAUTH_SECRET', SECRET);
     mockResolveDev.mockReset();
     mockGetActiveTunnel.mockReset();
     mockUnsubmittedSpend.mockReset();
@@ -198,8 +202,8 @@ describe('/apps/dev/[blockId] SSR resolver', () => {
     await resolver(makeCtx({ user: AUTHOR, setHeader: () => undefined }));
     expect(mockResolveFrame).toHaveBeenCalledTimes(1);
   });
-  afterAll(() => {
-    process.env.NEXTAUTH_SECRET = prev;
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('author + owner + active tunnel → iframeSrc set (server-derived host) + route-scoped CSP', async () => {

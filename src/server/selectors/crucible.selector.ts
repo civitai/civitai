@@ -67,6 +67,8 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   updatedAt: true,
   ingestion: true,
   textNsfw: true,
+  takenDownAt: true,
+  takedownReason: true,
   user: { select: userWithCosmeticsSelect },
   image: {
     select: {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -49,7 +49,8 @@ const { ledger, lookupPayment, grantBuzzPurchase, trackModActivity, lock, scan }
       ),
       trackModActivity: vi.fn(async () => undefined),
       lock: { held: false },
-      scan: { down: false },
+      // floodPages: pages of automated bank Refunds into the blue account, as heavy generators get.
+      scan: { down: false, floodPages: 0, reads: 0 },
     };
   }
 );
@@ -72,6 +73,29 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
       { accountType, query }: { accountType: string; query: { type: TransactionType } }
     ) => {
       if (scan.down) throw new Error('Buzz service unavailable');
+      if (accountType === 'blue' && query.type === TransactionType.Refund && scan.floodPages) {
+        // The cursor carries the page number; the fake ends on its own after floodPages.
+        const page = query.cursor ? query.cursor.getTime() : 0;
+        scan.reads++;
+        const refunds = Array.from({ length: 200 }, () => ({
+          type: 'Refund',
+          fromAccountId: 0,
+          fromAccountType: 'User',
+          toAccountId: accountId,
+          toAccountType: 'Generation',
+          amount: 25,
+          description: 'Generation refund',
+          date: '2026-10-24T12:00:00.000Z',
+        }));
+        const hand =
+          page === 0
+            ? ledger.filter((r) => r.type === 'Refund' && r.toAccountType === 'Generation')
+            : [];
+        return {
+          cursor: page + 1 < scan.floodPages ? new Date(page + 1) : null,
+          transactions: [...hand.map((r) => ({ ...r, fromAccountType: 'User' })), ...refunds],
+        };
+      }
       return {
         cursor: null,
         transactions: ledger
@@ -153,19 +177,21 @@ function grant({
   amount,
   from = 0,
   key,
+  toAccountType = 'User',
 }: {
   type: string;
   description: string;
   amount: number;
   from?: number;
   key?: string;
+  toAccountType?: string;
 }) {
   ledger.push({
     externalTransactionId: key,
     type,
     fromAccountId: from,
     toAccountId: USER_ID,
-    toAccountType: 'User',
+    toAccountType,
     amount,
     description,
     date: '2026-10-24T10:00:00.000Z',
@@ -178,6 +204,7 @@ const credit = (acknowledge?: string[]) =>
 
 beforeEach(() => {
   ledger.length = 0;
+  scan.floodPages = 0;
   lock.held = false;
   vi.clearAllMocks();
   dbMock.dbRead.user.findUnique.mockResolvedValue({ id: USER_ID, username: 'depositor' });
@@ -410,5 +437,175 @@ describe('matchManualCredit', () => {
 
   it('ignores a staff Tip unrelated in both wording and amount', () => {
     expect(matchManualCredit({ ...base, description: 'Contest prize' }, ctx)).toBeNull();
+  });
+});
+
+describe('automatic deposit credit (webhook, reconcile, sweep, reprocess)', () => {
+  // The deposit row, with the status ordering processDeposit asks Postgres for.
+  let row: { status: string; buzzCredited: number | null } | null;
+
+  beforeEach(() => {
+    row = null;
+    const find = async () => row && { ...row, createdAt: new Date('2026-10-24T08:00:00Z') };
+    dbMock.dbRead.cryptoDeposit.findUnique.mockImplementation(find);
+    dbMock.dbWrite.cryptoDeposit.findUnique.mockImplementation(find);
+    dbMock.dbWrite.cryptoDeposit.upsert.mockImplementation(async ({ create, update }: any) => {
+      row = row
+        ? { ...row, buzzCredited: update.buzzCredited }
+        : { status: create.status, buzzCredited: create.buzzCredited };
+      return {};
+    });
+    dbMock.dbWrite.cryptoDeposit.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (!row || where.status?.notIn?.includes(row.status)) return { count: 0 };
+      row = { ...row, status: data.status };
+      return { count: 1 };
+    });
+  });
+
+  const ipn = async () => {
+    const { processDeposit, eventFromPayment } = await import(
+      '~/server/services/nowpayments.service'
+    );
+    const { payment } = await lookupPayment(PAYMENT_ID);
+    return processDeposit(PAYMENT_ID, payment.payment_status, eventFromPayment(payment));
+  };
+  const flagged = () =>
+    vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([data]) => (data as { message?: string }).message)
+      .filter((m) => m?.startsWith('Deposit held') || m?.startsWith('Deposit credited with'));
+
+  it('credits a deposit nothing on the ledger already covers', async () => {
+    await ipn();
+
+    expect(deposits()).toHaveLength(1);
+    expect(row?.status).toBe('finished');
+    expect(flagged()).toEqual([]);
+  });
+
+  it('holds, without crediting, a deposit a staff Tip citing the payment id already paid', async () => {
+    row = { status: 'confirming', buzzCredited: null };
+    supportTip(`Crypto deposit ${PAYMENT_ID} not received`);
+
+    const result = await ipn();
+
+    expect(deposits()).toEqual([]);
+    expect(row).toMatchObject({ status: 'held', buzzCredited: null });
+    expect(result.transactionId).toBeUndefined();
+    expect(flagged()).toEqual(['Deposit held: a hand grant cites this payment']);
+  });
+
+  it('holds a deposit a staff Tip citing a payin hash prefix already paid', async () => {
+    supportTip('Manual credit for tx 0xbf7255aa');
+
+    await ipn();
+
+    expect(deposits()).toEqual([]);
+    expect(row?.status).toBe('held');
+  });
+
+  it('keeps a held deposit uncredited when NowPayments redelivers it', async () => {
+    supportTip(`Crypto deposit ${PAYMENT_ID} not received`);
+    await ipn();
+    // The hold must not depend on the scan finding the grant a second time,
+    ledger.length = 0;
+    // nor on a replica that has not seen the hold yet.
+    dbMock.dbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
+
+    await ipn();
+    const { reprocessDeposit } = await import('~/server/services/nowpayments.service');
+    await reprocessDeposit(PAYMENT_ID);
+
+    expect(deposits()).toEqual([]);
+    expect(row?.status).toBe('held');
+  });
+
+  it('credits past a soft match and flags it', async () => {
+    supportTip('Goodwill for the crypto deposit issue');
+
+    await ipn();
+
+    expect(deposits()).toHaveLength(1);
+    expect(row?.status).toBe('finished');
+    expect(flagged()).toEqual(['Deposit credited with possible hand grant']);
+  });
+
+  it('credits past a citing grant from a non-staff account and flags it', async () => {
+    grant({ type: 'Tip', description: `re ${PAYMENT_ID}`, amount: 1, from: 99 });
+
+    await ipn();
+
+    expect(deposits()).toHaveLength(1);
+    expect(flagged()).toEqual(['Deposit credited with possible hand grant']);
+  });
+
+  it('leaves the deposit to the retry sweep when it cannot read the ledger', async () => {
+    scan.down = true;
+
+    await ipn();
+
+    expect(deposits()).toEqual([]);
+    expect(row?.status).toBe('buzz_failed');
+  });
+
+  it('leaves the deposit to the retry sweep while a credit for it is running', async () => {
+    lock.held = true;
+
+    await ipn();
+
+    expect(deposits()).toEqual([]);
+    expect(row?.status).toBe('buzz_failed');
+  });
+
+  describe('for an account with more refunds since the payment than one scan reads', () => {
+    beforeEach(() => {
+      scan.floodPages = 50;
+      scan.reads = 0;
+    });
+
+    it('credits the deposit and flags the incomplete scan', async () => {
+      await ipn();
+
+      expect(deposits()).toHaveLength(1);
+      expect(scan.reads).toBe(20);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'warning',
+          message: 'Deposit credited: hand-grant scan incomplete',
+          unscanned: ['blue Refund'],
+        })
+      );
+    });
+
+    it('still holds a deposit a recent staff Refund citing the payment paid', async () => {
+      grant({
+        type: 'Refund',
+        description: `Refund for deposit ${PAYMENT_ID}`,
+        amount: 20_000,
+        toAccountType: 'Generation',
+      });
+
+      await ipn();
+
+      expect(deposits()).toEqual([]);
+      expect(row?.status).toBe('held');
+    });
+
+    it('is still refused by the moderator credit tool', async () => {
+      const result = await credit();
+
+      expect(result).toMatchObject({ credited: false, decision: 'refused' });
+      expect(deposits()).toEqual([]);
+    });
+  });
+
+  it('keeps a credited deposit credited when a citing grant appears later', async () => {
+    await ipn();
+    supportTip(`Crypto deposit ${PAYMENT_ID} not received`);
+
+    await ipn();
+
+    expect(deposits()).toHaveLength(1);
+    expect(row?.status).toBe('finished');
   });
 });

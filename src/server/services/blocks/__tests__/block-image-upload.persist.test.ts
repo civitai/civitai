@@ -1,3 +1,4 @@
+import { isBlurhashValid } from 'blurhash';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 
@@ -245,6 +246,22 @@ describe('persistBlockUploadImage (measures the uploaded bytes)', () => {
     expect(arg.skipIngestion).toBeFalsy();
     expect('skipIngestion' in arg && arg.skipIngestion === true).toBe(false);
     expect(arg).toMatchObject({ url: KEY, type: 'image', name: 'cover.png' });
+  });
+
+  it('stores the blurhash placeholder an on-site upload gets, measured from the stored bytes', async () => {
+    // Declared 800×450, stored 300×200: the placeholder's size must be the stored one.
+    storeObject(await flatPng(300, 200));
+
+    await persist(DECLARED_COVER);
+
+    const arg = mockCreateImage.mock.calls[0][0] as {
+      hash?: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(typeof arg.metadata.hash).toBe('string');
+    expect(isBlurhashValid(arg.metadata.hash as string).result).toBe(true);
+    expect(arg.metadata).toMatchObject({ width: 300, height: 200 });
+    expect(arg.hash).toBe(arg.metadata.hash);
   });
 });
 

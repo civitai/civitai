@@ -133,6 +133,18 @@ export type StorylineChapterPost = {
 };
 
 /**
+ * A chapter readers are shown as removed: removed itself, or its post taken down or its author banned
+ * or gone. Also what may not become the main route, so the two cannot drift apart.
+ */
+export const isStorylineChapterRemoved = ({
+  post,
+  removed,
+}: {
+  post: Pick<StorylineChapterPost, 'tosViolation' | 'user'>;
+  removed: boolean;
+}) => removed || post.tosViolation || !!post.user.bannedAt || !!post.user.deletedAt;
+
+/**
  * Whether one chapter is shown to one reader, and if not, why. Order matters: the first reason
  * that applies is the one reported, and the most permanent reasons come first.
  *
@@ -161,8 +173,7 @@ export function getStorylineChapterTombstone({
   const isModerator = !!viewer?.isModerator;
   const isAuthor = viewer?.id === post.userId;
 
-  if (!isModerator && (removed || post.tosViolation || post.user.bannedAt || post.user.deletedAt))
-    return 'removed';
+  if (!isModerator && isStorylineChapterRemoved({ post, removed })) return 'removed';
   if (!isAuthor && blockedUserIds.has(post.userId)) return 'unavailable';
 
   const published = !!post.publishedAt && post.publishedAt < now;
@@ -173,6 +184,31 @@ export function getStorylineChapterTombstone({
     return post.nsfwLevel ? 'aboveStoryRating' : 'unavailable';
   }
   if ((post.nsfwLevel & browsingLevel) === 0) return 'browsingLevel';
+  return null;
+}
+
+/** Why chapter 1 keeps its storyline from the public; its owner, participants and moderators are told. */
+export type StorylineRootHiddenReason = 'removed' | 'unpublished' | 'pendingRating';
+
+/**
+ * Whether chapter 1 keeps the storyline out of public view, and why. `post` is null once the post
+ * is deleted. Mirrored in SQL by `storylineRootVisibleSql` (the feed) and `storylineRootWaitingSql`
+ * (the readiness pass); change all three.
+ */
+export function getStorylineRootHiddenReason(
+  {
+    post,
+    removed,
+  }: {
+    post: Pick<StorylineChapterPost, 'nsfwLevel' | 'publishedAt' | 'tosViolation' | 'user'> | null;
+    removed: boolean;
+  },
+  now = new Date()
+): StorylineRootHiddenReason | null {
+  if (!post || isStorylineChapterRemoved({ post, removed }) || post.nsfwLevel === NsfwLevel.Blocked)
+    return 'removed';
+  if (!post.publishedAt || !(post.publishedAt < now)) return 'unpublished';
+  if (!post.nsfwLevel) return 'pendingRating';
   return null;
 }
 

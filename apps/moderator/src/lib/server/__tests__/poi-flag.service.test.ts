@@ -21,6 +21,7 @@ describe('the real-person hash endpoints', () => {
     ['confirm', confirmPoiFlag, 'poi-flag/confirm', 'confirmed'],
     ['revert', revertPoiFlag, 'poi-flag/revert', 'reverted'],
     ['dismiss', dismissPoiHashMatch, 'poi-flag/dismiss', 'dismissed'],
+    ['flag', setModelPoiFlag, 'poi-flag/flag-match', 'flagged'],
   ] as const)('%s reports a 200 that acted on nothing as a failure', async (_, call, path, key) => {
     callModEndpoint.mockResolvedValue({ ok: true, body: { [key]: 0 } });
     expect(await call(42)).toMatchObject({ ok: false, error: expect.stringMatching(/^Nothing/) });
@@ -36,15 +37,5 @@ describe('the real-person hash endpoints', () => {
     callModEndpoint.mockResolvedValue({ ok: false, error: 'Forbidden.' });
     expect(await confirmPoiFlag(42)).toEqual({ ok: false, error: 'Forbidden.' });
     expect(bustMinorQueueCounts).not.toHaveBeenCalled();
-  });
-
-  it('flags a match through set-poi, setting the flag rather than lifting it', async () => {
-    callModEndpoint.mockResolvedValue({ ok: true, body: { modelId: 42, poi: true } });
-    expect(await setModelPoiFlag(42)).toEqual({ ok: true });
-    expect(callModEndpoint).toHaveBeenCalledWith(
-      'model/set-poi',
-      { modelId: 42, poi: true },
-      expect.any(String)
-    );
   });
 });

@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WATCHDOG_WORKER_SOURCE } from '~/server/eventloop-watchdog';
+import { allowConnection } from '~/__tests__/network-guard';
 
 // The worker source is an inline string (see the tracing note in
 // eventloop-watchdog.ts), so it is NOT type-checked and NOT linted. This suite is
@@ -55,6 +56,9 @@ async function startWorker(opts: { thresholdMs?: number; token?: string } = {}):
       reject(err);
     });
   });
+
+  // The worker's own server: the guard does not see a listen in another thread.
+  allowConnection('127.0.0.1', port);
 
   const scrape = async (token: string | undefined = opts.token ?? TOKEN) => {
     const query = token === undefined ? '' : `?token=${encodeURIComponent(token)}`;

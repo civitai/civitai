@@ -4,7 +4,7 @@ import { CONNECTOR_NAME } from '@/services/debezium-manager';
 import { buildEmbedInput, type Embedder, type EmbedInput } from './embedder';
 import { isEligible, type ImageRow } from './eligibility';
 import type { VectorStore } from './qdrant';
-import { getImageRows, getPayloads } from './source';
+import { getImageRows, getPayloads, type ImagePayload } from './source';
 
 export type VectorStoreLike = Pick<
   VectorStore,
@@ -66,14 +66,15 @@ export function staticEmbedBlock({ withoutImageCdc = false } = {}): string | nul
 }
 
 /**
- * Whether the connector streams Image right now. This process's flag says nothing about the
+ * Whether the connector streams `needed` right now. This process's flag says nothing about the
  * connector, which the metrics watcher manages from its own env, so ask Kafka Connect.
  */
 export async function connectorBlock(
-  fetchImpl: typeof fetch = globalThis.fetch
+  fetchImpl: typeof fetch = globalThis.fetch,
+  needed: string[] = ['public.Image']
 ): Promise<string | null> {
   const connectUrl = process.env.DEBEZIUM_CONNECT_URL;
-  if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the Image stream cannot be verified';
+  if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the stream cannot be verified';
   try {
     const base = `${connectUrl}/connectors/${CONNECTOR_NAME}`;
     const [configRes, statusRes] = await Promise.all([
@@ -84,9 +85,9 @@ export async function connectorBlock(
       return `the connector could not be read (${configRes.status}/${statusRes.status})`;
     }
     const conf = (await configRes.json()) as Record<string, unknown>;
-    const tables = String(conf['table.include.list'] ?? '');
-    if (!tables.split(',').includes('public.Image'))
-      return 'the connector does not stream public.Image';
+    const tables = String(conf['table.include.list'] ?? '').split(',');
+    const missing = needed.find((t) => !tables.includes(t));
+    if (missing) return `the connector does not stream ${missing}`;
     // Listed is not flowing: a failed task streams nothing.
     const status = (await statusRes.json()) as {
       connector?: { state?: string };
@@ -125,6 +126,36 @@ export async function syncRows(
   goneIds: number[],
   deps: SyncDeps
 ): Promise<SyncStats> {
+  const { stats, inputs, payloads } = await prepareRows(rows, goneIds, deps);
+  if (!inputs.length || !deps.embedder) return stats;
+
+  // Each workflow's vectors are stored as it returns, so a process killed mid-call loses only
+  // the workflows still in flight; a re-run finds the rest as existing points.
+  const store = vectorWriter(payloads, stats, deps);
+  const result = await deps.embedder.embed(inputs, {
+    acceptStamp: (stamp) => deps.store.assertModel(stamp),
+    onVectors: async (vectors) => void (await store(vectors)),
+  });
+  // Whatever was not stored as it came (an embedder without onVectors, or a failed early write).
+  await store(result.vectors);
+  stats.failed = result.failed.length;
+
+  // Stored what was paid for; now surface the failure so the caller retries the rest.
+  if (result.error) throw result.error;
+  return stats;
+}
+
+/**
+ * Applies the deletes and payload rewrites `rows` need and returns the inputs still to embed,
+ * with their payloads. Writes nothing in a dry run; with embedding off the inputs are only counted.
+ * `paceWrites` is given each group's write count before it is written.
+ */
+export async function prepareRows(
+  rows: ImageRow[],
+  goneIds: number[],
+  deps: SyncDeps,
+  paceWrites?: (writes: number) => Promise<void>
+): Promise<{ stats: SyncStats; inputs: EmbedInput[]; payloads: Map<number, ImagePayload> }> {
   const stats = emptyStats();
   const eligible = rows.filter(isEligible);
   const remove = [...goneIds, ...rows.filter((r) => !isEligible(r)).map((r) => r.id)];
@@ -151,50 +182,63 @@ export async function syncRows(
   if (deps.dryRun) {
     // Counts what a real run would embed.
     stats.embedded = inputs.length;
-    return stats;
+    return { stats, inputs: [], payloads };
   }
 
+  await paceWrites?.(toDelete.size + update.size);
   await deps.store.delete([...toDelete]);
   await deps.store.setPayloads(update);
   if (!deps.embedder) {
     stats.embedOff = inputs.length;
     stats.deferredIds = inputs.map((i) => Number(i.id));
-    return stats;
+    return { stats, inputs: [], payloads };
   }
-  if (!inputs.length) return stats;
+  return { stats, inputs, payloads };
+}
 
-  const result = await deps.embedder.embed(inputs, {
-    acceptStamp: (stamp) => deps.store.assertModel(stamp),
-  });
-  const points = [...result.vectors]
-    .filter(([id]) => payloads.has(id))
-    .map(([id, vector]) => ({ id, vector, payload: payloads.get(id)! }));
-  await deps.store.upsert(points);
-  stats.embedded = points.length;
-  stats.failed = result.failed.length;
+/**
+ * Stores vectors as points with their payloads, adding to `stats`, and returns the ids it stored
+ * (including any deleted again because they lapsed meanwhile). Each id is stored once.
+ */
+export function vectorWriter(
+  payloads: Map<number, ImagePayload>,
+  stats: SyncStats,
+  deps: SyncDeps,
+  paceWrites?: (writes: number) => Promise<void>
+) {
+  const written = new Set<number>();
+  return async (vectors: Iterable<[number, number[]]>): Promise<number[]> => {
+    const points = [...vectors]
+      .filter(([id]) => payloads.has(id) && !written.has(id))
+      .map(([id, vector]) => ({ id, vector, payload: payloads.get(id)! }));
+    if (!points.length) return [];
+    await paceWrites?.(points.length);
+    await deps.store.upsert(points);
+    const ids = points.map((p) => p.id);
+    for (const id of ids) written.add(id);
+    stats.embedded += ids.length;
 
-  // The rows were read before a slow embed. A change made meanwhile may already have been
-  // applied by another worker, which this upsert would undo: a block (its delete) or an
-  // nsfwLevel or tag change (its payload). Re-reading after the write closes that window; any
-  // change committed later arrives as its own event, and by then the point exists.
-  const embeddedIds = points.map((p) => p.id);
-  const now = await getImageRows(deps.pg as Pool, embeddedIds);
-  const stillEligible = now.filter(isEligible);
-  const eligibleIds = new Set(stillEligible.map((r) => r.id));
-  const lapsed = embeddedIds.filter((id) => !eligibleIds.has(id));
-  await deps.store.delete(lapsed);
-  const fresh = await getPayloads(deps.pg as Pool, stillEligible);
-  const changed = new Map(
-    [...fresh].filter(
-      ([id, payload]) => JSON.stringify(payload) !== JSON.stringify(payloads.get(id))
-    )
-  );
-  await deps.store.setPayloads(changed);
-  stats.embedded -= lapsed.length;
-  stats.deleted += lapsed.length;
-  stats.updated += changed.size;
-
-  // Stored what was paid for; now surface the failure so the caller retries the rest.
-  if (result.error) throw result.error;
-  return stats;
+    // The rows were read before a slow embed. A change made meanwhile may already have been
+    // applied by another worker, which this upsert would undo: a block (its delete) or an
+    // nsfwLevel or tag change (its payload). Re-reading right after each write closes that
+    // window; any change committed later arrives as its own event, and by then the point exists.
+    const now = await getImageRows(deps.pg as Pool, ids);
+    const stillEligible = now.filter(isEligible);
+    const eligibleIds = new Set(stillEligible.map((r) => r.id));
+    const lapsed = ids.filter((id) => !eligibleIds.has(id));
+    await deps.store.delete(lapsed);
+    const fresh = await getPayloads(deps.pg as Pool, stillEligible);
+    const changed = new Map(
+      [...fresh].filter(
+        ([id, payload]) => JSON.stringify(payload) !== JSON.stringify(payloads.get(id))
+      )
+    );
+    await deps.store.setPayloads(changed);
+    stats.embedded -= lapsed.length;
+    stats.deleted += lapsed.length;
+    stats.updated += changed.size;
+    // Charged after: a lapsed image's delete is not held back by the write rate.
+    await paceWrites?.(lapsed.length + changed.size);
+    return ids;
+  };
 }

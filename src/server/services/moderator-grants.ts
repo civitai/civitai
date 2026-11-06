@@ -14,14 +14,18 @@ export type ModeratorGrantId =
   | 'user.removeReactions'
   | 'user.membership.code'
   | 'user.membership.gift'
+  | 'user.membership.extend'
+  | 'user.membership.cancel'
   | 'user.creatorScore.grant'
   | 'user.creatorScore.grantLarge'
   | 'user.creatorProgram.ban'
   | 'creatorServices.resolveDispute'
+  | 'creatorServices.reviewDispute'
   | 'image.removal.confirm'
   | 'csam.report.file'
   | 'user.ban'
   | 'user.strike'
+  | 'user.message.asCivitai'
   | 'labelStore.submitPrediction';
 
 export async function hasModeratorGrant(

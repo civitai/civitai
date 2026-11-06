@@ -43,6 +43,16 @@ export const USER_MENU_ITEM_IDS = [
   'support-discord',
   'support-assistant',
   'support-portal',
+  'create-generate',
+  'create-post-images',
+  'create-post-videos',
+  'create-model',
+  'create-model3d',
+  'create-train',
+  'create-article',
+  'create-comic',
+  'create-bounty',
+  'create-challenge',
 ] as const;
 
 export type UserMenuItemId = (typeof USER_MENU_ITEM_IDS)[number];

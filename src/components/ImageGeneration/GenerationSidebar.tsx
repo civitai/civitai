@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
+import { useEffect } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import {
   GENERATION_SIDEBAR_DEFAULT_WIDTH,
@@ -12,6 +13,11 @@ import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useRefreshResidencyOnOpen } from '~/components/ResourceLoad/ResourceResidency';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { restoreMobileGeneratorView } from '~/store/mobile-generator.store';
+import { HideDevToolsInMobileGenerator } from '~/components/generation_v2/HideDevToolsInMobileGenerator';
+import { isDev } from '~/env/other';
+import phoneControls from '~/components/generation_v2/PhoneControls.module.scss';
 const GenerationPanel = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
 export function useGenerationSidebarState() {
@@ -26,10 +32,23 @@ export function useGenerationSidebarState() {
 export function GenerationSidebar() {
   const router = useRouter();
   const { opened, fullScreen } = useGenerationSidebarState();
+  const mobileGenerator = useMobileGenerator();
 
-  useRefreshResidencyOnOpen(opened);
+  // On a phone the generator is its own page, so opening it is a history entry Back can leave.
+  // Read the store, not the render: leaving /generate closes the panel in the same commit.
+  useEffect(() => {
+    if (mobileGenerator && opened && useGenerationPanelStore.getState().opened)
+      router.push('/generate');
+  }, [mobileGenerator, opened]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!opened) return null;
+  // Mounted on every page, so the first to know the phone layout is on.
+  useEffect(() => {
+    if (mobileGenerator) restoreMobileGeneratorView();
+  }, [mobileGenerator]);
+
+  useRefreshResidencyOnOpen(opened && !mobileGenerator);
+
+  if (!opened || mobileGenerator) return null;
 
   return (
     <GenerationColumn className={clsx('z-10', fullScreen && 'z-[210] !w-screen')}>
@@ -65,14 +84,16 @@ export function GenerationColumn({
 
 /** What the generator renders into, whether it is a column or the whole viewport. */
 export function GenerationSurface({ children }: { children: ReactNode }) {
+  const mobileGenerator = useMobileGenerator();
   return (
-    <div data-tour="gen:start" className="size-full">
+    <div data-tour="gen:start" className={clsx('size-full', mobileGenerator && phoneControls.root)}>
       <ContainerProvider
         containerName={GENERATION_SIDEBAR_NAME}
         className="bg-gray-0 dark:bg-dark-7"
       >
         {children}
       </ContainerProvider>
+      {isDev && mobileGenerator && <HideDevToolsInMobileGenerator />}
     </div>
   );
 }

@@ -14,6 +14,8 @@ const { getAllImages, getAllImagesIndex } = vi.hoisted(() => ({
   getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
 }));
 
+// Not a held-gallery test: no model is held.
+vi.mock('~/server/services/model.service', () => ({ getHeldGalleryLevel: async () => undefined }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages,

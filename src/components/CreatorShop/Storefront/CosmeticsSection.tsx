@@ -70,8 +70,6 @@ export function CosmeticsSection({
             items={cosmetics}
             ownedCosmeticIds={ownedCosmeticIds}
             ownerUserId={ownerUserId}
-            // Attribute purchases to this storefront — unattributed purchases of
-            // sellable items pay the platform the reseller share.
             viaShopUserId={ownerUserId}
           />
           <ShopBrowsePagination page={page} onChange={setPage} totalPages={totalPages} />

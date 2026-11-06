@@ -554,7 +554,7 @@ describe('announcing', () => {
       `INSERT INTO "ModelMetric" ("modelId", "userId", status, "downloadCount") VALUES (1, $1, 'Published', 150)`,
       [CREATOR]
     );
-    const { notified } = await run(DOWNLOADS, { watermark: yesterday() });
+    const { notified } = await run({ ...DOWNLOADS, silent: true }, { watermark: yesterday() });
     expect(notified).toEqual([]);
     expect(await held(CREATOR)).toEqual([
       { key: 'reach:downloads-100', seen: true, at: expect.any(String) },
@@ -728,19 +728,16 @@ describe('watermark definitions', () => {
 });
 
 /**
- * 🔴 Downloads stay silent at launch by product decision. Every other group is announced now that
- * the journey page shows them. A group must be wholly silent or wholly announced, since its tiers
- * share one watermark row.
+ * 🔴 Every activity group is announced, downloads included since 2026-10-26: a silent group's
+ * grants never notify and read as launch backfills ("Earned before launch"). A group must be wholly
+ * silent or wholly announced, since its tiers share one watermark row.
  */
 describe('which activity groups announce', () => {
-  it('announces every activity group except downloads', () => {
-    expect(
-      groups
-        .filter((group) => group.silent)
-        .flatMap((group) => group.keys)
-        .sort()
-    ).toEqual(milestoneKeysFor('modelDownloads').sort());
-    expect(groups.filter((group) => !group.silent).length).toBeGreaterThan(0);
+  it('announces every activity group, downloads included', () => {
+    expect(groups.filter((group) => group.silent).flatMap((group) => group.keys)).toEqual([]);
+    expect(groups.flatMap((group) => group.keys)).toEqual(
+      expect.arrayContaining(milestoneKeysFor('modelDownloads'))
+    );
   });
 });
 

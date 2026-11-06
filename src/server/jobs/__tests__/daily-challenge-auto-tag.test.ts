@@ -19,10 +19,12 @@ const {
   mockCreateChallengeRecord,
   mockGenerateCollectionDetails,
   mockGenerateArticle,
+  mockGenerateResourceConcept,
 } = vi.hoisted(() => ({
   mockGetChallengeConfig: vi.fn(),
   mockCreateChallengeRecord: vi.fn().mockResolvedValue(31337),
   mockGenerateCollectionDetails: vi.fn().mockResolvedValue({ name: 'Challenge collection' }),
+  mockGenerateResourceConcept: vi.fn().mockResolvedValue(undefined),
   mockGenerateArticle: vi.fn().mockResolvedValue({
     title: 'A challenge',
     content: 'body',
@@ -40,6 +42,7 @@ vi.mock('~/server/games/daily-challenge/generative-content', async (importOrigin
   ...(await importOriginal<typeof GenerativeContent>()),
   generateCollectionDetails: mockGenerateCollectionDetails,
   generateArticle: mockGenerateArticle,
+  generateResourceConcept: mockGenerateResourceConcept,
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({

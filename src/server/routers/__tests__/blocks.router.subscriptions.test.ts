@@ -216,19 +216,18 @@ describe('blocks.listAvailable (public)', () => {
     );
   });
 
-  it('passes launchOnly=true to the service for a NON-MOD caller (public sees page apps only)', async () => {
-    mockListAvailable.mockResolvedValue({ items: [], nextCursor: undefined });
-    // Force the flag ON for a non-mod (models the post-launch segment-widen) so
-    // the call reaches the service and we can assert the launchOnly arg.
+  it('🔴 returns empty for a NON-MOD caller even with the flag ON (post-#263 widen)', async () => {
+    // The service applies no per-listing visibility, so the procedure is moderator-only
+    // regardless of `app-blocks-enabled`; a widened flag must not reach the service.
+    mockListAvailable.mockResolvedValue({
+      items: [{ id: 'ab_testers' }, { id: 'ab_private' }],
+      nextCursor: undefined,
+    });
     mockIsAppBlocksEnabled.mockImplementation(async () => true);
     const caller = blocksRouter.createCaller(authedCtx(42, false) as never);
-    await caller.listAvailable({ limit: 20 });
-    expect(mockListAvailable).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 20 }),
-      true,
-      // 3rd arg = redCapable (no host → false).
-      false
-    );
+    const out = await caller.listAvailable({ limit: 20 });
+    expect(out).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
   });
 
   it('returns empty for a non-mod caller (Phase 2 internal-only gate)', async () => {

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ApiKeySpend from '~/server/http/orchestrator/api-key-spend';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
 /**
  * `blocks.revokeScopes` — the tRPC half of per-scope consent revocation.
@@ -69,6 +71,15 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptServer: vi.fn() }));
+// The mirror teardown's two orchestrator calls.
+vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiKeySpend>()),
+  deleteAuthSubject: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),

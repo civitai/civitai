@@ -134,6 +134,8 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   'storage-doc-unhide': { label: 'Stored document unhidden', color: 'blue' },
   'storage-doc-delete': { label: 'Stored document deleted', color: 'red' },
   'storage-doc-dismiss': { label: 'Stored document reports dismissed', color: 'blue' },
+  'moderator-edit': { label: 'Edited by a moderator', color: 'blue' },
+  'set-official': { label: 'Official mark changed', color: 'blue' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

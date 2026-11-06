@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as MeiliClient from '~/server/meilisearch/client';
 
 // 1. Hoisted mocks for API and Service dependencies
 const {
@@ -8,7 +9,9 @@ const {
   mockImageMetaCacheFetch,
   mockGetServerAuthSession,
   mockGetFeatureFlags,
+  mockGetHeldGalleryLevel,
 } = vi.hoisted(() => ({
+  mockGetHeldGalleryLevel: vi.fn(),
   mockGetAllImages: vi.fn(),
   mockGetImagesFromFeedSearch: vi.fn(),
   mockImageMetaCacheFetch: vi.fn(),
@@ -21,6 +24,11 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesFromFeedSearch: mockGetImagesFromFeedSearch,
   // The feed-service branch declines, so every request here reaches feed search as before.
   getImagesFromFeedServiceForRest: async () => undefined,
+}));
+
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: mockGetHeldGalleryLevel,
+  getHeldLevelsByPost: async () => new Map(),
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -52,7 +60,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
 // buildSearchActor is stubbed. importOriginal pulls the real module; env/prom
 // at its module load are tolerated (no real connection opens in test).
 vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/meilisearch/client')>();
+  const actual = await importOriginal<typeof MeiliClient>();
   return {
     ...actual,
     buildSearchActor: vi.fn().mockReturnValue('mock-actor'),
@@ -183,6 +191,67 @@ describe('/api/v1/images API Handler', () => {
     mockGetImagesFromFeedSearch.mockResolvedValue(mockImagesResult);
     mockGetAllImages.mockResolvedValue(mockImagesResult);
     mockImageMetaCacheFetch.mockResolvedValue(mockMetaResult);
+  });
+
+  describe('a held model or version', () => {
+    afterEach(() => mockGetHeldGalleryLevel.mockReset());
+
+    // A modelId request takes the DB path, a version request the feed search: both are checked.
+    const searchedLevel = () => {
+      const calls = [...mockGetAllImages.mock.calls, ...mockGetImagesFromFeedSearch.mock.calls];
+      expect(calls).toHaveLength(1);
+      return (calls[0][0] as { browsingLevel?: number }).browsingLevel;
+    };
+
+    it.each([
+      ['?modelId=', { modelId: '5' }],
+      ['?modelVersionId=', { modelVersionId: '50' }],
+      ['?postId=', { postId: '500' }],
+    ])('serves %s only at the held levels of what is asked for', async (_name, selector) => {
+      mockGetHeldGalleryLevel.mockResolvedValue(1);
+      const { req, res } = createMocks({ query: { ...selector, browsingLevel: '31' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockGetHeldGalleryLevel).toHaveBeenCalledWith(
+        expect.objectContaining(
+          Object.fromEntries(Object.entries(selector).map(([key, id]) => [key, Number(id)]))
+        )
+      );
+      expect(searchedLevel()).toBe(1);
+    });
+
+    it('returns an empty page, searching nothing, when no asked level is held', async () => {
+      mockGetHeldGalleryLevel.mockResolvedValue(1);
+      const { req, res } = createMocks({ query: { modelVersionId: '50', browsingLevel: '28' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(res._getJSONData().items).toEqual([]);
+      expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+      expect(mockGetAllImages).not.toHaveBeenCalled();
+    });
+
+    it('holds a moderator too', async () => {
+      mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+      mockGetHeldGalleryLevel.mockResolvedValue(1);
+      const { req, res } = createMocks({ query: { modelVersionId: '50', browsingLevel: '31' } });
+
+      await handler(req, res);
+
+      expect(searchedLevel()).toBe(1);
+    });
+
+    it('leaves an unheld model at the level asked for', async () => {
+      mockGetHeldGalleryLevel.mockResolvedValue(undefined);
+      const { req, res } = createMocks({ query: { modelId: '5', browsingLevel: '31' } });
+
+      await handler(req, res);
+
+      expect(searchedLevel()).toBe(31);
+    });
   });
 
   it('should return meta: null by default (when withMeta is false) and NOT fetch from cache', async () => {

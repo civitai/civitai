@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { SignalTopic } from '~/server/common/enums';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
-import type { EventHat, EventPointEntityType, EventPointType } from './types';
+import type { EventHat, EventPointEntityType, EventPointLedgerType, EventPointType } from './types';
 
 // Every live key for one event, on sysRedis under `event:{event}:points:`.
 export function eventPointKeys(event: string) {
@@ -54,7 +54,7 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
   return {
     // user ids that already earned `type` on this entity (per UTC day for once:'day' types)
     seen: (
-      type: EventPointType,
+      type: EventPointLedgerType,
       entityType: EventPointEntityType,
       entityId: number,
       day?: string
@@ -67,8 +67,12 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
     live: (bucket: number, scope: TotalScope) => `${root}:live:${bucket}:${scope}` as const,
     // the bucket the referee last settled up to
     cut: `${root}:cut` as const,
+    // UTC day -> JSON { team: points per UTC hour (24) }, plus `cut`: when the hours were settled to
+    teamHours: `${root}:team-hours` as const,
   } as const;
 }
+// Not a day, so no day's field can equal it.
+export const TEAM_HOURS_CUT_FIELD = 'cut';
 // 'count': per hat and type (countField), the actions that were granted points, as the referee counts.
 export type TotalScope = 'hat' | 'team' | 'owner' | 'count';
 
@@ -161,3 +165,6 @@ export const eventOwnerTopic = (event: string, topicId: string) =>
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);
 export const utcDay = (time: Date) => time.toISOString().slice(0, 10);
+// storyline ids whose spark scored for this person on this UTC day
+export const storySparksScoredKey = (actorId: number, day: string) =>
+  `${REDIS_SYS_KEYS.EVENT}:${REDIS_SUB_KEYS.EVENT.POINTS}:story-sparks:${day}:${actorId}` as const;

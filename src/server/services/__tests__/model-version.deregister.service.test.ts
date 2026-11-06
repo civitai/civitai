@@ -93,7 +93,12 @@ function stubVersionRows(fileUrls: string[]) {
     meta: {},
   });
   mockDbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 });
-  mockDbWrite.modelVersion.delete.mockResolvedValue({ id: VERSION_ID, modelId: 7 });
+  mockDbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+    id: VERSION_ID,
+    modelId: 7,
+  } as never);
+  // The guarded DELETE removes the one version: its owner is not held.
+  mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
 }
 
 beforeEach(() => {

@@ -1,5 +1,5 @@
 /**
- * `page_render_total` counts HTML documents. Each case replays the hook sequence Next 16.4.3
+ * `page_render_total` counts HTML documents. Each case replays the hook sequence Next 16.4.5
  * runs for that response, as recorded from a built Next app with logging `_app` and `_document`
  * hooks (normal render: app, document; gSSP notFound: app, app as `/404`, document as `/404`;
  * gSSP throw: app, app as `/_error`, document as `/_error`; gSSP redirect, `_app` redirect and
@@ -140,7 +140,8 @@ describe('page_render_total counts HTML documents', () => {
   // count them itself.
   it('_app.getInitialProps counts nothing, so redirects and /_next/data requests count zero', async () => {
     signedIn();
-    const res = { writeHead: vi.fn(), end: vi.fn() };
+    // `getHeader`: `_app` reads the incoming Cache-Control first (`~/server/utils/static-asset-cache`).
+    const res = { writeHead: vi.fn(), end: vi.fn(), getHeader: vi.fn() };
     await runApp({ headers: {}, url: '/images' }, '/images');
     await appGetInitialProps({
       Component: () => null,
@@ -166,7 +167,7 @@ describe('the recorded hook sequences', () => {
     expect(
       version,
       'Next changed: re-record the _app/_document hook order for normal, notFound, throw, redirect and data responses, then update this file'
-    ).toBe('16.4.3');
+    ).toBe('16.4.5');
   });
 });
 

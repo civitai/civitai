@@ -175,9 +175,10 @@ covers you by default.
 **Never put test files under `src/pages`.** Next.js treats every `.ts`/`.tsx`
 file there as a route — including nested `__tests__/` directories — and
 `next build` runs a route-type validator over them. A Vitest file in that tree
-fails the build with `Property 'default' is missing`, and **only `next build`
-catches it**: typecheck, vitest and every CI job pass. It reaches the preview
-build before anyone notices.
+fails the build with `Property 'default' is missing`. `pnpm run typecheck`
+catches it too, because it runs `next typegen` first, but vitest does not, and a
+convention guard (`src/__tests__/pages/no-test-files-in-pages-tree.test.ts`)
+names the fix.
 
 Put handler tests in a `__tests__/` directory outside `src/pages` (e.g.
 `src/server/__tests__/`) and import the handler through the `~/pages/...` alias.

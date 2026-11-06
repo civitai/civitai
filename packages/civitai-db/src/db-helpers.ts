@@ -223,8 +223,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     if (typeof sql === 'object') {
       // Prisma.Sql object
       queryText = sql.text;
-      queryParams = sql.values;
-      for (const i in queryParams) queryParams[i] = formatSqlType(queryParams[i]);
+      queryParams = sql.values.map(formatSqlParam);
     } else if (params !== undefined) {
       // Plain string with parameters
       queryText = sql;
@@ -388,6 +387,13 @@ function formatSqlType(value: any): string {
     return JSON.stringify(value);
   }
   return value;
+}
+
+// Unlike formatSqlType, which inlines values into SQL text, a bound array stays an array so node-postgres
+// sends it as a Postgres array (`= ANY($1::int[])`).
+function formatSqlParam(value: any): any {
+  if (!Array.isArray(value)) return formatSqlType(value);
+  return value.map((element) => (element === null ? null : formatSqlParam(element)));
 }
 
 export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {

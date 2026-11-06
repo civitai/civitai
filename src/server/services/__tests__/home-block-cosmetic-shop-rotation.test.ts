@@ -1,14 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dbMock } from '~/__tests__/mocks';
 import type * as CacheService from '~/server/services/home-block-cache.service';
 import type * as CosmeticShopService from '~/server/services/cosmetic-shop.service';
 import type * as TesterSegment from '~/server/flipt/tester-segment';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
-const { getHomeBlockCached, getShopSectionsWithItems, isFliptPublic } = vi.hoisted(() => ({
-  getHomeBlockCached: vi.fn(),
-  getShopSectionsWithItems: vi.fn(),
-  isFliptPublic: vi.fn(),
+const { getHomeBlockCached, getShopSectionsWithItems, isFliptPublic, getHomeBlockRow } = vi.hoisted(
+  () => ({
+    getHomeBlockCached: vi.fn(),
+    getShopSectionsWithItems: vi.fn(),
+    isFliptPublic: vi.fn(),
+    getHomeBlockRow: vi.fn(),
+  })
+);
+
+// The block's row, read through Kysely on the replica. Its rows, against a real database, are
+// pinned in hot-reads-5.kysely-parity.test.ts.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getHomeBlockRow,
 }));
 
 vi.mock('~/server/flipt/tester-segment', async (importOriginal) => ({
@@ -33,7 +43,7 @@ type ShopBlock = { cosmeticShopSection?: { items: { shopItem: { id: number } }[]
 const ids = (block: ShopBlock) => block?.cosmeticShopSection?.items.map((i) => i.shopItem.id);
 
 function stubBlock(cosmeticShopSection: Record<string, unknown>, items = ITEMS) {
-  dbMock.dbRead.homeBlock.findUniqueOrThrow.mockResolvedValue({
+  getHomeBlockRow.mockResolvedValue({
     id: 40,
     type: HomeBlockType.CosmeticShop,
     userId: -1,
@@ -52,6 +62,8 @@ describe('a CosmeticShop home block', () => {
   beforeEach(() => {
     vi.useRealTimers();
     getHomeBlockCached.mockReset();
+    isFliptPublic.mockReset();
+    getShopSectionsWithItems.mockReset();
   });
 
   it('without `random` is served exactly as the cache holds it', async () => {
@@ -144,10 +156,39 @@ describe('a CosmeticShop home block', () => {
       });
 
       expect(isFliptPublic).toHaveBeenCalledWith('creator-shop');
-      expect(getShopSectionsWithItems).toHaveBeenLastCalledWith({
-        sectionId: 9,
-        creatorShopEnabled: isPublic,
-      });
+      expect(getShopSectionsWithItems).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sectionId: 9, creatorShopEnabled: isPublic })
+      );
     }
   );
+
+  it.each([
+    [true, [1, 2]],
+    [false, [1]],
+  ])('shows sticker items only while stickers is public (%s)', async (isPublic, expected) => {
+    isFliptPublic.mockImplementation(async (flag: string) => flag === 'stickers' && isPublic);
+    // Stands in for the shop service's sticker filter, which its own suite pins.
+    getShopSectionsWithItems.mockImplementation(
+      async ({ stickersEnabled }: { stickersEnabled?: boolean }) => [
+        {
+          id: 9,
+          items: [
+            { shopItem: { id: 1, cosmetic: { type: 'Badge' } } },
+            { shopItem: { id: 2, cosmetic: { type: 'Sticker' } } },
+          ].filter((i) => stickersEnabled || i.shopItem.cosmetic.type !== 'Sticker'),
+        },
+      ]
+    );
+
+    const block = await getHomeBlockData({
+      homeBlock: {
+        id: 40,
+        type: HomeBlockType.CosmeticShop,
+        metadata: { cosmeticShopSection: { id: 9 } },
+      },
+      input: {},
+    });
+
+    expect(ids(block as ShopBlock)).toEqual(expected);
+  });
 });

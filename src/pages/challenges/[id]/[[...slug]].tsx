@@ -12,19 +12,17 @@ import {
   Indicator,
   Loader,
   type MantineSize,
-  Menu,
   ScrollArea,
   Spoiler,
   Stack,
   Text,
-  Popover,
   Progress,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
@@ -32,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { Page } from '~/components/AppLayout/Page';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
@@ -42,6 +40,8 @@ import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -67,6 +67,7 @@ import {
   IconDotsVertical,
   IconFilter,
   IconFlag,
+  IconGavel,
   IconGift,
   IconPencil,
   IconPhoto,
@@ -260,6 +261,7 @@ const DEEP_LINK_TARGETS: Record<string, string[]> = {
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -292,6 +294,17 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     onSuccess: () => {
       showSuccessNotification({
         message: 'Rescan queued. The verdict will apply once the scan completes.',
+      });
+    },
+    onError: handleMutationError,
+  });
+
+  const rejudgeMutation = trpc.challenge.rejudge.useMutation({
+    onSuccess: ({ entries }) => {
+      showSuccessNotification({
+        message: entries
+          ? `${entries} entries queued for judging again.`
+          : 'No judged entries to re-judge.',
       });
     },
     onError: handleMutationError,
@@ -388,6 +401,33 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     });
   };
 
+  const handleRejudge = () => {
+    if (!challenge) return;
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Re-judge Entries',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Have the judge review every judged entry in{' '}
+              <strong>&ldquo;{challenge.title}&rdquo;</strong> again?
+            </Text>
+            <Text size="sm" c="dimmed">
+              Deletes the judge&apos;s comments, reactions and scores on those entries and resets
+              the rankings. The review job then judges each entry again over its next runs (about
+              one judge call per entry, plus ranking comparisons), and entrants get new comments. An
+              entry whose review keeps failing is dropped after 3 attempts.
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Re-judge' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => rejudgeMutation.mutateAsync({ id }),
+      },
+    });
+  };
+
   const handleDelete = () => {
     dialogStore.trigger({
       component: ConfirmDialog,
@@ -424,7 +464,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     const canSubmit =
       challenge.status === ChallengeStatus.Active &&
       !!challenge.collectionId &&
-      !currentUser?.muted;
+      !currentUser?.muted &&
+      !isContestBanned;
     if (wantsSubmit && canSubmit && challenge.collectionId)
       dialogStore.trigger({
         component: ChallengeSubmitModal,
@@ -432,7 +473,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       });
 
     return abortScroll;
-  }, [challenge, router, currentUser?.muted]);
+  }, [challenge, router, currentUser?.muted, isContestBanned]);
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
@@ -581,6 +622,19 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                               onClick={handleEndAndPickWinners}
                             >
                               End & Pick Winners
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={
+                                rejudgeMutation.isPending ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconGavel size={14} />
+                                )
+                              }
+                              onClick={handleRejudge}
+                              disabled={rejudgeMutation.isPending}
+                            >
+                              Re-judge Entries
                             </Menu.Item>
                             <Menu.Item
                               leftSection={<IconX size={14} />}
@@ -756,7 +810,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <article>
                 <Stack gap={4}>
                   {challenge.description ? (
-                    <RenderHtml html={challenge.description} />
+                    <RenderHtml html={challenge.description} withMentions />
                   ) : (
                     <Text c="dimmed">No description provided.</Text>
                   )}
@@ -1369,6 +1423,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               <Group justify="space-between">Judging</Group>
             </Accordion.Control>
             <Accordion.Panel>
+              <Text size="xs" c="dimmed" px="xs" pb={4}>
+                Only entries the judge scores can place. The highest scores make a shortlist, and a
+                final review of that shortlist decides the places, so a higher score doesn&apos;t
+                guarantee a place.
+              </Text>
               <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
                 {challenge.judgingCategories.map((category) => (
                   <div
@@ -1810,6 +1869,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 disableStoreFilters
                 judgeInfo={judgeInfo}
                 judgingCategories={challenge.judgingCategories}
+                hideHatTurf
               />
             )}
           </Stack>
@@ -1872,12 +1932,14 @@ function SubmitEntryButton({
   size?: MantineSize;
   fullWidth?: boolean;
 }) {
+  const isContestBanned = useIsContestBanned();
+  const blocked = isOwner || isContestBanned;
   const button = (
     <Button
       // `data-disabled` instead of `disabled` so the tooltip still receives hover events.
-      data-disabled={isOwner || undefined}
-      aria-disabled={isOwner || undefined}
-      onClick={isOwner ? (e: MouseEvent) => e.preventDefault() : onClick}
+      data-disabled={blocked || undefined}
+      aria-disabled={blocked || undefined}
+      onClick={blocked ? (e: MouseEvent) => e.preventDefault() : onClick}
       leftSection={<IconPhoto size={16} />}
       variant="light"
       color="blue"
@@ -1888,9 +1950,12 @@ function SubmitEntryButton({
     </Button>
   );
 
-  if (isOwner)
+  if (blocked)
     return (
-      <Tooltip label="You can't submit entries to your own challenge" withArrow>
+      <Tooltip
+        label={isOwner ? "You can't submit entries to your own challenge" : CONTEST_BANNED_MESSAGE}
+        withArrow
+      >
         {button}
       </Tooltip>
     );

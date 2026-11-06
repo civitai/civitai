@@ -2,6 +2,7 @@
   import '../global.css';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { page, navigating } from '$app/state';
+  import { toLinkBase } from '$lib/civitai-link';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
     IconLayoutDashboard,
@@ -15,6 +16,7 @@
     IconScanLetterT,
     IconChartBar,
     IconScale,
+    IconTicket,
     IconCircle,
     IconChevronRight,
     IconLogout,
@@ -57,18 +59,19 @@
   import {
     sidebarCounts,
     sidebarLastActioned,
+    sidebarQueueOldest,
     refreshSidebarCounts,
   } from '$lib/sidebar-counts.svelte';
   import {
-    LAST_ACTIONED_WINDOW_DAYS,
-    URGENT_SEVERITY_RANK,
-    lastActionedBadge,
+    queueWaitBadge,
     severityClassForRank,
   } from '$lib/queue-thresholds';
   import ShortAge from '$lib/components/ShortAge.svelte';
   import { minuteClock } from '$lib/minute-clock.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { writeOpenNavGroups } from '$lib/nav-open-groups';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -86,7 +89,11 @@
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto, Users: IconUsers };
+  const groupIcons: Record<string, typeof IconPhoto> = {
+    Images: IconPhoto,
+    Users: IconUsers,
+    Tickets: IconTicket,
+  };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
@@ -107,33 +114,48 @@
   const PARTIAL_TITLE = 'Some counts are unavailable';
 
   const lastActioned = sidebarLastActioned();
+  const queueOldest = sidebarQueueOldest();
   const clock = minuteClock();
   const now = $derived(clock.now);
-  // Nothing until the lookup lands: a missing timestamp reads as "no action in a week", and painting
-  // that before the answer arrives would flash every waiting queue red.
+  // Nothing until both lookups land: with one missing, the badge would time from the wrong event and
+  // jump when the other arrives.
   const actionedFor = (link: NavLink, count: number | null) =>
-    link.countKey && lastActioned.value
-      ? lastActionedBadge(link.countKey, lastActioned.value[link.countKey]?.at, count, now)
+    link.countKey && lastActioned.value && queueOldest.value
+      ? queueWaitBadge(
+          link.countKey,
+          lastActioned.value[link.countKey]?.at,
+          queueOldest.value[link.countKey],
+          count,
+          now
+        )
       : null;
 
   // Threshold colour on top-level counts only; a group takes its worst queue's, so a collapsed group
   // still says when something inside it is behind.
   const severityFor = (link: NavLink) => severityClassForRank(navWorstRank(link, countFor));
-  const overThreshold = (link: NavLink) =>
-    (navWorstRank(link, countFor) ?? Infinity) <= URGENT_SEVERITY_RANK;
 
-  // Collapsed unless you're working inside the section or something in it is over threshold; an
-  // explicit toggle wins from then on.
-  let openGroups = $state<Record<string, boolean>>({});
-  const holdsCurrentPage = (item: NavLink) =>
-    !!item.children?.some(
-      (child) => !child.external && !!child.path && isPathActive(child.path, page.url.pathname)
-    );
-  const isOpen = (item: NavLink) =>
-    openGroups[item.label] ?? (holdsCurrentPage(item) || overThreshold(item));
+  // Collapsed until the moderator opens one; their open sections are remembered across visits.
+  const openGroups = $derived(new SvelteSet(data.openNavGroups));
+  const isOpen = (item: NavLink) => openGroups.has(item.label);
+  const setOpen = (item: NavLink, open: boolean) => {
+    if (open) openGroups.add(item.label);
+    else openGroups.delete(item.label);
+    writeOpenNavGroups([...openGroups]);
+  };
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
+
+  // Stored absolute URLs (an appeal's link, pasted text) still name `.com`; every builder here already
+  // uses the link base. Rewritten on hover or focus, so the status bar, copy-link and middle-click agree.
+  const retarget = (event: Event) => {
+    const a = (event.target as Element | null)?.closest?.('a[href]');
+    if (!(a instanceof HTMLAnchorElement)) return;
+    const next = toLinkBase(a.href, data.civitaiUrl);
+    if (next !== a.href) a.href = next;
+  };
 </script>
+
+<svelte:document onpointerover={retarget} onfocusin={retarget} />
 
 <SidebarProvider>
   {#if navigating.to}
@@ -175,7 +197,7 @@
                   {@const rollup = badgeFor(item, rollupFor(item))}
                   <Collapsible
                     open={isOpen(item)}
-                    onOpenChange={(o) => (openGroups[item.label] = o)}
+                    onOpenChange={(o) => setOpen(item, o)}
                   >
                     <SidebarMenuItem>
                       <CollapsibleTrigger>
@@ -232,18 +254,12 @@
                                     <!-- Beside the label, not the count: the counts stay one right-aligned column. -->
                                     {#if actioned}
                                       {@const badgeClass = `shrink-0 rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
-                                      {#if actioned.at}
-                                        <ShortAge
-                                          at={actioned.at}
-                                          {now}
-                                          title={actioned.title}
-                                          class={badgeClass}
-                                        />
-                                      {:else}
-                                        <span class={badgeClass} title={actioned.title}>
-                                          &gt;{LAST_ACTIONED_WINDOW_DAYS}d
-                                        </span>
-                                      {/if}
+                                      <ShortAge
+                                        at={actioned.at}
+                                        {now}
+                                        title={actioned.title}
+                                        class={badgeClass}
+                                      />
                                     {/if}
                                     {#if cnt !== null}
                                       <span
@@ -308,6 +324,7 @@
         {#if data.logoutUrl}
           <a
             href={data.logoutUrl}
+            data-sveltekit-reload
             aria-label="Sign out"
             title="Sign out"
             class="rounded-md p-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"

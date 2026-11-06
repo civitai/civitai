@@ -1,4 +1,5 @@
-import { Anchor, Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Group, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';

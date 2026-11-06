@@ -121,6 +121,15 @@ describe('AppAssistantChat', () => {
     expect(chatEl().children).toHaveLength(0);
   });
 
+  test('shows every tool call as a row the viewer can open (tool-calls="details")', async () => {
+    renderWithProviders(
+      <AppAssistantChat tokens={tokens()} tools={{}} instructions={() => ''} mcpServers={[]} />
+    );
+    await vi.waitFor(() => expect(chatEl()).not.toBeNull());
+    // Unset, the element's default is `activity`: a line while a call runs, then nothing.
+    expect(chatEl().getAttribute('tool-calls')).toBe('details');
+  });
+
   test('grants only the scopes the chat token holds', async () => {
     const tokens: AssistantTokenProvider = {
       getToken: vi.fn(async () => 'chat-token'),
@@ -146,6 +155,13 @@ describe('AppAssistantChat', () => {
     expect(m.configureChat).toHaveBeenCalledWith({
       name: 'App Assistant',
       model: 'openai/gpt-6-luna',
+      models: [
+        { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna' },
+        { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash' },
+        { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5' },
+        { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
+      ],
+      modelsOnly: true,
       maxSteps: 1000,
       contextBudgetTokens: 64000,
     });

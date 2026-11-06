@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `PublicEndpoint` stamps `Cache-Control: public, s-maxage=…` before the handler
@@ -223,6 +223,39 @@ describe('PublicEndpoint cache headers by caller', () => {
       { maxAge: 86400 }
     );
     expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);
+  });
+});
+
+// Test 16. Readers accept the session from either slot whatever the app's cookie mode, so the cache gate must
+// treat every slot as a credential. Control: a gate built from `sessionCookieName()` alone marks the host-only
+// and legacy-only requests below `public, s-maxage`.
+describe('PublicEndpoint treats a legacy-only cookie as credentialed', () => {
+  const ORIGINAL_MODE = process.env.AUTH_SESSION_COOKIE_MODE;
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    if (ORIGINAL_MODE === undefined) delete process.env.AUTH_SESSION_COOKIE_MODE;
+    else process.env.AUTH_SESSION_COOKIE_MODE = ORIGINAL_MODE;
+  });
+
+  it.each(['shared', 'host'])('in %s mode', async (mode) => {
+    process.env.AUTH_SESSION_COOKIE_MODE = mode;
+    for (const name of [
+      '__Host-civ-token',
+      '__Secure-civ-token',
+      'civ-token',
+      '__Secure-civitai-token',
+      'civitai-token',
+    ]) {
+      for (const args of [
+        { cookies: { [name]: 'abc' } },
+        { headers: { cookie: `ga_session=1; ${name}=abc` } },
+      ]) {
+        const headers = await runPublicEndpoint(args);
+        expect(headers['Cache-Control'], `${name} via ${Object.keys(args)[0]}`).toBe(
+          PRIVATE_DEFAULT
+        );
+      }
+    }
   });
 });
 

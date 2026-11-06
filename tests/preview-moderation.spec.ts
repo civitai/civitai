@@ -203,7 +203,7 @@ test.describe('moderation surface (mod)', () => {
     //   apps/moderator/src/routes/reports/[slug]/__tests__/report-{actions,queue}.test.ts
     // Unit-level rather than end-to-end, so it is not the same coverage — it does not
     // exercise a real report through a real database. What it does buy is a tier that
-    // renders RED: the `App unit tests` job is not `continue-on-error`, unlike this
+    // renders RED: the `App suites` job is not `continue-on-error`, unlike this
     // preview job and unlike `unit`. It still does not block a merge — `main` has no
     // required_status_checks — so read it as a louder signal, not as a gate.
     //

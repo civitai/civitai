@@ -25,6 +25,8 @@ const dbForcing: Record<string, Record<string, unknown>> = {
   collectionId: { collectionId: 5 },
   reactions: { reactions: ['Like'] },
   imageId: { imageId: 5 },
+  // The index feed builder drops `ids`; served there, a batch came back as the global feed.
+  ids: { ids: [5] },
   'bare modelId': { modelId: 5 },
   'prioritizedUserIds with a model': { prioritizedUserIds: [5], modelVersionId: 9 },
   'publishedOnly with a userId': { publishedOnly: true, userId: 5 },

@@ -2,12 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromotionService from '~/server/services/promotion.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type * as PlacementService from '~/server/services/placement.service';
+import type * as FreePlacementService from '~/server/services/free-placement.service';
 
 const { services } = vi.hoisted(() => ({
   services: {
     getPendingPromotions: vi.fn(async () => []),
     getPlacementSpaces: vi.fn(async () => []),
     placementPriceRange: vi.fn(async () => ({ min: 0, max: 0, freeSlotCap: 0 })),
+    resolvePlacementSpaceFor: vi.fn(async () => null),
+    getFreePlacementAllowance: vi.fn(async () => ({
+      used: 0,
+      remaining: 0,
+      resetsAt: new Date(0),
+    })),
+    hasUsedFreePlacementOn: vi.fn(async () => false),
   },
 }));
 
@@ -18,10 +26,16 @@ vi.mock('~/server/services/promotion.service', async (importOriginal) => ({
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   getPlacementSpaces: services.getPlacementSpaces,
+  resolvePlacementSpaceFor: services.resolvePlacementSpaceFor,
 }));
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
   placementPriceRange: services.placementPriceRange,
+}));
+vi.mock('~/server/services/free-placement.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FreePlacementService>()),
+  getFreePlacementAllowance: services.getFreePlacementAllowance,
+  hasUsedFreePlacementOn: services.hasUsedFreePlacementOn,
 }));
 
 import { placementRouter } from '~/server/routers/placement.router';
@@ -149,7 +163,7 @@ describe('creator promotions are closed with the flag absent', () => {
 describe('the same calls with the flag on', () => {
   const on = callersFor({ creatorPromotions: true });
 
-  // They may still fail further in, against an empty test database; what they
+  // They may still fail further in, against the empty mocked database; what they
   // must not do is fail at the gate. The flag-off row for the same call is what
   // shows this negative assertion is reached at all, so keep the two together.
   it.each(GATED)('%s passes the gate', async (_name, call) => {

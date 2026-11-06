@@ -1,5 +1,7 @@
 import type { Prize, PrizeSourceType } from '@prisma/client';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { countUnclaimedPrizesViaKysely } from '~/server/services/hot-reads-5.reads';
 import { logToAxiom } from '~/server/logging/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -282,7 +284,7 @@ export async function getPrize({
 }
 
 export async function countUnclaimedPrizes(userId: number) {
-  return dbRead.prize.count({ where: { userId, claimedAt: null, voidedAt: null } });
+  return countUnclaimedPrizesViaKysely((await loadKyselyDb()).kyselyRead, userId);
 }
 
 export async function getMyPrizes({

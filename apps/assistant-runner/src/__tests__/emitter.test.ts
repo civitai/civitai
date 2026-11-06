@@ -2,7 +2,7 @@ import type { TurnPart } from '@civitai/components-chat/core';
 import { applyRunEvent, type RunEvent } from '@civitai/components-chat/runner-protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { RunEmitter } from '../emitter';
+import { RunEmitter } from '../core/emitter';
 
 const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 

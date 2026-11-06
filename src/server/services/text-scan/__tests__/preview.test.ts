@@ -24,7 +24,8 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   })),
 }));
 
-import { previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import { getActiveTextScanPrompts } from '~/server/services/text-scan/prompt';
 
 const reply = (content: unknown, status = 'succeeded') => ({
   data: {
@@ -78,6 +79,33 @@ describe('previewTextScanNsfw', () => {
     mockSubmitWorkflow.mockResolvedValueOnce(reply('not json at all'));
     expect(await previewTextScanNsfw({ fields, waitSeconds: 10 })).toEqual({
       status: 'unavailable',
+    });
+  });
+});
+
+describe('previewComFaceIntent', () => {
+  beforeEach(() => {
+    mockSubmitWorkflow.mockReset();
+  });
+
+  it('reports unavailable without submitting when the prompt row is missing', async () => {
+    await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
+      status: 'unavailable',
+    });
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("returns the label's verdict when its prompt row exists", async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValueOnce({
+      base: { id: 1, key: 'base', content: 'BASE PROMPT' },
+      'label:model-com-face-intent': { id: 3, key: 'label:model-com-face-intent', content: 'STUB' },
+    });
+    mockSubmitWorkflow.mockResolvedValue(
+      reply({ 'model-com-face-intent': { detected: true, reason: 'stub reason' } })
+    );
+    await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
+      status: 'ok',
+      output: { detected: true, reason: 'stub reason' },
     });
   });
 });

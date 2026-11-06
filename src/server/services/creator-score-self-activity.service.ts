@@ -41,10 +41,10 @@ export async function countSelfImageEngagement(
 
   const comments = await pg.cancellableQuery<{ userId: number; count: number }>(
     `SELECT i."userId", count(*)::int AS count
-     FROM "CommentV2" c
-     JOIN "Thread" t ON t.id = c."threadId"
-     JOIN "Image" i ON i.id = t."imageId" AND i."userId" = c."userId"
-     WHERE c."userId" = ANY($1::int[])
+     FROM "CommentV3" c
+     JOIN "Image" i ON i.id = c."entityId" AND i."userId" = c."userId"
+     WHERE c."entityType" = 'image' AND c."parentId" IS NULL AND c."deletedAt" IS NULL
+       AND c."userId" = ANY($1::int[])
        AND c."createdAt" < $2
      GROUP BY 1`,
     [ownerIds, before]

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DisputeEvent } from '$lib/server/creator-services-disputes.service';
-import { disputeOrigin } from '../origin';
+import { disputeOrigin, viewerParty } from '../origin';
 
 const event = (
   id: number,
@@ -119,5 +119,21 @@ describe('disputeOrigin', () => {
         events: [event(1, 'files_missing')],
       }).code
     ).toBeNull();
+  });
+});
+
+describe('viewerParty', () => {
+  const row = {
+    buyer: { id: 2, username: 'b' },
+    seller: { id: 1, username: 's', unavailable: false },
+  };
+
+  it.each([
+    [1, 'seller'],
+    [2, 'buyer'],
+    [3, null],
+    [null, null],
+  ] as const)('a moderator with id %s is %s', (viewerId, party) => {
+    expect(viewerParty(row, viewerId)).toBe(party);
   });
 });

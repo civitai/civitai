@@ -1,3 +1,4 @@
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
@@ -77,7 +78,7 @@ export type AppListingModerationNotificationDetails = {
  * `app-listing-purged` made it six, which is the doc-rot a stated total always eventually
  * becomes. The set is enumerable from the object below; the number is not worth maintaining.)
  */
-export const OWNER_SUBMISSIONS_URL = '/apps/build';
+export const OWNER_SUBMISSIONS_URL = MY_APPS_HREF;
 
 function appLabel(details: AppListingModerationNotificationDetails): string {
   return details.name ? `"${details.name}"` : 'Your app';

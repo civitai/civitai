@@ -1,4 +1,5 @@
-import { Anchor, Group, Popover, Skeleton, Text } from '@mantine/core';
+import { Anchor, Group, Skeleton, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconSticker } from '@tabler/icons-react';
 import type { RefObject } from 'react';
 import { useEffect, useRef, useState } from 'react';

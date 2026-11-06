@@ -15,18 +15,25 @@ export class CookieState<T> {
   #canonical: () => T;
   #encode: (value: T) => string;
   #maxAge: number;
+  #reload: () => Promise<void>;
   // Wrapped so a legitimately-null value is distinguishable from "no change pending".
   #pending = $state<{ value: T } | null>(null);
 
   constructor(
     name: string,
     canonical: () => T,
-    options: { encode?: (value: T) => string; maxAge?: number } = {}
+    options: {
+      encode?: (value: T) => string;
+      maxAge?: number;
+      // How the loads re-run after a write (default invalidateAll) — e.g. navigate away from a URL override too.
+      reload?: () => Promise<void>;
+    } = {}
   ) {
     this.#name = name;
     this.#canonical = canonical;
     this.#encode = options.encode ?? String;
     this.#maxAge = options.maxAge ?? ONE_YEAR;
+    this.#reload = options.reload ?? invalidateAll;
   }
 
   // Optimistic while a change is in flight, otherwise the server value from `data`.
@@ -42,7 +49,7 @@ export class CookieState<T> {
     }; samesite=lax`;
     refetching.begin();
     try {
-      await invalidateAll();
+      await this.#reload();
     } finally {
       refetching.end();
       this.#pending = null;

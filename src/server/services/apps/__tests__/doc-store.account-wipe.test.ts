@@ -235,6 +235,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect(out).toEqual({
         userId: WIPED,
         failures: [],
+        stopped: false,
         namespaces: [
           {
             appId: app,
@@ -305,14 +306,15 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       ).toEqual(before.otherUsage);
       expect(before.otherUsage).toHaveLength(1);
 
-      // The app's usage lost exactly the deleted documents, private and shared.
+      // The app's usage lost exactly the deleted SHARED documents: private documents were
+      // never charged to it, so their deletion refunds it nothing.
       const [usageAfter] = await h.raw(
         `SELECT bytes::int AS bytes, docs FROM appdata.usage_app WHERE app_id = $1 AND ns = 'prod'`,
         [app]
       );
       expect(usageAfter).toEqual({
-        bytes: usageBefore.bytes - privBefore.bytes - sharedBefore.bytes,
-        docs: usageBefore.docs - 4,
+        bytes: usageBefore.bytes - sharedBefore.bytes,
+        docs: usageBefore.docs - 2,
       });
       await assertUsageConsistent(h, app, NS_PROD);
     });
@@ -589,7 +591,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
       expect((await maint.wipeAccount(WIPED)).namespaces.length).toBeGreaterThan(0);
       const after = await snapshot(h, app);
       const again = await maint.wipeAccount(WIPED);
-      expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [] });
+      expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [], stopped: false });
       expect(await snapshot(h, app)).toEqual(after);
 
       const nobody = 5_909;
@@ -598,6 +600,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
         userId: nobody,
         namespaces: [],
         failures: [],
+        stopped: false,
       });
       expect(await h.raw(`SELECT count(*)::int AS n FROM appdata.usage_app`)).toEqual(appsBefore);
     });
@@ -878,7 +881,7 @@ describe.skipIf(!REAL_PG_URL)('account wipe racing other writers on Postgres', (
     }
     // Whichever order they committed in, the wipe left nothing and every tally is exact.
     const again = await maint.wipeAccount(WIPED);
-    expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [] });
+    expect(again).toEqual({ userId: WIPED, namespaces: [], failures: [], stopped: false });
     expect(await rowsNaming(h, app, WIPED)).toEqual(NAMES_NOBODY);
     await assertTalliesMatchMarks(h, app);
     await assertUsageConsistent(h, app, NS_PROD);

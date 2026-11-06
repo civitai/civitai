@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
 import type * as UserHubService from '~/server/services/user-hub.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
+
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -32,6 +37,28 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+
+// Hydration queries here. It returns no rows unless a test makes it fail.
+const { pg, emptyPool } = vi.hoisted(() => {
+  const pg = { fail: false };
+  const query = async () => {
+    if (pg.fail) throw new Error('hydrate query failed');
+    return { rows: [] };
+  };
+  const client = { query, release: () => undefined };
+  return { pg, emptyPool: { connect: async () => client, query } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+// The replica's user-id-by-username read (a Kysely statement).
+const { getUserIdByUsername } = vi.hoisted(() => ({ getUserIdByUsername: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getUserIdByUsername,
+}));
 vi.mock('~/server/services/new-creators.service', () => ({
   getNewCreatorUserIds: vi.fn(async () => newCreatorIds()),
 }));
@@ -76,7 +103,6 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 
 import { getAllImagesIndex } from '../image.service';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
-import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const request = () =>
   ({
@@ -91,6 +117,7 @@ const request = () =>
 describe('getAllImagesIndex with feed-service-primary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pg.fail = false;
   });
 
   it('does not ask the feed when the flag is off', async () => {
@@ -99,13 +126,25 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     expect(fetchFeedPrimary).not.toHaveBeenCalled();
   });
 
-  it('asks the feed once and falls through to the search path when hydration yields nothing', async () => {
+  it('asks the feed once and falls through to the search path when hydration fails', async () => {
     primaryOn.mockReturnValue(true);
+    pg.fail = true;
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
     const r = await getAllImagesIndex(request());
     expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
     expect(r.source).not.toBe('feed');
     expect(r.nextCursor).toBeUndefined();
+  });
+
+  // The search index cannot return rows the hydrate filtered out, so the page is served empty and
+  // the scroll moves on with the feed's cursor.
+  it('serves an empty feed page with the feed cursor when hydration filters out every row', async () => {
+    primaryOn.mockReturnValue(true);
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    const r = await getAllImagesIndex(request());
+    expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ source: 'feed', items: [] });
+    expect(r.nextCursor).toBeDefined();
   });
 
   it('asks the feed once and falls through when the feed itself fails', async () => {
@@ -118,7 +157,7 @@ describe('getAllImagesIndex with feed-service-primary', () => {
 
   it('scopes the feed to the creator a profile page names by username', async () => {
     primaryOn.mockReturnValue(true);
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+    getUserIdByUsername.mockResolvedValue({ id: 7 });
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({
       ...request(),
@@ -244,6 +283,12 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       expect(q.get('excludedTagGroups')).toBe('66');
     });
 
+    it('asks only for the held level of a held model the hub serves', async () => {
+      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7], heldBrowsingLevel: 1 }));
+      await getAllImagesIndex({ ...hub(), browsingLevel: 31 });
+      expect(sentQuery().get('levels')).toBe('1');
+    });
+
     it('asks only for the levels the hub allows', async () => {
       resolveHubSources.mockResolvedValue(hubSources({ userIds: [7], forcedBrowsingLevel: 3 }));
       await getAllImagesIndex({ ...hub(), browsingLevel: 31 });
@@ -258,6 +303,10 @@ describe('getAllImagesIndex with feed-service-primary', () => {
       [
         'caps below everything the viewer browses',
         hubSources({ userIds: [7], forcedBrowsingLevel: 16 }),
+      ],
+      [
+        'holds models that allow no level in common',
+        hubSources({ userIds: [7], heldBrowsingLevel: 0 }),
       ],
     ])('serves a hub that %s as an empty feed, never the open one', async (_, sources) => {
       resolveHubSources.mockResolvedValue(sources);

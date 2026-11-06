@@ -23,6 +23,17 @@ import type {
   SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import type * as S3Utils from '~/utils/s3-utils';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13 P3a) — off-site submission SERVICE tests (design B1).
@@ -334,6 +345,17 @@ describe('submitExternalListing', () => {
     };
     expect(listingData.externalUrl).toBeNull();
     expect(listingData.connectClientId).toBe(CLIENT_ID);
+  });
+
+  it('App Developer Terms not accepted: refused before any write', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('REQUIRES an OAuth client: a missing client → NOT_FOUND, no write', async () => {

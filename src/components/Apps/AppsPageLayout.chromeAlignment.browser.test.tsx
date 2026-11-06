@@ -81,9 +81,10 @@
  * WAS FALSE. Verified 2026-10-03 against the GitHub API: `civitai/civitai` `main` carries
  * `required_status_checks: null` — there is NO required check on this branch, so NO
  * project in this repo can block a merge, `unit` included. `.github/workflows/lint.yml`'s
- * `geometry:` job says the same thing in its own comment. "Non-blocking" therefore
- * describes every tier here: `Component tests` goes red on a PR, `geometry` and `unit`
- * report as a green job with a red step, and none is a required check.
+ * `Geometry tests` step says the same thing in its own comment. "Non-blocking" therefore
+ * describes every tier here: `Component tests` goes red on a PR, `unit` reports as a red
+ * job in a green run, `geometry` as a green job with an error annotation, and none is a
+ * required check.
  *
  * The `unit`-project siblings are still where the STRUCTURAL half lives and are still
  * worth having — `__tests__/appsPageLayoutRender.test.ts` (the measure box, on the
@@ -293,13 +294,15 @@ describe('the /apps route set that renders the shared chrome', () => {
       // repointed ('a' < 'b', where 'i' > 'b'), so the position moving is not a second
       // change to review.
       '/apps/activity',
-      '/apps/assistant',
+      // `/apps/assistant` left by 301ing to `/apps/build`, which renders the App Assistant.
       '/apps/build',
       '/apps/invites',
       '/apps/listing/[appListingId]/edit',
       '/apps/revenue',
       '/apps/review',
       '/apps/review/[publishRequestId]',
+      // The store, moved from `/apps` (now the viewer's app home); measure-free like it was.
+      '/apps/store',
       '/apps/store-preview/[slug]',
       '/apps/submit',
     ]);
@@ -317,7 +320,7 @@ describe.each(VIEWPORTS)(
       const railWidth = collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH;
       const railChrome = appsRailChromeWidth(collapsed);
 
-      test('nav left AND width are the same on all 13 routes', async () => {
+      test('nav left AND width are the same on all 12 routes', async () => {
         await page.viewport(width, height);
         const seen: Record<string, [number, number]> = {};
         const container: Record<string, [number, number]> = {};
@@ -413,7 +416,7 @@ describe.each(VIEWPORTS)(
         expect(bodyLefts.size, `the body starts at ${[...bodyLefts]} across routes`).toBe(1);
 
         // And the measured routes are genuinely DISTINCT widths, so the fixture varies
-        // the dimension under test instead of feeding one value 13 times. TWO classes
+        // the dimension under test instead of feeding one value 12 times. TWO classes
         // since the narrow-table cap was deleted.
         const measuredWidths = new Set(
           ROUTES.filter((r) => r.measure !== undefined).map((r) => seen[r.route][1])

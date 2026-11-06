@@ -1,5 +1,6 @@
 import type { MenuProps } from '@mantine/core';
-import { Menu, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { closeAllModals, closeModal, openConfirmModal } from '@mantine/modals';
 import {
@@ -52,6 +53,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
       closeAllModals();
       dialog.onClose();
     },
@@ -150,6 +152,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
     },
     onError(error) {
       showErrorNotification({
@@ -178,6 +181,7 @@ export function CommentDiscussionMenu({
     async onSuccess() {
       await queryUtils.comment.getAll.invalidate();
       await queryUtils.comment.getVisibleCountByModel.invalidate();
+      await queryUtils.comment.getVisibleCountsByModel.invalidate();
     },
     onError(error, vars, context) {
       showErrorNotification({

@@ -130,7 +130,7 @@ export async function sendNotificationEmails({
   if (userIds.length === 0) return outcome;
 
   const [bare]: BareNotification[] = [{ id: 0, type, details }];
-  await populateNotificationDetails([bare]);
+  await populateNotificationDetails([bare], { showSfwFace: true });
   const prepared = getNotificationMessage(bare);
   if (!prepared?.message) return { ...outcome, skipped: 'unrenderable' };
   const typeName = notificationProcessors[type]?.displayName ?? 'Civitai';

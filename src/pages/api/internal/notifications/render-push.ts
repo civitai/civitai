@@ -2,10 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
-import {
-  getNotificationMessage,
-  notificationProcessors,
-} from '~/server/notifications/utils.notifications';
+import { getPushTitle } from '~/server/notifications/push.constants';
+import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 // Called by the apps/notifications push dispatcher, once per fanned-out notification row. The
@@ -28,13 +26,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     type: n.type,
     details: n.details,
   }));
-  await populateNotificationDetails(bare);
+  await populateNotificationDetails(bare, { showSfwFace: true });
 
   const results = bare.map((n) => {
     const prepared = getNotificationMessage(n);
     if (!prepared?.message) return null;
     return {
-      title: notificationProcessors[n.type]?.displayName ?? 'Civitai',
+      title: getPushTitle(n.type, n.details),
       body: prepared.message,
       url: prepared.url ?? null,
     };

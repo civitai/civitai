@@ -62,7 +62,7 @@ const row = (userId: number) => ({
   userId,
   hats: [
     { id: 7, worn: true, price: 3000 },
-    { id: 8, worn: false, price: null },
+    { id: 8, worn: false, price: null, picked: true },
   ],
   hatCount: 2,
   points: 40,
@@ -131,8 +131,8 @@ describe('getTeamRoster', () => {
     const result = await read();
     expect(result.items.map((i) => i.user.username)).toEqual(['one']);
     expect(result.items[0].hats).toEqual([
-      { cosmeticId: 7, name: 'Crown', url: 'crown.png', worn: true, price: 3000 },
-      { cosmeticId: 8, name: 'Party Cap', url: 'cap.png', worn: false, price: null },
+      { cosmeticId: 7, name: 'Crown', url: 'crown.png', worn: true, price: 3000, picked: false },
+      { cosmeticId: 8, name: 'Party Cap', url: 'cap.png', worn: false, price: null, picked: true },
     ]);
   });
 });

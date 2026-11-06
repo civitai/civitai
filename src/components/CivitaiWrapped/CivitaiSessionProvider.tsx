@@ -24,7 +24,7 @@ export function CivitaiSessionProvider({
   children: React.ReactNode;
   disableHidden?: boolean;
 }) {
-  const { data, update, status } = useSession();
+  const { data, update } = useSession();
   const user = data?.user;
   const { allowMatureContent, region, verifiedBot } = useAppContext();
   // `AppContext.region` is optional because _app's `region` PROP is SSR-only. This CONTEXT
@@ -96,6 +96,7 @@ export function CivitaiSessionProvider({
     // data?.expires seems not used but is needed to remotely kill sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    user,
     data?.expires,
     allowMatureContent,
     disableHidden,
@@ -161,6 +162,9 @@ export const useCivitaiSessionContext = () => {
   if (!context) throw new Error('missing CivitaiSessionContext');
   return context;
 };
+
+/** The session, or `null` outside the provider, for shared UI that renders without one. */
+export const useOptionalCivitaiSessionContext = () => useContext(CivitaiSessionContext);
 
 const publicContentSettings: BrowsingSettings = {
   ...browsingModeDefaults,

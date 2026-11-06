@@ -28,6 +28,7 @@ import {
 } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
+import { ApiKeyGenerationMarker } from '~/components/Account/ApiKeyGeneration';
 import {
   API_KEY_DEEPLINK_PARAMS,
   parseApiKeyDeeplink,
@@ -219,6 +220,7 @@ export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
                       {/* Must wrap: the spend-limit meter and its nowrap "n / m per 24h" can't
                           share a phone-width line with two dates. */}
                       <Group gap="md" align="center">
+                        <ApiKeyGenerationMarker tokenScope={apiKey.tokenScope} />
                         <Group gap={4} wrap="nowrap">
                           <IconCalendar size={12} color="var(--mantine-color-dimmed)" />
                           <Text size="xs" c="dimmed">

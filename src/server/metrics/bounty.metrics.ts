@@ -121,10 +121,9 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
 async function getCommentTasks(ctx: MetricProcessorRunContext) {
   const affected = await getAffected(ctx)`
     -- get recent bounty comments
-    SELECT t."bountyId" as id
-    FROM "Thread" t
-    JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."bountyId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
+    SELECT c."entityId" as id
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'bounty' AND c."parentId" IS NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -136,15 +135,16 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
       -- Aggregate bounty comment metrics into JSON
       WITH metric_data AS (
         SELECT
-          t."bountyId",
+          c."entityId" AS "bountyId",
           tf.timeframe,
           ${snippets.timeframeSum('c."createdAt"')} as "commentCount"
-        FROM "Thread" t
-        JOIN "Bounty" b ON b.id = t."bountyId" -- ensure the bounty exists
-        JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
+        FROM "CommentV3" c
+        JOIN "Bounty" b ON b.id = c."entityId" -- ensure the bounty exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-        WHERE t."bountyId" = ANY(${ids}::int[])
-        GROUP BY t."bountyId", tf.timeframe
+        WHERE c."entityType" = 'bounty' AND c."parentId" IS NULL AND c."deletedAt" IS NULL
+          AND c."tosViolation" = false
+          AND c."entityId" = ANY(${ids}::int[])
+        GROUP BY c."entityId", tf.timeframe
       )
       SELECT jsonb_agg(
         jsonb_build_object(

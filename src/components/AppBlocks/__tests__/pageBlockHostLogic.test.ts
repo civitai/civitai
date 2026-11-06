@@ -2146,3 +2146,96 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
     });
   });
 });
+
+/**
+ * The run chrome's launch origin (`?from=home`) must survive the block's own navigation: the
+ * host pushes an href built from the BLOCK's path, so without the stamp the first in-app
+ * navigation dropped it and a reload relabelled the way out "Marketplace". The host's value
+ * wins over any `from` the block wrote into its own path. Literal expected hrefs throughout.
+ */
+describe('resolveNavigateRequest — launch origin survives in-app navigation', () => {
+  const RUN = { base: '/apps/run', slug: 'pixel-forge', siteNavigation: true };
+  const fromCount = (href: string) =>
+    new URLSearchParams(href.split('#')[0].split('?')[1] ?? '').getAll('from');
+
+  it('🔴 home: the pushed href carries from=home exactly once, sub-path kept', () => {
+    const req = resolveNavigateRequest({ path: 'gallery/42' }, { ...RUN, launchOrigin: 'home' });
+    expect(req).toEqual({
+      scope: 'app',
+      href: '/apps/run/pixel-forge/gallery/42?from=home',
+      shallow: true,
+      target: 'current',
+    });
+    expect(fromCount(req!.href)).toEqual(['home']);
+  });
+
+  it("home: the block's own query (incl. `sl`) and hash keep their bytes and order", () => {
+    expect(
+      resolveNavigateRequest(
+        { path: 'gallery?sl=asl_01J9&q=a%20b#top' },
+        { ...RUN, launchOrigin: 'home' }
+      )?.href
+    ).toBe('/apps/run/pixel-forge/gallery?sl=asl_01J9&q=a%20b&from=home#top');
+  });
+
+  it('home: a block-supplied `from` is replaced, never duplicated', () => {
+    const href = resolveNavigateRequest(
+      { path: 'gallery?from=evil&sl=asl_01J9' },
+      { ...RUN, launchOrigin: 'home' }
+    )!.href;
+    expect(href).toBe('/apps/run/pixel-forge/gallery?sl=asl_01J9&from=home');
+    expect(fromCount(href)).toEqual(['home']);
+  });
+
+  it('store: no `from` is added', () => {
+    expect(
+      resolveNavigateRequest({ path: 'gallery/42' }, { ...RUN, launchOrigin: 'store' })?.href
+    ).toBe('/apps/run/pixel-forge/gallery/42');
+  });
+
+  it('omitting the origin is the store (fail-safe: nothing is added)', () => {
+    expect(resolveNavigateRequest({ path: 'gallery/42' }, RUN)?.href).toBe(
+      '/apps/run/pixel-forge/gallery/42'
+    );
+  });
+
+  it.each([
+    ['from=home', 'gallery?from=home'],
+    ['an encoded key', 'gallery?fr%6Fm=home'],
+    ['repeated', 'gallery?from=home&from=home'],
+  ])(
+    '🔴 store: a block cannot relabel the crumb with its own `from` (%s) — reload stays Marketplace',
+    (_l, path) => {
+      const href = resolveNavigateRequest({ path }, { ...RUN, launchOrigin: 'store' })!.href;
+      expect(href).toBe('/apps/run/pixel-forge/gallery');
+      expect(fromCount(href)).toEqual([]);
+    }
+  );
+
+  it('store: other query pairs survive the `from` strip', () => {
+    expect(
+      resolveNavigateRequest(
+        { path: 'gallery?sl=asl_01J9&from=home#top' },
+        { ...RUN, launchOrigin: 'store' }
+      )?.href
+    ).toBe('/apps/run/pixel-forge/gallery?sl=asl_01J9#top');
+  });
+
+  it("site scope to a non-run page is left byte-for-byte alone (not the chrome's param)", () => {
+    expect(
+      resolveNavigateRequest(
+        { scope: 'site', path: 'models/12345?from=feed' },
+        { ...RUN, launchOrigin: 'home' }
+      )?.href
+    ).toBe('/models/12345?from=feed');
+  });
+
+  it("site scope to a run route: the host's origin wins there too", () => {
+    expect(
+      resolveNavigateRequest(
+        { scope: 'site', path: 'apps/run/other-app?from=home' },
+        { ...RUN, launchOrigin: 'store' }
+      )?.href
+    ).toBe('/apps/run/other-app');
+  });
+});

@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
 import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
+import { botCacheMiddleware } from '~/server/middleware/bot-cache.middleware';
 import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
 import { nextDataSkipMiddleware } from '~/server/middleware/next-data-skip.middleware';
@@ -25,10 +26,10 @@ const middlewares: Middleware[] = [
   nextDataSkipMiddleware,
   apiCacheMiddleware,
   syncAccountNoindexMiddleware,
+  // After every redirect and block; a hit is terminal and gets the headers accumulated so far.
+  botCacheMiddleware,
   botDetectionMiddleware,
 ];
-
-export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
 
 // `NextResponse.next()` sets this internal header to mark the response as a
 // "passthrough" (continue to handler) rather than a terminal redirect/rewrite.

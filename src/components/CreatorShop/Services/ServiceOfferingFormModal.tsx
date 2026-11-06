@@ -120,6 +120,7 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             <InputNumber
               name="maxOpenDeals"
               label="Open slots at once"
+              inputWrapperOrder={['label', 'input', 'description', 'error']}
               description="How many buyers can have a request open with you."
               min={SERVICE_OPEN_DEALS_MIN}
               max={SERVICE_OPEN_DEALS_MAX}

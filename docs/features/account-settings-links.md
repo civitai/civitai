@@ -24,11 +24,11 @@ An anchor is the element `id`. A section's id is the slug of its title unless th
 
 | Pane | Anchors |
 |------|---------|
-| profile | `account-info`, `creator-profile`, `account-standing`, `refresh-session`, `delete-account` |
+| profile | `account-info`, `creator-profile`, `account-standing`, `hat-turf`, `refresh-session`, `delete-account` |
 | preferences | `media-playback`, `generation`, `file-preferences`, `civbot-assistant`, `privacy`, `hide-reaction-lists`, `features` |
 | notifications | `delivery` |
 | content | `ads`, `mature-content`, `topics`, `hidden-tags`, `hidden-users` |
-| creator | `metric-visibility`, `stickers` |
+| creator | `metric-visibility`, `stickers`, `hat-turf-owner` |
 | billing | `manage-subscription`, `payment-methods`, `payments`, `membership-gifts` |
 | security | `accounts`, `api-keys`, `oauth-applications`, `connected-apps`, `store-items` |
 

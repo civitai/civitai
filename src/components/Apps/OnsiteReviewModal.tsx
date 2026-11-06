@@ -15,8 +15,8 @@ import {
   Switch,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
@@ -37,6 +37,7 @@ import {
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+import { groupBlockScopes, PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import type { ReviewSubmitterChip, ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 import {
@@ -53,6 +54,7 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
 import {
   parseManifestAnalytics,
   type DeclaredEventProperty,
@@ -67,6 +69,7 @@ import {
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import type { FloorAsset } from '~/shared/utils/listing-publish-floor';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -89,14 +92,15 @@ import { trpc } from '~/utils/trpc';
  * it exactly as before (zero behaviour change).
  */
 
-export type ManifestDiffSummary =
+export type ManifestDiffSummary = (
   | { kind: 'first-version'; fields: string[] }
   | {
       kind: 'update';
       added: string[];
       removed: string[];
       changed: Array<{ field: string; from: unknown; to: unknown }>;
-    };
+    }
+) & { registryExports?: RegistryExportDiff };
 
 export type FileSummary = {
   files: Array<{ path: string; sha256: string; sizeBytes: number }>;
@@ -134,6 +138,8 @@ export type ReviewedRequestCommon = {
   appListingId?: string | null;
   /** Set when approving re-rates a listing from its imagery, starting from `declared`. */
   approveRating?: { listingId: string; declared: string | null } | null;
+  /** Icon / cover the listing this approve publishes lacks; non-empty ⇒ the server refuses Approve. */
+  approveFloorMissing?: FloorAsset[];
 };
 
 export type PendingRequest = ReviewedRequestCommon;
@@ -435,7 +441,43 @@ export function ReviewManifestDiffSection({
       ) : (
         <ManifestDiffPreview diff={mds} />
       )}
+      {mds.registryExports && <RegistryExportsNotice exports={mds.registryExports} />}
     </Stack>
+  );
+}
+
+/**
+ * The collections this version publishes to registries — outside Civitai, to anyone who
+ * follows them — shown on its own because the generic diff only says `storage` changed.
+ */
+export function RegistryExportsNotice({ exports }: { exports: RegistryExportDiff }) {
+  return (
+    <Alert color="orange" variant="light" p="xs" title="Published to registries">
+      <Stack gap={4}>
+        {exports.exported.map((name) => (
+          <Group key={`e:${name}`} gap={6}>
+            <Code style={{ fontSize: 11 }}>{name}</Code>
+            {exports.added.includes(name) && (
+              <Badge size="xs" color="orange">
+                new in this version
+              </Badge>
+            )}
+          </Group>
+        ))}
+        {exports.removed.map((name) => (
+          <Group key={`r:${name}`} gap={6}>
+            <Code style={{ fontSize: 11 }}>{name}</Code>
+            <Badge size="xs" color="gray">
+              no longer published
+            </Badge>
+          </Group>
+        ))}
+        <Text size="xs" c="dimmed">
+          Visible shared documents of these collections become readable by anyone through a
+          registry. Private and hidden documents never leave.
+        </Text>
+      </Stack>
+    </Alert>
   );
 }
 
@@ -1517,11 +1559,8 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
     !Array.isArray(manifest.scopeJustifications)
       ? (manifest.scopeJustifications as Record<string, unknown>)
       : {};
-  // Split the declared scopes into a SENSITIVE group (elevated-risk — rendered
-  // first with warning emphasis) and the normal group. Each group keeps the
-  // existing "(N)" count semantics for its own members.
-  const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
-  const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
+  // Same groups and order as the store listing the viewer will see.
+  const { sensitive: sensitiveScopes, other: normalScopes } = groupBlockScopes(scopes);
   return (
     <Card withBorder p="sm" data-testid="apps-review-permissions">
       <Stack gap="xs">
@@ -1554,7 +1593,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 <Group gap={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitiveScopes.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitiveScopes.length})
                   </Text>
                   <Tooltip
                     multiline
@@ -1574,7 +1613,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
             <Group gap={6}>
               <IconKey size={14} />
               <Text size="sm" fw={600}>
-                Permissions ({normalScopes.length})
+                {PERMISSION_GROUP_LABELS.other} ({normalScopes.length})
               </Text>
               <Tooltip
                 multiline

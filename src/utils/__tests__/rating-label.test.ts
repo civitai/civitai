@@ -508,7 +508,7 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
           contentRating: null,
           recommend: { recommendedCount: up, notRecommendedCount: down, recommendPct: up / total },
           reviewCount: total,
-          installCount: 0,
+          openCount: 0,
           updatedAt: '2026-03-04T05:06:07.000Z',
         } as Parameters<typeof buildListingDetailRows>[0],
         { formatDate: (iso) => iso }
@@ -566,7 +566,7 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
             recommendPct: (4 / 137) * 100,
           },
           reviewCount: 137,
-          installCount: 0,
+          openCount: 0,
           updatedAt: '2026-03-04T05:06:07.000Z',
         } as Parameters<typeof buildListingDetailRows>[0],
         { formatDate: (iso) => iso }

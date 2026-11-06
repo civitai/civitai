@@ -1,4 +1,5 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -84,10 +85,11 @@ export const getHomeBlocksHandler = async ({
     }
 
     if (input.withCoreData) {
+      const coverage = await coverageAudience(ctx.user ?? undefined);
       // Get the core data for each home block:
       const homeBlocksWithData = await Promise.all(
         homeBlocks.map((homeBlock) => {
-          return getHomeBlockData({ homeBlock, user: ctx.user, input });
+          return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
         })
       );
 

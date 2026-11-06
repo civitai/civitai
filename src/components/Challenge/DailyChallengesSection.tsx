@@ -1,6 +1,11 @@
 import { ActionIcon, Button, Group, Modal, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconInfoCircle, IconSettings, IconCalendarEvent, IconChevronRight } from '@tabler/icons-react';
+import {
+  IconInfoCircle,
+  IconSettings,
+  IconCalendarEvent,
+  IconChevronRight,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { ChallengeCard } from '~/components/Cards/ChallengeCard';
 import { ChallengeCardSkeletonRow } from '~/components/Challenge/ChallengeCardSkeletonRow';
@@ -96,8 +101,8 @@ export function DailyChallengesSection() {
               🎨 How It Works
             </Title>
             <Text size="sm">
-              Every day, we select a new challenge featuring a specific AI model. Create images using
-              the featured model and submit your best work to compete for prizes!
+              Every day, we select a new challenge featuring a specific AI model. Create images
+              using the featured model and submit your best work to compete for prizes!
             </Text>
           </div>
           <div>
@@ -105,10 +110,13 @@ export function DailyChallengesSection() {
               🏆 Winning & Rewards
             </Title>
             <Text size="sm">
-              The top 3 entries are reviewed and selected by our AI judging system. Entries are
-              ranked by a weighted score where theme relevance counts for 50%, so staying on-theme is
-              key! Winners receive Buzz prizes and challenge points. Even if you don&apos;t win, you
-              can earn participation rewards for submitting quality entries.
+              Our AI judge doesn&apos;t score every entry. While the challenge runs, it scores a
+              random selection of new entries, with a limit on how many it scores per creator.
+              Scores weight theme relevance at 50%, so staying on-theme is key! Only scored entries
+              can place: the highest scores make a shortlist, and a final review of that shortlist
+              decides the places, so a higher score doesn&apos;t guarantee a place. Winners receive
+              Buzz prizes and challenge points. Even if you don&apos;t win, you can earn
+              participation rewards for submitting quality entries.
             </Text>
           </div>
           <div>

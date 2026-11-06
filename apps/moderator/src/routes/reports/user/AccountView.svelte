@@ -144,7 +144,7 @@
           {/snippet}
         </ReportList>
 
-        {#if (canAct || can.strike) && account.details}
+        {#if (canAct || can.strike || page.data.grants?.['user.message.asCivitai']) && account.details}
           <AccountActions
             suspectId={account.suspectId}
             {canBan}

@@ -2,7 +2,6 @@ import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { XGuardModerationStep } from '@civitai/orchestration-client';
 import { getWorkflow } from '@civitai/orchestration-client';
 import pLimit from 'p-limit';
-import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { SignalMessages } from '~/server/common/enums';
@@ -129,7 +128,7 @@ export async function startRun(args: {
     );
   }
 
-  const runId = uuid();
+  const runId = crypto.randomUUID();
   const total = parsed.rows.length * activeCandidates.length;
   const baseline = pickBaselineCandidate(activeCandidates);
   const systemPromptOverride = await getSystemPrompt(dataset.mode);

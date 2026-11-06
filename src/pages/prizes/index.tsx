@@ -45,10 +45,10 @@ export default function PrizesPage() {
 
   return (
     <>
-      <Meta title="Your prizes | Civitai" deIndex />
+      <Meta title="Prizes | Civitai" deIndex />
       <Container size="xs" my="xl">
         <Stack gap="md">
-          <Title order={1}>Your prizes</Title>
+          <Title order={1}>Prizes</Title>
           {isError && !prizes ? (
             <Stack gap="xs" align="flex-start">
               <Text c="red">Could not load your prizes.</Text>

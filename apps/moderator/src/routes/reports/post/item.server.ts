@@ -1,6 +1,7 @@
-import { getPostLookup } from '$lib/server/image-lookup.service';
+import { getPostLookup, getRecentImagesOutsidePost } from '$lib/server/image-lookup.service';
 import { loadAccountHistory } from '$lib/server/account-history';
 import { loadItemReports } from '$lib/server/report-queue-load';
+import { getPostStorylineChapter } from '$lib/server/storyline-takedown.service';
 import { ReportEntity } from '$lib/reports';
 import type { PostTab } from './tabs';
 
@@ -13,17 +14,29 @@ import type { PostTab } from './tabs';
  * no owner to look up until it has been read, hence the second round trip.
  */
 export async function loadPostItem(postId: number, tab: PostTab, locals: App.Locals) {
-  const [lookup, reports] = await Promise.all([
+  const [lookup, reports, storylineChapter] = await Promise.all([
     getPostLookup(postId),
     loadItemReports(ReportEntity.Post, postId),
+    getPostStorylineChapter(postId),
   ]);
   const ownerId = lookup?.post.userId ?? null;
   // The heavy read, on its own tab only: a moderator settling a report from the images never opens it.
-  const accountHistory =
-    ownerId && tab === 'owner'
-      ? await loadAccountHistory(ownerId, locals.user.username ?? null)
-      : null;
-  return { postId, tab, lookup, reports, ownerId, accountHistory };
+  const [accountHistory, ownerRecentImages] = await Promise.all([
+    ownerId && tab === 'owner' ? loadAccountHistory(ownerId, locals.user.username ?? null) : null,
+    // Whether the post looks like the rest of the account's work is often the whole ruling, and at
+    // queue volume nobody opens the profile to check.
+    ownerId && tab === 'images' ? getRecentImagesOutsidePost(ownerId, postId) : [],
+  ]);
+  return {
+    postId,
+    tab,
+    lookup,
+    reports,
+    storylineChapter,
+    ownerId,
+    accountHistory,
+    ownerRecentImages,
+  };
 }
 
 export type PostItem = Awaited<ReturnType<typeof loadPostItem>>;

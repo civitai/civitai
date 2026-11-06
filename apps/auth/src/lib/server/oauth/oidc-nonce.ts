@@ -19,7 +19,21 @@ import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 // and /session (a server-to-server call that CANNOT see that cookie) reads it back to register the account +
 // hand the SAME id to the spoke — so every domain shares one device set. First-party codes carry only
 // `deviceId` (no OIDC nonce); third-party OIDC codes carry nonce/authTime — the two flows never overlap.
-type OidcCodeContext = { nonce?: string; authTime?: number; deviceId?: string };
+// `openid` records a request that asked for the `openid` scope, which earns an id_token with or without a nonce.
+// `family`, `iat0`, `impersonatedBy` and `impExp` are the hub session's lineage, for a code minted for the hub
+// session's own user. `proofFamily` is the hub session's family whoever the code is for: it lets /session record
+// a new family against this browser.
+type OidcCodeContext = {
+  nonce?: string;
+  openid?: boolean;
+  authTime?: number;
+  deviceId?: string;
+  family?: string;
+  iat0?: number;
+  impersonatedBy?: number;
+  impExp?: number;
+  proofFamily?: string;
+};
 
 const field = (code: string) => createHash('sha256').update(code).digest('hex');
 
@@ -40,8 +54,8 @@ export async function storeOidcContext(code: string, ctx: OidcCodeContext): Prom
       AUTH_CODE_TTL * 1000
     );
   } catch {
-    // Best-effort: a miss just means the id_token omits nonce — acceptable degradation over failing the
-    // whole token exchange.
+    // Best-effort: a miss means the id_token omits nonce, or for an openid-only request isn't issued —
+    // acceptable degradation over failing the whole token exchange.
   }
 }
 

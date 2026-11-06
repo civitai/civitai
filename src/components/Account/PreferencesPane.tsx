@@ -5,6 +5,7 @@ import {
   assistantToggleableFeatures,
   AutoplayGifsToggle,
   EarlyAdopterToggle,
+  FitPostImagesToggle,
   HideBlueBuzzToggle,
   HideFromReactionListsToggle,
   ModelFileFormatSelect,
@@ -100,6 +101,9 @@ export function PreferencesPane() {
             <HideBlueBuzzToggle />
           </SettingRow>
         )}
+        <SettingRow block>
+          <FitPostImagesToggle />
+        </SettingRow>
         <SettingRow block>
           <EarlyAdopterToggle />
         </SettingRow>

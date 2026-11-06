@@ -1,5 +1,6 @@
 import type { MantineSize, PaperProps } from '@mantine/core';
-import { Paper, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconFlame, IconHeart, IconMoneybag, IconSword } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import React from 'react';

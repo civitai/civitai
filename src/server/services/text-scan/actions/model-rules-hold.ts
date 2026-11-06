@@ -24,6 +24,8 @@ export type ModelRulesHoldDetection = {
   applied: boolean;
   /** The versions a publish was making public, kept so a dismissal can publish them. */
   versionIds?: number[];
+  /** Set when a training run, not a publish or an edit, made the detection. */
+  source?: 'training';
 };
 
 export type ModelRulesHoldWrite =
@@ -61,7 +63,9 @@ type PendingRow = {
  */
 export async function syncModelRulesHold(
   modelId: number,
-  detection: ModelRulesHoldDetection | null
+  detection: ModelRulesHoldDetection | null,
+  /** A training check closes only a hold a training run wrote: a publish's hold also holds the model down. */
+  { onlySource }: { onlySource?: 'training' } = {}
 ): Promise<ModelRulesHoldWrite> {
   return dbWrite.$transaction(async (tx) => {
     await lockModelRulesHold(tx, modelId);
@@ -76,7 +80,7 @@ export async function syncModelRulesHold(
     `;
 
     if (!detection) {
-      if (!pending) return 'none';
+      if (!pending || (onlySource && pending.meta?.source !== onlySource)) return 'none';
       if (pending.claimed) throw new ModelRulesHoldBusyError();
       return (await supersede(tx, pending)) ? 'closed' : busy();
     }
@@ -100,6 +104,8 @@ export async function syncModelRulesHold(
     }
 
     if (pending) {
+      // The pending hold of a publish is the one that holds the model down; a training run leaves it.
+      if (detection.source && pending.meta?.source !== detection.source) return 'skipped';
       if (pending.claimed) throw new ModelRulesHoldBusyError();
       if (!(await supersede(tx, pending))) return busy();
     }
@@ -146,6 +152,7 @@ function holdMeta(detection: ModelRulesHoldDetection) {
     rules: detection.rules,
     ...(detection.applied ? { applied: true } : {}),
     ...(detection.versionIds?.length ? { versionIds: detection.versionIds } : {}),
+    ...(detection.source ? { source: detection.source } : {}),
   };
 }
 

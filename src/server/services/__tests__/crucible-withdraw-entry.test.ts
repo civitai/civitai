@@ -1,11 +1,18 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as CrucibleEntryAccepted from '~/server/services/crucible-entry-accepted';
 import type * as PostService from '~/server/services/post.service';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
 const afterPostsPublish = vi.fn();
+const revokeCrucibleEntry = vi.fn();
+
+vi.mock('~/server/services/crucible-entry-accepted', async (importOriginal) => ({
+  ...(await importOriginal<typeof CrucibleEntryAccepted>()),
+  revokeCrucibleEntry,
+}));
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -69,6 +76,21 @@ describe('withdrawCrucibleEntry', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-withdrawn', entryId: 5, imageId: 70 })
     );
+  });
+
+  it('takes the withdrawn entry back from whatever accepted it, and only once it is withdrawn', async () => {
+    await withdraw();
+    expect(revokeCrucibleEntry).toHaveBeenCalledTimes(1);
+    expect(revokeCrucibleEntry).toHaveBeenCalledWith({
+      entryId: 5,
+      crucibleId: 7,
+      userId: ENTRANT,
+    });
+
+    revokeCrucibleEntry.mockClear();
+    lockCrucible.mockResolvedValue([]);
+    await expect(withdraw()).rejects.toThrow(/only be removed while the crucible is running/);
+    expect(revokeCrucibleEntry).not.toHaveBeenCalled();
   });
 
   it("refuses someone else's entry as not found", async () => {

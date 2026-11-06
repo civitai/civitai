@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { CopyButton, Tooltip, Badge, Group } from '@mantine/core';
+import { CopyButton, Badge, Group } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
@@ -57,6 +58,7 @@ export function TrainedWords({
           color="gray"
           style={{ cursor: 'pointer' }}
           onClick={() => setShowAll(true)}
+          data-tap-target
         >
           +{trainedWords.length - limit} more
         </Badge>
@@ -86,6 +88,7 @@ export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: 
             color={copied ? 'green' : 'violet'}
             style={{ cursor: 'pointer', height: 'auto' }}
             onClick={copy}
+            data-tap-target
             pr={2}
             {...badgeProps}
           >

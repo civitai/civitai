@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { visualViewportBottomInset } from '~/hooks/useVisualViewportBottomInset';
+import { isKeyboardOpen, visualViewportBottomInset } from '~/hooks/useVisualViewportBottomInset';
 
 describe('visualViewportBottomInset — the keyboard strip a fixed bottom sheet must clear', () => {
   it('keyboard up: the layout height the visual viewport no longer shows', () => {
@@ -52,5 +52,30 @@ describe('visualViewportBottomInset — the keyboard strip a fixed bottom sheet 
     expect(visualViewportBottomInset(844, undefined)).toBe(0);
     expect(visualViewportBottomInset(844, { height: Number.NaN, offsetTop: 0 })).toBe(0);
     expect(visualViewportBottomInset(Number.NaN, { height: 500, offsetTop: 0 })).toBe(0);
+  });
+});
+
+describe('isKeyboardOpen — whether the form footer should step aside for typing', () => {
+  const unresized = { tallest: 844, height: 844 };
+
+  it('a keyboard over the layout viewport is open', () => {
+    expect(isKeyboardOpen(unresized, { height: 508, offsetTop: 0 })).toBe(true);
+  });
+
+  it('iOS panned a low field fully into view: still open, though none of it is over the bottom', () => {
+    expect(visualViewportBottomInset(844, { height: 508, offsetTop: 336 })).toBe(0);
+    expect(isKeyboardOpen(unresized, { height: 508, offsetTop: 336 })).toBe(true);
+  });
+
+  it('a browser that resizes the page for the keyboard: the page shrank by a keyboard', () => {
+    expect(isKeyboardOpen({ tallest: 844, height: 508 }, { height: 508, offsetTop: 0 })).toBe(true);
+    expect(isKeyboardOpen({ tallest: 844, height: 744 }, null)).toBe(true);
+  });
+
+  it('a focused field with the keyboard dismissed, a URL bar sliver, or a pinch zoom, is not', () => {
+    expect(isKeyboardOpen(unresized, { height: 844, offsetTop: 0 })).toBe(false);
+    expect(isKeyboardOpen({ tallest: 844, height: 745 }, null)).toBe(false);
+    expect(isKeyboardOpen(unresized, { height: 745, offsetTop: 0 })).toBe(false);
+    expect(isKeyboardOpen(unresized, { height: 422, offsetTop: 0, scale: 2 })).toBe(false);
   });
 });

@@ -135,6 +135,8 @@ export type PrivateRunAccess =
       allowed: true;
       audience: PrivateRunAudience;
       block: PrivateRunPageBlockResolution;
+      /** A restricted viewer may still run the app, but its token carries no spend scope. */
+      viewerMuted: boolean;
     }
   | { allowed: false; reason: PrivateRunRefusalReason };
 
@@ -333,7 +335,7 @@ export async function resolvePrivateRunAccess(args: {
   // deliberate divergence from the caller's pool rather than being a claim about nothing.
   const viewerRow = await dbWrite.user.findUnique({
     where: { id: viewer.id },
-    select: { deletedAt: true, bannedAt: true },
+    select: { deletedAt: true, bannedAt: true, muted: true },
   });
   if (!viewerRow || viewerRow.deletedAt || viewerRow.bannedAt) {
     return { allowed: false, reason: 'viewer-ineligible' };
@@ -421,5 +423,5 @@ export async function resolvePrivateRunAccess(args: {
     return { allowed: false, reason: 'no-iframe-src' };
   }
 
-  return { allowed: true, audience, block };
+  return { allowed: true, audience, block, viewerMuted: viewerRow.muted };
 }

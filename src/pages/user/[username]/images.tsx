@@ -2,14 +2,14 @@ import React from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { UserMediaInfinite } from '~/components/Image/Infinite/UserMediaInfinite';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const username = ctx.query.username as string;
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
 
     if (user?.bannedAt)
       return {

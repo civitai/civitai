@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const query = vi.hoisted(() => vi.fn(async () => ({ json: async () => [] })));
+const query = vi.hoisted(() =>
+  vi.fn(async (_arg: { query: string; query_params?: Record<string, unknown> }) => ({
+    json: async () => [],
+  }))
+);
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
 
 const { queryReferee, REFEREE_QUERY_MAX_SECONDS, refereeWindow } = await import(
@@ -15,6 +19,7 @@ const EVENT = {
   name: 'e',
   startDate: new Date('2026-11-01T00:00:00.000Z'),
   endDate: new Date('2026-12-01T00:00:00.000Z'),
+  teams: [],
   scoring: { capPerActorPerOwnerPerDay: 50, types: {}, newAccountDays: 7, finalizeAfterMs: 0 },
 };
 
@@ -38,5 +43,43 @@ describe('referee ClickHouse queries', () => {
       );
     }
     expect(REFEREE_QUERY_MAX_SECONDS).toBeLessThan(300);
+  });
+});
+
+// Shadow point types (recorded for testers, scoring for nobody) share the ledger with real ones. Live
+// weights apply to the whole season, so a type the config does not list must never be read: without
+// this filter it writes zero-point snapshot rows, and once given a weight it would score retroactively.
+// CI has no ClickHouse to run the SQL, so this pins both halves: the clause is an AND-ed, uncommented
+// condition on the ledger scan of each query, and the caller binds it to exactly the config's types.
+describe('referee reads only the scored types', () => {
+  const FILTER = /^\s*AND has\(\{types:Array\(String\)\}, type\)\s*$/m;
+  // The ledger scan: the seasonRows CTE of the referee, the whole of the users query.
+  const ledgerScan = (sql: string) => /seasonRows AS \(([\s\S]*?)\n  \),/.exec(sql)?.[1] ?? sql;
+
+  it.each([
+    ['referee', eventPointsRefereeSql],
+    ['users', eventPointsRefereeUsersSql],
+  ])('%s query filters its ledger scan on the scoring types', (_, sql) => {
+    expect(ledgerScan(sql)).toMatch(/FROM event_point_events/);
+    expect(ledgerScan(sql)).toMatch(FILTER);
+  });
+
+  it('binds `types` to exactly the scoring config, never a type only the ledger has', async () => {
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ 'shadow:view': '5' });
+    query.mockClear();
+    const scored = {
+      ...EVENT,
+      scoring: {
+        ...EVENT.scoring,
+        types: {
+          view: { weight: 1, once: 'day' as const, entities: ['Image' as const] },
+          reaction: { weight: 5, once: 'event' as const, entities: ['Image' as const] },
+        },
+      },
+    };
+    await queryReferee(scored, refereeWindow(scored, 'live', new Date('2026-11-05T12:07:00.000Z')));
+    expect(query).toHaveBeenCalledTimes(2);
+    for (const [arg] of query.mock.calls)
+      expect(arg.query_params?.types).toEqual(['view', 'reaction']);
   });
 });

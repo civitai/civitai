@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 
 // Unit tests for getModelEarlyAccessRefundRequirement and the refundEarlyAccess gate in
 // unpublishModelById. model.service.ts has a very large import graph, so most of its transitive
@@ -185,8 +186,11 @@ function setupRefundData({
   ]);
 }
 
-function setupModelStatus(status: string) {
-  mockTx.model.findUniqueOrThrow.mockResolvedValue({ status });
+// The row unpublishModelById reads under its lock, first in its transaction.
+function setupModelStatus(status: string, meta: Record<string, unknown> | null = {}) {
+  mockTx.$queryRaw.mockImplementation(async (strings: string[]) =>
+    strings.join('').includes('FROM "Model" WHERE id') ? [{ status, meta }] : []
+  );
 }
 
 function setupUnpublishWrites({
@@ -621,6 +625,30 @@ describe('unpublishModelById — early access refund gate', () => {
   const takeDownSql = () => takeDown().sql.replace(/\s+/g, ' ');
   const takeDownParams = () => takeDown().values;
 
+  // Every take-down path calls this, the moderator app's included, so the record is ended here.
+  it("ends a content wipe's removal record on a violation take-down", async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+    const record = {
+      removedWithOwner: true,
+      statusBeforeRemoval: 'Published',
+      versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+    };
+
+    setupModelStatus(KEPT_MODEL_STATUS, { commentsLocked: true, ...record });
+
+    await unpublishModelById({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      reason: 'duplicate',
+    });
+
+    const meta = mockTx.model.update.mock.calls[0][0].data.meta as Record<string, unknown>;
+    expect(meta).toMatchObject({ commentsLocked: true, unpublishedReason: 'duplicate' });
+    for (const key of Object.keys(record)) expect(meta).not.toHaveProperty(key);
+  });
+
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
     setupRefundData({ accessRows: [] });
     setupUnpublishWrites();
@@ -693,7 +721,7 @@ describe('unpublishModelById — early access refund gate', () => {
       setupUnpublishWrites();
       setupModelStatus('UnpublishedViolation');
 
-      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: {} });
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
       expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
     });
@@ -703,15 +731,15 @@ describe('unpublishModelById — early access refund gate', () => {
       // largest bucket in prod; and refreshing unpublishedAt re-fires the take-down notification.
       setupRefundData({ accessRows: [] });
       setupUnpublishWrites();
-      setupModelStatus('UnpublishedViolation');
       const moderatorRecord = {
         unpublishedReason: 'other',
         customMessage: 'Reviewed by a human',
         unpublishedAt: '2020-01-01T00:00:00.000Z',
         unpublishedBy: 999,
       };
+      setupModelStatus('UnpublishedViolation', { ...moderatorRecord });
 
-      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: { ...moderatorRecord } });
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
       expect(mockTx.model.update.mock.calls[0][0].data.meta).toEqual(moderatorRecord);
     });
@@ -737,13 +765,12 @@ describe('unpublishModelById — early access refund gate', () => {
     it('does not escalate a published model carrying a stale reason in meta', async () => {
       setupRefundData({ accessRows: [] });
       setupUnpublishWrites();
-      setupModelStatus('Published');
-
-      await unpublishModelById({
-        id: MODEL_ID,
-        userId: OWNER_ID,
-        meta: { unpublishedReason: 'duplicate', customMessage: 'from a previous take-down' },
+      setupModelStatus('Published', {
+        unpublishedReason: 'duplicate',
+        customMessage: 'from a previous take-down',
       });
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
       expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('Unpublished');
     });

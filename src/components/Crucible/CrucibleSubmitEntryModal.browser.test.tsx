@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   showErrorNotification: vi.fn(),
   reasonsById: {} as Record<number, string[]>,
   minVotes: 0,
+  user: { id: 42, muted: false } as { id: number; muted: boolean; meta?: unknown },
 }));
 
 vi.mock('~/utils/notifications', async (importOriginal) => ({
@@ -93,7 +94,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUserModule>()),
-  useCurrentUser: () => ({ id: 42, muted: false }),
+  useCurrentUser: () => mocks.user,
 }));
 
 vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
@@ -214,6 +215,7 @@ beforeEach(() => {
   useGeneratorSelectionStore.setState({ selected: [] });
   mocks.reasonsById = {};
   mocks.minVotes = 0;
+  mocks.user = { id: 42, muted: false };
 });
 
 describe('CrucibleSubmitEntryModal — free entries', () => {
@@ -313,6 +315,40 @@ describe('CrucibleSubmitEntryModal — entries closed near the end', () => {
 
     await vi.waitFor(() => expect(plainSubmit()?.disabled).toBe(false));
     expect(document.body.textContent).not.toContain(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
+  });
+});
+
+describe('CrucibleSubmitEntryModal — contest ban', () => {
+  test('explains the ban once and will not submit', async () => {
+    mocks.reasonsById = { 1: ['contest-banned'], 2: ['contest-banned'] };
+    renderModal();
+    await select(1);
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('You are banned from participating in contests')
+    );
+    expect(document.body.textContent?.split('banned from participating').length).toBe(2);
+    expect(plainSubmit()?.disabled).toBe(true);
+  });
+
+  const BANNED_NOTICE = 'You are banned from participating in contests';
+
+  test("shows the notice and will not submit on the session's ban alone, before any image is checked", async () => {
+    mocks.user = { id: 42, muted: false, meta: { contestBanDetails: { bannedAt: 'x' } } };
+    renderModal();
+    await select(1);
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain(BANNED_NOTICE));
+    expect(plainSubmit()?.disabled).toBe(true);
+  });
+
+  test('an unbanned entrant sees no notice and can submit the same image', async () => {
+    mocks.user = { id: 42, muted: false, meta: {} };
+    renderModal();
+    await select(1);
+
+    await vi.waitFor(() => expect(plainSubmit()?.disabled).toBe(false));
+    expect(document.body.textContent).not.toContain(BANNED_NOTICE);
   });
 });
 

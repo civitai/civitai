@@ -1,7 +1,12 @@
 import { sql, type Insertable, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
-import { MODEL_RULES_HOLD_LABEL } from '@civitai/moderation/model-rules';
+import {
+  MODEL_RULES_HOLD_LABEL,
+  readModelRuleExtras,
+  type ModelRuleCategory,
+  type ModelRuleReference,
+} from '@civitai/moderation/model-rules';
 import { convertLegacyModelRule } from '@civitai/moderation/model-rules-convert';
 import {
   isSemanticDefinition,
@@ -42,6 +47,8 @@ export type ModelRuleView = {
   subject: string;
   description: string;
   aliases: string[];
+  category?: ModelRuleCategory;
+  references: ModelRuleReference[];
   needsAttention: boolean;
   enabled: boolean;
   note: string;
@@ -81,6 +88,7 @@ export async function listModelRules(): Promise<ModelRuleView[]> {
     subject: semantic.subject,
     description: semantic.description,
     aliases: semantic.aliases ?? [],
+    ...readModelRuleExtras(semantic),
     needsAttention: !!semantic.needsAttention,
     enabled: row.enabled,
     note: row.reason ?? '',
@@ -206,6 +214,7 @@ const viewOf = (definition: unknown, reason: string | null, enabled: boolean) =>
     subject: semantic.subject,
     description: semantic.description,
     aliases: semantic.aliases ?? [],
+    ...readModelRuleExtras(semantic),
     note: reason ?? '',
     enabled,
     needsAttention: !!semantic.needsAttention,
@@ -221,6 +230,8 @@ export async function createModelRule(
     subject: input.subject,
     description: input.description,
     aliases: input.aliases,
+    category: input.category,
+    references: input.references,
     updatedById: userId,
   });
   const now = new Date();
@@ -273,6 +284,8 @@ export async function updateModelRule(
       subject: input.subject,
       description: input.description,
       aliases: input.aliases,
+      category: input.category,
+      references: input.references,
       ...(existing.definition.legacyMatch === undefined
         ? {}
         : { legacyMatch: existing.definition.legacyMatch }),

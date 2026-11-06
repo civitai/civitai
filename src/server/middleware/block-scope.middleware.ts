@@ -37,6 +37,7 @@ import {
 } from '~/server/services/block-token.service';
 import {
   ANON_SUBJECT,
+  HUB_TOKEN_JTI_PREFIX,
   isValidSubject,
   subjectForUserId,
   USER_SUB_RE,
@@ -663,9 +664,10 @@ export interface WithBlockScopeOpts {
    * Opt-in: write THIS route's refusals in its own envelope instead of the wrapper's
    * `{ error, code? }`. Receives every refusal the wrapper itself emits (after it has decided
    * to refuse — the decision, the status and the order are unchanged) and returns the body.
-   * Absent, the body is byte-identical to before. Only the document store declares one.
+   * Absent, the body is byte-identical to before. Only the document store declares one. It also
+   * receives the request, so the route can label the refusal (the document store counts it).
    */
-  formatRefusal?: (refusal: BlockScopeRefusal) => unknown;
+  formatRefusal?: (refusal: BlockScopeRefusal, req: NextApiRequest) => unknown;
 }
 
 /**
@@ -690,9 +692,14 @@ export type BlockScopeRefusal = {
 };
 
 /** Send a wrapper refusal: the route's own envelope when it declared one, else the default. */
-function sendRefusal(res: NextApiResponse, opts: WithBlockScopeOpts, refusal: BlockScopeRefusal) {
+function sendRefusal(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  opts: WithBlockScopeOpts,
+  refusal: BlockScopeRefusal
+) {
   const body = opts.formatRefusal
-    ? opts.formatRefusal(refusal)
+    ? opts.formatRefusal(refusal, req)
     : refusal.code === undefined
     ? { error: refusal.error }
     : { error: refusal.error, code: refusal.code };
@@ -1286,6 +1293,14 @@ export function enforceContextBinding(
         // where the operation is known. No request-shape binding; presence is the check.
         break;
       }
+      case 'apps:storage:import': {
+        // An import acts AS the viewer in another app, under a grant that viewer gave, so an
+        // anonymous subject can never hold it. The storage route checks the grant per source.
+        if (claims.sub === ANON_SUBJECT) {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
       case 'apps:storage:publish': {
         // Authoring a document in a shared collection is ALWAYS attributed to a user, so
         // an anonymous subject can never hold it (mirrors apps:storage:shared:write).
@@ -1447,7 +1462,7 @@ async function resolveDevTunnelHubClaims(args: {
     sub: subjectForUserId(userId),
     iat,
     exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
-    jti: `hub_${apiKeyId}`,
+    jti: `${HUB_TOKEN_JTI_PREFIX}${apiKeyId}`,
     blockId,
     appId: clientId,
     appBlockId,
@@ -1494,7 +1509,11 @@ async function resolveHubTokenClaims(
     scopes?: unknown;
     page?: { buzzBudgetPerGen?: unknown };
   };
-  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  // `apps:storage:import` is never carried, and its grant ledger is never read or pruned here: the
+  // storage route refuses an import on any hub token (`import_hub_token`).
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes)
+    .filter(isKnownBlockScope)
+    .filter((s) => s !== 'apps:storage:import');
   const scopes = partitionByConsent(declared, granted).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
@@ -1512,7 +1531,7 @@ async function resolveHubTokenClaims(
     sub: subjectForUserId(userId),
     iat,
     exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
-    jti: `hub_${session.apiKeyId}`,
+    jti: `${HUB_TOKEN_JTI_PREFIX}${session.apiKeyId}`,
     blockId: block.blockId,
     appId: clientId,
     appBlockId: block.id,
@@ -1583,7 +1602,11 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       : null;
     if (!claims) {
       if (!isJwt) return handler(req, res);
-      sendRefusal(res, opts, { kind: 'invalid_token', status: 401, error: 'invalid block token' });
+      sendRefusal(req, res, opts, {
+        kind: 'invalid_token',
+        status: 401,
+        error: 'invalid block token',
+      });
       return;
     }
 
@@ -1755,7 +1778,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       // be a breaking change for zero gain. `code` lets an app distinguish "this install
       // went away / the publisher was banned" from the consent refusal below and from an
       // ordinary `insufficient_scope`, which are three different things for it to do.
-      sendRefusal(res, opts, {
+      sendRefusal(req, res, opts, {
         kind: 'instance_revoked',
         status: 403,
         error: 'block instance revoked',
@@ -1873,7 +1896,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         !isConsentExemptScope(opts.requiredScope)
       ) {
         recordBlockConsentMarkerUnavailable('rest');
-        sendRefusal(res, opts, {
+        sendRefusal(req, res, opts, {
           kind: 'permission_state_unavailable',
           status: 503,
           error: 'permission state is temporarily unavailable — retry shortly',
@@ -1895,7 +1918,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // point of adding codes: "you never had this" and "the user took this away" call
         // for different app behaviour — the second one should stop asking and let the host
         // re-prompt, the first is a manifest/approval problem.
-        sendRefusal(res, opts, {
+        sendRefusal(req, res, opts, {
           kind: 'consent_revoked',
           status: 403,
           error: `consent revoked for scope: ${opts.requiredScope}`,
@@ -1993,7 +2016,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // `code` on EVERY 403 this wrapper emits, so an app can treat it as always-present
         // rather than having to test for it. Review found it on 3 of 5; the two it was
         // missing are this one and the context-binding refusal below.
-        sendRefusal(res, opts, {
+        sendRefusal(req, res, opts, {
           kind: 'app_not_approved',
           status: 403,
           error: 'app block is not approved',
@@ -2003,7 +2026,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       }
       if (approval === 'lookup_failed') {
         if (opts.onApprovalLookupFailure !== 'serve') {
-          sendRefusal(res, opts, {
+          sendRefusal(req, res, opts, {
             kind: 'approval_unavailable',
             status: 503,
             error: 'app block status unavailable',
@@ -2054,7 +2077,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
         // retrying a permission the user withdrew, or reports a consent problem for what
         // is really a manifest/approval gap. The name mirrors RFC 6750's OAuth 2.0 Bearer
         // Token error code, which is the vocabulary an app author already knows.
-        sendRefusal(res, opts, {
+        sendRefusal(req, res, opts, {
           kind: 'insufficient_scope',
           status: 403,
           error: `missing required scope: ${opts.requiredScope}`,
@@ -2076,7 +2099,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
           // array-form query param). A fourth distinct cause, and an app's remedy differs
           // again: re-request the token for the right context rather than re-prompt for
           // consent. `err.message` stays the human half, unchanged.
-          sendRefusal(res, opts, {
+          sendRefusal(req, res, opts, {
             kind: 'context_binding',
             status: 403,
             error: err.message,

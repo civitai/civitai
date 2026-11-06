@@ -6,6 +6,7 @@ import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../../test/c
 import type * as TrpcModule from '~/utils/trpc';
 import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { MediaUploadOnCompleteProps, UseMediaUploadProps } from '~/hooks/useMediaUpload';
 import { formatDate } from '~/utils/date-helpers';
 
@@ -45,7 +46,8 @@ vi.mock('~/components/Dialog/triggers/resource-select', () => ({
   }) => onSelect({ id: 42, name: 'v2.0', model: { name: 'Neon Noir' } }),
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ batchPostScheduling: true, postPlanner: false }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({

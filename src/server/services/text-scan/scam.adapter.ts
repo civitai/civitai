@@ -10,6 +10,7 @@ export const SCAM_ENTITY_TYPES = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'ResourceReview',
   'User',
   'UserProfile',
@@ -21,6 +22,8 @@ const SCAM_CLEANUP: Record<ScamEntityType, ScamCleanup> = {
   ChatMessage: 'chatMessages',
   Comment: 'comments',
   CommentV2: 'commentsV2',
+  // The commentsV2 cleanup also hides the author's comments on CommentV3-write surfaces.
+  CommentV3: 'commentsV2',
   ResourceReview: 'none',
   User: 'none',
   UserProfile: 'none',

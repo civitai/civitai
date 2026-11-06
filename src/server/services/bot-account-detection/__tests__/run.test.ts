@@ -58,12 +58,10 @@ function recordingReader(
       const posted = ids.filter((id) => !postedIds || postedIds.has(id));
       return {
         comments: [],
-        commentsV2: [],
         models: [],
         // Still on the site: everything the account posted, unless it is one of the blocked ones.
         images: posted.filter((id) => !blockedIds?.has(id)).map((userId) => ({ userId, count: 1 })),
         allComments: [],
-        allCommentsV2: [],
         allModels: [],
         allImages: posted.map((userId) => ({ userId, count: blockedIds?.has(userId) ? 40 : 1 })),
       };
@@ -582,11 +580,9 @@ describe('🔴 the seam between the evidence and the scoring', () => {
           .slice(0, take),
       countPosts: async (ids) => ({
         comments: [],
-        commentsV2: [],
         models: [],
         images: [],
         allComments: [],
-        allCommentsV2: [],
         allModels: [],
         allImages: ids.map((userId) => ({ userId, count: images })),
       }),

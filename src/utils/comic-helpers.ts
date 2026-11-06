@@ -21,3 +21,6 @@ export function formatRelativeDate(date: Date | string): string {
 export function formatGenreLabel(genre: string): string {
   return genre.replace(/([A-Z])/g, ' $1').trim();
 }
+
+/** tRPC error message for a comic that exists but is only served on the red domain. */
+export const COMIC_ON_RED_ERROR = 'COMIC_ON_RED';

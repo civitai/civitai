@@ -56,7 +56,15 @@ export async function scamEligibleAuthors(
         id: { in: ids },
         ...(ignoreAccountAge ? {} : { createdAt: { gt: scamAccountAgeCutoff(now) } }),
       },
-      select: { id: true, createdAt: true, isModerator: true, deletedAt: true, bannedAt: true },
+      select: {
+        id: true,
+        username: true,
+        meta: true,
+        createdAt: true,
+        isModerator: true,
+        deletedAt: true,
+        bannedAt: true,
+      },
     }),
     dbWrite.challengeJudge.findMany({ where: { userId: { in: ids } }, select: { userId: true } }),
   ]);

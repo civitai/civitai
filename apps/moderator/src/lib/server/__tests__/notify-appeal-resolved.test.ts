@@ -23,6 +23,14 @@ describe('notifyAppealResolved', () => {
     );
   });
 
+  it('files the decision under the Moderation tab', async () => {
+    createNotification.mockClear();
+    await notifyAppealResolved({ appeal: { id: 3, userId: 8 }, entityId: 40, status: 'Approved' });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Moderation' })
+    );
+  });
+
   it('keeps an image appeal’s details as they were', async () => {
     createNotification.mockClear();
     await notifyAppealResolved({ appeal: { id: 3, userId: 8 }, entityId: 40, status: 'Approved' });

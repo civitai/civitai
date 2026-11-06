@@ -1,4 +1,5 @@
-import { Button, Group, Popover, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconMoodSmile, IconPlus } from '@tabler/icons-react';
 import { groupBy } from 'lodash-es';

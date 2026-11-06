@@ -14,6 +14,8 @@ export const MAX_ROUNDS = 10;
  *  allowance is the dollar cap. */
 export const DAILY_TOKEN_CAP = 10_000_000;
 export const TOOL_TIMEOUT_MS = 45_000;
+/** The forced final answer's own window when the turn deadline passed during the last lookups. */
+export const FINAL_ANSWER_GRACE_MS = 30_000;
 /** A whole turn; past this the in-flight model call is aborted. */
 export const TURN_DEADLINE_MS = 4 * 60_000;
 /**
@@ -51,6 +53,10 @@ export type AnyTool = {
   name: string;
   input: z.ZodType;
   run: (args: never, ctx: ToolContext) => Promise<ToolResult>;
+  /** Longer than `TOOL_TIMEOUT_MS` for a tool measured to need it. */
+  timeoutMs?: number;
+  /** Added to the timed-out result, so the model can say exactly what went unchecked. */
+  onTimeout?: (args: never) => Record<string, unknown>;
 };
 
 export type TurnOutcome = {
@@ -159,7 +165,12 @@ export async function runTurn(input: {
         messages,
         tools: input.specs,
         toolChoice: last ? 'none' : 'auto',
-        signal: abort.signal,
+        // The answer that reports what was and was not checked always gets at least a short window,
+        // even when the lookups before it ran up to or past the deadline; otherwise the turn ends
+        // with nothing for the moderator to read.
+        signal: last
+          ? AbortSignal.timeout(Math.max(deadline - now(), FINAL_ANSWER_GRACE_MS))
+          : abort.signal,
       });
       promptTokens += completion.usage.prompt;
       completionTokens += completion.usage.completion;
@@ -189,7 +200,7 @@ export async function runTurn(input: {
       messages.push({ role: 'assistant', content: completion.message.content, tool_calls: calls });
       const results = await Promise.all(calls.map((call) => callTool(call, input, now)));
       for (const r of results) {
-        toolCalls.push(r.log);
+        toolCalls.push({ ...r.log, round: round + 1 });
         for (const s of r.sources) sources.set(s.ref, s);
         messages.push({ role: 'tool', tool_call_id: r.id, content: r.content });
       }
@@ -218,10 +229,10 @@ async function callTool(
   const started = now();
   const name = call.function.name;
   let args: unknown = call.function.arguments;
-  const fail = (error: string) => {
+  const fail = (error: string, detail: Record<string, unknown> = {}) => {
     const log = { name, args, rows: 0, truncated: false, ms: now() - started, error };
     input.emit({ type: 'tool-done', name, rows: 0, error, ms: log.ms });
-    return { id: call.id, content: JSON.stringify({ error }), log, sources: [] };
+    return { id: call.id, content: JSON.stringify({ ...detail, error }), log, sources: [] };
   };
 
   // A model may name a tool it saw earlier or was told about by quoted text; it gets an error.
@@ -246,7 +257,7 @@ async function callTool(
     const result = await Promise.race([
       (tool.run as (a: unknown, c: ToolContext) => Promise<ToolResult>)(parsed.data, input.ctx),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(TIMED_OUT)), TOOL_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new Error(TIMED_OUT)), tool.timeoutMs ?? TOOL_TIMEOUT_MS);
       }),
     ]);
     const { json, trimmed } = fitJson(
@@ -267,7 +278,16 @@ async function callTool(
     console.error(`[assistant] tool ${name} failed`, e);
     // 🔴 Never the error's own text: a ClickHouse error quotes the whole query, addresses included, and
     // this string reaches the model, the moderator's screen and the audit.
-    return fail(e instanceof Error && e.message === TIMED_OUT ? TIMED_OUT : 'The lookup failed.');
+    if (e instanceof Error && e.message === TIMED_OUT) {
+      let detail: Record<string, unknown> = {};
+      try {
+        detail = tool.onTimeout?.(parsed.data as never) ?? {};
+      } catch (inner) {
+        console.error(`[assistant] tool ${name} onTimeout failed`, inner);
+      }
+      return fail(TIMED_OUT, detail);
+    }
+    return fail('The lookup failed.');
   } finally {
     clearTimeout(timer);
   }

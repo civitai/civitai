@@ -127,6 +127,11 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
 const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
   {
     file: 'src/pages/_app.tsx',
+    spec: '~/server/bot-cache/bot-cache',
+    reason: 'server-only: reads the server env and Flipt.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
     spec: '~/server/services/settings-bootstrap.service',
     reason:
       'the per-render settings bootstrap, read in-process instead of over an HTTP request to our own `/api/user/settings`.',
@@ -136,6 +141,18 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
     spec: '~/server/shell/shell-render',
     reason:
       'the static-shell decision and its viewer-independent seeds (flags with no user, ToS, browsing addons, liveNow), read before the bootstrap is.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/trpc/trpc-pool-cookie',
+    reason:
+      'the tRPC routing cookie, synced from the viewer flag on a private full render; server-only because it writes a response header.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/utils/static-asset-cache',
+    reason:
+      'makes a page render on a static-asset Cache-Control rule path private; server-only because it writes a response header.',
   },
 ];
 

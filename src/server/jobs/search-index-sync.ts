@@ -31,8 +31,9 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   images: UNRUNNABLE_JOB_CRON,
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
-  imageMetrics: '*/1 * * * *',
-  imageMetricsUpdateMetrics: '*/1 * * * *',
+  // Retired with the feeds Meilisearch (`metrics_images_v1`), as `images` above.
+  imageMetrics: UNRUNNABLE_JOB_CRON,
+  imageMetricsUpdateMetrics: UNRUNNABLE_JOB_CRON,
   tools: UNRUNNABLE_JOB_CRON,
   comics: '*/5 * * * *',
 };

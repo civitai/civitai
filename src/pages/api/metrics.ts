@@ -18,6 +18,8 @@ import '~/server/prom/resource-intent-tags.metrics';
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
 // which is the exact ambiguity that counter exists to remove.
 import '~/server/auth/session-metrics';
+// Side-effect import: registers auth_internal_parity (collect()-based, probed at most every ten minutes).
+import '~/server/prom/auth-internal-parity.metrics';
 // Side-effect import: registers the Flipt eval-cache counters (collect()-based), so the
 // series exist from the first scrape rather than only after some other module happens to
 // pull them in. Same reasoning as the neighbours — an absent series here would read as
@@ -67,6 +69,11 @@ import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.
 import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
 import { seedAppBlockSharedStorageMetrics } from '~/server/prom/app-block-shared-storage.metrics';
+// The App Blocks document store: its review-storage counters and server-fault error series are
+// published at 0, and its enabled gauge is evaluated from the store's own predicate on every
+// scrape, so an alert on it fires on a pod that has served no storage traffic.
+import { seedAppBlockDocStoreMetrics } from '~/server/metrics/app-block-runtime.metrics';
+import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instance';
 // Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
@@ -217,6 +224,8 @@ async function collectRegistryMetrics(
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   await seedAppBlockStorageMetrics();
   await seedAppBlockSharedStorageMetrics();
+  seedAppBlockDocStoreMetrics();
+  await refreshDocStoreEnabled();
 
   const metrics = await collectRegistryMetrics(client.register, 'default');
 

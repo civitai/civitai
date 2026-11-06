@@ -23,8 +23,10 @@
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
       // canGenerateUnpublished stays unset: the standalone shell doesn't gate epoch generation.
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — the session user's tier is fixed for the page's life
       isPaidMember: data.isPaidMember,
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       pricingUrl: `${data.civitaiUrl}/pricing`,
     },
@@ -55,6 +57,6 @@
   });
 </script>
 
-<div class="mx-auto w-full max-w-6xl overflow-x-hidden px-6 py-10">
+<div class="mx-auto w-full max-w-6xl overflow-x-clip px-4 py-6 sm:px-6 sm:py-10">
   {@render children()}
 </div>

@@ -198,6 +198,15 @@ function sameContent(a: SubListingContent, b: SubListingContent): boolean {
   );
 }
 
+/** True when `next` changes `live` only by giving it a different, non-null image. */
+function imageOnlyChange(live: SubListingContent, next: SubListingContent): boolean {
+  return (
+    next.imageId != null &&
+    next.imageId !== live.imageId &&
+    sameContent(live, { ...next, imageId: live.imageId })
+  );
+}
+
 function liveContent(row: SubListingContent): SubListingContent {
   return {
     title: row.title,
@@ -329,10 +338,17 @@ async function publicImageOwner(imageId: number): Promise<number | null> {
 
 /**
  * The image rule for a card, shared by the in-app publish and the catalog sync: `imageId` must
- * be publicly visible, in a published non-private post, and uploaded by the item's author.
+ * be publicly visible, in a published non-private post, and uploaded by the item's author. The
+ * catalog sync also takes one the parent listing's owner uploaded (`alsoOwnedBy`): the platform
+ * that lists a creator's item may give it a card of its own making, as it does its own items.
+ * Returns the image's uploader (null for no image).
  */
-async function assertCardImage(imageId: number | null, authorUserId: number): Promise<void> {
-  if (imageId == null) return;
+async function assertCardImage(
+  imageId: number | null,
+  authorUserId: number,
+  alsoOwnedBy?: number
+): Promise<number | null> {
+  if (imageId == null) return null;
   const owner = await publicImageOwner(imageId);
   if (owner == null) {
     throw new SubListingError(
@@ -341,9 +357,10 @@ async function assertCardImage(imageId: number | null, authorUserId: number): Pr
       'The image must be public: in a published post and reviewed'
     );
   }
-  if (owner !== authorUserId) {
+  if (owner !== authorUserId && owner !== alsoOwnedBy) {
     throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
   }
+  return owner;
 }
 
 export type UpsertSubListingResult = {
@@ -442,13 +459,23 @@ async function writeSubListing(
   authorUserId: number,
   content: SubListingContent,
   authorMismatch: () => SubListingError = notYourItem,
+  /** The new image (already checked public) was uploaded by the parent listing's owner. */
+  ownerImage = false,
   attempt = 1
 ): Promise<WriteOutcome> {
   const again = () => {
     if (attempt >= MAX_WRITE_ATTEMPTS) {
       throw new SubListingError(409, 'conflict', 'The item changed while saving, retry');
     }
-    return writeSubListing(parent, itemKey, authorUserId, content, authorMismatch, attempt + 1);
+    return writeSubListing(
+      parent,
+      itemKey,
+      authorUserId,
+      content,
+      authorMismatch,
+      ownerImage,
+      attempt + 1
+    );
   };
   const activeCount = () =>
     dbWrite.appSubListing.count({
@@ -539,6 +566,26 @@ async function writeSubListing(
   if (sameContent(liveContent(existing), content)) {
     if (existing.pendingSubmittedAt && !(await casUpdate({ ...CLEAR_PENDING }))) return again();
     return { id: existing.id, status, pendingEdit: false, catalogAffected: false };
+  }
+  // The platform's own card for an approved item goes live without review: the edit changes only
+  // the image, to a public one the parent listing's owner uploaded, as on the owner's own items.
+  // It replaces any staged edit, as every newer sync does. Anything else waits for a moderator.
+  if (ownerImage && imageOnlyChange(liveContent(existing), content)) {
+    const swapped = await casUpdate({
+      imageId: content.imageId,
+      ...CLEAR_PENDING,
+      editRejectionReason: null,
+    });
+    if (!swapped) return again();
+    logToAxiom({
+      name: 'app-sub-listing-owner-card-applied',
+      type: 'info',
+      subListingId: existing.id,
+      parentListingId: parent.id,
+      fromImageId: existing.imageId,
+      toImageId: content.imageId,
+    }).catch(() => null);
+    return { id: existing.id, status, pendingEdit: false, catalogAffected: true };
   }
   const written = await casUpdate({
     pendingTitle: content.title,
@@ -871,7 +918,7 @@ export async function upsertCatalogSubListing(args: {
     );
   }
 
-  await assertCardImage(content.imageId, author.id);
+  const imageOwner = await assertCardImage(content.imageId, author.id, parent.ownerUserId);
 
   try {
     const safe = await assertSharedTextSafe({
@@ -895,7 +942,8 @@ export async function upsertCatalogSubListing(args: {
       args.externalId,
       author.id,
       content,
-      authorMismatch
+      authorMismatch,
+      imageOwner != null && imageOwner === parent.ownerUserId
     );
     if (catalogAffected) await bustCatalog();
     return { ...result, href };

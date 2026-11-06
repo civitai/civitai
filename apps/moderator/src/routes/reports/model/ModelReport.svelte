@@ -129,6 +129,12 @@
           detail: m.mode === 'Archived' ? 'Archived by its owner: visible, but no longer updated.' : null,
         };
       case 'UnpublishedViolation':
+        if (m.removedWithOwner)
+          return {
+            tone: 'down',
+            label: 'Removed with owner',
+            detail: 'Kept and hidden when its owner’s content was removed; not a violation.',
+          };
         return {
           tone: 'down',
           label: `Unpublished as a violation${onDate(m.unpublishedAt)}`,

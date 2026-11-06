@@ -85,6 +85,18 @@ describe('a failed training quote, from the orchestrator response to the block',
     });
   });
 
+  it('a 400 keyed by field carries its message', async () => {
+    mockSubmitWorkflow.mockResolvedValue({
+      data: undefined,
+      error: { errors: { 'steps[0].input.images': ['Training requires at least 5 images.'] } },
+      response: { status: 400 },
+    });
+    expect(await refusalFor()).toEqual({
+      error: 'Training could not be priced: Training requires at least 5 images.',
+      errorCode: 'training-quote-rejected',
+    });
+  });
+
   it('a 404 is a rejection too', async () => {
     mockSubmitWorkflow.mockResolvedValue(errorReply(404, ['The model was not found.']));
     expect(await refusalFor()).toEqual({

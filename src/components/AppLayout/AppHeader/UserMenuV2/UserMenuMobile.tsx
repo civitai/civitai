@@ -15,32 +15,40 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button, Divider, Popover, Text, UnstyledButton } from '@mantine/core';
+import { Button, Divider, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import {
   IconArrowsSort,
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
   IconGripVertical,
+  IconPlus,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   AccountSwitcher,
-  BuzzMenuItem,
+  BuzzBalances,
   MenuItemButton,
   MenuItemLink,
   UserMenuCtx,
   UserMenuFooter,
 } from '~/components/AppLayout/AppHeader/UserMenu';
+import { MembershipTierBadge } from '~/components/Account/MembershipTierBadge';
 import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { SupportChip } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  ACCOUNT_CARD_FRAME,
   BadgeMuteCtx,
   canMuteBadge,
   MenuItemLabel,
@@ -105,6 +113,7 @@ function MobileBody({ pins, close }: { pins: Pins; close: () => void }) {
     opened: true,
     pins: pins.pins,
     muted: pins.mutedBadges,
+    mobile: true,
   });
   const pinActions = usePinActions(pins);
   const { announce, region } = pinActions;
@@ -306,6 +315,7 @@ function TopLevel({
   );
 }
 
+/** The viewer's card at the top of the phone menu: who they are, their Buzz, and Buy Buzz. */
 export function MobileHeaderRows({
   pinned = false,
   onTogglePin,
@@ -315,41 +325,95 @@ export function MobileHeaderRows({
 }) {
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
+  const features = useFeatureFlags();
+  const onBuyBuzz = useBuyBuzz();
   const { handleClose } = useContext(UserMenuCtx);
   const trackHeader = useTrackHeaderOpen('mobile');
   if (!currentUser) return null;
 
   return (
-    <div className="flex items-center gap-1 pr-1">
-      <MenuItemLink
-        href={`/user/${currentUser.username}`}
-        className="min-w-0 rounded-lg !pr-2"
-        onClick={() => {
-          trackHeader('profile');
-          handleClose();
-        }}
-        data-panel-row
-      >
-        {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too. */}
-        <div className="-ml-2 min-w-0 overflow-x-clip pl-2">
-          <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
-        </div>
-      </MenuItemLink>
-      <div className="ml-auto">
-        <BuzzMenuItem compact onOpen={() => trackHeader('buzz-dashboard')} />
-      </div>
+    // Opening focuses the card itself, not its first link, so a tap does not light a focus ring on the name.
+    <div
+      tabIndex={-1}
+      data-autofocus
+      // The top-left corner follows the 56px avatar: its radius plus the card's padding.
+      className={clsx(
+        ACCOUNT_CARD_FRAME,
+        'relative m-1 flex flex-col gap-2 rounded-tl-[36px] p-2 outline-none'
+      )}
+    >
       {onTogglePin && (
         <LegacyActionIcon
           size="lg"
           variant="subtle"
           color="gray"
-          className="shrink-0"
+          className="absolute -right-0.5 -top-0.5 z-[1]"
           aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
           aria-pressed={pinned}
           onClick={onTogglePin}
         >
           <PinGlyph pinned={pinned} touch />
         </LegacyActionIcon>
+      )}
+      <div className="flex items-center gap-1">
+        <MenuItemLink
+          href={`/user/${currentUser.username}`}
+          className="min-w-0 flex-1 rounded-lg !p-0"
+          onClick={() => {
+            trackHeader('profile');
+            handleClose();
+          }}
+          data-panel-row
+        >
+          {/* Clips the name sideways only: an avatar frame reaches past the avatar's box, top and bottom too.
+              Username's drop shadow is for names over media; on this flat card it smudges the name. */}
+          <div className="-ml-2 min-w-0 overflow-x-clip pl-2 [&_.mantine-Text-root]:filter-none">
+            <UserAvatar
+              user={creator ?? currentUser}
+              size="lg"
+              withUsername
+              textSize="lg"
+              subText={
+                currentUser.tier ? (
+                  <MembershipTierBadge tier={currentUser.tier} />
+                ) : (
+                  <SupportChip onClick={handleClose} />
+                )
+              }
+              withHoverCard={false}
+            />
+          </div>
+        </MenuItemLink>
+      </div>
+      {features.buzz && (
+        <BuzzBalances
+          labelled
+          animated={features.buzzSpendPop}
+          iconSize={16}
+          textSize="md"
+          href="/user/buzz-dashboard"
+          onOpen={() => {
+            trackHeader('buzz-dashboard');
+            handleClose();
+          }}
+          action={
+            <LegacyActionIcon
+              variant="light"
+              color="blue"
+              radius="md"
+              size={24}
+              aria-label="Buy Buzz"
+              title="Buy Buzz"
+              onClick={() => {
+                // The sheet covers the screen and holds focus, so it closes before the purchase opens.
+                handleClose();
+                onBuyBuzz({});
+              }}
+            >
+              <IconPlus size={16} />
+            </LegacyActionIcon>
+          }
+        />
       )}
     </div>
   );
@@ -571,7 +635,7 @@ export function MobileItem({
     </>
   );
 
-  const link = item.href ? (
+  const row = item.href ? (
     item.external ? (
       <a
         href={item.href}
@@ -607,6 +671,15 @@ export function MobileItem({
       {content}
     </MenuItemButton>
   );
+
+  const link =
+    item.redirectReason && item.href ? (
+      <LoginRedirect reason={item.redirectReason} returnUrl={item.href}>
+        {row}
+      </LoginRedirect>
+    ) : (
+      row
+    );
 
   if (!canPin && !canMute) return link;
   // A row, not one button: the pin and the mute are controls of their own, and a button cannot hold another.

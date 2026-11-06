@@ -157,7 +157,8 @@ const getWorkflowFromVersion = async (modelVersionId: number) => {
   // the addressing for a privileged gate release, so an owner could point the file a moderator is
   // reviewing at a different run and have the ruling land there. The tag is written by us at submit
   // time (training.orch.ts) and the reviewed user cannot set it, so it — not the metadata — is what
-  // says which version this workflow belongs to.
+  // says which version this workflow belongs to. Keep it even though modelFile writes now drop
+  // client trainingResults: files saved before that still carry whatever metadata they were given.
   if (!workflow.tags?.includes(`modelVersion:${modelVersionId}`)) {
     logWebhook({
       message: 'Workflow does not belong to this model version; refusing to touch its gate',

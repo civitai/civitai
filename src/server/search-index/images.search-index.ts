@@ -25,13 +25,13 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import type { ImageGenerationProcess, MediaType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 100000; // Do not increase - might break Redis from what we've been able to tell.
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
-
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -82,6 +82,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: updateFilterableAttributesTask created',
       updateFilterableAttributesTask
     );
+  }
+
+  // Meili returns at most maxValuesPerFacet (default 100) values per facet, alphabetically.
+  if (settings.faceting?.maxValuesPerFacet !== SEARCH_FACET_LIMIT) {
+    const updateFacetingTask = await index.updateFaceting({
+      maxValuesPerFacet: SEARCH_FACET_LIMIT,
+    });
+    console.log('onIndexSetup :: updateFacetingTask created', updateFacetingTask);
   }
 
   console.log('onIndexSetup :: all tasks completed');

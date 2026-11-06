@@ -3,6 +3,8 @@
 // prod; a touch faster here). Results are keyed by the `key` the caller sends, which must be unique per run.
 
 import { backend } from '$lib/host';
+import { abortableDelay } from '$lib/pool';
+import { isAbort } from '$lib/upload';
 import type { Media } from '$lib/data/trainingModels';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/backend';
 
@@ -53,20 +55,6 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(new DOMException('Aborted', 'AbortError'));
-      },
-      { once: true }
-    );
-  });
-}
-
 async function submitBatch(
   mode: AutoLabelMode,
   media: Media,
@@ -83,8 +71,6 @@ function pollOnce(
   return backend().autoLabelPoll(workflowId, signal);
 }
 
-const isAbort = (err: unknown) => (err as DOMException | undefined)?.name === 'AbortError';
-
 async function runBatch(
   mode: AutoLabelMode,
   media: Media,
@@ -93,8 +79,12 @@ async function runBatch(
   signal: AbortSignal
 ): Promise<void> {
   const applied = new Set<string>();
+  let submitError: string | undefined;
   try {
-    const workflowId = await submitBatch(mode, media, batch);
+    const workflowId = await submitBatch(mode, media, batch).catch((err) => {
+      if (!isAbort(err) && err instanceof Error) submitError = err.message;
+      throw err;
+    });
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
@@ -109,7 +99,7 @@ async function runBatch(
       } catch (err) {
         if (isAbort(err)) throw err; // exit finishes the flow; other errors are transient — keep polling
       }
-      await sleep(POLL_INTERVAL_MS, signal);
+      await abortableDelay(POLL_INTERVAL_MS, signal);
     }
   } catch (err) {
     if (isAbort(err)) throw err; // let runAutoLabel see the abort; submit failures fall through to fail
@@ -118,7 +108,8 @@ async function runBatch(
     // fails so the tile stops showing "labeling…". Skipped on abort — the caller resets those.
     if (!signal.aborted) {
       for (const item of batch) {
-        if (!applied.has(item.key)) onResult({ key: item.key, status: 'failed' });
+        if (!applied.has(item.key))
+          onResult({ key: item.key, status: 'failed', ...(submitError && { error: submitError }) });
       }
     }
   }

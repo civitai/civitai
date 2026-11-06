@@ -1,4 +1,8 @@
-import { storedModelRuleSchema } from '@civitai/moderation/model-rules';
+import {
+  storedModelRuleSchema,
+  type ModelRuleCategory,
+  type ModelRuleReference,
+} from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -12,6 +16,9 @@ export type EnabledModelRule = {
   subject: string;
   description: string;
   aliases: string[];
+  /** Absent on an entry cached before these fields existed. */
+  category?: ModelRuleCategory;
+  references?: ModelRuleReference[];
   updatedAt: number;
 };
 
@@ -30,8 +37,18 @@ export async function getEnabledModelRules(): Promise<EnabledModelRule[]> {
         // A regex definition, or a converted rule a person has not reviewed yet, never reaches the matcher.
         const parsed = storedModelRuleSchema.safeParse(row.definition);
         if (!parsed.success || parsed.data.needsAttention) return [];
-        const { subject, description, aliases } = parsed.data;
-        return [{ id: row.id, subject, description, aliases, updatedAt: row.updatedAt.getTime() }];
+        const { subject, description, aliases, category, references } = parsed.data;
+        return [
+          {
+            id: row.id,
+            subject,
+            description,
+            aliases,
+            category,
+            references,
+            updatedAt: row.updatedAt.getTime(),
+          },
+        ];
       });
     },
     { ttl: CacheTTL.day }

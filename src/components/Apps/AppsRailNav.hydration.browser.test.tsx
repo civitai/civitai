@@ -19,7 +19,7 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * 🔴 THE INVARIANT GOT *WIDER* WITH THE RAIL, WHICH IS WORTH SAYING EXPLICITLY. A tab set
  * that differed between the server and the first client paint cost a row of chrome; a RAIL
- * that differs costs 276px of the page's WIDTH, and the store grid beneath it is a
+ * that differs costs 292px of the page's WIDTH, and the store grid beneath it is a
  * container query — so the same mismatch now re-ladders every card on the page rather than
  * shifting one bar. The deferral is load-bearing for more than it was.
  *
@@ -186,7 +186,7 @@ describe('the rail — hydration-safe conditional tabs', () => {
     // The two capability-driven tabs render — their inputs are SSR-frozen.
     await expect.element(link('Build')).toBeInTheDocument();
     await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
 
     // The conditional tabs MUST NOT render pre-mount — this is what keeps the first
     // client paint identical to the SSR HTML (the fix). Before the fix, the query
@@ -200,14 +200,15 @@ describe('the rail — hydration-safe conditional tabs', () => {
     mocks.isClient = true; // after mount / hydration has matched
     await renderRail();
 
-    for (const name of ['Marketplace', 'Build', ...CONDITIONAL]) {
+    for (const name of ['My apps', 'Marketplace', 'Build', ...CONDITIONAL]) {
       await expect.element(link(name)).toBeInTheDocument();
     }
     expect(renderedSections()).toEqual([
-      'Marketplace',
+      'My apps',
       'Activity',
       'Invites',
       'Revenue',
+      'Marketplace',
       'Build',
       'Review',
     ]);
@@ -219,7 +220,7 @@ describe('the rail — hydration-safe conditional tabs', () => {
     await renderRail();
 
     await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
     for (const name of CONDITIONAL) {
       expect(link(name).elements()).toHaveLength(0);
     }
@@ -249,8 +250,9 @@ describe('the rail — hydration-safe conditional tabs', () => {
     };
     await renderRail();
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
-    for (const retired of ['My apps', 'My submissions', 'Create', 'Build apps']) {
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
+    // ("My apps" is a live row again — the `/apps` home — so it is not in the retired list.)
+    for (const retired of ['My submissions', 'Create', 'Build apps']) {
       expect(link(retired).elements(), `a tab named "${retired}" is rendered`).toHaveLength(0);
     }
   });
@@ -310,7 +312,7 @@ describe('the rail — SSR tab set === first client render', () => {
     mocks.navSummary = undefined;
     await renderRail();
     await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
   test('NON-AUTHOR, first client paint (query data PRESENT) → the identical set', async () => {
@@ -319,7 +321,7 @@ describe('the rail — SSR tab set === first client render', () => {
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // the prod condition that broke hydration
     await renderRail();
     await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
   test('AUTHOR, server render (no query data) → Build + Marketplace', async () => {
@@ -328,7 +330,7 @@ describe('the rail — SSR tab set === first client render', () => {
     mocks.navSummary = undefined;
     await renderRail();
     await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
   test('AUTHOR, first client paint (query data PRESENT, invites pending) → the identical set', async () => {
@@ -340,7 +342,7 @@ describe('the rail — SSR tab set === first client render', () => {
     // Non-empty on BOTH sides of the pair: the capability gates applied on the first
     // paint (Build is here pre-mount) while the summary gate did NOT — including the
     // author-only `Invites`, whose summary flag is true in this fixture.
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
     expect(link('Invites').elements()).toHaveLength(0);
   });
 
@@ -352,7 +354,14 @@ describe('the rail — SSR tab set === first client render', () => {
     mocks.navSummary = { ...ALL_TRUE_SUMMARY };
     await renderRail();
     await expect.element(link('Activity')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    expect(renderedSections()).toEqual([
+      'My apps',
+      'Activity',
+      'Revenue',
+      'Marketplace',
+      'Build',
+      'Review',
+    ]);
     // Invites is the one tab the author gate removes — this viewer has a pending invite
     // in the summary and still must not get it.
     expect(renderedSections()).not.toContain('Invites');
@@ -442,25 +451,25 @@ describe('the rail — the Build tab keys off canAccessAppsBuild', () => {
     mocks.navSummary = { ...ALL_TRUE_SUMMARY }; // hasPendingInvites: true
     await renderRail();
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    // No "My apps" either: it is signed-in only (`/apps` redirects a signed-out viewer).
+    expect(renderedSections()).toEqual(['Activity', 'Revenue', 'Marketplace', 'Build', 'Review']);
     expect(link('Invites').elements()).toHaveLength(0);
   });
 
-  test('a logged-out viewer with no capability at all gets no bar', async () => {
+  test('a logged-out viewer with no capability gets no bar (Marketplace alone)', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = null;
     mocks.navSummary = undefined; // the summary query is protected — no data for anon
     await renderRail(); // barrier awaited inside — absence below is a real observation
-    // Marketplace is all that qualifies (`canBuild` needs one of the two capability
-    // terms), so the `< 2` collapse removes the bar entirely.
+    // `canBuild` needs a capability term and "My apps" needs a session, so Marketplace
+    // alone qualifies and the `< 2` collapse removes the bar.
     expect(renderedSections()).toEqual([]);
   });
 
   test('🔴 a logged-out viewer WITH appBlocksGetStarted does get Build (positive control)', async () => {
-    // The control for the `toEqual([])` above — the same reader observes a bar as soon
-    // as one qualifying tab is added, so the empty set there is a real absence. It also
-    // pins the deliberate asymmetry again from the get-started side: that term consults
-    // no user whatsoever.
+    // The control for the case above — one flag moves and Build appears. It also pins the
+    // deliberate asymmetry again from the get-started side: that term consults no user
+    // whatsoever.
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = null;
     mocks.navSummary = undefined;
@@ -471,13 +480,13 @@ describe('the rail — the Build tab keys off canAccessAppsBuild', () => {
 });
 
 /**
- * The <2-tab collapse, driven through the container. Still reachable, and by the live
- * `app-dev-testers` shape: a store-visible non-author with an empty summary and no
- * `appBlocksGetStarted` has `canBuild: false` and qualifies for Marketplace ALONE. The
- * third test is the same fixture with only that one flag moved, which is what attributes
- * the difference to the flag rather than to two unrelated fixtures.
+ * The <2-tab collapse is no longer reachable through the container for a store-visible
+ * viewer: `/apps` became the "My apps" home, gated on the SAME store access as
+ * Marketplace, so such a viewer always holds at least two entries — and a viewer WITHOUT
+ * store access gets `[]` from the hook. The floor itself is pinned against the real layout
+ * in `AppsRailNav.browser.test.tsx`. What this block keeps is the per-flag shape of the set.
  */
-describe('the rail — hides entirely below two tabs', () => {
+describe('the rail — the store-visible non-author', () => {
   const EMPTY_SUMMARY = {
     hasInstalls: false,
     hasActivity: false,
@@ -488,73 +497,51 @@ describe('the rail — hides entirely below two tabs', () => {
     hasPendingInvites: false,
   };
 
-  test('a store-visible non-author with an empty summary renders no nav at all', async () => {
+  test('🔴 with an empty summary still gets a nav: My apps + Marketplace', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     mocks.navSummary = { ...EMPTY_SUMMARY };
-    await renderRail(); // barrier awaited inside — absence below is a real observation
-    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
-    expect(renderedSections()).toEqual([]);
+    await renderRail();
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
   });
 
-  test('one install is enough to bring the bar back', async () => {
+  test('one install adds Activity', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     mocks.navSummary = { ...EMPTY_SUMMARY, hasInstalls: true };
     await renderRail();
-    await expect
-      .element(page.getByRole('navigation', { name: 'App sections' }))
-      .toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
+    await expect.element(link('Activity')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace']);
   });
 
-  test('🔴 …and so is appBlocksGetStarted, on the OTHERWISE IDENTICAL viewer', async () => {
+  test('🔴 …and appBlocksGetStarted adds Build, on the OTHERWISE IDENTICAL viewer', async () => {
     mocks.isClient = true;
     mocks.flags = { appBlocks: true, appBlocksAuthor: false, appBlocksGetStarted: true };
     mocks.user = { id: 7, username: 'tester', isModerator: false };
     mocks.navSummary = { ...EMPTY_SUMMARY };
     await renderRail();
-    await expect
-      .element(page.getByRole('navigation', { name: 'App sections' }))
-      .toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 });
 
 /**
- * 🔴 THE 1 → 2 TRANSITION — the post-hydration RELAYOUT the deferral buys, pinned as the
- * measured fact it is rather than left for someone to discover on a real page.
+ * 🔴 NO 1 → 2 TRANSITION ANY MORE — the 292px post-hydration shift this block used to pin is
+ * GONE for the common cohort, and that is now the checked fact.
  *
- * The tests above cover both END STATES with `isClient` fixed, and never the transition
- * between them. That gap hid a real consequence, found by an adversarial audit: for a
- * store-visible NON-AUTHOR WITH INSTALLS — anyone who has ever installed an app, i.e. the
- * ordinary `/apps` user — the SSR and first-paint section set is `[Marketplace]` ALONE.
- * One section is below `APPS_NAV_MIN_SECTIONS`, so `AppsPageLayout` renders NO RAIL and
- * the body takes the full container. After mount `getNavSummary` resolves, `Activity`
- * appears, the count reaches two, and the rail mounts — moving the page body 276px to the
- * right and re-laddering the container-queried store grid underneath it.
- *
- * 🔴 THIS IS NOT A HYDRATION MISMATCH AND THE DEFERRAL IS NOT THE BUG. Server and first
- * client paint agree exactly, which is the whole point of `useIsClient` and is what the
- * suite above proves. What changed is the COST of the reveal: as a tab strip it added one
- * ROW of vertical chrome; as a rail it is a full-width horizontal relayout on the most
- * common cohort. The trade is real either way —
- *
- *   • reserve the rail from the first paint for any logged-in store viewer whose summary
- *     query will run (all SSR-safe inputs), and the genuinely-one-section cohort gets
- *     276px of permanent chrome showing a single link — the exact waste the `< 2` collapse
- *     exists to prevent;
- *   • defer, as now, and that cohort pays nothing while the common one pays a one-time
- *     shift.
- *
- * — so it is a PRODUCT decision, deliberately not taken in code here. What this block does
- * is make the current behaviour a checked fact, so the choice is visible in a diff rather
- * than inherited by accident.
+ * It used to be: a store-visible non-author WITH installs had `[Marketplace]` alone before
+ * mount (one section ⇒ no rail ⇒ full-width body), then `Activity` arrived from the
+ * client-only summary, the count reached two and the rail MOUNTED, moving the body 292px.
+ * The "My apps" row is SSR-frozen (store access only), so that viewer now has TWO entries
+ * on the server and on the first client paint; the rail is there from the start and the
+ * reveal only adds a link inside it.
  */
-describe('🔴 the rail MOUNTS on the 1 → 2 transition (a 276px post-hydration shift)', () => {
-  // Local, because the sibling describe's `EMPTY_SUMMARY` is scoped to that block.
+describe('🔴 the rail is present BEFORE and AFTER mount for an installed non-author (no relayout)', () => {
   const NO_ROWS = {
     hasInstalls: false,
     hasActivity: false,
@@ -571,37 +558,23 @@ describe('🔴 the rail MOUNTS on the 1 → 2 transition (a 276px post-hydration
     mocks.navSummary = { ...NO_ROWS, hasInstalls: true };
   };
 
-  test('pre-mount this viewer gets ONE section, so NO rail and a full-width body', async () => {
+  test('pre-mount this viewer already gets TWO sections, so the rail is mounted', async () => {
     INSTALLED_NON_AUTHOR();
     mocks.isClient = false; // server + first client paint
-    await renderRail();
-    // One qualifying section ⇒ the `< 2` collapse ⇒ no chrome at all.
-    expect(renderedSections()).toEqual([]);
-    expect(document.querySelector('[data-apps-chrome="rail"]')).toBeNull();
-  });
-
-  test('🔴 post-mount the SAME viewer gets TWO, so the rail mounts and the body narrows', async () => {
-    INSTALLED_NON_AUTHOR();
-    mocks.isClient = true; // after mount, the summary has resolved
     await renderRail();
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
-    const rail = document.querySelector('[data-apps-chrome="rail"]') as HTMLElement | null;
-    expect(rail, 'the rail did not mount for a viewer who reached two sections').not.toBeNull();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
+    expect(document.querySelector('[data-apps-chrome="rail"]')).not.toBeNull();
   });
 
-  test('🔴 NEGATIVE CONTROL: a viewer who stays at ONE section never mounts it', async () => {
-    // Without this, "the rail appears once isClient is true" would also be satisfied by a
-    // rail that appears for everyone post-mount — which would make the pair above a
-    // statement about `isClient` rather than about the SECTION COUNT crossing the floor.
-    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
-    mocks.user = { id: 7, username: 'tester', isModerator: false };
-    mocks.navSummary = { ...NO_ROWS }; // no installs, no activity, nothing
-    mocks.isClient = true;
+  test('post-mount the SAME viewer gains Activity inside the same rail', async () => {
+    INSTALLED_NON_AUTHOR();
+    mocks.isClient = true; // after mount, the summary has resolved
     await renderRail();
-    expect(renderedSections()).toEqual([]);
-    expect(document.querySelector('[data-apps-chrome="rail"]')).toBeNull();
+    await expect.element(link('Activity')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace']);
+    expect(document.querySelector('[data-apps-chrome="rail"]')).not.toBeNull();
   });
 });

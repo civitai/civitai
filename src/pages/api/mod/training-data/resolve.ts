@@ -3,6 +3,7 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
@@ -39,21 +40,16 @@ export default defineModeratorEndpoint('trainingData.resolve', {
     // Thrown, not returned: the wrapper maps a TRPCError to its status, and a returned `{error}` would
     // be sent as a 200 with an error-shaped body.
     if (!file) throw throwNotFoundError('No training data on this version');
-    // A Training Studio `Training Data` row's URL is the trained epoch, not a zip. Keyed on the
-    // server-owned model meta because the row's own metadata is the owner's to edit.
+    // A Training Studio `Training Data` row points at the trained epoch until the dataset archive job
+    // swaps in the zip. Keyed on the server-owned model meta and the url itself because the row's own
+    // metadata is the owner's to edit.
     const studioWorkflowId = (
       file.modelVersion.model.meta as { trainingStudioWorkflowId?: string } | null
     )?.trainingStudioWorkflowId;
-    const { selectedEpochUrl, trainingResults } = (file.metadata ?? {}) as {
-      selectedEpochUrl?: string;
-      trainingResults?: { workflowId?: string };
-    };
-    if (
-      studioWorkflowId &&
-      (file.url === selectedEpochUrl || trainingResults?.workflowId === studioWorkflowId)
-    )
+    const { selectedEpochUrl } = (file.metadata ?? {}) as { selectedEpochUrl?: string };
+    if (studioWorkflowId && (file.url === selectedEpochUrl || isTrustedOrchestratorUrl(file.url)))
       throw throwNotFoundError(
-        'This version was trained in the Training Studio, so its dataset is not a zip. Open it on the training data review page.'
+        'This version was trained in the Training Studio and its dataset has not been archived yet. Open it on the training data review page.'
       );
 
     try {

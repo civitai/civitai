@@ -45,17 +45,25 @@ const fieldLabel = (key: string) =>
 export function getMissingFieldMessage(
   errors: Record<string, { message?: string }> | null
 ): string | null {
+  return getMissingField(errors)?.message ?? null;
+}
+
+/** The first field holding back the estimate: its key, so the footer can point at it, and why. */
+export function getMissingField(
+  errors: Record<string, { message?: string }> | null
+): { key: string; message: string } | null {
   if (!errors) return null;
   const entries = Object.entries(errors);
   for (const [key, error] of entries) {
     if (!error.message) continue;
     const label = fieldLabel(key);
-    return error.message.toLowerCase().includes(label.toLowerCase())
+    const message = error.message.toLowerCase().includes(label.toLowerCase())
       ? error.message
       : `${label}: ${error.message}`;
+    return { key, message };
   }
   const first = entries[0];
-  return first ? `${fieldLabel(first[0])} is invalid.` : null;
+  return first ? { key: first[0], message: `${fieldLabel(first[0])} is invalid.` } : null;
 }
 
 /** Fields whose content never affects cost — placeholdered for estimation. */

@@ -371,6 +371,8 @@ export const serverSchema = z
     DISCORD_BOT_TOKEN: z.string().optional(),
     DISCORD_GUILD_ID: z.string().optional(),
     DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
+    // The training canary's Discord channel. Unset: canary results are only logged to Axiom.
+    DISCORD_WEBHOOK_TRAINING_CANARY: z.string().optional(),
     EMAIL_HOST: z.string(),
     EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
     EMAIL_SECURE: zc.booleanString,
@@ -393,9 +395,14 @@ export const serverSchema = z
     S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
     CF_API_TOKEN: z.string().optional(),
     CF_ZONE_ID: z.string().optional(),
+    // The value the edge puts in `x-civ-cf-verified-bot` on a verified crawler's request. Unset or
+    // empty: no request is treated as one (`~/server/bot-cache/bot-cache`).
+    CF_VERIFIED_BOT_HEADER_SECRET: z.string().optional(),
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
+    SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
@@ -421,6 +428,13 @@ export const serverSchema = z
     // reason as MODERATOR_APP_INTERNAL_URL above.
     GF_REPORT_TOKEN: z.string().optional(),
     GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
+    // The shared "Civitai Moderation" account that moderators message users as. Unset or '' turns the
+    // feature off.
+    CIVITAI_MODERATION_USER_ID: z
+      .union([z.coerce.number().int().positive(), z.literal('')])
+      .optional(),
+    // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
+    MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -484,6 +498,9 @@ export const serverSchema = z
     // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
     // `src/server/trpc/batch-cap.ts`.
     TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
+    BLUE_PAID_ACCESS_RING_WINDOW_DAYS: z.coerce.number().int().min(1).max(90).catch(7),
+    BLUE_PAID_ACCESS_RING_MIN_BUYERS: z.coerce.number().int().min(2).max(1_000).catch(5),
+    BLUE_PAID_ACCESS_RING_MIN_SHARE_PCT: z.coerce.number().int().min(1).max(100).catch(80),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
@@ -498,12 +515,16 @@ export const serverSchema = z
     AXIOM_DATASTREAM: z.string().optional(),
     SEARCH_HOST: z.url().optional(),
     SEARCH_API_KEY: z.string().optional(),
-    // Search-only Meilisearch key (value + uid) that signs per-viewer browser search tokens.
-    // Unset = browsers keep using NEXT_PUBLIC_SEARCH_CLIENT_KEY.
+    // Search-only Meilisearch key (value + uid). With `siteSearchProxy` on, /api/search queries with
+    // it (unset = SEARCH_API_KEY); off, it signs per-viewer browser search tokens (unset = browsers
+    // use NEXT_PUBLIC_SEARCH_CLIENT_KEY).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
+    // Semantic image search (docs/features/semantic-image-search.md). Unset = the search page errors.
+    QDRANT_URL: z.url().optional(),
+    QDRANT_API_KEY: z.string().optional(),
     // Candidate image-feed service for shadow comparisons; unset = shadow mode inert.
     FEED_SERVICE_URL: z.url().optional(),
     // Debounce window (ms) for flushing model-metric-affected ids into the
@@ -817,7 +838,7 @@ export const serverSchema = z
     PAYPAL_CLIENT_ID: z.string().optional(),
     S3_VAULT_BUCKET: z.string().optional(),
     HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
-    // Comma-delimited check names to skip in /api/health (e.g. "searchMetrics").
+    // Comma-delimited check names to skip in /api/health (e.g. "clickhouse").
     // Static counterpart to the runtime sysRedis DISABLED_HEALTHCHECKS list.
     HEALTHCHECK_DISABLED: commaDelimitedStringArray().optional(),
     FRESHDESK_JWT_SECRET: z.string().optional(),
@@ -1052,6 +1073,10 @@ export const serverSchema = z
     // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
+    // Per call, the most retractions syncCdnAccess sends and the most CDN purges retryTakedownPersists
+    // makes; each retraction also purges. The rest wait for a later call. Anything but a positive
+    // integer (including 0) falls back to 15 rather than failing boot.
+    CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN: z.coerce.number().int().positive().catch(15),
 
     // Color environment domains (server-only; delivered to client via AppProvider).
     // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.

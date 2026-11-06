@@ -7,32 +7,58 @@ import { constants } from '~/server/common/constants';
 import { stripStickerTokens } from '~/shared/utils/sticker-token';
 import { getModelUrl } from '~/utils/string-helpers';
 
+/**
+ * Parse a chat link. linkify may hand over a bare `host/path`, which is read as https.
+ * Null when it does not parse or carries credentials (`user:pass@host`).
+ */
+const parseChatLink = (value: string) => {
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+  } catch {
+    return null;
+  }
+  if (url.username || url.password) return null;
+  return url;
+};
+
+export const isExternalChatLink = (href: string) => {
+  const url = parseChatLink(href);
+  return !!url && constants.chat.externalHosts.includes(url.hostname);
+};
+
+const civitaiChatLinkPath = (href: string) => {
+  const url = parseChatLink(href);
+  if (!url || !constants.chat.civHosts.includes(url.hostname)) return null;
+  return `${url.pathname}${url.search}${url.hash}` || '/';
+};
+
 export const getLinkHref = (href: string | undefined) => {
   if (!href) return;
 
-  if (constants.chat.externalRegex.test(href)) return href;
+  if (isExternalChatLink(href)) return href;
 
-  let newHref: string;
   const airMatch = href.match(constants.chat.airRegex);
   if (airMatch && airMatch.groups) {
     const { mId, mvId } = airMatch.groups;
-    newHref = getModelUrl({ modelId: Number(mId), modelVersionId: Number(mvId) });
-  } else {
-    newHref = href.replace(constants.chat.civRegex, '') || '/';
+    return getModelUrl({ modelId: Number(mId), modelVersionId: Number(mvId) });
   }
-  return newHref;
+
+  // Anything off the allowlist gets no link at all.
+  return civitaiChatLinkPath(href) ?? undefined;
 };
 
-export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
+export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement> = ({
   attributes,
   content,
 }) => {
   const { href, ...props }: { href?: string } = attributes;
 
   const modHref = getLinkHref(href);
-  if (!modHref) return;
+  // linkify-react reads `.props` off whatever this returns, so plain text still needs an element.
+  if (!modHref) return <>{content}</>;
 
-  if (constants.chat.externalRegex.test(modHref)) {
+  if (isExternalChatLink(modHref)) {
     // TODO: In a perfect world, we wouldn't be relying on Mantine here.
     return (
       <Anchor
@@ -63,17 +89,25 @@ export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement 
 // 2026-08-26: there is no arbitrary-URL fetch behind DM link previews.
 export const validateLink = {
   url: (value: string) =>
-    constants.chat.civRegex.test(value) ||
+    civitaiChatLinkPath(value) !== null ||
     constants.chat.airRegex.test(value) ||
-    constants.chat.externalRegex.test(value),
+    isExternalChatLink(value),
 };
 
 export const linkifyOptions: Opts = {
   render: renderLink,
-  validate: validateLink,
+  // A type missing from an object `validate` passes, so anything but a url (an email) is text.
+  validate: (value, type) => type === 'url' && validateLink.url(value),
 };
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
+
+/** Markdown the one-line preview would otherwise show raw: links, bold and inline code. */
+export const stripMarkdownForPreview = (text: string) =>
+  text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/`([^`]*)`/g, '$1');
 
 /**
  * The last-message line in a chat list row, with who said it.
@@ -90,7 +124,7 @@ export const chatPreviewText = ({
   viewerId: number | undefined;
   otherMembers: { userId: number; user: { username: string | null } }[];
 }) => {
-  const text = stripStickerTokens(message.content);
+  const text = stripMarkdownForPreview(stripStickerTokens(message.content));
   if (message.userId === viewerId) return `You: ${text}`;
   if (otherMembers.length > 1) {
     const sender = otherMembers.find((cm) => cm.userId === message.userId)?.user.username;

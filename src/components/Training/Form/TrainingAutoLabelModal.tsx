@@ -1,14 +1,5 @@
-import {
-  Button,
-  Divider,
-  Group,
-  Input,
-  Modal,
-  SegmentedControl,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { Button, Divider, Group, Input, Modal, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';

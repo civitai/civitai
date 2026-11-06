@@ -5,8 +5,8 @@ import { LuaFactory } from 'wasmoon';
  * with a settable clock, so a script's arithmetic and its redis.call sequence are tested rather
  * than mocked. CI has no Redis server.
  *
- * Supports only the commands the scripts under test use: TIME, HGET, HMGET, HSET, HINCRBY, PEXPIRE,
- * EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
+ * Supports only the commands the scripts under test use: TIME, EXISTS, GET, SET (NX, EX, PX), HGET, HEXISTS, HLEN, HMGET, HSET, HDEL, HINCRBY, PEXPIRE,
+ * HPEXPIRE, EXPIRE, TTL, DEL, LRANGE, LSET, SADD, SCARD, SISMEMBER, SREM, SMEMBERS, and redis.error_reply (thrown, as the client would). It is deliberately stricter than Redis in two places that would otherwise hide a 5.1/5.4 divergence:
  * every redis.call argument must already be a string (so a script must format its own numbers),
  * and every number it returns must be an integer (Redis would silently truncate a float).
  * `integerArgs` relaxes the first for scripts whose numeric arguments are literals or `ipairs`
@@ -19,12 +19,18 @@ export type LuaRedis = {
   hash: (key: string) => Record<string, string> | undefined;
   /** Remaining ms until `key` expires, -2 if missing, -1 if it has no TTL. */
   pttl: (key: string) => number;
+  /** Remaining ms until hash field `field` expires (HPEXPIRE), -2 if missing, -1 if it has no TTL. */
+  hpttl: (key: string, field: string) => number;
   /** Replaces the hash at `key`, as a test's starting data. */
   setHash: (key: string, fields: Record<string, string>) => void;
   /** The members of the set at `key` (after expiry), or undefined. */
   set: (key: string) => string[] | undefined;
   /** Replaces the set at `key`, as a test's starting data. */
   setSet: (key: string, members: string[]) => void;
+  /** The string at `key` (after expiry), or undefined. */
+  string: (key: string) => string | undefined;
+  /** Replaces the string at `key`, as a test's starting data, expiring in `ttlMs` when given. */
+  setString: (key: string, value: string, ttlMs?: number) => void;
   /** The list at `key`, head first, or undefined. */
   list: (key: string) => string[] | undefined;
   /** Replaces the list at `key` (head first), as a test's starting data. */
@@ -40,13 +46,24 @@ export type LuaRedis = {
 
 export function createLuaRedis(
   startMs: number,
-  { integerArgs = false }: { integerArgs?: boolean } = {}
+  {
+    integerArgs = false,
+    strings = new Map<string, string>(),
+  }: {
+    integerArgs?: boolean;
+    /**
+     * The plain string keys GET/SET read and write. Pass a test's own map to run a script over
+     * the same keys its fake client's `get`/`set`/`del` serve.
+     */
+    strings?: Map<string, string>;
+  } = {}
 ): LuaRedis {
   const factory = new LuaFactory();
   const hashes = new Map<string, Map<string, string>>();
   const lists = new Map<string, string[]>();
   const sets = new Map<string, Set<string>>();
   const expiresAt = new Map<string, number>();
+  const fieldExpiresAt = new Map<string, Map<string, number>>();
   const calls: string[][] = [];
   const errors: unknown[] = [];
 
@@ -60,6 +77,8 @@ export function createLuaRedis(
     eval: async (script, { keys, arguments: argv }) => {
       const engine = await factory.createEngine();
       try {
+        // Redis runs Lua 5.1, where `unpack` is a global; 5.4 only has table.unpack.
+        await engine.doString('unpack = table.unpack');
         engine.global.set('KEYS', keys);
         engine.global.set('ARGV', argv);
         engine.global.set('redis', {
@@ -84,6 +103,7 @@ export function createLuaRedis(
     setHash: (key, fields) => {
       hashes.set(key, new Map(Object.entries(fields)));
       expiresAt.delete(key);
+      fieldExpiresAt.delete(key);
     },
     set: (key) => {
       expire(key);
@@ -94,12 +114,27 @@ export function createLuaRedis(
       sets.set(key, new Set(members));
       expiresAt.delete(key);
     },
+    string: (key) => {
+      expire(key);
+      return strings.get(key);
+    },
+    setString: (key, value, ttlMs) => {
+      strings.set(key, value);
+      if (ttlMs === undefined) expiresAt.delete(key);
+      else expiresAt.set(key, state.nowMs + ttlMs);
+    },
     list: (key) => {
       const l = lists.get(key);
       return l ? [...l] : undefined;
     },
     setList: (key, items) => {
       lists.set(key, [...items]);
+    },
+    hpttl: (key, field) => {
+      expire(key);
+      if (!hashes.get(key)?.has(field)) return -2;
+      const at = fieldExpiresAt.get(key)?.get(field);
+      return at === undefined ? -1 : at - state.nowMs;
     },
     pttl: (key) => {
       expire(key);
@@ -110,7 +145,7 @@ export function createLuaRedis(
   };
 
   function exists(key: string) {
-    return hashes.has(key) || sets.has(key) || lists.has(key);
+    return hashes.has(key) || sets.has(key) || lists.has(key) || strings.has(key);
   }
 
   function expire(key: string) {
@@ -118,11 +153,24 @@ export function createLuaRedis(
     if (at !== undefined && at <= state.nowMs) {
       sets.delete(key);
       hashes.delete(key);
+      strings.delete(key);
       expiresAt.delete(key);
+      fieldExpiresAt.delete(key);
     }
+    const fieldTtls = fieldExpiresAt.get(key);
+    const h = hashes.get(key);
+    if (!fieldTtls || !h) return;
+    for (const [field, fieldAt] of fieldTtls) {
+      if (fieldAt > state.nowMs) continue;
+      h.delete(field);
+      fieldTtls.delete(field);
+    }
+    if (!h.size) hashes.delete(key);
   }
 
-  function redisCall(command: string, ...args: unknown[]) {
+  function redisCall(name: string, ...args: unknown[]) {
+    // Redis reads command names in any case.
+    const command = name.toUpperCase();
     const strArgs = args.map((a) => {
       if (typeof a === 'string') return a;
       if (integerArgs && typeof a === 'number' && Number.isInteger(a)) return String(a);
@@ -137,8 +185,30 @@ export function createLuaRedis(
           String(Math.floor(state.nowMs / 1000)),
           String(Math.floor(state.nowMs % 1000) * 1000),
         ];
+      case 'GET':
+        return strings.get(key) ?? false;
+      case 'SET': {
+        const opts = strArgs.slice(2).map((a) => a.toUpperCase());
+        if (opts.includes('NX') && exists(key)) return false;
+        hashes.delete(key);
+        sets.delete(key);
+        lists.delete(key);
+        strings.set(key, strArgs[1]);
+        const ex = opts.indexOf('EX');
+        const px = opts.indexOf('PX');
+        if (ex !== -1) expiresAt.set(key, state.nowMs + Number(strArgs[2 + ex + 1]) * 1000);
+        else if (px !== -1) expiresAt.set(key, state.nowMs + Number(strArgs[2 + px + 1]));
+        else expiresAt.delete(key);
+        return { ok: 'OK' };
+      }
+      case 'EXISTS':
+        return exists(key) ? 1 : 0;
       case 'HGET':
         return hashes.get(key)?.get(strArgs[1]) ?? false;
+      case 'HEXISTS':
+        return hashes.get(key)?.has(strArgs[1]) ? 1 : 0;
+      case 'HLEN':
+        return hashes.get(key)?.size ?? 0;
       case 'HINCRBY': {
         const h = hashes.get(key) ?? new Map<string, string>();
         const by = strArgs[2];
@@ -157,9 +227,36 @@ export function createLuaRedis(
       }
       case 'HSET': {
         const h = hashes.get(key) ?? new Map<string, string>();
-        for (let i = 1; i < strArgs.length; i += 2) h.set(strArgs[i], strArgs[i + 1]);
+        for (let i = 1; i < strArgs.length; i += 2) {
+          h.set(strArgs[i], strArgs[i + 1]);
+          fieldExpiresAt.get(key)?.delete(strArgs[i]);
+        }
         hashes.set(key, h);
         return 1;
+      }
+      case 'HDEL': {
+        const h = hashes.get(key);
+        let removed = 0;
+        for (const f of strArgs.slice(1)) {
+          if (h?.delete(f)) removed++;
+          fieldExpiresAt.get(key)?.delete(f);
+        }
+        if (h && !h.size) hashes.delete(key);
+        return removed;
+      }
+      case 'HPEXPIRE': {
+        // HPEXPIRE key ms FIELDS n field [field ...]
+        if (strArgs[2] !== 'FIELDS') throw new Error('ERR syntax error');
+        const ms = Number(strArgs[1]);
+        const fields = strArgs.slice(4, 4 + Number(strArgs[3]));
+        const h = hashes.get(key);
+        const ttls = fieldExpiresAt.get(key) ?? new Map<string, number>();
+        fieldExpiresAt.set(key, ttls);
+        return fields.map((f) => {
+          if (!h?.has(f)) return -2;
+          ttls.set(f, state.nowMs + ms);
+          return 1;
+        });
       }
       case 'PEXPIRE': {
         if (!exists(key)) return 0;
@@ -200,7 +297,7 @@ export function createLuaRedis(
         return removed;
       }
       case 'DEL': {
-        const existed = hashes.delete(key) || sets.delete(key);
+        const existed = hashes.delete(key) || sets.delete(key) || strings.delete(key);
         expiresAt.delete(key);
         return existed ? 1 : 0;
       }

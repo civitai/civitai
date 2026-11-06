@@ -37,8 +37,8 @@ the repo imports the old name any more, so do not reintroduce it.
 # Check installed version (either package may be present)
 grep -E '@civitai/(orchestration-)?client' package.json
 
-# Check latest available — the 'latest' dist-tag lags 'beta', so read the version list
-npm view @civitai/orchestration-client versions --json | tail -20
+# Check latest available
+npm view @civitai/orchestration-client version
 ```
 
 Search the **latest** version's types for the ecosystem:
@@ -55,11 +55,16 @@ Note what you find (or don't find):
 - **Multiple variant types** (e.g., standard vs turbo): the handler will branch on model version and return the appropriate typed input
 - **No types at all**: fall back to the generic `ImageGenStepTemplate` / `VideoGenStepTemplate` with a string `engine` field
 
-If the installed version is older than the latest and the latest has useful types, bump:
+If the installed version is older than the latest and the latest has useful types, bump it to the same
+exact version in **every** `package.json` that lists it, then install:
 
 ```bash
-pnpm add @civitai/orchestration-client@<latest-version>
+git grep -l '"@civitai/orchestration-client"' -- '*package.json'
+pnpm install
 ```
+
+A bump in the root alone leaves two copies installed, and
+`src/__tests__/orchestration-client-single-version.test.ts` fails.
 
 Import new types from `@civitai/orchestration-client` rather than hand-rolling them.
 
@@ -152,6 +157,11 @@ Two sections:
 `defineGraph<FamilyExt>({ scope: familyScope })`. Field helpers come from `../shared`
 (`familyResources`, `perModelSlider`, `promptOnlyTextBlock`) and `../defs`. Ideogram 4
 (`e680364460`) is a compact reference for the whole set.
+
+A field whose def depends on graph values (`({ version }) => ...`) must not build zod schemas
+inline, or it rebuilds them on every keystroke. Hoist the def, or wrap it in `cachedFactory` keyed
+on the values it reads (`tripoFaceLimitDef` in `model3d/tripo.graph.ts`). `no-churning-field-def`
+fails otherwise.
 
 Exports: always export `<name>VersionIds` (as a `const` object) so the handler can import it for
 version-to-model-string mapping.

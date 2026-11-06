@@ -2,6 +2,7 @@ import { shortAge } from '$lib/format';
 import {
   chatAuditChatUrl,
   commentV2Url,
+  commentV3Url,
   entityUrl,
   modelCommentUrl,
   userLookupUrl,
@@ -18,6 +19,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
 ] as const;
 
@@ -30,6 +32,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   Comment: 'Model comment',
   CommentV2: 'Comment',
+  CommentV3: 'Comment (new)',
   UserProfile: 'Profile',
 };
 
@@ -79,6 +82,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',
@@ -147,29 +151,6 @@ export const CSAM_HOLD_CONFIRMS: Partial<
   },
 };
 
-const MIN_PHRASE = 2;
-// A quote that never closes would otherwise run on to the next quote mark and highlight the text between.
-const MAX_PHRASE = 120;
-const WORD = '\\p{L}\\p{N}';
-// A quote opens after a non-word character and closes before one, so an apostrophe inside a word
-// ("author's", "isn't") is not one.
-const QUOTED = [
-  `(?<![${WORD}])'([^'\\n]{1,${MAX_PHRASE}}?)'(?![${WORD}])`,
-  `"([^"\\n]{1,${MAX_PHRASE}}?)"`,
-  `“([^”\\n]{1,${MAX_PHRASE}}?)”`,
-  `(?<![${WORD}])‘([^’\\n]{1,${MAX_PHRASE}}?)’(?![${WORD}])`,
-];
-
-export function quotedPhrases(reason: string): string[] {
-  const found = new Set<string>();
-  for (const source of QUOTED)
-    for (const match of reason.matchAll(new RegExp(source, 'gu'))) {
-      const phrase = match[1].trim();
-      if (phrase.length >= MIN_PHRASE) found.add(phrase);
-    }
-  return [...found];
-}
-
 export function holdTitle(hold: {
   entityType: string;
   entityId: number;
@@ -182,6 +163,7 @@ export function holdTitle(hold: {
       return 'Chat';
     case 'Comment':
     case 'CommentV2':
+    case 'CommentV3':
       return 'Comment';
     case 'UserProfile':
       return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
@@ -231,6 +213,8 @@ export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null
   switch (hold.entityType) {
     case 'CommentV2':
       return commentV2Url(civitaiUrl, hold.entityId);
+    case 'CommentV3':
+      return commentV3Url(civitaiUrl, hold.entityId);
     case 'Comment':
       return hold.commentModelId
         ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)

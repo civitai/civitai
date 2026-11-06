@@ -4,8 +4,8 @@
  *
  * WHY THIS EXISTS AS A SCRIPT AND NOT ONLY AS A TEST. The behavioural regression guard for
  * the 2026-08-08 `/api/og` outage lives in `src/tests/api/og.image-optimizer-sharp.test.ts`,
- * which runs in the `Unit tests` job — and that job is `continue-on-error: true`, so it
- * reports without gating. A guard that cannot fail a build is a notification. This is the
+ * which runs in the `Unit tests` job — and that job does not run on pull requests, only on
+ * `main` after the merge. A guard that cannot fail a PR is a notification. This is the
  * same structural assertion in a form a blocking job can run in ~50ms: no database, no
  * sharp, no browser, no network, no Next module graph — one file read per installed copy.
  *

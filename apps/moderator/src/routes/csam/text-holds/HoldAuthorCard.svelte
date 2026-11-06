@@ -4,8 +4,9 @@
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import UserCard from '$lib/components/user-card/UserCard.svelte';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
-  import { urlWith } from '$lib/url';
+    import { urlWith } from '$lib/url';
   import type { HoldAuthor } from './hold-author';
   import { decisionLabel, entityLabel } from './hold-entity';
 
@@ -67,6 +68,35 @@
               </span>
             {:else if author.reportedContent}
               nothing reported
+            {:else}
+              —
+            {/if}
+          </FactRow>
+          <FactRow label="Latest reports">
+            {#if author.recentReports?.length}
+                <ul class="m-0 list-none space-y-1.5 p-0">
+                  {#each author.recentReports as r (r.id)}
+                    {@const href = entityUrl(page.data.civitaiUrl, r.type, r.entityId)}
+                    <li>
+                      <span class="flex items-baseline justify-between gap-2">
+                        {#if href}
+                          <a {href} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+                            {r.entityType} #{r.entityId}
+                          </a>
+                        {:else}
+                          <span>{r.entityType}{r.entityId ? ` #${r.entityId}` : ''}</span>
+                        {/if}
+                        <span class="shrink-0 text-dark-2">{shortAge(r.createdAt)} ago</span>
+                      </span>
+                      <span class="block text-dark-2">{r.reason}</span>
+                    </li>
+                  {/each}
+                </ul>
+                <a href={userLookupUrl(author.userId, 'reports')} class="mt-1.5 inline-block {LINK_CLASS}">
+                  All reports in User Lookup
+                </a>
+            {:else if author.recentReports}
+              no human reports on their content
             {:else}
               —
             {/if}

@@ -30,12 +30,15 @@
   import { chipHref, rowChips } from '$lib/triage/filters';
 
   let {
-    groups,
+    groups = [],
+    status,
     sort,
     selectionParam,
     trailing,
   }: {
-    groups: ChipGroup[];
+    groups?: ChipGroup[];
+    /** A status select, rendered as the sort select is, ahead of it. */
+    status?: ChipGroup;
     sort?: ChipGroup;
     /** The URL param holding the open item; it indexes the old result set, so a filter drops it. */
     selectionParam: string;
@@ -64,6 +67,43 @@
   {/if}
 {/snippet}
 
+{#snippet select(group: ChipGroup)}
+  <!-- A function binding: the URL owns the group, so a one-way value prop could latch. -->
+  <Select.Root
+    type="single"
+    bind:value={
+      () => group.active,
+      (value) => {
+        if (value && value !== group.active) go(hrefFor(group, value));
+      }
+    }
+  >
+    <Select.Trigger
+      aria-label={group.label}
+      class={group.pill ? PILL_CONTROL : `${TEXT_CONTROL} h-auto border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-transparent [&>svg]:size-3`}
+    >
+      {#if group.pill}
+        <span class="text-xs text-dark-2">{group.label}</span>
+        <span class="text-[13px] font-medium text-white">{group.labels[group.active]}</span>
+        {#if group.counts?.[group.active] != null}
+          <span
+            class="rounded-lg bg-blue-500 px-[7px] py-px text-[11px] font-semibold text-white tabular-nums"
+            >{countText(group, group.active)}</span
+          >
+        {/if}
+      {:else}
+        {group.labels[group.active]}
+        {@render count(group, group.active)}
+      {/if}
+    </Select.Trigger>
+    <Select.Content>
+      {#each group.values as value (value)}
+        <Select.Item {value}>{group.labels[value]} {@render count(group, value)}</Select.Item>
+      {/each}
+    </Select.Content>
+  </Select.Root>
+{/snippet}
+
 <div class={cn('flex flex-wrap items-center', groups.some((g) => g.compact) ? 'gap-1' : 'gap-1.5')}>
   {#each chips as { group, value } (`${group.key}:${value}`)}
     {@const active = group.active === value}
@@ -90,40 +130,6 @@
     </a>
   {/each}
   {@render trailing?.()}
-  {#if sort}
-    <!-- A function binding: the URL owns the sort, so a one-way value prop could latch. -->
-    <Select.Root
-      type="single"
-      bind:value={
-        () => sort.active,
-        (value) => {
-          if (value && value !== sort.active) go(hrefFor(sort, value));
-        }
-      }
-    >
-      <Select.Trigger
-        aria-label={sort.label}
-        class={sort.pill ? PILL_CONTROL : `${TEXT_CONTROL} h-auto border-0 bg-transparent shadow-none dark:bg-transparent dark:hover:bg-transparent [&>svg]:size-3`}
-      >
-        {#if sort.pill}
-          <span class="text-xs text-dark-2">{sort.label}</span>
-          <span class="text-[13px] font-medium text-white">{sort.labels[sort.active]}</span>
-          {#if sort.counts?.[sort.active] != null}
-            <span
-              class="rounded-lg bg-blue-500 px-[7px] py-px text-[11px] font-semibold text-white tabular-nums"
-              >{countText(sort, sort.active)}</span
-            >
-          {/if}
-        {:else}
-          {sort.labels[sort.active]}
-          {@render count(sort, sort.active)}
-        {/if}
-      </Select.Trigger>
-      <Select.Content>
-        {#each sort.values as value (value)}
-          <Select.Item {value}>{sort.labels[value]} {@render count(sort, value)}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  {/if}
+  {#if status}{@render select(status)}{/if}
+  {#if sort}{@render select(sort)}{/if}
 </div>

@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AutoLabelItem, AutoLabelResult } from './backend';
 
 const submitted: AutoLabelItem[] = [];
+const refuse = { message: '' };
 vi.mock('$lib/host', () => ({
   backend: () => ({
     autoLabelSubmit: async (items: AutoLabelItem[]) => {
+      if (refuse.message) throw new Error(refuse.message);
       submitted.push(...items);
       return { workflowId: 'wf' };
     },
@@ -57,5 +59,22 @@ describe('auto-label per-image submit cap', () => {
       );
     }
     expect(sent.at(-1)).toBe(0);
+  });
+
+  it("fails a refused batch with the server's reason, so the tile can show it", async () => {
+    refuse.message = 'Auto-label only accepts media uploaded to Civitai.';
+    try {
+      const results: AutoLabelResult[] = [];
+      await runAutoLabel(
+        'caption',
+        'image',
+        [{ key: 'r', mediaUrl: 'https://x/refused.png' }],
+        (r) => results.push(r),
+        new AbortController().signal
+      );
+      expect(results).toEqual([{ key: 'r', status: 'failed', error: refuse.message }]);
+    } finally {
+      refuse.message = '';
+    }
   });
 });
