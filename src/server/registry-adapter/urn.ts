@@ -1,11 +1,16 @@
 /**
  * The adapter's namespace and the one function that builds every URN in it.
  *
- * `app-blocks`: not Civitai-specific, and less generic than plain `apps`. URNs are never
- * rewritten once a registry has seen them, so settle any change here, before a registry consumes
- * it.
+ * `apps.civitai.com`: a domain the operator controls, as the spec asks of a namespace that is not
+ * a well-known name, so it cannot clash with anyone else's. URNs are never rewritten once a
+ * registry has seen them, so settle any change here before a registry consumes them. Registry
+ * issue #6 (URNs or https URLs as identifiers) may still change the identifier FORM; that would
+ * be a mechanical change of these builders, with the namespace staying `apps.civitai.com`.
+ *
+ * Length: the longest URN built here is a document's, `urn:apps.civitai.com:` plus a 64-char
+ * slug, a 32-char collection and a 128-char key with their two `/`: 247 characters.
  */
-export const REGISTRY_NAMESPACE = 'app-blocks';
+export const REGISTRY_NAMESPACE = 'apps.civitai.com';
 
 /** The registry's own schema of schemas: every schema entity claims it. Not ours. */
 export const REGISTRY_SCHEMA_SCHEMA = 'urn:schema:registry:schema@v1';

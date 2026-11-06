@@ -17,7 +17,8 @@ import { syncAccountNoindexMiddleware } from '~/server/middleware/sync-account-n
 // botDetection's terminal-with-request-mods response so both effects apply.
 // (Session-based guards — /moderator, /testing, preview-auth — moved to _app getInitialProps: the edge runtime
 // can't resolve the thin hub civ-token to a full user.)
-const middlewares: Middleware[] = [
+// Exported for `standalone-api-policy.test.ts`, which pins what this list does to an `/api/v1/` request.
+export const middlewares: Middleware[] = [
   regionBlockMiddleware,
   regionRestrictionMiddleware,
   apiRegionBlockMiddleware,

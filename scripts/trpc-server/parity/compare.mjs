@@ -15,11 +15,12 @@
  * Usage:
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
  *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json
- *     [--cases trpc|image-delivery|beacons] [--route-counter]
+ *     [--cases trpc|image-delivery|beacons|api] [--route-counter]
  *     [--tracker <url> --tracker-a-ip <ip> --tracker-b-ip <ip>]
  *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
- * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery` or `beacons`. A case
+ * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery`, `beacons` or
+ * `api` (the standalone server's `api` profile: `/api/v1/**` and `/api/auth/**`). A case
  * with `warm: true` is sent once more to the same server, unmeasured, right before its measured
  * send (after the Redis reset), so the measured request finds what the first one cached.
  *
@@ -49,7 +50,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
+import { buildApiCases, buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
 
 const IGNORED_HEADERS = new Set(['date', 'connection', 'keep-alive']);
 const COOKIE_TIME_TOLERANCE_S = 30;
@@ -390,6 +391,7 @@ const suites = {
   trpc: () => buildCases({ sessionCookie }),
   'image-delivery': () => buildImageDeliveryCases({ webhookToken: env.WEBHOOK_TOKEN }),
   beacons: () => buildBeaconCases({ sessionCookie }),
+  api: () => buildApiCases({ sessionCookie }),
 };
 if (!suites[args.cases]) fail2(`--cases ${args.cases}: expected one of ${Object.keys(suites)}`);
 const cases = suites[args.cases]();
