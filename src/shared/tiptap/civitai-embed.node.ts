@@ -1,3 +1,4 @@
+import type { Editor } from '@tiptap/core';
 import { Node, mergeAttributes, nodePasteRule } from '@tiptap/core';
 import type { DOMOutputSpec } from '@tiptap/pm/model';
 import type { CivitaiEmbedItem } from '~/shared/tiptap/civitai-embed.utils';
@@ -95,3 +96,9 @@ export const CivitaiEmbedNode = Node.create<{ pasteToCard: boolean }>({
     ];
   },
 });
+
+/** The model or image an Embed dialog input can become a card of, behind the same gate as paste. */
+export function civitaiCardFromInput(editor: Editor, input: string): CivitaiEmbedItem | null {
+  const node = editor.extensionManager.extensions.find((ext) => ext.name === CivitaiEmbedNode.name);
+  return node?.options.pasteToCard ? parseCivitaiEmbedUrl(input) : null;
+}

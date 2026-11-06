@@ -80,19 +80,22 @@ function MaturePlaceholder({
   return <MatureTile type={item.type} onShow={() => setRevealed(true)} />;
 }
 
-export function MatureTile({ type, onShow }: { type: CivitaiEmbedType; onShow: () => void }) {
+/** Without onShow (mature content off), the tile only says something is hidden. */
+export function MatureTile({ type, onShow }: { type: CivitaiEmbedType; onShow?: () => void }) {
   return (
-    <Tile testId="civitai-embed-mature">
+    <Tile testId={onShow ? 'civitai-embed-mature' : 'civitai-embed-hidden'}>
       <IconEyeOff size={28} className="text-dimmed" />
       <Text size="xs" tt="uppercase" fw={600} c="dimmed">
         {typeLabel[type]}
       </Text>
       <Text size="sm" c="dimmed">
-        Mature content, hidden by your browsing settings
+        {onShow ? 'Mature content, hidden by your browsing settings' : 'Mature content hidden'}
       </Text>
-      <Button size="compact-sm" variant="light" onClick={onShow}>
-        Show
-      </Button>
+      {onShow && (
+        <Button size="compact-sm" variant="light" onClick={onShow}>
+          Show
+        </Button>
+      )}
     </Tile>
   );
 }
@@ -110,6 +113,7 @@ function EmbedCard({ item }: { item: CivitaiEmbedItem }) {
       {view.state === 'loading' && <Skeleton className="aspect-[7/9] w-full" radius="md" />}
       {view.state === 'card' && <EntityCard item={item} data={view.data} />}
       {view.state === 'mature' && <MaturePlaceholder item={item} data={view.data} />}
+      {view.state === 'hidden' && <MatureTile type={item.type} />}
       {view.state === 'unavailable' && <UnavailableTile item={item} />}
     </div>
   );

@@ -8,6 +8,7 @@ import { ConsentBlockedEmbed } from '~/components/Consent/ConsentBlockedEmbed';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { civitaiCardFromInput } from '~/shared/tiptap/civitai-embed.node';
 import { embedIframeAttrs } from '~/shared/tiptap/embed.node';
 import type { EmbedProvider, LegacyEmbedKind, ParsedEmbed } from '~/shared/utils/embed-providers';
 import {
@@ -56,6 +57,7 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
   const dialog = useDialogContext();
   const [value, setValue] = useState('');
   const detected = useMemo(() => detectFor(editor, value), [editor, value]);
+  const card = useMemo(() => civitaiCardFromInput(editor, value), [editor, value]);
   const lookup = trpc.content.resolveBandcampEmbed.useMutation();
   const bandcampPage = detected?.kind === 'bandcamp-lookup' ? detected.pageUrl : null;
 
@@ -98,6 +100,16 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
     dialog.onClose();
   };
 
+  const insertCard = () => {
+    if (!card) return;
+    editor
+      .chain()
+      .focus()
+      .insertContent({ type: 'civitaiEmbed', attrs: { items: [card] } })
+      .run();
+    dialog.onClose();
+  };
+
   const waiting = !!bandcampPage && (lookup.isPending || lookup.variables?.url !== bandcampPage);
   const legacy =
     detected && detected.kind !== 'embed' && detected.kind !== 'bandcamp-lookup'
@@ -119,22 +131,37 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
           onChange={(e) => setValue(e.currentTarget.value)}
           data-autofocus
         />
-        {value.trim() && (
-          <EmbedStatus
-            player={player}
-            legacy={legacy}
-            waiting={waiting}
-            lookupFailed={lookupFailed}
-            canLink={canLink}
-          />
+        {card ? (
+          <Text size="sm" fw={600}>
+            Detected: Civitai {card.type}
+          </Text>
+        ) : (
+          value.trim() && (
+            <EmbedStatus
+              player={player}
+              legacy={legacy}
+              waiting={waiting}
+              lookupFailed={lookupFailed}
+              canLink={canLink}
+            />
+          )
         )}
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button onClick={insert} disabled={waiting || (!player && !legacyLabel && !canLink)}>
-            {player || legacyLabel ? 'Embed' : 'Insert link'}
-          </Button>
+          {card ? (
+            <>
+              <Button variant="light" onClick={insert}>
+                Insert as link
+              </Button>
+              <Button onClick={insertCard}>Insert as card</Button>
+            </>
+          ) : (
+            <Button onClick={insert} disabled={waiting || (!player && !legacyLabel && !canLink)}>
+              {player || legacyLabel ? 'Embed' : 'Insert link'}
+            </Button>
+          )}
         </Group>
       </Stack>
     </Modal>

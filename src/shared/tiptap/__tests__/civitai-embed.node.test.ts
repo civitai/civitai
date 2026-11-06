@@ -2,7 +2,12 @@ import { generateHTML } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import { generateJSON } from '~/server/utils/tiptap-generate-json';
-import { CIVITAI_EMBED_PASTE_URL } from '~/shared/tiptap/civitai-embed.node';
+import type { Editor } from '@tiptap/core';
+import {
+  CIVITAI_EMBED_PASTE_URL,
+  CivitaiEmbedNode,
+  civitaiCardFromInput,
+} from '~/shared/tiptap/civitai-embed.node';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import {
   CIVITAI_EMBED_MAX_PER_TYPE,
@@ -102,6 +107,27 @@ describe('the paste rule', () => {
     'https://image.civitai.com/images/1',
     'https://civitai.com/user/someone',
   ])('leaves %s as a plain link', (url) => expect(claims(url)).toBe(false));
+});
+
+describe('the Embed dialog card option', () => {
+  const editorWith = (pasteToCard: boolean) =>
+    ({
+      extensionManager: { extensions: [CivitaiEmbedNode.configure({ pasteToCard })] },
+    } as unknown as Editor);
+
+  it('offers a card for a model version link where cards are on', () => {
+    expect(
+      civitaiCardFromInput(editorWith(true), ' https://civitai.com/models/5?modelVersionId=6 ')
+    ).toEqual({ type: 'model', id: 5, versionId: 6 });
+  });
+
+  it('offers no card where the flag or the editor leaves cards off', () => {
+    expect(civitaiCardFromInput(editorWith(false), 'https://civitai.com/images/77')).toBeNull();
+  });
+
+  it('offers no card for a link that is not a model or image', () => {
+    expect(civitaiCardFromInput(editorWith(true), 'https://civitai.com/user/someone')).toBeNull();
+  });
 });
 
 describe('collectCivitaiEmbedIds', () => {

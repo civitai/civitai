@@ -1,6 +1,8 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
+import { getEmbedAvailabilityHandler } from '~/server/controllers/civitai-embed.controller';
 import { cacheIt, rateLimit } from '~/server/middleware.trpc';
+import { getEmbedAvailabilitySchema } from '~/server/schema/civitai-embed.schema';
 import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
 import { resolveBandcampEmbed } from '~/server/services/embed-lookup.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -32,4 +34,10 @@ export const contentRouter = router({
     .input(z.object({ url: z.string().max(500) }))
     .use(rateLimit({ limit: 30, period: 60 * 60 }))
     .mutation(({ input }) => resolveBandcampEmbed(input.url)),
+  /** Article cards a reader can't see: content-free, so mature-off readers get a placeholder. */
+  getEmbedAvailability: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getEmbedAvailabilitySchema)
+    .use(rateLimit({ limit: 300, period: 60 * 60 }))
+    .query(getEmbedAvailabilityHandler),
 });
