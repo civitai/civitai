@@ -19,12 +19,14 @@ const {
   mockDeleteObject,
   mockDeregister,
   mockFileListBust,
+  mockBustFileAirs,
 } = vi.hoisted(() => ({
   mockResourceDataBust: vi.fn(() => Promise.resolve()),
   mockBustOrchestrator: vi.fn(() => Promise.resolve()),
   mockDeleteObject: vi.fn(() => Promise.resolve()),
   mockDeregister: vi.fn(() => Promise.resolve()),
   mockFileListBust: vi.fn(() => Promise.resolve()),
+  mockBustFileAirs: vi.fn(() => Promise.resolve()),
 }));
 // A new upload deletes the old object in the background; keep that off any real bucket.
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObject }));
@@ -37,6 +39,9 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
+}));
+vi.mock('~/server/services/orchestrator/scanned-file-airs', () => ({
+  bustVersionScannedFileAirs: mockBustFileAirs,
 }));
 // The version's file list (the only createCachedObject in the service).
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
@@ -123,7 +128,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued mockRejectedValueOnce; a test that never reaches its bust would
   // otherwise hand that rejection to the next test.
-  for (const bust of [mockFileListBust, mockResourceDataBust, mockBustOrchestrator])
+  for (const bust of [
+    mockFileListBust,
+    mockResourceDataBust,
+    mockBustOrchestrator,
+    mockBustFileAirs,
+  ])
     bust.mockReset().mockImplementation(() => Promise.resolve());
   withFile();
   linkedRows = [];
@@ -320,6 +330,33 @@ describe('a new upload creates a new file record', () => {
     await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
     expect(mockResourceDataBust).not.toHaveBeenCalled();
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("busts the version's coverage caches, file-pinned AIRs included, when an edit changes the type", async () => {
+    await updateFile({ id: 1, type: 'Config', userId: 7 });
+    expect(mockResourceDataBust).toHaveBeenCalledWith([10]);
+    expect(mockBustFileAirs).toHaveBeenCalledWith(10, expect.objectContaining({ modelId: 5 }));
+    // Once before the write, while the old type still derives the old AIR, and once after.
+    const write = dbMock.dbWrite.modelFile.updateMany.mock.invocationCallOrder[0];
+    expect(mockBustOrchestrator.mock.invocationCallOrder.map((order) => order < write)).toEqual([
+      true,
+      false,
+    ]);
+
+    vi.clearAllMocks();
+    // The editor re-sends the stored type with every save.
+    await updateFile({ id: 1, type: FILE.type, overrideName: 'renamed', userId: 7 });
+    expect(mockResourceDataBust).not.toHaveBeenCalled();
+    expect(mockBustOrchestrator).not.toHaveBeenCalled();
+    expect(mockBustFileAirs).not.toHaveBeenCalled();
+  });
+
+  it('still succeeds when a cache bust fails after a type change', async () => {
+    mockBustFileAirs.mockRejectedValueOnce(new Error('orchestrator down'));
+
+    await expect(updateFile({ id: 1, type: 'Config', userId: 7 })).resolves.toMatchObject({
+      id: 1,
+    });
   });
 
   it('still succeeds when a cache bust fails after the swap', async () => {

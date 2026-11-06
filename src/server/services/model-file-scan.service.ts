@@ -42,6 +42,7 @@ import {
   unpublishModelVersionById,
 } from '~/server/services/model-version.service';
 import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 
@@ -448,7 +449,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
       bustOrchestratorModelCache(modelVersionId),
-      coverageMoved && file.modelVersion && bustScannedFileAirs(modelVersionId, file.modelVersion),
+      coverageMoved &&
+        file.modelVersion &&
+        bustVersionScannedFileAirs(modelVersionId, file.modelVersion),
     ]).catch((e) =>
       logToAxiom(
         {
@@ -460,28 +463,6 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         'webhooks'
       ).catch(() => undefined)
     );
-}
-
-// Version busts never reach the file-pinned AIRs, and the exclusion covers every file of the version.
-async function bustScannedFileAirs(
-  modelVersionId: number,
-  version: { modelId: number; baseModel: string; model: { type: ModelType } }
-) {
-  const files = await dbWrite.modelFile.findMany({
-    where: { modelVersionId },
-    select: { id: true },
-  });
-  await Promise.all(
-    files.map(({ id }) =>
-      bustOrchestratorScannedFileCache({
-        fileId: id,
-        modelVersionId,
-        modelId: version.modelId,
-        modelType: version.model.type,
-        baseModel: version.baseModel,
-      })
-    )
-  );
 }
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
