@@ -120,6 +120,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON moves a per-id cache built with `slotBuckets` (the feed-hydration caches) to the
+  // slot-bucketed key layout: its ids are read with one MGET per bucket instead of one GET each.
+  // Same values, TTLs and invalidations; see `slotBuckets` in packages/civitai-redis/src/cached-array.ts.
+  // Evaluated per CACHE: entityId and the `cache` context property are the cache key, so a
+  // percentage rollout or a segment moves caches one at a time. Turning a cache on starts its
+  // bucketed layout cold (a miss burst on the origin), so move big caches one at a time.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call, on every feed fetch.
+  FEED_HYDRATION_SLOT_BUCKETS = 'feed-hydration-slot-buckets',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

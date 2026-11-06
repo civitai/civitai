@@ -6543,6 +6543,9 @@ type CachedImagesForModelVersions = {
 // eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
+  // FEED_HYDRATION_SLOT_BUCKETS in ~/server/redis/caches, as a literal: suites that mock that
+  // module import this one.
+  slotBuckets: 16,
   idKey: 'modelVersionId',
   ttl: CacheTTL.day,
   // The lookupFn filters on async-populated columns (i.nsfwLevel != 0,
