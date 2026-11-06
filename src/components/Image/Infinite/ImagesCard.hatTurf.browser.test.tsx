@@ -140,7 +140,14 @@ vi.mock('~/components/Tours/ToursProvider', async (o) => ({
   useTourContext: () => ({ running: false, helpers: undefined }),
 }));
 
-import { IMAGES_CARD_FOOTER_HEIGHT, ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import {
+  adjustImagesCardHeight,
+  getImagesCardFooterHeight,
+  getImagesCardHeight,
+  IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT,
+  IMAGES_CARD_ONE_ROW_MIN_WIDTH,
+} from '~/components/Image/Infinite/images-card-footer';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
@@ -342,8 +349,8 @@ test.each([
   expect(footer()).toBeNull();
 });
 
-// The masonry sizes a card as image + IMAGES_CARD_FOOTER_HEIGHT, so a taller footer takes its
-// excess from the bottom of the picture. Columns are 320px; a phone's single column is its width.
+// The masonry sizes a card as image + getImagesCardFooterHeight(width), so a taller footer takes
+// its excess from the bottom of the picture. Columns are 320px; a phone's single column is its width.
 describe('the /images card footer fits the height the masonry gives it', () => {
   const reacted = {
     ...image,
@@ -369,7 +376,7 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       <TurfSummaryContext.Provider value={value}>
         <IntersectionObserverProvider>
           <div style={{ width }}>
-            <ImagesCard data={reacted} height={400} />
+            <ImagesCard data={reacted} height={400} width={width} />
           </div>
         </IntersectionObserverProvider>
       </TurfSummaryContext.Provider>
@@ -378,7 +385,7 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       expect(document.body.querySelectorAll('[aria-label$="reaction"]').length).toBeGreaterThan(3)
     );
     if (value) await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
-    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
+    expect(footerHeight()).toBe(getImagesCardFooterHeight(width));
   });
   // A tester's card: three-digit counts, a 530 tip and a sticker chip beside the hat button.
   const crowded = {
@@ -391,14 +398,25 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       tippedAmountCountAllTime: 530,
     },
   };
-  async function renderCrowded(width: number) {
+  // The longest counts the abbreviation produces, and a tip to match.
+  const longest = {
+    ...crowded,
+    stats: {
+      likeCountAllTime: 12345,
+      heartCountAllTime: 9876,
+      laughCountAllTime: 666,
+      cryCountAllTime: 258,
+      tippedAmountCountAllTime: 12345,
+    },
+  };
+  async function renderCrowded(width: number, height = 400, data = crowded) {
     features.stickerPlacement = true;
     stickerBadge.renders = true;
     renderWithProviders(
       <TurfSummaryContext.Provider value={turf()}>
         <IntersectionObserverProvider>
           <div style={{ width }}>
-            <ImagesCard data={crowded} height={400} />
+            <ImagesCard data={data} height={height} width={width} />
           </div>
         </IntersectionObserverProvider>
       </TurfSummaryContext.Provider>
@@ -408,53 +426,131 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       expect(document.body.querySelector('[aria-label*="sticker" i]')).not.toBeNull()
     );
   }
-  // How many reactions fit depends on the fonts; a reaction that doesn't wraps onto a line the
-  // bar clips, where it can be neither seen, hit nor focused.
+  // Every reaction must be whole inside the footer, on one line, and reachable by a tap.
   function reactionState() {
-    const bar = document.body.querySelector('[class*="fitReactions"]')!.getBoundingClientRect();
+    const footer = document.body.querySelector('[class*="actionsFooter"]')!.getBoundingClientRect();
     return [...document.body.querySelectorAll<HTMLElement>('[aria-label$="reaction"]')].map(
       (el) => {
         const r = el.getBoundingClientRect();
-        const inert = el.inert;
-        // Hit-testing skips an inert element, so it is lifted while the point is sampled: what is
-        // measured is whether the bar's clipping hides it. Its top edge lies inside the footer's
-        // padding, above where the card itself clips.
-        el.inert = false;
-        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 2);
-        el.inert = inert;
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
         return {
-          dropped: r.top >= bar.bottom - 0.5,
-          whole: r.bottom <= bar.bottom + 0.5 && r.right <= bar.right + 0.5,
+          top: r.top,
+          whole:
+            r.left >= footer.left - 0.5 &&
+            r.right <= footer.right + 0.5 &&
+            r.bottom <= footer.bottom + 0.5,
           visible: !!hit && el.contains(hit),
-          inert,
         };
       }
     );
   }
+  function expectAllFourShown() {
+    const reactions = reactionState();
+    expect(reactions).toHaveLength(4);
+    for (const r of reactions) expect(r).toMatchObject({ whole: true, visible: true });
+    // One line of reactions: a wrapped one would push the tip row out of the reserved height.
+    expect(new Set(reactions.map((r) => Math.round(r.top))).size).toBe(1);
+  }
 
-  test.each([288, 320, 358])(
-    'a %ipx card with three-digit counts, a tip, a sticker chip and the hat button',
+  // A tester reported the Cry reaction missing on feed images. Every non-zero reaction stays
+  // seen and tappable at every width, with the footer exactly the height the masonry reserves.
+  // The widths straddle IMAGES_CARD_ONE_ROW_MIN_WIDTH, where the footer changes from two rows to one.
+  test.each([
+    240,
+    288,
+    320,
+    358,
+    IMAGES_CARD_ONE_ROW_MIN_WIDTH - 1,
+    IMAGES_CARD_ONE_ROW_MIN_WIDTH,
+    600,
+  ])('a %ipx card shows all four reactions in the height the masonry reserves', async (width) => {
+    await renderCrowded(width);
+    await vi.waitFor(() => expect(footerHeight()).toBe(getImagesCardFooterHeight(width)));
+    await vi.waitFor(expectAllFourShown);
+  });
+
+  // A third line of reactions would grow the footer past the reserved height and crop the picture.
+  // Not asserted at 240px, where five-character counts do wrap: the masonry's columns are 320px,
+  // and a phone's single column is its width, so no real card is that narrow.
+  test.each([288, 358, IMAGES_CARD_ONE_ROW_MIN_WIDTH - 1])(
+    'a %ipx card with the longest counts keeps its reserved height',
     async (width) => {
-      await renderCrowded(width);
-      expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
-      const reactions = reactionState();
-      // At 288px some reaction always drops, so the checks below have something to check.
-      if (width === 288) expect(reactions.some((r) => r.dropped)).toBe(true);
-      await vi.waitFor(() => {
-        for (const r of reactionState()) {
-          if (r.dropped) expect(r).toMatchObject({ visible: false, inert: true });
-          else expect(r).toMatchObject({ whole: true, visible: true, inert: false });
-        }
-      });
+      await renderCrowded(width, 400, longest);
+      await vi.waitFor(() => expect(footerHeight()).toBe(getImagesCardFooterHeight(width)));
+      expectAllFourShown();
     }
   );
 
-  test('a card wide enough for everything drops no reaction', async () => {
-    await renderCrowded(600);
-    expect(footerHeight()).toBe(IMAGES_CARD_FOOTER_HEIGHT);
-    const reactions = reactionState();
-    expect(reactions).toHaveLength(4);
-    for (const r of reactions)
-      expect(r).toMatchObject({ dropped: false, whole: true, visible: true, inert: false });
+  test('the masonry reserves what the card draws', () => {
+    expect(adjustImagesCardHeight({ height: 300, width: 288 })).toBe(
+      300 + getImagesCardFooterHeight(288)
+    );
+    expect(adjustImagesCardHeight({ height: 300, width: 600 })).toBe(
+      300 + IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT
+    );
+    // A custom card draws no such footer.
+    expect(adjustImagesCardHeight({ height: 300, width: 288 }, true)).toBe(
+      300 + IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT
+    );
+  });
+
+  test('below the threshold the tip row sits under the reactions', async () => {
+    await renderCrowded(IMAGES_CARD_ONE_ROW_MIN_WIDTH - 1);
+    const tip = document.body.querySelector('[class*="tipRow"]')!.getBoundingClientRect();
+    const first = document.body.querySelector('[aria-label$="reaction"]')!.getBoundingClientRect();
+    expect(tip.top).toBeGreaterThanOrEqual(first.bottom - 0.5);
+  });
+
+  test('at the threshold the tip shares the reactions row', async () => {
+    await renderCrowded(IMAGES_CARD_ONE_ROW_MIN_WIDTH);
+    const tip = document.body.querySelector('[class*="tipRow"]')!.getBoundingClientRect();
+    const first = document.body.querySelector('[aria-label$="reaction"]')!.getBoundingClientRect();
+    expect(tip.top).toBeLessThan(first.bottom);
+  });
+
+  // The hat button stays inside the footer and tappable in both layouts, at 360 and below.
+  test.each([240, 288, 360, IMAGES_CARD_ONE_ROW_MIN_WIDTH - 1, IMAGES_CARD_ONE_ROW_MIN_WIDTH])(
+    'a %ipx card keeps the hat button reachable',
+    async (width) => {
+      await renderCrowded(width);
+      const footer = document.body
+        .querySelector('[class*="actionsFooter"]')!
+        .getBoundingClientRect();
+      const gear = q('hat-turf-gear')!.closest('button')!;
+      const r = gear.getBoundingClientRect();
+      expect(r.width).toBeGreaterThan(0);
+      expect(r.left).toBeGreaterThanOrEqual(footer.left - 0.5);
+      expect(r.right).toBeLessThanOrEqual(footer.right + 0.5);
+      expect(r.bottom).toBeLessThanOrEqual(footer.bottom + 0.5);
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      expect(gear.contains(hit)).toBe(true);
+    }
+  );
+
+  // The crop testers reported twice (fixed in #7816): a footer taller than the masonry reserved
+  // took its excess from the picture. The picture must keep the height the masonry computed.
+  const pictureHeight = () =>
+    document.body
+      .querySelector('[class*="actionsFooter"]')!
+      .previousElementSibling!.getBoundingClientRect().height;
+  const PICTURE = 300;
+  // The card's own 1px border above and below; the same at every width, one row or two.
+  const BORDER = 2;
+
+  test.each([240, 288, 320, 358, IMAGES_CARD_ONE_ROW_MIN_WIDTH - 1, IMAGES_CARD_ONE_ROW_MIN_WIDTH])(
+    'a %ipx card keeps the picture at the height the masonry computed',
+    async (width) => {
+      await renderCrowded(width, getImagesCardHeight(PICTURE, width));
+      await vi.waitFor(() => expect(footerHeight()).toBe(getImagesCardFooterHeight(width)));
+      expect(pictureHeight()).toBe(PICTURE - BORDER);
+    }
+  );
+
+  // Control: reserve the old one-row height for a two-row footer and the picture is cropped, so
+  // the assertion above can fail.
+  test('a two-row footer in a one-row reservation crops the picture', async () => {
+    await renderCrowded(288, PICTURE + IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT);
+    await vi.waitFor(() => expect(footerHeight()).toBe(getImagesCardFooterHeight(288)));
+    expect(pictureHeight()).toBeLessThan(PICTURE - BORDER);
   });
 });

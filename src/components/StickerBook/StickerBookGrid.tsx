@@ -126,7 +126,7 @@ export function StickerBookGrid({
         {shown.map((item) => (
           <div key={item.imageId} className="relative">
             <div style={{ width: CARD_WIDTH }}>
-              <ImagesCard data={item.image} height={CARD_HEIGHT} />
+              <ImagesCard data={item.image} height={CARD_HEIGHT} width={CARD_WIDTH} />
             </div>
             <PlacedBy counterparts={item.counterparts} side={side} latestAt={item.latestAt} />
           </div>
