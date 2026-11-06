@@ -54,6 +54,7 @@ CREATE TABLE "hot_reads_10_parity"."TagsOnCollection" (
   "collectionId"   INTEGER NOT NULL,
   "tagId"          INTEGER NOT NULL,
   "filterableOnly" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt"      TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("tagId", "collectionId")
 );
 

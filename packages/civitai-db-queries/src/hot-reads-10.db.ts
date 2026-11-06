@@ -21,9 +21,12 @@ import { jsonBuildObject } from './infra/helpers';
 // - The to-many relations (the collection's tags, the cover's tags, the owner's equipped
 //   cosmetics) are correlated `json_agg` subqueries. Every column in them survives JSON unchanged
 //   (integers, booleans, text, citext, enums as text, JSON columns); none of them is a timestamp.
-// - None of the Prisma relation reads has an `orderBy`. Here each aggregate is ordered by its
-//   table's key (tags by tag id, cosmetics by cosmetic id then claim key), so the order is defined;
-//   the parity suite compares the lists sorted.
+// - None of the Prisma relation reads has an `orderBy`. The collection's tags are ordered by when
+//   they were added ("createdAt", NULLs first, then tag id), which is the order Prisma's unordered
+//   read gives on a heap filled in insertion order and the order the contest category dropdown
+//   shows them in; the parity suite pins it order-sensitively. The other aggregates are ordered by
+//   their table's key (cover tags by tag id, cosmetics by cosmetic id then claim key), so the order
+//   is defined; the parity suite compares those lists sorted.
 //
 // Relations: base tables, plus "TagsOnImageDetails", declared `/// @view` in schema.full.prisma and
 // a VIEW in fact: a per-row projection of "TagsOnImageNew" with no GROUP BY or UNION, so Postgres
@@ -133,6 +136,7 @@ export function getCollectionByIdRow(db: Kysely<DB>, id: number) {
                       filterableOnly: eb.ref('TagsOnCollection.filterableOnly'),
                     })
                   )
+                  .orderBy('TagsOnCollection.createdAt', (ob) => ob.asc().nullsFirst())
                   .orderBy('TagsOnCollection.tagId', 'asc'),
                 sql<[]>`'[]'`
               )

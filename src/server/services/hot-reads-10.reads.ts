@@ -34,8 +34,9 @@ type Row = NonNullable<Awaited<ReturnType<typeof getCollectionByIdRow>>>;
 
 /**
  * The same collection from ONE statement (`getCollectionByIdRow`), `null` when there is no such
- * collection. Keys are built in the order the Prisma select lists them. Tags and cosmetics come
- * back in key order (the Prisma read has no `orderBy`).
+ * collection. Keys are built in the order the Prisma select lists them. The Prisma read has no
+ * `orderBy`: the collection's tags come back in the order they were added ("createdAt", NULLs first,
+ * then tag id), the cover's tags and the cosmetics in key order.
  */
 export async function readCollectionByIdViaKysely(
   db: Kysely<DB>,

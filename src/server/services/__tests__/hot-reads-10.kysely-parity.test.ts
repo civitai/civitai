@@ -25,7 +25,8 @@ import {
  * against the same rows in the same database and must return the same value, `toStrictEqual`, AND
  * the same JSON text (so key order, which reaches the response, matches too). The Prisma read has
  * no `orderBy` on any relation, so tags and cosmetics are compared sorted by key; the Kysely read's
- * own order (key order) is pinned by a literal control.
+ * own order is pinned by a literal control. The collection's tags are ALSO compared in order, on a
+ * fixture inserted in "createdAt" order, because that order reaches the contest category dropdown.
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_10_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost. Locally, KYSELY_PARITY_DATABASE_URL
@@ -84,6 +85,9 @@ const PICTURE_CREATED_AT = new Date('2026-08-09T10:11:12.013Z');
 const DELETED_AT = new Date('2026-03-04T05:06:07.008Z');
 const OBTAINED_AT = new Date('2026-09-10T11:12:13.140Z');
 const EQUIPPED_AT = new Date('2026-10-11T12:13:14.200Z');
+const TAGGED_AT = new Date('2026-11-01T01:02:03.004Z');
+const TAGGED_AT_2 = new Date('2026-11-02T02:03:04.005Z');
+const TAGGED_AT_3 = new Date('2026-11-03T03:04:05.006Z');
 
 const ts = (date: Date) => `'${date.toISOString().replace('T', ' ').replace('Z', '')}'`;
 
@@ -191,13 +195,16 @@ describe.skipIf(!parityUrl)('hot reads 10: Kysely returns exactly what Prisma re
         (${IMG_COVER}, ${T_LANDSCAPE}, ${AUTOMATED | 5}),
         (${IMG_PICTURE}, ${T_OTHER}, 3)
     `);
-    // Out of key order, both values of filterableOnly.
+    // Inserted (so stored on the heap) in "createdAt" order, which is not tag-id order: a NULL
+    // "createdAt" first, then increasing distinct values. Both values of filterableOnly.
     await exec(`
-      INSERT INTO ${t('TagsOnCollection')} ("collectionId", "tagId", "filterableOnly") VALUES
-        (${C_FULL}, ${T_OTHER}, false),
-        (${C_FULL}, ${T_CONTEST}, true),
-        (${C_FULL}, ${T_LANDSCAPE}, false),
-        (${C_OTHER}, ${T_HILL}, true)
+      INSERT INTO ${t(
+        'TagsOnCollection'
+      )} ("collectionId", "tagId", "filterableOnly", "createdAt") VALUES
+        (${C_FULL}, ${T_CONTEST}, true, NULL),
+        (${C_FULL}, ${T_OTHER}, false, ${ts(TAGGED_AT)}),
+        (${C_FULL}, ${T_LANDSCAPE}, false, ${ts(TAGGED_AT_2)}),
+        (${C_OTHER}, ${T_HILL}, true, ${ts(TAGGED_AT_3)})
     `);
     await exec(`
       INSERT INTO ${t('Cosmetic')} (id, name, type, source, data) VALUES
@@ -246,7 +253,24 @@ describe.skipIf(!parityUrl)('hot reads 10: Kysely returns exactly what Prisma re
     expect(JSON.stringify(viaKysely)).toBe(JSON.stringify(viaPrisma));
   });
 
-  it('control: each branch reads the fixture expected, relations in key order', async () => {
+  // ORDER-SENSITIVE, unlike the cases above: the collection's tags reach the contest category
+  // dropdown in the order the read returns them. The Kysely read orders them by "createdAt" (NULLs
+  // first), then tag id. Prisma's read has no orderBy and returns heap order, which on this fixture
+  // is insertion order, so the two agree here; the literal pins the Kysely order against the
+  // fixture's "createdAt" order directly, whatever Prisma's plan returns.
+  it("the collection's tags come back in the order they were added, on both paths", async () => {
+    const viaKysely = await readCollectionByIdViaKysely(kysely, C_FULL);
+    const viaPrisma = await readCollectionByIdViaPrisma(prisma, C_FULL);
+    const ADDED_ORDER = [T_CONTEST, T_OTHER, T_LANDSCAPE];
+    // Control: the added order is not tag-id order, so a read ordered by id cannot pass.
+    expect([...ADDED_ORDER].sort((a, b) => a - b)).not.toStrictEqual(ADDED_ORDER);
+    expect(viaKysely?.tags.map((t) => t.tag.id)).toStrictEqual(ADDED_ORDER);
+    expect(viaPrisma?.tags.map((t) => t.tag.id)).toStrictEqual(ADDED_ORDER);
+    expect(viaKysely?.tags).toStrictEqual(viaPrisma?.tags);
+    expect(JSON.stringify(viaKysely?.tags)).toBe(JSON.stringify(viaPrisma?.tags));
+  });
+
+  it("control: each branch reads the fixture expected, relations in the read's order", async () => {
     const full = await readCollectionByIdViaKysely(kysely, C_FULL);
     expect(full).not.toBeNull();
     if (!full) return;
@@ -291,10 +315,11 @@ describe.skipIf(!parityUrl)('hot reads 10: Kysely returns exactly what Prisma re
         },
       ],
     });
+    // The collection's tags in the order they were added (see the case above).
     expect(full.tags).toStrictEqual([
-      { tag: { id: T_LANDSCAPE, name: 'landscape' }, filterableOnly: false },
       { tag: { id: T_CONTEST, name: 'ContestEntry' }, filterableOnly: true },
       { tag: { id: T_OTHER, name: 'other' }, filterableOnly: false },
+      { tag: { id: T_LANDSCAPE, name: 'landscape' }, filterableOnly: false },
     ]);
     expect(full.user).toStrictEqual({
       id: U_FULL,
