@@ -113,6 +113,7 @@ describe('saving a draft that has an active share link', () => {
     });
     dbMock.dbWrite.article.findUnique
       .mockResolvedValueOnce(draft('<p>Old body</p>') as never) // the change's own read
+      .mockResolvedValueOnce(draft('<p>Old body</p>') as never) // the read under the lock
       .mockResolvedValueOnce(draft('<p>New body</p>') as never) // text sent for the check
       .mockResolvedValueOnce(draft('<p>Newer body</p>') as never) // a later save landed
       .mockResolvedValue(draft('<p>Newer body</p>') as never);
@@ -137,6 +138,19 @@ describe('saving a draft that has an active share link', () => {
     expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ resourceId: ARTICLE }) })
     );
+  });
+
+  it('leaves the verdict alone when its guarded write lands on nothing', async () => {
+    checkRecord(true);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    const applied = await applyArticleContentChange({
+      id: ARTICLE,
+      userId: AUTHOR,
+      content: '<p>New body</p>',
+      expectedContent: '<p>Something else</p>',
+    });
+    expect(applied).toBe(false);
+    expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
   });
 
   it('keeps its verdict and links when a save leaves the text as it was', async () => {
@@ -234,6 +248,17 @@ describe('saving a shared draft from the editor', () => {
     expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'Pending', workflowId: null } })
     );
+  });
+
+  it('judges the change against the text stored under the lock, not the earlier read', async () => {
+    dbMock.dbWrite.accessToken.findMany.mockResolvedValue([activeLink()] as never);
+    // The request read its own payload's text; another save changed it before this one locked.
+    dbMock.dbWrite.article.findUnique
+      .mockResolvedValueOnce({ ...stored, content: '<p>New body</p>' } as never)
+      .mockResolvedValue({ ...stored, content: '<p>Other body</p>' } as never);
+    await save();
+    expect(formWrite().ingestion).toBe('Rescan');
+    expect(submitTextModerationOrScan).toHaveBeenCalled();
   });
 
   it('leaves ingestion alone on an unshared draft', async () => {

@@ -1274,13 +1274,18 @@ export const upsertArticle = async ({
       : writingWithoutViolationStatus
       ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
       : { id };
+    let sharedTextChanged = false;
     const result = await dbWrite.$transaction(async (tx) => {
-      // A shared draft leaves Scanned in the same write that changes its text; the lock keeps a
-      // link being created meanwhile from missing it.
+      // A shared draft leaves Scanned in the same write that changes its text. Under the lock, so
+      // neither a link being created nor a concurrent save can slip between the read and the write.
       await lockAccessTokens(tx, id as number);
+      const stored = await tx.article.findUnique({
+        where: { id: id as number },
+        select: { title: true, content: true },
+      });
       const textChanged =
-        (data.title !== undefined && data.title !== article.title) ||
-        (data.content !== undefined && data.content !== article.content);
+        (data.title !== undefined && data.title !== stored?.title) ||
+        (data.content !== undefined && data.content !== stored?.content);
       const sharedSave =
         textChanged &&
         (await isSharedArticle(
@@ -1289,6 +1294,7 @@ export const upsertArticle = async ({
           tx
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
+      sharedTextChanged = sharedSave;
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
@@ -1391,8 +1397,8 @@ export const upsertArticle = async ({
       context: {
         ownerId: result.userId,
         title: data.title ?? article.title ?? '',
-        previousTitle: article.title,
         previousContent: article.content,
+        sharedTextChanged,
         coverId: coverId ?? article.coverId,
         publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
@@ -1439,8 +1445,9 @@ export const upsertArticle = async ({
 type ArticleContentChangeContext = {
   ownerId: number;
   title: string | null;
-  previousTitle: string | null;
   previousContent: string | null;
+  /** The write voided a shared draft's verdict, so a fresh check must follow. */
+  sharedTextChanged?: boolean;
   coverId: number | null;
   publication: { status: ArticleStatus; scheduledAt: Date | null };
 };
@@ -1500,15 +1507,14 @@ export async function applyArticleContentChange({
     resolved = {
       ownerId: stored.userId,
       title: stored.title,
-      previousTitle: stored.title,
       previousContent: stored.content,
       coverId: stored.coverId,
       publication: { status: stored.status, scheduledAt: stored.scheduledAt },
     };
   }
-  const { ownerId, title, previousTitle, previousContent, coverId, publication } = resolved;
-  // Only a change of text needs a shared draft checked again.
-  const textChanged = previousContent !== content || (previousTitle ?? '') !== (title ?? '');
+  const { ownerId, title, previousContent, coverId, publication } = resolved;
+  // Set by whichever write voided a shared draft's verdict; a fresh check must follow it.
+  let sharedTextChanged = !!resolved.sharedTextChanged;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1520,13 +1526,21 @@ export async function applyArticleContentChange({
     // draft leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
-      const shared = textChanged && (await isSharedArticle(id, publication.status, tx));
-      if (shared) await resetSharedArticleTextCheck(tx, id);
-      return tx.$executeRaw`UPDATE "Article" SET content = ${content}${
-        shared ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+      const locked = (await isSharedArticle(id, publication.status, tx))
+        ? await tx.article.findUnique({ where: { id }, select: { content: true } })
+        : null;
+      const resetting = !!locked && locked.content !== content;
+      const written = await tx.$executeRaw`UPDATE "Article" SET content = ${content}${
+        resetting ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
       } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;
+      // Only a write that landed voids the verdict, or no check would follow the reset.
+      if (resetting && written) {
+        await resetSharedArticleTextCheck(tx, id);
+        sharedTextChanged = true;
+      }
+      return written;
     });
     if (expectedContent !== undefined && !affected) return false;
   }
@@ -1610,10 +1624,11 @@ export async function applyArticleContentChange({
         where: { entityType: 'Article', entityId: id },
       });
     } else if (shared) {
-      // Unchanged text keeps the verdict on record. Changed text is live to link holders as soon
-      // as it passes, so a check that cannot be shown to have started withdraws the links.
+      // A write that voided the verdict needs a fresh one; otherwise the verdict on record is for
+      // this text. Link holders see the text as soon as it passes, so a check that cannot be
+      // shown to have started withdraws the links.
       const checked =
-        !textChanged ||
+        !sharedTextChanged ||
         (await submitSharedArticleText(id).catch((e) => {
           handleLogError(e as Error, 'article-share-check', { articleId: id });
           return false;
