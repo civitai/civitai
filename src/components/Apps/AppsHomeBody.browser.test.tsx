@@ -7,6 +7,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as NotificationsMod from '~/utils/notifications';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import type { MyAppRow } from '~/server/services/blocks/my-apps.logic';
 
@@ -25,36 +26,76 @@ const mocks = vi.hoisted(() => ({
   detailIcons: {} as Record<string, string>,
   hide: vi.fn(),
   unhide: vi.fn(),
+  /** `utils.appListings.listMyApps.invalidate` — the home's ONLY list refetch. */
+  invalidate: vi.fn(),
+  /** Re-render every mounted `listMyApps` reader (a refetch landing). */
+  listeners: new Set<() => void>(),
+  /** Bumped per test, so a server model left over from an earlier test cannot publish. */
+  modelId: 0,
+  showErrorNotification: vi.fn(),
+}));
+
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showErrorNotification: (...a: unknown[]) => mocks.showErrorNotification(...a),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcMod>()),
-  trpc: makeTrpcProxy({
-    'appListings.listMyApps': {
-      useQuery: () => ({ ...mocks.myApps, refetch: vi.fn() }),
-    },
-    'appListings.hideMyApp': { useMutation: () => ({ mutateAsync: mocks.hide }) },
-    'appListings.unhideMyApp': { useMutation: () => ({ mutateAsync: mocks.unhide }) },
-    // The live icon read a recents-only tile makes (the chrome's `useChromeListingDetail`).
-    'appListings.getAppDetail': {
-      useQuery: (input: { slug: string }) => ({
-        data: mocks.detailIcons[input.slug]
-          ? { iconUrl: mocks.detailIcons[input.slug] }
-          : undefined,
-        isLoading: false,
-        error: null,
-      }),
-    },
-    // The home makes NO store list read; this stub records any call so a test can say so.
-    'appListings.listAvailable': {
-      useQuery: (input: Record<string, unknown>) => {
-        mocks.listAvailableInputs.push(input);
-        return { data: { items: mocks.listAvailableItems }, isPending: false };
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const React = await import('react');
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy(
+      {
+        'appListings.listMyApps': {
+          useQuery: () => {
+            const [, rerender] = React.useReducer((n: number) => n + 1, 0);
+            React.useEffect(() => {
+              mocks.listeners.add(rerender);
+              return () => {
+                mocks.listeners.delete(rerender);
+              };
+            }, []);
+            return { ...mocks.myApps, refetch: vi.fn() };
+          },
+        },
+        // Delegating, so a test can swap the spy mid-render without waiting for a re-render.
+        'appListings.hideMyApp': {
+          useMutation: () => ({ mutateAsync: (i: { slug: string }) => mocks.hide(i) }),
+        },
+        'appListings.unhideMyApp': {
+          useMutation: () => ({ mutateAsync: (i: { slug: string }) => mocks.unhide(i) }),
+        },
+        // The live icon read a recents-only tile makes (the chrome's `useChromeListingDetail`).
+        'appListings.getAppDetail': {
+          useQuery: (input: { slug: string }) => ({
+            data: mocks.detailIcons[input.slug]
+              ? { iconUrl: mocks.detailIcons[input.slug] }
+              : undefined,
+            isLoading: false,
+            error: null,
+          }),
+        },
+        // The home makes NO store list read; this stub records any call so a test can say so.
+        'appListings.listAvailable': {
+          useQuery: (input: Record<string, unknown>) => {
+            mocks.listAvailableInputs.push(input);
+            return { data: { items: mocks.listAvailableItems }, isPending: false };
+          },
+        },
       },
-    },
-  }),
-}));
+      {
+        // A STABLE spy (the proxy's default mints a fresh one per read, so it can never be
+        // asserted on). Read at RENDER time, so a refetch an unmounting test still owes lands
+        // on that test's spy, never on the next test's.
+        useUtils: () => {
+          const invalidate = mocks.invalidate;
+          return { appListings: { listMyApps: { invalidate: () => invalidate() } } };
+        },
+      }
+    ),
+  };
+});
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => mocks.flags,
   useOptionalFeatureFlags: () => mocks.flags,
@@ -88,6 +129,16 @@ const OFFSITE_APP: MyAppRow = {
   launchHref: 'https://promptlab.example.org/app',
   external: true,
   lastUsedAt: new Date('2026-10-10T00:00:00.000Z'),
+};
+
+/** A third app the server holds but cuts off below the cap until a slot frees up. */
+const THIRD_APP: MyAppRow = {
+  ...PAGE_APP,
+  listingId: 'apl_page3',
+  slug: 'third-app',
+  name: 'Third App',
+  launchHref: '/apps/run/third-app',
+  lastUsedAt: new Date('2026-10-01T00:00:00.000Z'),
 };
 
 function listingCard(id: string, name: string): ListingCard {
@@ -126,7 +177,17 @@ function launch(name: string): HTMLAnchorElement {
 }
 
 /** The `listMyApps` payload: the derived apps plus the viewer's hides. */
-const served = (apps: MyAppRow[], hidden: Record<string, string> = {}) => ({ apps, hidden });
+const served = (
+  apps: MyAppRow[],
+  hidden: Record<string, string> = {},
+  removedCount = 0,
+  removedSlugsByListingId: Record<string, string> = {}
+) => ({
+  apps,
+  hidden,
+  removedCount,
+  removedSlugsByListingId,
+});
 
 beforeEach(() => {
   mocks.myApps = { data: served([PAGE_APP, OFFSITE_APP]), isLoading: false, isError: false };
@@ -135,6 +196,9 @@ beforeEach(() => {
     hiddenAt: new Date().toISOString(),
   }));
   mocks.unhide = vi.fn(async (input: { slug: string }) => ({ slug: input.slug }));
+  mocks.invalidate = vi.fn(async () => undefined);
+  mocks.showErrorNotification = vi.fn();
+  mocks.modelId++;
   mocks.listAvailableItems = [];
   mocks.listAvailableInputs = [];
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
@@ -428,6 +492,19 @@ describe('the empty state after removing everything', () => {
       '/apps/store'
     );
   });
+
+  test('🔴 the server already dropped every app (no rows, removedCount 1) → still "removed", not "No apps yet"', async () => {
+    mocks.myApps = {
+      data: served([], { 'pixel-forge': '2020-01-05T00:00:00.000Z' }, 1),
+      isLoading: false,
+      isError: false,
+    };
+    renderWithProviders(<AppsHomeBody />);
+    await expect
+      .element(page.getByRole('heading', { name: "You've removed all your apps from this page" }))
+      .toBeVisible();
+    expect(page.getByRole('heading', { name: 'No apps yet' }).elements()).toHaveLength(0);
+  });
 });
 
 describe('Remove from My apps', () => {
@@ -616,5 +693,323 @@ describe('Remove from My apps', () => {
     );
     renderWithProviders(<AppsHomeBody />);
     await expect.element(page.getByText('Pixel Forge', { exact: true })).toBeVisible();
+  });
+
+  test('🔴 an off-site recent under an OLDER slug stays removed once the server drops its row', async () => {
+    // Recorded under the stale slug; the hide is under the listing's current one, and AFTER
+    // the open (stamped with the real clock), so the app is still removed.
+    recordRecentlyOpenedApp(
+      {
+        id: 'apl_off1',
+        slug: 'prompt-lab-old',
+        kind: 'offsite',
+        name: 'Prompt Lab',
+        externalUrl: 'https://promptlab.example.org/app',
+      },
+      41
+    );
+    const hiddenAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const payload = (map: Record<string, string>) =>
+      served([PAGE_APP], { 'prompt-lab': hiddenAt }, 1, map);
+    mocks.myApps = { data: payload({ apl_off1: 'prompt-lab' }), isLoading: false, isError: false };
+    const { unmount } = await renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge', { exact: true })).toBeVisible();
+    expect(page.getByText('Prompt Lab', { exact: true }).elements()).toHaveLength(0);
+    await unmount();
+
+    // Control: the same payload without the dropped-row map resurrects it — the fixture
+    // reaches the path the map closes.
+    mocks.myApps = { data: payload({}), isLoading: false, isError: false };
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Prompt Lab', { exact: true })).toBeVisible();
+  });
+
+  /**
+   * The list refetch waits for the Undo window. Each test runs against a SERVER MODEL that
+   * behaves like the real `listMyApps`: a refetch (the stable `invalidate` spy) re-reads the
+   * server, which DROPS hidden rows and fills the freed slot from below its cap. So a refetch
+   * that fired at remove time is visible two ways: the spy's count, and the removed row
+   * leaving the cache (with Third App, the next app past the cap, arriving in its place).
+   */
+  describe('the list refetch waits until the Undo window closes', () => {
+    const CAP = 2;
+    function serveFromServer(rows: MyAppRow[]) {
+      const hidden: Record<string, string> = {};
+      const id = ++mocks.modelId;
+      const publish = () => {
+        if (mocks.modelId !== id) return;
+        const visible = rows.filter((r) => !(r.slug in hidden));
+        mocks.myApps = {
+          data: served(visible.slice(0, CAP), { ...hidden }, rows.length - visible.length),
+          isLoading: false,
+          isError: false,
+        };
+      };
+      publish();
+      mocks.hide = vi.fn(async ({ slug }: { slug: string }) => {
+        hidden[slug] = new Date().toISOString();
+        return { slug, hiddenAt: hidden[slug] };
+      });
+      mocks.unhide = vi.fn(async ({ slug }: { slug: string }) => {
+        delete hidden[slug];
+        return { slug };
+      });
+      mocks.invalidate = vi.fn(async () => {
+        publish();
+        mocks.listeners.forEach((l) => l());
+      });
+    }
+    const names = () =>
+      page
+        .getByTestId('apps-home-tile-name')
+        .elements()
+        .map((e) => e.textContent);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+    /** Move focus off the bar (Undo takes it on appear, which pauses the timer). */
+    async function blurBar() {
+      (document.activeElement as HTMLElement | null)?.blur();
+      await frame();
+    }
+    /** Advance fake time, yielding a frame each second so React commits as it goes. */
+    async function advance(ms: number) {
+      for (let t = 0; t < ms; t += 1000) {
+        vi.advanceTimersByTime(Math.min(1000, ms - t));
+        await frame();
+      }
+    }
+    function deferred<T>() {
+      let resolve!: (v: T) => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    beforeEach(() => {
+      serveFromServer([PAGE_APP, OFFSITE_APP, THIRD_APP]);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function renderAndRemove(name: string) {
+      renderWithProviders(<AppsHomeBody />);
+      await expect.element(page.getByText(name)).toBeVisible();
+      await removeViaMenu(name);
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(1);
+      await expect.poll(names).not.toContain(name);
+    }
+    const fakeTimers = () =>
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+
+    test('🔴 remove → no listMyApps refetch while the window is open', async () => {
+      await renderAndRemove('Pixel Forge');
+      fakeTimers();
+      await blurBar();
+      // Well inside the window (real time also ticks the fake clock, so stay clear of it).
+      await advance(5000);
+      expect(page.getByTestId('apps-home-removed').elements()).toHaveLength(1);
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      // The removed row is still cached: the cap's next app has not been pulled in.
+      expect(names()).toEqual(['Prompt Lab']);
+    });
+
+    test('🔴 Undo inside the window → the tile is back AT ONCE, in its old place, never twice', async () => {
+      const unhide = deferred<{ slug: string }>();
+      const serverUnhide = mocks.unhide;
+      mocks.unhide = vi.fn(async (input: { slug: string }) => {
+        await unhide.promise;
+        return serverUnhide(input);
+      });
+      await renderAndRemove('Pixel Forge');
+      await userEvent.click(page.getByTestId('apps-home-undo'));
+      // The unhide has NOT settled: only the still-cached row can put the tile back.
+      await expect.poll(names).toEqual(['Pixel Forge', 'Prompt Lab']);
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      expect(mocks.unhide.mock.calls[0][0]).toEqual({ slug: 'pixel-forge' });
+      // Once it settles, the one refetch reads the server's (unhidden) list: no duplicate.
+      unhide.resolve({ slug: 'pixel-forge' });
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      await frame();
+      expect(names()).toEqual(['Pixel Forge', 'Prompt Lab']);
+    });
+
+    test('🔴 remove → Undo → remove again before the unhide settles: the hide waits for it', async () => {
+      const unhide = deferred<void>();
+      const order: string[] = [];
+      const serverHide = mocks.hide;
+      const serverUnhide = mocks.unhide;
+      mocks.hide = vi.fn(async (input: { slug: string }) => {
+        order.push(`hide:${input.slug}`);
+        return serverHide(input);
+      });
+      mocks.unhide = vi.fn(async (input: { slug: string }) => {
+        order.push(`unhide:${input.slug}`);
+        await unhide.promise;
+        order.push(`unhide-settled:${input.slug}`);
+        return serverUnhide(input);
+      });
+      await renderAndRemove('Pixel Forge');
+      await userEvent.click(page.getByTestId('apps-home-undo'));
+      await expect.poll(() => mocks.unhide.mock.calls.length).toBe(1);
+      await expect.poll(names).toContain('Pixel Forge');
+      await removeViaMenu('Pixel Forge');
+      // Removed at once on screen, but the second hide is held behind the pending unhide.
+      await expect.poll(names).not.toContain('Pixel Forge');
+      await frame();
+      await frame();
+      expect(mocks.hide).toHaveBeenCalledTimes(1);
+      unhide.resolve();
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(2);
+      expect(order).toEqual([
+        'hide:pixel-forge',
+        'unhide:pixel-forge',
+        'unhide-settled:pixel-forge',
+        'hide:pixel-forge',
+      ]);
+    });
+
+    test('🔴 no Undo → exactly one refetch, after the window, bringing in the next app', async () => {
+      await renderAndRemove('Pixel Forge');
+      fakeTimers();
+      await blurBar();
+      await advance(5000);
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      await expect
+        .poll(async () => {
+          await advance(1000);
+          return page.getByTestId('apps-home-removed').elements().length;
+        })
+        .toBe(0);
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      await expect.poll(names).toEqual(['Prompt Lab', 'Third App']);
+      await advance(60_000);
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    });
+
+    /** Remove Pixel Forge, then Prompt Lab ~3s later (fake time), with the bar's timer live. */
+    async function removeTwoApart() {
+      await renderAndRemove('Pixel Forge');
+      fakeTimers();
+      await blurBar();
+      await advance(3000);
+      // The first removal is still undoable, and nothing has refetched.
+      await expect
+        .element(page.getByRole('button', { name: 'Undo removing Pixel Forge' }))
+        .toBeVisible();
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      await removeViaMenu('Prompt Lab');
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(2);
+      await expect
+        .element(page.getByRole('button', { name: 'Undo removing Prompt Lab' }))
+        .toBeVisible();
+      await blurBar();
+      // Past the FIRST removal's window, inside the second's.
+      await advance(5500);
+      expect(page.getByTestId('apps-home-removed').elements()).toHaveLength(1);
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+    }
+
+    test('🔴 two removes 3s apart: the later one stays undoable past the earlier window', async () => {
+      mocks.unhide = vi.fn(() => new Promise<never>(() => undefined));
+      await removeTwoApart();
+      await userEvent.click(page.getByRole('button', { name: 'Undo removing Prompt Lab' }));
+      // Its row is still cached (the earlier window's close did not refetch), so it is back
+      // at once although the unhide never settles. The earlier removal stays removed.
+      await expect.poll(names).toEqual(['Prompt Lab']);
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+    });
+
+    test('🔴 two removes 3s apart, no Undo: ONE refetch, after the later window', async () => {
+      await removeTwoApart();
+      await expect
+        .poll(async () => {
+          await advance(1000);
+          return page.getByTestId('apps-home-removed').elements().length;
+        })
+        .toBe(0);
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      await expect.poll(names).toEqual(['Third App']);
+      await advance(60_000);
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    });
+
+    test('🔴 a failed Undo keeps the app removed (the server still holds the hide), says so, and refetches once', async () => {
+      // The unhide rejects on cue; the refetch is held, so what the grid shows in between comes
+      // from the CACHED rows — which predate the hide and still list Pixel Forge.
+      const unhide = deferred<never>();
+      mocks.unhide = vi.fn(() => unhide.promise);
+      const refetch = deferred<void>();
+      const serverInvalidate = mocks.invalidate;
+      mocks.invalidate = vi.fn(async () => {
+        await refetch.promise;
+        return serverInvalidate();
+      });
+      await renderAndRemove('Pixel Forge');
+      await userEvent.click(page.getByTestId('apps-home-undo'));
+      // Undo puts the tile back at once, before its unhide settles.
+      await expect.poll(names).toEqual(['Pixel Forge', 'Prompt Lab']);
+      unhide.reject(new Error('nope'));
+      await expect.poll(() => mocks.showErrorNotification.mock.calls.length).toBe(1);
+      expect(mocks.showErrorNotification.mock.calls[0][0]).toMatchObject({
+        title: "Couldn't restore Pixel Forge",
+      });
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      // The refetch has not landed (Third App is not in), so only the restored hide keeps the
+      // still-cached row off the grid.
+      await frame();
+      expect(names()).toEqual(['Prompt Lab']);
+      refetch.resolve();
+      await expect.poll(names).toEqual(['Prompt Lab', 'Third App']);
+      for (let i = 0; i < 3; i++) await frame();
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+      expect(mocks.unhide).toHaveBeenCalledTimes(1);
+    });
+
+    test('🔴 leaving the page inside the Undo window still refetches once, after the hide settles', async () => {
+      const hide = deferred<void>();
+      const serverHide = mocks.hide;
+      mocks.hide = vi.fn(async (input: { slug: string }) => {
+        await hide.promise;
+        return serverHide(input);
+      });
+      const { unmount } = await renderWithProviders(<AppsHomeBody />);
+      await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+      await removeViaMenu('Pixel Forge');
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(1);
+      await expect
+        .element(page.getByRole('button', { name: 'Undo removing Pixel Forge' }))
+        .toBeVisible();
+      await unmount();
+      // Gone mid-window, hide still in flight: the refetch is owed but must not run yet, or it
+      // could read the list before the hide lands.
+      for (let i = 0; i < 3; i++) await frame();
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      hide.resolve();
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      for (let i = 0; i < 3; i++) await frame();
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    });
+
+    test('🔴 a failed hide rolls back its tile; an earlier removal stays removed, unrefetched meanwhile', async () => {
+      await renderAndRemove('Pixel Forge');
+      const failing = deferred<never>();
+      mocks.hide = vi.fn(() => failing.promise);
+      await removeViaMenu('Prompt Lab');
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(1);
+      // Both hidden, and nothing refetched while the bar is up: the cap has not pulled in
+      // Third App.
+      await expect.poll(names).toEqual([]);
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      failing.reject(new Error('nope'));
+      await expect.poll(() => names().includes('Prompt Lab')).toBe(true);
+      expect(names()).not.toContain('Pixel Forge');
+      expect(page.getByTestId('apps-home-removed').elements()).toHaveLength(0);
+      // The bar closed, so the owed refetch runs once and reads the server's real state.
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      await expect.poll(names).toEqual(['Prompt Lab', 'Third App']);
+    });
   });
 });
