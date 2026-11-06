@@ -84,6 +84,11 @@ describe('safeError', () => {
     expect(out.message).toContain('denied');
   });
 
+  it('keeps count fields whose names only contain "token"', () => {
+    const out = safeError({ detail: 'limit', tokens: 5, promptTokens: 120 })!;
+    expect(JSON.parse(out.message)).toMatchObject({ tokens: 5, promptTokens: 120 });
+  });
+
   it('caps the serialized text and survives values JSON cannot encode', () => {
     expect(safeError({ detail: 'x'.repeat(10_000) })!.message.length).toBeLessThanOrEqual(2_000);
     const circular: Record<string, unknown> = { detail: 'loop' };

@@ -19,6 +19,8 @@ describe('redactCredentialsInString', () => {
       'fetch failed: GET https://x.test/a?token=[redacted] 500',
     ],
     [`token=${FAKE_KEY}&page=2`, 'token=[redacted]&page=2'],
+    [`/oauth/cb?code=${FAKE_KEY}&state=s`, '/oauth/cb?code=[redacted]&state=s'],
+    [`https://cdn.test/f?sig=${FAKE_KEY}&w=450`, 'https://cdn.test/f?sig=[redacted]&w=450'],
     [`Authorization: Bearer ${FAKE_KEY}`, 'Authorization: Bearer [redacted]'],
   ])('blanks the credential in %s', (input, expected) => {
     expect(redactCredentialsInString(input)).toBe(expected);
@@ -54,6 +56,21 @@ describe('redactCredentials', () => {
       tokenizer: 'clip',
       code: 'NOT_FOUND',
     });
+  });
+
+  it('blanks credential fields whatever their shape, and custom x- credential headers', () => {
+    const out = redactCredentials({
+      headers: {
+        'set-cookie': [`sid=${FAKE_KEY}`],
+        'x-service-token': FAKE_KEY,
+        'x-request-signature': FAKE_KEY,
+        'x-request-id': 'req-1',
+      },
+      link: new URL(`https://x.test/a?token=${FAKE_KEY}`),
+    });
+    expect(JSON.stringify(out)).not.toContain(FAKE_KEY);
+    expect(out.headers['x-request-id']).toBe('req-1');
+    expect(out.link).toBe('https://x.test/a?token=[redacted]');
   });
 
   it('does not mutate its input', () => {

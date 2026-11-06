@@ -19,19 +19,28 @@ describe('CredentialRedactingSpanProcessor', () => {
       'http.target': `/api/download/models/1?token=${FAKE_KEY}&type=Model`,
       'url.full': `https://civitai.com/api/v1/images?page=2&apiKey=${FAKE_KEY}`,
       'url.query': `token=${FAKE_KEY}&page=2`,
-      'http.query': 'page=2&limit=10',
+      'http.query': 'page=2&limit=10&tokens=5',
+      'http.redirects': [`/a?token=${FAKE_KEY}`, '/b?page=2'],
       'http.status_code': 200,
     });
+    span.recordException(new Error(`GET https://x.test/a?token=${FAKE_KEY} failed`));
+    span.setStatus({ code: 2, message: `Bearer ${FAKE_KEY} rejected` });
     span.end();
     await provider.forceFlush();
 
     const [exported] = exporter.getFinishedSpans();
-    expect(JSON.stringify(exported.attributes)).not.toContain(FAKE_KEY);
+    expect(JSON.stringify([exported.attributes, exported.events, exported.status])).not.toContain(
+      FAKE_KEY
+    );
+    expect(exported.events[0].attributes?.['exception.message']).toBe(
+      'GET https://x.test/a?token=[redacted] failed'
+    );
     expect(exported.attributes).toMatchObject({
       'http.target': '/api/download/models/1?token=[redacted]&type=Model',
       'url.full': 'https://civitai.com/api/v1/images?page=2&apiKey=[redacted]',
       'url.query': 'token=[redacted]&page=2',
-      'http.query': 'page=2&limit=10',
+      'http.query': 'page=2&limit=10&tokens=5',
+      'http.redirects': ['/a?token=[redacted]', '/b?page=2'],
       'http.status_code': 200,
     });
   });

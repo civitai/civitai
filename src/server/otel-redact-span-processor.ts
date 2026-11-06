@@ -8,6 +8,17 @@ import { redactCredentialsInString } from '@civitai/axiom/redact-credentials';
  * span carry the raw query string; the HTTP instrumentation's `redactedQueryParams` applies to
  * outgoing requests only.
  */
+function scrubAttributes(attrs: object) {
+  const attributes = attrs as Record<string, unknown>;
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value === 'string') attributes[key] = redactCredentialsInString(value);
+    else if (Array.isArray(value))
+      attributes[key] = value.map((v) =>
+        typeof v === 'string' ? redactCredentialsInString(v) : v
+      );
+  }
+}
+
 export class CredentialRedactingSpanProcessor implements SpanProcessor {
   constructor(private readonly inner: SpanProcessor) {}
 
@@ -16,14 +27,14 @@ export class CredentialRedactingSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan) {
-    // The SDK span's attributes object is still the live record at onEnd; exporters read it after.
-    const attributes = span.attributes as Record<string, unknown>;
-    for (const [key, value] of Object.entries(attributes)) {
-      if (typeof value === 'string') attributes[key] = redactCredentialsInString(value);
-      else if (Array.isArray(value))
-        attributes[key] = value.map((v) =>
-          typeof v === 'string' ? redactCredentialsInString(v) : v
-        );
+    // The SDK span's attributes, events and status are still the live record at onEnd; exporters
+    // read them after. Events carry recordException's message and stack.
+    scrubAttributes(span.attributes);
+    for (const event of span.events) if (event.attributes) scrubAttributes(event.attributes);
+    if (span.status.message) {
+      (span.status as { message?: string }).message = redactCredentialsInString(
+        span.status.message
+      );
     }
     this.inner.onEnd(span);
   }

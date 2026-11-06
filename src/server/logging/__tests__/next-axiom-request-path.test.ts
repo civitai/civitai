@@ -62,6 +62,21 @@ describe('next-axiom request.path', () => {
     expect(shipped).not.toContain(FAKE_TOKEN);
   });
 
+  it.each([
+    [`/api/x?token=${FAKE_TOKEN}&page=2`, '/api/x?token=[redacted]&page=2'],
+    [`/api/x?apiKey=${FAKE_TOKEN}`, '/api/x?apiKey=[redacted]'],
+    [`/api/x?api_key=${FAKE_TOKEN}`, '/api/x?api_key=[redacted]'],
+    [`/api/x?X-Amz-Signature=${FAKE_TOKEN}`, '/api/x?X-Amz-Signature=[redacted]'],
+    [`/api/x?code=${FAKE_TOKEN}&state=s`, '/api/x?code=[redacted]&state=s'],
+    ['/api/v1/images?page=2&limit=10', '/api/v1/images?page=2&limit=10'],
+    ['/api/x?tokens=5&tokenizer=clip&keyword=cat', '/api/x?tokens=5&tokenizer=clip&keyword=cat'],
+  ])('redacts the request path %s', async (input, expected) => {
+    const generic = (await import('@civitai/next-axiom/dist/platform/generic')) as unknown as {
+      redactRequestPath: (url: string) => string;
+    };
+    expect(generic.redactRequestPath(input)).toBe(expected);
+  });
+
   it('redacts the same parameter names as @civitai/axiom', async () => {
     // The patch adds this export; the package's own .d.ts doesn't declare it.
     const generic = (await import('@civitai/next-axiom/dist/platform/generic')) as unknown as {

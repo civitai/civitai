@@ -52,7 +52,11 @@ export const CREDENTIAL_FIELD_NAMES: ReadonlySet<string> = new Set([
 const normalize = (name: string) => name.toLowerCase().replace(/[-_]/g, '');
 
 export const isCredentialParam = (name: string) => CREDENTIAL_PARAM_NAMES.has(normalize(name));
-export const isCredentialField = (name: string) => CREDENTIAL_FIELD_NAMES.has(normalize(name));
+// Custom `x-` headers named for a credential (`x-<anything>-token`, `-secret`, `-signature`, ...).
+const CREDENTIAL_HEADER_RE = /^x-.*(token|secret|signature|key|auth|password)$/i;
+
+export const isCredentialField = (name: string) =>
+  CREDENTIAL_FIELD_NAMES.has(normalize(name)) || CREDENTIAL_HEADER_RE.test(name);
 
 // `name=value` after `?`, `&`, `#` or at the start (a bare query string such as OTel's `url.query`).
 const QUERY_PARAM_RE = /(^|[?&#])([^=?&#\s"'<>]+)=([^&#\s"'<>]*)/g;
@@ -89,8 +93,8 @@ function isPlainObject(value: object): value is Record<string, unknown> {
 }
 
 /**
- * Return a copy of `value` with credential-named fields blanked and every string scrubbed by
- * `redactCredentialsInString`. Arrays and plain objects are walked; other objects (Error, Date,
+ * Return `value` with credential-named fields blanked and every string scrubbed by
+ * `redactCredentialsInString`, without mutating it. Arrays and plain objects are walked and URL instances scrubbed; other objects (Error, Date,
  * class instances) pass through untouched, as does a reference already on the current path, so a
  * circular payload still reaches the caller's own serialization fallback. Never throws.
  */
@@ -102,24 +106,37 @@ export function redactCredentials<T>(value: T): T {
   }
 }
 
+// Copy-on-write: a subtree with nothing to redact is returned by reference, so the common
+// clean payload costs a scan, not a deep copy.
 function walk(value: unknown, depth: number, path: WeakSet<object>): unknown {
   if (typeof value === 'string') return redactCredentialsInString(value);
   if (!value || typeof value !== 'object' || depth > MAX_DEPTH || path.has(value)) return value;
+  if (value instanceof URL) {
+    const href = redactCredentialsInString(value.href);
+    return href === value.href ? value : href;
+  }
   if (!Array.isArray(value) && !isPlainObject(value)) return value;
 
   path.add(value);
-  let out: unknown;
+  let out: unknown = value;
   if (Array.isArray(value)) {
-    out = value.map((v) => walk(v, depth + 1, path));
-  } else {
-    const obj: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      obj[k] =
-        isCredentialField(k) && v != null && typeof v !== 'object'
-          ? REDACTED_CREDENTIAL
-          : walk(v, depth + 1, path);
+    let copy: unknown[] | undefined;
+    for (let i = 0; i < value.length; i++) {
+      const next = walk(value[i], depth + 1, path);
+      if (next !== value[i]) (copy ??= value.slice())[i] = next;
     }
-    out = obj;
+    if (copy) out = copy;
+  } else {
+    let copy: Record<string, unknown> | undefined;
+    for (const k in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
+      const v = value[k];
+      // Blanked whole, whatever its shape: `set-cookie` arrives as a string[].
+      const next =
+        v != null && isCredentialField(k) ? REDACTED_CREDENTIAL : walk(v, depth + 1, path);
+      if (next !== v) (copy ??= { ...value })[k] = next;
+    }
+    if (copy) out = copy;
   }
   path.delete(value);
   return out;
