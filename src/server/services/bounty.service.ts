@@ -607,7 +607,7 @@ export const upsertBounty = async ({
       })
     : null;
   const storedLockedProperties = stored?.lockedProperties ?? [];
-  // Only the filter below may write these for a non-moderator; updateBountyById keeps the stored ones.
+  // Non-moderators can only write fresh profanity detections, never client-supplied ones.
   if (!isModerator && data.details)
     data.details = filterSensitiveProfanityData(data.details, false);
   enforceLockedProperties({ data, storedLockedProperties, isModerator });

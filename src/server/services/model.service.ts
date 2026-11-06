@@ -2082,9 +2082,8 @@ export const getModelVersionsMicro = async ({
   });
 };
 
-// Mutations hand their updated row straight back to the caller, so the keys the read path hides
-// from non-moderators have to come off here too. Stripping beats narrowing the Prisma `select`:
-// these rows feed many callers, and moderators read the keys back from the stored row.
+// Mutation rows go straight back to callers and feed many of them, so strip moderator-only meta
+// here rather than narrowing the Prisma select.
 function withoutModeratorOnlyMeta<T extends { meta: unknown }>(model: T): T {
   const meta = model.meta as ModelMeta | null;
   return { ...model, meta: meta && filterModelMetaForClient(meta, false) } as T;
