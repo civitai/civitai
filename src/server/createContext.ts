@@ -26,7 +26,6 @@ export const createContext = async ({
   res: NextApiResponse;
 }) => {
   const session = await getServerAuthSession({ req, res });
-  const { user, bannedUser } = trpcViewer(session?.user);
   // ATTRIBUTION surface. `ctx.ip` labels a caller for tracking, audit trails and
   // actor hashing; it is not an input to an allow/deny decision, so it takes the
   // derivation that always yields a label rather than the fail-closed one that
@@ -89,8 +88,7 @@ export const createContext = async ({
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    user,
-    bannedUser,
+    ...trpcViewer(session?.user),
     acceptableOrigin,
     // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
     // account must still reach them.
