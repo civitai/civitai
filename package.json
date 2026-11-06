@@ -213,6 +213,7 @@
     "@tiptap/extension-image": "3.16.0",
     "@tiptap/extension-link": "3.16.0",
     "@tiptap/extension-mention": "3.16.0",
+    "@tiptap/extension-text-align": "3.16.0",
     "@tiptap/extension-text-style": "3.16.0",
     "@tiptap/extension-youtube": "3.16.0",
     "@tiptap/extensions": "3.16.0",

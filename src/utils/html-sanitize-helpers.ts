@@ -52,6 +52,14 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.strawpoll.com',
 ];
 
+// The article editor's alignment control writes `style="text-align: …"` on these blocks. Only that
+// one property with one of three values survives, so `style` is not a general-purpose vector here:
+// `allowedStyles` is an allowlist of properties, and every other declaration is dropped.
+const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
+const TEXT_ALIGN_STYLES = Object.fromEntries(
+  TEXT_ALIGN_TAGS.map((tag) => [tag, { 'text-align': [/^(left|center|right)$/] }])
+);
+
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
   a: ['rel', 'href', 'target'],
   img: ['src', 'alt', 'width', 'height'],
@@ -76,6 +84,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   // left to find — the words stay and silently stop updating.
   div: ['data-youtube-video', 'data-type', 'data-id'],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
+  ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
   'edge-media': ['url', 'type', 'filename', 'className'],
@@ -210,6 +219,22 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     ...options
   } = args ?? {};
 
+  // Style filtering needs the parser. Without it the `style` attribute would pass raw, so the
+  // alignment blocks lose theirs rather than gain a way past the property allowlist.
+  const parsesStyles = options.parseStyleAttributes !== false;
+  const allowedAttributes = parsesStyles
+    ? options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES
+    : Object.fromEntries(
+        Object.entries(options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES).map(
+          ([tag, attrs]) => [
+            tag,
+            TEXT_ALIGN_TAGS.includes(tag) && Array.isArray(attrs)
+              ? attrs.filter((attr) => attr !== 'style')
+              : attrs,
+          ]
+        )
+      );
+
   const stripBlurbMarker: Transformer = (tagName, attribs) => {
     const supplied = transformTags?.div;
     const applied =
@@ -226,7 +251,6 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
 
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
-    allowedAttributes: DEFAULT_ALLOWED_ATTRIBUTES,
     exclusiveFilter: (frame) =>
       (!allowStickers && isStickerSpan(frame)) ||
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
@@ -254,5 +278,7 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       div: stripBlurbMarker,
     },
     ...options,
+    allowedAttributes,
+    allowedStyles: parsesStyles ? { ...TEXT_ALIGN_STYLES, ...options.allowedStyles } : undefined,
   });
 }
