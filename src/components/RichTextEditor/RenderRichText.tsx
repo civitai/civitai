@@ -21,6 +21,7 @@ import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
@@ -36,6 +37,7 @@ const extensions = [
   StrawPollNode,
   TimestampNode,
   BlurbNode,
+  TextAlignExtension,
 ];
 
 type JsonNode = {

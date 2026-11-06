@@ -296,6 +296,9 @@ importers:
       '@tiptap/extension-mention':
         specifier: 3.16.0
         version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)(@tiptap/suggestion@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0))
+      '@tiptap/extension-text-align':
+        specifier: 3.16.0
+        version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))
       '@tiptap/extension-text-style':
         specifier: 3.16.0
         version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))
@@ -472,7 +475,7 @@ importers:
         version: 11.2.2
       mantine-react-table:
         specifier: ^2.0.0-beta.9
-        version: 2.0.0-beta.9(f9d0fda811c1be3a41e3eac75f2d989f)
+        version: 2.0.0-beta.9(be749f7ad460d53b639f4d21d2fc05ad)
       meilisearch:
         specifier: 0.33.0
         version: 0.33.0
@@ -5334,6 +5337,11 @@ packages:
     resolution: {integrity: sha512-Vnq5vW801zPbu1LtKeA5k4R241jY+hRjXeijYwIPxy15KzIiipY12518HiCf6/8kkRbMxgOfdYg9X4BRV3HV3g==}
     peerDependencies:
       '@tiptap/core': 3.23.4
+
+  '@tiptap/extension-text-align@3.16.0':
+    resolution: {integrity: sha512-+9mgmd9rSM394/wwBBcxLW9/xzz66j+vUSYMeWcZFC0so/jibu4HcW1lPqKJfQ2F6xAD/xe4cQfckvpdjQaR1Q==}
+    peerDependencies:
+      '@tiptap/core': ^3.16.0
 
   '@tiptap/extension-text-style@3.16.0':
     resolution: {integrity: sha512-D+gIqMvCDYTCvnOVpFwfqjSi0UVAbe/9jXP765WlZsN5SOZm4tGOCo+AGxdxReWHsfteM+bdxaK6It1EDRrmiA==}
@@ -16750,6 +16758,10 @@ snapshots:
     dependencies:
       '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
 
+  '@tiptap/extension-text-align@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))':
+    dependencies:
+      '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
+
   '@tiptap/extension-text-style@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))':
     dependencies:
       '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
@@ -17690,9 +17702,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -21367,7 +21379,7 @@ snapshots:
   make-error@1.3.6:
     optional: true
 
-  mantine-react-table@2.0.0-beta.9(f9d0fda811c1be3a41e3eac75f2d989f):
+  mantine-react-table@2.0.0-beta.9(be749f7ad460d53b639f4d21d2fc05ad):
     dependencies:
       '@mantine/core': 7.17.8(patch_hash=35f18881be9a89ce42df2638cbce6563d7d11e3a3c8b96047325c10d9e82a4fd)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
       '@mantine/dates': 7.17.8(@mantine/core@7.17.8(patch_hash=35f18881be9a89ce42df2638cbce6563d7d11e3a3c8b96047325c10d9e82a4fd)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1))(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(dayjs@1.11.13)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
