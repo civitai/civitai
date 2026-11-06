@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 
@@ -16,17 +17,19 @@ export function hasFailedScan(file: {
 }
 
 /**
- * GenerationCoverage's file test, stricter than hasFailedScan: a scanner Error also uncovers the
- * version. The migration that defines the view states the same rule in SQL.
+ * GenerationCoverage's file test, stricter than hasFailedScan: a scanner Error on a file the generator
+ * loads also uncovers the version. The migration that defines the view states the same rule in SQL.
  */
 export function excludedFromCoverage(file: {
+  type: string;
   pickleScanResult?: ScanResultCode | null;
   virusScanResult?: ScanResultCode | null;
 }) {
   return (
     hasFailedScan(file) ||
-    file.pickleScanResult === ScanResultCode.Error ||
-    file.virusScanResult === ScanResultCode.Error
+    (LOADABLE_FILE_TYPES.includes(file.type) &&
+      (file.pickleScanResult === ScanResultCode.Error ||
+        file.virusScanResult === ScanResultCode.Error))
   );
 }
 
