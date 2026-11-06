@@ -192,6 +192,24 @@ describe('Civitai cards in an article', () => {
     ]);
   });
 
+  test('moving to another article starts its cards fresh', async () => {
+    const view = (content: Record<string, unknown>) => (
+      <BrowsingLevelProvider>
+        <div data-testid="host">
+          <RenderRichText content={content} />
+        </div>
+      </BrowsingLevelProvider>
+    );
+    const screen = await renderWithProviders(view(article([link('model', 1)])));
+    await expect.element(page.getByText('Safe model')).toBeInTheDocument();
+
+    await screen.rerender(view(article([link('model', 4)])));
+    await expect.element(page.getByText('Other model')).toBeInTheDocument();
+    // Read as "missing" against the last article's results, id 4 would also go to the
+    // mature follow-up.
+    expect(mocks.requests.map((r) => r.ids)).toEqual([[1], [4]]);
+  });
+
   test('nothing is requested until a card is in view', async () => {
     mocks.state.inView = false;
     renderArticle(article([link('model', 1)]));

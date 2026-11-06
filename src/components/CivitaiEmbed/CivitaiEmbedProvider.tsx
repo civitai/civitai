@@ -106,10 +106,9 @@ export function CivitaiEmbedProvider({
   const missingModelIds = useMemo(() => missing(modelIds, models), [modelIds, models]);
   const missingImageIds = useMemo(() => missing(imageIds, images), [imageIds, images]);
 
-  const allImages = useMemo(
-    () => [...images.byId.values(), ...matureImages.byId.values()],
-    [images, matureImages]
-  );
+  // Viewer-level images only: this list is also the detail modal's prev/next, which must not
+  // step onto a mature image the reader has not chosen to show.
+  const feedImages = useMemo(() => [...images.byId.values()], [images]);
 
   const requestLoad = useCallback(() => setRequested(true), []);
   const value = useMemo(
@@ -144,7 +143,7 @@ export function CivitaiEmbedProvider({
             />
           </BrowsingLevelProvider>
         )}
-        <ImagesProvider images={allImages} hideHatTurf hideStickerBadge>
+        <ImagesProvider images={feedImages} hideHatTurf hideStickerBadge>
           {children}
         </ImagesProvider>
       </ViewerBrowsingLevelScope>
