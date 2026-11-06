@@ -3,7 +3,14 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { YESNO_PROMPT_MAX } from '../../knights/trials-limits';
 import { dbWrite } from '../db';
-import { CORESET, FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
+import {
+  CORESET,
+  countRows,
+  FIRST_PAGE,
+  pageWindow,
+  type ListPage,
+  type ListQuery,
+} from './coreset.config';
 import { unservableReason, type Outcome } from './coreset.service';
 
 export type YesNoQuestion = { key: string; prompt: string; active: boolean };
@@ -57,10 +64,7 @@ export async function getYesNoReferences(
       .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey');
     return query.imageId === undefined ? base : base.where('r.imageId', '=', query.imageId);
   };
-  const counted = await filtered()
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .executeTakeFirstOrThrow();
-  const total = Number(counted.count);
+  const total = await countRows(filtered());
   const { page, offset, limit } = pageWindow(query.page, total, pageSize);
   const items = await filtered()
     .select([

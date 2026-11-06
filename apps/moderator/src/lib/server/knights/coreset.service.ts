@@ -11,6 +11,7 @@ import { dbWrite } from '../db';
 import {
   CORESET,
   FIRST_PAGE,
+  countRows,
   pageWindow,
   type CoreSetConfig,
   type ListPage,
@@ -54,12 +55,6 @@ const flaggedSql = (config: CoreSetConfig) =>
 
 type ReferenceQuery = ReturnType<typeof references>;
 
-const countOf = async (query: ReferenceQuery) =>
-  Number(
-    (await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirstOrThrow())
-      .count
-  );
-
 const forImage = (query: ReferenceQuery, { imageId }: ListQuery) =>
   imageId === undefined ? query : query.where('r.imageId', '=', imageId);
 
@@ -94,7 +89,7 @@ export async function getCoreItems(
   config: CoreSetConfig = CORESET
 ): Promise<ListPage<CoreSetItem>> {
   const base = forImage(references().where('r.source', '=', REFERENCE_SOURCE.core), query);
-  const total = await countOf(base);
+  const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
   const items = await listItems(base, config)
     .orderBy(sql`("r"."status" = ${REFERENCE_STATUS.active})`, 'desc')
@@ -117,7 +112,7 @@ export async function getFreshItems(
       .where('r.status', '=', REFERENCE_STATUS.active),
     query
   );
-  const total = await countOf(base);
+  const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
   const items = await listItems(base, config)
     .orderBy(flaggedSql(config), 'desc')
@@ -139,7 +134,7 @@ export async function getSpotCheckItems(
       .where('r.status', '=', REFERENCE_STATUS.pending),
     query
   );
-  const total = await countOf(base);
+  const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
   const items = await base
     .select(['r.id', 'ri.url as imageKey'])
