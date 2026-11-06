@@ -18,6 +18,7 @@ import { buyItem } from '$lib/server/shop/purchase';
 import { REFUSAL_STATUS, refusalText } from '$lib/shop-view';
 import type { Actions, PageServerLoad } from './$types';
 
+const POSTGRES_INT_MAX = 2_147_483_647;
 const CLOSED_TEXT = "The shop isn't open yet. Your gold keeps accruing.";
 
 const buzzPacksOpen = () => conversionEnabled() && buzzConfigured();
@@ -60,17 +61,18 @@ export const actions: Actions = {
   buy: async ({ locals, request }) => {
     if (!shopEnabled()) return fail(403, { message: CLOSED_TEXT });
     const form = await request.formData();
-    const itemId = String(form.get('itemId') ?? '');
+    const rawItemId = String(form.get('itemId') ?? '').trim();
+    const itemId = /^\d+$/.test(rawItemId) ? Number(rawItemId) : NaN;
     const requestKey = String(form.get('requestKey') ?? '');
     const rawPrice = String(form.get('price') ?? '').trim();
     const price = rawPrice === '' ? NaN : Number(rawPrice);
     if (
-      !itemId ||
+      !(itemId > 0 && itemId <= POSTGRES_INT_MAX) ||
       !REQUEST_KEY_PATTERN.test(requestKey) ||
       !Number.isInteger(price) ||
       price <= 0
     ) {
-      return fail(400, { message: refusalText('bad-key'), reason: 'bad-key' as const, itemId });
+      return fail(400, { message: refusalText('bad-key'), reason: 'bad-key' as const });
     }
 
     const open = buzzPacksOpen();
@@ -134,7 +136,7 @@ export const actions: Actions = {
   },
 };
 
-async function rankGateOf(itemId: string): Promise<string | null> {
+async function rankGateOf(itemId: number): Promise<string | null> {
   const row = await db
     .selectFrom('KnightsShopItem')
     .select('minRank')

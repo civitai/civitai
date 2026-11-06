@@ -7,6 +7,14 @@ import { hasActiveMembership, listInventory, membershipOf, recentPurchases } fro
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 const ACOLYTE_BADGE = 858;
+const ITEM = {
+  'badge-seal': 1,
+  'sticker-wave': 2,
+  'sticker-free': 3,
+  'buzz-50': 4,
+  'acolyte-resale': 5,
+} as const;
+type ItemName = keyof typeof ITEM;
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -23,10 +31,10 @@ beforeEach(async () => {
   );
   await pg.exec(`
     INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","cosmeticId","tier","months") VALUES
-      ('badge-seal','cosmetic','Seal badge',400,NULL,101,NULL,NULL),
-      ('sticker-wave','cosmetic','Wave stickers',300,NULL,102,NULL,NULL),
-      ('sticker-free','cosmetic','Free stickers',300,NULL,103,NULL,NULL),
-      ('buzz-50','buzz_pack','50 Buzz',1000,50,NULL,NULL,NULL);
+      (1,'cosmetic','Seal badge',400,NULL,101,NULL,NULL),
+      (2,'cosmetic','Wave stickers',300,NULL,102,NULL,NULL),
+      (3,'cosmetic','Free stickers',300,NULL,103,NULL,NULL),
+      (4,'buzz_pack','50 Buzz',1000,50,NULL,NULL,NULL);
     INSERT INTO "Cosmetic" ("id","name","type","source","data") VALUES
       (101,'Seal','Badge','Purchase','{"url":"seal-key"}'),
       (102,'Wave','Sticker','Purchase','{"uses":5}'),
@@ -37,12 +45,12 @@ beforeEach(async () => {
 
 let n = 0;
 /** Records a purchase and returns its key, which is also the `claimKey` of what it granted. */
-const buy = async (itemId: string, { playerId = 1, status = 'granted' } = {}) => {
+const buy = async (item: ItemName, { playerId = 1, status = 'granted' } = {}) => {
   const key = `purchase-${++n}`;
   await pg.query(
     `INSERT INTO "KnightsShopPurchase" ("playerId","requestKey","externalKey","itemId","kind","gold","grant","status")
      SELECT $1, $2, $2, $3, "kind", "price", '{}', $4 FROM "KnightsShopItem" WHERE "id" = $3`,
-    [playerId, key, itemId, status]
+    [playerId, key, ITEM[item], status]
   );
   return key;
 };
@@ -101,7 +109,7 @@ describe('listInventory', () => {
   it('calls a rank badge the player also bought a shop item', async () => {
     await own(ACOLYTE_BADGE, 'rank-grant');
     await pg.query(
-      `INSERT INTO "KnightsShopItem" ("id","kind","name","price","cosmeticId") VALUES ('acolyte-resale','cosmetic','Acolyte',100,${ACOLYTE_BADGE})`
+      `INSERT INTO "KnightsShopItem" ("id","kind","name","price","cosmeticId") VALUES (5,'cosmetic','Acolyte',100,${ACOLYTE_BADGE})`
     );
     await own(ACOLYTE_BADGE, await buy('acolyte-resale'));
 

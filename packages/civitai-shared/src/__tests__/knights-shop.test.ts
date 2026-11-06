@@ -7,12 +7,12 @@ import {
   stockFor,
   utcDay,
   type ShopItem,
-} from './rotation';
+} from '../knights-shop';
 
-const item = (id: string, over: Partial<ShopItem> = {}): ShopItem => ({
+const item = (id: number, over: Partial<ShopItem> = {}): ShopItem => ({
   id,
   kind: 'cosmetic',
-  name: id,
+  name: `item ${id}`,
   description: '',
   price: 1000,
   buzz: null,
@@ -26,17 +26,22 @@ const item = (id: string, over: Partial<ShopItem> = {}): ShopItem => ({
   ...over,
 });
 
+const PACK = 100;
+const MEMBER = 101;
+const OFF = 102;
+const cosmeticIds = Array.from({ length: 12 }, (_, i) => i + 1);
+
 const CATALOG = [
-  ...Array.from({ length: 12 }, (_, i) => item(`c${i}`)),
-  item('pack', { kind: 'buzz_pack', rotating: false, buzz: 50, cosmeticId: null }),
-  item('member', {
+  ...cosmeticIds.map((id) => item(id)),
+  item(PACK, { kind: 'buzz_pack', rotating: false, buzz: 50, cosmeticId: null }),
+  item(MEMBER, {
     kind: 'membership',
     rotating: false,
     tier: 'silver',
     months: 1,
     cosmeticId: null,
   }),
-  item('off', { active: false, rotating: false }),
+  item(OFF, { active: false, rotating: false }),
 ];
 
 describe('the daily rotation', () => {
@@ -64,9 +69,9 @@ describe('the daily rotation', () => {
     const { stock } = stockFor(CATALOG, '2026-12-20');
     const ids = stock.map((s) => s.item.id);
 
-    expect(ids).toEqual(expect.arrayContaining(['pack', 'member']));
-    expect(ids).not.toContain('off');
-    expect(ids.filter((id) => id.startsWith('c'))).toHaveLength(ROTATION_SIZE);
+    expect(ids).toEqual(expect.arrayContaining([PACK, MEMBER]));
+    expect(ids).not.toContain(OFF);
+    expect(ids.filter((id) => cosmeticIds.includes(id))).toHaveLength(ROTATION_SIZE);
   });
 
   it("picks deals from today's stock and takes the deal percent off", () => {
@@ -80,13 +85,19 @@ describe('the daily rotation', () => {
     expect(stock.filter((s) => s.deal).map((s) => s.item.id)).toEqual(deals.map((d) => d.item.id));
   });
 
+  it('breaks sortOrder ties by numeric id, so 10 sorts after 9', () => {
+    const { stock } = stockFor([item(10), item(9), item(100)], '2026-12-20');
+
+    expect(stock.map((s) => s.item.id)).toEqual([9, 10, 100]);
+  });
+
   it('never prices a deal at zero gold', () => {
     expect(dealPrice(1)).toBe(1);
     expect(dealPrice(1000)).toBe(800);
   });
 
   it('copes with a catalog smaller than the rotation', () => {
-    expect(stockFor([item('only')], '2026-12-20').stock.map((s) => s.item.id)).toEqual(['only']);
+    expect(stockFor([item(7)], '2026-12-20').stock.map((s) => s.item.id)).toEqual([7]);
     expect(stockFor([], '2026-12-20')).toEqual({ stock: [], deals: [] });
   });
 

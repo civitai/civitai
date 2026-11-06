@@ -7286,7 +7286,7 @@ export interface CreatorProgramPayoutReviewRun {
 }
 
 export interface KnightsShopItem {
-  id: string;
+  id: number;
   kind: string;
   name: string;
   description: string;
@@ -7301,6 +7301,17 @@ export interface KnightsShopItem {
   sortOrder: number;
   createdAt: Date;
   purchases?: KnightsShopPurchase[];
+  changes?: KnightsShopItemChange[];
+}
+
+export interface KnightsShopItemChange {
+  id: number;
+  itemId: number;
+  item?: KnightsShopItem;
+  userId: number;
+  action: string;
+  changes: JsonValue;
+  createdAt: Date;
 }
 
 export interface KnightsShopPurchase {
@@ -7308,7 +7319,7 @@ export interface KnightsShopPurchase {
   playerId: number;
   requestKey: string;
   externalKey: string;
-  itemId: string;
+  itemId: number;
   item?: KnightsShopItem;
   kind: string;
   gold: number;

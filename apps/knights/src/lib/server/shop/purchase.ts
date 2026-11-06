@@ -15,14 +15,14 @@ import {
 import { holdingBlocksPurchase, stickerUses } from './cosmetics';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { hasActiveMembership } from './inventory';
-import { isSellable, stockFor, utcDay, type ShopItem } from './rotation';
+import { isSellable, stockFor, utcDay, type ShopItem } from '@civitai/shared/knights-shop';
 
 type Purchase = Selectable<DB['KnightsShopPurchase']>;
 type Log = (event: Record<string, unknown>) => unknown;
 
 export type BuyRequest = {
   playerId: number;
-  itemId: string;
+  itemId: number;
   /** The buyer's idempotency key: a repeat of it replays the first answer and never charges twice. */
   requestKey: string;
   /** The price the buyer saw; a different current price refuses the purchase. */

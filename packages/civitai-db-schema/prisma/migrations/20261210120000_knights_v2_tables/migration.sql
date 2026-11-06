@@ -326,10 +326,10 @@ CREATE TABLE IF NOT EXISTS "KnightsAcolyteLevelGold" (
   CONSTRAINT "KnightsAcolyteLevelGold_pkey" PRIMARY KEY ("playerId", "level")
 );
 
--- The gold shop: a catalog, and the gold ledger of what was bought. Load the catalog with `pnpm run seed:shop` in apps/knights
--- after the main app build with the shop endpoints (/api/mod/knights/shop) is deployed.
+-- The gold shop: a catalog, and the gold ledger of what was bought. The catalog is managed from the moderator app
+-- (/knights-of-new-order/shop); `pnpm run seed:shop` in apps/knights fills a local dev database only.
 CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
-  "id" TEXT PRIMARY KEY,
+  "id" SERIAL PRIMARY KEY,
   "kind" TEXT NOT NULL,
   "name" TEXT NOT NULL,
   "description" TEXT NOT NULL DEFAULT '',
@@ -356,7 +356,7 @@ CREATE TABLE IF NOT EXISTS "KnightsShopPurchase" (
   "playerId" INTEGER NOT NULL,
   "requestKey" TEXT NOT NULL,
   "externalKey" TEXT NOT NULL,
-  "itemId" TEXT NOT NULL REFERENCES "KnightsShopItem"("id"),
+  "itemId" INTEGER NOT NULL REFERENCES "KnightsShopItem"("id"),
   "kind" TEXT NOT NULL,
   "gold" INTEGER NOT NULL,
   "grant" JSONB NOT NULL,
@@ -378,3 +378,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS "KnightsShopPurchase_deal_once_key" ON "Knight
   WHERE "dealDay" IS NOT NULL AND "status" <> 'failed';
 CREATE INDEX IF NOT EXISTS "KnightsShopPurchase_playerId_createdAt_idx" ON "KnightsShopPurchase" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsShopPurchase_pending_idx" ON "KnightsShopPurchase" ("createdAt") WHERE "status" = 'pending';
+
+-- userId is the moderator and has no foreign key, so deleting a user never rewrites the trail.
+CREATE TABLE IF NOT EXISTS "KnightsShopItemChange" (
+  "id" SERIAL PRIMARY KEY,
+  "itemId" INTEGER NOT NULL REFERENCES "KnightsShopItem"("id"),
+  "userId" INTEGER NOT NULL,
+  "action" TEXT NOT NULL,
+  "changes" JSONB NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "KnightsShopItemChange_action_check" CHECK ("action" IN ('create', 'update', 'retire', 'restore'))
+);
+
+CREATE INDEX IF NOT EXISTS "KnightsShopItemChange_itemId_createdAt_idx"
+  ON "KnightsShopItemChange" ("itemId", "createdAt" DESC);

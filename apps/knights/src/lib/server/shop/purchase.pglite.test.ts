@@ -9,15 +9,17 @@ import { BuzzRejectedError, type BuzzGrant, type BuzzPort } from '../conversion/
 import { markConversionPaid, retryPendingConversions } from '../conversion/convert';
 import { MainAppRejectedError, type MainAppPort } from './main-app';
 import { buyItem, retryPendingPurchases, type BuyDeps } from './purchase';
-import { stockFor } from './rotation';
+import { stockFor } from '@civitai/shared/knights-shop';
 
 const dealsToday = vi.hoisted(() => ({ count: 0 }));
-vi.mock('./config', async (original) => ({
-  ...(await original<typeof import('./config')>()),
-  get DEALS_PER_DAY() {
-    return dealsToday.count;
-  },
-}));
+vi.mock('@civitai/shared/knights-shop', async (original) => {
+  const actual = await original<typeof import('@civitai/shared/knights-shop')>();
+  return {
+    ...actual,
+    stockFor: (items: Parameters<typeof actual.stockFor>[0], day: string) =>
+      actual.stockFor(items, day, { dealsPerDay: dealsToday.count }),
+  };
+});
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 const DAY = '2026-12-20';
@@ -60,15 +62,27 @@ function fakeMainApp({ failFirst = false, down = false, reject = null as number 
   };
 }
 
+const ITEM = {
+  'buzz-50': 1,
+  'buzz-130': 2,
+  'member-silver': 3,
+  'badge-seal': 4,
+  'sticker-wave': 5,
+  'sticker-free': 6,
+  halo: 7,
+} as const;
+type ItemName = keyof typeof ITEM;
+const NO_SUCH_ITEM = 9999;
+
 const ITEMS = `
 INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","cosmeticId","tier","months","minRank","rotating") VALUES
- ('buzz-50','buzz_pack','50 Buzz',1000,50,NULL,NULL,NULL,NULL,false),
- ('buzz-130','buzz_pack','130 Buzz',2500,130,NULL,NULL,NULL,NULL,false),
- ('member-silver','membership','Silver',12000,NULL,NULL,'silver',1,NULL,false),
- ('badge-seal','cosmetic','Seal badge',400,NULL,101,NULL,NULL,NULL,false),
- ('sticker-wave','cosmetic','Wave stickers',300,NULL,102,NULL,NULL,NULL,false),
- ('sticker-free','cosmetic','Free stickers',300,NULL,103,NULL,NULL,NULL,false),
- ('halo','cosmetic','Halo',2000,NULL,104,NULL,NULL,'Paladin',false);
+ (1,'buzz_pack','50 Buzz',1000,50,NULL,NULL,NULL,NULL,false),
+ (2,'buzz_pack','130 Buzz',2500,130,NULL,NULL,NULL,NULL,false),
+ (3,'membership','Silver',12000,NULL,NULL,'silver',1,NULL,false),
+ (4,'cosmetic','Seal badge',400,NULL,101,NULL,NULL,NULL,false),
+ (5,'cosmetic','Wave stickers',300,NULL,102,NULL,NULL,NULL,false),
+ (6,'cosmetic','Free stickers',300,NULL,103,NULL,NULL,NULL,false),
+ (7,'cosmetic','Halo',2000,NULL,104,NULL,NULL,'Paladin',false);
 INSERT INTO "Cosmetic" ("id","name","type","source","data") VALUES
  (101,'Seal','Badge','Purchase','{}'),
  (102,'Wave','Sticker','Purchase','{"uses":5}'),
@@ -84,7 +98,7 @@ const defaultDeps = (over: Partial<BuyDeps> = {}): BuyDeps => ({
 
 let keyCounter = 0;
 const buy = (
-  itemId: string,
+  itemId: ItemName | 'nope' | number,
   {
     playerId = 1,
     price,
@@ -101,20 +115,23 @@ const buy = (
 ) =>
   buyItem(db, deps, {
     playerId,
-    itemId,
+    itemId: idOf(itemId),
     requestKey: key ?? `request-${++keyCounter}`,
-    price: price ?? PRICES[itemId],
+    price: price ?? PRICES[idOf(itemId)],
     now,
   });
 
-const PRICES: Record<string, number> = {
-  'buzz-50': 1000,
-  'buzz-130': 2500,
-  'member-silver': 12000,
-  'badge-seal': 400,
-  'sticker-wave': 300,
-  'sticker-free': 300,
-  halo: 2000,
+const idOf = (item: ItemName | 'nope' | number) =>
+  typeof item === 'number' ? item : item === 'nope' ? NO_SUCH_ITEM : ITEM[item];
+
+const PRICES: Record<number, number> = {
+  [ITEM['buzz-50']]: 1000,
+  [ITEM['buzz-130']]: 2500,
+  [ITEM['member-silver']]: 12000,
+  [ITEM['badge-seal']]: 400,
+  [ITEM['sticker-wave']]: 300,
+  [ITEM['sticker-free']]: 300,
+  [ITEM.halo]: 2000,
 };
 
 const player = async (userId = 1) =>
@@ -274,7 +291,9 @@ describe('spending gold', () => {
   it('answers a replay of a charged purchase after the player is held, and again once the item is gone', async () => {
     const first = await buy('badge-seal', { key: 'replay-after-hold' });
     await pg.query(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt" = now() WHERE "userId"=1`);
-    await pg.query(`UPDATE "KnightsShopItem" SET "active" = false WHERE "id" = 'badge-seal'`);
+    await pg.query(
+      `UPDATE "KnightsShopItem" SET "active" = false WHERE "id" = ${ITEM['badge-seal']}`
+    );
 
     const again = await buy('badge-seal', { key: 'replay-after-hold', price: 1 });
 
@@ -397,7 +416,9 @@ describe('spending gold', () => {
 
   it('refuses an item that is not sold, and one gated to a higher rank', async () => {
     expect(await buy('nope', { price: 1 })).toEqual({ status: 'refused', reason: 'unknown-item' });
-    await pg.query(`UPDATE "KnightsShopItem" SET "active" = false WHERE "id" = 'buzz-130'`);
+    await pg.query(
+      `UPDATE "KnightsShopItem" SET "active" = false WHERE "id" = ${ITEM['buzz-130']}`
+    );
     expect(await buy('buzz-130')).toEqual({ status: 'refused', reason: 'unknown-item' });
     expect(await buy('halo')).toEqual({ status: 'refused', reason: 'rank' });
     await pg.query(`UPDATE "NewOrderPlayer" SET "rankType" = 'Paladin' WHERE "userId"=1`);
@@ -635,7 +656,9 @@ describe('a membership month', () => {
   });
 
   it('is sold one month at a time: an item that says otherwise is not on sale', async () => {
-    await pg.query(`UPDATE "KnightsShopItem" SET "months" = 3 WHERE "id" = 'member-silver'`);
+    await pg.query(
+      `UPDATE "KnightsShopItem" SET "months" = 3 WHERE "id" = ${ITEM['member-silver']}`
+    );
     expect(await buy('member-silver')).toEqual({ status: 'refused', reason: 'unknown-item' });
   });
 

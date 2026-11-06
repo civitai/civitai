@@ -222,11 +222,12 @@ describe('the Knights of New Order section', () => {
   const KNIGHTS = '/knights-of-new-order';
   const group = () => NAVIGATION.find((l) => l.label === 'Knights of New Order');
 
-  it('holds Inquisitor, Trials and Linked accounts under a group with no grant of its own', () => {
+  it('holds Inquisitor, Trials, Shop and Linked accounts under a group with no grant of its own', () => {
     expect(group()?.path).toBeUndefined();
     expect(group()?.children?.map((c) => [c.path, c.label])).toEqual([
       [`${KNIGHTS}/inquisitor`, 'Inquisitor'],
       [`${KNIGHTS}/trials`, 'Trials'],
+      [`${KNIGHTS}/shop`, 'Shop'],
       [KNIGHTS, 'Linked accounts'],
     ]);
   });
@@ -236,6 +237,7 @@ describe('the Knights of New Order section', () => {
     expect(countKeys).toEqual([
       [`${KNIGHTS}/inquisitor`, 'knightsInquisitor'],
       [`${KNIGHTS}/trials`, undefined],
+      [`${KNIGHTS}/shop`, undefined],
       [KNIGHTS, 'knightsLinkReviews'],
     ]);
   });
