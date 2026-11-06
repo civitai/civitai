@@ -2,7 +2,7 @@ import type { ExpressionBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { dbWrite } from '../db';
-import { CORESET } from './coreset.config';
+import { CORESET, FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
 import { unservableReason, type Outcome } from './coreset.service';
 
 export type YesNoQuestion = { key: string; prompt: string; active: boolean };
@@ -16,6 +16,8 @@ export type YesNoReferenceItem = {
   questionPrompt: string;
   answer: boolean;
   explanation: string | null;
+  /** The question Acolytes see for this pair. Null on pairs made before it existed: they see the axis prompt. */
+  prompt: string | null;
   active: boolean;
   /** Acolyte answers naming this pair. While any exist it can only be deactivated. */
   answers: number;
@@ -23,6 +25,7 @@ export type YesNoReferenceItem = {
 };
 
 const GONE = 'This pair is no longer available. Reload the page.';
+const NEEDS_PROMPT = 'Write the question Acolytes will be asked about this image.';
 
 /** Yes/no questions a pair can be written for, inactive ones included so a pair can be prepared early. */
 export async function getYesNoQuestions(): Promise<YesNoQuestion[]> {
@@ -35,17 +38,30 @@ export async function getYesNoQuestions(): Promise<YesNoQuestion[]> {
 }
 
 /** Active pairs first, then newest. */
-export async function getYesNoReferences(limit = CORESET.listLimit): Promise<YesNoReferenceItem[]> {
-  return dbWrite
-    .selectFrom('KnightsYesNoReference as r')
-    .innerJoin('Image as i', 'i.id', 'r.imageId')
-    .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
+export async function getYesNoReferences(
+  query: ListQuery = FIRST_PAGE,
+  pageSize: number = CORESET.pageSize
+): Promise<ListPage<YesNoReferenceItem>> {
+  const filtered = () => {
+    const base = dbWrite
+      .selectFrom('KnightsYesNoReference as r')
+      .innerJoin('Image as i', 'i.id', 'r.imageId')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey');
+    return query.imageId === undefined ? base : base.where('r.imageId', '=', query.imageId);
+  };
+  const counted = await filtered()
+    .select(sql<string>`count(*)`.as('count'))
+    .executeTakeFirstOrThrow();
+  const total = Number(counted.count);
+  const { page, offset, limit } = pageWindow(query.page, total, pageSize);
+  const items = await filtered()
     .select([
       'r.id',
       'r.imageId',
       'r.questionKey',
       'r.answer',
       'r.explanation',
+      'r.prompt',
       'r.active',
       'r.createdAt',
       sql<number>`(SELECT count(*)::int FROM "KnightsApprenticeAnswer" a WHERE a."yesNoReferenceId" = r."id")`.as(
@@ -58,7 +74,9 @@ export async function getYesNoReferences(limit = CORESET.listLimit): Promise<Yes
     .orderBy('r.active', 'desc')
     .orderBy('r.id', 'desc')
     .limit(limit)
+    .offset(offset)
     .execute();
+  return { items, total, page };
 }
 
 export async function getYesNoReferenceCount(): Promise<number> {
@@ -73,10 +91,13 @@ export async function getYesNoReferenceCount(): Promise<number> {
 export async function addYesNoReference(input: {
   imageId: number;
   questionKey: string;
+  prompt: string;
   answer: boolean;
   explanation: string;
   createdBy: number;
 }): Promise<Outcome> {
+  const prompt = input.prompt.trim();
+  if (!prompt) return { ok: false, error: NEEDS_PROMPT };
   const question = await dbWrite
     .selectFrom('KnightsQuestion')
     .select('kind')
@@ -97,6 +118,7 @@ export async function addYesNoReference(input: {
       questionKey: input.questionKey,
       answer: input.answer,
       explanation: input.explanation.trim() || null,
+      prompt,
       createdBy: input.createdBy,
       updatedAt: utc(new Date()),
     })
@@ -148,16 +170,19 @@ async function whyUntouched(id: number, verb: string): Promise<Outcome> {
     : { ok: false, error: GONE };
 }
 
-/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, so an edit would contradict it. */
+/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, so an edit would contradict it; the question text is frozen with them. */
 export async function updateYesNoReference(
   id: number,
-  input: { answer: boolean; explanation: string }
+  input: { answer: boolean; explanation: string; prompt: string }
 ): Promise<Outcome> {
+  const prompt = input.prompt.trim();
+  if (!prompt) return { ok: false, error: NEEDS_PROMPT };
   const updated = await dbWrite
     .updateTable('KnightsYesNoReference')
     .set({
       answer: input.answer,
       explanation: input.explanation.trim() || null,
+      prompt,
       updatedAt: utc(new Date()),
     })
     .where('id', '=', id)

@@ -51,6 +51,7 @@ describe('Knights of New Order yes/no reference actions', () => {
       formEvent({
         image: 'https://civitai.com/images/123?postId=5',
         questionKey: 'q.safe',
+        prompt: '  Is a knife held?  ',
         answer: 'yes',
         explanation: 'Why',
       })
@@ -59,6 +60,7 @@ describe('Knights of New Order yes/no reference actions', () => {
     expect(svc.add).toHaveBeenCalledWith({
       imageId: 123,
       questionKey: 'q.safe',
+      prompt: 'Is a knife held?',
       answer: true,
       explanation: 'Why',
       createdBy: 77,
@@ -67,7 +69,9 @@ describe('Knights of New Order yes/no reference actions', () => {
 
   it('accepts a plain image id and the no answer, with an empty explanation', async () => {
     svc.add.mockResolvedValueOnce({ ok: true });
-    await actions.addYesNo(formEvent({ image: '45', questionKey: 'q.safe', answer: 'no' }));
+    await actions.addYesNo(
+      formEvent({ image: '45', questionKey: 'q.safe', prompt: 'Asked?', answer: 'no' })
+    );
     expect(svc.add).toHaveBeenCalledWith(
       expect.objectContaining({ imageId: 45, answer: false, explanation: '' })
     );
@@ -75,8 +79,14 @@ describe('Knights of New Order yes/no reference actions', () => {
 
   it.each([
     ['an unreadable image', { image: 'not an image', questionKey: 'q', answer: 'yes' }],
-    ['an unknown answer', { image: '1', questionKey: 'q', answer: 'maybe' }],
-    ['a missing question', { image: '1', answer: 'yes' }],
+    ['an unknown answer', { image: '1', questionKey: 'q', prompt: 'Asked?', answer: 'maybe' }],
+    ['a missing question', { image: '1', prompt: 'Asked?', answer: 'yes' }],
+    ['a missing prompt', { image: '1', questionKey: 'q', answer: 'yes' }],
+    ['a blank prompt', { image: '1', questionKey: 'q', prompt: '   ', answer: 'yes' }],
+    [
+      'a prompt over the limit',
+      { image: '1', questionKey: 'q', prompt: 'x'.repeat(601), answer: 'yes' },
+    ],
   ])('rejects %s without calling the service', async (_, fields) => {
     const result = await actions.addYesNo(formEvent(fields));
     expect(result).toMatchObject({ status: 400 });
@@ -85,7 +95,7 @@ describe('Knights of New Order yes/no reference actions', () => {
 
   it('tells the moderator what to enter when the image field is unreadable', async () => {
     const result = await actions.addYesNo(
-      formEvent({ image: 'abc', questionKey: 'q', answer: 'yes' })
+      formEvent({ image: 'abc', questionKey: 'q', prompt: 'Asked?', answer: 'yes' })
     );
     expect(JSON.stringify(result)).toContain('Enter an image id or an image page URL.');
   });
@@ -95,7 +105,9 @@ describe('Knights of New Order yes/no reference actions', () => {
     ['past int4', '2147483648'],
     ['a zero page URL', 'https://civitai.com/images/0'],
   ])('gives the same message for an out-of-range image id (%s)', async (_, image) => {
-    const result = await actions.addYesNo(formEvent({ image, questionKey: 'q', answer: 'yes' }));
+    const result = await actions.addYesNo(
+      formEvent({ image, questionKey: 'q', prompt: 'Asked?', answer: 'yes' })
+    );
     expect(JSON.stringify(result)).toContain('Enter an image id or an image page URL.');
     expect(svc.add).not.toHaveBeenCalled();
   });
@@ -103,7 +115,7 @@ describe('Knights of New Order yes/no reference actions', () => {
   it('surfaces a duplicate or invalid question as a conflict with the service message', async () => {
     svc.add.mockResolvedValueOnce({ ok: false, error: 'Image 1 already has a reference.' });
     const result = await actions.addYesNo(
-      formEvent({ image: '1', questionKey: 'q.safe', answer: 'yes' })
+      formEvent({ image: '1', questionKey: 'q.safe', prompt: 'Asked?', answer: 'yes' })
     );
     expect(result).toMatchObject({
       status: 409,
@@ -123,27 +135,42 @@ describe('Knights of New Order yes/no reference actions', () => {
     expect(await actions.deleteYesNo(formEvent({ id: 'abc' }))).toMatchObject({ status: 400 });
   });
 
-  it('saves an edited answer and explanation by id, and rejects an unknown answer', async () => {
+  it('saves an edited prompt, answer and explanation by id, and rejects an unknown answer or a blank prompt', async () => {
     svc.update.mockResolvedValueOnce({ ok: true });
     expect(
-      await actions.updateYesNo(formEvent({ id: '5', answer: 'no', explanation: 'Why' }))
+      await actions.updateYesNo(
+        formEvent({ id: '5', prompt: ' Asked? ', answer: 'no', explanation: 'Why' })
+      )
     ).toMatchObject({ success: true });
-    expect(svc.update).toHaveBeenCalledWith(5, { answer: false, explanation: 'Why' });
-    expect(await actions.updateYesNo(formEvent({ id: '5', answer: 'maybe' }))).toMatchObject({
-      status: 400,
+    expect(svc.update).toHaveBeenCalledWith(5, {
+      prompt: 'Asked?',
+      answer: false,
+      explanation: 'Why',
     });
+    expect(
+      await actions.updateYesNo(formEvent({ id: '5', prompt: 'Asked?', answer: 'maybe' }))
+    ).toMatchObject({ status: 400 });
+    expect(
+      await actions.updateYesNo(formEvent({ id: '5', prompt: '  ', answer: 'yes' }))
+    ).toMatchObject({ status: 400 });
     expect(svc.update).toHaveBeenCalledTimes(1);
   });
 
   it('saves an edit with no explanation field as an empty explanation', async () => {
     svc.update.mockResolvedValueOnce({ ok: true });
-    await actions.updateYesNo(formEvent({ id: '5', answer: 'yes' }));
-    expect(svc.update).toHaveBeenCalledWith(5, { answer: true, explanation: '' });
+    await actions.updateYesNo(formEvent({ id: '5', prompt: 'Asked?', answer: 'yes' }));
+    expect(svc.update).toHaveBeenCalledWith(5, {
+      prompt: 'Asked?',
+      answer: true,
+      explanation: '',
+    });
   });
 
   it('shows the service refusal when a pair with answers is edited', async () => {
     svc.update.mockResolvedValueOnce({ ok: false, error: 'Deactivate it instead.' });
-    expect(await actions.updateYesNo(formEvent({ id: '5', answer: 'no' }))).toMatchObject({
+    expect(
+      await actions.updateYesNo(formEvent({ id: '5', prompt: 'Asked?', answer: 'no' }))
+    ).toMatchObject({
       status: 409,
       data: { error: 'Deactivate it instead.' },
     });
