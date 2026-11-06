@@ -45,12 +45,18 @@ import {
   withReactionCounts,
 } from '~/server/services/post.service';
 
-const metric = (imageId: number, like: number | null, heart: number | null) => ({
+const metric = (
+  imageId: number,
+  like: number | null,
+  heart: number | null,
+  laugh: number | null = null,
+  cry: number | null = null
+) => ({
   imageId,
   reactionLike: like,
   reactionHeart: heart,
-  reactionLaugh: null,
-  reactionCry: null,
+  reactionLaugh: laugh,
+  reactionCry: cry,
 });
 const past = new Date(Date.now() - 86_400_000);
 const future = new Date(Date.now() + 86_400_000);
@@ -60,15 +66,15 @@ describe('withReactionCounts', () => {
 
   it('sums the reaction types of a published post in one metrics read', async () => {
     getImageMetricsObject.mockResolvedValue({
-      1: metric(1, 3, 2),
+      1: metric(1, 3, 2, 1, 1),
       2: metric(2, null, null),
     });
 
     const result = await withReactionCounts([{ id: 1 }, { id: 2 }, { id: 3 }], past);
 
     expect(getImageMetricsObject).toHaveBeenCalledTimes(1);
-    // 1: 3 + 2. 2: every field null means unknown, not 0. 3: the read did not resolve it.
-    expect(result).toEqual([{ id: 1, reactionCount: 5 }, { id: 2 }, { id: 3 }]);
+    // 1: 3 + 2 + 1 + 1, all four types. 2: every field null means unknown, not 0. 3: the read did not resolve it.
+    expect(result).toEqual([{ id: 1, reactionCount: 7 }, { id: 2 }, { id: 3 }]);
   });
 
   it('reads nothing for a draft or a scheduled post', async () => {

@@ -760,10 +760,9 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
 };
 
 /**
- * Reaction totals for the editor's image cards, so an owner can see which image is least liked.
- * Edit-load only: `combinePostEditImageData` also runs on every upload and must not pay a metrics
- * read. Published posts only, and an image the metric read could not resolve gets no count
- * (absent, not 0).
+ * Reaction totals for the editor's image cards. Edit-load only: uploads share
+ * `combinePostEditImageData` and must not pay a metrics read. Published posts only; an image the
+ * read could not resolve gets no count (absent, not 0).
  */
 export async function withReactionCounts<T extends { id: number }>(
   images: T[],
