@@ -2091,6 +2091,18 @@ export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) 
 // Moderator: review queue
 // ---------------------------------------------------------------------------
 
+// Pending items have no verdict yet, so they go by submission; anything reviewed goes by when it
+// was approved or sent back. `id` breaks ties so a page boundary can't drop or repeat an item.
+export const reviewQueueOrder = (
+  sort: GetReviewQueueInput['sort'],
+  status: GetReviewQueueInput['status']
+): Prisma.CosmeticShopItemOrderByWithRelationInput[] => {
+  const dir = sort === 'newest' ? 'desc' : 'asc';
+  return status === CosmeticShopItemStatus.PendingReview
+    ? [{ createdAt: dir }, { id: dir }]
+    : [{ reviewedAt: { sort: dir, nulls: 'last' } }, { createdAt: dir }, { id: dir }];
+};
+
 export const getCreatorShopReviewQueue = async ({
   limit,
   page,
@@ -2180,12 +2192,7 @@ export const getCreatorShopReviewQueue = async ({
       where,
       take,
       skip,
-      // `id` breaks ties so a page boundary can't drop or repeat an item when
-      // two submissions share a createdAt.
-      orderBy: [
-        { createdAt: sort === 'newest' ? 'desc' : 'asc' },
-        { id: sort === 'newest' ? 'desc' : 'asc' },
-      ],
+      orderBy: reviewQueueOrder(sort, status),
       select: {
         ...creatorShopItemSelect,
         // A pack has no cosmetic, so its author is the lister — without this the
