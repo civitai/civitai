@@ -13,7 +13,11 @@ const load = async (entityType: string, id = 1) => {
   };
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Persistent answers would otherwise carry a share link from one case into the next.
+  dbMock.dbWrite.accessToken.findMany.mockResolvedValue([]);
+});
 
 describe('rated-entity profiles', () => {
   it('registers the rated entities with the spec labels', () => {

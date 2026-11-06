@@ -61,6 +61,26 @@ describe('articleModerationAdapter — text scan', () => {
   });
 
   it.each([
+    ['submits', 'an active', { id: 'wf' }],
+    ['parks', 'an expired', null],
+  ])('%s a draft with %s share link on retry', async (_verb, state, expected) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ status: 'Draft', scheduledAt: null });
+    dbMock.dbWrite.accessToken.findMany.mockResolvedValueOnce([
+      {
+        resourceId: 4,
+        resourceType: 'Article',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + (state === 'an active' ? 60_000 : -60_000)),
+      },
+    ] as never);
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
+
+    const result = await articleModerationAdapter.submit({ entityId: 4, content: 'T body' });
+    if (expected) expect(result).toEqual(expected);
+    else expect(result).toBe(TEXT_SCAN_ENTITY_NOT_PUBLIC);
+  });
+
+  it.each([
     ['processing', { status: 'Processing', scheduledAt: null }],
     ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
     // A deleted article is left to the route, which reports it gone so the cron drops the row.

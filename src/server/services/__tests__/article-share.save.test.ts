@@ -92,6 +92,62 @@ describe('saving a draft that has an active share link', () => {
     expect(writtenSql()).toContain(`ingestion = 'Rescan'`);
   });
 
+  it('voids the earlier verdict in the same transaction as the new text', async () => {
+    checkRecord(true);
+    await rewrite();
+    expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith({
+      where: { entityType: 'Article', entityId: ARTICLE },
+      data: { status: 'Pending', workflowId: null },
+    });
+  });
+
+  it('checks again when the text changed while its check was being sent', async () => {
+    checkRecord(true);
+    const draft = (content: string) => ({
+      userId: AUTHOR,
+      title: 'Title',
+      content,
+      coverId: null,
+      status: ArticleStatus.Draft,
+      scheduledAt: null,
+    });
+    dbMock.dbWrite.article.findUnique
+      .mockResolvedValueOnce(draft('<p>Old body</p>') as never) // the change's own read
+      .mockResolvedValueOnce(draft('<p>New body</p>') as never) // text sent for the check
+      .mockResolvedValueOnce(draft('<p>Newer body</p>') as never) // a later save landed
+      .mockResolvedValue(draft('<p>Newer body</p>') as never);
+    await rewrite();
+    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('withdraws every link when the text never holds still for a check', async () => {
+    checkRecord(true);
+    let n = 0;
+    dbMock.dbWrite.article.findUnique.mockImplementation((async () => ({
+      userId: AUTHOR,
+      title: 'Title',
+      content: `<p>Body ${n++}</p>`,
+      coverId: null,
+      status: ArticleStatus.Draft,
+      scheduledAt: null,
+    })) as never);
+    await rewrite();
+    expect(vi.mocked(submitTextModerationOrScan).mock.calls.length).toBeLessThanOrEqual(3);
+    expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ resourceId: ARTICLE }) })
+    );
+  });
+
+  it('keeps its verdict and links when a save leaves the text as it was', async () => {
+    checkRecord(false);
+    await applyArticleContentChange({ id: ARTICLE, userId: AUTHOR, content: '<p>Old body</p>' });
+    expect(writtenSql()).not.toContain('ingestion');
+    expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+
   it('sends the new text for a fresh check and keeps the links when the check started', async () => {
     checkRecord(true);
     await rewrite();
@@ -171,10 +227,13 @@ describe('saving a shared draft from the editor', () => {
       content: '<p>New body</p>',
     } as never);
 
-  it('takes it out of Scanned in the write that saves the text', async () => {
+  it('takes it out of Scanned and voids its verdict in the write that saves the text', async () => {
     dbMock.dbWrite.accessToken.findMany.mockResolvedValue([activeLink()] as never);
     await save();
     expect(formWrite().ingestion).toBe('Rescan');
+    expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'Pending', workflowId: null } })
+    );
   });
 
   it('leaves ingestion alone on an unshared draft', async () => {

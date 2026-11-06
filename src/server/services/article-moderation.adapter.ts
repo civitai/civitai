@@ -1,6 +1,7 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { isSharedArticle, recomputeArticleIngestion } from '~/server/services/article.service';
+import { recomputeArticleIngestion } from '~/server/services/article.service';
+import { isSharedArticle } from '~/server/services/article-share.helpers';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';

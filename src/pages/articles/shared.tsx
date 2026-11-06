@@ -33,22 +33,49 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-function readShareToken() {
-  const token = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
-  return shareTokenSchema.safeParse(token).success ? token : null;
+const TOKEN_KEY = 'civ-shared-draft-token';
+
+/**
+ * Takes the token out of the address bar before anything else on the page can read it: login
+ * links, page tracking and third-party scripts all copy the URL. Kept for this tab only, so a
+ * reload still opens the draft.
+ */
+function takeShareToken(): string | null {
+  const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('token');
+  let token = fromHash;
+  try {
+    if (fromHash) sessionStorage.setItem(TOKEN_KEY, fromHash);
+    else token = sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    // Storage unavailable: the token still works for this page view.
+  }
+  if (fromHash) history.replaceState(history.state, '', window.location.pathname);
+  return token && shareTokenSchema.safeParse(token).success ? token : null;
 }
+
+// Runs when the page module loads, ahead of hydration and of every script hydration starts.
+const initialToken = typeof window === 'undefined' ? undefined : takeShareToken();
 
 function SharedArticlePage() {
   const router = useRouter();
+  // Set after mount, so the first client render matches the server's.
   const [token, setToken] = useState<string | null>();
   const { mutate, data, isPending, isError } = trpc.article.getShared.useMutation();
 
   useEffect(() => {
-    const read = () => setToken(readShareToken());
-    read();
-    window.addEventListener('hashchange', read);
-    return () => window.removeEventListener('hashchange', read);
+    setToken(initialToken ?? null);
+    const onHash = () => {
+      const next = takeShareToken();
+      if (next) setToken(next);
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
+  useEffect(() => {
+    // The router captured the URL before this module ran; bring it in line without the token.
+    if (router.asPath.includes('#'))
+      void router.replace(router.pathname, undefined, { shallow: true });
+  }, [router]);
   useEffect(() => {
     if (token) mutate({ shareToken: token });
   }, [token, mutate]);

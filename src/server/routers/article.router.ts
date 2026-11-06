@@ -20,6 +20,7 @@ import {
   getArticleShareLinksSchema,
   getSharedArticleSchema,
   articleShareTokenRateLimits,
+  articleShareCreateRateLimits,
 } from '~/server/schema/article.schema';
 import {
   createArticleShareLink,
@@ -116,6 +117,7 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(createArticleShareLinkSchema)
     .use(isFlagProtected('articleCreate'))
+    .use(rateLimit(articleShareCreateRateLimits))
     .mutation(({ input, ctx }) => createArticleShareLink({ ...input, userId: ctx.user.id })),
   getShareLinks: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })

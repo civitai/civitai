@@ -5,7 +5,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 export function TrackPageView() {
   const browserRouter = useBrowserRouter();
-  const pathname = browserRouter.asPath.split('?')[0];
+  // Neither the query nor the fragment: a fragment can carry a share token.
+  const pathname = browserRouter.asPath.split(/[?#]/)[0];
 
   const timeRef = useRef<{ visible: number; hidden?: number }[]>([{ visible: Date.now() }]);
   const durationRef = useRef(0);

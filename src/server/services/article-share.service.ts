@@ -47,15 +47,10 @@ async function getOwnArticle(articleId: number, userId: number) {
 /**
  * Sends the article's current text for a fresh check, then recomputes its ingestion. Until that
  * check passes, the shared read answers "still being checked". Throws when the check could not be
- * shown to have started.
+ * shown to have started for the stored text.
  */
 async function checkSharedArticle(articleId: number) {
-  const article = await dbWrite.article.findUnique({
-    where: { id: articleId },
-    select: { title: true, content: true },
-  });
-  if (article && !(await submitSharedArticleText({ id: articleId, ...article })))
-    throw new Error('The share check did not start');
+  if (!(await submitSharedArticleText(articleId))) throw new Error('The share check did not start');
   await updateArticleImageScanStatus([articleId]);
 }
 
