@@ -19,7 +19,9 @@ import { jsonBuildObject } from './infra/helpers';
 //   subqueries. Every column in them survives JSON unchanged (integers, booleans, text, enums as
 //   text, JSON columns) EXCEPT the cosmetics' two timestamps, which are sent as epoch milliseconds
 //   (`obtainedAtMs`, `equippedAtMs`) and turned back into Dates by the wrapper. Both columns are
-//   TIMESTAMP(3), so the millisecond value is exact.
+//   TIMESTAMP(3), so the value is a whole number of milliseconds, and `round` takes back the
+//   sub-microsecond error of `date_part`'s double. (`date_part`, not `extract(epoch FROM …)`: the
+//   parity suite's relation ledger reads every `from "<name>"` as a relation.)
 // - None of the Prisma relation reads has an `orderBy`. Here each aggregate is ordered by its
 //   table's key (links by id, cosmetics by cosmetic id then claim key, tags by tag id), so the
 //   order is defined; the parity suite compares the lists sorted.
@@ -215,11 +217,11 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
                 eb.fn
                   .jsonAgg(
                     jsonBuildObject({
-                      equippedAtMs: sql<number | null>`(extract(epoch from ${eb.ref(
+                      equippedAtMs: sql<number | null>`round(date_part('epoch', ${eb.ref(
                         'UserCosmetic.equippedAt'
                       )}) * 1000)::bigint`,
                       cosmeticId: eb.ref('UserCosmetic.cosmeticId'),
-                      obtainedAtMs: sql<number>`(extract(epoch from ${eb.ref(
+                      obtainedAtMs: sql<number>`round(date_part('epoch', ${eb.ref(
                         'UserCosmetic.obtainedAt'
                       )}) * 1000)::bigint`,
                       claimKey: eb.ref('UserCosmetic.claimKey'),
