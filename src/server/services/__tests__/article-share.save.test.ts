@@ -409,6 +409,18 @@ describe('the scan settling on an article sent for processing', () => {
     expect(revoked()).toBe(true);
   });
 
+  // Held to commit, so a link cannot be made between the revoke and the flip.
+  it('takes the share-link lock before it writes the article', async () => {
+    await settle(ArticleStatus.Processing);
+    const sqls = dbMock.dbWrite.$executeRaw.mock.calls.map(([strings]) =>
+      (strings as string[]).join('?').trim()
+    );
+    const lock = sqls.findIndex((sql) => sql.includes('pg_advisory_xact_lock(?::int, ?::int)'));
+    const write = sqls.findIndex((sql) => sql.startsWith('UPDATE "Article"'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(write);
+  });
+
   it('leaves the links of a draft whose scan settles', async () => {
     await settle(ArticleStatus.Draft);
     expect(writtenStatus()).not.toContain('status =');

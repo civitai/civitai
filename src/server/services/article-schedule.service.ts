@@ -45,22 +45,29 @@ export async function publishDueScheduledArticles(now: Date) {
     };
 
     if (outcome === 'publish' || outcome === 'process') {
-      // A link made for the draft must not reopen it after a later unpublish.
-      const { count } = await dbWrite.$transaction(async (tx) => {
-        await lockAccessTokens(tx, article.id);
-        const write = await tx.article.updateMany({
-          where: guard,
-          // publishedAt is the real go-live instant, not the scheduled one: the follower
-          // notification and the Newest sort both key on it, and a value behind their last pass
-          // would be skipped. A processing article gets it from recomputeArticleIngestion.
-          data:
-            outcome === 'publish'
-              ? { status: ArticleStatus.Published, publishedAt: now, scheduledAt: null }
-              : { status: ArticleStatus.Processing, scheduledAt: null },
+      // A link made for the draft must not reopen it after a later unpublish. The lock can wait on
+      // a save of this article; a timeout rolls back and leaves it due, so the next run retries it
+      // and this run still runs the side effects of the ones it already took live.
+      const { count } = await dbWrite
+        .$transaction(async (tx) => {
+          await lockAccessTokens(tx, article.id);
+          const write = await tx.article.updateMany({
+            where: guard,
+            // publishedAt is the real go-live instant, not the scheduled one: the follower
+            // notification and the Newest sort both key on it, and a value behind their last pass
+            // would be skipped. A processing article gets it from recomputeArticleIngestion.
+            data:
+              outcome === 'publish'
+                ? { status: ArticleStatus.Published, publishedAt: now, scheduledAt: null }
+                : { status: ArticleStatus.Processing, scheduledAt: null },
+          });
+          if (write.count) await revokeActiveAccessTokens('Article', article.id, tx);
+          return write;
+        })
+        .catch(async (error) => {
+          await logGoLiveError('go-live write failed', article.id, error);
+          return { count: 0 };
         });
-        if (write.count) await revokeActiveAccessTokens('Article', article.id, tx);
-        return write;
-      });
       if (count) (outcome === 'publish' ? published : processing).push(article);
     } else {
       const { count } = await dbWrite.article.updateMany({
