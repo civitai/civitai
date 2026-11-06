@@ -27,6 +27,7 @@ import {
   modelsDisplayedAttributes,
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { getVersionAccelerator } from '~/server/search-index/version-accelerator';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
@@ -527,6 +528,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
             // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
             turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
+            accelerator: getVersionAccelerator(settings),
             pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
