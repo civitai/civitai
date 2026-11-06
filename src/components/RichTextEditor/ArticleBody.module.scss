@@ -1,7 +1,5 @@
-// Article-only reading typography, applied on top of the shared rich-text styles.
-// Specificity is `div.articleBody <el>` (0,1,2), which beats the shared `.htmlRenderer <el>`
-// rules without depending on stylesheet order. Only text blocks that are direct children of the
-// content div are width-capped; images, code, tables and embeds keep the full column.
+// div.articleBody <el> is (0,1,2), so it beats the shared .htmlRenderer <el> rules without
+// depending on stylesheet order.
 div.articleBody {
   font-size: 17px;
   line-height: 1.65;
@@ -23,7 +21,6 @@ div.articleBody {
     margin-bottom: 0;
   }
 
-  // Blank spacer paragraphs authors use between blocks
   p:empty,
   p:has(> br:only-child) {
     margin: 0;
@@ -37,8 +34,7 @@ div.articleBody {
     scroll-margin-top: 72px;
   }
 
-  // The shared styles reserve space under the fixed navbar with a hidden ::before;
-  // scroll-margin-top does that job here so the heading margins below are the real ones.
+  // The shared hidden ::before reserves space under the fixed navbar; scroll-margin-top does that here.
   :is(h1, h2, h3)::before {
     display: none;
   }
@@ -115,7 +111,6 @@ div.articleBody {
     text-underline-offset: 0.2em;
   }
 
-  // Inline code is no smaller than the sentence around it
   code {
     font-size: 1em;
     padding: 0.15em 0.4em;
