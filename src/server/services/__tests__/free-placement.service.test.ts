@@ -133,6 +133,21 @@ describe('createFreePlacement', () => {
     // query is `expiresAt <= now()`, which NULL never satisfies.
     expect(written.expiresAt).toBeInstanceOf(Date);
     expect(written.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(written).not.toHaveProperty('track');
+  });
+
+  it('stores a moving sticker’s track beside its data', async () => {
+    const track = { v: 1, ms: 100, x: [[0, 0.2]], y: [[0, 0.5]], s: [[0, 0.1]], r: [[0, 0]] };
+    await createFreePlacement({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { cosmeticId: 5 },
+      track,
+    });
+
+    expect(placementCreate.mock.calls[0][0].data.track).toEqual(track);
   });
 
   // The owner is taken from the space this function resolved, from the target it
