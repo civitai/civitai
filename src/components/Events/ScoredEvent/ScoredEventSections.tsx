@@ -108,7 +108,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           </div>
         )}
         <div className="mt-4 empty:hidden">
-          <HatTurfEventSection event={event} team={team} />
+          <HatTurfEventSection event={event} team={team} teams={data.teams} />
         </div>
       </div>
     ),
