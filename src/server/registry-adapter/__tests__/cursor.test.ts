@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
-import { createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
+import { createPollingAdapter, retainLatest, sharedRead } from '~/server/registry-adapter/cursor';
+import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
@@ -196,6 +197,30 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
     });
     expect(a.cursor).toBe(b.cursor);
     expect(store.size()).toBe(1);
+  });
+});
+
+describe('states kept per stream', () => {
+  it('the newest digest goes first, and what falls past the bound is evicted', () => {
+    expect(retainLatest(['d2', 'd1'], 'd3', 2)).toEqual({ list: ['d3', 'd2'], evicted: ['d1'] });
+    expect(retainLatest(['d2', 'd1'], 'd1', 2)).toEqual({ list: ['d1', 'd2'], evicted: [] });
+    expect(retainLatest([], 'd1', 2)).toEqual({ list: ['d1'], evicted: [] });
+  });
+
+  it('🔴 a cursor older than the bound answers cursor_expired; the newest still resumes', async () => {
+    const store = createMemorySnapshotStore(2);
+    const s1 = [e('alpha-app', 'r-1')];
+    const s2 = [e('alpha-app', 'r-2')];
+    const s3 = [e('alpha-app', 'r-3')];
+    const h = harness(store, [s1, s2, s3]);
+    const { cursor: first } = await h.adapter.snapshot(APPS, { signal: h.signal });
+    const changes = await h.drain(APPS, first);
+    expect(changes.map(shape)).toEqual([
+      ['upsert', 'urn:civitai-apps:app/alpha-app', 'r-2'],
+      ['upsert', 'urn:civitai-apps:app/alpha-app', 'r-3'],
+    ]);
+    expect(await codeOf(harness(store, [s3]).drain(APPS, first))).toBe('cursor_expired');
+    expect(await harness(store, [s3]).drain(APPS, changes[1].cursor)).toEqual([]);
   });
 });
 

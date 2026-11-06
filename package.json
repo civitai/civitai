@@ -69,7 +69,7 @@
     "seed:scanner-policies": "tsx --env-file=.env scripts/seed-scanner-policies.ts",
     "build:registry-adapter": "node scripts/build-registry-adapter.mjs",
     "start:registry-adapter": "node dist/registry-adapter.js",
-    "registry-adapter:fixture": "tsx src/server/registry-adapter/fixture/main.ts",
+    "registry-adapter:fixture": "tsx scripts/registry-adapter-fixture/main.ts",
     "prebuild": "pnpm build:workers",
     "build": "next build",
     "build:dev": "pnpm build:workers && cross-env NODE_OPTIONS=\"--max_old_space_size=16384\" next build",

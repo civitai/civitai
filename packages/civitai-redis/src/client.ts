@@ -2922,6 +2922,10 @@ export const REDIS_SYS_KEYS = {
     // digest always holds the same value. Losing one only expires that cursor (the consumer
     // re-snapshots), so eviction is safe.
     SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${sha256(stream schema)}`. Digests that fall off it
+    // are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 

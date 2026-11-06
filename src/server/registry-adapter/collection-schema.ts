@@ -4,14 +4,10 @@
  * history on every read so the adapter keeps no state for them.
  *
  * The rule for a major is the registry's (`@vN` changes only additively: annotations and new
- * optional properties). It is wider than the store's own "breaking" (narrowings only), so the
- * store's check is used as a floor, never as the rule.
+ * optional properties). It is wider than the store's own "breaking" (narrowings only), so it
+ * mints on every store-breaking change and on widenings the store accepts in place.
  */
 import { jsonEqual } from '~/server/services/apps/doc-store-schema';
-import {
-  checkStorageMigrations,
-  migrationOpCovers,
-} from '~/server/services/apps/storage-schema-migrations';
 import type {
   AppStorageCollectionSchema,
   DeclaredStorageCollection,
@@ -132,8 +128,6 @@ export function synthesizeCollectionSchema(args: {
   };
 }
 
-export type MintReason = 'not-additive' | 'store-breaking' | 'acknowledge-only';
-
 export type ManifestStep = {
   /** The publish request id, or {@link HEAD_STEP} for `app_blocks.manifest`. */
   id: string;
@@ -143,42 +137,32 @@ export type ManifestStep = {
 /** The step id of the enforced manifest, appended after the approved history. */
 export const HEAD_STEP = 'head';
 
-export type CollectionTransition = {
-  stepId: string;
-  from: number;
-  to: number;
-  reasons: MintReason[];
-};
-
 export type CollectionMajors = {
   /** Whether the newest parseable manifest declares the collection. */
   declared: boolean;
   /** The newest declaration within each major, index 0 = `@v1`. `undefined` = no schema. */
   majors: Array<AppStorageCollectionSchema | undefined>;
-  transitions: CollectionTransition[];
 };
 
 export type MajorDerivation = {
   collections: Map<string, CollectionMajors>;
   /** Step id → collection → the major that step's manifest declared it under. */
   stepMajors: Map<string, Map<string, number>>;
-  /** Store-breaking transitions that the additive rule called additive. Expected empty. */
-  invariantViolations: string[];
 };
 
 /**
  * Recompute every collection's majors from `steps`: the approved publish requests in review
- * order, then the enforced manifest. A transition mints the next major when it is not
- * additive, when the store calls it breaking, or when the store's breaking changes are all
- * covered by `acknowledge` ops (an acknowledge rewrites nothing, so stored documents may fail
- * the new schema). A collection removed and declared again is compared with its last
- * declaration. A manifest whose storage does not parse is skipped, as the store skips it.
+ * order, then the enforced manifest. A transition mints the next major exactly when it is not
+ * {@link isAdditive}. That covers the store's own breaking changes, an acknowledge-only one
+ * included: the store's breaking list (`checkStorageMigrations`) is a subset of the
+ * non-additive changes, which the "store-breaking ⇒ not additive" table in
+ * `__tests__/collection-schema.test.ts` pins. A collection removed and declared again is compared
+ * with its last declaration. A manifest whose storage does not parse is skipped, as the store
+ * skips it.
  */
 export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDerivation {
   const collections = new Map<string, CollectionMajors & { last: DeclaredStorageCollection }>();
   const stepMajors = new Map<string, Map<string, number>>();
-  const invariantViolations: string[] = [];
-  const parsedHistory: unknown[] = [];
 
   for (const step of steps) {
     const parsed = parseManifestStorage(step.manifest, APP_STORAGE_ALL_FEATURES_ON);
@@ -186,60 +170,30 @@ export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDer
     stepMajors.set(step.id, declaredHere);
     if (parsed.errors.length > 0) continue;
 
-    const prev = parsedHistory.length ? parsedHistory[parsedHistory.length - 1] : null;
-    const check =
-      prev === null
-        ? null
-        : checkStorageMigrations(prev, step.manifest, [...parsedHistory].reverse());
-
     for (const state of collections.values()) state.declared = false;
     for (const [name, now] of parsed.collections) {
       const state = collections.get(name);
       if (!state) {
-        collections.set(name, { declared: true, majors: [now.schema], transitions: [], last: now });
+        collections.set(name, { declared: true, majors: [now.schema], last: now });
         declaredHere.set(name, 1);
         continue;
       }
-      const breaking = (check?.breaking ?? []).filter((b) => b.collection === name);
-      const additive = isAdditive(state.last.schema, now.schema);
-      const acknowledgedOnly =
-        breaking.length > 0 &&
-        breaking.every((b) =>
-          (now.migrations ?? []).some(
-            (op) => op.op === 'acknowledge' && migrationOpCovers(op, b, now.schema)
-          )
-        );
-      const reasons: MintReason[] = [];
-      if (!additive) reasons.push('not-additive');
-      if (breaking.length > 0) reasons.push('store-breaking');
-      if (acknowledgedOnly) reasons.push('acknowledge-only');
-      if (breaking.length > 0 && additive) {
-        invariantViolations.push(`${step.id}: ${name} is store-breaking but additive`);
-      }
-
-      const current = state.majors.length;
-      if (reasons.length > 0) {
-        state.majors.push(now.schema);
-        state.transitions.push({ stepId: step.id, from: current, to: current + 1, reasons });
+      if (isAdditive(state.last.schema, now.schema)) {
+        state.majors[state.majors.length - 1] = now.schema;
       } else {
-        state.majors[current - 1] = now.schema;
+        state.majors.push(now.schema);
       }
       state.declared = true;
       state.last = now;
       declaredHere.set(name, state.majors.length);
     }
-    parsedHistory.push(step.manifest);
   }
 
   return {
     collections: new Map(
-      [...collections].map(([name, { declared, majors, transitions }]) => [
-        name,
-        { declared, majors, transitions },
-      ])
+      [...collections].map(([name, { declared, majors }]) => [name, { declared, majors }])
     ),
     stepMajors,
-    invariantViolations,
   };
 }
 

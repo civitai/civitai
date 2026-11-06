@@ -10,7 +10,7 @@ import { diffCollectionSchemas } from '~/server/services/apps/storage-schema-mig
 import type { StorageMigrationOp } from '~/shared/constants/block-storage.constants';
 
 /**
- * Collection majors. Every expectation is a literal: the majors, the transition reasons and the
+ * Collection majors. Every expectation is a literal: the majors, the major each step declared and the
  * schema documents are written out, never computed from the code under test.
  */
 
@@ -130,8 +130,10 @@ describe('isAdditive — the letter of "annotations and new optional properties"
 });
 
 describe('store-breaking ⇒ not additive', () => {
-  // Each pair is one the store's own diff flags. The first assertion is the precondition (the
-  // store does flag it), so a pair that stops being store-breaking fails here, not silently.
+  // THE PIN for `deriveCollectionMajors`, which mints on `!isAdditive` alone: every change the
+  // store calls breaking must be non-additive, or a store-breaking transition would keep its
+  // major. Each pair is one the store's own diff flags; the first assertion is that precondition,
+  // so a pair that stops being store-breaking fails here rather than silently.
   it.each<[string, S | undefined, S]>([
     ['newly required', obj({ a: {} }), obj({ a: {} }, { required: ['a'] })],
     [
@@ -182,48 +184,32 @@ describe('store-breaking ⇒ not additive', () => {
 });
 
 describe('deriveCollectionMajors', () => {
+  // Where a mint happened is pinned by `stepMajors`: the major each step declared the
+  // collection under, which is what releases publish.
+  const majorsByStep = (d: ReturnType<typeof deriveCollectionMajors>) =>
+    [...d.stepMajors].map(([id, m]) => [id, m.get('cards') ?? null]);
+
   it('a widening mints @v2 although the store does not call it breaking', () => {
     const { d, cards } = cardsOf([
       step('pubreq_a', { cards: coll(SEED) }),
       step('pubreq_b', { cards: coll(SEED_WIDER) }),
     ]);
-    expect(cards).toEqual({
-      declared: true,
-      majors: [SEED, SEED_WIDER],
-      transitions: [{ stepId: 'pubreq_b', from: 1, to: 2, reasons: ['not-additive'] }],
-    });
-    expect(d.invariantViolations).toEqual([]);
+    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_WIDER] });
+    expect(majorsByStep(d)).toEqual([
+      ['pubreq_a', 1],
+      ['pubreq_b', 2],
+    ]);
   });
 
-  it('a narrowing covered only by acknowledge mints, and says so', () => {
+  it('🔴 a narrowing covered only by acknowledge still mints', () => {
     const { d, cards } = cardsOf([
       step('pubreq_a', { cards: coll(SEED) }),
       step('pubreq_b', { cards: coll(SEED_NARROWER, ACK_STARS) }),
     ]);
-    expect(cards?.transitions).toEqual([
-      {
-        stepId: 'pubreq_b',
-        from: 1,
-        to: 2,
-        reasons: ['not-additive', 'store-breaking', 'acknowledge-only'],
-      },
-    ]);
-    expect(d.invariantViolations).toEqual([]);
-  });
-
-  it('a narrowing covered by a mutation op mints, but is not acknowledge-only', () => {
-    const required = obj(
-      { title: { type: 'string', maxLength: 80 }, stars: { type: 'integer', maximum: 10 } },
-      { required: ['title'] }
-    );
-    const { cards } = cardsOf([
-      step('pubreq_a', { cards: coll(SEED) }),
-      step('pubreq_b', {
-        cards: coll(required, [{ op: 'default', path: '/title', value: 'untitled-card' }]),
-      }),
-    ]);
-    expect(cards?.transitions).toEqual([
-      { stepId: 'pubreq_b', from: 1, to: 2, reasons: ['not-additive', 'store-breaking'] },
+    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_NARROWER] });
+    expect(majorsByStep(d)).toEqual([
+      ['pubreq_a', 1],
+      ['pubreq_b', 2],
     ]);
   });
 
@@ -232,10 +218,10 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_a', { cards: coll(SEED) }),
       step('pubreq_b', { cards: coll(SEED_PLUS_MOOD) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED_PLUS_MOOD], transitions: [] });
-    expect([...d.stepMajors]).toEqual([
-      ['pubreq_a', new Map([['cards', 1]])],
-      ['pubreq_b', new Map([['cards', 1]])],
+    expect(cards).toEqual({ declared: true, majors: [SEED_PLUS_MOOD] });
+    expect(majorsByStep(d)).toEqual([
+      ['pubreq_a', 1],
+      ['pubreq_b', 1],
     ]);
   });
 
@@ -244,13 +230,7 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_a', { cards: coll() }),
       step('pubreq_b', { cards: coll(SEED) }),
     ]);
-    expect(cards).toEqual({
-      declared: true,
-      majors: [undefined, SEED],
-      transitions: [
-        { stepId: 'pubreq_b', from: 1, to: 2, reasons: ['not-additive', 'store-breaking'] },
-      ],
-    });
+    expect(cards).toEqual({ declared: true, majors: [undefined, SEED] });
     expect(collectionSchemaDocuments('pixel-garden', d)).toEqual([
       {
         urn: 'urn:schema:civitai-apps:pixel-garden/cards@v1',
@@ -281,8 +261,12 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_b', { notes: coll() }),
       step('pubreq_c', { cards: coll(SEED), notes: coll() }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED], transitions: [] });
-    expect(d.stepMajors.get('pubreq_b')).toEqual(new Map([['notes', 1]]));
+    expect(cards).toEqual({ declared: true, majors: [SEED] });
+    expect(majorsByStep(d)).toEqual([
+      ['pubreq_a', 1],
+      ['pubreq_b', null],
+      ['pubreq_c', 1],
+    ]);
   });
 
   it('removed then declared again narrower: mints against the last declaration', () => {
@@ -291,15 +275,12 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_b', { notes: coll() }),
       step('pubreq_c', { cards: coll(SEED_NARROWER, ACK_STARS), notes: coll() }),
     ]);
-    expect(cards?.transitions).toEqual([
-      {
-        stepId: 'pubreq_c',
-        from: 1,
-        to: 2,
-        reasons: ['not-additive', 'store-breaking', 'acknowledge-only'],
-      },
+    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_NARROWER] });
+    expect(majorsByStep(d)).toEqual([
+      ['pubreq_a', 1],
+      ['pubreq_b', null],
+      ['pubreq_c', 2],
     ]);
-    expect(d.invariantViolations).toEqual([]);
   });
 
   it('a collection the newest manifest no longer declares serves no schema', () => {
@@ -314,12 +295,13 @@ describe('deriveCollectionMajors', () => {
   });
 
   it('the enforced manifest is the last step: a divergent head mints on its own', () => {
-    const { cards } = cardsOf([
+    const { d } = cardsOf([
       step('pubreq_a', { cards: coll(SEED) }),
       step('head', { cards: coll(SEED_WIDER) }),
     ]);
-    expect(cards?.transitions).toEqual([
-      { stepId: 'head', from: 1, to: 2, reasons: ['not-additive'] },
+    expect(majorsByStep(d)).toEqual([
+      ['pubreq_a', 1],
+      ['head', 2],
     ]);
   });
 
@@ -329,7 +311,7 @@ describe('deriveCollectionMajors', () => {
       { id: 'pubreq_bad', manifest: { storage: { collections: { cards: { visibility: 9 } } } } },
       step('pubreq_c', { cards: coll(SEED) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED], transitions: [] });
+    expect(cards).toEqual({ declared: true, majors: [SEED] });
     expect(d.stepMajors.get('pubreq_bad')).toEqual(new Map());
   });
 });

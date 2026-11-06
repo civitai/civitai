@@ -14,6 +14,7 @@ import type {
   CatalogReadDeps,
 } from '~/server/registry-adapter/catalog-source';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
+import { STATES_KEPT_PER_STREAM, retainLatest } from '~/server/registry-adapter/cursor';
 import type { SharedDocSource } from '~/server/registry-adapter/doc-feed';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
@@ -126,10 +127,16 @@ export function fixtureFile(path: string): () => FixtureCatalog {
   return () => JSON.parse(readFileSync(path, 'utf8')) as FixtureCatalog;
 }
 
-export function createMemorySnapshotStore(): SnapshotStore {
+export function createMemorySnapshotStore(keep: number = STATES_KEPT_PER_STREAM): SnapshotStore {
   const sets = new Map<string, string>();
+  const streams = new Map<string, string[]>();
   return {
     get: async (digest) => sets.get(digest) ?? null,
-    put: async (digest, value) => void sets.set(digest, value),
+    put: async (digest, value, stream) => {
+      sets.set(digest, value);
+      const { list, evicted } = retainLatest(streams.get(stream) ?? [], digest, keep);
+      streams.set(stream, list);
+      for (const old of evicted) sets.delete(old);
+    },
   };
 }

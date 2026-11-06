@@ -18,11 +18,8 @@ import {
   fixtureCatalogDeps,
   fixtureDocSource,
   fixtureFile,
-} from '~/server/registry-adapter/fixture/fixture-source';
-import {
-  SHARED_SCHEMA_NAMESPACE,
-  sharedSchemaEntities,
-} from '~/server/registry-adapter/fixture/shared-schemas.fixture';
+} from './fixture-source';
+import { SHARED_SCHEMA_NAMESPACE, sharedSchemaEntities } from './shared-schemas';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
 import { REGISTRY_NAMESPACE, REGISTRY_SCHEMA_SCHEMA } from '~/server/registry-adapter/urn';
 

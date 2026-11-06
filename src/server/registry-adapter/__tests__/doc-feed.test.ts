@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
-import type { FixtureCatalog } from '~/server/registry-adapter/fixture/fixture-source';
-import { fixtureDocSource } from '~/server/registry-adapter/fixture/fixture-source';
+import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
+import { fixtureDocSource } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 

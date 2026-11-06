@@ -126,7 +126,7 @@ export function createDocFeed(opts: DocFeedOptions) {
   const save = async (state: FeedState): Promise<string> => {
     const raw = canonicalJson(state);
     const digest = sha256Hex(raw).slice(0, 32);
-    await opts.store.put(digest, raw);
+    await opts.store.put(digest, raw, state.schema);
     return `${STATE_FORMAT}.${digest}`;
   };
 
@@ -144,7 +144,7 @@ export function createDocFeed(opts: DocFeedOptions) {
     if (state.v !== STATE_FORMAT || state.schema !== schema) {
       throw cursorExpired('the cursor belongs to another stream');
     }
-    await opts.store.put(digest, raw);
+    await opts.store.put(digest, raw, schema);
     return state;
   };
 

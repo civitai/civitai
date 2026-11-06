@@ -35,12 +35,14 @@ const result = await esbuild.build({
   legalComments: 'none',
   logLevel: 'info',
   metafile: true,
+  // Input paths in the metafile are relative to this, which the guard below relies on.
+  absWorkingDir: root,
 });
 
-// Fail loudly rather than ship a bundle that would throw at startup: a test file, or any
-// fixture-mode module, must never be part of the production entrypoint.
+// Fail loudly: a test file, or any fixture-mode module (`scripts/registry-adapter-fixture/`),
+// must never be part of the production entrypoint.
 const forbidden = Object.keys(result.metafile.inputs).filter(
-  (input) => /__tests__\//.test(input) || /registry-adapter\/fixture\//.test(input)
+  (input) => /__tests__\//.test(input) || /^scripts\//.test(input)
 );
 if (forbidden.length > 0) {
   console.error(`build-registry-adapter: refusing inputs:\n  ${forbidden.join('\n  ')}`);

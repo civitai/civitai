@@ -16,8 +16,31 @@ import type { EntitySets } from '~/server/registry-adapter/entities';
 
 export interface SnapshotStore {
   get(digest: string): Promise<string | null>;
-  /** Idempotent: the same digest always holds the same value. Refreshes its retention. */
-  put(digest: string, value: string): Promise<void>;
+  /**
+   * Idempotent: the same digest always holds the same value. Makes it the newest state of
+   * `stream`, refreshes its retention, and drops that stream's states beyond
+   * {@link STATES_KEPT_PER_STREAM} ({@link retainLatest}).
+   */
+  put(digest: string, value: string, stream: string): Promise<void>;
+}
+
+/**
+ * States kept per stream. A stream's state can be large (Phase 1 holds every document served),
+ * and a new one is written on every poll that changed something, so without a bound storage
+ * grows with polls × documents for the retention period. A cursor older than the newest 64
+ * states of its stream answers `cursor_expired`, and the consumer re-snapshots — the same path as
+ * a cursor whose state expired.
+ */
+export const STATES_KEPT_PER_STREAM = 64;
+
+/** A stream's state list after `digest` becomes its newest, and the digests that fall off it. */
+export function retainLatest(
+  list: readonly string[],
+  digest: string,
+  keep: number = STATES_KEPT_PER_STREAM
+): { list: string[]; evicted: string[] } {
+  const next = [digest, ...list.filter((d) => d !== digest)];
+  return { list: next.slice(0, keep), evicted: next.slice(keep) };
 }
 
 export const CURSOR_FORMAT = 'c1';
@@ -75,7 +98,7 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
 
   const save = async (set: ServedSet): Promise<string> => {
     const cursor = cursorFor(set);
-    await opts.store.put(cursor.slice(CURSOR_FORMAT.length + 1), JSON.stringify(set));
+    await opts.store.put(cursor.slice(CURSOR_FORMAT.length + 1), JSON.stringify(set), set.schema);
     return cursor;
   };
 
@@ -93,7 +116,7 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
     if (set.schema !== schema || !Array.isArray(set.entries)) {
       throw cursorExpired('the cursor belongs to another schema');
     }
-    await opts.store.put(digest, raw);
+    await opts.store.put(digest, raw, schema);
     return new Map(set.entries);
   };
 
