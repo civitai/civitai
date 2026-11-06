@@ -97,6 +97,12 @@ function HiddenFetcher({
     { modelIds, imageIds, browsingLevel },
     { enabled }
   );
+  // A new key (level or ids changed) must not keep answering from the old one meanwhile.
+  const key = `${browsingLevel}:${modelIds}:${imageIds}`;
+  useEffect(() => {
+    onModels(pending());
+    onImages(pending());
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   const models = useMemo(() => data?.models.filter((x) => x.aboveViewerLevel), [data]);
   const images = useMemo(() => data?.images.filter((x) => x.aboveViewerLevel), [data]);
   const query = { enabled, isLoading, isFetched, isError };

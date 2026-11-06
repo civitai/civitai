@@ -40,6 +40,7 @@ const mocks = vi.hoisted(() => {
     user: { id: 9 } as { id: number } | null,
     inView: true,
     server: 'ok' as 'ok' | 'fail',
+    availability: 'ok' as 'ok' | 'fail',
   };
   const requests: { type: 'model' | 'image'; ids: number[]; browsingLevel: number }[] = [];
   const availabilityRequests: { modelIds: number[]; imageIds: number[] }[] = [];
@@ -78,6 +79,7 @@ function useFakeAvailability(
     enabled: opts?.enabled ?? true,
     queryFn: async () => {
       mocks.availabilityRequests.push({ modelIds: input.modelIds, imageIds: input.imageIds });
+      if (mocks.state.availability === 'fail') throw new Error('rate limited');
       const cap = mocks.state.canViewNsfw ? allBrowsingLevelsFlag : sfwBrowsingLevelsFlag;
       const answer = (type: 'model' | 'image', ids: number[]) =>
         ids.map((id) => {
@@ -205,6 +207,7 @@ beforeEach(() => {
     user: { id: 9 },
     inView: true,
     server: 'ok',
+    availability: 'ok',
   });
   mocks.requests.length = 0;
   mocks.availabilityRequests.length = 0;
@@ -305,6 +308,15 @@ describe('Civitai cards in an article', () => {
     expect(page.getByRole('button', { name: 'Show' }).elements()).toHaveLength(0);
     expect(mocks.requests.map((r) => r.ids)).toEqual([[1, 2]]);
     expect(mocks.availabilityRequests).toEqual(availability);
+  });
+
+  test('with mature content off, a failed availability check reads not available', async () => {
+    Object.assign(mocks.state, { showNsfw: false, availability: 'fail' });
+    renderArticle(article([link('model', 2)]));
+
+    await settled();
+    expect(host().textContent).toContain('This model is not available');
+    expect(host().textContent).not.toContain('Mature content');
   });
 
   test('with mature content off, a deleted id still reads not available', async () => {
