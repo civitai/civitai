@@ -73,6 +73,50 @@ export function standingsLabel(
   }`;
 }
 
+export type BadgeFigure = {
+  /** What the image earns per action: the leader's hats, capped at the players the event credits. */
+  points: number;
+  /** The team earning them, whose colour the disc takes; null when no team has hats here. */
+  pointsTeam: string | null;
+  /**
+   * The viewer's team's position in hats: ahead of the next-closest team (positive), behind the
+   * leader (negative), or level (0). Null for a viewer on no team, or an image with no hats.
+   */
+  margin: number | null;
+};
+
+/** The numbers in the badge: points in the dial, the viewer's margin beside it. */
+export function badgeFigure(
+  summary: Pick<TurfSummary, 'counted' | 'leader' | 'hatted' | 'hattedTeam'>,
+  viewerTeam: string | null | undefined,
+  creditedPlayers: number | null | undefined
+): BadgeFigure {
+  const lead = badgeLeader(summary);
+  const leadCount = lead ? summary.counted[lead] ?? 0 : 0;
+  let margin: number | null = null;
+  if (lead && viewerTeam) {
+    const mine = summary.counted[viewerTeam] ?? 0;
+    if (viewerTeam === lead) {
+      const others = Object.entries(summary.counted)
+        .filter(([team]) => team !== lead)
+        .map(([, n]) => n);
+      margin = mine - Math.max(0, ...others);
+    } else {
+      margin = mine - leadCount;
+    }
+  }
+  if (summary.hatted) return { points: 1, pointsTeam: summary.hattedTeam ?? lead, margin };
+  return {
+    points: creditedPlayers != null ? Math.min(leadCount, creditedPlayers) : leadCount,
+    pointsTeam: lead,
+    margin,
+  };
+}
+
+/** "+3", "\u22123", "0". */
+export const formatMargin = (margin: number) =>
+  margin > 0 ? `+${margin}` : margin < 0 ? `\u2212${-margin}` : '0';
+
 /**
  * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
  * viewer's team needs to lead outright: a tie stays with the current leader.
