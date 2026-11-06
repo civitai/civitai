@@ -15,7 +15,6 @@ import {
 } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useInView } from '~/hooks/useInView';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { CivitaiEmbedItem, CivitaiEmbedType } from '~/shared/tiptap/civitai-embed.utils';
 import { getCivitaiEmbedHref, toCivitaiEmbedItem } from '~/shared/tiptap/civitai-embed.utils';
 import { Flags } from '~/shared/utils/flags';
@@ -57,9 +56,9 @@ export function UnavailableTile({ item }: { item: CivitaiEmbedItem }) {
 }
 
 /**
- * Never renders the item's name or cover: both can be explicit, and this viewer has the level
- * that would show them turned off. Show goes through the same paths the feeds use, so it can
- * only reveal what the viewer's own settings allow.
+ * Never renders the item's name or cover until Show: both can be explicit, and this viewer has
+ * that level turned off. Only viewers with mature content on reach this; Show widens the level
+ * for this one card, as ExplainHiddenImages' "Show Hidden" does, and the domain cap still wins.
  */
 function MaturePlaceholder({
   item,
@@ -69,8 +68,6 @@ function MaturePlaceholder({
   data: EmbedModel | EmbedImage;
 }) {
   const browsingLevel = useBrowsingLevelDebounced();
-  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
-  const setBrowsingSettings = useBrowsingSettings((x) => x.setState);
   const [revealed, setRevealed] = useState(false);
 
   if (revealed)
@@ -80,16 +77,7 @@ function MaturePlaceholder({
       </BrowsingLevelProvider>
     );
 
-  return (
-    <MatureTile
-      type={item.type}
-      onShow={() =>
-        // With mature content off entirely, Show is the site-wide switch, the same one the
-        // browsing menu flips; the item then appears only if their level covers it.
-        showNsfw ? setRevealed(true) : setBrowsingSettings({ showNsfw: true })
-      }
-    />
-  );
+  return <MatureTile type={item.type} onShow={() => setRevealed(true)} />;
 }
 
 export function MatureTile({ type, onShow }: { type: CivitaiEmbedType; onShow: () => void }) {

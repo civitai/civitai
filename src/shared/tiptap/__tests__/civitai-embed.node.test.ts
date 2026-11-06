@@ -2,6 +2,7 @@ import { generateHTML } from '@tiptap/html';
 import { describe, expect, it } from 'vitest';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import { generateJSON } from '~/server/utils/tiptap-generate-json';
+import { CIVITAI_EMBED_PASTE_URL } from '~/shared/tiptap/civitai-embed.node';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { collectCivitaiEmbedIds, parseCivitaiEmbedUrl } from '~/shared/tiptap/civitai-embed.utils';
 
@@ -74,6 +75,29 @@ describe('parseCivitaiEmbedUrl', () => {
     'https://civitai.com/images',
     'https://civitai.com/articles/5',
   ])('rejects %s', (url) => expect(parseCivitaiEmbedUrl(url)).toBeNull());
+});
+
+describe('the paste rule', () => {
+  // A paste the regex takes but the parser refuses would insert an empty card.
+  it.each([
+    'https://civitai.com/models/123',
+    'https://www.civitai.red/models/5?modelVersionId=6',
+    'https://civitai.com/models/123/slug#reviews',
+    'https://civitai.com/images/77/',
+    'https://civitai.com/images/77?postId=1',
+    'https://civitai.com/models/abc',
+    'https://image.civitai.com/images/1',
+    'https://civitai.com/user/someone',
+  ])('only claims what it can parse: %s', (url) => {
+    const claimed = new RegExp(CIVITAI_EMBED_PASTE_URL.source).test(url);
+    if (claimed) expect(parseCivitaiEmbedUrl(url)).not.toBeNull();
+  });
+
+  it('claims a plain model and image link', () => {
+    const re = new RegExp(CIVITAI_EMBED_PASTE_URL.source);
+    expect(re.test('https://civitai.com/models/123')).toBe(true);
+    expect(re.test('https://civitai.com/images/77')).toBe(true);
+  });
 });
 
 describe('collectCivitaiEmbedIds', () => {

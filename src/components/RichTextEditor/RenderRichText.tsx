@@ -133,7 +133,12 @@ export function RenderRichText({
   if (!embedIds.modelIds.length && !embedIds.imageIds.length) return body;
 
   return (
-    <CivitaiEmbedProvider modelIds={embedIds.modelIds} imageIds={embedIds.imageIds}>
+    <CivitaiEmbedProvider
+      // A new article must not inherit the last one's results as "loaded".
+      key={`${embedIds.modelIds}|${embedIds.imageIds}`}
+      modelIds={embedIds.modelIds}
+      imageIds={embedIds.imageIds}
+    >
       {body}
     </CivitaiEmbedProvider>
   );

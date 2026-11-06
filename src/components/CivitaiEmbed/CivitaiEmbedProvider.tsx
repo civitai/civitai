@@ -9,6 +9,7 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useQueryModels } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -25,7 +26,7 @@ type EmbedState = {
   canEnableMature: boolean;
   models: Result<EmbedModel>;
   images: Result<EmbedImage>;
-  /** Missing at the viewer's level but present at the most this domain lets them enable. */
+  /** Missing at the viewer's level but present at the widest level this domain allows. */
   matureModels: Result<EmbedModel>;
   matureImages: Result<EmbedImage>;
 };
@@ -77,8 +78,10 @@ const missing = <T,>(ids: number[], result: Result<T>) =>
 
 /**
  * One feed query per type for every embed on the page, sent once the first card scrolls into
- * view. Ids the viewer's level drops get one follow-up at the widest level the domain lets this
- * viewer enable, only to tell "mature" from "gone"; that data stays out of the DOM until Show.
+ * view. For a viewer with mature content already on, ids their level drops get one follow-up at
+ * the domain's widest level, to tell "mature" from "gone"; that data stays out of the DOM until
+ * Show. With mature content off nothing above their level is requested at all: showNsfw is the
+ * over-18 confirmation, and a response is a disclosure whether or not it renders.
  */
 export function CivitaiEmbedProvider({
   modelIds,
@@ -91,7 +94,8 @@ export function CivitaiEmbedProvider({
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const canEnableMature = !!features.canViewNsfw && !!currentUser;
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
+  const canEnableMature = !!features.canViewNsfw && !!currentUser && showNsfw;
 
   const [requested, setRequested] = useState(false);
   const [models, setModels] = useState(pending<EmbedModel>);
@@ -101,6 +105,11 @@ export function CivitaiEmbedProvider({
 
   const missingModelIds = useMemo(() => missing(modelIds, models), [modelIds, models]);
   const missingImageIds = useMemo(() => missing(imageIds, images), [imageIds, images]);
+
+  const allImages = useMemo(
+    () => [...images.byId.values(), ...matureImages.byId.values()],
+    [images, matureImages]
+  );
 
   const requestLoad = useCallback(() => setRequested(true), []);
   const value = useMemo(
@@ -135,7 +144,7 @@ export function CivitaiEmbedProvider({
             />
           </BrowsingLevelProvider>
         )}
-        <ImagesProvider images={[...images.byId.values()]} hideHatTurf hideStickerBadge>
+        <ImagesProvider images={allImages} hideHatTurf hideStickerBadge>
           {children}
         </ImagesProvider>
       </ViewerBrowsingLevelScope>

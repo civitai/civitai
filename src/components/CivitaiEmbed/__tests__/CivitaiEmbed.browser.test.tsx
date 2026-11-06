@@ -24,7 +24,10 @@ const mocks = vi.hoisted(() => {
       { id: 2, name: 'Spicy model', nsfwLevel: 16, images: [{ id: 102, url: 'mature-cover.jpg' }] },
       { id: 4, name: 'Other model', nsfwLevel: 1, images: [{ id: 104, url: 'other-cover.jpg' }] },
     ],
-    image: [{ id: 7, name: 'Safe image', nsfwLevel: 1, url: 'safe-image.jpg' }],
+    image: [
+      { id: 7, name: 'Safe image', nsfwLevel: 1, url: 'safe-image.jpg' },
+      { id: 8, name: 'Spicy image', nsfwLevel: 16, url: 'mature-image.jpg' },
+    ],
   };
   const state = {
     level: 1,
@@ -32,10 +35,10 @@ const mocks = vi.hoisted(() => {
     canViewNsfw: true,
     user: { id: 9 } as { id: number } | null,
     inView: true,
+    server: 'ok' as 'ok' | 'fail',
   };
   const requests: { type: 'model' | 'image'; ids: number[]; browsingLevel: number }[] = [];
-  const setBrowsingSettings = vi.fn();
-  return { rows, state, requests, setBrowsingSettings };
+  return { rows, state, requests };
 });
 
 function fakeFeed(type: 'model' | 'image') {
@@ -48,6 +51,7 @@ function fakeFeed(type: 'model' | 'image') {
       enabled: opts?.enabled ?? true,
       queryFn: async () => {
         mocks.requests.push({ type, ids: input.ids, browsingLevel: input.browsingLevel });
+        if (mocks.state.server === 'fail') throw new Error('feed down');
         const items = mocks.rows[type].filter(
           (row) =>
             input.ids.includes(row.id) && Flags.intersects(row.nsfwLevel, input.browsingLevel)
@@ -60,10 +64,14 @@ function fakeFeed(type: 'model' | 'image') {
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: makeTrpcProxy({
-    'model.getAll': { useInfiniteQuery: fakeFeed('model') },
-    'image.getInfinite': { useInfiniteQuery: fakeFeed('image') },
-  }),
+  trpc: makeTrpcProxy(
+    {
+      'model.getAll': { useInfiniteQuery: fakeFeed('model') },
+      'image.getInfinite': { useInfiniteQuery: fakeFeed('image') },
+    },
+    // useQueryModels writes back to this cache when a request fails.
+    { useUtils: () => ({ model: { getAll: { setInfiniteData: () => undefined } } }) }
+  ),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.state.user }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -77,7 +85,6 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
       showNsfw: mocks.state.showNsfw,
       browsingLevel: mocks.state.level,
       blurNsfw: true,
-      setState: mocks.setBrowsingSettings,
     }),
 }));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (importOriginal) => ({
@@ -98,22 +105,38 @@ vi.mock('~/hooks/useInView', () => ({
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-// The feed cards are the feeds' own; what matters here is which data reaches them.
-vi.mock('~/components/Cards/ModelCard', () => ({
-  ModelCard: ({ data }: { data: (typeof mocks.rows.model)[number] }) => (
-    <div data-testid="model-card">
-      <img src={data.images[0].url} alt="" />
-      {data.name}
-    </div>
-  ),
-}));
-vi.mock('~/components/Cards/ImageCard', () => ({
-  ImageCard: ({ data }: { data: (typeof mocks.rows.image)[number] }) => (
-    <div data-testid="image-card">
-      <img src={data.url} alt="" />
-    </div>
-  ),
-}));
+// The feed cards are the feeds' own. Like their image guard, these show media only at a
+// browsing level that covers it, so a reveal is observable only if it really sets the level.
+async function levelGate() {
+  const { useBrowsingLevelDebounced } = await import(
+    '~/components/BrowsingLevel/BrowsingLevelProvider'
+  );
+  return function useMedia(nsfwLevel: number, url: string) {
+    const level = useBrowsingLevelDebounced();
+    return Flags.intersects(nsfwLevel, level) ? <img src={url} alt="" /> : null;
+  };
+}
+vi.mock('~/components/Cards/ModelCard', async () => {
+  const useMedia = await levelGate();
+  return {
+    ModelCard: function ModelCard({ data }: { data: (typeof mocks.rows.model)[number] }) {
+      return (
+        <div data-testid="model-card">
+          {useMedia(data.nsfwLevel, data.images[0].url)}
+          {data.name}
+        </div>
+      );
+    },
+  };
+});
+vi.mock('~/components/Cards/ImageCard', async () => {
+  const useMedia = await levelGate();
+  return {
+    ImageCard: function ImageCard({ data }: { data: (typeof mocks.rows.image)[number] }) {
+      return <div data-testid="image-card">{useMedia(data.nsfwLevel, data.url)}</div>;
+    },
+  };
+});
 
 const { RenderRichText } = await import('~/components/RichTextEditor/RenderRichText');
 
@@ -150,9 +173,9 @@ beforeEach(() => {
     canViewNsfw: true,
     user: { id: 9 },
     inView: true,
+    server: 'ok',
   });
   mocks.requests.length = 0;
-  mocks.setBrowsingSettings.mockClear();
 });
 
 describe('Civitai cards in an article', () => {
@@ -191,24 +214,41 @@ describe('Civitai cards in an article', () => {
     await vi.waitFor(() => expect(host().innerHTML).toContain('mature-cover.jpg'));
   });
 
-  test('Show turns mature content on site-wide when the viewer has it off', async () => {
-    mocks.state.showNsfw = false;
-    renderArticle(article([link('model', 2)]));
+  test('a mature image gets the same placeholder, and Show reveals only that card', async () => {
+    renderArticle(article([link('image', 8), link('model', 2)]));
 
     await settled();
-    expect(host().innerHTML).not.toContain('mature-cover.jpg');
-    await userEvent.click(page.getByRole('button', { name: 'Show' }));
-    expect(mocks.setBrowsingSettings).toHaveBeenCalledWith({ showNsfw: true });
+    expect(host().innerHTML).not.toContain('mature-image.jpg');
+    expect(page.getByRole('button', { name: 'Show' }).elements()).toHaveLength(2);
+
+    await userEvent.click(page.getByRole('button', { name: 'Show' }).first());
+    await vi.waitFor(() => expect(host().innerHTML).toContain('mature-image.jpg'));
     expect(host().innerHTML).not.toContain('mature-cover.jpg');
   });
 
-  test('where mature content cannot be enabled, a mature model is simply not available', async () => {
-    mocks.state.canViewNsfw = false;
+  // Nothing above the viewer's level may even be requested where they could not see it: the
+  // response reaches the client whether or not it renders.
+  test.each([
+    ['the site does not allow mature content', { canViewNsfw: false }],
+    ['the viewer is signed out', { user: null }],
+    ['the viewer has mature content off', { showNsfw: false }],
+  ])('when %s, a mature model is not available and nothing more is fetched', async (_, state) => {
+    Object.assign(mocks.state, state);
     renderArticle(article([link('model', 2)]));
 
     await settled();
     expect(host().textContent).toContain('This model is not available');
+    expect(host().textContent).not.toContain('Mature content');
     expect(mocks.requests.map((r) => r.ids)).toEqual([[2]]);
+  });
+
+  test('a failed request shows not-available, never the mature follow-up', async () => {
+    mocks.state.server = 'fail';
+    renderArticle(article([link('model', 1)]));
+
+    await settled();
+    expect(host().textContent).toContain('This model is not available');
+    expect(mocks.requests).toHaveLength(1);
   });
 
   test('a deleted id renders the not-available tile with its plain link', async () => {

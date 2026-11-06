@@ -10,7 +10,7 @@ import {
 export type CivitaiEmbedAttrs = { items: CivitaiEmbedItem[] };
 
 // A line that is nothing but a model, version or image link.
-const PASTED_URL =
+export const CIVITAI_EMBED_PASTE_URL =
   /^https?:\/\/(?:www\.)?civitai\.(?:com|red|green|blue)\/(?:models\/\d+[^\s]*|images\/\d+\/?)$/g;
 
 function readItems(el: HTMLElement): CivitaiEmbedItem[] {
@@ -85,7 +85,7 @@ export const CivitaiEmbedNode = Node.create<{ pasteToCard: boolean }>({
     if (!this.options.pasteToCard) return [];
     return [
       nodePasteRule({
-        find: PASTED_URL,
+        find: CIVITAI_EMBED_PASTE_URL,
         type: this.type,
         getAttributes: (match) => {
           const item = parseCivitaiEmbedUrl(match[0]);
