@@ -258,24 +258,28 @@ describe('image detail on a phone', () => {
     }
   );
 
-  test('the Hat Turf badge rides in the strip under the picture, after the actions', async () => {
-    renderDetail(0);
-    await vi.waitFor(() => expect(sheet()).not.toBeNull());
-    const badge = sheet()!.querySelector('[data-testid="hat-badge"]');
-    expect(badge).not.toBeNull();
-    const save = [...sheet()!.querySelectorAll('button')].find((b) => b.textContent === 'Save')!;
-    expect(save.compareDocumentPosition(badge!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  // The desktop toolbar's copy stays in the DOM, hidden by a container query.
-  test('an expanded sheet shows the Hat Turf badge once, in the strip', async () => {
-    ctx.active = true;
-    renderDetail(0);
-    await vi.waitFor(() => expect(sheet()).not.toBeNull());
-    const shown = [...document.body.querySelectorAll('[data-testid="hat-badge"]')].filter((el) =>
+  const shown = (id: string) =>
+    [...document.body.querySelectorAll(`[data-testid="${id}"]`)].filter((el) =>
       el.checkVisibility()
     );
-    expect(shown).toHaveLength(1);
-    expect(sheet()!.contains(shown[0])).toBe(true);
-  });
+
+  // Hat Turf in the reaction row squeezed the reaction counts on a phone, and the bottom strip is
+  // where Justin did not want it: on a phone both pieces ride in the top toolbar.
+  test.each([false, true])(
+    'the badge and the hat button show once each, in the top toolbar (sheet expanded: %s)',
+    async (active) => {
+      ctx.active = active;
+      renderDetail(0);
+      await vi.waitFor(() => expect(sheet()).not.toBeNull());
+      const badges = shown('hat-badge');
+      const hats = shown('hat-controls');
+      expect(badges).toHaveLength(1);
+      expect(hats).toHaveLength(1);
+      for (const el of [badges[0], hats[0]]) {
+        expect(sheet()!.contains(el)).toBe(false);
+        // The toolbar is the first thing under the page's top edge, above the picture.
+        expect(el.getBoundingClientRect().top).toBeLessThan(PHONE.height / 4);
+      }
+    }
+  );
 });

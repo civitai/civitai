@@ -325,7 +325,10 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
-      {takesHats(image) && <HatTurfDetailBadge imageId={image.id} />}
+      {/* On a phone Hat Turf is in the top toolbar, not this bottom bar. */}
+      {withStoryline && !narrowStage && takesHats(image) && (
+        <HatTurfDetailBadge imageId={image.id} />
+      )}
     </>
   );
 
@@ -382,6 +385,12 @@ function ImageDetail2Content() {
                               postId={image.postId ?? null}
                               placement="mobile"
                             />
+                            {narrowStage && takesHats(image) && (
+                              <div className="ml-1 flex shrink-0 items-center gap-2">
+                                <HatTurfDetailBadge imageId={image.id} />
+                                <HatTurfDetailControls imageId={image.id} />
+                              </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
@@ -540,7 +549,7 @@ function ImageDetail2Content() {
                               imageNsfwLevel={image.nsfwLevel}
                               className="ml-2"
                             />
-                            {takesHats(image) && (
+                            {!narrowStage && takesHats(image) && (
                               <div className="ml-2">
                                 <HatTurfDetailControls imageId={image.id} />
                               </div>
