@@ -642,7 +642,7 @@ export const TOOLS = [
   tool({
     name: 'shop_purchases',
     description:
-      "What a set of accounts bought from the Creator Shop (1-25 accounts), per account and per item: title, kind (a cosmetic type, 'pack' or 'box'), count, Buzz, refunded count, first and last time, and paidFrom, the Buzz paid by account type from the ledger (blue = reward Buzz). noChargeFound counts paid purchases with no ledger charge; purchases from before about 2026-10-08 used another charge format and always count there. It is null when the ledger read was cut short. The top 25 items by Buzz are listed and the rest rolled into other. topUps are sticker use top-ups, from the ledger alone: charges and Buzz per sticker; how many uses each bought is not recorded.",
+      "What a set of accounts bought from the Creator Shop (1-25 accounts), per account and per item: title, kind (a cosmetic type, 'pack' or 'box'), count, Buzz, refunded count, first and last time, and paidFrom, the Buzz paid by account type from the ledger (blue = reward Buzz). noChargeFound counts paid purchases with no ledger charge; purchases from before about 2026-10-08 used another charge format and always count there. When ledgerCapped is true the ledger read hit its cap for that account: noChargeFound is null, and paidFrom and topUps may be partial. The top 25 items by Buzz are listed and the rest rolled into other. topUps are sticker use top-ups, from the ledger alone: charges and Buzz per sticker; how many uses each bought is not recorded.",
     input: z.object({
       userIds: userIdList(25),
       days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(30),

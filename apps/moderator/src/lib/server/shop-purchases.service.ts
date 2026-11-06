@@ -14,6 +14,7 @@ import { isInt4Id, usersByIds } from './users.service';
 
 const PURCHASE_ROW_LIMIT = 1000;
 const LEG_ROW_LIMIT = 5000;
+const LEG_READ_TIMEOUT_S = 30;
 const ITEMS_SHOWN = 25;
 
 const PACK_PREFIX = 'cosmetic-pack-v2-';
@@ -86,6 +87,8 @@ export type AccountShopPurchases = {
   items: ShopItemSummary[];
   other: OtherItems | null;
   topUps: StickerTopUp[];
+  /** The ledger read hit its cap for this account, so paidFrom and topUps may be partial. */
+  ledgerCapped: boolean;
   truncated: boolean;
 };
 
@@ -232,6 +235,7 @@ export function summarizeShopPurchases(
       items: items.slice(0, ITEMS_SHOWN),
       other: rollUpOther(items.slice(ITEMS_SHOWN)),
       topUps: !kind || kind === 'Sticker' ? summarizeTopUps(ownTopUps) : [],
+      ledgerCapped: legsCut,
       truncated: rowsCut || legsCut,
     };
   });
@@ -298,6 +302,7 @@ export async function getShopPurchaseSummary(
         limit: LEG_ROW_LIMIT,
       },
       format: 'JSONEachRow',
+      clickhouse_settings: { max_execution_time: LEG_READ_TIMEOUT_S },
     })
     .then((r) => r.json<LegRow>());
 

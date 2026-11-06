@@ -1,14 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LegRow, PurchaseRow } from '$lib/server/shop-purchases.service';
 
-vi.mock('$lib/server/db', () => ({ dbRead: {} }));
-vi.mock('$lib/server/clickhouse', () => ({ getClickhouse: () => ({}) }));
+const chQueries: {
+  query: string;
+  query_params: Record<string, unknown>;
+  clickhouse_settings: Record<string, number>;
+}[] = [];
+vi.mock('$lib/server/db', () => {
+  const chain: Record<string, unknown> = {
+    selectFrom: () => chain,
+    selectAll: () => chain,
+    where: () => chain,
+    execute: async () => [],
+  };
+  return { dbRead: chain };
+});
+vi.mock('$lib/server/clickhouse', () => ({
+  getClickhouse: () => ({
+    query: async (q: (typeof chQueries)[number]) => {
+      chQueries.push(q);
+      return { json: async () => [] };
+    },
+  }),
+}));
 vi.mock('$lib/server/users.service', () => ({
   isInt4Id: (n: number) => Number.isInteger(n) && n > 0 && n <= 2147483647,
   usersByIds: async () => new Map(),
 }));
 
-const { summarizeShopPurchases } = await import('$lib/server/shop-purchases.service');
+const { getShopPurchaseSummary, summarizeShopPurchases } = await import(
+  '$lib/server/shop-purchases.service'
+);
 
 const BUYER = 5;
 const OTHER_BUYER = 6;
@@ -151,7 +173,35 @@ describe('shop_purchases missing charges', () => {
     const fill = Array.from({ length: 5000 }, (_, i) => leg(`${itemCharge(`x${i}`)}-User`));
     const account = summarize([purchase(itemCharge('k'))], fill);
     expect(account.items[0].noChargeFound).toBeNull();
+    expect(account.ledgerCapped).toBe(true);
     expect(account.truncated).toBe(true);
+  });
+
+  it('does not call an account capped just under the limit', () => {
+    const fill = Array.from({ length: 4999 }, (_, i) => leg(`${itemCharge(`x${i}`)}-User`));
+    const account = summarize([purchase(itemCharge('k'))], fill);
+    expect(account.ledgerCapped).toBe(false);
+    expect(account.items[0].noChargeFound).toBe(1);
+  });
+});
+
+describe('shop_purchases ledger read', () => {
+  it('always bounds the read by a window and a time limit, with the values bound', async () => {
+    chQueries.length = 0;
+    await getShopPurchaseSummary([BUYER], 100_000);
+    expect(chQueries).toHaveLength(1);
+    const [q] = chQueries;
+    expect(q.query).toContain('date >= now() - toIntervalDay({readDays:UInt32})');
+    expect(q.query_params).toMatchObject({ ids: [BUYER], days: 365, readDays: 366 });
+    // The client's own request timeout is 300s.
+    expect(q.clickhouse_settings.max_execution_time).toBeLessThan(300);
+  });
+
+  it('reads nothing when no id is valid', async () => {
+    chQueries.length = 0;
+    const result = await getShopPurchaseSummary([0, -1]);
+    expect(chQueries).toHaveLength(0);
+    expect(result.accounts).toEqual([]);
   });
 });
 
@@ -267,6 +317,18 @@ describe('shop_purchases sticker top-ups', () => {
     );
     expect(accounts[0].topUps.map((t) => t.cosmeticId)).toEqual([44]);
     expect(accounts[1].topUps.map((t) => t.cosmeticId)).toEqual([55]);
+  });
+
+  it('leaves the seller leg out of a top-up beside its charge', () => {
+    const { topUps } = summarize(
+      [],
+      [
+        leg(`${topUp(44)}-User`, { amount: '100', description: 'Sticker uses - Wave' }),
+        leg(`${topUp(44)}:sell:9:yellow`, { type: 'sell', toAccountId: '9', amount: '70' }),
+      ]
+    );
+    expect(topUps).toHaveLength(1);
+    expect(topUps[0]).toMatchObject({ charges: 1, paidFrom: { yellow: 100 } });
   });
 
   it('does not treat a purchase charge as a top-up', () => {
