@@ -26,7 +26,6 @@ export function pageWindow(requested: number, total: number, pageSize: number) {
   return { page, offset: (page - 1) * pageSize, limit: pageSize };
 }
 
-/** Rows `query` matches, before paging. */
 export async function countRows<DB, TB extends keyof DB>(
   query: SelectQueryBuilder<DB, TB, object>
 ): Promise<number> {

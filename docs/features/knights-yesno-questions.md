@@ -37,8 +37,9 @@ localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It kee
 and `policy_preference` to `moderators`, creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`), and closes an open item the file marks inactive
 (`retired`, no outcome), along with any open reworded copies of it; a question it withdrew earlier and lists again, with no
-answers, is reopened. It never rewrites an item a moderator changed (counted as `moderated`) and never reopens one closed as
-`moderator-retired`. It prints counts only. Data files are never committed.
+answers, is reopened. It skips an unanswered item a moderator changed (counted as `moderated`), except that a moderated item the file
+withdrew and relists is reopened and rewritten. It never reopens one closed as `moderator-retired`; relisting it brings back its latest
+reworded copy instead, if the import had closed that copy. It prints counts only. Data files are never committed.
 
 ## Moderator cleanup
 
@@ -48,7 +49,7 @@ by text or image. A moderator can:
 - **Retire** an open question for its image, with a required note. It closes as `moderator-retired` and its pending answers become
   `inconclusive`; the Knights tick (`settleFinalItems`) settles them later, dropping their pending gold. Answers already recorded stay in
   the label store.
-- **Restore** a `moderator-retired` question that has no answers.
+- **Restore** a `moderator-retired` question that has no answers. Restore is refused while a reworded copy of it is open (retire the copy first), so a question never has two live versions.
 - **Reword** a question. This always retires it and opens a new item `<producer id>:rN` with `meta.rewordOf`, so answers under a producer
   id are always answers to the producer's wording.
 
@@ -89,7 +90,7 @@ The tick (`sweep.ts`) closes, with no outcome, answered players' questions that 
 shown or their axis is switched off (`unplayable`), or nobody has answered for `KNIGHTS_YESNO_MAX_AGE_DAYS` (default 14, `stale`).
 Votes become `inconclusive`, their gold is dropped, the vote XP stays, labels already written stay. The sweep walks every answered
 question in id order a page at a time within a time budget and steps over one it cannot close, so a few cannot hold back the rest. Questions with no answers hold nothing
-and are left open. Moderators' questions are not swept. Locks are taken in the vote's order: the item row, then the voters' player rows.
+and are left open. Moderators' questions are not swept. A vote locks its own player row first, then the item row; a close, whether in a vote or in the sweep, locks the item row, then the voters' player rows in id order.
 
 ## Labels
 

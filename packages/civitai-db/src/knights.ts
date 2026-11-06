@@ -21,9 +21,7 @@ export const REFERENCE_STATUS = {
 export const YESNO_QUESTION_MAX = 600;
 /** `reason` of a yes/no item a moderator closed. The import never reopens one. */
 export const MODERATOR_RETIRED = 'moderator-retired';
-/** `meta` key holding a yes/no item's last moderator action. */
 export const MODERATION_META_KEY = 'moderation';
-/** `meta` key on a reworded copy, holding the producer id of the question it replaces. */
 export const REWORD_OF_META_KEY = 'rewordOf';
 
 export type ModerationNote = { action: string; by: number; note: string; at: string };
@@ -32,7 +30,7 @@ export const moderationMeta = (action: string, by: number, note: string, now: Da
   [MODERATION_META_KEY]: { action, by, note, at: now.toISOString() } satisfies ModerationNote,
 });
 
-/** Merges `patch` into the item's `meta`, creating it when null. */
+/** Unqualified "meta": not usable in an aliased or joined update. */
 export const mergeMeta = (patch: Record<string, unknown>) =>
   sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
 
@@ -75,7 +73,11 @@ export async function gradeKnightsVotes(
     .execute();
 }
 
-/** The caller holds the item row lock, in a transaction. Settles nothing: `settleFinalItems` (the Knights tick) settles the inconclusive votes later. Locks the item row, then its votes, never player rows, so the moderator app avoids the player locks Knights' close path takes. `metaPatch` is merged into `meta`. */
+/**
+ * The caller holds the item row lock, in a transaction. Touches only the item and its votes, never player rows,
+ * so the moderator app doesn't take the player locks Knights' close path takes. `settleFinalItems` settles the
+ * inconclusive votes later. `metaPatch` is merged into `meta`.
+ */
 export async function closeYesNoItemRow(
   trx: Kysely<DB> | Transaction<DB>,
   itemId: number,
