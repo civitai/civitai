@@ -56,7 +56,9 @@ async function statementFor(
   return queryWithTimeoutMock.mock.calls[0][2] as { text: string; values: unknown[] };
 }
 
-const REVIEW_ARM = /rci\."collectionId" = \$(\d+)/;
+// The rating clause's arm, not the acceptableMinor exception that also names the collection.
+const REVIEW_ARM =
+  /i\."nsfwLevel" = 0 AND EXISTS \(\s*SELECT 1 FROM "CollectionItem" rci[\s\S]*?rci\."collectionId" = \$(\d+)/;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -118,11 +120,30 @@ describe("a collection review's image read", () => {
       { id: REVIEWER },
       { pending: true, reviewCollectionId: COLLECTION }
     );
-    expect(review.text).not.toMatch(/i\."acceptableMinor" = FALSE/);
+    // The review read's acceptableMinor check admits that collection's REVIEW and REJECTED
+    // submissions; pending-viewer-image.sql.behavior.test.ts runs it against rows.
+    const exception = review.text.match(
+      /i\."acceptableMinor" = FALSE OR i\."userId" = \$\d+ OR EXISTS \(\s*SELECT 1 FROM "CollectionItem" rci[\s\S]*?rci\."collectionId" = \$(\d+)/
+    );
+    expect(exception, 'no review exception on the acceptableMinor check').not.toBeNull();
+    expect(review.values[Number(exception![1]) - 1]).toBe(COLLECTION);
     vi.clearAllMocks();
     queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
     const accepted = await statementFor({ id: REVIEWER }, { pending: false });
     expect(accepted.text).toMatch(/i\."acceptableMinor" = FALSE/);
+  });
+
+  it("applies the acceptableMinor check to a non-moderator's pending read outside a review", async () => {
+    const { text } = await statementFor({ id: REVIEWER }, { pending: true });
+    expect(text).toMatch(/\(i\."acceptableMinor" = FALSE OR i\."userId" = \$\d+\)/);
+  });
+
+  it("leaves a moderator's pending read without the acceptableMinor check", async () => {
+    const { text } = await statementFor({ id: REVIEWER, isModerator: true }, { pending: true });
+    // Any filter on the column, however spelled; the bare column is selected, so match a predicate.
+    expect(text).not.toMatch(/"acceptableMinor"\s*(=|IS|!=|<>)|NOT\s+i\."acceptableMinor"/);
+    expect(text).not.toMatch(/"needsReview" IS NULL|"i"\."ingestion"/);
+    expect(text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 
   it("checks the collection's ownership and MANAGE against the viewer, not a profile being browsed", async () => {
