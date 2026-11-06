@@ -107,17 +107,21 @@ beforeAll(async () => {
       (u) => [`(${u * 10}, 'c', ${u}, 1)`, `(${u * 10 + 1}, 'c', ${u}, 1)`]
     ).join(', ')}`
   );
-  // Two comments with every column set and each flag opposite between them, so the copy is checked
-  // column by column: a constant or a swapped column is wrong on at least one of the two.
+  // Three comments with every column set and each flag true on exactly one of them, so the copy is
+  // checked column by column: a constant or a swapped column is wrong on at least one row.
   await db.exec(`
     UPDATE archive."CommentV2" SET content = 'kept text', "createdAt" = '2026-01-02 03:04:05',
-      "updatedAt" = '2026-02-03 04:05:06', nsfw = true, "tosViolation" = true, hidden = false,
+      "updatedAt" = '2026-02-03 04:05:06', nsfw = true, "tosViolation" = false, hidden = false,
       metadata = '{"k": 1}'
     WHERE id = ${MARKER * 10};
     UPDATE archive."CommentV2" SET content = 'other text', "createdAt" = '2026-03-04 05:06:07',
       "updatedAt" = '2026-04-05 06:07:08', nsfw = false, "tosViolation" = false, hidden = true,
       metadata = '{"k": 2}'
     WHERE id = ${MARKER * 10 + 1};
+    UPDATE archive."CommentV2" SET content = 'third text', "createdAt" = '2026-05-06 07:08:09',
+      "updatedAt" = '2026-06-07 08:09:10', nsfw = false, "tosViolation" = true, hidden = false,
+      metadata = '{"k": 3}'
+    WHERE id = ${PENDING * 10};
   `);
 });
 
@@ -170,9 +174,26 @@ describe('evidence_hold_keep_archived_comments', () => {
     const kept = await db.query(
       `SELECT "commentId", "userId", "threadId", content, "createdAt", "updatedAt", nsfw,
          "tosViolation", hidden, metadata, thread, source
-       FROM "EvidenceHoldComment" WHERE "userId" = ${MARKER} ORDER BY "commentId"`
+       FROM "EvidenceHoldComment" WHERE "commentId" IN (${PENDING * 10}, ${MARKER * 10}, ${
+        MARKER * 10 + 1
+      })
+       ORDER BY "commentId"`
     );
     expect(kept.rows).toEqual([
+      {
+        commentId: PENDING * 10,
+        userId: PENDING,
+        threadId: 1,
+        content: 'third text',
+        createdAt: new Date('2026-05-06T07:08:09.000Z'),
+        updatedAt: new Date('2026-06-07T08:09:10.000Z'),
+        nsfw: false,
+        tosViolation: true,
+        hidden: false,
+        metadata: { k: 3 },
+        thread: { id: 1, postId: 900, imageId: null, parentThreadId: null },
+        source: 'archive',
+      },
       {
         commentId: MARKER * 10,
         userId: MARKER,
@@ -181,7 +202,7 @@ describe('evidence_hold_keep_archived_comments', () => {
         createdAt: new Date('2026-01-02T03:04:05.000Z'),
         updatedAt: new Date('2026-02-03T04:05:06.000Z'),
         nsfw: true,
-        tosViolation: true,
+        tosViolation: false,
         hidden: false,
         metadata: { k: 1 },
         thread: { id: 1, postId: 900, imageId: null, parentThreadId: null },
