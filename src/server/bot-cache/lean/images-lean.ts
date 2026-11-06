@@ -102,17 +102,15 @@ function reactions(image: ImageRow) {
   const order = (Object.keys(constants.availableReactions) as string[]).filter(
     (key) => key in metrics
   );
-  const badges = order
-    .filter((key) => metrics[key]! >= 1)
-    .map(
-      (key) =>
-        `<button aria-label="${esc(key)} reaction"><span>${esc(
-          constants.availableReactions[key as keyof typeof constants.availableReactions]
-        )}</span> ${count(metrics[key]!, false)}</button>`
-    )
-    .join('');
-  const tip = image.poi ? '' : `<span>${count(stats?.tippedAmountCountAllTime ?? 0, true)}</span>`;
-  return `<div>${badges}${tip}</div>`;
+  const emoji = constants.availableReactions as Record<string, string>;
+  const badge = (key: string) => {
+    const content = `<span>${esc(emoji[key])}</span> ${count(metrics[key]!, false)}`;
+    return `<button aria-label="${esc(key)} reaction">${content}</button>`;
+  };
+  const badges = order.filter((key) => metrics[key]! >= 1).map(badge);
+  const tipped = stats?.tippedAmountCountAllTime ?? 0;
+  const tip = image.poi ? '' : `<span>${count(tipped, true)}</span>`;
+  return `<div>${badges.join('')}${tip}</div>`;
 }
 
 /** `ImageDetail2`'s `renderLeftImageControls`: the buttons do nothing without scripts. */
@@ -128,11 +126,11 @@ function imageControls(image: ImageRow, url: string, features: FeatureAccess) {
 function creatorCard(image: ImageRow) {
   const user = image.user;
   const username = user.username && !user.deletedAt ? user.username : null;
-  const avatar = user.image
-    ? `<img${attr('src', getEdgeUrl(user.image, { width: 96, optimized: true }))}${attr(
-        'alt',
-        username ? `${username}'s Avatar` : undefined
-      )} loading="lazy">`
+  // `UserAvatar`: Mantine's `Avatar` with the edge URL, or its initials when there is no image.
+  const src = user.image ? getEdgeUrl(user.image, { width: 96, optimized: true }) : null;
+  const alt = username ? `${username}'s Avatar` : undefined;
+  const avatar = src
+    ? `<img${attr('src', src)}${attr('alt', alt)} loading="lazy">`
     : `<span>${esc(username ? getInitials(username) : '')}</span>`;
   // `DaysFromNow` renders nothing on the server.
   const subText = image.publishedAt ? 'Uploaded' : 'Not published';
@@ -151,18 +149,14 @@ function creatorCard(image: ImageRow) {
 function processCard(data: GenerationData) {
   const { tools, techniques } = data;
   if (!tools.length && !techniques.length) return '';
-  const toolList = tools.length
-    ? `<h3>Tools</h3><ul>${tools
-        .map(({ name }) => `<li><a href="/tools/${esc(slugit(name))}">${esc(name)}</a></li>`)
-        .join('')}</ul>`
-    : '';
-  const techniqueList = techniques.length
-    ? `<h3>Techniques</h3><ul>${techniques
-        .map(
-          ({ name, notes }) => `<li><p>${esc(name)}</p>${notes ? `<p>${esc(notes)}</p>` : ''}</li>`
-        )
-        .join('')}</ul>`
-    : '';
+  // A tool's link is the `as` path, `/tools/<slug>`; its notes are in a closed popover.
+  const tool = ({ name }: { name: string }) =>
+    `<li><a href="/tools/${esc(slugit(name))}">${esc(name)}</a></li>`;
+  const technique = ({ name, notes }: { name: string; notes: string | null }) =>
+    `<li><p>${esc(name)}</p>${notes ? `<p>${esc(notes)}</p>` : ''}</li>`;
+  const toolList = tools.length ? `<h3>Tools</h3><ul>${tools.map(tool).join('')}</ul>` : '';
+  const techniqueItems = techniques.map(technique).join('');
+  const techniqueList = techniques.length ? `<h3>Techniques</h3><ul>${techniqueItems}</ul>` : '';
   return `<section><h2>Process</h2>${toolList}${techniqueList}</section>`;
 }
 
@@ -174,34 +168,28 @@ function resourcesList(data: GenerationData) {
     .map((resource) => ({ ...resource, isAvailable: resource.versionId !== null }))
     .sort((a, b) => (a.isAvailable === b.isAvailable ? 0 : a.isAvailable ? -1 : 1));
   if (!resources.length) return '';
-  const sorted = sortByModelTypes(resources);
-  const item = (resource: (typeof sorted)[number]) => {
-    const wrap = (inner: string) =>
-      resource.modelId
-        ? `<a href="${esc(
-            getModelUrl({
-              modelId: resource.modelId,
-              modelName: resource.modelName,
-              modelVersionId: resource.versionId,
-            })
-          )}">${inner}</a>`
-        : inner;
+  const items = sortByModelTypes(resources).slice(0, RESOURCE_LIMIT);
+  const html = items.map((resource) => {
+    const href = resource.modelId
+      ? getModelUrl({
+          modelId: resource.modelId,
+          modelName: resource.modelName,
+          modelVersionId: resource.versionId,
+        })
+      : null;
+    const wrap = (inner: string) => (href ? `<a href="${esc(href)}">${inner}</a>` : inner);
+    const strength = resource.strength ? `<span>${esc(resource.strength)}</span>` : '';
     const type = resource.modelType
-      ? `<span>${esc(getDisplayName(resource.modelType))}</span>${
-          resource.strength ? `<span>${esc(resource.strength)}</span>` : ''
-        }`
+      ? `<span>${esc(getDisplayName(resource.modelType))}</span>${strength}`
       : '';
     const version = resource.versionName ? wrap(`<p>${esc(resource.versionName)}</p>`) : '';
     return `<li>${wrap(`<p>${esc(resource.modelName)}</p>`)}${type}${version}</li>`;
-  };
+  });
   const more =
     resources.length > RESOURCE_LIMIT
       ? `<p>Show ${resources.length - RESOURCE_LIMIT} more</p>`
       : '';
-  return `<h3>Resources used</h3><ul>${sorted
-    .slice(0, RESOURCE_LIMIT)
-    .map(item)
-    .join('')}</ul>${more}`;
+  return `<h3>Resources used</h3><ul>${html.join('')}</ul>${more}`;
 }
 
 /** `ImageMeta`'s "Other metadata" entries. */
@@ -237,15 +225,13 @@ function generationCard(data: GenerationData) {
     const badges = `<span>${esc(software)}</span><span>${esc(data.process ?? '')}</span>`;
     const prompt = meta.prompt as string | undefined;
     const negative = meta.negativePrompt as string | undefined;
-    const others = simpleMeta(data);
+    const others = simpleMeta(data)
+      .map(({ key, value }) => `<li><span>${esc(key)}:</span><span>${esc(value)}</span></li>`)
+      .join('');
     metaHtml =
       (prompt ? `<h3>Prompt</h3>${badges}<p>${esc(prompt)}</p>` : badges) +
       (negative ? `<h3>Negative prompt</h3><p>${esc(negative)}</p>` : '') +
-      (others.length
-        ? `<h3>Other metadata</h3><ul>${others
-            .map(({ key, value }) => `<li><span>${esc(key)}:</span><span>${esc(value)}</span></li>`)
-            .join('')}</ul>`
-        : '');
+      (others ? `<h3>Other metadata</h3><ul>${others}</ul>` : '');
   }
   const copyAll = meta ? '<button type="button">COPY ALL</button>' : '';
   return `<section><h2>Generation data</h2>${copyAll}${resources}${metaHtml}</section>`;
@@ -307,12 +293,9 @@ export async function renderImageDetailLean({
   // `ImageDetailProvider` / `ImageDetail2` answer NotFound; this file does not draw that page.
   if (!image) return { fallback: 'not-found' };
   if (isImageDetailPoiHidden(image, null)) return { fallback: 'not-found' };
-  const hidden = expandHiddenPreferences(
-    readQuery<Parameters<typeof expandHiddenPreferences>[0]>(
-      ssg,
-      ssg.hiddenPreferences.getHidden.queryOptions().queryKey
-    ).data
-  );
+  type HiddenData = Parameters<typeof expandHiddenPreferences>[0];
+  const hiddenKey = ssg.hiddenPreferences.getHidden.queryOptions().queryKey;
+  const hidden = expandHiddenPreferences(readQuery<HiddenData>(ssg, hiddenKey).data);
   if (hidden.blockedUsers.some((u) => u.id === image.user.id)) return { fallback: 'not-found' };
   // A contest's forced rating comes from details only a signed-in render prefetches.
   if (readQuery(ssg, ssg.image.getContestCollectionDetails.queryOptions({ id }).queryKey).found)
@@ -328,10 +311,8 @@ export async function renderImageDetailLean({
   });
   if (state !== 'page') return { fallback: 'gated' };
 
-  const generation = readQuery<GenerationData>(
-    ssg,
-    ssg.image.getGenerationData.queryOptions({ id }).queryKey
-  ).data;
+  const generationKey = ssg.image.getGenerationData.queryOptions({ id }).queryKey;
+  const generation = readQuery<GenerationData>(ssg, generationKey).data;
   if (unsupported(image, generation)) return { fallback: 'unsupported' };
 
   const baseUrl = env.NEXT_PUBLIC_BASE_URL ?? '';
