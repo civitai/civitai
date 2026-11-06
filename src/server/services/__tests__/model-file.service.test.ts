@@ -398,3 +398,77 @@ describe('getFilesForModelVersionCache — nested files array is caller-owned', 
     expect(result['42']).toEqual({ modelVersionId: 42 });
   });
 });
+
+describe('createFile / updateFile — renaming a download (overrideName)', () => {
+  const OWNER = 1;
+  const storedRow = {
+    id: 77,
+    name: 'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    overrideName: null,
+    url: 'https://bucket/modelVersion/5/X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    type: 'Model',
+    metadata: {},
+    modelVersionId: 5,
+  };
+
+  beforeEach(() => {
+    // Answers the way Postgres would: the row only when the ownership scope in `where` admits it.
+    mockDbWrite.modelFile.findUnique.mockImplementation(((args: {
+      where?: { modelVersion?: { model?: { userId?: number } } };
+    }) => {
+      const scopedTo = args.where?.modelVersion?.model?.userId;
+      return Promise.resolve(scopedTo === undefined || scopedTo === OWNER ? storedRow : null);
+    }) as never);
+    mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  it('refuses a user who does not own the model, and writes nothing', async () => {
+    await expect(
+      modelFileService.updateFile({ id: 77, overrideName: 'stolen.safetensors', userId: 2 })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockDbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('leaves a stored name that is re-sent unchanged exactly as it was', async () => {
+    // Saved before the server sanitised, with no extension: rewriting it on every save would make
+    // it look changed and send it back through the blocklist.
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
+      ...storedRow,
+      overrideName: 'legacy',
+    } as never);
+    await modelFileService.updateFile({ id: 77, overrideName: 'legacy', userId: OWNER });
+    expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 77 },
+      data: { overrideName: 'legacy', metadata: undefined },
+    });
+  });
+
+  it('sanitises the name a new file is created with', async () => {
+    mockDbWrite.modelVersion.findFirst.mockResolvedValue({ id: 5 } as never);
+    mockDbWrite.modelFile.create.mockResolvedValue({ id: 78 } as never);
+    await modelFileService.createFile({
+      name: storedRow.name,
+      overrideName: '../a"\r\nb',
+      url: storedRow.url,
+      sizeKB: 1,
+      type: 'Model',
+      modelVersionId: 5,
+      select: { id: true },
+      userId: OWNER,
+    });
+    expect(mockDbWrite.modelFile.create.mock.calls[0][0].data).toMatchObject({
+      overrideName: '_a_ b.safetensors',
+    });
+  });
+
+  it.each([
+    ['the owner', { userId: OWNER }],
+    ['a moderator', { userId: 999, isModerator: true }],
+  ])('lets %s rename, sanitised server-side, without touching url or name', async (_l, who) => {
+    await modelFileService.updateFile({ id: 77, overrideName: '../a"\r\nb', ...who });
+    expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 77 },
+      data: { overrideName: '_a_ b.safetensors', metadata: undefined },
+    });
+  });
+});

@@ -4,8 +4,6 @@ import {
   onStorySparkPostsHidden,
   onStorySparkPostsRestored,
 } from '~/server/events/points/hooks';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
-import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
@@ -46,7 +44,6 @@ import { editPostImageSelect, postSelect } from '~/server/selectors/post.selecto
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -77,6 +74,7 @@ import {
   createImageResources,
   deleteImageFromS3,
   deleteImagesForModelVersionCache,
+  getImageMetricsObject,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
@@ -111,12 +109,15 @@ import {
   Availability,
   CollectionMode,
   CollectionType,
+  EntityType,
+  JobQueueType,
   MediaType,
   Model3DStatus,
   ModelHashType,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { readImageUploadObjectHead } from '~/utils/s3-utils';
@@ -684,15 +685,10 @@ const getPostCollectionCollectionItem = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  let db: typeof dbRead | typeof dbWrite;
-  let post: Awaited<ReturnType<typeof readPostDetailViaKysely>> = undefined;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6)) {
-    const kysely = await getKyselyWithoutLag('post', id);
-    db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
-    post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
-  } else {
-    db = await getDbWithoutLag('post', id);
-  }
+  const kysely = await getKyselyWithoutLag('post', id);
+  // The Prisma client on the same side of the lag decision, for the reads below.
+  const db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
+  let post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
   // A post whose user row is gone reads `undefined` through Kysely, and Prisma throws for it.
   if (post === undefined) post = await readPostDetailViaPrisma(db, { id, viewer: user });
 
@@ -731,7 +727,8 @@ export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const images = await getPostEditImages({ id, user });
+  const editImages = await getPostEditImages({ id, user });
+  const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -761,6 +758,31 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
 };
+
+/**
+ * Reaction totals for the editor's image cards. Edit-load only: uploads share
+ * `combinePostEditImageData` and must not pay a metrics read. Published posts only; an image the
+ * read could not resolve gets no count (absent, not 0).
+ */
+export async function withReactionCounts<T extends { id: number }>(
+  images: T[],
+  publishedAt: Date | null
+): Promise<(T & { reactionCount?: number })[]> {
+  if (!publishedAt || publishedAt > new Date() || !images.length) return images;
+  const metrics = await getImageMetricsObject(images);
+  return images.map((image) => {
+    const m = metrics[image.id];
+    if (!m) return image;
+    const { reactionLike, reactionHeart, reactionLaugh, reactionCry } = m;
+    if ([reactionLike, reactionHeart, reactionLaugh, reactionCry].every((n) => n == null))
+      return image;
+    return {
+      ...image,
+      reactionCount:
+        (reactionLike ?? 0) + (reactionHeart ?? 0) + (reactionLaugh ?? 0) + (reactionCry ?? 0),
+    };
+  });
+}
 
 async function getPostModel({
   modelVersionId,
@@ -1239,6 +1261,15 @@ export async function afterPostsUnpublish(posts: { postId: number; userId: numbe
   const userIds = uniq(posts.map((post) => post.userId));
   await userPostCountCache.refresh(userIds);
   await userImageVideoCountCaches.refresh(userIds);
+  // Last, so a failed queue write can't skip the search delete above. The nsfw trigger fires on
+  // publish only, and the version's level still counts this post's images.
+  await enqueueJobs(
+    posts.map((post) => ({
+      entityId: post.postId,
+      entityType: EntityType.Post,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
+  );
 }
 
 export const deletePost = async ({
@@ -1249,7 +1280,6 @@ export const deletePost = async ({
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
-  const markerView = await holdMarkerViewExists();
   // Chapter 1 of a story started from an image, whose points go with it.
   const sparked = await dbWrite.storylineChapter.findFirst({
     where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
@@ -1294,10 +1324,6 @@ export const deletePost = async ({
         if (deletableImages.length) {
           const imageIds = deletableImages.map((i) => i.id);
           deletedImages = await tx.$queryRaw<DeletedImage[]>`
-          WITH ${detachHeldThreadsCte(
-            { imageId: Prisma.sql`SELECT unnest(${imageIds}::int[])` },
-            markerView
-          )}
           DELETE FROM "Image"
           WHERE id IN (${Prisma.join(imageIds)})
           RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
@@ -1305,7 +1331,6 @@ export const deletePost = async ({
         }
 
         const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-        WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT ${id}::int` }, markerView)}
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"
@@ -1987,6 +2012,10 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);
+  // The version level counts the first 20 images by index, so an order change can move one in or out.
+  await enqueueJobs([
+    { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+  ]);
 
   return transaction;
 };

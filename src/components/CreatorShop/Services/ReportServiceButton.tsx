@@ -17,7 +17,7 @@ export function ReportServiceButton({ offeringId }: { offeringId: number }) {
           openReportModal({ entityType: ReportEntity.ServiceOffering, entityId: offeringId })
         }
       >
-        Report
+        Report this service
       </Button>
     </LoginRedirect>
   );

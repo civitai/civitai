@@ -369,7 +369,15 @@ export const upsertBountyHandler = async ({
     else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
 
     const { meta: _meta, ...publicBounty } = bounty;
-    return publicBounty;
+    return {
+      ...publicBounty,
+      details: publicBounty.details
+        ? filterSensitiveProfanityData(
+            publicBounty.details as BountyDetailsSchema,
+            ctx.user.isModerator
+          )
+        : publicBounty.details,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

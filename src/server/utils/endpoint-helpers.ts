@@ -11,16 +11,20 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import {
+  credentialLogFields,
+  getRequestCredential,
+  type RequestCredential,
+} from '~/server/auth/request-credential';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
-import {
-  BANNED_ACCOUNT_MESSAGE,
-  isClientAbortError,
-  isDriverAuthoredMessage,
-} from '~/server/utils/errorHandling';
+import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
@@ -615,12 +619,12 @@ export function AuthedEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    const session = await getServerAuthSession({ req, res });
-    if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
-    // The cookie session outlives a ban (it renders the banned page); bearer tokens are refused upstream.
     // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
-    if (session.user.bannedAt && !allowBanned)
-      return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
+    if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
     await handler(req, res, session.user);
   });
 }
@@ -631,7 +635,8 @@ export function MixedAuthEndpoint(
     res: NextApiResponse,
     user: Session['user'] | undefined
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowBanned = false }: { allowBanned?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
@@ -667,7 +672,12 @@ export function MixedAuthEndpoint(
     if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
 
-    const session = await getServerAuthSession({ req, res });
+    // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
+    // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
       const isNotUpToDate = await checkNotUpToDate(
@@ -863,6 +873,32 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   }
 }
 
+// Off while `orchestrator-endpoint-scope-would-refuse` counts show which keys call these routes
+// without the route's scope; true refuses them on every `OrchestratorEndpoint` route.
+let enforceOrchestratorEndpointScope = false;
+
+export const orchestratorEndpointScopeTesting = {
+  isEnforcing: () => enforceOrchestratorEndpointScope,
+  setEnforce(value: boolean) {
+    enforceOrchestratorEndpointScope = value;
+  },
+};
+
+/** Records a call `OrchestratorEndpoint` would refuse once enforcing. No user, key or IP. */
+function logScopeWouldRefuse(
+  req: AxiomAPIRequest,
+  requiredScope: number,
+  credential: RequestCredential
+) {
+  logToAxiom({
+    name: 'orchestrator-endpoint-scope-would-refuse',
+    type: 'info',
+    route: req.url?.split('?')[0],
+    requiredScope,
+    ...credentialLogFields(credential),
+  }).catch(() => undefined);
+}
+
 export function OrchestratorEndpoint(
   handler: (
     req: AxiomAPIRequest,
@@ -870,9 +906,22 @@ export function OrchestratorEndpoint(
     user: SessionUser,
     token: string
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[],
+  requiredScope: number
 ) {
   return AuthedEndpoint(async (req, res, user) => {
+    // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
+    const credential = getRequestCredential(req);
+    if (
+      credential.tokenScope !== TokenScope.Full &&
+      !Flags.hasFlag(credential.tokenScope, requiredScope)
+    ) {
+      if (enforceOrchestratorEndpointScope)
+        return res
+          .status(403)
+          .json({ error: 'Your API key does not have the required scope for this action' });
+      logScopeWouldRefuse(req, requiredScope, credential);
+    }
     let token: string;
     try {
       token = await getOrchestratorToken(user.id, { req, res });

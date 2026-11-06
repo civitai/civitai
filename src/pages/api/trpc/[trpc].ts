@@ -38,6 +38,7 @@ import { redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
+import { retryAfterHeader } from '~/server/trpc/retry-after-header';
 
 /**
  * The longest input an error log line carries: in JSON characters, and in values (so the measure
@@ -119,6 +120,9 @@ const trpcHandler = createNextApiHandler({
       const alertsVersion = peekSiteAlertsVersion();
       if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
     }
+
+    const retryAfter = retryAfterHeader({ errors, info, paths });
+    if (retryAfter) headers['Retry-After'] = retryAfter;
 
     return Object.keys(headers).length > 0 ? { headers } : {};
   },

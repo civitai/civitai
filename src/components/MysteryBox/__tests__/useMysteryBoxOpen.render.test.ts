@@ -22,6 +22,7 @@ const { spies } = vi.hoisted(() => ({
     setData: vi.fn(),
     invalidateBoxes: vi.fn(),
     invalidateHats: vi.fn(),
+    invalidateStickerHats: vi.fn(),
     setHeld: vi.fn(),
     invalidateHeld: vi.fn(),
     invalidateOpenings: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           getOpenings: { invalidate: spies.invalidateOpenings },
         },
         event: { getMyHats: { invalidate: spies.invalidateHats } },
+        hatTurf: { getMyStickerHats: { invalidate: spies.invalidateStickerHats } },
         user: { checkNotifications: { setData: spies.setCounts } },
       }),
     }
@@ -153,6 +155,8 @@ describe('useMysteryBoxOpen', () => {
     expect(spies.invalidateBoxes).not.toHaveBeenCalled();
     for (const [key] of spies.setData.mock.calls) expect(key).toEqual({ event: 'birthday2026' });
     expect(spies.invalidateHats).toHaveBeenCalledWith({ event: 'birthday2026' });
+    // A won hat must show in the Hat Turf sticker list without a reload.
+    expect(spies.invalidateStickerHats).toHaveBeenCalledWith({ event: 'birthday2026' });
     // Bought and opened: the menu badge ends where it began, and the Inventory reloads when shown.
     expect(unopenedAfterUpdates(2)).toBe(2);
     expect(spies.setHeld).not.toHaveBeenCalled();

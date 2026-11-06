@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import { updateCommentV3Schema } from '~/server/schema/commentv3.schema';
 
 /**
  * Setting `tosViolation` was a one-way door: nothing in the main app or the moderator spoke cleared it,
@@ -25,11 +25,10 @@ const missing = new Set<number>();
 const record = (first: unknown, rest: unknown[]) => {
   const { text, values } = Prisma.sql(first as TemplateStringsArray, ...(rest as never[]));
   statements.push(text);
-  // The clear: an unheld author's comment, cleared.
   if (text.includes('WITH target AS'))
     return values.some((v) => typeof v === 'number' && missing.has(v))
       ? []
-      : [{ userId: 1, held: false, cleared: true, reopened: 0 }];
+      : [{ cleared: true, reopened: 0 }];
   return [] as unknown[];
 };
 /** The statement that reopens reports. */
@@ -93,7 +92,7 @@ describe('clearing a comment ToS flag', () => {
     // Not a formality: an unguarded loop would emit a bare UPDATE with no id bound.
     const result = await bulkClearCommentV2TosViolation({ ids: [] });
 
-    expect(result).toEqual({ count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 });
+    expect(result).toEqual({ count: 0, reopenedReports: 0, failed: 0 });
     expect(statements).toHaveLength(0);
   });
 
@@ -109,16 +108,10 @@ describe('clearing a comment ToS flag', () => {
   });
 });
 
-// Clearing the flag is restoreFromTos's alone, which leaves retained comments hidden.
+// Clearing the flag is restoreFromTos's alone.
 describe('editing a comment', () => {
   it('cannot carry the ToS flag', () => {
-    const input = upsertCommentv2Schema.parse({
-      id: 7,
-      entityType: 'image',
-      entityId: 1,
-      content: 'edited',
-      tosViolation: false,
-    });
+    const input = updateCommentV3Schema.parse({ id: 7, content: 'edited', tosViolation: false });
     expect(input).not.toHaveProperty('tosViolation');
   });
 });

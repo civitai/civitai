@@ -148,7 +148,11 @@ const STORE_GATE_SITES = [
   // entry above, and the reason note 1 in this header carries an explicit carve-out. The
   // page itself is runtime-gated; this ONE anchor points at a store-gated route.
   'pages/apps/activity.tsx',
+  // `/apps` is the viewer's "My apps" home now; its body keeps the same store gate as its
+  // SSR resolver (`resolveAppsHomeAccess` → `resolveAppsPageAccess`).
   'pages/apps/index.tsx',
+  // 🔴 THE STORE, MOVED HERE FROM `/apps`. Same page, same gate, new address.
+  'pages/apps/store.tsx',
   'pages/apps/store-preview/[slug].tsx',
 ] as const;
 

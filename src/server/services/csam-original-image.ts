@@ -1,4 +1,7 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { rmSync } from 'fs';
+import { mkdir, open } from 'fs/promises';
+import { join } from 'path';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -21,6 +24,16 @@ export type OriginalImage = {
   contentType: string;
   sha256: string;
   /** Returns the byte reservation, if one was taken. Safe to call more than once. */
+  release: () => void;
+};
+
+/** A large stored original, spooled to a file. `release` deletes the file and returns the reservation. */
+export type SpooledImage = {
+  source: 'original';
+  path: string;
+  bytes: number;
+  contentType: string;
+  sha256: string;
   release: () => void;
 };
 
@@ -177,62 +190,231 @@ async function fetchEdge(
   return { response, body: response.body, declared };
 }
 
+const STORED_READ_ATTEMPTS = 3;
+const STORED_READ_RETRY_DELAY_MS = 250;
+
+/** A stored object larger than this is read in ranged parts into a spool file, when a caller spools. */
+export const SPOOL_THRESHOLD_BYTES = 32 * 1024 * 1024;
+export const RANGE_PART_BYTES = 16 * 1024 * 1024;
+
+const SOCKET_FAILURE_CODES = new Set(['ECONNRESET', 'EPIPE', 'ETIMEDOUT']);
+const isSocketFailure = (e: unknown) =>
+  SOCKET_FAILURE_CODES.has((e as { code?: unknown } | undefined)?.code as string);
+
+type Reserve = (bytes: number) => Promise<() => void>;
+type OnRetry = (failedAttempt: number) => void;
+const noReservation = () => undefined;
+
 /**
- * The stored object under `Image.url`. Only a missing object falls back to the edge copy, so a
- * transient storage error cannot quietly downgrade evidence to an edge copy; it throws and the
- * caller retries.
- *
- * `reserve` takes the object's size before its body is read, so a caller can bound bytes held at once.
+ * Retries a socket failure with a fresh request, never a resume. Each attempt gets the read timeout,
+ * cut short by `deadline` if given.
  */
-export async function readOriginalImage(
+async function withSocketRetry<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  onRetry?: OnRetry,
+  deadline?: AbortSignal
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const timeout = AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+    const signal = deadline ? AbortSignal.any([deadline, timeout]) : timeout;
+    try {
+      return await read(signal);
+    } catch (e) {
+      // A timeout surfaces as the same reset, after the whole window: not retried.
+      if (signal.aborted || attempt >= STORED_READ_ATTEMPTS || !isSocketFailure(e)) throw e;
+      onRetry?.(attempt);
+      await new Promise((resolve) => setTimeout(resolve, STORED_READ_RETRY_DELAY_MS * attempt));
+    }
+  }
+}
+
+type LargeStoredObject = {
+  large: true;
+  size: number;
+  etag: string;
+  contentType: string;
+  spoolDir: string;
+};
+
+/** `undefined` when no object is stored under the key. */
+async function readStoredObject(
+  { s3, bucket }: ImageBackend,
   image: ImageInput,
-  {
-    reserve,
-    backend,
-    fetchImpl = fetch,
-  }: ReadOptions & { reserve?: (bytes: number) => Promise<() => void> } = {}
-): Promise<OriginalImageRead> {
-  const noReservation = () => undefined;
+  reserve: Reserve | undefined,
+  spoolDir: string | undefined,
+  abortSignal: AbortSignal
+): Promise<OriginalImageRead | LargeStoredObject | undefined> {
+  let response;
+  try {
+    response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
+      abortSignal,
+    });
+  } catch (e) {
+    if (isMissingObject(e)) return undefined;
+    throw e;
+  }
+
+  const body = response.Body;
+  if (!body) throw new Error('original image response has no body');
+  const size = response.ContentLength;
+  if ((size ?? 0) > MAX_ORIGINAL_IMAGE_BYTES) {
+    destroyBody(body);
+    return missing(OVER_CAP);
+  }
+  if (spoolDir && size !== undefined && size > SPOOL_THRESHOLD_BYTES) {
+    destroyBody(body);
+    if (!response.ETag) throw new Error('original image response has no ETag');
+    const contentType = pickContentType(response.ContentType, image.mimeType);
+    return { large: true, size, etag: response.ETag, contentType, spoolDir };
+  }
+  let release: () => void = noReservation;
+  try {
+    if (reserve) release = await reserve(size ?? UNKNOWN_SIZE);
+    const bytes = await body.transformToByteArray();
+    // A view, not a copy: the object is held once.
+    const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return {
+      source: 'original',
+      data,
+      contentType: pickContentType(response.ContentType, image.mimeType),
+      sha256: createHash('sha256').update(data).digest('hex'),
+      release,
+    };
+  } catch (e) {
+    // An unread body holds its socket until the read timeout.
+    destroyBody(body);
+    release();
+    throw e;
+  }
+}
+
+/** One part, from the version the first response named: a changed object fails, never mixes. */
+async function readRange(
+  { s3, bucket }: ImageBackend,
+  key: string,
+  { etag, size }: LargeStoredObject,
+  start: number,
+  end: number,
+  abortSignal: AbortSignal
+) {
+  const response = await s3.send(
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Range: `bytes=${start}-${end}`,
+      IfMatch: etag,
+    }),
+    { abortSignal }
+  );
+  const body = response.Body;
+  if (!body) throw new Error('original image part has no body');
+  try {
+    if (response.ContentRange !== `bytes ${start}-${end}/${size}`)
+      throw new Error('original image part has the wrong range');
+    // Checked here too, so a store that ignores If-Match still cannot mix two versions.
+    if (response.ETag !== etag) throw new Error('original image part is from another version');
+    const bytes = await body.transformToByteArray();
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  } catch (e) {
+    destroyBody(body);
+    throw e;
+  }
+}
+
+/**
+ * Reads a large stored object in ranged parts into a file, so a connection cut partway through
+ * costs one part, not the whole object. The file is complete and its length checked against the
+ * object's before it is returned; on any failure it is removed.
+ */
+async function spoolStoredObject(
+  storage: ImageBackend,
+  image: ImageInput,
+  large: LargeStoredObject,
+  reserve: Reserve | undefined,
+  onRetry: OnRetry | undefined
+): Promise<SpooledImage> {
+  const releaseReservation = reserve ? await reserve(large.size) : noReservation;
+  let path: string | undefined;
+  try {
+    await mkdir(large.spoolDir, { recursive: true });
+    path = join(large.spoolDir, `${randomUUID()}.part`);
+    const hash = createHash('sha256');
+    // The whole object gets the window one whole-object read had.
+    const deadline = AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS);
+    let written = 0;
+    const file = await open(path, 'wx');
+    try {
+      for (let start = 0; start < large.size; start += RANGE_PART_BYTES) {
+        const end = Math.min(start + RANGE_PART_BYTES, large.size) - 1;
+        const part = await withSocketRetry(
+          (signal) => readRange(storage, image.url, large, start, end, signal),
+          onRetry,
+          deadline
+        );
+        hash.update(part);
+        // A write can return having written less, with no error (a full disk does).
+        for (let offset = 0; offset < part.length; ) {
+          const { bytesWritten } = await file.write(part, offset, part.length - offset);
+          if (bytesWritten === 0) throw new Error('spooled original image write made no progress');
+          offset += bytesWritten;
+          written += bytesWritten;
+        }
+      }
+    } finally {
+      await file.close();
+    }
+    if (written !== large.size) throw new Error('spooled original image has the wrong size');
+
+    const spooled = path;
+    let released = false;
+    return {
+      source: 'original',
+      path: spooled,
+      bytes: large.size,
+      contentType: large.contentType,
+      sha256: hash.digest('hex'),
+      release: () => {
+        if (released) return;
+        released = true;
+        rmSync(spooled, { force: true });
+        releaseReservation();
+      },
+    };
+  } catch (e) {
+    if (path) rmSync(path, { force: true });
+    releaseReservation();
+    throw e;
+  }
+}
+
+type ReadOriginalOptions = ReadOptions & {
+  reserve?: Reserve;
+  /** Called before each retry with the attempt that failed. */
+  onRetry?: OnRetry;
+};
+
+function readOriginal(image: ImageInput, options: ReadOriginalOptions): Promise<OriginalImageRead>;
+function readOriginal(
+  image: ImageInput,
+  options: ReadOriginalOptions,
+  spoolDir: string
+): Promise<OriginalImageRead | SpooledImage>;
+async function readOriginal(
+  image: ImageInput,
+  { reserve, backend, fetchImpl = fetch, onRetry }: ReadOriginalOptions,
+  spoolDir?: string
+): Promise<OriginalImageRead | SpooledImage> {
   const passthrough = isEdgeUrlPassthrough(image.url);
 
   if (!passthrough) {
-    const { s3, bucket } = backend ?? (await getImageUploadBackend());
-    let response;
-    try {
-      response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: image.url }), {
-        abortSignal: AbortSignal.timeout(ORIGINAL_IMAGE_READ_TIMEOUT_MS),
-      });
-    } catch (e) {
-      if (!isMissingObject(e)) throw e;
-    }
-
-    if (response) {
-      const body = response.Body;
-      if (!body) throw new Error('original image response has no body');
-      if ((response.ContentLength ?? 0) > MAX_ORIGINAL_IMAGE_BYTES) {
-        destroyBody(body);
-        return missing(OVER_CAP);
-      }
-      let release: () => void = noReservation;
-      try {
-        if (reserve) release = await reserve(response.ContentLength ?? UNKNOWN_SIZE);
-        const bytes = await body.transformToByteArray();
-        // A view, not a copy: the object is held once.
-        const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        return {
-          source: 'original',
-          data,
-          contentType: pickContentType(response.ContentType, image.mimeType),
-          sha256: createHash('sha256').update(data).digest('hex'),
-          release,
-        };
-      } catch (e) {
-        // An unread body holds its socket until the read timeout.
-        destroyBody(body);
-        release();
-        throw e;
-      }
-    }
+    const storage = backend ?? (await getImageUploadBackend());
+    const stored = await withSocketRetry(
+      (signal) => readStoredObject(storage, image, reserve, spoolDir, signal),
+      onRetry
+    );
+    if (stored && 'large' in stored)
+      return spoolStoredObject(storage, image, stored, reserve, onRetry);
+    if (stored) return stored;
   }
 
   const refused = edgeRefusal(image.url, passthrough);
@@ -257,6 +439,31 @@ export async function readOriginalImage(
     if (e instanceof OverCapError) return missing(OVER_CAP);
     throw e;
   }
+}
+
+/**
+ * The stored object under `Image.url`, in memory. Only a missing object falls back to the edge copy,
+ * so a transient storage error cannot quietly downgrade evidence to an edge copy. A socket failure
+ * is retried with a fresh request, never a resume, up to `STORED_READ_ATTEMPTS`; any other error
+ * throws and the caller retries.
+ *
+ * `reserve` takes the object's size before its body is read, so a caller can bound bytes held at once.
+ * The whole object is read before it is returned, so a failed attempt hands the caller no bytes.
+ */
+export function readOriginalImage(image: ImageInput, options: ReadOriginalOptions = {}) {
+  return readOriginal(image, options);
+}
+
+/**
+ * As {@link readOriginalImage}, except a stored object over `SPOOL_THRESHOLD_BYTES` is read in
+ * ranged parts into a file under `spoolDir`, each part retried on its own. The caller must call
+ * `release`, which deletes the file.
+ */
+export function spoolOriginalImage(
+  image: ImageInput,
+  { spoolDir, ...options }: ReadOriginalOptions & { spoolDir: string }
+) {
+  return readOriginal(image, options, spoolDir);
 }
 
 /**

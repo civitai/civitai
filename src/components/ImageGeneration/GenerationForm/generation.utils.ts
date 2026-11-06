@@ -84,7 +84,7 @@ const DEFAULT_GENERATION_CONFIG = {
  * fields should call this hook so React Query dedupes the request.
  */
 export const useGenerationConfig = () => {
-  const { data } = trpc.generation.getGenerationConfig.useQuery(undefined, {
+  const { data, isFetched } = trpc.generation.getGenerationConfig.useQuery(undefined, {
     gcTime: Infinity,
     staleTime: Infinity,
     trpc: { context: { skipBatch: true } },
@@ -92,8 +92,9 @@ export const useGenerationConfig = () => {
 
   // Merge defaults so every field is always present (also guards stale caches
   // from before a field existed). Callers read `useGenerationConfig().<field>`
-  // directly — no per-field hooks needed.
-  return useMemo(() => ({ ...DEFAULT_GENERATION_CONFIG, ...data }), [data]);
+  // directly — no per-field hooks needed. `isFetched` stays false until the query
+  // settles once (success or error), so callers can wait for the gates.
+  return useMemo(() => ({ ...DEFAULT_GENERATION_CONFIG, ...data, isFetched }), [data, isFetched]);
 };
 
 // TODO - move these somewhere that makes more sense

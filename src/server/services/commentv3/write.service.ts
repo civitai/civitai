@@ -387,6 +387,18 @@ export async function toggleCommentMute(
   return { muted: true };
 }
 
+export async function isTopicMuted(
+  db: SqlRunner,
+  { userId, entityType, entityId }: { userId: number; entityType: string; entityId: number }
+) {
+  return !!(await first(
+    db,
+    `SELECT 1 AS x FROM "CommentTopicMute"
+     WHERE "userId" = $1 AND "entityType" = $2::"CommentEntityType" AND "entityId" = $3`,
+    [userId, entityType, entityId]
+  ));
+}
+
 /** Mutes or unmutes a whole section. Needs no topic: a section with no comments can be muted too. */
 export async function toggleTopicMute(
   db: SqlRunner,
@@ -405,24 +417,3 @@ export async function toggleTopicMute(
   );
   return { muted: true };
 }
-
-/**
- * Whether a write aimed at `{ entityType, entityId }` belongs on a surface that writes CommentV3: a
- * reply or edit addressed as `comment` is on the stored comment's surface. The old `commentv2`
- * writes refuse these, so a stale page cannot skip the CommentV3 lock and parent checks.
- */
-export async function isV3WriteTarget(
-  db: SqlRunner,
-  { entityType, entityId }: { entityType: string; entityId: number }
-) {
-  if (entityType !== 'comment') return isV3WriteSurface(entityType);
-  const row = await first<{ entityType: string }>(
-    db,
-    `SELECT "entityType"::text AS "entityType" FROM "CommentV3" WHERE id = $1`,
-    [entityId]
-  );
-  return !!row && isV3WriteSurface(row.entityType);
-}
-
-export const V3_WRITE_TARGET_MESSAGE =
-  'These comments have been updated. Reload the page and try again.';

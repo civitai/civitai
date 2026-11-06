@@ -4,22 +4,36 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as StorylineService from '~/server/services/storyline.service';
 import type * as StorylineReaderLevel from '~/server/utils/storyline-reader-level';
+import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 const REACTOR_ID = 5;
 
-const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate } = vi.hoisted(
-  () => ({
+const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate, v3Comment } =
+  vi.hoisted(() => ({
     mockToggleReaction: vi.fn(),
     storylineGate: vi.fn(),
+    v3Comment: vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined),
     mockEncouragement: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
     mockGoodContent: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
-  })
-);
+  }));
 
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
+// The comment a reaction targets, as CommentV3 stores it; none means a CommentV2-only comment.
+vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof WriteService>()),
+  getV3WriteComment: v3Comment,
+}));
+// An image's two reads, through Kysely: an image in no post (so no access check), whose owner row
+// is not found (so no tracker row).
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImagePostId: vi.fn(async () => ({ postId: null })),
+  getImageNsfwLevelAndOwner: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ storylines: true }),
@@ -71,6 +85,7 @@ beforeEach(() => {
   mockToggleReaction.mockResolvedValue('created');
   // A live comment, so the comment cases reach the reaction.
   dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
+  v3Comment.mockResolvedValue(undefined);
 });
 
 async function react(entityType: ReactionEntityType, entityId: number) {
@@ -280,8 +295,12 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
     takenDownAt,
   });
   beforeEach(() => {
-    // Serves both lookups on the comment: not detached, and in crucible 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, crucibleId: 17 }] as never);
+    v3Comment.mockResolvedValue({
+      id: 55,
+      entityType: 'crucible',
+      entityId: 17,
+      tosViolation: false,
+    } as never);
   });
 
   it('is refused once the crucible is taken down', async () => {
@@ -305,7 +324,12 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
   it('is refused on a comment hidden for ToS', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(null) as never);
-    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: true } as never);
+    v3Comment.mockResolvedValue({
+      id: 55,
+      entityType: 'crucible',
+      entityId: 17,
+      tosViolation: true,
+    } as never);
 
     await expect(react('comment', 55)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockToggleReaction).not.toHaveBeenCalled();
@@ -322,12 +346,17 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
 describe('toggleReactionHandler — a comment on a storyline', () => {
   beforeEach(() => {
-    // Serves both lookups on the comment: not detached, and in storyline 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, storylineId: 17 }] as never);
+    v3Comment.mockResolvedValue({
+      id: 55,
+      entityType: 'storyline',
+      entityId: 17,
+      tosViolation: false,
+    } as never);
   });
 
   it('is refused once the storyline is taken down', async () => {
     storylineGate.mockResolvedValue({ userId: REACTOR_ID, tosViolation: true });
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue({ tosViolation: true } as never);
 
     await expect(react('comment', 55)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(mockToggleReaction).not.toHaveBeenCalled();
@@ -342,6 +371,7 @@ describe('toggleReactionHandler — a comment on a storyline', () => {
 
   it('goes through on a storyline the reactor can open (control)', async () => {
     storylineGate.mockResolvedValue({ userId: 4, tosViolation: false });
+    dbMock.dbRead.storyline.findUnique.mockResolvedValue({ tosViolation: false } as never);
 
     await react('comment', 55);
 

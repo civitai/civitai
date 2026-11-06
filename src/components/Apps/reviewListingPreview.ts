@@ -260,6 +260,8 @@ export function buildListingDetailPreview(
     // Fix it with a reader, not speculatively; do not cite it as precedent for turning
     // the `openCount` override above back into a `0`.
     installCount: 0,
+    // `null` for the reason the card builder's `openCount` gives: this row has no rollup.
+    openCount: null,
     screenshots: images?.screenshots ?? [],
     kindData: detailKindData(row),
   };

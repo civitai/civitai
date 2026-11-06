@@ -144,12 +144,11 @@ const { clearRecentlyOpenedApps } = await import('./recentlyOpenedAppsStore');
  * ⚠️ SCOPE LIMIT, stated rather than papered over. `mocks.isClient = false`
  * models the pre-mount render for anything gated on `useIsClient()`, but it
  * CANNOT suppress React effects — browser mode always mounts, so a
- * `useEffect`-based mitigation (the recents rail's "seed empty, load after
- * mount") has already run by the time an assertion can look. An attempt to
- * assert the rail's absence pre-mount here failed for exactly that reason and
- * was removed rather than weakened into a guard that proves nothing. The rail's
- * ordering + hide-when-empty behaviour is covered in
- * `AppListingsMarketplaceBody.browser.test.tsx` and `RecentlyOpenedApps.browser.test.tsx`.
+ * `useEffect`-based mitigation (a "seed empty, load after mount" read, as the
+ * recents merge on the `/apps` home does) has already run by the time an
+ * assertion can look. The store no longer renders a recents rail at all; the
+ * home's recents ordering is covered in `appsHomeMerge.test.ts` and
+ * `AppsHomeBody.browser.test.tsx`.
  */
 
 /** The scaffold's shared router singleton — a per-file mock loses to the setup file. */

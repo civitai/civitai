@@ -55,7 +55,7 @@ function encryptJWE(payload, key) {
 const SECRET = process.env.NEXTAUTH_SECRET;
 const BASE_URL = process.env.BASE_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https => __Secure- prefix
-// The cookie only needs to outlive one Lighthouse pipeline run, whose budget is under 2h.
+// Short-lived on purpose: the cookie only needs to outlive one Lighthouse pipeline run.
 const MAX_AGE_S = 2 * 60 * 60;
 
 // Mint the legacy next-auth v4 session JWE WITHOUT next-auth (removed); the app still accepts it via

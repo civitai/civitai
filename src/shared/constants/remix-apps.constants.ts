@@ -13,9 +13,7 @@ export type RemixAppDefinition = {
   /** `mature` absent = the app refuses mature sources. */
   engine: { safe: RemixAppEngine; mature?: RemixAppEngine };
   prompt: string;
-  caption?: { instructions: string };
   params: { aspectRatio: 'source' | GenerationAspectRatio; quantity: 1 | 2 | 4 };
-  after: 'queue' | 'post' | 'remixGallery';
 };
 
 const editEngine = (tier: RemixTier): RemixAppEngine => ({
@@ -23,32 +21,22 @@ const editEngine = (tier: RemixTier): RemixAppEngine => ({
   versionId: REMIX_ENGINES.edit[tier].modelVersionId,
 });
 
-const DEFAULT_ENGINE: RemixAppDefinition['engine'] = {
+export const DEFAULT_ENGINE: RemixAppDefinition['engine'] = {
   safe: editEngine('safe'),
   mature: editEngine('mature'),
 };
 
-/** The P1 launch list. */
+/** One-shot apps not yet on the remix app runtime (`~/shared/remix-apps/system-apps`). */
 export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
-  {
-    slug: 'anime-it',
-    name: 'Anime it',
-    icon: 'sparkles',
-    output: 'image',
-    engine: DEFAULT_ENGINE,
-    prompt: 'Redraw this image as a high-quality anime illustration, keeping the composition.',
-    params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
-  },
   {
     slug: 'make-it-real',
     name: 'Make it real',
     icon: 'camera',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Turn this image into a realistic photograph, keeping the subject and composition.',
+    prompt:
+      "Turn this image into a live-action photograph of the real person (or the real animal or object) shown, in the same outfit, pose and setting, as if shot on a DSLR in natural light: real skin, hair, fabric and materials, and real surroundings. Nothing may look drawn, painted or rendered, with no line art, no cel shading and no glossy anime eyes. Keep the pose, outfit and composition. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'toy-figure',
@@ -56,9 +44,9 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'toy',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Turn the subject into a collectible toy figure in its packaging box, product photo.',
+    prompt:
+      "Turn the subject into a collectible toy figure in its packaging box, product photo. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'pixel-art',
@@ -66,9 +54,9 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'grid',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Redraw this image as detailed 16-bit pixel art, keeping the composition.',
+    prompt:
+      "Redraw this image as true low-resolution pixel art, as if drawn on a 160 by 240 pixel grid and scaled up with nearest-neighbor: large, clearly visible square pixels, hard stair-stepped edges, no anti-aliasing or smooth gradients, and a limited palette of about 16 flat colors with simple dithering. Keep the subject, pose and composition. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'pencil-sketch',
@@ -76,9 +64,9 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'pencil',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Redraw this image as a detailed graphite pencil sketch on paper.',
+    prompt:
+      "Redraw this image as a detailed graphite pencil sketch on paper. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'claymation',
@@ -86,9 +74,9 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'clay',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Recreate this image as a stop-motion claymation scene with plasticine figures.',
+    prompt:
+      "Recreate this image as a stop-motion claymation scene with plasticine figures. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
 ];
 
@@ -111,7 +99,6 @@ export const TEAM_REMIX_APP: RemixAppDefinition = {
   engine: { safe: editEngine('safe') },
   prompt: TEAM_REMIX_PROMPT,
   params: { aspectRatio: 'source', quantity: 1 },
-  after: 'remixGallery',
 };
 
 export function teamRemixApp(team: string): RemixAppDefinition {

@@ -229,7 +229,9 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Start preview' })).toBeInTheDocument();
     // Structured manifest render (scopes + slot targets), not a raw JSON dump.
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     await expect.element(page.getByText('model.sidebar_top')).toBeInTheDocument();
     // A first-version submission shows the full-manifest note (no diff).
     await expect
@@ -519,7 +521,9 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
     );
     // Positive control: the modal DID render, so the two zeros below mean "absent",
     // not "nothing mounted".
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
     expect(page.getByText(/^Digital goods/).elements()).toHaveLength(0);
   });
@@ -709,7 +713,9 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
       />
     );
     // Positive control: the modal rendered, so the zero below means "absent".
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     expect(page.getByTestId('apps-review-analytics').elements()).toHaveLength(0);
   });
 });
@@ -735,8 +741,10 @@ describe('OnsiteReviewModal — per-scope justifications shown to the mod', () =
         onClose={vi.fn()}
       />
     );
-    // Header uses the renamed "Permissions" copy with the count.
-    await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
+    // The non-sensitive group's heading, with its count.
+    await expect
+      .element(page.getByText('Other permissions (2)', { exact: true }))
+      .toBeInTheDocument();
     // The supplied justification is surfaced verbatim under its badge, prefixed
     // with the "Why:" label. Exact match on the full paragraph disambiguates from
     // the raw manifest-JSON panel (which contains the string but not "Why:").
@@ -771,9 +779,13 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
       />
     );
     // Sensitive group header with the sensitive-only count.
-    await expect.element(page.getByText('Sensitive permissions (2)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Sensitive permissions (2)', { exact: true }))
+      .toBeInTheDocument();
     // Normal group header counts ONLY the non-sensitive scopes.
-    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (1)', { exact: true }))
+      .toBeInTheDocument();
     // The sensitive scopes carry the reusable "Sensitive" indicator; the two
     // sensitive scopes each get one badge (the normal scope does not).
     expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(2);
@@ -781,6 +793,40 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
     await expect.element(page.getByText('ai:write:budgeted')).toBeInTheDocument();
     await expect.element(page.getByText('buzz:read:self')).toBeInTheDocument();
     await expect.element(page.getByText('models:read:self')).toBeInTheDocument();
+  });
+
+  // The moderator sees the same order as the store listing will show the viewer.
+  test("each group is in the store listing's order, and an unknown scope is not dropped", async () => {
+    const unknown = 'zz:not-a-real:scope';
+    const input = [
+      'models:read:self',
+      unknown,
+      'apps:storage:shared:write',
+      'user:read:self',
+      'ai:write:budgeted',
+    ];
+    const mixed = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-order',
+      slug: 'order-block',
+      manifest: { ...ONSITE_PENDING.manifest, scopes: input },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: mixed, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect
+      .element(page.getByText('Sensitive permissions (2)', { exact: true }))
+      .toBeInTheDocument();
+    const order = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="apps-review-scope-row"]')
+    ).map((row) => row.dataset.scope);
+    expect(order).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:shared:write',
+      'user:read:self',
+      'models:read:self',
+      unknown,
+    ]);
   });
 
   test('a manifest with ONLY normal scopes renders NO "Sensitive permissions" header', async () => {
@@ -797,7 +843,9 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
       <OnsiteReviewModal selection={{ request: normalOnly, mode: 'pending' }} onClose={vi.fn()} />
     );
     // The normal group still shows all of them.
-    await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Other permissions (2)', { exact: true }))
+      .toBeInTheDocument();
     // No sensitive header and no sensitive badge when nothing is sensitive.
     expect(page.getByText(/Sensitive permissions/).elements()).toHaveLength(0);
     expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(0);

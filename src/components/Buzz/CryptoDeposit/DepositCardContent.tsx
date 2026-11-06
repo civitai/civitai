@@ -43,6 +43,7 @@ import {
 import { getChainDisplayName, getNetworkDisplayName } from '~/server/common/chain-config';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { DepositNetworkWarning } from '~/components/Buzz/CryptoDeposit/DepositNetworkWarning';
 import { BulkBonusNotice } from '~/components/Buzz/CryptoDeposit/BulkBonusNotice';
 
 const QRCodeSVG = dynamic(() => import('qrcode.react').then((mod) => mod.QRCodeSVG), {
@@ -277,6 +278,13 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                     {chainLabel}
                   </Badge>
                 </Group>
+                {!isEmpty && currencyState.selectedCode && (
+                  <DepositNetworkWarning
+                    code={currencyState.selectedCode}
+                    ticker={currencyState.selectedGroup?.ticker}
+                    network={currencyState.selectedNetwork?.network}
+                  />
+                )}
                 {isEmpty && loading ? (
                   <Skeleton height={38} radius="md" />
                 ) : (

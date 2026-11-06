@@ -41,8 +41,9 @@ function pageAccessFor(role: string) {
 type Held = { isModerator: boolean; roles: readonly string[] };
 
 // The account's own row on the primary.
-function primaryHolds({ isModerator, roles }: Held) {
+function primaryHolds({ isModerator, roles }: Held, meta: unknown = SYSTEM_META) {
   dbMock.dbWrite.user.findUnique.mockResolvedValue({
+    meta,
     isModerator,
     roles: roles.map((role) => ({ role })),
   } as never);
@@ -115,11 +116,103 @@ describe('a bearer key owned by a system account', () => {
       });
     });
 
+    it('is refused when the primary has no row for the account', async () => {
+      dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
+      await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalled();
+    });
+
     // The session copy (beforeEach) still shows no access: a grant it has not caught up with counts.
     it.each(MODERATOR_ACCESS)('is refused while the account holds %s', async (_, held) => {
       primaryHolds(held);
       await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
       expect(getSessionUserById).toHaveBeenCalledWith(USER_ID);
+    });
+
+    describe('once an admin has allowed it write keys', () => {
+      const ALLOWED = { ...SYSTEM_META, moderatorWriteKeys: true };
+
+      it.each(MODERATOR_ACCESS)(
+        'resolves a Full key while the account holds %s',
+        async (_, held) => {
+          keyOwnedBy(USER_ID, TokenScope.Full);
+          holds(held);
+          primaryHolds(held, ALLOWED);
+          await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
+            user: { id: USER_ID },
+          });
+        }
+      );
+
+      it('resolves when the primary stores meta as a JSON string', async () => {
+        holds({ isModerator: true, roles: [] });
+        primaryHolds({ isModerator: true, roles: [] }, JSON.stringify(ALLOWED));
+        await expect(getSessionFromBearerToken('k')).resolves.toMatchObject({
+          user: { id: USER_ID },
+        });
+      });
+
+      it('is refused when only the session copy carries the allowance', async () => {
+        primaryHolds({ isModerator: true, roles: [] });
+        getSessionUserById.mockResolvedValue({
+          id: USER_ID,
+          meta: ALLOWED,
+          isModerator: true,
+          roles: [],
+        });
+        await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      });
+
+      it.each([
+        ['the string "true"', 'true'],
+        ['the number 1', 1],
+        ['an object', {}],
+      ])('is refused when the allowance is %s', async (_, value) => {
+        holds({ isModerator: true, roles: [] });
+        primaryHolds(
+          { isModerator: true, roles: [] },
+          { ...SYSTEM_META, moderatorWriteKeys: value }
+        );
+        await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      });
+
+      it('is still refused once the account is banned', async () => {
+        primaryHolds({ isModerator: true, roles: [] }, ALLOWED);
+        getSessionUserById.mockResolvedValue({
+          id: USER_ID,
+          meta: ALLOWED,
+          isModerator: true,
+          roles: [],
+          bannedAt: new Date(),
+        });
+        await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      });
+
+      it('is still refused for the shared moderation account', async () => {
+        keyOwnedBy(MODERATION, TokenScope.Full);
+        primaryHolds({ isModerator: true, roles: [] }, ALLOWED);
+        getSessionUserById.mockResolvedValue({
+          id: MODERATION,
+          meta: ALLOWED,
+          isModerator: true,
+          roles: [],
+        });
+        await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      });
+    });
+
+    // The allowance only lifts the system-account rule, so on any other account it changes nothing.
+    it('owned by an ordinary banned account stays refused with the allowance', async () => {
+      const meta = { moderatorWriteKeys: true };
+      primaryHolds({ isModerator: true, roles: [] }, meta);
+      getSessionUserById.mockResolvedValue({
+        id: USER_ID,
+        meta,
+        isModerator: true,
+        roles: [],
+        bannedAt: new Date(),
+      });
+      await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
     });
 
     it.each(MODERATOR_ACCESS)(

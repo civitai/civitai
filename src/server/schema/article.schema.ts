@@ -101,6 +101,8 @@ export const upsertArticleInput = z.object({
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
   coverImage: imageReferenceInputSchema.nullish(),
+  // Omitted leaves the banner as it is; null removes it.
+  bannerImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),

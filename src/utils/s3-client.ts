@@ -13,6 +13,7 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { attachmentContentDisposition } from '~/utils/content-disposition';
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
@@ -150,7 +151,7 @@ export class S3Client {
       new GetObjectCommand({
         Bucket: bucket,
         Key: key,
-        ResponseContentDisposition: filename ? `attachment; filename="${filename}"` : undefined,
+        ResponseContentDisposition: filename ? attachmentContentDisposition(filename) : undefined,
       }),
       { expiresIn }
     );

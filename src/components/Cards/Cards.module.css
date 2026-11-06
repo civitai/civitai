@@ -424,8 +424,8 @@
   }
 }
 
-/* For a footer below the image in a card whose height the masonry fixed: a second row would come
-   out of the picture, so it is the one wrapping line at any width. */
+/* Footer in a card whose height the masonry fixed: reactions and tip flow as one wrapping line,
+   since a second stacked row would overflow into the picture. */
 .actions.oneLine {
   flex-direction: row;
   flex-wrap: wrap;

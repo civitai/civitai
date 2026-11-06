@@ -258,6 +258,7 @@ export type ModEndpoint =
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
+  | 'model/resolve-restricted-nsfw-verdict'
   | 'minor-flag/confirm'
   | 'minor-flag/dismiss'
   | 'minor-flag/resolve-appeal'
@@ -451,7 +452,7 @@ export async function bulkCommentAction(input: {
   commentV2Ids: number[];
   userId: number;
   moderatorId: number;
-}): Promise<ActionResult & { affected?: number; retainedHidden?: number }> {
+}): Promise<ActionResult & { affected?: number }> {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
@@ -482,21 +483,13 @@ export async function bulkCommentAction(input: {
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
       : nested('comment') + nested('commentV2');
 
-  // A delete or a restore keeps some comments hidden; the endpoint never says why, and neither does this.
-  const retainedHidden =
-    input.action === 'bulkDelete'
-      ? countOf(result.body, ['retainedHidden'])
-      : input.action === 'restoreFromTos'
-      ? nested('comment', 'retainedHidden') + nested('commentV2', 'retainedHidden')
-      : 0;
-
   const failed =
     input.action === 'restoreFromTos'
       ? nested('comment', 'failed') + nested('commentV2', 'failed')
       : 0;
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
-  if (affected === 0 && retainedHidden === 0 && failed === 0)
+  if (affected === 0 && failed === 0)
     return {
       ok: false,
       error:
@@ -507,19 +500,13 @@ export async function bulkCommentAction(input: {
 
   if (affected)
     await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
-  if (retainedHidden)
-    await logAction(
-      `comments:${input.action}:retainedHidden:${retainedHidden}`,
-      input.userId,
-      input.moderatorId
-    );
   if (failed)
     return {
       ok: false,
-      error: `${failed} could not be restored and stay hidden. Restored ${affected}, kept hidden ${retainedHidden}.`,
+      error: `${failed} could not be restored and stay hidden. Restored ${affected}.`,
     };
   // Both endpoints count rows they actually wrote, so a short count is real.
-  return { ok: true, affected, retainedHidden };
+  return { ok: true, affected };
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
@@ -651,6 +638,13 @@ export async function setMuted(input: {
 
   // The main app's `afterAccountStandingChanged`, which this write cannot reach. The revoke comes
   // last because the orchestrator re-validates against the session's standing.
+  // The cookie is read now because the repeat below runs after this request has ended.
+  let cookie: string | undefined;
+  try {
+    cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
+  } catch {
+    cookie = undefined;
+  }
   const bustStanding = () =>
     bustKeyBestEffort(
       `${REDIS_KEYS.CACHES.ACCOUNT_STANDING}:${input.userId}` as RedisKeyTemplateCache,
@@ -661,6 +655,24 @@ export async function setMuted(input: {
       }
     );
   await bustStanding();
+  // After the bust, from which the main app refuses new submits. Best-effort and bounded just past
+  // the endpoint's own 5 s wait: the mute stands whatever this returns.
+  const cancelPending = async () => {
+    const cancelled = await postJson({
+      path: '/api/mod/user/cancel-pending-workflows',
+      body: { userId: input.userId },
+      label: 'Cancel pending generations',
+      auth: 'session',
+      timeoutMs: 6_000,
+      cookie,
+    });
+    if (!cancelled.ok)
+      void logAxiomError(new Error(cancelled.error), {
+        name: 'mute.cancel-pending-workflows-failed',
+        userId: input.userId,
+      });
+  };
+  await cancelPending();
   try {
     await invalidateUserSessions(input.userId);
   } finally {
@@ -668,13 +680,6 @@ export async function setMuted(input: {
     // file for its other actions.
     const { revokeOrchestratorUserTokens } = await import('./orchestrator');
     // Best-effort, like the revoke: the main app also refuses a muted account new generation tokens.
-    // The cookie is read now because the repeat below runs after this request has ended.
-    let cookie: string | undefined;
-    try {
-      cookie = getRequestEvent().request.headers.get('cookie') ?? undefined;
-    } catch {
-      cookie = undefined;
-    }
     const expireGenerationCredentials = async () => {
       const result = await postJson({
         path: '/api/mod/user/expire-generation-credentials',
@@ -695,7 +700,9 @@ export async function setMuted(input: {
     setTimeout(() => {
       void bustStanding()
         .then(expireGenerationCredentials)
-        .finally(() => revokeOrchestratorUserTokens(input.userId));
+        .finally(() => revokeOrchestratorUserTokens(input.userId))
+        .finally(cancelPending)
+        .catch(() => undefined);
     }, ACCOUNT_STANDING_REBUST_MS).unref?.();
   }
   await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);

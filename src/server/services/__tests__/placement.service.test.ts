@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubscriptionsService from '~/server/services/subscriptions.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import {
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
@@ -11,7 +12,13 @@ import {
   placementSurfaces,
 } from '~/shared/utils/placement';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const findUnique = dbMock.dbRead.keyValue.findUnique;
+// The `placement:config` KeyValue row, read through Kysely: `undefined` for no row. Its rows,
+// against a real database, are pinned in hot-reads-5.kysely-parity.test.ts.
+const { configRead } = vi.hoisted(() => ({ configRead: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRead,
+}));
 // The many-creator score read (`placementPriceRanges`), still raw SQL.
 const queryRaw = dbMock.dbRead.$queryRaw;
 
@@ -37,11 +44,12 @@ const {
   MAX_EXPIRY_HOURS,
 } = await import('~/server/services/placement.service');
 
-const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value });
+const storedConfig = (value: unknown) =>
+  configRead.mockResolvedValue({ key: 'placement:config', value });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  findUnique.mockResolvedValue(null);
+  configRead.mockResolvedValue(undefined);
   userScore.mockResolvedValue([{ score: 0 }]);
   getCapTierViaKysely.mockResolvedValue(null);
 });
@@ -98,7 +106,7 @@ describe('getPlacementConfig', () => {
 
   it('falls back to compiled defaults when the row is missing or malformed', async () => {
     for (const value of [null, { declineFeeRates: 'thirty percent' }, 42]) {
-      findUnique.mockResolvedValue(value === null ? null : { value });
+      configRead.mockResolvedValue(value === null ? undefined : { key: 'placement:config', value });
       const config = await getPlacementConfig();
       expect(config.declineFeeRate('sticker')).toBe(
         PLACEMENT_SURFACES.sticker.defaultDeclineFeeRate
@@ -148,7 +156,7 @@ describe('getPlacementConfig', () => {
   });
 
   it('survives the config read throwing', async () => {
-    findUnique.mockRejectedValue(new Error('KeyValue unavailable'));
+    configRead.mockRejectedValue(new Error('KeyValue unavailable'));
     const config = await getPlacementConfig();
     expect(config.declineFeeRate('sticker')).toBe(PLACEMENT_SURFACES.sticker.defaultDeclineFeeRate);
   });
@@ -242,9 +250,9 @@ describe('placementPriceRanges', () => {
     queryRaw.mockResolvedValue([{ id: 1, score: 0 }]);
     getCapTiers.mockResolvedValue(new Map([[1, null]]));
     const config = await getPlacementConfig();
-    findUnique.mockClear();
+    configRead.mockClear();
     const ranges = await placementPriceRanges([1], 'sticker', config);
-    expect(findUnique).not.toHaveBeenCalled();
+    expect(configRead).not.toHaveBeenCalled();
     userScore.mockResolvedValue([{ score: 0 }]);
     getCapTierViaKysely.mockResolvedValue(null);
     expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));

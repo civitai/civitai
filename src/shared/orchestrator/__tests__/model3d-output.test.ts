@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
+import {
+  isFbxOnlyDelivered,
+  isGlbFormat,
+  isInlineViewableModel3DFile,
+  normalizeModel3DFormat,
+} from '~/shared/orchestrator/model3d-output';
 
 const mesh = (format: string, available = true) => ({ type: 'model3d', available, format });
 const polyGen = (status: string, output: ReturnType<typeof mesh>[]) => ({
@@ -45,5 +50,39 @@ describe('isUnratedOutput — 3D meshes', () => {
   it('never holds a GLB mesh, which is rated through its preview render', async () => {
     const { isUnratedOutput } = await import('~/shared/orchestrator/workflow-data');
     expect(isUnratedOutput({ ...base, format: 'glb' })).toBe(false);
+  });
+});
+
+describe('isGlbFormat', () => {
+  it.each(['glb', 'GLB', '.glb', ' GLB '])('accepts %j', (format) => {
+    expect(isGlbFormat(format)).toBe(true);
+  });
+
+  it.each(['fbx', 'gltf', '', null, undefined])('rejects %j', (format) => {
+    expect(isGlbFormat(format)).toBe(false);
+  });
+});
+
+describe('normalizeModel3DFormat', () => {
+  it.each([
+    ['GLB', 'glb'],
+    ['.glb', 'glb'],
+    [' .GLTF ', 'gltf'],
+    ['fbx', 'fbx'],
+    [null, ''],
+  ])('%j → %j', (format, expected) => {
+    expect(normalizeModel3DFormat(format)).toBe(expected);
+  });
+});
+
+describe('isInlineViewableModel3DFile', () => {
+  it('keeps a GLB whose stored format is not normalised', () => {
+    expect(isInlineViewableModel3DFile({ format: '.glb', variant: 'primary' })).toBe(true);
+    expect(isInlineViewableModel3DFile({ format: ' GLB ', variant: null })).toBe(true);
+  });
+
+  it('drops FBX files and armature-only meshes', () => {
+    expect(isInlineViewableModel3DFile({ format: 'fbx', variant: 'primary' })).toBe(false);
+    expect(isInlineViewableModel3DFile({ format: 'glb', variant: 'walking-armature' })).toBe(false);
   });
 });

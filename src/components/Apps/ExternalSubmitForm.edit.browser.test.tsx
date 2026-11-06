@@ -38,6 +38,12 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
 }));
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 vi.mock('~/utils/trpc', () => {
   const noopMutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue({}), isPending: false });
   const recording = (fn: (v: unknown) => unknown, result: unknown = {}) => () => ({

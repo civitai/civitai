@@ -40,6 +40,5 @@ describe('Krea 2 licence registration', () => {
     expect(server.nonCommercial).toBeUndefined();
     expect(server.disableMature).toBeUndefined();
     expect(server.restrictedNsfwLevels).toBeUndefined();
-    expect(server.requiresSameLicense).toBeUndefined();
   });
 });

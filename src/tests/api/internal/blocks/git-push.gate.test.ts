@@ -148,6 +148,18 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 
 import { isFlipt } from '~/server/flipt/client';
+import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 const mockedIsFlipt = vi.mocked(isFlipt);
 
@@ -291,6 +303,78 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     // Response signals pending-review, not deployed.
     expect(res._status).toBe(202);
     expect(res._body).toMatchObject({ status: 'pending-review', deployed: false });
+  });
+
+  it('an owner who has not accepted the App Developer Terms: 403, a failure status linking to where to accept, nothing parked, no mod ping', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new terms.AppDeveloperTermsNotAcceptedError(
+        appDeveloperTermsRefusalMessage('https://civitai.com')
+      )
+    );
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(403);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'failure',
+        description: expect.stringContaining('/content/app-developer-terms'),
+        targetUrl: expect.stringMatching(/\/apps\/submit$/),
+      })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("checks the pusher's own acceptance, mapped from the dev-<userId> Forgejo handle", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    await invoke(signedReq(body), makeRes());
+    expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
+  });
+
+  it("a collaborator's push blocked by the OWNER says the owner must accept, not the pusher", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockResolvedValueOnce(false);
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    expect(res._status).toBe(403);
+    expect(vi.mocked(terms.hasAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(77);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'failure',
+        description: expect.stringMatching(/^The app's owner has not accepted/),
+      })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  it("a collaborator's push blocked by the PUSHER shows the pusher's own refusal", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new terms.AppDeveloperTermsNotAcceptedError('pusher-refusal-marker')
+    );
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    expect(res._status).toBe(403);
+    expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failure', description: 'pusher-refusal-marker' })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
   });
 
   it('the new pending push supersedes any older pending request for the slug (one-pending-per-slug)', async () => {

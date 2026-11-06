@@ -19,12 +19,14 @@ const {
   mockDeleteObject,
   mockDeregister,
   mockFileListBust,
+  mockBustFileAirs,
 } = vi.hoisted(() => ({
   mockResourceDataBust: vi.fn(() => Promise.resolve()),
   mockBustOrchestrator: vi.fn(() => Promise.resolve()),
   mockDeleteObject: vi.fn(() => Promise.resolve()),
   mockDeregister: vi.fn(() => Promise.resolve()),
   mockFileListBust: vi.fn(() => Promise.resolve()),
+  mockBustFileAirs: vi.fn(() => Promise.resolve()),
 }));
 // A new upload deletes the old object in the background; keep that off any real bucket.
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObject }));
@@ -37,6 +39,9 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
+}));
+vi.mock('~/server/services/orchestrator/scanned-file-airs', () => ({
+  bustVersionScannedFileAirs: mockBustFileAirs,
 }));
 // The version's file list (the only createCachedObject in the service).
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
@@ -123,7 +128,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks keeps a queued mockRejectedValueOnce; a test that never reaches its bust would
   // otherwise hand that rejection to the next test.
-  for (const bust of [mockFileListBust, mockResourceDataBust, mockBustOrchestrator])
+  for (const bust of [
+    mockFileListBust,
+    mockResourceDataBust,
+    mockBustOrchestrator,
+    mockBustFileAirs,
+  ])
     bust.mockReset().mockImplementation(() => Promise.resolve());
   withFile();
   linkedRows = [];
@@ -164,15 +174,15 @@ describe('updateFile', () => {
   });
 
   it('still writes the fields an owner may legitimately change', async () => {
-    await updateFile({ id: 1, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 });
 
-    expect(writtenData()).toMatchObject({ overrideName: 'renamed' });
+    expect(writtenData()).toMatchObject({ overrideName: 'renamed.safetensors' });
   });
 
   it('edits the same record in place when the url is unchanged', async () => {
-    const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
+    const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7 });
 
-    expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed', metadata: undefined });
+    expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed.safetensors', metadata: undefined });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 1, replacedFileId: undefined });
   });
@@ -180,7 +190,7 @@ describe('updateFile', () => {
   it('reports a file replaced since the lookup as not found, rather than a silent success', async () => {
     dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).rejects.toMatchObject({
+    await expect(updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
@@ -317,9 +327,36 @@ describe('a new upload creates a new file record', () => {
 
     mockResourceDataBust.mockClear();
     mockBustOrchestrator.mockClear();
-    await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7 });
     expect(mockResourceDataBust).not.toHaveBeenCalled();
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("busts the version's coverage caches, file-pinned AIRs included, when an edit changes the type", async () => {
+    await updateFile({ id: 1, type: 'Config', userId: 7 });
+    expect(mockResourceDataBust).toHaveBeenCalledWith([10]);
+    expect(mockBustFileAirs).toHaveBeenCalledWith(10, expect.objectContaining({ modelId: 5 }));
+    // Once before the write, while the old type still derives the old AIR, and once after.
+    const write = dbMock.dbWrite.modelFile.updateMany.mock.invocationCallOrder[0];
+    expect(mockBustOrchestrator.mock.invocationCallOrder.map((order) => order < write)).toEqual([
+      true,
+      false,
+    ]);
+
+    vi.clearAllMocks();
+    // The editor re-sends the stored type with every save.
+    await updateFile({ id: 1, type: 'Pruned Model', overrideName: 'renamed', userId: 7 });
+    expect(mockResourceDataBust).not.toHaveBeenCalled();
+    expect(mockBustOrchestrator).not.toHaveBeenCalled();
+    expect(mockBustFileAirs).not.toHaveBeenCalled();
+  });
+
+  it('still succeeds when a cache bust fails after a type change', async () => {
+    mockBustFileAirs.mockRejectedValueOnce(new Error('orchestrator down'));
+
+    await expect(updateFile({ id: 1, type: 'Config', userId: 7 })).resolves.toMatchObject({
+      id: 1,
+    });
   });
 
   it('still succeeds when a cache bust fails after the swap', async () => {
@@ -379,7 +416,7 @@ describe('a published version keeps its files', () => {
   it('still allows metadata edits on a published version', async () => {
     withFile({ status: 'Published' });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).resolves.toMatchObject({
+    await expect(updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })).resolves.toMatchObject({
       id: 1,
     });
   });
@@ -590,7 +627,7 @@ describe('a new url from a client', () => {
 
   it('is not checked when the url is the one the file already has', async () => {
     await expect(
-      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7, urlFromClient: true })
+      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7, urlFromClient: true })
     ).resolves.toMatchObject({ id: 1 });
     expect(dbMock.dbWrite.modelFile.findFirst).not.toHaveBeenCalled();
   });

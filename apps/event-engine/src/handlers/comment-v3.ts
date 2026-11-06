@@ -2,21 +2,33 @@ import { createEventHandler } from './base';
 
 /**
 ## Metrics driven by the CommentV3 table, for the surfaces in COMMENT_V3_SURFACES:
-- ArticleMetric.commentCount (create, delete, tombstone)
+- Article, Image, Post and BountyMetric.commentCount (create, delete, tombstone)
 - UserMetric.commentCount (same) — comments received by the owner of the commented-on entity
 
-A surface counts here once the main app writes its comments to CommentV3 directly
-(`constants.comments.v3WriteSurfaces` in src/server/common/constants.ts; pinned by
-comment-v3-surfaces.parity.test.ts).
-Every comment on it is counted here, whichever table it was written to: one written to CommentV2
-reaches CommentV3 through the mirror trigger, and `comment-v2.ts` skips these surfaces, so each
-comment is counted once and the count does not depend on which service deploys first.
+The surfaces are the ones the main app reads from CommentV3 (`constants.comments.v3ReadSurfaces`
+in src/server/common/constants.ts; pinned by comment-v3-surfaces.parity.test.ts). Every comment on
+them is counted here, whichever table it was written to: one written to CommentV2 reaches CommentV3
+through the mirror trigger, and `comment-v2.ts` skips these surfaces, so each comment is counted
+once and the count does not depend on which surfaces the main app has flipped.
 
 Replies count too. A deleted comment that keeps its replies stays as a tombstone (`deletedAt` set),
 which takes it off the count; the tombstone's later removal does not take it off again.
 */
 
-export const COMMENT_V3_SURFACES = ['article'];
+export const COMMENT_V3_SURFACES = [
+  'article',
+  'post',
+  'image',
+  'review',
+  'bounty',
+  'bountyEntry',
+  'challenge',
+  'crucible',
+  'storyline',
+  'model3d',
+  'appListing',
+  'comicChapter',
+];
 
 interface CommentV3Record {
   id: number;
@@ -26,11 +38,28 @@ interface CommentV3Record {
   deletedAt: string | number | null;
 }
 
-/** Per surface: the entity metric it feeds, if any, and how to find the entity's owner. */
+const ownedBy = (table: string, owner = '"userId"') =>
+  `SELECT ${owner} AS "ownerId" FROM ${table} WHERE id = $1`;
+
+/**
+ * Per surface: the entity metric it feeds, if any, and how to find the owner. `metric` only for
+ * pairs registered in the event engine's default.entityMetricKind; an unregistered pair silently
+ * counts distinct commenters. Crucible and storyline have no entry: CommentV2 never counted them.
+ */
 const SURFACES: Record<string, { metric?: string; ownerSql: string }> = {
-  article: {
-    metric: 'Article',
-    ownerSql: `SELECT "userId" AS "ownerId" FROM "Article" WHERE id = $1`,
+  article: { metric: 'Article', ownerSql: ownedBy('"Article"') },
+  image: { metric: 'Image', ownerSql: ownedBy('"Image"') },
+  post: { metric: 'Post', ownerSql: ownedBy('"Post"') },
+  bounty: { metric: 'Bounty', ownerSql: ownedBy('"Bounty"') },
+  review: { ownerSql: ownedBy('"ResourceReview"') },
+  bountyEntry: { ownerSql: ownedBy('"BountyEntry"') },
+  challenge: { ownerSql: ownedBy('"Challenge"', '"createdById"') },
+  model3d: { ownerSql: ownedBy('"Model3D"') },
+  // `entityId` is the listing's serial id.
+  appListing: { ownerSql: `SELECT user_id AS "ownerId" FROM app_listings WHERE serial_id = $1` },
+  comicChapter: {
+    ownerSql: `SELECT p."userId" AS "ownerId" FROM "ComicChapter" c
+      JOIN "ComicProject" p ON p.id = c."projectId" WHERE c.id = $1`,
   },
 };
 
@@ -65,7 +94,7 @@ export const commentV3Handler = createEventHandler<CommentV3Record>({
     sample: () => ({
       id: faker.number.int({ min: 1, max: 100000 }),
       userId: faker.number.int({ min: 1, max: 1000 }),
-      entityType: 'article',
+      entityType: faker.helpers.arrayElement(COMMENT_V3_SURFACES),
       entityId: faker.number.int({ min: 1, max: 5000 }),
       deletedAt: null,
     }),
