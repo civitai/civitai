@@ -29,7 +29,7 @@ const inlineImage = (src: string, size?: string) => ({
 
 async function renderArticle(
   nodes: object[],
-  viewport: typeof DESKTOP = DESKTOP,
+  viewport: { width: number; height: number } = DESKTOP,
   column = COLUMN,
   className?: string
 ) {
