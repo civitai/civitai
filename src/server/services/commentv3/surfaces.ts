@@ -95,6 +95,7 @@ async function assertArticleCommentsVisible(articleId: number, ctx: CommentReadC
   if (!article) throw throwNotFoundError('Article not found');
   if (article.status === ArticleStatus.Published) return;
   // Signed-out reads are edge-cached by URL; a link holder's answer must never be served to anyone else.
+  // `edgeCacheIt` on a commentv3 read would rewrite ctx.cache after this and undo it.
   if (ctx.cache)
     Object.assign(ctx.cache, { skip: true, canCache: false, edgeTTL: 0, browserTTL: 0 });
   if (ctx.user?.isModerator || article.userId === ctx.user?.id) return;

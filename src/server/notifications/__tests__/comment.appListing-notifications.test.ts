@@ -463,6 +463,11 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND c."userId" != pc."userId"
       AND NOT EXISTS (
+      SELECT 1 FROM "Article" da
+      WHERE c."entityType" = 'article' AND da.id = c."entityId"
+      AND da.status <> 'Published' AND da."userId" <> pc."userId"
+      )
+      AND NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
       WHERE (blk."userId" = pc."userId" AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = c."userId" AND blk."targetUserId" = pc."userId" AND blk.type = 'Block')
@@ -581,6 +586,11 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
       WHERE c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR c."parentId" IS NOT NULL)
+      AND NOT EXISTS (
+      SELECT 1 FROM "Article" da
+      WHERE c."entityType" = 'article' AND da.id = c."entityId"
+      AND da.status <> 'Published'
+      )
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
       SELECT
@@ -652,7 +662,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       AND NOT EXISTS (
       SELECT 1 FROM "Article" da
-      WHERE c."entityType" = 'article' AND da.id = c."entityId" AND da.status <> 'Published'
+      WHERE c."entityType" = 'article' AND da.id = c."entityId"
+      AND da.status <> 'Published'
       )
       UNION
       SELECT DISTINCT

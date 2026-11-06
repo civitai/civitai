@@ -491,7 +491,7 @@ describe('comments on a shared draft', () => {
     req: { cookies: cookie ? { [articleShareCookieName(ARTICLE)]: TOKEN } : {} },
     cache: { skip: false, canCache: true, edgeTTL: 60, browserTTL: 60 },
   });
-  // Every comment read and write on an article runs this gate, a create included.
+  // The controller runs this gate on every read and write (commentv3.write.test.ts pins create's call).
   const gate = async (ctx: ReturnType<typeof as>) =>
     commentSurface('article').assertVisible?.(ARTICLE, ctx as never);
   const status = (value: ArticleStatus) =>
@@ -521,16 +521,33 @@ describe('comments on a shared draft', () => {
     await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it('lets a signed-out holder read, and refuses a signed-out visitor with no link', async () => {
+    await expect(gate(as(undefined))).resolves.toBeUndefined();
+    await expect(gate(as(undefined, { cookie: false }))).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it("refuses another article's token under this article's cookie", async () => {
+    dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(
+      tokenRow({ resourceId: OTHER_ARTICLE }) as never
+    );
+    await expect(gate(as(STRANGER))).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
   it('refuses a signed-in user who never opened a link', async () => {
     await expect(gate(as(STRANGER, { cookie: false }))).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
 
-  it('never lets a shared edge cache keep a draft section', async () => {
-    const ctx = as(undefined);
-    await gate(ctx);
-    expect(ctx.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
+  it('never lets a shared edge cache keep a draft section, served or refused', async () => {
+    const served = as(undefined);
+    await expect(gate(served)).resolves.toBeUndefined();
+    expect(served.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
+    const refused = as(undefined, { cookie: false });
+    await expect(gate(refused)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(refused.cache).toMatchObject({ edgeTTL: 0, browserTTL: 0, canCache: false });
   });
 
   // Today's behaviour change: an unpublished article's comments were readable by anyone.
@@ -547,8 +564,10 @@ describe('comments on a shared draft', () => {
 
   it('leaves a published article open to everyone', async () => {
     status(ArticleStatus.Published);
-    await expect(gate(as(undefined, { cookie: false }))).resolves.toBeUndefined();
+    const ctx = as(undefined, { cookie: false });
+    await expect(gate(ctx)).resolves.toBeUndefined();
     expect(dbMock.dbWrite.accessToken.findUnique).not.toHaveBeenCalled();
+    expect(ctx.cache.edgeTTL).toBe(60);
   });
 });
 
@@ -556,7 +575,11 @@ describe('moderators and share links', () => {
   it('lets a moderator list and revoke a link on an article they do not own', async () => {
     const MODERATOR = 30;
     dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(tokenRow() as never);
-    await getArticleShareLinks({ articleId: ARTICLE, userId: MODERATOR, isModerator: true });
+    const listed = [{ id: 7, createdAt: new Date(), expiresAt: new Date() }];
+    dbMock.dbWrite.accessToken.findMany.mockResolvedValue(listed as never);
+    expect(
+      await getArticleShareLinks({ articleId: ARTICLE, userId: MODERATOR, isModerator: true })
+    ).toEqual(listed);
     await revokeArticleShareLink({ id: 7, userId: MODERATOR, isModerator: true });
     expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 7, revokedAt: null } })
