@@ -3,7 +3,7 @@ import { isCivitaiSiteUrl, parseCivitaiUrlSafe } from '~/utils/civitai-url';
 export type CivitaiEmbedType = 'model' | 'image';
 export type CivitaiEmbedItem = { type: CivitaiEmbedType; id: number; versionId?: number };
 
-/** The model and image list schemas cap `limit` at 100; ids past it would silently never load. */
+/** model.getAll caps `limit` at 100 (image.getInfinite at 200); one cap keeps every id in one request. */
 export const CIVITAI_EMBED_MAX_PER_TYPE = 100;
 
 const isEmbedType = (value: unknown): value is CivitaiEmbedType =>

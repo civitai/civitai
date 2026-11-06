@@ -14,9 +14,9 @@ import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
-// A stand-in for the feed endpoints that applies the one rule under test: a row comes back only
-// when its rating intersects the requested browsing level. Everything else about visibility is the
-// real client code — the hooks, the providers and the level they send.
+// Stand-in feed endpoint: a row comes back only when its rating intersects the requested level.
+// The query hooks and browsing-level providers are real; settings, flags, the user, hidden
+// preferences and the cards are stubbed.
 const mocks = vi.hoisted(() => {
   const rows = {
     model: [
@@ -91,7 +91,6 @@ vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (importOriginal) => 
   ...(await importOriginal<typeof AddonsModule>()),
   useBrowsingSettingsAddons: () => ({ settings: {} }),
 }));
-// Hidden-user/tag filtering is the feeds' own and not under test here.
 vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
   useApplyHiddenPreferences: ({ data }: { data?: unknown[] }) => ({
     items: data ?? [],
@@ -105,8 +104,9 @@ vi.mock('~/hooks/useInView', () => ({
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-// The feed cards are the feeds' own. Like their image guard, these show media only at a
-// browsing level that covers it, so a reveal is observable only if it really sets the level.
+// Stand-in cards that show media only when the browsing level covers it. The real cards blur via
+// ImageGuard2's blurLevels instead, so these prove Show raises the level for one card, not that
+// the real cover appears unblurred.
 async function levelGate() {
   const { useBrowsingLevelDebounced } = await import(
     '~/components/BrowsingLevel/BrowsingLevelProvider'

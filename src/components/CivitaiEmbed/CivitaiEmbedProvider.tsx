@@ -26,7 +26,6 @@ type EmbedState = {
   canEnableMature: boolean;
   models: Result<EmbedModel>;
   images: Result<EmbedImage>;
-  /** Missing at the viewer's level but present at the widest level this domain allows. */
   matureModels: Result<EmbedModel>;
   matureImages: Result<EmbedImage>;
 };
@@ -77,11 +76,10 @@ const missing = <T,>(ids: number[], result: Result<T>) =>
   result.loaded && !result.failed ? ids.filter((id) => !result.byId.has(id)) : [];
 
 /**
- * One feed query per type for every embed on the page, sent once the first card scrolls into
- * view. For a viewer with mature content already on, ids their level drops get one follow-up at
- * the domain's widest level, to tell "mature" from "gone"; that data stays out of the DOM until
- * Show. With mature content off nothing above their level is requested at all: showNsfw is the
- * over-18 confirmation, and a response is a disclosure whether or not it renders.
+ * Ids the viewer's level drops get one follow-up at the domain's widest level, to tell
+ * "mature" from "gone"; that data stays out of the DOM until Show. With mature content off
+ * nothing above their level is requested at all: showNsfw is the over-18 confirmation, and a
+ * response is a disclosure whether or not it renders.
  */
 export function CivitaiEmbedProvider({
   modelIds,

@@ -371,7 +371,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter
-// - ids: the index feed builder never applies it, so an ids batch came back as the global feed
+// - ids: the index feed builder never applies it, so an ids batch would return the global feed
 // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
 //   a modelId-only query would silently return the global feed (matches the
 //   /api/v1/images legacy-method logic)
