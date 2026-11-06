@@ -1963,10 +1963,14 @@ model ResourceReview {
   reactions      ResourceReviewReaction[]
   helper         ResourceReviewHelper?
   reports        ResourceReviewReport[]
+  /// The unpublished post the review was written from. The review stays hidden until that post is live.
+  postId         Int?
+  post           Post?                    @relation(fields: [postId], references: [id], onDelete: SetNull)
 
   @@unique([modelVersionId, userId])
   @@index([modelVersionId], type: Hash)
   @@index([userId], type: Hash)
+  @@index([postId])
 }
 
 model ResourceReviewReaction {
@@ -2129,6 +2133,7 @@ model Post {
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
   storylinePendingChapter StorylinePendingChapter?
+  resourceReviews  ResourceReview[]
 
   @@index([modelVersionId])
   @@index([model3dId])
