@@ -10,6 +10,7 @@ import {
   exportedCollections,
 } from '~/server/registry-adapter/collection-schema';
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
+import { ENTITY_SCHEMA_DOCUMENTS } from '~/server/registry-adapter/schemas';
 import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter/release';
 import {
   APP_RELEASE_SCHEMA,
@@ -114,6 +115,10 @@ export function buildEntities(
   const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
   const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
+  // The schemas the entities below claim, published by this source whatever the catalog holds.
+  for (const doc of ENTITY_SCHEMA_DOCUMENTS) {
+    add(REGISTRY_SCHEMA_SCHEMA, entity(doc.$id as string, REGISTRY_SCHEMA_SCHEMA, doc));
+  }
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
 
   for (const app of apps) {

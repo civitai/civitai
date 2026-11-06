@@ -6,9 +6,9 @@ import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { FILTER_MAX_BYTES, usesRegex } from '~/server/registry-adapter/json-schema';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 
-const APPS = 'urn:schema:civitai-schemas:app@v1';
+const APPS = 'urn:schema:app-blocks:app@v1';
 const one: Entity = {
-  urn: 'urn:civitai-apps:app/orbit-notes',
+  urn: 'urn:app-blocks:app/orbit-notes',
   schemas: [APPS],
   rev: 'rev-7a',
   body: { slug: 'orbit-notes' },
@@ -17,15 +17,24 @@ const one: Entity = {
 /** A source whose change feed has one delete and then ends, so every stream closes. */
 function adapter(over: Partial<Adapter> = {}): Adapter {
   return {
-    namespace: 'civitai-apps',
+    namespace: 'app-blocks',
     serves: (schema) => schema === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [one] }),
-    async *changes(): AsyncGenerator<Change> {
-      yield { delete: 'urn:civitai-apps:app/tide-log', cursor: 'c1.after-delete' };
-    },
+    changes: async () => feed({ delete: 'urn:app-blocks:app/tide-log', cursor: 'c1.after-delete' }),
     ...over,
   };
+}
+
+/** A change feed of `changes`, then its end. */
+async function* feed(...changes: Change[]): AsyncGenerator<Change> {
+  yield* changes;
+}
+
+/** A change feed that fails on its first read, once the stream is live. */
+// eslint-disable-next-line require-yield
+async function* failing(err: Error): AsyncGenerator<Change> {
+  throw err;
 }
 
 let server: Server | undefined;
@@ -54,7 +63,7 @@ describe('the HTTP/SSE binding', () => {
       'event: upsert\n' +
         `data: ${JSON.stringify({ entity: one, cursor: '' })}\n\n` +
         'event: live\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
-        'event: delete\ndata: {"urn":"urn:civitai-apps:app/tide-log","cursor":"c1.after-delete"}\n\n' +
+        'event: delete\ndata: {"urn":"urn:app-blocks:app/tide-log","cursor":"c1.after-delete"}\n\n' +
         'event: end\ndata: {}\n\n'
     );
   });
@@ -67,7 +76,7 @@ describe('the HTTP/SSE binding', () => {
   it('a urn filter drops other entities', async () => {
     const res = await get(
       adapter(),
-      sub(APPS, `&urn=${encodeURIComponent('urn:civitai-apps:app/other')}`)
+      sub(APPS, `&urn=${encodeURIComponent('urn:app-blocks:app/other')}`)
     );
     expect(res.text).toBe(
       'event: live\ndata: {"cursor":"c1.snapshot-cursor"}\n\nevent: end\ndata: {}\n\n'
@@ -79,19 +88,34 @@ describe('the HTTP/SSE binding', () => {
     expect(res.text).toBe('event: end\ndata: {}\n\n');
   });
 
-  it('cursor_expired on resume arrives as an error event naming it, as the SDK sends it', async () => {
+  it('a cursor the source refuses is answered with its own status, before any event', async () => {
     const res = await get(
       adapter({
-        // eslint-disable-next-line require-yield
-        async *changes() {
+        changes: async () => {
           throw new ProtocolError('cursor_expired', 'gone');
         },
       }),
       sub(APPS, '&cursor=c1.stale')
     );
-    // `live` precedes the first read of the change feed, so the stream has started.
+    expect([res.status, res.type, JSON.parse(res.text)]).toEqual([
+      410,
+      'application/json',
+      { error: 'cursor_expired', message: 'gone' },
+    ]);
+  });
+
+  it('a feed that fails once live arrives as an error event naming it, after live', async () => {
+    const res = await get(
+      adapter({
+        changes: async () => failing(new ProtocolError('cursor_expired', 'gone later')),
+      }),
+      sub(APPS, '&cursor=c1.resume-here')
+    );
     expect(res.status).toBe(200);
-    expect(res.text).toContain('event: error\ndata: {"error":"cursor_expired","message":"gone"}');
+    expect(res.text).toBe(
+      'event: live\ndata: {"cursor":"c1.resume-here"}\n\n' +
+        'event: error\ndata: {"error":"cursor_expired","message":"gone later"}\n\n'
+    );
   });
 
   it('🔴 an unexpected error is `unavailable` and its text never reaches the client', async () => {
@@ -187,9 +211,7 @@ describe('a request filter', () => {
   const filter = (f: unknown) => `&filter=${encodeURIComponent(JSON.stringify(f))}`;
   const changed: Entity = { ...one, rev: 'rev-8b', body: { slug: 'renamed-orbit' } };
   const withChange = adapter({
-    async *changes(): AsyncGenerator<Change> {
-      yield { upsert: changed, cursor: 'c1.after-rename' };
-    },
+    changes: async () => feed({ upsert: changed, cursor: 'c1.after-rename' }),
   });
 
   it('drops a snapshot entity that does not match', async () => {
@@ -211,7 +233,7 @@ describe('a request filter', () => {
       sub(APPS, filter({ properties: { slug: { const: 'orbit-notes' } } }))
     );
     expect(res.text).toContain(
-      'event: delete\ndata: {"urn":"urn:civitai-apps:app/orbit-notes","cursor":"c1.after-rename"}'
+      'event: delete\ndata: {"urn":"urn:app-blocks:app/orbit-notes","cursor":"c1.after-rename"}'
     );
     expect(res.text).not.toContain('renamed-orbit');
   });
