@@ -219,10 +219,18 @@ export function selectSql(plan: PgTablePlan): string {
   const cols = [...plan.columns, ...plan.noteColumns, ...plan.ruleColumns].map((c) =>
     c.db === c.field ? q(c.db) : `${q(c.db)} AS ${q(c.field)}`
   );
+  // Collaborators exist only on posts (entity-collaborator.service.ts refuses any other type).
+  if (plan.model === 'EntityCollaborator')
+    cols.push(
+      `(SELECT p."userId" FROM "Post" p WHERE ${q(plan.table)}."entityType" = 'Post'
+         AND p.id = ${q(plan.table)}."entityId") AS ${q(ENTITY_OWNER)}`
+    );
   return `SELECT ${cols.join(', ')} FROM ${q(plan.table)} WHERE ${plan.where}`;
 }
 
 const REMOVED = 'removed';
+/** Read alongside a collaborator row to tell its owner from staff; never written. */
+const ENTITY_OWNER = 'entityOwnerId';
 
 /** One row as written: staff ids redacted, JSON scrubbed, the table's rule applied, notes split off. */
 export function transformRow(
@@ -248,9 +256,13 @@ export function transformRow(
     if (byStaff || Number(row.resolvedById) !== Number(row.ownerId))
       out.resolvedById = STAFF_PLACEHOLDER;
   }
-  // A moderator can add a collaborator for the owner, so the adder is not shown.
-  if (plan.model === 'EntityCollaborator' && 'createdBy' in out)
-    out.createdBy = redactStaff(out.createdBy, userId);
+  // The post's owner adds its collaborators, or a moderator does for them.
+  if (plan.model === 'EntityCollaborator' && out.createdBy != null) {
+    const by = Number(out.createdBy);
+    const owner = row[ENTITY_OWNER];
+    if (by !== userId && owner == null) out.createdBy = null;
+    else if (by !== userId && by !== Number(owner)) out.createdBy = STAFF_PLACEHOLDER;
+  }
   if (plan.rule === 'image-media') {
     const removed =
       row.ingestion === 'Blocked' || row.tosViolation === true || row.blockedFor != null;

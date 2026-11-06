@@ -1,6 +1,11 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { IMAGE_SAFETY_CONDITION, planPostgresExport } from '../sources/postgres';
+import {
+  IMAGE_SAFETY_CONDITION,
+  planPostgresExport,
+  selectSql,
+  transformRow,
+} from '../sources/postgres';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -113,6 +118,31 @@ describe('export WHERE clauses, run', () => {
     expect(await ids('ModelVersion', planFor('ModelVersion').where)).toEqual([11]);
     expect(await ids('ModelFile', planFor('ModelFile').where)).toEqual([111]);
     expect(await ids('User', planFor('User').where)).toEqual([ME]);
+  });
+
+  it("names a post's owner as the one who added a collaborator, and anyone else as staff", async () => {
+    await db.exec(`
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int);
+      CREATE TABLE "EntityCollaborator" ("entityType" text, "entityId" int, "userId" int,
+        status text, "createdAt" timestamp, "createdBy" int, "lastMessageSentAt" timestamp);
+      INSERT INTO "Post" VALUES (1, ${OTHER}), (2, ${OTHER});
+      INSERT INTO "EntityCollaborator" ("entityType", "entityId", "userId", "createdBy") VALUES
+        ('Post', 1, ${ME}, ${OTHER}),  -- the owner added me
+        ('Post', 2, ${ME}, 900),       -- a moderator did
+        ('Post', 9, ${ME}, ${OTHER});  -- the post is gone: nobody to check against
+    `);
+    const plan = planFor('EntityCollaborator');
+    const { rows } = await db.query<Record<string, unknown>>(
+      `${selectSql(plan)} ORDER BY "entityId"`
+    );
+    const out = rows.map((r) => transformRow(plan, r, ME).out);
+    expect(out.map((r) => [r.entityId, r.createdBy])).toEqual([
+      [1, OTHER],
+      [2, '[staff]'],
+      [9, null],
+    ]);
+    // The owner looked up is read, never written.
+    expect(out.every((r) => !('entityOwnerId' in r))).toBe(true);
   });
 
   it('matches a row on any of several subject columns', async () => {

@@ -195,15 +195,6 @@ describe('personal-data-export row rules', () => {
     ).toBeNull();
   });
 
-  it('does not show who added a collaborator, since a moderator can', () => {
-    const collab = planFor('EntityCollaborator');
-    const row = { entityId: 1, entityType: 'Post', userId: SUBJECT, createdBy: 900 };
-    expect(transformRow(collab, row, SUBJECT).out.createdBy).toBe('[staff]');
-    expect(transformRow(collab, { ...row, createdBy: SUBJECT }, SUBJECT).out.createdBy).toBe(
-      SUBJECT
-    );
-  });
-
   it('does not name the gifter of an anonymous gift to its recipient', () => {
     const gift = planFor('MembershipGift');
     const row = {
