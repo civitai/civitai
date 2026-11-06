@@ -19,6 +19,7 @@ import {
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
+  withTags,
   withTrigger,
   versionOptions,
   CUSTOM_VERSION_KEY,
@@ -471,5 +472,20 @@ describe('stampMature', () => {
     const [out] = stampMature([run], false, 2);
     expect('matureAck' in out!).toBe(false);
     expect(out!.meta.matureCount).toBe(2);
+  });
+});
+
+describe('withTags', () => {
+  it('appends a comma/newline paste in order, skipping tags the image already has', () => {
+    expect(withTags(['red hair', 'smile'], 'smile, blue eyes\nred hair,  hat ')).toEqual([
+      'red hair',
+      'smile',
+      'blue eyes',
+      'hat',
+    ]);
+  });
+  it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
+    const tags = ['smile'];
+    expect(withTags(tags, ' , smile ')).toBe(tags);
   });
 });

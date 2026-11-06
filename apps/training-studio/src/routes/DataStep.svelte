@@ -23,11 +23,14 @@
     IconArrowLeft,
     IconArrowRight,
     IconBoltFilled,
+    IconLayoutGrid,
+    IconLayoutList,
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { hostConfig, portalProps } from '$lib/host';
+  import { browser, hostConfig, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
@@ -66,6 +69,7 @@
     type Selection,
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
+  import TagEditor from './TagEditor.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
   import { fileDrop, isZip, pickedFiles } from './fileDrop';
   import { inFlight, uploadedFields, uploadTile } from './tileUpload';
@@ -218,11 +222,22 @@
   const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
   const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
   const labelingActive = $derived(images.some((i) => i.labeling));
+  // The card whose inline editor has focus: an auto-label pass taking it would unmount the editor and
+  // drop what's being typed. Focus leaving commits the draft, then re-offers the card to auto-label.
+  let inlineFocusId = $state<number | null>(null);
   // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
   // returned nothing (failed steps go to the editor's Re-run).
   const unlabeled = $derived(
-    images.filter((i) => isTrainable(i) && !isLabeled(i) && !i.labeling && !i.labelTried && !!i.blobUrl)
+    images.filter(
+      (i) =>
+        isTrainable(i) &&
+        !isLabeled(i) &&
+        !i.labeling &&
+        !i.labelTried &&
+        !!i.blobUrl &&
+        i.id !== inlineFocusId
+    )
   );
   const canContinue = $derived(uploadedCount > 0 && !busy && !labelingActive && allLabeled);
   const enough = $derived(uploadedCount >= type.minImg);
@@ -241,11 +256,23 @@
   function showTag(tag: string) {
     tagFilter = { tag, ids: images.filter((i) => i.tags.includes(tag)).map((i) => i.id) };
   }
+  // A card being edited inline stays under Labeled/Unlabeled until the filter changes, or the first
+  // keystroke of a caption would label it and pull it out of the grid mid-word.
+  let editedInline = $state<{ filter: DatasetFilter; ids: number[] }>({ filter: 'all', ids: [] });
+  const keptInView = (i: Img) => editedInline.filter === filter && editedInline.ids.includes(i.id);
+  function showFilter(next: DatasetFilter) {
+    filter = next;
+    editedInline = { filter: next, ids: [] };
+  }
+  function keepInView(id: number) {
+    if (editedInline.filter !== filter) editedInline = { filter, ids: [id] };
+    else if (!editedInline.ids.includes(id)) editedInline.ids.push(id);
+  }
   const statusShownImages = $derived(
     filter === 'labeled'
-      ? images.filter(isLabeled)
+      ? images.filter((i) => isLabeled(i) || keptInView(i))
       : filter === 'unlabeled'
-        ? images.filter((i) => !isLabeled(i))
+        ? images.filter((i) => !isLabeled(i) || keptInView(i))
         : filter === 'mature'
           ? images.filter(isMature)
           : filter === 'failed'
@@ -656,6 +683,24 @@
         nsfwLevel: i.nsfwLevel,
       }))
     );
+  }
+
+  const LABEL_VIEW_KEY = 'ts-label-view';
+  function storedLabelView(): 'grid' | 'inline' {
+    try {
+      return browser && localStorage.getItem(LABEL_VIEW_KEY) === 'inline' ? 'inline' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  }
+  let labelView = $state(storedLabelView());
+  function setLabelView(next: 'grid' | 'inline') {
+    labelView = next;
+    try {
+      localStorage.setItem(LABEL_VIEW_KEY, next);
+    } catch {
+      // Blocked storage only loses the remembered choice.
+    }
   }
 
   // ---- label editor: opens LabelEditorModal for one uploaded image ----
@@ -1096,37 +1141,55 @@
         </div>
 
         <div class="mb-3">
-          <ToggleGroup
-            type="single"
-            value={filter}
-            onValueChange={(v) => {
-              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
-                filter = v;
-            }}
-            variant="outline"
-            size="sm"
-            class="self-start"
-          >
-            <ToggleGroupItem value="all" aria-label="Show all images">All {images.length}</ToggleGroupItem>
-            <ToggleGroupItem value="labeled" aria-label="Show labeled images">
-              Labeled {labeledTotal}
-            </ToggleGroupItem>
-            <ToggleGroupItem value="unlabeled" aria-label="Show unlabeled images">
-              Unlabeled <span class={unlabeledTotal > 0 ? 'ml-1 font-semibold text-dark-0' : 'ml-1'}
-                >{unlabeledTotal}</span
-              >
-            </ToggleGroupItem>
-            {#if matureTotal > 0 || filter === 'mature'}
-              <ToggleGroupItem value="mature" aria-label="Show images rated mature">
-                Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <ToggleGroup
+              type="single"
+              value={filter}
+              onValueChange={(v) => {
+                if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
+                  showFilter(v);
+              }}
+              variant="outline"
+              size="sm"
+              class="self-start"
+            >
+              <ToggleGroupItem value="all" aria-label="Show all images">All {images.length}</ToggleGroupItem>
+              <ToggleGroupItem value="labeled" aria-label="Show labeled images">
+                Labeled {labeledTotal}
               </ToggleGroupItem>
-            {/if}
-            {#if failedTotal > 0 || filter === 'failed'}
-              <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
-                Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
+              <ToggleGroupItem value="unlabeled" aria-label="Show unlabeled images">
+                Unlabeled <span class={unlabeledTotal > 0 ? 'ml-1 font-semibold text-dark-0' : 'ml-1'}
+                  >{unlabeledTotal}</span
+                >
               </ToggleGroupItem>
-            {/if}
-          </ToggleGroup>
+              {#if matureTotal > 0 || filter === 'mature'}
+                <ToggleGroupItem value="mature" aria-label="Show images rated mature">
+                  Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+                </ToggleGroupItem>
+              {/if}
+              {#if failedTotal > 0 || filter === 'failed'}
+                <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
+                  Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
+                </ToggleGroupItem>
+              {/if}
+            </ToggleGroup>
+            <ToggleGroup
+              type="single"
+              value={labelView}
+              onValueChange={(v) => {
+                if (v === 'grid' || v === 'inline') setLabelView(v);
+              }}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="grid" aria-label="Compact grid" title="Compact grid — edit labels in a dialog">
+                <IconLayoutGrid size={14} stroke={2} />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="inline" aria-label="Edit labels on the cards" title="Edit labels right on each card">
+                <IconLayoutList size={14} stroke={2} class="mr-1 inline" />Edit inline
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
           {#if tagFilter}
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2">
               <span>Showing {mediaCount(shownImages.length, media)} tagged</span>
@@ -1163,7 +1226,11 @@
           </div>
         {/if}
 
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+        <div
+          class="grid gap-3 {labelView === 'inline'
+            ? 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'
+            : 'grid-cols-[repeat(auto-fill,minmax(140px,1fr))]'}"
+        >
           {#each shownImages as img (img.id)}
             <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
               <div class="relative aspect-square bg-dark-7">
@@ -1252,7 +1319,21 @@
                 {/if}
               </div>
 
-              <div class="min-h-[44px] p-2.5">
+              <div
+                class="min-h-[44px] p-2.5"
+                onfocusin={labelView === 'inline'
+                  ? () => {
+                      keepInView(img.id);
+                      inlineFocusId = img.id;
+                    }
+                  : undefined}
+                onfocusout={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null) && inlineFocusId === img.id) {
+                    inlineFocusId = null;
+                    void maybeAutoLabel();
+                  }
+                }}
+              >
                 {#if img.status !== 'uploaded'}
                   <!-- The failure overlay covers the preview, so the filename is how the user finds it. -->
                   <div class="font-mono text-xs text-dark-2">
@@ -1263,6 +1344,32 @@
                   <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
                     <IconSparkles size={12} stroke={2} /> labeling…
                   </div>
+                {:else if labelView === 'inline'}
+                  {#if img.labelError}
+                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                  {/if}
+                  {#if labelMode === 'tag'}
+                    <TagEditor
+                      tags={img.tags}
+                      onchange={(tags) => patch(img.id, { tags })}
+                      name={img.name}
+                      {trigger}
+                      compact
+                    />
+                  {:else}
+                    <Textarea
+                      bind:value={img.caption}
+                      rows={4}
+                      placeholder="Describe the image…"
+                      aria-label={`Caption for ${img.name}`}
+                      class="min-h-24 resize-y text-sm leading-snug"
+                    />
+                    {#if triggerText && !captionTriggerHit(trigger, img.caption)}
+                      <p class="mt-1 text-xs text-dark-2">
+                        <span class="text-buzz">{triggerText}</span> is prepended automatically.
+                      </p>
+                    {/if}
+                  {/if}
                 {:else if img.tags.length === 0 && !img.caption}
                   {#if img.labelError}
                     <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
@@ -1326,7 +1433,7 @@
         <button
           id="continue-blocked-reason"
           type="button"
-          onclick={() => (filter = 'unlabeled')}
+          onclick={() => showFilter('unlabeled')}
           class="font-mono text-xs text-buzz underline decoration-dotted underline-offset-2 transition-colors hover:text-buzz/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           {uploadedCount - labeledCount} unlabeled — show {uploadedCount - labeledCount === 1
