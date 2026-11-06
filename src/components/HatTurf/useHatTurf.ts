@@ -21,6 +21,8 @@ export function useHatStock() {
         left: data.left,
         ownerOff: data.ownerOff,
         cap: data.cap,
+        /** How many of a leading team's stickers score; the badge caps its points at this. */
+        creditedPlayers: data.creditedPlayers,
         // The wire may hand back a string; the countdown needs a Date.
         nextAt: data.nextAt ? new Date(data.nextAt) : null,
       }

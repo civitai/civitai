@@ -342,6 +342,23 @@ describe('a hat is placed with the sticker editor', () => {
     expect(pose.opacity).toBe(1);
   });
 
+  test('the preview is mirrored when flipped, and upright again when unflipped', async () => {
+    renderPicture('contain', [400, 300]);
+    const body = await editorPart(BODY);
+    const art = body.querySelector('[data-testid="hat-turf-art"], svg')!;
+    const mirrored = () => {
+      for (let el: Element | null = art; el && el !== body.parentElement; el = el.parentElement) {
+        if (getComputedStyle(el).transform === 'matrix(-1, 0, 0, 1, 0, 0)') return true;
+      }
+      return false;
+    };
+    expect(mirrored()).toBe(false);
+    (await editorPart('[aria-label="Flip this sticker"]')).click();
+    await vi.waitFor(() => expect(mirrored()).toBe(true));
+    (await editorPart('[aria-label="Unflip this sticker"]')).click();
+    await vi.waitFor(() => expect(mirrored()).toBe(false));
+  });
+
   test('on a cropped card the hat stays on the part the card shows', async () => {
     renderPicture('cover', [100, 400]);
     await editorPart(BODY);

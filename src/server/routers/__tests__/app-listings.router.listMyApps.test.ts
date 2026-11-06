@@ -14,14 +14,14 @@ import { TRPCError } from '@trpc/server';
  * router's import graph never loads Prisma.
  */
 
-const { mockResolveStoreVisibilityScope, mockListMyApps, mockHidden, mockHide, mockUnhide } =
-  vi.hoisted(() => ({
+const { mockResolveStoreVisibilityScope, mockListMyApps, mockHide, mockUnhide } = vi.hoisted(
+  () => ({
     mockResolveStoreVisibilityScope: vi.fn(),
     mockListMyApps: vi.fn(),
-    mockHidden: vi.fn(),
     mockHide: vi.fn(),
     mockUnhide: vi.fn(),
-  }));
+  })
+);
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
@@ -31,7 +31,6 @@ vi.mock('~/server/services/blocks/my-apps.service', () => ({
   listMyApps: (...a: unknown[]) => mockListMyApps(...a),
 }));
 vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
-  getMyHiddenApps: (...a: unknown[]) => mockHidden(...a),
   hideMyApp: (...a: unknown[]) => mockHide(...a),
   unhideMyApp: (...a: unknown[]) => mockUnhide(...a),
 }));
@@ -77,12 +76,10 @@ beforeEach(() => {
       opts?.user?.isModerator ? 'full' : 'none'
   );
   mockListMyApps.mockReset();
-  mockListMyApps.mockImplementation(async (args: { userId: number }) => [
-    { listingId: `apl_for_${args.userId}` },
-  ]);
-  mockHidden.mockReset();
-  mockHidden.mockImplementation(async (userId: number) => ({
-    [`hidden-for-${userId}`]: '2026-10-10T11:22:33.000Z',
+  mockListMyApps.mockImplementation(async (args: { userId: number }) => ({
+    apps: [{ listingId: `apl_for_${args.userId}` }],
+    removedCount: args.userId,
+    hidden: { [`hidden-for-${args.userId}`]: '2026-10-10T11:22:33.000Z' },
   }));
   mockHide.mockReset();
   mockHide.mockImplementation(async (args: { slug: string }) => ({
@@ -122,16 +119,18 @@ describe('appListings.listMyApps', () => {
   it('reads the CALLER — two users, each gets their own rows', async () => {
     const a = await appListingsRouter.createCaller(fakeCtx(modUser) as never).listMyApps();
     const b = await appListingsRouter.createCaller(fakeCtx(otherMod) as never).listMyApps();
-    // The apps AND the caller's own hides, each read for the caller.
+    // The service's payload for the caller, passed through whole (the hides are read inside
+    // the service, keyed on the same userId — `my-apps.service.test.ts`).
     expect(a).toEqual({
       apps: [{ listingId: 'apl_for_41' }],
+      removedCount: 41,
       hidden: { 'hidden-for-41': '2026-10-10T11:22:33.000Z' },
     });
     expect(b).toEqual({
       apps: [{ listingId: 'apl_for_73' }],
+      removedCount: 73,
       hidden: { 'hidden-for-73': '2026-10-10T11:22:33.000Z' },
     });
-    expect(mockHidden.mock.calls.map(([id]) => id)).toEqual([41, 73]);
     expect(mockListMyApps.mock.calls.map(([args]) => (args as { userId: number }).userId)).toEqual([
       41, 73,
     ]);

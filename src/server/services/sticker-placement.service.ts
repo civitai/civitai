@@ -57,6 +57,8 @@ import {
   STICKER_AUTO_SPACE_KEY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
+import { sampleStickerTrack, stickerTrackMaxScale } from '~/shared/utils/sticker-track';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
@@ -181,6 +183,11 @@ const stickerImageEligibilityColumns = (imageId: number) => Prisma.sql`
 const isKeptOffRow = (row: { flags: number; imageNsfwLevel: number }) =>
   isStickerKeptOffImage({ cosmeticFlags: row.flags, imageNsfwLevel: row.imageNsfwLevel });
 
+function trackStartPose(track: StickerTrack) {
+  const { x, y, scale, rotation } = sampleStickerTrack(track, 0);
+  return { x, y, scale, rotation };
+}
+
 export type CreateStickerPlacement = {
   /**
    * 🔴 From the session, never from the request body. Every free-tier rule —
@@ -192,6 +199,8 @@ export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  /** Movement over a video. Its pose at time zero replaces the one in `data`. */
+  track?: StickerTrack;
   /**
    * Which of the two offers the placer took. A choice, not a claim: it selects
    * the path, and the path re-decides every rule for itself under a lock. The
@@ -248,10 +257,14 @@ const commentFrom = (data: { comment?: string | null }) => normalizeStickerComme
 export async function createStickerPlacement({
   placerId,
   imageId,
-  data,
+  data: requested,
+  track,
   free = false,
   spendType,
 }: CreateStickerPlacement) {
+  // `data` stays the pose every reader draws, so a moving sticker is drawn where it starts by
+  // anything that does not know about tracks, and the size check below sees the real start.
+  const data = track ? { ...requested, ...trackStartPose(track) } : requested;
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -281,12 +294,16 @@ export async function createStickerPlacement({
   // they were accepted at, and a creator lowering their limit is not a licence
   // to take back something already paid for.
   const maxScale = stickerMaxScale(space.settings);
-  if (data.scale > maxScale)
+  if (data.scale > maxScale || (track && stickerTrackMaxScale(track) > maxScale))
     throw throwBadRequestError(
       `placement: this creator allows stickers up to ${Math.round(
         maxScale * 100
       )}% of the image width`
     );
+
+  // Only the resolved space knows the image's type, so this cannot sit in the schema.
+  if (track && space.mediaType !== 'video')
+    throw throwBadRequestError('placement: movement can only be recorded on a video');
 
   // Everything below is the paid path: the escrow, the price, and the two
   // refusals `createFreePlacement` makes for itself under its lock. Branching
@@ -294,7 +311,7 @@ export async function createStickerPlacement({
   // offer — the alternative is a paid path with free-shaped holes in it, which
   // is the guard-versus-filter shape this feature has already shipped five
   // times.
-  if (free) return placeFreeSticker({ placerId, imageId, data, space });
+  if (free) return placeFreeSticker({ placerId, imageId, data, track, space });
 
   // Below the branch rather than above it, and not a `!free` condition: a
   // creator can open free capacity on a space they have never priced, so an
@@ -339,6 +356,7 @@ export async function createStickerPlacement({
         ...(comment ? { comment } : {}),
         ...autoSpaceStamp(space),
       },
+      ...(track ? { track } : {}),
     },
     select: { id: true },
   });
@@ -409,11 +427,13 @@ async function placeFreeSticker({
   placerId,
   imageId,
   data,
+  track,
   space,
 }: {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  track?: StickerTrack;
   space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>>;
 }) {
   const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId, imageId });
@@ -436,6 +456,7 @@ async function placeFreeSticker({
       ...(comment ? { comment } : {}),
       ...autoSpaceStamp(space),
     },
+    track,
   });
 
   try {

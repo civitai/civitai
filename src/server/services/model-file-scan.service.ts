@@ -42,6 +42,7 @@ import {
   unpublishModelVersionById,
 } from '~/server/services/model-version.service';
 import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 
@@ -246,7 +247,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: { pickleScanResult: true, virusScanResult: true },
   });
   const failedScan = ranScan && hasFailedScan(written);
-  const coverageMoved = ranScan && (excludedFromCoverage(written) || excludedFromCoverage(file));
+  const coverageMoved =
+    ranScan &&
+    (excludedFromCoverage({ ...written, type: file.type }) || excludedFromCoverage(file));
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
@@ -442,13 +445,15 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
   // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
   // already written, and a throw would make the orchestrator redeliver the whole workflow.
-  // A failed or errored scan of any file type uncovers the version, and a clean rescan of one
-  // recovers it, so both bust too.
+  // A failed scan of any file, or an errored scan of a loadable one, uncovers the version, and a
+  // clean rescan recovers it, so both bust too.
   if (coverageMoved || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
       bustOrchestratorModelCache(modelVersionId),
-      coverageMoved && file.modelVersion && bustScannedFileAirs(modelVersionId, file.modelVersion),
+      coverageMoved &&
+        file.modelVersion &&
+        bustVersionScannedFileAirs(modelVersionId, file.modelVersion),
     ]).catch((e) =>
       logToAxiom(
         {
@@ -460,28 +465,6 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         'webhooks'
       ).catch(() => undefined)
     );
-}
-
-// Version busts never reach the file-pinned AIRs, and the exclusion covers every file of the version.
-async function bustScannedFileAirs(
-  modelVersionId: number,
-  version: { modelId: number; baseModel: string; model: { type: ModelType } }
-) {
-  const files = await dbWrite.modelFile.findMany({
-    where: { modelVersionId },
-    select: { id: true },
-  });
-  await Promise.all(
-    files.map(({ id }) =>
-      bustOrchestratorScannedFileCache({
-        fileId: id,
-        modelVersionId,
-        modelId: version.modelId,
-        modelType: version.model.type,
-        baseModel: version.baseModel,
-      })
-    )
-  );
 }
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;

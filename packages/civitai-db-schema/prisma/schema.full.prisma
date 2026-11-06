@@ -10402,6 +10402,9 @@ model Placement {
   placerId              Int
   placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
   data                  Json      @default("{}")
+  /// A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+  /// `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+  track                 Json?
   status                String
   /// 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
   /// removals refund different amounts, so the status alone cannot settle the

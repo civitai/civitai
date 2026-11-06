@@ -83,6 +83,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
+import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
 import { isViewer } from '~/utils/is-viewer';
 
 const NOT_FOUND = Symbol('article-not-found');
@@ -560,7 +561,13 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
               {article.contentJson && (
                 <article>
-                  <RenderRichText content={article.contentJson} fallbackHtml={article.content} />
+                  <RenderRichText
+                    content={article.contentJson}
+                    fallbackHtml={article.content}
+                    className={
+                      features.articleTypography ? articleBodyClasses.articleBody : undefined
+                    }
+                  />
                 </article>
               )}
               <Divider />
