@@ -122,6 +122,9 @@ beforeAll(async () => {
       "updatedAt" = '2026-06-07 08:09:10', nsfw = false, "tosViolation" = true, hidden = false,
       metadata = '{"k": 3}'
     WHERE id = ${PENDING * 10};
+    -- No thread to join: one with no threadId, one whose thread row is not in the archive.
+    UPDATE archive."CommentV2" SET "threadId" = NULL WHERE id = ${UNARCHIVED * 10};
+    UPDATE archive."CommentV2" SET "threadId" = 77 WHERE id = ${UNARCHIVED * 10 + 1};
   `);
 });
 
@@ -222,6 +225,15 @@ describe('evidence_hold_keep_archived_comments', () => {
         thread: { id: 1, postId: 900, imageId: null, parentThreadId: null },
         source: 'archive',
       },
+    ]);
+
+    const threadless = await db.query(
+      `SELECT "commentId", "threadId", thread FROM "EvidenceHoldComment"
+       WHERE "userId" = ${UNARCHIVED} ORDER BY "commentId"`
+    );
+    expect(threadless.rows).toEqual([
+      { commentId: UNARCHIVED * 10, threadId: null, thread: null },
+      { commentId: UNARCHIVED * 10 + 1, threadId: 77, thread: null },
     ]);
 
     expect(await keep()).toBe(0);
