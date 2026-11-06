@@ -2,11 +2,12 @@
  * The HTTP/SSE binding of the source protocol, matching the registry SDK's `serve()`: one
  * route, `GET /subscribe`, plus `/healthz` for a process supervisor.
  *
- * Unlike the SDK, it does not apply a request's `filter` itself: the registry checks every
- * entity against the filter whatever a source sends, so sending more is only extra traffic.
+ * A request's `filter` is applied as the SDK applies it: a snapshot entity that does not match
+ * is left out, and a change that stops matching is sent as a delete.
  */
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
+import { compileFilter } from '~/server/registry-adapter/json-schema';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import {
   HTTP_STATUS,
@@ -80,7 +81,8 @@ export function handleRequest(
       return sendError(res, new ProtocolError('bad_request', `no route ${url.pathname}`));
     }
     try {
-      const { schema, cursor, urns } = parseSubscribeQuery(url.searchParams);
+      const { schema, cursor, urns, filter } = parseSubscribeQuery(url.searchParams);
+      const matches = compileFilter(filter) ?? (() => true);
       const stream = openStream(req, res);
       if (!adapter.serves.includes(schema)) return stream.send({ type: 'end' });
       const wanted = (urn: string) => urns.length === 0 || urns.includes(urn);
@@ -91,7 +93,8 @@ export function handleRequest(
         const snapshot = await adapter.snapshot(schema, ctx);
         for await (const entity of snapshot.entities) {
           if (stream.signal.aborted) return;
-          if (wanted(entity.urn)) stream.send({ type: 'upsert', entity, cursor: '' });
+          if (wanted(entity.urn) && matches(entity.body))
+            stream.send({ type: 'upsert', entity, cursor: '' });
         }
         position = snapshot.cursor;
       }
@@ -101,7 +104,11 @@ export function handleRequest(
         if (stream.signal.aborted) return;
         if ('upsert' in change) {
           if (wanted(change.upsert.urn)) {
-            stream.send({ type: 'upsert', entity: change.upsert, cursor: change.cursor });
+            stream.send(
+              matches(change.upsert.body)
+                ? { type: 'upsert', entity: change.upsert, cursor: change.cursor }
+                : { type: 'delete', urn: change.upsert.urn, cursor: change.cursor }
+            );
           }
         } else if (wanted(change.delete)) {
           stream.send({ type: 'delete', urn: change.delete, cursor: change.cursor });

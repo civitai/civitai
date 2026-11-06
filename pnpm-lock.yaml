@@ -335,6 +335,9 @@ importers:
       '@trpc/server':
         specifier: ^11.17.0
         version: 11.17.0(typescript@5.9.2)
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       algoliasearch:
         specifier: ^4.23.3
         version: 4.25.2

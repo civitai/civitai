@@ -112,3 +112,42 @@ describe('the HTTP/SSE binding', () => {
     expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
   });
 });
+
+describe('a request filter', () => {
+  const filter = (f: unknown) => `&filter=${encodeURIComponent(JSON.stringify(f))}`;
+  const changed: Entity = { ...one, rev: 'rev-8b', body: { slug: 'renamed-orbit' } };
+  const withChange = adapter({
+    async *changes(): AsyncGenerator<Change> {
+      yield { upsert: changed, cursor: 'c1.after-rename' };
+    },
+  });
+
+  it('drops a snapshot entity that does not match', async () => {
+    const res = await get(withChange, sub(APPS, filter(false)));
+    expect(res.text.startsWith('event: live')).toBe(true);
+  });
+
+  it('keeps one that does', async () => {
+    const res = await get(
+      withChange,
+      sub(APPS, filter({ properties: { slug: { const: 'orbit-notes' } } }))
+    );
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('🔴 a change that stops matching arrives as a delete', async () => {
+    const res = await get(
+      withChange,
+      sub(APPS, filter({ properties: { slug: { const: 'orbit-notes' } } }))
+    );
+    expect(res.text).toContain(
+      'event: delete\ndata: {"urn":"urn:civitai-apps:app/orbit-notes","cursor":"c1.after-rename"}'
+    );
+    expect(res.text).not.toContain('renamed-orbit');
+  });
+
+  it('a filter that is not a schema is bad_request', async () => {
+    const res = await get(withChange, sub(APPS, filter({ type: 12 })));
+    expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
+  });
+});
