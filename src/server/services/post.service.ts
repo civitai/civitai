@@ -79,7 +79,6 @@ import {
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   invalidateManyImageExistence,
-  purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
   isPlainOwnerDelete,
   imagesWithOpenReports,
@@ -1855,8 +1854,6 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       userId: result.userId,
     });
   }
-
-  purgeImageGenerationDataCache(image.id);
 };
 
 export const addResourceToPostImage = async ({
