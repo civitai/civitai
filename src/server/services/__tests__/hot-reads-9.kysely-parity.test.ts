@@ -266,6 +266,18 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
     expect(JSON.stringify(viaKysely)).toBe(JSON.stringify(viaPrisma));
   });
 
+  // "username" is CITEXT: a lookup that differs from the stored name only in case finds the user,
+  // on both paths. A path whose comparison were case-sensitive would reject with P2025 here.
+  it('a mixed-case username finds the lowercase-stored user on both paths', async () => {
+    const where = { username: 'Full-PROFILE' };
+    const viaKysely = await readUserWithProfileViaKysely(kysely, where);
+    const viaPrisma = await readUserWithProfileViaPrisma(prisma, where);
+    expect([viaKysely.id, viaKysely.username]).toStrictEqual([U_FULL, 'full-profile']);
+    expect([viaPrisma.id, viaPrisma.username]).toStrictEqual([U_FULL, 'full-profile']);
+    expect(sorted(viaKysely)).toStrictEqual(sorted(viaPrisma));
+    expect(JSON.stringify(sorted(viaKysely))).toBe(JSON.stringify(sorted(viaPrisma)));
+  });
+
   it.each<[string, UserWithProfileWhere]>([
     ['a deleted user', { id: U_DELETED }],
     ['a deleted user, by username', { username: 'deleted-profile' }],

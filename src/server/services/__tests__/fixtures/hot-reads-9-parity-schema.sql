@@ -10,12 +10,17 @@
 -- lives in its own schema, hot_reads_9_parity, because other parity suites share the throwaway
 -- database.
 --
+-- "User"."username" is CITEXT, as in production (unlike the older parity fixtures, which use TEXT),
+-- so a case-only difference in a username lookup shows. The extension goes in "public", where
+-- production has it and where the DROP SCHEMA below cannot remove it, and is created only if missing.
+--
 -- No semicolons in comments: the suite splits this file on them.
 --
 -- Applied against a THROWAWAY database: this drops and recreates the schema on every run.
 
 DROP SCHEMA IF EXISTS "hot_reads_9_parity" CASCADE;
 CREATE SCHEMA "hot_reads_9_parity";
+CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA public;
 
 CREATE TYPE "hot_reads_9_parity"."LinkType" AS ENUM ('Sponsorship', 'Social', 'Other');
 CREATE TYPE "hot_reads_9_parity"."CosmeticType" AS ENUM ('Badge', 'NamePlate', 'ContentDecoration', 'ProfileDecoration', 'ProfileBackground', 'Sticker', 'ChatTheme', 'CardDecoration');
@@ -28,7 +33,7 @@ CREATE TYPE "hot_reads_9_parity"."TagSource" AS ENUM ('User', 'Rekognition', 'WD
 
 CREATE TABLE "hot_reads_9_parity"."User" (
   "id"                  INTEGER      NOT NULL PRIMARY KEY,
-  "username"            TEXT         UNIQUE,
+  "username"            public.citext UNIQUE,
   "image"               TEXT,
   "createdAt"           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "deletedAt"           TIMESTAMP(3),
