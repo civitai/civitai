@@ -80,6 +80,8 @@ const ATTACHABLE = Prisma.sql`'Requested'::"ServiceDealStatus", 'Accepted'::"Ser
 // Compared as text, so seller paths do not depend on the enum value existing: the client deploys
 // before the migration that adds it.
 const NOT_ATTACHMENT = Prisma.sql`f."kind"::text <> 'Attachment'`;
+/** A deal that ended without the work: the seller loses the buyer's attachments. */
+const CLOSED_TO_SELLER = new Set(['Declined', 'Expired', 'Cancelled']);
 
 const UPLOAD_KEY_ROOT = 'service-deals';
 const HELD_COPY_ATTEMPTS = 3;
@@ -787,7 +789,8 @@ export async function listServiceDealFiles({
       // a buyer gets of a Final: the delivery copy's size, no failure detail.
       // A moderator who is also the seller is the seller here.
       const owner = isBuyer || (isModerator && !isSeller);
-      const cleared = row.status === 'Ready' && attachmentScansClear(row);
+      const cleared =
+        row.status === 'Ready' && attachmentScansClear(row) && !CLOSED_TO_SELLER.has(deal.status);
       if (!owner && !cleared) return [];
       return [
         {
@@ -862,7 +865,7 @@ export type ServiceDealFileDownload = {
  * nothing). The seller may take back anything they uploaded; a moderator anything, for dispute
  * review; the buyer only a Final of the delivered round that has passed its scan, once they own it.
  * An Attachment reverses the roles: the buyer may take back their own, and the seller gets the
- * delivery copy only once its scans pass.
+ * delivery copy only once its scans pass, and never after the deal is Declined, Expired or Cancelled.
  *
  * A buyer gets the delivery file, never the upload: for a zip that is the archive the server built,
  * and a zip without one is not downloadable by them at all. `delivered` asks a moderator for the
@@ -913,7 +916,10 @@ export async function resolveServiceDealFileDownload({
   const allowed = isAttachment
     ? (isModerator && row.sellerId !== userId) ||
       (row.buyerId === userId && ready) ||
-      (row.sellerId === userId && ready && attachmentScansClear(row))
+      (row.sellerId === userId &&
+        ready &&
+        attachmentScansClear(row) &&
+        !CLOSED_TO_SELLER.has(row.dealStatus))
     : row.sellerId === userId ||
       isModerator ||
       (row.buyerId === userId &&

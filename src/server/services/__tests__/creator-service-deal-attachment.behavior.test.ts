@@ -1165,6 +1165,26 @@ describe('what the seller can see', () => {
     );
     expect(await download(fileId, SELLER)).toBeNull();
   });
+
+  const CLOSED = ['Declined', 'Expired', 'Cancelled'];
+  it.each(ALL_STATUSES)(
+    'a passed attachment on a %s deal: the seller only while the deal did not end unworked',
+    async (status) => {
+      const dealId = await accepted();
+      const fileId = await attach(dealId, 'notes.txt', TEXT);
+      await scanned([fileId]);
+      expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+      await setStatus(dealId, status);
+
+      const sellerKeeps = !CLOSED.includes(status);
+      expect(await list(dealId, SELLER)).toHaveLength(sellerKeeps ? 1 : 0);
+      expect((await download(fileId, SELLER)) !== null).toBe(sellerKeeps);
+      // A moderator keeps it for review, and the buyer keeps their own.
+      expect(await list(dealId, STRANGER, true)).toHaveLength(1);
+      expect(await download(fileId, STRANGER, true)).not.toBeNull();
+      expect(await download(fileId, BUYER)).not.toBeNull();
+    }
+  );
 });
 
 describe('attachments take no part in delivery, acceptance or payout', () => {
