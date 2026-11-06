@@ -58,6 +58,7 @@ where it loads on demand:
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
   `prettier --write`, and never `prettier --plugin=prettier-plugin-svelte` (it empties `.svelte` files).
+- **CI runs on CI:** never run the whole workspace locally (all `scripts/ci/*.mjs`, `turbo`, recursive `pnpm`); see `docs/dev/local-ci.md`.
 - **Releases** (`pnpm run release[:minor|:major]`) need explicit user approval — they bump, tag and push.
 
 ## Tests
@@ -137,21 +138,6 @@ explicit user approval.
 **Never stack PRs.** Base every PR on the integration branch (`main` or a `feat/...` branch), never on
 another open PR's branch — a squash-merged parent doesn't retarget the child, and its changes go missing.
 If a change depends on an unmerged PR, wait for it to merge or fold both into one PR.
-
-## 🔴 CI runs on CI, not on this workstation
-
-The GitHub Actions workflows (`.github/workflows/`: `apps`, `lint`, `full-ci`,
-`moderator-boot`, `schema-drift`, `submodule-pin-guard`, `trpc-server-parity`) are
-where a change is validated. Do **not** run the whole local mirror
-(`scripts/ci/*.mjs` across the workspace) to "reproduce CI" — this is a large
-monorepo and a workspace-wide run spins the disks and slows every agent and the
-operator's desktop. Workspace-wide `turbo` task runs and recursive
-`pnpm`/`npm`/`yarn` (`-r` / `--recursive` / `--workspaces`) are refused by the
-local agent tooling.
-
-**A change-scoped subset is the local loop** — one app's suite
-(`pnpm --filter <app> test`), one `scripts/ci/*.mjs` gate directly, or a single
-package's typecheck. The full workspace is CI's.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

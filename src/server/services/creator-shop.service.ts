@@ -39,6 +39,7 @@ import { constants } from '~/server/common/constants';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
+  awaitsRequestedChanges,
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
@@ -992,6 +993,9 @@ export const updateCreatorShopItem = async ({
     recordChange('sellableByOthers', yesNo(meta.sellableByOthers), yesNo(nextSellableByOthers));
     recordChange('sellerShare', meta.sellerShare ?? 0, nextSellerShare);
   }
+  // Without this a save with nothing changed resubmits the item unaltered.
+  if (existing.status === CosmeticShopItemStatus.RequestedChanges && !changes.length)
+    throw throwBadRequestError('Make the requested changes before resubmitting');
 
   const reviewNote = !backToReview
     ? undefined
@@ -1280,11 +1284,16 @@ export const setCreatorShopItemListed = async ({
     if (current.status === CosmeticShopItemStatus.Rejected)
       throw throwBadRequestError(REJECTED_IS_FINAL);
     const meta = current.meta as CosmeticShopItemMeta | null;
+    // Still waiting on the creator: listing again must not put it back in the queue unaltered. A
+    // pack stays RequestedChanges through a cover or text edit, so the history decides.
+    const keepsVerdict =
+      current.status === CosmeticShopItemStatus.RequestedChanges &&
+      (!meta?.history?.length || awaitsRequestedChanges(meta.history));
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         listed,
-        ...(listed
+        ...(listed && !keepsVerdict
           ? {
               status: CosmeticShopItemStatus.PendingReview,
               rejectionReason: null,
@@ -1357,16 +1366,22 @@ export const unarchiveCreatorShopItem = async ({
     const rejectionUnprovable = !meta.history?.length && !!current.rejectionReason;
     if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
       throw throwBadRequestError(REJECTED_IS_FINAL);
+    // An item archived while it waited on requested changes comes back still waiting on them.
+    const keepsVerdict = awaitsRequestedChanges(meta.history);
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         // Same rule as re-listing: archiving ended this item's resale listings, so
         // bringing it back is a fresh submission, not an undo.
-        status: CosmeticShopItemStatus.PendingReview,
         archivedAt: null,
-        rejectionReason: null,
-        reviewedById: null,
-        reviewedAt: null,
+        ...(keepsVerdict
+          ? { status: CosmeticShopItemStatus.RequestedChanges }
+          : {
+              status: CosmeticShopItemStatus.PendingReview,
+              rejectionReason: null,
+              reviewedById: null,
+              reviewedAt: null,
+            }),
         meta: {
           ...meta,
           displayApproved: recordedDisplayVerdict({
@@ -2076,6 +2091,18 @@ export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) 
 // Moderator: review queue
 // ---------------------------------------------------------------------------
 
+// Pending items have no verdict yet, so they go by submission; anything reviewed goes by when it
+// was approved or sent back. `id` breaks ties so a page boundary can't drop or repeat an item.
+export const reviewQueueOrder = (
+  sort: GetReviewQueueInput['sort'],
+  status: GetReviewQueueInput['status']
+): Prisma.CosmeticShopItemOrderByWithRelationInput[] => {
+  const dir = sort === 'newest' ? 'desc' : 'asc';
+  return status === CosmeticShopItemStatus.PendingReview
+    ? [{ createdAt: dir }, { id: dir }]
+    : [{ reviewedAt: { sort: dir, nulls: 'last' } }, { createdAt: dir }, { id: dir }];
+};
+
 export const getCreatorShopReviewQueue = async ({
   limit,
   page,
@@ -2165,12 +2192,7 @@ export const getCreatorShopReviewQueue = async ({
       where,
       take,
       skip,
-      // `id` breaks ties so a page boundary can't drop or repeat an item when
-      // two submissions share a createdAt.
-      orderBy: [
-        { createdAt: sort === 'newest' ? 'desc' : 'asc' },
-        { id: sort === 'newest' ? 'desc' : 'asc' },
-      ],
+      orderBy: reviewQueueOrder(sort, status),
       select: {
         ...creatorShopItemSelect,
         // A pack has no cosmetic, so its author is the lister — without this the
