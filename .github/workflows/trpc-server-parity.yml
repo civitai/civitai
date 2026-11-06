@@ -22,7 +22,9 @@ name: tRPC server parity
 #   - boots the standalone server once more under its `api` profile (`STANDALONE_SERVER_PROFILE=api`:
 #     `/api/v1/**` and `/api/auth/**` added) and runs the tRPC cases and the `--cases api` cases
 #     against it, with a copy whose proxy-policy call is removed as that profile's negative control
-#     (the 451 for a blocked region must go red), and checks an `/api/v1/` request span is emitted.
+#     (the 451 for a blocked region must go red), and checks an `/api/v1/` request span is emitted;
+#   - boots the api profile once more on an image whose `/api/v1/enums` route module throws at load,
+#     and requires that server to come up, answer that route 500 and serve the others.
 #
 # Runs when anything that can change either server's answers changes: the server itself, the
 # image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
@@ -59,6 +61,8 @@ on:
       - 'pnpm-lock.yaml'
       - 'patches/**'
       - 'src/pages/api/trpc/**'
+      # The api profile (STANDALONE_SERVER_PROFILE=api) serves every /api/v1/ route.
+      - 'src/pages/api/v1/**'
       - 'src/pages/api/live.ts'
       - 'src/pages/api/health.ts'
       - 'src/pages/api/ready.ts'
@@ -317,6 +321,7 @@ jobs:
       SHA: ${{ needs.gate.outputs.sha }}
       MUTANT_IMAGE: trpc-server-parity:mutant
       API_MUTANT_IMAGE: trpc-server-parity:api-mutant
+      BROKEN_ROUTE_IMAGE: trpc-server-parity:broken-route
       CANDIDATE_IMAGE: trpc-server-parity:candidate
       STATUS_CONTEXT: tRPC parity
     steps:
@@ -444,6 +449,14 @@ jobs:
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/candidate/Dockerfile"
           docker build -q -t "$CANDIDATE_IMAGE" "$WORK/candidate"
           docker run --rm --entrypoint cat "$CANDIDATE_IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
+          # The candidate with ONE route module that throws at load: /api/v1/enums.
+          mkdir -p "$WORK/broken"
+          rel=$(docker run --rm --entrypoint node "$CANDIDATE_IMAGE" -e "process.stdout.write(require('/app/.next/server/pages-manifest.json')['/api/v1/enums'] || '')")
+          [ -n "$rel" ] || { echo "/api/v1/enums is not in the image's pages-manifest"; exit 2; }
+          echo "throw new Error('parity: this route module fails to load on purpose');" > "$WORK/broken/broken.js"
+          printf 'FROM %s\nCOPY --chown=1001:1001 broken.js /app/.next/server/%s\n' "$CANDIDATE_IMAGE" "$rel" > "$WORK/broken/Dockerfile"
+          docker build -q -t "$BROKEN_ROUTE_IMAGE" "$WORK/broken"
+          docker run --rm --entrypoint cat "$BROKEN_ROUTE_IMAGE" "/app/.next/server/$rel" | cmp - "$WORK/broken/broken.js"
 
       - name: Start the servers
         run: |
@@ -453,6 +466,7 @@ jobs:
           docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api -p 3003:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api-mutant -p 3004:3000 "$API_MUTANT_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name broken -p 3005:3000 "$BROKEN_ROUTE_IMAGE" node -- trpc-server/server.cjs
 
       # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
       #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
@@ -493,7 +507,11 @@ jobs:
             running api || { echo "api exited"; docker logs api 2>&1 | tail -100; exit 1; }
             sleep 2
           done
-          check api '[trpc-server] instrumentation registered' '[trpc-server] ready (profile api,' '/api/v1/models/[id]' '/api/auth/session'
+          check api '[trpc-server] instrumentation registered' '[trpc-server] ready (profile api,' '/api/v1/models/[id]'
+          # /api/auth/ is not in the api profile.
+          if docker logs api 2>&1 | grep -F '[trpc-server] ready (profile api,' | grep -qF '/api/auth/'; then
+            echo "api: the ready line lists an /api/auth/ page"; exit 1
+          fi
 
           ok=
           for _ in $(seq 1 150); do
@@ -590,6 +608,26 @@ jobs:
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-mutant.json" \
             --cases api --expect-red v1-blocked-region --expect-red-diff 'pinned 451 '
 
+      - name: A route module that fails to load does not take the server down
+        if: ${{ !cancelled() }}
+        run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          running() { [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ]; }
+          for _ in $(seq 1 180); do
+            docker logs broken 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running broken || { echo "broken: the server exited"; docker logs broken 2>&1 | tail -60; exit 1; }
+            sleep 2
+          done
+          docker logs broken 2>&1 | grep -F '[trpc-server] failed to load /api/v1/enums' \
+            || { echo "broken: no load-failure line for /api/v1/enums"; docker logs broken 2>&1 | tail -60; exit 1; }
+          code() { curl -s -o /dev/null -w '%{http_code}' -A 'python-requests/2.32.3' -H 'cf-connecting-ip: 198.51.100.23' "http://127.0.0.1:$1$2"; }
+          # Positive control: the unbroken api profile serves the route.
+          [ "$(code 3003 /api/v1/enums)" = 200 ] || { echo "api: /api/v1/enums is not 200"; exit 1; }
+          b=$(code 3005 /api/v1/enums); echo "broken /api/v1/enums -> $b"; [ "$b" = 500 ] || exit 1
+          a=$(code 3003 /api/v1/me); b=$(code 3005 /api/v1/me); echo "/api/v1/me: api $a, broken $b"; [ "$a" = "$b" ] || exit 1
+          b=$(code 3005 "/api/live?token=$token"); echo "broken /api/live -> $b"; [ "$b" = 200 ] || exit 1
+          running broken || { echo "broken exited after serving"; exit 1; }
+
       - name: The alerted span is still emitted
         if: ${{ !cancelled() }}
         run: |
@@ -619,7 +657,7 @@ jobs:
       - name: Server logs
         if: always()
         run: |
-          for c in next trpc mutant api api-mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+          for c in next trpc mutant api api-mutant broken; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
 
       - uses: actions/upload-artifact@v7
         if: always()

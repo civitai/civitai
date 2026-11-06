@@ -48,12 +48,11 @@ describe('servedPages', () => {
     ]);
   });
 
-  it('api: the trpc list plus the manifest pages under /api/v1/ and /api/auth/', () => {
-    expect(served.servedPages('api', manifest)).toEqual([
-      ...served.TRPC_PAGES,
-      '/api/auth/session',
-      '/api/v1/models',
-    ]);
+  // /api/auth/ is deliberately NOT in the api profile: little CPU, and the widest blast radius
+  // (cookies, redirects, POSTs) of anything the pools serve.
+  it('api: the trpc list plus the manifest pages under /api/v1/, and no /api/auth/ page', () => {
+    expect(served.servedPages('api', manifest)).toEqual([...served.TRPC_PAGES, '/api/v1/models']);
+    expect(served.API_PROFILE_PREFIXES).toEqual(['/api/v1/']);
   });
 
   it('throws on an unknown profile rather than serving a default', () => {

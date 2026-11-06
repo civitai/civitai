@@ -739,19 +739,22 @@ export function buildBeaconCases(ctx) {
   ];
 }
 
-// The `api` profile (`--cases api`): `/api/v1/**` and `/api/auth/**` served by the standalone server
+// The `api` profile (`--cases api`): `/api/v1/**` served by the standalone server
 // booted with `STANDALONE_SERVER_PROFILE=api`.
 //
 // `/api/v1/` sits behind the proxy under Next, so these cases are also where the standalone
 // server's own application of the proxy's API policy is compared with the real proxy: the 451 for
 // a blocked region, the default Cache-Control and X-Handled-By headers, and the verified-crawler
-// request header. `/api/auth/` is outside the proxy matcher, as tRPC is.
+// request header, and its non-GET request-body cap. `/api/auth/` is not in the profile.
 //
 // The job's database is empty, so DB-backed routes answer "not found" or an empty list, on both
 // sides; that is still compared byte for byte.
 
 const PROXY_STREAMED_451 =
   "Next's proxy answers the blocked region with a middleware response, which router-server streams (Transfer-Encoding: chunked). The standalone server answers it from applyApiRequestPolicy, the function the tRPC route also uses, which ends the response with the whole body (Content-Length). Status, every other header and the body are the same; only the framing differs.";
+
+const API_AUTH_NOT_SERVED =
+  'The api profile does not serve /api/auth/ (it stays on Next): routing must never send it there, and this pins that the standalone server answers it as an unserved path.';
 
 const API_UNKNOWN_PATH =
   'Next answers a path no route matches by rendering its 404 page (and, under /api/v1/, after running the proxy). The api profile renders no pages; it answers the plain 404, as for the tRPC paths above. Routing sends it only paths of served shapes.';
@@ -860,18 +863,27 @@ export function buildApiCases(ctx) {
       divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
     },
 
-    // --- /api/auth/ ----------------------------------------------------------------------------
-    { id: 'auth-session-anonymous', path: '/api/auth/session', headers: edge },
-    // No signed-in /api/auth/session case: its body carries the session's `expires`, computed at
-    // request time to the millisecond, so two sends never match. The signed-in cookie path is
-    // covered by v1-signed-in-cookie.
-    { id: 'auth-jwks', path: '/api/auth/jwks', headers: edge },
-    { id: 'auth-accounts-anonymous', path: '/api/auth/accounts', headers: edge },
-    { id: 'auth-catch-all', path: '/api/auth/oauth/unknown/x', headers: edge },
+    // --- /api/v1/: the proxy's request-body cap -----------------------------------------------
+    // Next's proxy reads a non-GET body through a clone capped at proxyClientMaxBodySize (10 MiB
+    // by default) and the route then sees only what was copied. This route's own bodyParser limit
+    // is also 10 MiB, so the two servers differ visibly if the cap is not reproduced: Next's route
+    // gets a truncated (invalid) JSON body and answers 400, an uncapped server sees the whole body
+    // and answers 413.
     {
-      id: 'auth-blocked-region-not-proxied',
+      id: 'v1-body-over-proxy-cap',
+      method: 'POST',
+      path: '/api/v1/partners/supported-models',
+      headers: { ...apiClient, 'content-type': 'application/json' },
+      body: () => Buffer.from(`[${' '.repeat(10 * 1024 * 1024 + 1024)}]`),
+    },
+
+    // --- /api/auth/ is NOT in this profile -----------------------------------------------------
+    // Low CPU and the widest blast radius (cookies, redirects, POST flows), so it stays on Next.
+    {
+      id: 'auth-not-served',
       path: '/api/auth/session',
-      headers: { ...edge, 'cf-ipcountry': 'GB' },
+      headers: edge,
+      divergence: { reason: API_AUTH_NOT_SERVED, candidate: NOT_FOUND },
     },
 
     // --- the tRPC list is still served, unchanged, under this profile -----------------------------

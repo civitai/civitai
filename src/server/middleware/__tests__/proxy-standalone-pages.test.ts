@@ -121,7 +121,8 @@ const API_FAMILY_PAGES = served.API_PROFILE_PREFIXES.flatMap((prefix) => pagesUn
 describe('the api profile', () => {
   it('finds the route families it serves (positive control for the walk)', () => {
     expect(API_FAMILY_PAGES).toContain('/api/v1/models/[id]');
-    expect(API_FAMILY_PAGES).toContain('/api/auth/session');
+    // /api/auth/ stays on Next: not part of the api profile.
+    expect(API_FAMILY_PAGES).not.toContain('/api/auth/session');
     expect(API_FAMILY_PAGES.length).toBeGreaterThan(50);
   });
 
