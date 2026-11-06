@@ -8,8 +8,9 @@ import { DepositNetworkWarning } from '~/components/Buzz/CryptoDeposit/DepositNe
 // Customers sent USDT0 over X Layer to the USDC-on-Base address and the deposit was never credited.
 // The warning must name the token and network of the currency actually selected.
 
-const TAIL =
-  "Transfers on any other network (for example X Layer, BNB Chain or Ethereum) won't be credited and may not be recoverable. On exchanges like OKX or Binance, check the network selector before you confirm.";
+const tail = (examples: string) =>
+  `Transfers on any other network (for example ${examples}) won't be credited and may not be recoverable. On exchanges like OKX or Binance, check the network selector before you confirm.`;
+const TAIL = tail('X Layer, BNB Chain or Ethereum');
 
 describe('DepositNetworkWarning', () => {
   it('names USDC on Base for usdcbase', async () => {
@@ -29,22 +30,31 @@ describe('DepositNetworkWarning', () => {
   });
 
   it.each([
-    ['usdcsol', 'USDC', 'Solana'],
-    ['usdcerc20', 'USDC', 'Ethereum'],
-    ['usdterc20', 'USDT', 'Ethereum'],
-    ['usdtbsc', 'USDT', 'BNB Chain'],
-    ['usdcmatic', 'USDC', 'Polygon'],
-    ['usdtmatic', 'USDT', 'Polygon'],
-    ['usdcarb', 'USDC', 'Arbitrum'],
-    ['usdtarb', 'USDT', 'Arbitrum'],
-  ])('names the right token and network for %s', async (code, token, network) => {
+    ['usdcsol', 'USDC', 'Solana', 'X Layer, BNB Chain or Ethereum'],
+    ['usdcerc20', 'USDC', 'Ethereum', 'X Layer or BNB Chain'],
+    ['usdterc20', 'USDT', 'Ethereum', 'X Layer or BNB Chain'],
+    ['usdtbsc', 'USDT', 'BNB Chain', 'X Layer or Ethereum'],
+    ['usdcmatic', 'USDC', 'Polygon', 'X Layer, BNB Chain or Ethereum'],
+    ['usdtmatic', 'USDT', 'Polygon', 'X Layer, BNB Chain or Ethereum'],
+    ['usdcarb', 'USDC', 'Arbitrum', 'X Layer, BNB Chain or Ethereum'],
+    ['usdtarb', 'USDT', 'Arbitrum', 'X Layer, BNB Chain or Ethereum'],
+  ])('names the right token and network for %s', async (code, token, network, examples) => {
     renderWithProviders(<DepositNetworkWarning code={code} />);
     await expect
-      .element(page.getByText(`Send only ${token} on the ${network} network. ` + TAIL))
+      .element(page.getByText(`Send only ${token} on the ${network} network. ` + tail(examples)))
       .toBeInTheDocument();
     await expect
       .element(page.getByTestId('deposit-network-badge'))
       .toHaveTextContent(`${token} · ${network}`);
+  });
+
+  it('names BNB Chain and drops it from the examples when NowPayments reports bsc', async () => {
+    renderWithProviders(<DepositNetworkWarning code="usdtbsc" ticker="usdt" network="bsc" />);
+    await expect
+      .element(
+        page.getByText('Send only USDT on the BNB Chain network. ' + tail('X Layer or Ethereum'))
+      )
+      .toBeInTheDocument();
   });
 
   it('places an unmapped code from the live ticker and known network', async () => {

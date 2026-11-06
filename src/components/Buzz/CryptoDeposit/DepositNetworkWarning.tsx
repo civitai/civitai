@@ -33,12 +33,27 @@ export function getDepositTokenNetwork({
 }): DepositTokenNetwork | null {
   // NowPayments' own ticker/network wins; the static map covers the window before the list loads.
   const networkName = network ? getKnownNetworkDisplayName(network) : undefined;
-  if (ticker && networkName) return { token: ticker.toUpperCase(), network: networkName };
+  if (ticker && networkName)
+    return {
+      token: ticker.toUpperCase(),
+      network: networkName === 'BSC' ? 'BNB Chain' : networkName,
+    };
   return PAY_CURRENCY_TOKEN_NETWORK[code.toLowerCase()] ?? null;
 }
 
-const TAIL =
-  "Transfers on any other network (for example X Layer, BNB Chain or Ethereum) won't be credited and may not be recoverable. On exchanges like OKX or Binance, check the network selector before you confirm.";
+const EXAMPLE_NETWORKS = ['X Layer', 'BNB Chain', 'Ethereum'];
+
+/** The example networks minus the one the user picked, so the text never calls that network unsupported. */
+export function getExampleNetworks(selected?: string): string {
+  const others = EXAMPLE_NETWORKS.filter((n) => n !== selected);
+  return others.length > 1 ? `${others.slice(0, -1).join(', ')} or ${others.at(-1)}` : others[0];
+}
+
+function getTail(selected?: string) {
+  return `Transfers on any other network (for example ${getExampleNetworks(
+    selected
+  )}) won't be credited and may not be recoverable. On exchanges like OKX or Binance, check the network selector before you confirm.`;
+}
 
 export function DepositNetworkWarning({
   code,
@@ -81,7 +96,7 @@ export function DepositNetworkWarning({
               Send only <b>{code.toUpperCase()}</b> on the network it belongs to.
             </>
           )}{' '}
-          {TAIL}
+          {getTail(resolved?.network)}
         </Text>
       </div>
     </Group>
