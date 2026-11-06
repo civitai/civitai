@@ -54,8 +54,8 @@ section that holds the detail.
 - **2026-10-30 — article writes flip before the remaining cross-surface readers move** (Briant;
   _Phase 4_). Article's writes ship first, keeping each article comment's `CommentV2` row in step
   for the readers still on the old tables. Every other surface's reads and those readers then
-  move in one flip, the old-row sync is removed, and the other surfaces' writes flip one at a time
-  without it. Comic chapters and model comments write through the same v3 path
+  move in one flip, then every other surface's writes flip at once in two releases, with the
+  old-row sync kept until Phase 6 (revised 2026-11-03, `docs/plans/comments-v3-write-flip.md`). Comic chapters and model comments write through the same v3 path
   (`docs/plans/comments-v3-article-flip.md`).
 - **2026-10-30 — v3 writes are raw SQL, not Kysely** (decision 8, amended). Porting the old writes
   to Kysely instead was rejected: the old code is deleted in Phase 6.
@@ -1327,7 +1327,8 @@ Per-surface cutover checklist additions from the residue sweep:
   caches over the metric tables and would serve stale counts for a day otherwise.
 - **image flip**: `EntityMetric` rows with `metricType='Comment'` (surfaced by the
   `EntityMetricImage` view) are written on comment create/delete — re-point that writer with the
-  image surface.
+  image surface. Done in release 1: the image entry in `commentv3/surfaces.ts` writes it on a
+  create, as v2 did (v2 writes none on a delete).
 - **comicChapter flip**: reads built 2026-11-03 (`CommentSection` on the comics page, keyed by
   `ComicChapter.id`; `ChapterComments.tsx` and `getChapterThread` removed). Its server side,
   `createChapterComment` in `comics.router.ts` (now `{ chapterId, content }`), still bypasses
@@ -1376,8 +1377,9 @@ moderator app are the two largest consumers and get their own sections below. Th
     a single `WHERE entityType='image' AND entityId=... AND userId=...` lookup (add a covering
     check that `(entityType, entityId, userId)` is answerable from the planned indexes — it is via
     the `(userId, id)` index only for small per-user sets; if slow, extend `(entityType, entityId,
-id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes** already go
-    through `upsertComment`, so dual-write covers them; `getJudgeCommentForImage` in
+id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes** go through
+    `writeJudgeComment` (`commentv3/comment-write.service.ts`), which calls `upsertComment` while
+    images write CommentV2 (dual-write covers them) and the v3 write after the flip; `getJudgeCommentForImage` in
     `commentsv2.service.ts` is the matching read; both read CommentV3 since Phase 3.
   - `src/server/jobs/job-queue.ts` — `EntityType.Comment`/`CommentV2` mappings are marked
     `// unused`; delete them in Phase 6 rather than porting.
@@ -1403,8 +1405,7 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   `CommentV3` rows since Phase 3, not `CommentTopic.commentCount`, which counts replies and
   tombstones), `src/server/services/collection.service.ts` (judged check) and
   `src/server/services/challenge.service.ts` (four counts), both on `CommentV3` the same way,
-  `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3), `src/pages/api/mod/daily-challenge/re-review.ts`,
-  and `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
+  `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3) and `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
   `CommentV3Report` arm since Phase 3).
 - Entity-label/URL maps: `src/utils/string-helpers.ts` (`commentV2`/`CommentV2` → 'Comment'
   entries), `src/pages/moderator/strikes.tsx` entity→URL map, and

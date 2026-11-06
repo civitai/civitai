@@ -22,15 +22,18 @@ export const SHELL_CDN_CACHE_CONTROL_HEADER = SHELL_EDGE_HEADERS[0];
 
 let buildId: string | undefined;
 
+/** What `shellBuildId` answers when there is no readable build id (tests, dev, a broken image). */
+export const UNKNOWN_BUILD_ID = 'unknown';
+
 /** This build's id, as Next wrote it next to the build. `unknown` when there is no build (tests, dev). */
 export function shellBuildId(): string {
   if (buildId === undefined) {
     try {
       const file = path.resolve(process.cwd(), process.env.NEXT_DIST_DIR || '.next', 'BUILD_ID');
       const value = fs.readFileSync(file, 'utf8').trim();
-      buildId = /^[\w-]+$/.test(value) ? value : 'unknown';
+      buildId = /^[\w-]+$/.test(value) ? value : UNKNOWN_BUILD_ID;
     } catch {
-      buildId = 'unknown';
+      buildId = UNKNOWN_BUILD_ID;
     }
   }
   return buildId;

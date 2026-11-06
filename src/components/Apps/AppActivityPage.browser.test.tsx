@@ -776,7 +776,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
     expect(gridText).toContain(ACTIVITY_EMPTY_LABEL);
     expect(gridText.split(ACTIVITY_EMPTY_LABEL)).toHaveLength(2);
-    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: `BlockScopeList`'s own
+    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: the generic
     // fallback tells the viewer the app requests no permissions, which is false by construction
     // for a row minted from the app's scope-gated calls.
     expect(gridText).not.toContain("doesn't request any permissions");
@@ -1160,19 +1160,17 @@ describe('Apps & permissions — each app is a collapsible row', () => {
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
     await expect.poll(() => panel.offsetHeight).toBeGreaterThan(0);
-    expect(panel.querySelector('[data-testid="block-scope-title"]')?.textContent).toBe(
+    expect(panel.querySelector('[data-testid="permission-title"]')?.textContent).toBe(
       'Run AI work with your Buzz'
     );
-    expect(panel.querySelector('[data-testid="block-scope-id"]')?.textContent).toBe(
-      'ai:write:budgeted'
-    );
+    expect(panel.textContent).not.toContain('ai:write:budgeted');
 
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(panel.offsetHeight).toBe(0);
   });
 
-  test('rows open independently, and an untitled scope falls back to its id alone', async () => {
+  test('rows open independently, and an untitled scope falls back to a humanised title', async () => {
     renderWithProviders(<AppActivityPage />);
     const toggles = page.getByTestId('apps-grant-toggle');
     await toggles.nth(0).click();
@@ -1181,10 +1179,14 @@ describe('Apps & permissions — each app is a collapsible row', () => {
     await expect.element(toggles.nth(1)).toHaveAttribute('aria-expanded', 'true');
     // Demo App's `read:profile` has no plain title; Spender's scope does.
     const titlesIn = (toggle: HTMLElement) =>
-      document
-        .getElementById(toggle.getAttribute('aria-controls') ?? 'missing')
-        ?.querySelectorAll('[data-testid="block-scope-title"]').length;
-    expect(titlesIn(toggles.nth(0).element() as HTMLElement)).toBe(0);
-    expect(titlesIn(toggles.nth(1).element() as HTMLElement)).toBe(1);
+      Array.from(
+        document
+          .getElementById(toggle.getAttribute('aria-controls') ?? 'missing')
+          ?.querySelectorAll('[data-testid="permission-title"]') ?? []
+      ).map((t) => t.textContent);
+    expect(titlesIn(toggles.nth(0).element() as HTMLElement)).toEqual(['Read profile']);
+    expect(titlesIn(toggles.nth(1).element() as HTMLElement)).toEqual([
+      'Run AI work with your Buzz',
+    ]);
   });
 });

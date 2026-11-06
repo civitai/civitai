@@ -1,5 +1,6 @@
-import { Stack } from '@mantine/core';
-import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { Stack, Text } from '@mantine/core';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
+import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { buildScopeConsentRows } from '~/components/Apps/scopeConsentRows';
 import {
   ScopeConsentAction,
@@ -102,7 +103,7 @@ export function ScopeConsentList({
    *
    * ⚠️ THE REASON FOR THAT IS NOT "no rows" ANY MORE, AND THE OLD WORDING SAID SO. With `grant`
    * undefined the union can still make `rows` non-empty — a `justRevoked` entry survives the grant
-   * going away — so there ARE rows and `renderScopeAction` IS called. The conclusion holds for a
+   * going away — so there ARE rows and `renderDetail` IS called. The conclusion holds for a
    * different reason: every row reachable in that state is hard-coded `'revoked'` by
    * `buildScopeConsentRows`' appended tail, and the `revoked` arm renders a marker and NO control, so
    * nothing can reach `requestRevoke` with the placeholder `appBlockId`. Reported by the round-5 lane.
@@ -158,30 +159,33 @@ export function ScopeConsentList({
 
   return (
     <Stack gap="xs" data-testid="scope-consent-list">
-      <BlockScopeList
-        // The ROW LIST is `buildScopeConsentRows`' output, not `grant.scopes` — a scope the viewer
-        // revoked and the publisher later dropped from the manifest is in the second and not the
-        // first. See that function's docblock: forgetting a withdrawal is the one thing this
-        // surface must never do.
-        scopes={rows.map((r) => r.scope)}
-        emptyLabel={emptyLabel}
-        consent={{
-          revokedScopes: rows.filter((r) => r.state === 'revoked').map((r) => r.scope),
-          renderScopeAction: (scope) => (
+      {rows.length === 0 ? (
+        <Text size="xs" c="dimmed" fs="italic">
+          {emptyLabel}
+        </Text>
+      ) : (
+        <ListingPermissionGroups
+          // The ROW LIST is `buildScopeConsentRows`' output, not `grant.scopes` — a scope the viewer
+          // revoked and the publisher later dropped from the manifest is in the second and not the
+          // first. See that function's docblock: forgetting a withdrawal is the one thing this
+          // surface must never do.
+          permissions={blockScopePermissions(rows.map((r) => r.scope))}
+          revokedIds={rows.filter((r) => r.state === 'revoked').map((r) => r.scope)}
+          renderDetail={(scope) => (
             <ScopeConsentAction
               scope={scope}
-              // `?? 'unknown'` can only be reached if `BlockScopeList` were handed a scope this
-              // component did not put in `rows`, which is impossible today. `unknown` is the
-              // right fallback rather than `fixed`: both withhold the control, but `fixed`
-              // ASSERTS the permission is platform-granted and unwithdrawable, and we would have
-              // no basis for saying that about a row we cannot account for. Say nothing instead.
+              // `?? 'unknown'` can only be reached for a scope this component did not put in
+              // `rows`, which is impossible today. `unknown` is the right fallback rather than
+              // `fixed`: both withhold the control, but `fixed` ASSERTS the permission is
+              // platform-granted and unwithdrawable, and we would have no basis for saying that
+              // about a row we cannot account for. Say nothing instead.
               state={stateByScope.get(scope) ?? 'unknown'}
               pendingScope={pendingScope}
               onRevoke={requestRevoke}
             />
-          ),
-        }}
-      />
+          )}
+        />
+      )}
       {/* 🔴 BEFORE the revoked-at line, deliberately: the hold governs EVERY row on the card while
           `scopesRevokedAt` is about one past action, and on a migrated database both can be true at
           once. See `ScopeGrantWithheldLine`. */}

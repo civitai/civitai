@@ -377,16 +377,12 @@ export const upsertComment = async ({
   // value can be a stale cached null.
   parentThreadId: _clientParentThreadId,
   isModerator,
-  includeHidden,
   track,
   eventPoints = true,
   ...data
 }: UpsertCommentV2Input & {
   userId: number;
   isModerator?: boolean;
-  // An edit that reaches a comment hidden for ToS (the challenge judge re-reviewing its own). Widens
-  // only the edit's target; every content and block check still runs.
-  includeHidden?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
@@ -519,8 +515,7 @@ export const upsertComment = async ({
     // and only a moderator sets the flag.
     const row = await tx.commentV2
       .update({
-        where:
-          isModerator || includeHidden ? { id: data.id } : { id: data.id, tosViolation: false },
+        where: isModerator ? { id: data.id } : { id: data.id, tosViolation: false },
         data: isModerator ? data : { ...data, tosViolation: undefined },
         select: commentV2Select,
       })

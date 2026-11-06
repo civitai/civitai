@@ -114,6 +114,9 @@ const CollectionsLayout = ({
           {({ FilterBox, Filters, ListMenu, Collections, InviteList, isLoading }) => (
             <Card
               className={classes.sidebar}
+              // The list scrolls inside the page scroll area; without this the subnav's
+              // hide-on-scroll counts it as the page scrolling and retracts the subnav.
+              data-ignore-hide-on-scroll=""
               w={300}
               mr="xs"
               p={0}
