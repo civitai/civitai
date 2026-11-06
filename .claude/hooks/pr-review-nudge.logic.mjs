@@ -116,11 +116,6 @@ export function ghPrMatch(command) {
   return null;
 }
 
-/** `'create'` or `'ready'` (`ghPrMatch`'s subcommand), else null. */
-export function ghPrSubcommand(command) {
-  return ghPrMatch(command)?.sub ?? null;
-}
-
 /**
  * Whether the create's own words ask for a draft (`-d`, `--draft`, `--draft=true`). Read from the
  * matched segment only, as whole words: gh prints its "Creating draft pull request" line only to a

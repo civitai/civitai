@@ -2,11 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
-  ghPrSubcommand,
+  ghPrMatch,
   hqSignedIn,
   nudge,
   nudgeEvent,
@@ -141,39 +140,8 @@ describe('prEvent fires nothing for anything else', () => {
   });
 });
 
-describe('ghPrSubcommand scans the command in linear time', () => {
-  const sub = ghPrSubcommand as (command: string) => string | null;
-
-  // The scanner runs on every Bash call, so a long run of flags must not make it slow. It runs in a
-  // child process with a time limit: a scanner whose cost grows exponentially with the flag count
-  // is killed and fails this assertion, instead of blocking the test worker in synchronous code
-  // that no test timeout can interrupt.
-  const SCAN_LIMIT_MS = 5_000;
-  const logic = pathToFileURL(resolve(__dirname, '../../.claude/hooks/pr-review-nudge.logic.mjs'));
-  const scanInChild = (command: string) =>
-    spawnSync(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `import { ghPrSubcommand } from ${JSON.stringify(logic.href)};
-         let s = '';
-         process.stdin.setEncoding('utf8');
-         process.stdin.on('data', (c) => { s += c; });
-         process.stdin.on('end', () => { process.stdout.write(JSON.stringify(ghPrSubcommand(s))); });`,
-      ],
-      { input: command, encoding: 'utf8', timeout: SCAN_LIMIT_MS }
-    );
-
-  it.each([
-    ['pr create after 40 flags', `gh${' --flag'.repeat(40)} pr create --fill`, 'create'],
-    ['40 flags with no pr', `gh${' --flag'.repeat(40)} x`, null],
-  ])('answers %s within the time limit', (_label, command, expected) => {
-    const r = scanInChild(command);
-    expect(r.signal, `ghPrSubcommand did not return within ${SCAN_LIMIT_MS} ms`).toBeNull();
-    expect(r.status, r.stderr).toBe(0);
-    expect(JSON.parse(r.stdout)).toBe(expected);
-  });
+describe('ghPrMatch reads the gh segment', () => {
+  const sub = (command: string) => (ghPrMatch(command) as { sub: string } | null)?.sub ?? null;
 
   it('takes a value only after a flag without =', () => {
     expect(sub('gh -R civitai/civitai pr ready 7')).toBe('ready');
@@ -421,8 +389,9 @@ describe.skipIf(process.platform === 'win32')(
       expect(r.stdout).toBe('');
     });
 
-    // The scanner runs on every Bash call, so a long run of flags must not slow the hook. The hook
-    // runs with a time limit: a scanner that is too slow gets the child killed, not the suite.
+    // The scanner runs on every Bash call, so a long run of flags must not slow the hook. These are
+    // the file's only long-input cases, and they run the hook in a child with a time limit: a
+    // scanner that is too slow gets the child killed and fails here, rather than blocking the worker.
     const HOOK_LIMIT_MS = 5_000;
     it.each([
       ['a long flag run with no pr subcommand', `gh${' --flag'.repeat(40)} x`, ''],
