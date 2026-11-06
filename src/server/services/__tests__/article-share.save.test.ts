@@ -79,6 +79,9 @@ beforeEach(() => {
     scheduledAt: null,
   } as never);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+  // Implementations outlive clearAllMocks; a case that drives the generation must not leak it.
+  dbMock.dbWrite.articleShareCheck.findUnique.mockReset();
+  dbMock.dbWrite.articleShareCheck.findUnique.mockResolvedValue(null);
 });
 
 describe('saving a draft that has an active share link', () => {
@@ -114,20 +117,42 @@ describe('saving a draft that has an active share link', () => {
     expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
   });
 
-  it('holds the share lock from reading the text until the check is recorded', async () => {
+  it('checks again when a save changed the text while the check was out', async () => {
+    checkRecord(true);
+    // Generation as each snapshot sees it: the first check's confirm finds it bumped.
+    dbMock.dbWrite.articleShareCheck.findUnique
+      .mockResolvedValueOnce({ generation: 1 } as never)
+      .mockResolvedValueOnce({ generation: 2 } as never)
+      .mockResolvedValue({ generation: 2 } as never);
+    await rewrite();
+    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbWrite.articleShareCheck.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ workflowId: 'wf' }) })
+    );
+    expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('withdraws every link when the text never holds still for a check', async () => {
+    checkRecord(true);
+    let generation = 0;
+    dbMock.dbWrite.articleShareCheck.findUnique.mockImplementation((async () => ({
+      generation: generation++,
+    })) as never);
+    await rewrite();
+    expect(vi.mocked(submitTextModerationOrScan).mock.calls.length).toBeLessThanOrEqual(3);
+    expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ resourceId: ARTICLE }) })
+    );
+  });
+
+  it('bumps the check generation in the same transaction as the new text', async () => {
     checkRecord(true);
     await rewrite();
-    const locks = dbMock.dbWrite.$executeRaw.mock.calls
-      .map(([strings, ...values], i) => ({
-        sql: Prisma.sql(strings as TemplateStringsArray, ...values).sql,
-        order: dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[i],
-      }))
-      .filter(({ sql }) => sql.includes('pg_advisory_xact_lock'));
-    const submitAt = vi.mocked(submitTextModerationOrScan).mock.invocationCallOrder[0];
-    const recordAt = dbMock.dbWrite.articleShareCheck.upsert.mock.invocationCallOrder[0];
-    // The last lock before the submit is the check's own, and the record follows the submit.
-    expect(locks.filter(({ order }) => order < submitAt).length).toBeGreaterThanOrEqual(2);
-    expect(recordAt).toBeGreaterThan(submitAt);
+    expect(dbMock.dbWrite.articleShareCheck.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: { generation: { increment: 1 }, workflowId: null, textHash: null },
+      })
+    );
   });
 
   it('keeps its verdict and links when a save leaves the text as it was', async () => {

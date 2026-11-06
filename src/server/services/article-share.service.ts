@@ -215,7 +215,7 @@ export async function getArticleByShareToken({
     ]);
     if (check?.blocked) return UNAVAILABLE;
     const current =
-      !!required &&
+      !!required?.workflowId &&
       required.textHash === sharedArticleTextHash(article) &&
       check?.workflowId === required.workflowId &&
       check.status === EntityModerationStatus.Succeeded;

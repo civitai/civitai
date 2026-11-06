@@ -2623,60 +2623,80 @@ export async function resetSharedArticleTextCheck(tx: Prisma.TransactionClient, 
     where: { entityType: 'Article', entityId: id },
     data: { status: EntityModerationStatus.Pending, workflowId: null },
   });
+  await tx.articleShareCheck.upsert({
+    where: { articleId: id },
+    create: { articleId: id, generation: 1 },
+    update: { generation: { increment: 1 }, workflowId: null, textHash: null },
+  });
 }
+
+const SHARED_CHECK_ATTEMPTS = 3;
 
 /**
  * A shared draft passes the same content checks as a published article before it can be viewed.
  * Sends the stored text for a fresh check and records that check as the one the shared read
- * requires. Holds the share lock throughout, so no save can change the text between the read,
- * the scan and the record. False when no check can be shown to have started; throws when the
- * submit does.
+ * requires, but only if no write changed the text meanwhile: every such write bumps the check's
+ * generation under the share lock, and the record is made under the same lock. A changed text is
+ * checked again. False when no check can be shown to have started; throws when the submit does.
  */
 export async function submitSharedArticleText(id: number): Promise<boolean> {
-  return dbWrite.$transaction(
-    async (tx) => {
+  const snapshot = (tx: Prisma.TransactionClient) =>
+    Promise.all([
+      tx.article.findUnique({ where: { id }, select: { title: true, content: true } }),
+      tx.articleShareCheck.findUnique({ where: { articleId: id }, select: { generation: true } }),
+    ]);
+  const underLock = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
-      const text = await tx.article.findUnique({
-        where: { id },
-        select: { title: true, content: true },
-      });
-      if (!text) return false;
-      if (!articleHasText(text.title, text.content)) return true;
+      return fn(tx);
+    });
 
-      const startedAt = new Date();
-      const workflow = await submitTextModerationOrScan({
-        entityType: 'Article',
-        entityId: id,
-        force: true,
-        xguard: () =>
-          submitTextModeration({
-            entityType: 'Article',
-            entityId: id,
-            content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
-            labels: ['nsfw'],
-            recordForReview: true,
-            forceRescan: true,
-            rearmRetries: true,
-          }),
-      });
-      const workflowId = workflow?.id;
-      const row = await dbWrite.entityModeration.findUnique({
-        where: { entityType_entityId: { entityType: 'Article', entityId: id } },
-        select: { updatedAt: true },
-      });
-      if (!workflowId || !row || row.updatedAt < startedAt) return false;
+  for (let attempt = 0; attempt < SHARED_CHECK_ATTEMPTS; attempt++) {
+    const [text, check] = await underLock(snapshot);
+    if (!text) return false;
+    if (!articleHasText(text.title, text.content)) return true;
+    const generation = check?.generation ?? 0;
 
-      const textHash = sharedArticleTextHash(text);
+    const startedAt = new Date();
+    const workflow = await submitTextModerationOrScan({
+      entityType: 'Article',
+      entityId: id,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          labels: ['nsfw'],
+          recordForReview: true,
+          forceRescan: true,
+          rearmRetries: true,
+        }),
+    });
+    const workflowId = workflow?.id;
+    const row = await dbWrite.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+      select: { updatedAt: true },
+    });
+    if (!workflowId || !row || row.updatedAt < startedAt) return false;
+
+    const recorded = await underLock(async (tx) => {
+      const [now, nowCheck] = await snapshot(tx);
+      const unchanged =
+        (nowCheck?.generation ?? 0) === generation &&
+        now?.title === text.title &&
+        now?.content === text.content;
+      if (!unchanged) return false;
       await tx.articleShareCheck.upsert({
         where: { articleId: id },
-        create: { articleId: id, workflowId, textHash },
-        update: { workflowId, textHash },
+        create: { articleId: id, generation, workflowId, textHash: sharedArticleTextHash(text) },
+        update: { workflowId, textHash: sharedArticleTextHash(text) },
       });
       return true;
-    },
-    // The scan request is made with the lock held; saves of this one article wait for it.
-    { timeout: 60_000, maxWait: 10_000 }
-  );
+    });
+    if (recorded) return true;
+  }
+  return false;
 }
 
 export function articleHasText(title: string | null, content: string | null): boolean {

@@ -5091,8 +5091,10 @@ model AccessToken {
 // a hash of that text. Written only by the share flow, under the share-token lock.
 model ArticleShareCheck {
   articleId  Int      @id
-  workflowId String
-  textHash   String
+  // Bumped by every write that changes a shared draft's text.
+  generation Int      @default(0)
+  workflowId String?
+  textHash   String?
   updatedAt  DateTime @updatedAt
 }
 

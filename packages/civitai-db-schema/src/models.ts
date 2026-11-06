@@ -2980,8 +2980,9 @@ export interface AccessToken {
 
 export interface ArticleShareCheck {
   articleId: number;
-  workflowId: string;
-  textHash: string;
+  generation: number;
+  workflowId: string | null;
+  textHash: string | null;
   updatedAt: Date;
 }
 

@@ -970,8 +970,9 @@ export type ArticleReport = {
 };
 export type ArticleShareCheck = {
   articleId: number;
-  workflowId: string;
-  textHash: string;
+  generation: Generated<number>;
+  workflowId: string | null;
+  textHash: string | null;
   updatedAt: Timestamp;
 };
 export type ArticleStat = {

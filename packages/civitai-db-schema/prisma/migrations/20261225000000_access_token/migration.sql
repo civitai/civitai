@@ -31,8 +31,9 @@ ALTER TABLE "AccessToken" ADD CONSTRAINT "AccessToken_createdById_fkey"
 
 CREATE TABLE "ArticleShareCheck" (
   "articleId" INTEGER NOT NULL,
-  "workflowId" TEXT NOT NULL,
-  "textHash" TEXT NOT NULL,
+  "generation" INTEGER NOT NULL DEFAULT 0,
+  "workflowId" TEXT,
+  "textHash" TEXT,
   "updatedAt" TIMESTAMP(3) NOT NULL,
 
   CONSTRAINT "ArticleShareCheck_pkey" PRIMARY KEY ("articleId")

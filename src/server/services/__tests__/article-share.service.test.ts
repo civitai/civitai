@@ -212,6 +212,12 @@ describe('getArticleByShareToken: the text check', () => {
     expect(await read()).toEqual({ status: 'checking' });
   });
 
+  it('waits when the recorded check was voided by a save, whatever the verdict row holds', async () => {
+    shareCheck({ workflowId: null });
+    textCheck({ workflowId: null });
+    expect(await read()).toEqual({ status: 'checking' });
+  });
+
   it('runs the share check again when another check replaced the recorded one', async () => {
     shareCheck({ workflowId: 'older' });
     expect(await read()).toEqual({ status: 'checking' });
