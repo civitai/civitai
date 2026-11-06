@@ -19,13 +19,13 @@ primary file of any model, uploaded or trained. Persisted through
 `modelFileCreateSchema`/`modelFileUpdateSchema` and exposed via `modelFileSelect`.
 
 The server rewrites every new value with `sanitizeOverrideName` (`src/utils/model-file-naming.ts`):
-one path segment, no control, quote or `%XX` characters, at most 200 UTF-8 bytes, and always the
-stored file's extension. The in-repo S3 links build their header with
-`attachmentContentDisposition` (`src/utils/content-disposition.ts`), an ASCII `filename` plus an
-RFC 5987 `filename*`.
+one path segment, no control, quote or `%XX` characters, at most 200 UTF-8 bytes, and the stored file's
+extension when that is plain alphanumerics. The in-repo S3 links and the training epoch download
+build their header with `attachmentContentDisposition` (`src/utils/content-disposition.ts`), an
+ASCII `filename` plus an RFC 5987 `filename*`.
 
 A trained file nobody named still downloads readably: `resolveModelFileName` treats the stored
-blob-id name (`<26-char id>[.<8-char token>].safetensors`, nothing looser) as generic, so a LoRA
+blob-id name (`<26-char Crockford id>[.<8-char token>].safetensors`, nothing looser) as generic, so a LoRA
 falls back to `<model>_<version>.safetensors` instead of keeping it.
 
 **Not built:** a rename input inside `TrainingSelectFile`'s epoch-publish dialog, so a creator

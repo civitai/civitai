@@ -109,11 +109,11 @@ const genericNamePatterns = [
 ];
 
 /**
- * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID), and since
- * #6243 the 8-character key token `uniqueAssetKey` adds. Deliberately this exact shape and nothing
- * looser, so no name a creator typed is ever replaced.
+ * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID, Crockford
+ * alphabet, so no I, L, O or U), and since #6243 the 8-character key token `uniqueAssetKey` adds.
+ * Deliberately this exact shape and nothing looser, so no name a creator typed is ever replaced.
  */
-const trainerBlobFileName = /^[0-9A-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
+const trainerBlobFileName = /^[0-9A-HJKMNP-TV-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
 export function isTrainerBlobFileName(fileName: string) {
   return trainerBlobFileName.test(fileName);
 }
@@ -270,9 +270,11 @@ export const MAX_OVERRIDE_NAME_BYTES = 200;
 // eslint-disable-next-line no-control-regex
 const unsafeNameChars = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
 
+/** The stored name comes from a client too, so an extension that is not plain is not kept. */
 function fileExtension(fileName: string) {
   const dot = fileName.lastIndexOf('.');
-  return dot > 0 ? fileName.slice(dot) : '';
+  const ext = dot > 0 ? fileName.slice(dot) : '';
+  return /^\.[A-Za-z0-9]{1,16}$/.test(ext) ? ext : '';
 }
 
 /**

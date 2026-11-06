@@ -457,7 +457,7 @@ describe('resolveModelFileName', () => {
         'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors.bak',
         'x40f7c8wa9tn0xw80mttct2tt0.safetensors',
         'X40F7C8WA9TN0XW80MTTCT2TT0_v2.safetensors',
-        'MYCHARACTERLORAFORFLUXDEV1.safetensors.safetensors',
+        'MYCHARACTERLORAFORFLUXDEV1.safetensors',
       ])('keeps a name that only resembles one: %s', (name) => {
         const file = { id: 1, name, type: 'Model' };
         expect(
@@ -574,6 +574,11 @@ describe('sanitizeOverrideName', () => {
     ['a bidi override', 'abc‮gpj.exe', 'abcgpj.exe.safetensors'],
   ])('neutralises %s', (_label, input, expected) => {
     expect(sanitizeOverrideName(input, stored)).toBe(expected);
+  });
+
+  it('drops an extension from a stored name that is not plain', () => {
+    expect(sanitizeOverrideName('My Bunny', 'a.safe"\r\n%0D/x')).toBe('My Bunny');
+    expect(sanitizeOverrideName('My Bunny', 'noextension')).toBe('My Bunny');
   });
 
   it('keeps non-ASCII names', () => {

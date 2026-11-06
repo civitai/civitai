@@ -100,8 +100,8 @@ describe('training epoch download filename', () => {
 
     const res = await call();
 
-    expect(res.headers['Content-Disposition']).toBe(
-      'attachment; filename="esadribicstyle_krea2_1284593_epoch_3.safetensors"'
+    expect(res.headers['Content-Disposition']).toContain(
+      'filename="esadribicstyle_krea2_1284593_epoch_3.safetensors"'
     );
   });
 
@@ -118,8 +118,8 @@ describe('training epoch download filename', () => {
 
     const res = await call();
 
-    expect(res.headers['Content-Disposition']).toBe(
-      'attachment; filename="esadribicstyle_1284593_epoch_3.safetensors"'
+    expect(res.headers['Content-Disposition']).toContain(
+      'filename="esadribicstyle_1284593_epoch_3.safetensors"'
     );
   });
 
