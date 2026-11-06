@@ -73,10 +73,12 @@ const ruleSections: { comment?: string[]; rules: string[] }[] = [
   },
   {
     // Image (and video) detail pages are `noindex` on every domain (see ImageDetail2), so a crawl
-    // of one is a server render that cannot earn a search result. The trailing slash keeps the
-    // `/images` index crawlable.
+    // of one is a server render that cannot earn a search result. Image ids are numeric, so one
+    // rule per leading digit blocks the detail pages while the `/images` index and the static
+    // files in public/images (site logo, app icons, og:images) stay fetchable. Nothing directly
+    // under public/images may start with a digit.
     comment: ['# Image detail pages — noindex on every domain, so a crawl only costs a render'],
-    rules: ['Disallow: /images/'],
+    rules: Array.from({ length: 10 }, (_, digit) => `Disallow: /images/${digit}`),
   },
 ];
 
