@@ -30,6 +30,7 @@ import {
 import { placementFreeSlotCap, placementPriceCap } from '~/shared/utils/placement';
 import type { SessionUser } from '~/types/session';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import {
   getCreatorRequirements,
   joinCreatorsProgram,
@@ -40,6 +41,13 @@ import {
 } from '../../../../apps/creator-studio/src/lib/monetization/paid-access';
 import { resolveSaleEligibility } from '../../../../apps/creator-studio/src/lib/monetization/sales';
 
+// The announcement and placement configs read their KeyValue row through Kysely; the other rows
+// (the sale limits) through Prisma. `keyValueRows` answers both from one table.
+const { kyselyKeyValue } = vi.hoisted(() => ({ kyselyKeyValue: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: kyselyKeyValue,
+}));
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
   getCreatorRequirements: vi.fn(),
@@ -78,12 +86,17 @@ const effectiveLimit = (rules: RateLimit[], period: number, user: SessionUser) =
       .map((r) => r.limit)
   );
 
-const keyValueRows = (rows: Record<string, unknown>) =>
+const keyValueRows = (rows: Record<string, unknown>) => {
   dbMock.dbRead.keyValue.findUnique.mockImplementation((async (args: { where: { key: string } }) =>
     args.where.key in rows ? { key: args.where.key, value: rows[args.where.key] } : null) as never);
+  kyselyKeyValue.mockImplementation(async (_db: unknown, key: string) =>
+    key in rows ? { key, value: rows[key] } : undefined
+  );
+};
 
 beforeEach(() => {
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
+  kyselyKeyValue.mockReset().mockResolvedValue(undefined);
 });
 
 describe('creator score unlock registry', () => {

@@ -23,6 +23,10 @@ vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   refreshSession: vi.fn(async () => undefined),
   invalidateSession: vi.fn(async () => undefined),
 }));
+// A mute calls the orchestrator to cancel the account's generations; never from a test.
+vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
+  cancelPendingWorkflows: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
   revokeCivitaiUserTokens: vi.fn(async () => true),

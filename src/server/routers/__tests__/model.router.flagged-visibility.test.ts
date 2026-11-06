@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as ModelController from '~/server/controllers/model.controller';
 import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
@@ -21,6 +22,13 @@ vi.mock('~/server/controllers/model.controller', async (importOriginal) => ({
   getModelVersionsHandler: handlers.getModelVersionsHandler,
   getModelDetailsForReviewHandler: handlers.getModelDetailsForReviewHandler,
   getAssociatedResourcesCardDataHandler: handlers.getAssociatedResourcesCardDataHandler,
+}));
+// The visibility middleware's POI/owner read is a Kysely statement (its row, against a real
+// database, is pinned in hot-reads-6.kysely-parity.test.ts).
+const { getModelPoiAndOwner } = vi.hoisted(() => ({ getModelPoiAndOwner: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getModelPoiAndOwner,
 }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),
@@ -77,7 +85,7 @@ const LOOKUPS = {
 type LookupKey = keyof typeof LOOKUPS;
 
 async function outcome(lookup: LookupKey, viewer: ViewerKey, poi: boolean) {
-  dbMock.dbRead.model.findUnique.mockResolvedValue({ poi, userId: OWNER });
+  getModelPoiAndOwner.mockResolvedValue({ poi, userId: OWNER });
   return LOOKUPS[lookup](caller(viewer)).then(
     () => 'served',
     (e: { code?: string }) => {

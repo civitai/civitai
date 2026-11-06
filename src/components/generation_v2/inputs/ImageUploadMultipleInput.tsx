@@ -17,8 +17,9 @@
 
 import { useMemo, useRef } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
-import { Badge, Input, Text, Tooltip } from '@mantine/core';
+import { Badge, Input, Text } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPhoto } from '@tabler/icons-react';
 import { COARSE_POINTER_QUERY } from '~/utils/phone-layout';
 import clsx from 'clsx';

@@ -1,4 +1,5 @@
-import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon, Box } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconDotsVertical,

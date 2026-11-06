@@ -5,7 +5,8 @@
  * category.
  */
 
-import { Badge, Group, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
+import { Badge, Group, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowLeft,
   IconCheck,

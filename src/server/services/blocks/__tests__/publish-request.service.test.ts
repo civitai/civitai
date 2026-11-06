@@ -14,6 +14,17 @@ import {
   MAX_FILE_SIZE_BYTES,
   MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 // submitVersion dynamically imports these; mock them so the sensitive-scope
 // gate can be exercised end-to-end without a real DB / MinIO / Forgejo. The
@@ -39,13 +50,19 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
-    appListing: { findFirst: dbMocks.appListingFindFirst },
+    appListing: { findFirst: dbMocks.appListingFindFirst, findUnique: async () => null },
     appListingPublishRequest: { findFirst: dbMocks.listingReqFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {
-    appBlockPublishRequest: { create: dbMocks.createPublishRequest },
+    appBlockPublishRequest: {
+      create: dbMocks.createPublishRequest,
+      // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+      findMany: async () => [],
+    },
     appListing: { create: dbMocks.appListingCreate },
+    // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+    appBlock: { findFirst: async () => null },
   },
 }));
 

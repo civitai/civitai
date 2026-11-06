@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as StorylineService from '~/server/services/storyline.service';
 import type * as StorylineReaderLevel from '~/server/utils/storyline-reader-level';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -20,6 +21,13 @@ const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate } 
 );
 
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
+// An image's two reads, through Kysely: an image in no post (so no access check), whose owner row
+// is not found (so no tracker row).
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImagePostId: vi.fn(async () => ({ postId: null })),
+  getImageNsfwLevelAndOwner: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ storylines: true }),
@@ -280,8 +288,8 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
     takenDownAt,
   });
   beforeEach(() => {
-    // Serves both lookups on the comment: not detached, and in crucible 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, crucibleId: 17 }] as never);
+    // The comment is in crucible 17's thread.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ crucibleId: 17 }] as never);
   });
 
   it('is refused once the crucible is taken down', async () => {
@@ -322,8 +330,8 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
 describe('toggleReactionHandler — a comment on a storyline', () => {
   beforeEach(() => {
-    // Serves both lookups on the comment: not detached, and in storyline 17's thread.
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, storylineId: 17 }] as never);
+    // The comment is in storyline 17's thread.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ storylineId: 17 }] as never);
   });
 
   it('is refused once the storyline is taken down', async () => {

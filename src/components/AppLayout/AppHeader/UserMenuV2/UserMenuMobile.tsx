@@ -15,7 +15,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button, Divider, Popover, Text, UnstyledButton } from '@mantine/core';
+import { Button, Divider, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import {
   IconArrowsSort,
   IconCheck,

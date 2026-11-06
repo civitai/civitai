@@ -1,9 +1,17 @@
-import { Fragment } from 'react';
-import { Card, Divider, Group, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
-import { IconAlertTriangle, IconCheck, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
+import { Fragment, useId, type ReactNode } from 'react';
+import { Card, Divider, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconInfoCircle,
+  IconPointFilled,
+  IconShieldCheck,
+} from '@tabler/icons-react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
   groupListingPermissions,
+  PERMISSION_GROUP_LABELS,
   type ListingPermission,
 } from '~/components/Apps/listingPermissions';
 
@@ -38,7 +46,6 @@ export function ListingPermissionsDisclosure({
   testId: string;
 }) {
   if (permissions.length === 0) return null;
-  const { sensitive, other } = groupListingPermissions(permissions);
 
   return (
     <Card withBorder data-testid={testId}>
@@ -53,60 +60,140 @@ export function ListingPermissionsDisclosure({
           </Tooltip>
         )}
       </Group>
-      <Stack gap="md">
-        {sensitive.length > 0 && (
-          <Stack gap="sm" data-testid="listing-permissions-sensitive-group">
-            <Group gap={6} wrap="nowrap">
-              <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
-              <Text size="sm" fw={600} c="orange">
-                Sensitive permissions ({sensitive.length})
-              </Text>
-            </Group>
-            {sensitive.map((p, i) => (
-              <Fragment key={p.id}>
-                {i > 0 && <Divider />}
-                <PermissionRow permission={p} />
-              </Fragment>
-            ))}
-          </Stack>
-        )}
-        {other.length > 0 && (
-          <Stack gap="sm" data-testid="listing-permissions-other-group">
-            {/* Only named when there is a sensitive group to tell it apart from. */}
-            {sensitive.length > 0 && (
-              <Text size="sm" fw={600}>
-                Other permissions ({other.length})
-              </Text>
-            )}
-            {other.map((p, i) => (
-              <Fragment key={p.id}>
-                {i > 0 && <Divider />}
-                <PermissionRow permission={p} />
-              </Fragment>
-            ))}
-          </Stack>
-        )}
-      </Stack>
+      <ListingPermissionGroups permissions={permissions} />
     </Card>
   );
 }
 
-function PermissionRow({ permission }: { permission: ListingPermission }) {
+/**
+ * `check` marks a permission the app HAS (store listing, settings, grants). `neutral` is for a
+ * prompt asking for permissions not yet given, where a green check would read as "already allowed".
+ */
+export type PermissionRowMarker = 'check' | 'neutral';
+
+/**
+ * The grouped rows alone, for an end-user surface with its own heading: the launch consent
+ * prompt, the app details modal, the install/manage settings modal, and the grant-management
+ * list in the permissions drawer and /apps/activity. `renderDetail` adds a caller's per-permission
+ * content (a revoke control, a consent note) under a row, keyed by the permission's id.
+ */
+export function ListingPermissionGroups({
+  permissions,
+  renderDetail,
+  revokedIds,
+  marker = 'check',
+}: {
+  permissions: ListingPermission[];
+  renderDetail?: (id: string) => ReactNode;
+  /** Permissions the viewer withdrew: struck through and greyed, never dropped. */
+  revokedIds?: string[];
+  marker?: PermissionRowMarker;
+}) {
+  const groupId = useId();
+  const { sensitive, other } = groupListingPermissions(permissions);
+  const labelled = sensitive.length > 0 && other.length > 0;
+  return (
+    <Stack gap="md">
+      {sensitive.length > 0 && (
+        <Stack
+          gap="sm"
+          data-testid="listing-permissions-sensitive-group"
+          role={labelled ? 'group' : undefined}
+          aria-labelledby={labelled ? `${groupId}-sensitive` : undefined}
+        >
+          <Group gap={6} wrap="nowrap">
+            <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
+            <Text id={`${groupId}-sensitive`} size="sm" fw={600} c="orange">
+              {PERMISSION_GROUP_LABELS.sensitive} ({sensitive.length})
+            </Text>
+          </Group>
+          {sensitive.map((p, i) => (
+            <Fragment key={p.id}>
+              {i > 0 && <Divider />}
+              <PermissionRow
+                permission={p}
+                extra={renderDetail?.(p.id)}
+                revoked={revokedIds?.includes(p.id)}
+                marker={marker}
+              />
+            </Fragment>
+          ))}
+        </Stack>
+      )}
+      {other.length > 0 && (
+        <Stack
+          gap="sm"
+          data-testid="listing-permissions-other-group"
+          role={labelled ? 'group' : undefined}
+          aria-labelledby={labelled ? `${groupId}-other` : undefined}
+        >
+          {/* Only named when there is a sensitive group to tell it apart from. */}
+          {labelled && (
+            <Text id={`${groupId}-other`} size="sm" fw={600}>
+              {PERMISSION_GROUP_LABELS.other} ({other.length})
+            </Text>
+          )}
+          {other.map((p, i) => (
+            <Fragment key={p.id}>
+              {i > 0 && <Divider />}
+              <PermissionRow
+                permission={p}
+                extra={renderDetail?.(p.id)}
+                revoked={revokedIds?.includes(p.id)}
+                marker={marker}
+              />
+            </Fragment>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+function PermissionRow({
+  permission,
+  extra,
+  revoked = false,
+  marker,
+}: {
+  permission: ListingPermission;
+  extra?: ReactNode;
+  revoked?: boolean;
+  marker: PermissionRowMarker;
+}) {
   const { id, title, detail, sensitive } = permission;
   return (
-    <Group gap="sm" wrap="nowrap" align="flex-start" data-permission-row={id}>
+    <Group
+      gap="sm"
+      wrap="nowrap"
+      align="flex-start"
+      data-permission-row={id}
+      data-revoked={revoked ? 'true' : undefined}
+    >
       <ThemeIcon
         variant="light"
-        color={sensitive ? 'orange' : 'green'}
+        color={revoked ? 'gray' : sensitive ? 'orange' : marker === 'check' ? 'green' : 'gray'}
         size="sm"
         radius="xl"
         mt={2}
       >
-        {sensitive ? <IconAlertTriangle size={12} /> : <IconCheck size={12} />}
+        {sensitive ? (
+          <IconAlertTriangle size={12} />
+        ) : marker === 'check' ? (
+          <IconCheck size={12} />
+        ) : (
+          <IconPointFilled size={12} />
+        )}
       </ThemeIcon>
       <Stack gap={2} style={{ minWidth: 0 }}>
         <Group gap="xs" wrap="wrap">
-          <Text size="sm" fw={500}>
+          <Text
+            size="sm"
+            fw={500}
+            td={revoked ? 'line-through' : undefined}
+            data-testid="permission-title"
+            c={revoked ? 'dimmed' : undefined}
+          >
             {title}
           </Text>
           {sensitive && <SensitiveScopeBadge size="sm" />}
@@ -116,6 +203,7 @@ function PermissionRow({ permission }: { permission: ListingPermission }) {
             {detail}
           </Text>
         )}
+        {extra}
       </Stack>
     </Group>
   );

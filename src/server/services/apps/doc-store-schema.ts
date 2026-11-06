@@ -19,9 +19,12 @@ import type {
   AppStorageCollectionSchema,
   AppStorageSchemaType,
 } from '~/shared/constants/block-storage.constants';
-import { APP_STORAGE_SCHEMA_PATTERN_FLAGS } from '~/shared/constants/block-storage.constants';
+import {
+  APP_STORAGE_SCHEMA_PATTERN_FLAGS,
+  escapeJsonPointerSegment as escapePointer,
+} from '~/shared/constants/block-storage.constants';
 
-type Failure = { pointer: string; keyword: string; reason: string };
+export type Failure = { pointer: string; keyword: string; reason: string };
 type Check = (value: unknown, pointer: string) => Failure | null;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -49,7 +52,7 @@ function hasType(t: AppStorageSchemaType, v: unknown): boolean {
 }
 
 /** Equality of two JSON values (own keys only, any key order). */
-function jsonEqual(a: unknown, b: unknown): boolean {
+export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (Array.isArray(a)) {
     return Array.isArray(b) && a.length === b.length && a.every((x, i) => jsonEqual(x, b[i]));
@@ -64,7 +67,6 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-const escapePointer = (key: string) => key.replace(/~/g, '~0').replace(/\//g, '~1');
 /** Length in code points, as JSON Schema counts it (a UTF-16 surrogate pair is one). */
 const codePoints = (s: string) => Array.from(s).length;
 const byUtf16 = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -229,6 +231,18 @@ function compiledFor(appId: string, collection: string, schema: AppStorageCollec
   }
   compiled.set(key, check);
   return check;
+}
+
+/**
+ * The first failure of `value` against `schema`, or null when it matches — the same evaluator
+ * as {@link validateDocAgainstCollectionSchema}, uncached. For checks made once per submit
+ * (a migration `default` value against the new schema), never per write.
+ */
+export function firstSchemaFailure(
+  schema: AppStorageCollectionSchema,
+  value: unknown
+): Failure | null {
+  return compile(schema)(value, '');
 }
 
 /** Longest pointer quoted in a message; `details.pointer` always carries the whole one. */

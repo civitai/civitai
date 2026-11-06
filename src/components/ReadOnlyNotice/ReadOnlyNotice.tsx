@@ -1,4 +1,5 @@
-import { Button, Popover, Text } from '@mantine/core';
+import { Button, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { IconWorldExclamation } from '@tabler/icons-react';
 

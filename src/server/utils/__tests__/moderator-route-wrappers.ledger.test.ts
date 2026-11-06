@@ -23,9 +23,7 @@ const WEBHOOK_ROUTES = [
   'adjust-tag-level',
   'ban-user',
   'custom-challenge',
-  'daily-challenge/backfill-theme-elements',
   'daily-challenge/cycle',
-  'daily-challenge/re-review',
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
@@ -525,6 +523,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'testing/model3d-seed',
   'user/orchestrator-key',
   'v1/block-tokens/index',
+  // A creator's own engagement counts and tipped Buzz: no read scope maps to them yet.
+  'v1/creator/engagement',
 ];
 
 describe('routes under src/pages/api outside the moderator wrappers', () => {

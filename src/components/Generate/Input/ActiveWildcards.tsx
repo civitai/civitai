@@ -1,4 +1,5 @@
-import { Loader, Text, Tooltip } from '@mantine/core';
+import { Loader, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconPackage, IconPlus, IconUser, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';

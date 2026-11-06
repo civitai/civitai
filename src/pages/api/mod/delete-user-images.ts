@@ -5,7 +5,6 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
@@ -56,8 +55,7 @@ export default ModEndpoint(
           WITH doomed AS (
             SELECT id FROM "Post"
             WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
-          ),
-          ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
+          )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       }

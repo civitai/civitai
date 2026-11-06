@@ -13,6 +13,11 @@ const h = vi.hoisted(() => ({
   // Every mounted provider's push handler: one per simulated viewer.
   viewers: new Set<(raw: unknown) => void>(),
   utils: undefined as unknown,
+  user: { id: 1 } as { id: number } | null,
+  stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
+  // A cached stock answer survives a disabled query (react-query keeps data), so the gate must not
+  // trust it alone: rows set this to answer even when the provider disables the read.
+  stockIgnoresEnabled: false,
 }));
 h.utils = { hatTurf: { getStickersForImages: { fetch: h.fetch } } };
 
@@ -25,6 +30,7 @@ const summary = (leader: string, hatted = false) => ({
 });
 
 vi.mock('~/components/HatTurf/useHatTurfFeed', () => ({ useHatTurfFeed: () => h.gate }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => h.user }));
 vi.mock('~/components/Signals/SignalsProvider', () => ({
   useSignalTopic: () => undefined,
   useSignalConnection: (_message: string, cb: (raw: unknown) => void) => {
@@ -37,7 +43,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof Trpc>()),
     trpc: makeTrpcProxy(
-      { 'hatTurf.watch': { useMutation: () => ({ mutate: h.mark }) } },
+      {
+        'hatTurf.watch': { useMutation: () => ({ mutate: h.mark }) },
+        'hatTurf.getStock': {
+          useQuery: (_input: unknown, opts: { enabled?: boolean }) => ({
+            data: opts.enabled === false && !h.stockIgnoresEnabled ? undefined : h.stock,
+          }),
+        },
+      },
       {
         // Answer each chunk's query by the procedure and input the provider asked for.
         useQueries: (build: (t: unknown) => { proc: string; input: any }[]) => {
@@ -67,6 +80,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                         .map((id: number) => [id, summary('blue', id === 1)])
                     ),
                     open: Object.fromEntries(input.imageIds.map((id: number) => [id, id !== 4])),
+                    hidden: input.imageIds.includes(6) ? { 6: true } : {},
                   }
                 : Object.fromEntries(
                     input.imageIds.map((id: number) => [
@@ -116,6 +130,9 @@ const mount = (imageIds: number[]) =>
 
 beforeEach(() => {
   h.gate = { event: 'birthday2026', arm: 'control' };
+  h.user = { id: 1 };
+  h.stock = { available: 3, optedIn: true };
+  h.stockIgnoresEnabled = false;
   h.asked = [];
   h.mark.mockClear();
   h.fetch.mockClear();
@@ -156,6 +173,37 @@ describe('TurfSummaryProvider', () => {
     expect(latest).toBeNull();
   });
 
+  // Only a viewer who joined Hat Turf sees turf. The
+  // others keep the context (the join invite needs it) but get no hats, counts or pushes. The joined
+  // row is the positive control for the rest.
+  test.each([
+    { who: 'joined', user: { id: 1 }, stock: { available: 3, optedIn: true }, joined: true },
+    { who: 'not joined', user: { id: 1 }, stock: { available: 3, optedIn: false }, joined: false },
+    { who: 'stock not loaded', user: { id: 1 }, stock: undefined, joined: false },
+    // Stock that says joined, served even though the read is disabled: only the signed-in check can
+    // keep turf hidden here.
+    {
+      who: 'signed out',
+      user: null,
+      stock: { available: 3, optedIn: true },
+      joined: false,
+      cached: true,
+    },
+  ])('$who: hats, counts and pushes only when joined', async ({ user, stock, joined, ...row }) => {
+    h.user = user;
+    h.stock = stock;
+    h.stockIgnoresEnabled = 'cached' in row;
+    await mount([1, 3]);
+    await vi.waitFor(() => expect(latest).not.toBeNull());
+    const procs = new Set(h.asked.map((a) => a.proc));
+    expect(procs.has('getSummaries')).toBe(true);
+    expect(procs.has('getStickersForImages')).toBe(joined);
+    expect(Object.keys(latest!.images).length).toBe(joined ? 2 : 0);
+    expect(Object.keys(latest!.stickers).length).toBe(joined ? 2 : 0);
+    expect(h.viewers.size).toBe(joined ? 1 : 0);
+    expect(latest!.joined).toBe(joined);
+  });
+
   test('a push replaces the image’s counts, keeps hatted, and reads its hats back once', async () => {
     await mount([1, 3]);
     expect(latest!.images[1].hatted).toBe(true);
@@ -175,6 +223,23 @@ describe('TurfSummaryProvider', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(h.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('a contest entry (hidden) keeps no hats and no counts, even from a push', async () => {
+    await mount([5, 6]);
+    await vi.waitFor(() => expect(latest!.stickers[5]).toBeDefined());
+    expect(latest!.hidden).toEqual({ 6: true });
+    expect(latest!.stickers[6]).toBeUndefined();
+    const counts = {
+      shown: { pink: 5 },
+      counted: { pink: 5 },
+      leader: 'pink',
+      leaderCosmeticId: 12,
+    };
+    act(() => h.push!({ event: 'birthday2026', imageId: 6, counts }));
+    act(() => h.push!({ event: 'birthday2026', imageId: 5, counts }));
+    await vi.waitFor(() => expect(latest!.images[5].leader).toBe('pink'));
+    expect(latest!.images[6]).toBeUndefined();
   });
 
   test('loading another page does not wipe the pushes already applied to the first', async () => {
@@ -214,6 +279,24 @@ describe('TurfSummaryProvider', () => {
     const last = h.mark.mock.calls.slice(-3).map(([arg]) => arg.imageIds.length);
     expect(last).toEqual([50, 50, 20]);
     stops.forEach((stop) => stop());
+  });
+
+  test('cards mounting over a scroll burst are marked in one request', async () => {
+    vi.useFakeTimers();
+    try {
+      await mount([1]);
+      const stops: (() => void)[] = [];
+      for (const id of [11, 12, 13, 14, 15]) {
+        stops.push(latest!.watch(id));
+        await vi.advanceTimersByTimeAsync(20);
+      }
+      expect(h.mark).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(h.mark.mock.calls.map(([arg]) => arg.imageIds)).toEqual([[11, 12, 13, 14, 15]]);
+      stops.forEach((stop) => stop());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

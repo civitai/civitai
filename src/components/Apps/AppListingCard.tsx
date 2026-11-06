@@ -10,12 +10,12 @@ import {
   Image,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
@@ -38,13 +38,19 @@ import {
   LISTING_CARD_TITLE_LINE_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
+import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import dayjs from '~/shared/utils/dayjs';
+import {
+  isMarketplaceCategory,
+  marketplaceCategoryLabel,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import {
   appInitial,
   listingPlaceholderGradient,
@@ -57,7 +63,8 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * Renders one `ListingCard` (from `appListings.listAvailable`) as card A: a cover with
  * the `⋮` menu over its top-right; a header row of the app icon (straddling the cover's
  * bottom edge), a one-line title and the kind-aware CTA (Open / View details / Visit ↗),
- * the title and CTA centred on the icon's centre; badges and the tagline; and, under a
+ * the title and CTA centred on the icon's centre; a meta line (category, linked to the store
+ * filtered by it, and "Updated <relative date>"); badges and the tagline; and, under a
  * divider, a footer with the recommend rollup and play count on the left and the creator on
  * the right. The whole card is one click target: the title link is stretched over it
  * (`after:inset-0`) and every other control sits above that layer (`relative z-10`).
@@ -210,6 +217,22 @@ export function ListingCover({
   );
 }
 
+const noopSubscribe = () => () => undefined;
+
+/**
+ * `false` on the server AND during hydration, `true` once rendered on the client. A relative
+ * date ("3 days ago") depends on the clock, so rendering it before then would make the server
+ * HTML and the first client paint disagree. Not `useIsClient`: that needs a provider some
+ * surfaces that render this card do not mount.
+ */
+function useRenderedOnClient() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false
+  );
+}
+
 export interface AppListingCardProps {
   card: ListingCard;
   /**
@@ -248,6 +271,9 @@ export function AppListingCard({
   coverBadge,
 }: AppListingCardProps) {
   const currentUser = useCurrentUser();
+  // The relative date is client-only, so the whole "Updated …" part waits for the client:
+  // no "Updated" with a hole in it, and the server and first client paint stay identical.
+  const isClient = useRenderedOnClient();
   const cta = getListingCta(card, { canOpenPage });
   // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
   // second inline copy. #3539 already gave each CTA its own icon; what was still
@@ -291,6 +317,12 @@ export function AppListingCard({
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
   const visibilityBadge = visibilityBadgeFor(card.restrictedAudience);
+  // META LINE. The category's display label (never the stored key), linked to the store
+  // filtered by it when the store can filter by that value — not in `preview`, where a link
+  // would take the moderator away from the review (the detail rail's rule).
+  const categoryLabel = card.category ? marketplaceCategoryLabel(card.category) : null;
+  const categoryHref = preview ? null : appsStoreCategoryHref(card.category);
+  const showUpdated = isClient && !!card.updatedAt;
 
   // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
   // load-bearing. Measured against a `/models` card in the same session (dark),
@@ -475,11 +507,47 @@ export function AppListingCard({
           )}
         </Group>
 
+        {/* META LINE — category · "Updated 3 days ago". ALWAYS rendered and ONE line
+            (`truncate`), so `AppListingCardSkeleton` reserves it unconditionally: without a
+            category it also holds a zero-width space, so it never collapses to no line.
+            The category link sits above the stretched title link (`relative z-10`) so it
+            is the one that receives the click. */}
+        <Text size="xs" c="dimmed" truncate data-testid="apps-listing-card-meta">
+          {categoryLabel &&
+            (categoryHref ? (
+              <Anchor
+                component={Link}
+                href={categoryHref}
+                inherit
+                c="dimmed"
+                underline="hover"
+                className="relative z-10"
+                data-testid="apps-listing-card-category"
+              >
+                {categoryLabel}
+              </Anchor>
+            ) : (
+              <span data-testid="apps-listing-card-category">{categoryLabel}</span>
+            ))}
+          {categoryLabel && showUpdated && ' · '}
+          {showUpdated && card.updatedAt && (
+            <span data-testid="apps-listing-card-updated">
+              Updated{' '}
+              <time dateTime={card.updatedAt} title={dayjs(card.updatedAt).format()}>
+                {dayjs(card.updatedAt).fromNow()}
+              </time>
+            </span>
+          )}
+          {/* A zero-width space keeps the line box when there is nothing else to show yet
+              (no category; the date waits for the client), so the line never collapses. */}
+          {!categoryLabel && '\u200B'}
+        </Text>
+
         {/* ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES TRUNCATE — it never
             grows a second line. "Beta" never shrinks (short, and the whole signal); the long
             badges shrink (`flexShrink: 1` + `minWidth: 0`), and their Tooltip carries the full
             text. Rendered only when at least one badge is. */}
-        {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
+        {(card.isOfficial || card.isBeta || showOwnerIncomplete || visibilityBadge) && (
           <Group
             gap={4}
             wrap="nowrap"
@@ -489,6 +557,8 @@ export function AppListingCard({
             {/* AUTHOR-DECLARED beta label: PUBLIC (the `Incomplete` badge is owner-only), and no
                 tooltip because the card DTO carries no `betaMessage`. `card.isBeta` is `false`
                 both for "not in beta" and while the manual-apply migration is outstanding. */}
+            {/* MODERATOR-SET provenance marker ("made by Civitai"); never author-controlled. */}
+            {card.isOfficial && <AppListingOfficialBadge size="xs" />}
             {card.isBeta && (
               <Badge
                 color="violet"

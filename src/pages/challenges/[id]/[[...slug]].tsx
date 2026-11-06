@@ -12,19 +12,17 @@ import {
   Indicator,
   Loader,
   type MantineSize,
-  Menu,
   ScrollArea,
   Spoiler,
   Stack,
   Text,
-  Popover,
   Progress,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
@@ -760,7 +758,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <article>
                 <Stack gap={4}>
                   {challenge.description ? (
-                    <RenderHtml html={challenge.description} />
+                    <RenderHtml html={challenge.description} withMentions />
                   ) : (
                     <Text c="dimmed">No description provided.</Text>
                   )}
@@ -1819,6 +1817,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 disableStoreFilters
                 judgeInfo={judgeInfo}
                 judgingCategories={challenge.judgingCategories}
+                hideHatTurf
               />
             )}
           </Stack>

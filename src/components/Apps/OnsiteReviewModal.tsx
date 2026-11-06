@@ -15,8 +15,8 @@ import {
   Switch,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
@@ -37,6 +37,7 @@ import {
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+import { groupBlockScopes, PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import type { ReviewSubmitterChip, ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 import {
@@ -1520,11 +1521,8 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
     !Array.isArray(manifest.scopeJustifications)
       ? (manifest.scopeJustifications as Record<string, unknown>)
       : {};
-  // Split the declared scopes into a SENSITIVE group (elevated-risk — rendered
-  // first with warning emphasis) and the normal group. Each group keeps the
-  // existing "(N)" count semantics for its own members.
-  const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
-  const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
+  // Same groups and order as the store listing the viewer will see.
+  const { sensitive: sensitiveScopes, other: normalScopes } = groupBlockScopes(scopes);
   return (
     <Card withBorder p="sm" data-testid="apps-review-permissions">
       <Stack gap="xs">
@@ -1557,7 +1555,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 <Group gap={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitiveScopes.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitiveScopes.length})
                   </Text>
                   <Tooltip
                     multiline
@@ -1577,7 +1575,7 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
             <Group gap={6}>
               <IconKey size={14} />
               <Text size="sm" fw={600}>
-                Permissions ({normalScopes.length})
+                {PERMISSION_GROUP_LABELS.other} ({normalScopes.length})
               </Text>
               <Tooltip
                 multiline

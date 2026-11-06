@@ -1,5 +1,6 @@
 import type { ActionIconProps, PopoverProps } from '@mantine/core';
-import { ActionIcon, HoverCard, Popover as MantinePopover, Text } from '@mantine/core';
+import { ActionIcon, Text } from '@mantine/core';
+import { HoverCard, Popover as MantinePopover } from '~/components/MantineOverlays';
 import type { Icon, IconProps } from '@tabler/icons-react';
 import { IconInfoCircle } from '@tabler/icons-react';
 import clsx from 'clsx';

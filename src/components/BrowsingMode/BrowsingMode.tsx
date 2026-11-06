@@ -1,14 +1,5 @@
-import {
-  Group,
-  Text,
-  Stack,
-  Popover,
-  Checkbox,
-  Button,
-  Tooltip,
-  Anchor,
-  Indicator,
-} from '@mantine/core';
+import { Group, Text, Stack, Checkbox, Button, Anchor, Indicator } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';

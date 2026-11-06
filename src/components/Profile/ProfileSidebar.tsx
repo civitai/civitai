@@ -5,13 +5,13 @@ import {
   Button,
   Divider,
   Group,
-  Popover,
   Stack,
   Text,
   Badge,
   UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,

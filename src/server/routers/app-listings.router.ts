@@ -1,4 +1,6 @@
 import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
+import { APP_DEVELOPER_TERMS_VERSION } from '~/shared/constants/app-developer-terms.constants';
 
 import {
   addListingScreenshotSchema,
@@ -19,6 +21,7 @@ import {
   listAllListingsForModerationSchema,
   listAppListingsSchema,
   listListingForksSchema,
+  myAppsHideInputSchema,
   startForkSchema,
   type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
@@ -63,6 +66,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -106,6 +110,7 @@ import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-sc
 
 /** Moderator authority on the listing editor needs a session or full-access key, never an app-scoped token. */
 const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+const listingEditorUser = (ctx: Context) => ({ ...ctx.user!, isModerator: actsAsModerator(ctx) });
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
@@ -214,16 +219,11 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
  *      `getMyListingForEdit`, `getMyListingForApp`, `beginListingRevision`,
  *      `submitListingRevision`, `updateListing`, `updateRevisionDraft`.
  *
- * For a caller who IS a moderator, the shape-1 members are cross-listing, so this meta
- * lets a THIRD-PARTY APP the moderator authorised with `AppBlocksSubmit` inherit that
- * reach — where an un-annotated proc would have 403'd it. That is delegated moderator
- * authority rather than widened authority, and it is the accepted cost of admitting the
- * CLI on the media procs; it is written down rather than left to be discovered.
+ * Moderator authority on the shape-1 members needs a session or a full-access personal key
+ * (`listingEditorUser`, the same rule as the details procs); any other token acts as its user.
  *
- * 🔴 IT IS ALSO WHY `getAssets` IS **NOT** IN THIS SET. It was annotated during the
- * `civitai app doctor` work and the annotation was withdrawn as a product decision: it is
- * shape 1, and it is a pure READ whose whole payload was already reachable from procs
- * already in this set, so it carried the bypass and bought nothing. New annotations are
+ * `getAssets` is NOT in this set: it is a pure READ whose whole payload is already reachable
+ * from procs in this set, so annotating it buys nothing. New annotations are
  * decided on that basis — what the proc ADDS, weighed against which gate it sits behind —
  * never by copying a sibling's `.meta(...)`.
  */
@@ -512,17 +512,11 @@ export const appListingsRouter = router({
   /**
    * Owner/mod read of a listing's current assets (creator dashboard).
    *
-   * 🔴 DELIBERATELY **NOT** `listingMediaCliScope`, and this is the note that keeps it
-   * that way. It was annotated during the `civitai app doctor` work and the annotation
-   * was then withdrawn as a product decision: its service gate
-   * ({@link loadOwnedListing}) SHORT-CIRCUITS for moderators, so admitting a scoped OAuth
-   * token here would let a third-party app a moderator authorised inherit that
-   * cross-listing reach. `app doctor` does not need it — every datum it wanted is already
-   * on annotated procs (`listMine.problems[]` for the advisory + `hasBlockedAsset` /
-   * `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
+   * Deliberately NOT `listingMediaCliScope`: `app doctor` does not need it — every datum it
+   * wanted is already on annotated procs (`listMine.problems[]` for the advisory +
+   * `hasBlockedAsset` / `hasPendingScan` / completeness equivalents; `getMyListingForEdit` /
    * `getMyListingForApp` for per-screenshot `{id, imageId, order, caption}`;
-   * `getAssetScanStatuses` for per-image scan state). Re-annotating this proc needs the
-   * mod-bypass question answered first, not a copy of a sibling's `.meta(...)`.
+   * `getAssetScanStatuses` for per-image scan state).
    *
    * `app-listings.router.cli-scope.test.ts` asserts a scoped OAuth token is REFUSED here,
    * so the exclusion is behaviourally pinned rather than left to this comment.
@@ -534,7 +528,7 @@ export const appListingsRouter = router({
       const { getListingAssets } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return getListingAssets({ listingId: input.listingId }, ctx.user);
+      return getListingAssets({ listingId: input.listingId }, listingEditorUser(ctx));
     }),
 
   /**
@@ -562,7 +556,8 @@ export const appListingsRouter = router({
    * Poll the scan status of freshly-attached asset images. The listing-media step
    * attaches an in-flight image IMMEDIATELY (the server stores the pending id), then
    * polls THIS to flip a per-asset "Scanning…" badge to "Scanned" / "Blocked". Owner-
-   * scoped in the service (mods read any; a not-owned id is silently omitted).
+   * scoped in the service (a moderator acting as one reads any; a not-owned id is silently
+   * omitted).
    */
   getAssetScanStatuses: protectedProcedure
     .meta(listingMediaCliScope)
@@ -572,7 +567,7 @@ export const appListingsRouter = router({
       const { getAssetScanStatuses } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
-      return getAssetScanStatuses(input.imageIds, ctx.user);
+      return getAssetScanStatuses(input.imageIds, listingEditorUser(ctx));
     }),
 
   // -------------------------------------------------------------------------
@@ -598,7 +593,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await setListingIcon(input, ctx.user);
+        return await setListingIcon(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -613,7 +608,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await setListingCover(input, ctx.user);
+        return await setListingCover(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -641,7 +636,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await setListingRedMedia(input, ctx.user);
+        return await setListingRedMedia(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -656,7 +651,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await addListingScreenshot(input, ctx.user);
+        return await addListingScreenshot(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -671,7 +666,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await reorderListingScreenshots(input, ctx.user);
+        return await reorderListingScreenshots(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -693,7 +688,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await updateListingScreenshotCaption(input, ctx.user);
+        return await updateListingScreenshotCaption(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -713,7 +708,7 @@ export const appListingsRouter = router({
         '~/server/services/blocks/app-listing-assets.service'
       );
       try {
-        return await removeListingScreenshot(input, ctx.user);
+        return await removeListingScreenshot(input, listingEditorUser(ctx));
       } catch (err) {
         throw mapOffsiteError(err);
       }
@@ -781,7 +776,7 @@ export const appListingsRouter = router({
       return submitExternalListing({
         input,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
+        isModerator: actsAsModerator(ctx),
       });
     }),
 
@@ -1212,6 +1207,36 @@ export const appListingsRouter = router({
         '~/server/services/blocks/listing-meta.service'
       );
       return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
+    }),
+
+  getDeveloperTermsStatus: appDeveloperProcedure.query(async ({ ctx }) => {
+    const { getAppDeveloperTermsStatus } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getAppDeveloperTermsStatus(ctx.user.id);
+  }),
+
+  getDeveloperRateCard: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.features?.appDeveloperRateCard) throw new TRPCError({ code: 'NOT_FOUND' });
+    const { getDeveloperRateCard } = await import(
+      '~/server/services/blocks/app-developer-terms.service'
+    );
+    return getDeveloperRateCard();
+  }),
+
+  acceptDeveloperTerms: appDeveloperProcedure
+    .input(z.object({ version: z.string().min(1).max(32) }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.version !== APP_DEVELOPER_TERMS_VERSION) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'The App Developer Terms changed. Reload the page and accept the new version.',
+        });
+      }
+      const { acceptAppDeveloperTerms } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      return acceptAppDeveloperTerms({ userId: ctx.user.id, version: input.version });
     }),
 
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
@@ -2032,6 +2057,103 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * The CALLER's apps for the `/apps` "My apps" home — full-page apps they have granted,
+   * bought into or recently used, and off-site apps they have consented to. Derived from
+   * existing rows only; see `my-apps.logic.ts` for the membership rules.
+   *
+   * 🔴 NO INPUT, ON PURPOSE: the user is `ctx.user.id` and nothing else. Same store gates as
+   * `listAvailable` (scope + audience floor, so a listing appears only if this viewer could
+   * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
+   * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
+   *
+   * Returns the derived `apps` AND the viewer's "Remove from My apps" `hidden` map
+   * (slug → ISO time). The server does NOT filter hidden apps out: whether one shows again
+   * depends on this browser's recently-opened time too, so the client merge applies the one
+   * rule (`isHiddenFromHome`) to both sources (`mergeHomeApps`).
+   */
+  listMyApps: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .query(async ({ ctx }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-my-apps');
+      if (scope === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const [{ listMyApps }, { getMyHiddenApps }] = await Promise.all([
+        import('~/server/services/blocks/my-apps.service'),
+        import('~/server/services/blocks/my-apps-hidden.service'),
+      ]);
+      const [apps, hidden] = await Promise.all([
+        listMyApps({
+          userId: ctx.user.id,
+          scope,
+          floor,
+          redCapable: isRedCapableRequest(ctx),
+          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+          canOpenPage: !!ctx.features?.appBlocksPages,
+        }),
+        getMyHiddenApps(ctx.user.id),
+      ]);
+      return { apps, hidden };
+    }),
+
+  /**
+   * "Remove from My apps": hide one app (by listing slug) from the CALLER's `/apps` home
+   * until they use it again. Writes only `User.settings.hiddenApps[slug]`, atomically (see
+   * `my-apps-hidden.service.ts`). Idempotent: repeating it leaves the app hidden, with the
+   * hide time moved to now. No input names a user — it is always `ctx.user.id`.
+   */
+  hideMyApp: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many requests — slow down.',
+      })
+    )
+    .input(myAppsHideInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
+      // through `applyStoreGates`, whose scope metric counts store READS.
+      if (narrowStoreScope((ctx as { _storeScope?: unknown })._storeScope) === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { hideMyApp } = await import('~/server/services/blocks/my-apps-hidden.service');
+      return hideMyApp({ userId: ctx.user.id, slug: input.slug });
+    }),
+
+  /**
+   * The Undo of `hideMyApp`: drop the caller's hide for one slug. Idempotent — unhiding an
+   * app that is not hidden is a no-op success.
+   */
+  unhideMyApp: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many requests — slow down.',
+      })
+    )
+    .input(myAppsHideInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
+      // through `applyStoreGates`, whose scope metric counts store READS.
+      if (narrowStoreScope((ctx as { _storeScope?: unknown })._storeScope) === 'none') {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+      }
+      const { unhideMyApp } = await import('~/server/services/blocks/my-apps-hidden.service');
+      return unhideMyApp({ userId: ctx.user.id, slug: input.slug });
+    }),
+
+  /**
    * OWNER/EDITOR: set the per-listing VISIBILITY LEVEL on a listing they hold a role on.
    *
    * `appDeveloperProcedure` is the same gate `updateListing` uses, and like that proc the
@@ -2122,6 +2244,30 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD mark / unmark a listing Official ("made by the Civitai team") — the badge on its store
+   * card and page. `moderatorProcedure` + the inner `isModerator` recheck, like `delistListing`;
+   * the acting moderator is bound to `ctx.user.id`. A listing's OWNER has no path to this flag:
+   * it is not a key of any author input schema, and the column is absent from the Prisma client
+   * every author write goes through. One `set-official` moderation event per change, written in
+   * the same transaction as the flag.
+   */
+  setListingOfficial: moderatorProcedure
+    .input(setListingOfficialSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Marking apps as Official is restricted to civitai team');
+      }
+      const { setListingOfficialAsModerator } = await import(
+        '~/server/services/blocks/app-listing-official.service'
+      );
+      return setListingOfficialAsModerator({
+        appListingId: input.appListingId,
+        isOfficial: input.isOfficial,
+        moderatorUserId: ctx.user.id,
+      });
+    }),
+
+  /**
    * The PUBLISHED forks of one listing — "N forks" and a paged list on its store page.
    *
    * Behind the `app-blocks-fork` rollout flag: off (or absent, or Flipt down) → `null`, and the
@@ -2147,12 +2293,14 @@ export const appListingsRouter = router({
       const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
       if (scope === 'none') return null;
       const redCapable = isRedCapableRequest(ctx);
+      // An R/X parent or fork is visible only to a viewer whose browsing level includes it.
+      const viewerBrowsingLevel = getRequestBrowsingLevel(ctx);
       const { getStoreVisibleListingSummary } = await import(
         '~/server/services/blocks/app-listing.service'
       );
       const parent = await getStoreVisibleListingSummary(
         { id: input.listingId },
-        { redCapable, scope, floor }
+        { redCapable, scope, floor, viewerBrowsingLevel }
       );
       if (!parent) return null;
       const [{ listListingForks }, { dbRead }] = await Promise.all([
@@ -2166,6 +2314,7 @@ export const appListingsRouter = router({
         scope,
         floor,
         redCapable,
+        viewerBrowsingLevel,
       });
     }),
 
@@ -2187,6 +2336,9 @@ export const appListingsRouter = router({
         listingId: input.listingId,
         scope,
         redCapable: isRedCapableRequest(ctx),
+        // Any signed-in viewer may fork a publicly visible listing, so "visible" includes their
+        // own browsing level for an R/X parent.
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
         req: ctx.req,
       });
     }),
@@ -2232,6 +2384,36 @@ export const appListingsRouter = router({
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  /**
+   * Why `getAppDetail` 404'd, when the ONLY reason is the viewer's browsing level: an R/X app
+   * whose rating their level leaves out. Returns `{ contentRating }` (nothing else of the app) so
+   * the detail page can show a hidden state that explains it; `null` otherwise, and the page
+   * shows its ordinary NotFound. Same gates and rate limit as `getAppDetail`.
+   */
+  getAppHiddenState: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') return null;
+      const { getListingHiddenByBrowsingLevel } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingHiddenByBrowsingLevel(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
     }),
 
   getAppCard: publicProcedure

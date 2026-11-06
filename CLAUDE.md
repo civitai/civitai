@@ -42,7 +42,8 @@ where it loads on demand:
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
   `convention-guards.md` (every guard and what it enforces).
 - **`docs/features/`** — check before implementing a feature (index: `docs/features/README.md`).
-- **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`, etc.
+- **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`,
+  `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
 
 ## Commands
 - **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio`
@@ -123,7 +124,8 @@ anything committed counts as disclosed and must be fixed and rotated.
    suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Want it on every PR? Always add it: `gh pr create ... --label full-ci` or
    `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
-5. Before merging, check the PR's CI — `main` has no required checks, so a red run doesn't block.
+5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
+   required checks, so a red run doesn't block.
 6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, the lanes with no
    automated gate. Required when you moved a file, renamed a script or command, retired an env var,
    completed a tracked item, or a pushback has turned up an overstatement.

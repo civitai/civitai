@@ -36,7 +36,7 @@ import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
-const modelQueryParamSchema = z
+export const modelQueryParamSchema = z
   .object({
     period: z.enum(MetricTimeframe),
     periodMode: periodModeSchema,

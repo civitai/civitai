@@ -94,7 +94,7 @@ const pendingLink = {
   parentChapter: null,
 };
 
-const box = () => page.getByRole('textbox', { name: 'Caption for this picture' });
+const box = () => page.getByRole('textbox', { name: 'Caption (shown in the story)' });
 
 beforeEach(() => {
   mocks.pending = null;

@@ -253,6 +253,9 @@ export type EventScoring = EventPointsConfig & {
   newAccountDays: number;
   // Scoring keeps running this long past endDate for late data; the winner is decided after it.
   finalizeAfterMs: number;
+  // Most stories one person can start from hatted images per UTC day that score, as a remix of the
+  // image. Without it, a story never scores.
+  storySparksPerActorPerDay?: number;
   // Points a team is given outright: they count toward its total, rank and winner from `at`, but
   // never toward any hat's or person's points.
   teamAwards?: readonly TeamAward[];

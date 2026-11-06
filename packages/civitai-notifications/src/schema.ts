@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { notificationCategories } from './constants';
+import { cursorDate, notificationListCursor } from './cursor';
 
 // The notification producer contract — the single source of truth the notifications app validates
 // POST bodies against and that every caller types against. Moved here (from the monolith's
@@ -64,6 +65,8 @@ export const notificationRow = z.object({
   category: notificationCategory,
   details: z.record(z.string(), z.any()),
   createdAt: z.coerce.date(),
+  /** `createdAt` at full (microsecond) precision, for the list cursor. */
+  cursorAt: z.string(),
   read: z.boolean(),
 });
 export type NotificationRow = z.infer<typeof notificationRow>;
@@ -79,7 +82,8 @@ export type NotificationCategoryCount = z.infer<typeof notificationCategoryCount
 export const queryNotificationsInput = z.object({
   userId: z.number(),
   limit: z.number().optional(),
-  cursor: z.coerce.date().optional(),
+  // A bare date is the cursor of callers built before the keyset cursor; drop it once none is deployed.
+  cursor: z.union([notificationListCursor, cursorDate]).optional(),
   category: notificationCategory.nullish(),
   unread: z.boolean().optional(),
 });
@@ -99,6 +103,12 @@ export const markReadInput = z.object({
   category: notificationCategory.nullish(),
 });
 export type MarkReadInput = z.infer<typeof markReadInput>;
+
+export const markReadByKeysInput = z.object({
+  userId: z.number(),
+  keys: z.array(z.string()).min(1).max(10),
+});
+export type MarkReadByKeysInput = z.infer<typeof markReadByKeysInput>;
 
 export const notificationExistsInput = z.object({ key: z.string() });
 export type NotificationExistsInput = z.infer<typeof notificationExistsInput>;

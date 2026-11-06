@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -16,6 +20,15 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const {
   enforceBlockedBrowsingTags,
@@ -106,6 +119,9 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  followStoryline,
+  getStorylineFollow,
+  unfollowStoryline,
   assertCanContinueStoryline,
   assertStorylineVisible,
   setCanonChapter,
@@ -203,6 +219,7 @@ beforeEach(() => {
   // The shared db mock is otherwise reset only between files; these tests must not share call
   // counts or implementations.
   resetSharedMocks();
+  for (const hook of Object.values(sparkHooks)) hook.mockClear();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
   hiddenUsersCached.mockReset();
@@ -2119,8 +2136,7 @@ describe('getStoryline: page fields', () => {
     ] as never);
   });
 
-  // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
-  // else is told which chapters were paid for, not even that none were.
+  // Others are not told even that none were.
   it("tells only the owner which of the main route's chapters someone paid to add", async () => {
     const answer = r.$queryRaw.getMockImplementation()!;
     r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
@@ -3919,7 +3935,6 @@ describe('covers and cast', () => {
     });
   });
 
-  // As on the page's main route: the owner alone is told which chapters someone paid to add.
   it("tells only the owner which of the map's chapters someone paid to add", async () => {
     r.storylineChapter.findMany.mockResolvedValue([
       { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
@@ -4549,16 +4564,15 @@ describe('title moderation', () => {
         TemplateStringsArray,
         ...unknown[]
       ];
-      const { sql, values: bound } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
       const text = sql.replace(/\s+/g, ' ');
       const level =
         `OR ((SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')} ` +
-        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ?), st."maxNsfwLevel") AS l, ` +
+        // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does. Blocked is
+        // written into the shared SQL text (storyline-visibility.sql), no longer bound.
+        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${NsfwLevel.Blocked}), st."maxNsfwLevel") AS l, ` +
         `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`;
       expect(text).toContain(level);
-      // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does.
-      const at = text.slice(0, text.indexOf(level) + level.indexOf('?')).split('?').length - 1;
-      expect(bound[at]).toBe(NsfwLevel.Blocked);
     });
   });
 
@@ -4939,6 +4953,7 @@ describe('the title scan’s minor finding, beyond the scan', () => {
           details: { storylineId: 10, takenDown: true, title: 'T' },
         })
       );
+      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
@@ -5053,6 +5068,20 @@ describe('a storyline started from an image', () => {
         targetId: 77,
       });
       expect(w.storylineChapter.create).not.toHaveBeenCalled();
+      expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+    });
+
+    it('tells event points once chapter 1 is written with the spark', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      await createStoryline({
+        sparkImageId: 77,
+        postId: 500,
+        title: 't',
+        maxNsfwLevel: NsfwLevel.R,
+        userId: OWNER,
+      });
+      expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('refuses a ceiling below the image rating, and accepts one above it', async () => {
@@ -5242,5 +5271,123 @@ describe('a storyline started from an image', () => {
       r.$queryRaw.mockResolvedValue([] as never);
       expect((await read()).spark).toBeNull();
     });
+  });
+});
+
+/**
+ * Follow rows, written as raw SQL into an in-process Postgres built from the follow migration (on
+ * stub "Storyline", "User" and "StorylineCollaborator" tables), so each test reads the row itself.
+ */
+describe('following a storyline', () => {
+  const pg = { db: null as unknown as PGlite };
+  const scopeOf = async (userId: number) =>
+    (
+      await pg.db.query<{ scope: string }>(
+        `SELECT scope FROM "StorylineFollow" WHERE "storylineId" = 10 AND "userId" = $1`,
+        [userId]
+      )
+    ).rows[0]?.scope ?? null;
+
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TABLE "User" (id integer PRIMARY KEY);
+      CREATE TABLE "Storyline" (id integer PRIMARY KEY, "userId" integer);
+      CREATE TABLE "StorylineCollaborator" ("storylineId" integer, "userId" integer, "acceptedAt" timestamp(3));
+      INSERT INTO "User" (id) VALUES (1), (2), (3);
+    `);
+    await pg.db.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261224120000_storyline_follow/migration.sql'
+        ),
+        'utf8'
+      )
+    );
+  });
+  afterAll(() => pg.db.close());
+
+  beforeEach(async () => {
+    await pg.db.exec(`
+      DELETE FROM "StorylineFollow"; DELETE FROM "Storyline";
+      INSERT INTO "Storyline" (id, "userId") VALUES (10, 1);
+    `);
+    const raw = pgliteRaw(pg.db);
+    w.$executeRaw.mockImplementation(raw.executeRaw as never);
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('?').includes('"StorylineFollow"')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    w.storyline.findUnique.mockResolvedValue({ userId: OWNER, tosViolation: false } as never);
+  });
+
+  const follow = (scope: 'Canon' | 'Endorsed' | 'Everything', userId = STRANGER) =>
+    followStoryline({
+      storylineId: 10,
+      scope,
+      viewer: { id: userId },
+      browsingLevel: NsfwLevel.PG,
+    });
+
+  it('has the owner follow the storyline they start', async () => {
+    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+    w.storyline.create.mockResolvedValue({ id: 10 } as never);
+    w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+    await createStoryline({ postId: 500, title: 't', maxNsfwLevel: NsfwLevel.R, userId: OWNER });
+    expect(await scopeOf(OWNER)).toBe('Canon');
+  });
+
+  it('has a collaborator follow on accepting, again after an unfollow, keeping a chosen scope', async () => {
+    w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Canon');
+
+    await unfollowStoryline({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBeNull();
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Canon');
+
+    await follow('Everything', COLLABORATOR);
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Everything');
+  });
+
+  it('follows nothing when there was no open invitation', async () => {
+    w.storylineCollaborator.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(
+      acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(COLLABORATOR)).toBeNull();
+  });
+
+  it('follows at a scope, changes it, reads it back and unfollows', async () => {
+    await expect(getStorylineFollow({ storylineId: 10, userId: STRANGER })).resolves.toEqual({
+      scope: null,
+    });
+    await follow('Endorsed');
+    expect(await scopeOf(STRANGER)).toBe('Endorsed');
+    await follow('Canon');
+    await expect(getStorylineFollow({ storylineId: 10, userId: STRANGER })).resolves.toEqual({
+      scope: 'Canon',
+    });
+    await unfollowStoryline({ storylineId: 10, userId: STRANGER });
+    expect(await scopeOf(STRANGER)).toBeNull();
+  });
+
+  it('refuses a taken-down storyline and writes no row', async () => {
+    r.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }) as never);
+    await expect(follow('Everything')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(STRANGER)).toBeNull();
+  });
+
+  it('refuses a storyline whose chapter 1 is hidden, and writes no row', async () => {
+    const [root] = storylineRow().chapters;
+    r.storyline.findUnique.mockResolvedValue(
+      storylineRow({ chapters: [{ ...root, post: { ...root.post, publishedAt: null } }] }) as never
+    );
+    await expect(follow('Everything')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(STRANGER)).toBeNull();
   });
 });

@@ -56,6 +56,10 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * /apps/submit?edit=<listingId> — the EDIT wizard (W13). Reuses the create wizard's
@@ -169,6 +173,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
   const submitRevisionMutation = trpc.appListings.submitListingRevision.useMutation();
+  const termsAccepted = useAppDeveloperTermsAccepted();
 
   const saving =
     updateListingMutation.isPending ||
@@ -738,6 +743,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         </Stepper.Step>
       </Stepper>
 
+      {(approved || moderatorLiveEdit) && <AppDeveloperTermsCheckbox />}
+
       <Group justify="space-between">
         <Button variant="default" component={Link} href={MY_APPS_HREF} disabled={saving}>
           Cancel
@@ -745,7 +752,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         <Button
           onClick={() => void handleSave()}
           loading={saving}
-          disabled={approved && !shadowId && !moderatorLiveEdit}
+          disabled={
+            (approved && !shadowId && !moderatorLiveEdit) ||
+            ((approved || moderatorLiveEdit) && !termsAccepted)
+          }
           leftSection={<IconDeviceFloppy size={16} />}
           data-testid="apps-offsite-edit-save"
         >

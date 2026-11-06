@@ -1,3 +1,4 @@
+import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type { ReactNode } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
@@ -75,7 +76,10 @@ vi.mock('~/components/Sticker/StickerPlacementBatchProvider', () => ({
 vi.mock('~/components/Metrics/useMetricSubscription', () => ({
   useMetricSubscription: () => undefined,
 }));
-vi.mock('~/components/Sticker/CardStickerOverlay', () => ({ CardStickerOverlay: () => null }));
+vi.mock('~/components/Sticker/CardStickerOverlay', async (importOriginal) => ({
+  ...(await importOriginal<typeof CardStickerOverlayModule>()),
+  CardStickerOverlay: () => null,
+}));
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
   InteractiveTipBuzzButton: ({ children }: { children: ReactNode }) => <>{children}</>,
   useBuzzTippingStore: () => 0,
@@ -120,7 +124,7 @@ const maxed = { like: 999999, heart: 999999, laugh: 999999, cry: 999999, tip: 99
 
 const zero = { like: 0, heart: 0, laugh: 0, cry: 0, tip: 0 };
 
-const FEED_CARD_WIDTHS = [181, 245, 320, 358];
+const FEED_CARD_WIDTHS = [181, 245, 288, 320, 358];
 
 const card = () => document.querySelector('[data-testid="shot"]')!;
 
@@ -169,7 +173,7 @@ function overflowPastCard() {
 }
 
 describe('ImagesCard action row', () => {
-  test.each(FEED_CARD_WIDTHS)('shows every count in full at %ipx', async (width) => {
+  test.each(FEED_CARD_WIDTHS)('never clips a count it draws at %ipx', async (width) => {
     await renderCard(stats, width);
 
     expect(clippedLabels()).toEqual([]);
@@ -177,7 +181,7 @@ describe('ImagesCard action row', () => {
     expect(document.body.querySelectorAll('[aria-label$="reaction"]')).toHaveLength(4);
   });
 
-  test.each(FEED_CARD_WIDTHS)('shows maxed counts in full at %ipx', async (width) => {
+  test.each(FEED_CARD_WIDTHS)('never clips a maxed count it draws at %ipx', async (width) => {
     await renderCard(maxed, width);
 
     expect(clippedLabels()).toEqual([]);

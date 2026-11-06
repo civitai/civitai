@@ -8,6 +8,7 @@ import {
   useEventTeamsLivePoints,
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
+import { HatTurfEventSection } from '~/components/Events/ScoredEvent/HatTurfEventSection';
 import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
@@ -106,6 +107,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
             </Button>
           </div>
         )}
+        <div className="mt-4 empty:hidden">
+          <HatTurfEventSection event={event} team={team} />
+        </div>
       </div>
     ),
     hats: joined && hats.length > 0 && (

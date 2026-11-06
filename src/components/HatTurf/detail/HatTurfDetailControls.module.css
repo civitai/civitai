@@ -4,40 +4,21 @@
   gap: 8px;
 }
 
-.hat {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-  background-color: rgba(55, 58, 64, 0.9);
-  color: var(--mantine-color-white);
-}
-
-.hatOn {
-  background-color: var(--mantine-color-yellow-4);
-  color: var(--mantine-color-dark-9);
-}
-
-.hatActive {
-  outline: 2px solid var(--mantine-color-white);
-}
-
-.hatEmpty {
-  opacity: 0.55;
-}
-
+/* The action row's buttons are 36px (`h-9`); the badge matches them. */
 .badgeButton {
   display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 36px;
   padding: 0;
   border: 0;
   background: none;
   cursor: pointer;
   border-radius: 50%;
+}
+
+.rowBadge {
+  --hat-turf-badge-size: 36px;
 }
 
 .badgeEmpty {
@@ -114,73 +95,9 @@
   font-weight: 600;
 }
 
-.stats {
-  width: 230px;
-  padding: 10px 12px;
+/* The reaction row is 30px; the button fills it. Scoped to win over the feed button's size. */
+.group .hat {
+  width: 30px;
+  height: 30px;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.dot {
-  width: 9px;
-  height: 9px;
-  flex: none;
-  border-radius: 50%;
-}
-
-.count {
-  margin-left: auto;
-  font-weight: 800;
-}
-
-.tag {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--mantine-color-yellow-4);
-}
-
-.link {
-  border: 0;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  color: var(--mantine-color-dimmed);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 6px 2px;
-  border: 0;
-  border-radius: var(--mantine-radius-md);
-  background-color: var(--mantine-color-default-hover);
-  color: var(--mantine-color-dimmed);
-  font-size: 10px;
-  text-align: center;
-  cursor: pointer;
-}
-
-.tileActive {
-  outline: 2px solid var(--mantine-color-yellow-4);
-  color: var(--mantine-color-text);
-}

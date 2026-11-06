@@ -10,10 +10,10 @@ import {
   Stack,
   Tabs,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconClockHour4,
   IconInfoCircle,

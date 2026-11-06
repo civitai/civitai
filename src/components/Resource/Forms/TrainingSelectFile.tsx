@@ -5,15 +5,14 @@ import {
   Flex,
   Group,
   Loader,
-  Menu,
   Paper,
   ScrollArea,
   Stack,
   Text,
   Textarea,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconAlertTriangle,

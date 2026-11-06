@@ -9,7 +9,6 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
@@ -173,8 +172,7 @@ async function drainUser(
                 AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
             )
             AND NOT ${held}
-        ),
-        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
+        )
         DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `;
     }

@@ -12,6 +12,7 @@ import {
   useQueryImages,
 } from '~/components/Image/image.utils';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
+import { useMarkImageMilestonesReadOnView } from '~/components/Notifications/notifications.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useCloseOnEscape } from '~/components/Image/Detail/useCloseOnEscape';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -235,6 +236,8 @@ export function ImageDetailProvider({
 
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === images[index]?.user.id;
+  // `index` falls back to 0 while the routed image loads; only mark the image actually shown.
+  useMarkImageMilestonesReadOnView(isOwner && images[index]?.id === imageId ? imageId : undefined);
 
   const connect: ConnectProps = modelId
     ? { connectType: 'model', connectId: modelId }

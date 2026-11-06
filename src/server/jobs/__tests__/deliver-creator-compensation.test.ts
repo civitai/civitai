@@ -280,12 +280,14 @@ describe('runPayout', () => {
     ]);
   });
 
-  it('pays no compensation for a version on a non-commercial base model', async () => {
+  it('pays no compensation or license fee for a version on a non-commercial base model, but pays its tips', async () => {
     mockClickhouseQuery.mockResolvedValue([
       row('compensation', 'Yellow', 50, 11),
       row('compensation', 'Yellow', 7, 12),
       row('compensation', 'Yellow', 4, 13),
       row('tip', 'Yellow', 6, 11),
+      row('licenseFee', 'Yellow', 5, 11),
+      row('licenseFee', 'Yellow', 3, 12),
     ]);
     dbMock.dbRead.$queryRaw.mockResolvedValue([
       {
@@ -311,9 +313,10 @@ describe('runPayout', () => {
       expect.arrayContaining([
         { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
         { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
+        { externalTransactionId: 'license-fee-2026-10-13-7-Yellow', amount: 3 },
       ])
     );
-    expect(sentTransactions()).toHaveLength(2);
+    expect(sentTransactions()).toHaveLength(3);
   });
 });
 

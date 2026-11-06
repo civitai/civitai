@@ -130,7 +130,7 @@ const EXPECTED_PROJECTORS: Record<
   'server/services/blocks/app-sub-listing-store.service.ts': 'gated',
   // Post "Published with" chip icon.
   'server/services/blocks/post-app-chip.logic.ts': 'gated',
-  // The owner's own "My apps" row: shows exactly what is attached.
+  // The owner's own "My builds" row: shows exactly what is attached.
   'server/services/blocks/app-access.service.ts': 'raw: author',
   // Author/moderator audience labels: reads the civitai.com ceiling, builds no url.
   'shared/utils/listing-media-split.ts': 'ceiling only: labels',

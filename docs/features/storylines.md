@@ -16,6 +16,12 @@ section).
 
 - **Finding one.** An image that belongs to a storyline carries a storyline pill in the images feed and
   in image detail. Opening it enters storyline mode.
+- **Browsing /storylines.** Sorted newest, recently updated (by when a storyline last gained a chapter
+  readers are shown) or most chapters. "Participated" lists the storylines you wrote a chapter in or
+  collaborate on; "Following" the ones you follow.
+- **Following.** Follow on a storyline's page tells you about its new chapters: canon only (the main
+  path, the default), also those by its creator and collaborators, or everything. Several chapters in
+  the same hour send one notification. Chapters that join the main path later are not announced.
 - **Reading.** In storyline mode, left and right in image detail walk the chapter's images and then
   move on to the next chapter, instead of paging the feed. A chip on the image says which storyline
   and chapter you are in and opens the map; Leave the storyline at the bottom of the map returns you
@@ -77,6 +83,8 @@ section).
   raises the maximum to fit it.
 - **Finding your own.** The "My storylines" filter on /storylines lists the storylines you started,
   empty ones included.
+- **Followed from the start.** A creator follows their storyline from the moment they start it, and a
+  collaborator from accepting the invitation, at canon only; either can change the scope or unfollow.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
@@ -89,10 +97,11 @@ section).
   choosing the main route of chapters. Setting the price, endorsing collaborators and answering
   continuations stay the creator's. Each such edit is recorded in the moderator activity log.
 - **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
-  post stays published; the storyline, its chapter order and its comments go. It is refused while a
-  paid continuation is pending or its Buzz has not settled. Only a moderator can delete one that
-  has approved a paid continuation, is under an open report, or was taken down (and not while the
-  creator's appeal is open).
+  post stays published; the storyline, its chapter order and its comments go, and the creator sees
+  the same result whatever else is true of it. Reports on it stay in the moderator queue under its
+  title, and a copy may be kept for moderators' records. It is refused while a paid continuation is
+  pending or its Buzz has not settled. Only a moderator can delete one that has approved a paid
+  continuation or was taken down (and not while the creator's appeal is open).
 - **Removing a chapter.** The creator, the chapter's author or a moderator removes a chapter from the
   storyline, from its menu on the storyline page or in the image menu while reading; its post stays
   published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a

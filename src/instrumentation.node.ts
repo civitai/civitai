@@ -128,25 +128,6 @@ void import('~/server/warmup')
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
   });
 
-// Arm the per-instance style hoist in the patched `@mantine/core` `useStyles` (dark until the
-// `ssr-mantine-usestyles-hoist` Flipt flag is on). Unconditional, unlike the withSpan gate: it
-// does not depend on OTel. Dynamic, like the warmer, so the Flipt client stays out of this
-// module's static graph; a failure here must never affect boot, and without a gate Mantine runs
-// its original code. See ~/server/utils/mantine-styles-hoist-gate.
-void import('~/server/utils/mantine-styles-hoist-gate')
-  .then((m) => {
-    m.registerMantineUseStylesHoistGate();
-    console.log(
-      '[instrumentation.node] Mantine useStyles hoist gate armed (flag-controlled: ssr-mantine-usestyles-hoist)'
-    );
-  })
-  .catch((err) => {
-    console.error(
-      '[instrumentation.node] Mantine useStyles gate registration failed (fail-open):',
-      err
-    );
-  });
-
 // Attach the OTel sink to the shared structured logger.
 //
 // Registered from HERE, rather than imported by `~/server/logging/client`, because that

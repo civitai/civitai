@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
-import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import {
+  onStorySparkLost,
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+} from '~/server/events/points/hooks';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
@@ -41,7 +44,6 @@ import { editPostImageSelect, postSelect } from '~/server/selectors/post.selecto
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -679,15 +681,10 @@ const getPostCollectionCollectionItem = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  let db: typeof dbRead | typeof dbWrite;
-  let post: Awaited<ReturnType<typeof readPostDetailViaKysely>> = undefined;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6)) {
-    const kysely = await getKyselyWithoutLag('post', id);
-    db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
-    post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
-  } else {
-    db = await getDbWithoutLag('post', id);
-  }
+  const kysely = await getKyselyWithoutLag('post', id);
+  // The Prisma client on the same side of the lag decision, for the reads below.
+  const db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
+  let post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
   // A post whose user row is gone reads `undefined` through Kysely, and Prisma throws for it.
   if (post === undefined) post = await readPostDetailViaPrisma(db, { id, viewer: user });
 
@@ -1202,6 +1199,7 @@ export async function afterPostPublish(post: { postId: number; userId: number })
 
 export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsRestored({ postIds: posts.map((post) => post.postId) });
   const userIds = uniq(posts.map((post) => post.userId));
   await userPostCountCache.refresh(userIds);
   const images = await dbWrite.image.findMany({
@@ -1220,6 +1218,7 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
 /** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
+  void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },
     select: { id: true },
@@ -1242,7 +1241,11 @@ export const deletePost = async ({
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
-  const markerView = await holdMarkerViewExists();
+  // Chapter 1 of a story started from an image, whose points go with it.
+  const sparked = await dbWrite.storylineChapter.findFirst({
+    where: { postId: id, depth: 0, storyline: { sparkImageId: { not: null } } },
+    select: { storylineId: true },
+  });
 
   const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported } =
     await dbWrite.$transaction(
@@ -1282,10 +1285,6 @@ export const deletePost = async ({
         if (deletableImages.length) {
           const imageIds = deletableImages.map((i) => i.id);
           deletedImages = await tx.$queryRaw<DeletedImage[]>`
-          WITH ${detachHeldThreadsCte(
-            { imageId: Prisma.sql`SELECT unnest(${imageIds}::int[])` },
-            markerView
-          )}
           DELETE FROM "Image"
           WHERE id IN (${Prisma.join(imageIds)})
           RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
@@ -1293,7 +1292,6 @@ export const deletePost = async ({
         }
 
         const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-        WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT ${id}::int` }, markerView)}
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"
@@ -1335,6 +1333,7 @@ export const deletePost = async ({
   // reject, and by this point the rows are gone — the pre-delete snapshot is the only
   // remaining record of which documents went stale.
   await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'post-delete' });
+  if (sparked) void onStorySparkLost(sparked.storylineId);
 
   const deletedImageIds = deletedImages.map((img) => img.id);
 

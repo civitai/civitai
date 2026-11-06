@@ -6,13 +6,13 @@ import {
   Card,
   CloseButton,
   Group,
-  Menu,
   RingProgress,
   ScrollArea,
   Text,
   useMantineTheme,
   rgba,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -61,7 +61,6 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
-import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -87,7 +86,10 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
-import { HatTurfDetailControls } from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
 import {
   HatTurfDetailProvider,
   HatTurfDetailReset,
@@ -325,6 +327,7 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
+      {takesHats(image) && <HatTurfDetailBadge imageId={image.id} />}
     </>
   );
 
@@ -682,9 +685,7 @@ function ImageDetail2Content() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {isAppealableImage(image) && isOwner && (
-                      <OwnerBlockedImageNotice imageId={image.id} />
-                    )}
+                    {isOwner && <OwnerBlockedImageNotice image={image} />}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

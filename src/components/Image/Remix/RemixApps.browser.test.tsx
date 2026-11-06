@@ -3,19 +3,21 @@ import { page } from 'vitest/browser';
 import type * as RemixUtils from '~/components/Image/Remix/remix.utils';
 import type * as ToursProvider from '~/components/Tours/ToursProvider';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
-import type * as Modals from '@mantine/modals';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const h = vi.hoisted(() => ({
   startRemix: vi.fn(() => Promise.resolve()),
-  run: vi.fn(async (_input: { slug: string; imageId: number; nonce: string }) => ({
-    workflowId: 'wf',
-  })),
-  confirm: vi.fn(),
+  openModal: vi.fn(),
   flags: { remixApps: true, isGreen: false } as Record<string, boolean>,
   user: { id: 9, showNsfw: true } as { id: number; showNsfw: boolean } | null,
   quoteEnabled: [] as boolean[],
+  /** What the open menu's quote returns; the default prices both kinds of app at 25. */
+  quote: null as null | {
+    isLoading: boolean;
+    isError?: boolean;
+    prices?: Record<string, unknown>[];
+  },
 }));
 
 vi.mock('~/components/TrackView/track.utils', () => ({
@@ -38,29 +40,35 @@ vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (importOrigi
   useOptionalCivitaiSessionContext: () =>
     h.user ? { type: 'authed', ...h.user } : { type: 'unauthed' },
 }));
-vi.mock('@mantine/modals', async (importOriginal) => ({
-  ...(await importOriginal<typeof Modals>()),
-  openConfirmModal: h.confirm,
-}));
+vi.mock('~/components/Dialog/triggers/remix-app', () => ({ openRemixAppModal: h.openModal }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  const original = await importOriginal<{ trpc: { orchestrator: unknown } }>();
   return {
-    ...(await importOriginal<object>()),
-    trpc: makeTrpcProxy({
-      'remixApp.quote': {
-        useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
-          h.quoteEnabled.push(opts.enabled);
-          return {
-            data: opts.enabled
-              ? { prices: [{ slug: 'anime-it', cost: 25, ready: true }] }
-              : undefined,
-            isLoading: false,
-            isError: false,
-          };
+    ...original,
+    trpc: makeTrpcProxy(
+      {
+        'remixApp.quote': {
+          useQuery: (input: { imageId: number }, opts: { enabled: boolean }) => {
+            h.quoteEnabled.push(opts.enabled);
+            const quote = h.quote ?? {
+              isLoading: false,
+              prices: [
+                { slug: 'make-it-real', cost: 25, ready: true },
+                { slug: 'anime-it', cost: 25, ready: true },
+              ],
+            };
+            return {
+              data: opts.enabled && quote.prices ? { prices: quote.prices } : undefined,
+              isLoading: quote.isLoading,
+              isError: !!quote.isError,
+            };
+          },
         },
       },
-    }),
-    trpcVanilla: { remixApp: { run: { mutate: h.run } } },
+      // The real router, so the queue's query key is the one the generator caches under.
+      { orchestrator: original.trpc.orchestrator }
+    ),
   };
 });
 
@@ -68,7 +76,7 @@ import { Menu } from '@mantine/core';
 import { RemixAppsSection } from '~/components/Image/Remix/RemixApps';
 import { RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import type { RemixSourceImage } from '~/components/Image/Remix/remix.utils';
-import { SYSTEM_REMIX_APPS } from '~/shared/constants/remix-apps.constants';
+import { REMIX_MENU_APPS } from '~/shared/remix-apps/system-apps';
 
 const video: RemixSourceImage = {
   id: 1,
@@ -78,7 +86,8 @@ const video: RemixSourceImage = {
   ingestion: 'Scanned',
   hasPositivePrompt: false,
 };
-const firstApp = SYSTEM_REMIX_APPS[0];
+const firstApp = REMIX_MENU_APPS.find((app) => !app.runtime)!;
+const runtimeApp = REMIX_MENU_APPS.find((app) => app.runtime)!;
 
 const renderMenu = (image: RemixSourceImage) =>
   renderWithProviders(
@@ -87,15 +96,12 @@ const renderMenu = (image: RemixSourceImage) =>
     </RemixMenu>
   );
 
-type ConfirmProps = { children: React.ReactElement; onConfirm: () => void };
-const lastConfirm = () => h.confirm.mock.calls.at(-1)![0] as ConfirmProps;
-
 beforeEach(() => {
   vi.clearAllMocks();
   h.flags = { remixApps: true, isGreen: false };
   h.user = { id: 9, showNsfw: true };
   h.quoteEnabled = [];
-  localStorage.clear();
+  h.quote = null;
 });
 
 describe('Remix apps in the Remix menu', () => {
@@ -108,7 +114,7 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.startRemix).not.toHaveBeenCalled();
     await expect.element(page.getByText('Remix apps')).toBeVisible();
     expect(h.quoteEnabled.at(-1)).toBe(true);
-    for (const app of SYSTEM_REMIX_APPS)
+    for (const app of REMIX_MENU_APPS)
       await expect.element(page.getByRole('menuitem', { name: app.name })).toBeVisible();
   });
 
@@ -136,32 +142,16 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.startRemix).toHaveBeenCalledTimes(1);
   });
 
-  test('the first run confirms; "don\'t ask again" skips the confirm next time', async () => {
+  test('an app opens its modal for this image, and runs nothing from the menu', async () => {
     renderMenu(video);
     await page.getByRole('button', { name: 'Remix' }).click();
-    await page.getByRole('menuitem', { name: firstApp.name }).click();
+    await page.getByRole('menuitem', { name: runtimeApp.name }).click();
 
-    expect(h.confirm).toHaveBeenCalledTimes(1);
-    expect(h.run).not.toHaveBeenCalled();
-
-    renderWithProviders(lastConfirm().children);
-    await expect.element(page.getByText('for 25 Buzz')).toBeInTheDocument();
-    await page.getByRole('checkbox', { name: "Don't ask again" }).click();
-    // A double click on Run repeats the same tap.
-    lastConfirm().onConfirm();
-    lastConfirm().onConfirm();
-    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2));
-    expect(h.run.mock.calls[0][0]).toMatchObject({ slug: firstApp.slug, imageId: video.id });
-    const firstNonce = h.run.mock.calls[0][0].nonce;
-    expect(h.run.mock.calls[1][0].nonce).toBe(firstNonce);
-    h.run.mockClear();
-
-    await page.getByRole('button', { name: 'Remix' }).click();
-    await page.getByRole('menuitem', { name: firstApp.name }).click();
-    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
-    expect(h.confirm).toHaveBeenCalledTimes(1);
-    // A new menu open is a new tap.
-    expect(h.run.mock.calls[0][0].nonce).not.toBe(firstNonce);
+    expect(h.openModal).toHaveBeenCalledTimes(1);
+    expect(h.openModal.mock.calls[0][0]).toEqual({
+      app: { slug: runtimeApp.slug, name: runtimeApp.name, runtime: true },
+      imageId: video.id,
+    });
   });
 
   test('a signed-out viewer is offered no apps', async () => {
@@ -172,30 +162,60 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.startRemix).toHaveBeenCalledTimes(1);
   });
 
-  test('two clicks in one open repeat the tap; the next open is a new tap', async () => {
-    localStorage.setItem('remix-apps:confirmed', '1');
-    // Mounted once and kept mounted, as Mantine does across a quick reopen.
-    const section = (openCount: number) => (
+  describe('nothing runs without a price on screen', () => {
+    const section = () => (
       <Menu opened>
         <Menu.Target>
           <button type="button">target</button>
         </Menu.Target>
         <Menu.Dropdown>
-          <RemixAppsSection apps={[firstApp]} imageId={video.id} openCount={openCount} />
+          <RemixAppsSection apps={[firstApp]} imageId={video.id} openCount={1} />
         </Menu.Dropdown>
       </Menu>
     );
-    const screen = await renderWithProviders(section(1));
-    const item = page.getByRole('menuitem', { name: firstApp.name });
-    await item.click();
-    await item.click();
-    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(2));
-    const [first, second] = h.run.mock.calls.map((c) => c[0].nonce);
-    expect(second).toBe(first);
+    const item = () => page.getByRole('menuitem', { name: firstApp.name });
+    /** A DOM click, which a disabled item ignores, where a pointer click would wait for it. */
+    const tap = () => (item().element() as HTMLElement).click();
 
-    await screen.rerender(section(2));
-    await item.click();
-    await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(3));
-    expect(h.run.mock.calls[2][0].nonce).not.toBe(first);
+    test('while the quote loads, the app cannot be opened', async () => {
+      h.quote = { isLoading: true };
+      const screen = await renderWithProviders(section());
+      await expect.element(item()).toBeDisabled();
+      tap();
+      expect(h.openModal).not.toHaveBeenCalled();
+
+      // POSITIVE CONTROL: once priced, the same tap opens the app.
+      h.quote = null;
+      await screen.rerender(section());
+      await expect.element(item()).toBeEnabled();
+      tap();
+      expect(h.openModal).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed quote says the price is unavailable and how to retry', async () => {
+      h.quote = { isLoading: false, isError: true };
+      await renderWithProviders(section());
+      await expect.element(page.getByText(/Price unavailable/)).toBeVisible();
+      await expect.element(item()).toBeDisabled();
+    });
+
+    test('a refused price is shown in place of the price, and the app cannot be opened', async () => {
+      h.quote = {
+        isLoading: false,
+        prices: [{ slug: firstApp.slug, refusal: 'This engine is busy right now.' }],
+      };
+      const screen = await renderWithProviders(section());
+      await expect.element(page.getByText('This engine is busy right now.')).toBeVisible();
+      await expect.element(item()).toBeDisabled();
+      tap();
+      expect(h.openModal).not.toHaveBeenCalled();
+
+      // POSITIVE CONTROL: the same item with a price opens the app.
+      h.quote = null;
+      await screen.rerender(section());
+      await expect.element(item()).toBeEnabled();
+      tap();
+      expect(h.openModal).toHaveBeenCalledTimes(1);
+    });
   });
 });

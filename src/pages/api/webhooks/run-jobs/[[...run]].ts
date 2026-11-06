@@ -50,6 +50,7 @@ import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
+import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
 import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
@@ -145,6 +146,7 @@ import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
+import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -171,6 +173,7 @@ import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
 import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
 import { crucibleSyncJobs } from '~/server/jobs/sync-crucible-scores';
+import { crucibleEntryAcceptedJob } from '~/server/jobs/crucible-entry-accepted';
 import { prizeAutoPayJob } from '~/server/jobs/prize-autopay';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -224,6 +227,7 @@ export const jobs: Job[] = [
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
+  comFaceRecheckJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
@@ -279,6 +283,7 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
+  runStorageMigrationsJob,
   reapDeletedAppStorageJob,
   removeDeletedAccountAppDataJob,
   checkImageExistence,
@@ -341,6 +346,7 @@ export const jobs: Job[] = [
   blurbFanoutJob,
   ...crucibleJobs,
   ...crucibleSyncJobs,
+  crucibleEntryAcceptedJob,
   prizeAutoPayJob,
   pushSubscriptionCleanupJob,
 ];

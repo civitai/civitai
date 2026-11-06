@@ -6,7 +6,8 @@
  * re-evaluate resource compatibility.
  */
 
-import { Badge, Group, Stack, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Group, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import { trackRecentEcosystem, useRecentEcosystemsStore } from '~/store/recent-ecosystems.store';
 import {

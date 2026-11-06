@@ -18,7 +18,14 @@
 
 // Padding is on this wrapper, not the rows, so the :has() rule below can hide it when nothing rendered.
 .actionsFooter {
-  padding: 8px;
+  // --footer-height is IMAGES_CARD_FOOTER_HEIGHT: the masonry reserves exactly that, and a taller
+  // footer takes its excess from the picture.
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--footer-height);
+  padding: 6px 8px;
 
   &:not(:has(:is(button, [class*='mantine-Badge-root']))) {
     display: none;
@@ -30,4 +37,27 @@
     background: none;
     box-shadow: none;
   }
+}
+
+// The masonry reserved one row, so the row never wraps. The tip and badges keep their width; when
+// the reactions don't fit beside them, the last ones drop to a second line that is clipped away.
+.actionsFooter .fitRow {
+  flex-wrap: nowrap;
+}
+
+.actionsFooter .fitRow .fitReactions {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 22px;
+  overflow: hidden;
+  justify-content: flex-start !important; // beats the bar's justify-center utility
+
+  & > * {
+    flex: none;
+  }
+}
+
+// The tip and the badges, which sit one level down because the rows are `display: contents`.
+.actionsFooter .fitRow > * > :not(.fitReactions) {
+  flex: none;
 }

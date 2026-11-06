@@ -1,4 +1,5 @@
-import { Text, Tooltip } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import { IconMessageReport } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';

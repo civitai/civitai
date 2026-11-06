@@ -39,8 +39,9 @@ Comments on this plan: `@dev:` inline; mine are `@ai:`.
   the old entities.
 - **Article writes, then every read, then the other surfaces' writes** (2026-10-30, Briant).
   Stage B ships as built. Next, one read flip moves every other surface's section and every
-  remaining reader of the old tables to `CommentV3`. Once nothing reads the old tables, the
-  old-row sync is removed and each other surface's writes flip without it. A comment written after
+  remaining reader of the old tables to `CommentV3`. Once nothing reads the old tables, every
+  other surface's writes flip at once (`comments-v3-write-flip.md`); the old-row sync stays until
+  Phase 6 (revised 2026-11-03). A comment written after
   the article flip has no `CommentV2` row; the sync keeps the row of an older one in step, so that
   a reader still on the old tables does not serve it after it is deleted or removed, and an
   old-table update does not make the mirror copy it back. Stage B already gives the block checks,
@@ -238,7 +239,7 @@ comment's surface. What it covers, beyond the SQL itself:
   insert (`CommentTopic.locked` or a locked ancestor). That closes the v2 gap where a deep reply
   under a locked thread was accepted, an intended behaviour change.
 - **Delete.** D6: tombstone with replies or a clamped answerer, hard delete when childless;
-  collapse tombstones on both edges; hold retention. Covers single delete, moderator bulk delete,
+  collapse tombstones on both edges. Covers single delete, moderator bulk delete,
   ban and remove-all-content, and user erasure. A tombstone's `CommentV3Report` links are deleted
   with it.
 - **Moderation.** Hide (owner and moderator), pin, ToS set and restore with the full chain
@@ -256,8 +257,8 @@ comment's surface. What it covers, beyond the SQL itself:
   `CommentV3` type.
 - **Rollback.** The reverse copy, rehearsed on the dev database with real stage B writes before
   the deploy. It carries `removedByAuthor` to the old tables (`metadata.removedByAuthor` on
-  CommentV2, the column on Comment); the dev rehearsal predates that, so rerun it with a held
-  author's deleted comment.
+  CommentV2, the column on Comment), which nothing sets since comment holds were removed (kept
+  until a migration drops the columns).
 
 ### Stage B as built (2026-10-29, not yet deployed)
 
@@ -268,17 +269,9 @@ comment's surface. What it covers, beyond the SQL itself:
   row locks rather than skipping them as the mirror's `commentv3_mirror_delete` does.
   Tombstoning deletes the comment's `CommentV3Report` links, as a hard delete's cascade does, so
   its reports leave the queue; the `Report` row stays.
-- Legal holds follow the CommentV2 rules (2026-10-30, Briant). Every delete, single or bulk, keeps
-  a comment whose author or anyone below it is held, as a ToS violation; one its author deleted is
-  marked `removedByAuthor` (migration `20261217120000_comment_v3_removed_by_author`), as is one a
-  content wipe keeps. A ToS restore leaves both hidden, and reports them as kept. A ToS removal
-  counts a comment already hidden and actions its reports without telling its author again. An
-  article with a held author's comment that exists only in CommentV3 is not deleted, since its
-  comments cannot be detached as a CommentV2 thread is: the owner's delete is refused, and a
-  content wipe keeps it, taken down as a violation (`UnpublishedViolation` with a
-  `removedWithOwner` record), so neither its owner nor a pending scan or schedule republishes it.
-  The `removedByAuthor` mark is also set on a comment's CommentV2 twin and carried by the reverse
-  copy, so the old ToS restore leaves it hidden after a rollback or an article delete.
+- No legal holds on comments (2026-11-04, Briant): every delete is a plain delete, and an
+  article's delete takes its comments with it. A ToS removal counts a comment already hidden and
+  actions its reports without telling its author again.
 - The `commentv3` router gains create, update, delete, hide, pin and ToS removal; the suite's
   adapter calls them on a write surface. Lock, comment mute and section mute keep their
   `commentv2` procedures, whose services branch on the surface. The other `commentv2` writes
@@ -297,7 +290,8 @@ comment's surface. What it covers, beyond the SQL itself:
   chain resolves the same owners when there is one.
 - Counts: `comment-v3.ts` counts every comment on a write surface, whichever table it was written
   to, and `comment-v2.ts` skips those surfaces, so either service can deploy first; a test holds
-  the event engine's surface list to `v3WriteSurfaces`. `articleStatCache` needs nothing new: the
+  the event engine's surface list to the surfaces CommentV3 serves (`v3ReadSurfaces` since the
+  write flip's release 1). `articleStatCache` needs nothing new: the
   article metrics job already counts from CommentV3 and purges it.
 - Text-scan: `CommentV3` follows the `CommentV2` rollout until it is given its own. Verdicts are
   not aliased across the two types: an article comment edited after the flip is scanned afresh
@@ -320,8 +314,8 @@ Before the deploy, in this order:
    `trg_moderation_commentv3` in the same enabled state as `trg_moderation_commentv2`. Still
    pending, after the deploy: cut `CommentV3` over wherever `CommentV2` is cut over, with
    `POST /api/admin/temp/text-scan-clavata-cutover` (`{action:'disable', entityType:'CommentV3'}`).
-5. Apply `20261217120000_comment_v3_removed_by_author`. The code that reads the column ships with
-   the deploy, so the column goes first.
+5. Apply `20261217120000_comment_v3_removed_by_author`. The Prisma client and the reverse copy name
+   the column, so it goes first.
 6. ~~The reverse-copy rerun on the dev database~~: done 2026-10-29, every reverse step's dry count
    at zero. A reply under a tombstone with no old row now goes on a reply thread with no parent
    comment; `reverseRootThreads` no longer creates threads for v1-shaped model comments.
@@ -336,6 +330,5 @@ Before the deploy, in this order:
    cross-surface readers, in one PR; image and post queries timed on the production replica
    first. A surface goes back to the old reads by leaving `v3ReadSurfaces`. Built 2026-11-02 for
    all but model discussion ("Read flip as built").
-4. Remove the old-row sync (`syncOldRows` and its callers), since nothing reads the old tables.
-5. Each other surface's write flip, one at a time and with no sync, comic chapters and model
-   comments last.
+4. The write flip for every read-flipped surface at once, in two releases
+   (`comments-v3-write-flip.md`); the old-row sync stays until Phase 6. Model comments flip last.

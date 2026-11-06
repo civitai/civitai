@@ -1764,7 +1764,6 @@ async function getViewerPendingSubmissions({
   /** The viewer own band. Marked on each row, never filtered on. */
   viewerLevels: number;
 }) {
-  // Through Kysely, on the replica.
   const pendingInput = {
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -2262,7 +2261,7 @@ export async function getRemixGalleryFreeEligibility({
  * A listing like the rest of the eligibility: the mutation re-decides under its lock. A failure
  * reads as no waiver, so the event layer cannot take the free option down with it.
  */
-const getTeamWaiverStanding = (input: { hostImageId: number; placerId: number }) =>
+export const getTeamWaiverStanding = (input: { hostImageId: number; placerId: number }) =>
   readTeamWaiverStanding(input).catch((error) => {
     logToAxiom({
       name: 'remix-gallery',

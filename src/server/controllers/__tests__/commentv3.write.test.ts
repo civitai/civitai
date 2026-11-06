@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { constants } from '~/server/common/constants';
+import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
 
@@ -14,23 +16,20 @@ const m = vi.hoisted(() => ({
   deleteComments: vi.fn(async () => [] as unknown[]),
   setCommentFlags: vi.fn<typeof WriteService.setCommentFlags>(async () => []),
   isCommentWriteLocked: vi.fn(async () => false),
-  visible: vi.fn(async (_: unknown) => undefined),
+  visible: vi.fn(async (_: unknown, _ctx?: unknown) => undefined),
   access: vi.fn(async (_: unknown) => [{ hasAccess: true }]),
   blocklist: vi.fn(async (_: unknown) => undefined),
   blockOwners: vi.fn(async (_: unknown) => [] as number[]),
   throwIfBlockedByOwners: vi.fn(async (_: unknown) => undefined),
-  contentOwner: vi.fn(async (_: unknown) => ({
-    hidden: false,
-    ownerId: undefined as number | undefined,
-  })),
   spend: vi.fn(async (_: unknown) => new Map()),
   scan: vi.fn(),
   tos: vi.fn(async (_: unknown) => ({ count: 1 })),
   onTopicCommentsRemoved: vi.fn(async (_: unknown) => undefined),
   onCommentCreated: vi.fn(async (_: unknown) => undefined),
   getStored: vi.fn(),
-  deleteUnlessHeld: vi.fn(),
+  deleteComments3: vi.fn(),
   afterDeleted: vi.fn(async (_: unknown) => undefined),
+  metric: vi.fn(async (_: unknown) => undefined),
 }));
 
 vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => ({
@@ -46,12 +45,19 @@ vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => (
   setCommentFlags: m.setCommentFlags,
   isCommentWriteLocked: m.isCommentWriteLocked,
 }));
-vi.mock('~/server/controllers/commentv2.controller', () => ({
-  assertCommentEntityVisible: m.visible,
-}));
+// Each surface's own rules, with the visibility check replaced so a test can refuse it.
+vi.mock('~/server/services/commentv3/surfaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof Surfaces>();
+  return {
+    ...actual,
+    commentSurface: (entityType: string) => ({
+      ...actual.commentSurface(entityType),
+      assertVisible: (entityId: number, ctx: unknown) => m.visible({ entityType, entityId }, ctx),
+    }),
+  };
+});
 vi.mock('~/server/services/block-check.service', () => ({
   getBlockCheckOwnerIds: m.blockOwners,
-  getContentOwnerIdForComment: m.contentOwner,
   throwIfBlockedByOwners: m.throwIfBlockedByOwners,
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -60,13 +66,14 @@ vi.mock('~/server/services/blocklist.service', () => ({
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: m.access }));
 vi.mock('~/server/services/commentv3/moderation.service', () => ({
   bulkSetCommentV3TosViolation: m.tos,
-  deleteCommentsV3UnlessHeld: m.deleteUnlessHeld,
+  deleteCommentsV3: m.deleteComments3,
   afterCommentsV3Deleted: m.afterDeleted,
 }));
 vi.mock('~/server/services/sticker.service', () => ({
   spendStickerUses: m.spend,
   recordStickerUsage: vi.fn(),
 }));
+vi.mock('~/server/utils/metric-helpers', () => ({ updateEntityMetric: m.metric }));
 vi.mock('~/server/services/text-scan/scam-scan-queue', () => ({ queueScamScan: m.scan }));
 vi.mock('~/server/events/points/hooks', () => ({
   onCommentCreated: m.onCommentCreated,
@@ -122,7 +129,11 @@ const row = (id: number, over: Partial<StoredCommentV3> = {}): StoredCommentV3 =
 const ctx = (id: number, isModerator = false) =>
   ({
     user: { id, isModerator },
-    track: { commentEvent: vi.fn(async () => undefined), stickerUsage: vi.fn() },
+    track: {
+      comment: vi.fn(async () => undefined),
+      commentEvent: vi.fn(async () => undefined),
+      stickerUsage: vi.fn(),
+    },
   } as never);
 
 beforeEach(() => {
@@ -142,7 +153,6 @@ beforeEach(() => {
     row(id)
   );
   m.blockOwners.mockResolvedValue([ARTICLE_OWNER]);
-  m.contentOwner.mockResolvedValue({ hidden: false, ownerId: ARTICLE_OWNER });
 });
 
 const create = (userId: number, input: Record<string, unknown>) =>
@@ -257,6 +267,87 @@ describe('commentv3 create', () => {
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 
+  it('refuses a member a reply under a comment removed for ToS; a moderator may', async () => {
+    m.stored.set(106, row(106, { tosViolation: true }));
+    await expect(create(STRANGER, { parentId: 106 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(m.insertComment).not.toHaveBeenCalled();
+    await createCommentV3Handler({
+      ctx: ctx(STRANGER, true),
+      input: { entityType: 'article', entityId: 10, content: '<p>x</p>', parentId: 106 } as never,
+    });
+    expect(m.insertComment).toHaveBeenCalledTimes(1);
+  });
+
+  describe('on a surface with its own tracking and side effects', () => {
+    beforeEach(() => {
+      constants.comments.v3WriteSurfaces.push('image');
+      m.insertComment.mockImplementation(async (_db: unknown, args: { parentId?: number }) =>
+        row(300, { entityType: 'image', entityId: 10, parentId: args.parentId ?? null })
+      );
+    });
+    const tracked = (c: unknown) =>
+      (c as { track: { comment: ReturnType<typeof vi.fn> } }).track.comment;
+    afterEach(() => {
+      constants.comments.v3WriteSurfaces.splice(
+        constants.comments.v3WriteSurfaces.indexOf('image'),
+        1
+      );
+    });
+
+    it('tracks a new comment as its surface and counts it on the image; a reply as a comment only', async () => {
+      const c = ctx(STRANGER);
+      await createCommentV3Handler({
+        ctx: c,
+        input: { entityType: 'image', entityId: 10, content: '<p>x</p>' } as never,
+      });
+      expect(tracked(c)).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'Image', entityId: 300 })
+      );
+      expect(m.metric).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'Image', entityId: 10, metricType: 'Comment' })
+      );
+
+      m.metric.mockClear();
+      const reply = ctx(STRANGER);
+      await createCommentV3Handler({
+        ctx: reply,
+        input: { entityType: 'image', entityId: 10, content: '<p>x</p>', parentId: 200 } as never,
+      });
+      expect(tracked(reply)).toHaveBeenCalledWith(expect.objectContaining({ type: 'Comment' }));
+      expect(m.metric).not.toHaveBeenCalled();
+    });
+  });
+
+  // `comments.type` is matched on downstream, so every entry is pinned, and an unmapped surface is not
+  // tracked at all.
+  describe('ClickHouse tracking per surface', () => {
+    const surfaces: [string, string | undefined][] = [
+      ['post', 'Post'],
+      ['image', 'Image'],
+      ['review', 'Review'],
+      ['bounty', 'Bounty'],
+      ['bountyEntry', 'BountyEntry'],
+      ['challenge', undefined],
+    ];
+    const initial = [...constants.comments.v3WriteSurfaces];
+    afterEach(() => {
+      constants.comments.v3WriteSurfaces.splice(0, Infinity, ...initial);
+    });
+
+    it.each(surfaces)('tracks a new %s comment as %s', async (entityType, type) => {
+      constants.comments.v3WriteSurfaces.push(entityType);
+      const c = ctx(STRANGER);
+      await createCommentV3Handler({
+        ctx: c,
+        input: { entityType, entityId: 10, content: '<p>x</p>' } as never,
+      });
+      const track = (c as { track: { comment: ReturnType<typeof vi.fn> } }).track.comment;
+      if (type)
+        expect(track).toHaveBeenCalledWith(expect.objectContaining({ type, entityId: 300 }));
+      else expect(track).not.toHaveBeenCalled();
+    });
+  });
+
   it('refuses a surface that does not write CommentV3 yet', async () => {
     await expect(create(STRANGER, { entityType: 'image' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
@@ -315,48 +406,44 @@ describe('commentv3 update', () => {
   it('does not edit a deleted comment', async () => {
     await expect(update(AUTHOR, 102)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
+
+  it('answers a member editing a comment removed for ToS as gone; a moderator may', async () => {
+    m.stored.set(106, row(106, { tosViolation: true }));
+    await expect(update(AUTHOR, 106)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(m.updateCommentContent).not.toHaveBeenCalled();
+    await update(STRANGER, 106, true);
+    expect(m.updateCommentContent).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('commentv3 delete', () => {
   const removed = [{ id: 101, userId: AUTHOR, entityType: 'article', entityId: 10 }];
 
-  it('lets only the author or a moderator delete, keeping it for a hold, and settles points', async () => {
-    m.deleteUnlessHeld.mockResolvedValue({ deleted: removed, retained: [] });
+  it('lets only the author or a moderator delete, and settles points', async () => {
+    m.deleteComments3.mockResolvedValue(removed);
     await expect(
       deleteCommentV3Handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    expect(m.deleteUnlessHeld).not.toHaveBeenCalled();
+    expect(m.deleteComments3).not.toHaveBeenCalled();
 
     const tx = nextTx();
     await deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } });
-    expect(m.deleteUnlessHeld).toHaveBeenCalledWith(tx, [101], false, { byAuthor: true });
-    expect(m.afterDeleted).toHaveBeenCalledWith({ deleted: removed, retained: [] });
-    expect(m.onTopicCommentsRemoved).not.toHaveBeenCalled();
-  });
+    expect(m.deleteComments3).toHaveBeenCalledWith(tx, [101]);
+    expect(m.afterDeleted).toHaveBeenCalledWith(removed);
 
-  // A moderator's removal is not the author's: a ToS restore may still bring it back.
-  it('marks only an author’s own delete as theirs', async () => {
-    m.deleteUnlessHeld.mockResolvedValue({ deleted: removed, retained: [] });
     await deleteCommentV3Handler({ ctx: ctx(STRANGER, true), input: { id: 101 } });
-    expect(m.deleteUnlessHeld).toHaveBeenCalledWith(expect.anything(), [101], false, {
-      byAuthor: false,
-    });
+    expect(m.deleteComments3).toHaveBeenCalledTimes(2);
   });
 
-  it('takes the points of a comment kept for a hold, which its author sees as deleted', async () => {
-    m.deleteUnlessHeld.mockResolvedValue({ deleted: [], retained: [{ id: 101, userId: AUTHOR }] });
-    await deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } });
-    expect(m.onTopicCommentsRemoved).toHaveBeenCalledWith([
-      expect.objectContaining({ userId: AUTHOR, entityType: 'article', entityId: 10 }),
-    ]);
-  });
-
-  it('refuses without naming the hold when one cannot be read', async () => {
-    m.deleteUnlessHeld.mockRejectedValue(new Error('relation "EvidenceHeldUser" does not exist'));
+  it('answers a member deleting their comment removed for ToS as gone; a moderator may', async () => {
+    m.stored.set(106, row(106, { tosViolation: true }));
+    m.deleteComments3.mockResolvedValue([]);
     await expect(
-      deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 101 } })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(m.afterDeleted).not.toHaveBeenCalled();
+      deleteCommentV3Handler({ ctx: ctx(AUTHOR), input: { id: 106 } })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(m.deleteComments3).not.toHaveBeenCalled();
+    await deleteCommentV3Handler({ ctx: ctx(STRANGER, true), input: { id: 106 } });
+    expect(m.deleteComments3).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -372,8 +459,23 @@ describe('commentv3 hide and pin', () => {
     await handler({ ctx: ctx(STRANGER, true), input: { id: 101 } });
     expect(m.setCommentFlags).toHaveBeenCalledTimes(2);
     expect(m.setCommentFlags).toHaveBeenCalledWith(expect.anything(), [101], flags);
-    expect(m.contentOwner).toHaveBeenCalledWith(101);
+    expect(m.blockOwners).toHaveBeenCalledWith({ entityType: 'article', entityId: 10 });
   });
+
+  it.each([
+    ['hide', toggleHideCommentV3Handler],
+    ['pin', togglePinCommentV3Handler],
+  ] as const)(
+    "%s holds the owner to the section's write rules; a moderator is not",
+    async (_, handler) => {
+      m.access.mockResolvedValue([{ hasAccess: false }]);
+      await expect(handler({ ctx: ctx(ARTICLE_OWNER), input: { id: 101 } })).rejects.toThrow();
+      expect(m.setCommentFlags).not.toHaveBeenCalled();
+      await handler({ ctx: ctx(STRANGER, true), input: { id: 101 } });
+      expect(m.setCommentFlags).toHaveBeenCalledTimes(1);
+      m.access.mockResolvedValue([{ hasAccess: true }]);
+    }
+  );
 
   it('turns them back off', async () => {
     m.stored.set(105, row(105, { hidden: true, pinnedAt: new Date() }));

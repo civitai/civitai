@@ -9,8 +9,8 @@ import {
   Select,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconSend, IconTrash, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';

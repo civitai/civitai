@@ -81,6 +81,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -532,6 +533,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         reason: error.message ?? 'An unexpected error occurred. Please try again later.',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
 
       if (idx > 0) {

@@ -165,3 +165,6 @@ export const eventOwnerTopic = (event: string, topicId: string) =>
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);
 export const utcDay = (time: Date) => time.toISOString().slice(0, 10);
+// storyline ids whose spark scored for this person on this UTC day
+export const storySparksScoredKey = (actorId: number, day: string) =>
+  `${REDIS_SYS_KEYS.EVENT}:${REDIS_SUB_KEYS.EVENT.POINTS}:story-sparks:${day}:${actorId}` as const;

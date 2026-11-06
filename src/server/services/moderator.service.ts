@@ -24,6 +24,8 @@ type ModelModActivity = {
     | 'dismissPoiHashMatch'
     | 'approveLockReview'
     | 'rejectLockReview'
+    // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
+    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -183,9 +185,15 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type CsamReportModActivity = {
+  entityType: 'csamReport';
+  activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
   | ImageTagModActivity

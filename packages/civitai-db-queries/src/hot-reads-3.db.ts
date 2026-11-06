@@ -2,8 +2,8 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // Kysely ports of the hot single-purpose Prisma reads behind the model page and the remix gallery
-// card. They replaced the Prisma reads (formerly behind a server Flipt flag). The app-side wrappers
-// (<civitai>/src/server/services/hot-reads-3.reads.ts) map these rows to the exact Prisma payload,
+// card. The app-side wrappers (<civitai>/src/server/services/hot-reads-3.reads.ts) map these rows
+// to the exact Prisma payload,
 // and <civitai>/src/server/services/__tests__/hot-reads-3.kysely-parity.test.ts pins them, against
 // a real database, to the values the Prisma reads returned.
 //

@@ -193,7 +193,9 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     // mocked, so we only assert the forwarded arg).
     // NSFW-APP-RED-ONLY: the 3rd arg is redCapable, derived from the request
     // host. The fake ctx carries no host header → not red-capable → false.
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true, false);
+    // 🔴 4th arg: the viewer's browsing level — signed out → PG (1), so an R/X app on a
+    // mature-capable site returns no details to them.
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', true, false, 1);
   });
 
   it('moderator (the live state today): served, launchOnly=false (grandfather)', async () => {
@@ -202,7 +204,8 @@ describe('blocks.getAppDetail — anon-capable, dark behind the flag (F-E E2)', 
     expect(result).toEqual(PUBLIC_DETAIL);
     expect(mockGetAppDetail).toHaveBeenCalledTimes(1);
     // A moderator sees everything → launchOnly=false. redCapable=false (no host).
-    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false, false);
+    // …and a signed-in viewer's own level (no mature opt-in in this context → PG|PG13 = 3).
+    expect(mockGetAppDetail).toHaveBeenCalledWith('ab_1', false, false, 3);
   });
 
   it('NOT_FOUND when the service returns null (missing / non-approved app)', async () => {

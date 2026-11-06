@@ -1,8 +1,3 @@
-import {
-  commentDetachedSql,
-  heldCommentInTreeSql,
-  threadDetachedSql,
-} from '~/server/services/comment-thread-hold';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   CommentV2Model,
@@ -39,13 +34,6 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
-import {
-  accountHoldSql,
-  contentKeptError,
-  holdMarkerViewExists,
-  isLegalHoldAbort,
-  logHoldRetained,
-} from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -389,16 +377,12 @@ export const upsertComment = async ({
   // value can be a stale cached null.
   parentThreadId: _clientParentThreadId,
   isModerator,
-  includeHidden,
   track,
   eventPoints = true,
   ...data
 }: UpsertCommentV2Input & {
   userId: number;
   isModerator?: boolean;
-  // An edit that reaches a comment hidden for ToS (the challenge judge re-reviewing its own). Widens
-  // only the edit's target; every content and block check still runs.
-  includeHidden?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
@@ -527,12 +511,11 @@ export const upsertComment = async ({
   // Wrapped so the edit's charge and the edit itself commit together.
   const { updated, charged } = await dbWrite.$transaction(async (tx) => {
     const chargedStickers = await chargeStickers(tx);
-    // A member edits only a comment still on the page: one hidden since the read above (an author's
-    // delete can keep it that way for a hold) answers as gone, and only a moderator sets the flag.
+    // A member edits only a comment still on the page: one hidden since the read above answers as gone,
+    // and only a moderator sets the flag.
     const row = await tx.commentV2
       .update({
-        where:
-          isModerator || includeHidden ? { id: data.id } : { id: data.id, tosViolation: false },
+        where: isModerator ? { id: data.id } : { id: data.id, tosViolation: false },
         data: isModerator ? data : { ...data, tosViolation: undefined },
         select: commentV2Select,
       })
@@ -811,17 +794,9 @@ export const getCommentCrucibleId = async (commentId: number) =>
   (await dbRead.$queryRaw<{ crucibleId: number }[]>(crucibleOfCommentSql(commentId)))[0]
     ?.crucibleId ?? null;
 
-const isDetached = async (sql: Prisma.Sql) =>
-  (await dbRead.$queryRaw<{ detached: boolean }[]>(sql))[0]?.detached === true;
-
-/** Whether a thread was taken off a deleted parent to keep a held author's comment: not public. */
-export const isThreadDetached = (threadId: number) => isDetached(threadDetachedSql(threadId));
-
-export const isCommentDetached = (commentId: number) => isDetached(commentDetachedSql(commentId));
-
 /**
- * Whether a member gets the comment as missing: gone, hidden for ToS, or detached. Read on the
- * primary, so a delete just made counts. A comment on a surface that writes CommentV3 has no
+ * Whether a member gets the comment as missing: gone, or hidden for ToS. Read on the primary, so a
+ * delete just made counts. A comment on a surface that writes CommentV3 has no
  * CommentV2 row.
  */
 export const isCommentGoneForMembers = async (commentId: number) => {
@@ -833,7 +808,7 @@ export const isCommentGoneForMembers = async (commentId: number) => {
     const v3 = await getV3WriteComment(prismaRunner(dbWrite), commentId);
     return !v3 || v3.tosViolation;
   }
-  return row.tosViolation || (await isCommentDetached(commentId));
+  return row.tosViolation;
 };
 
 export const getCommentThreadStorylineId = (threadId: number) =>
@@ -842,82 +817,28 @@ export const getCommentThreadStorylineId = (threadId: number) =>
 export const getCommentStorylineId = (commentId: number) =>
   firstStorylineId(storylineOfCommentSql(commentId));
 
-/**
- * A comment kept for a hold is hidden for ToS instead, which its author cannot tell from a delete:
- * it goes from every read they get, and its points with it.
- */
-export const deleteComment = async ({
-  id,
-  byAuthor = false,
-}: {
-  id: number;
-  byAuthor?: boolean;
-}) => {
+export const deleteComment = async ({ id }: { id: number }) => {
   await throwIfV3WriteTarget({ entityType: 'comment', entityId: id });
   const comment = await dbWrite.commentV2.findUnique({ where: { id } });
   if (!comment) return null;
-  const markerView = await holdMarkerViewExists();
-  const { deleted, retained } = await dbWrite
-    .$transaction((tx) => deleteCommentsV2UnlessHeld(tx, [id], markerView, { byAuthor }))
-    .catch((e: unknown) => {
-      throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
-    });
-  if (!deleted.length && !retained.length) return null;
-  if (retained.length)
-    void logHoldRetained(
-      'commentV2.delete',
-      retained.map((r) => r.userId)
-    ).catch(() => undefined);
+  const deleted = await dbWrite.$transaction((tx) => deleteCommentsV2(tx, [id]));
+  if (!deleted.length) return null;
   void onCommentsRemoved([comment]);
   return comment;
 };
 
 /**
- * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
- * transaction. Deleting one sets its reply thread's link null rather than deleting the replies, but
- * an orphaned reply thread does not stay safe, so a comment is also kept while a held author replied
- * anywhere below it. The hold is checked once per author below, not per reply: its cost grows with
- * the number of holding reports.
+ * Deletes CommentV2 comments in the caller's transaction. Deleting one sets its reply thread's link
+ * null rather than deleting the replies.
  */
-export async function deleteCommentsV2UnlessHeld(
-  tx: Prisma.TransactionClient,
-  ids: number[],
-  markerView: boolean,
-  { byAuthor = false } = {}
-) {
-  if (ids.length === 0) return { deleted: [], retained: [] };
-  const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
-    DELETE FROM "CommentV2" c
-    WHERE c.id = ANY(${ids}::int[])
-      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      AND NOT EXISTS (
-        SELECT 1 FROM "Thread" t
-        WHERE t."commentId" = c.id AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
-      )
-    RETURNING c."userId", c."threadId"
+export async function deleteCommentsV2(tx: Prisma.TransactionClient, ids: number[]) {
+  if (ids.length === 0) return [];
+  return tx.$queryRaw<{ userId: number; threadId: number }[]>`
+    DELETE FROM "CommentV2" c WHERE c.id = ANY(${ids}::int[]) RETURNING c."userId", c."threadId"
   `;
-  // One its author removed is marked, so a moderator's ToS restore can tell it from a ToS removal.
-  const removedByAuthor = byAuthor
-    ? Prisma.sql`, metadata = COALESCE(metadata, '{}'::jsonb) || '{"removedByAuthor": true}'::jsonb`
-    : Prisma.empty;
-  const retained = await tx.$queryRaw<{ userId: number }[]>`
-    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now() ${removedByAuthor}
-    WHERE id = ANY(${ids}::int[])
-    RETURNING "userId"
-  `;
-  return { deleted, retained };
 }
 
-/** What follows a committed `deleteCommentsV2UnlessHeld`. */
-export async function afterCommentsV2Deleted({
-  deleted,
-  retained,
-}: Awaited<ReturnType<typeof deleteCommentsV2UnlessHeld>>) {
-  if (retained.length)
-    await logHoldRetained(
-      'commentV2.bulkDelete',
-      retained.map((r) => r.userId)
-    );
+export function afterCommentsV2Deleted(deleted: Awaited<ReturnType<typeof deleteCommentsV2>>) {
   void onCommentsRemoved(deleted);
 }
 
@@ -956,8 +877,7 @@ export async function bulkSetCommentV2TosViolation({
   let count = v3.count;
 
   for (const id of ids) {
-    // An already-hidden comment may be one its author deleted, kept for a hold: its reports are still
-    // actioned, but its author must not hear about a comment they removed.
+    // An already-hidden comment still has its reports actioned, but its author is not told again.
     const wasHidden = (
       await dbWrite.commentV2.findUnique({ where: { id }, select: { tosViolation: true } })
     )?.tosViolation;
@@ -1477,61 +1397,28 @@ export async function getCommentsInfinite({
  *    moment it is being restored.
  */
 export async function bulkClearCommentV2TosViolation({ ids: requested }: { ids: number[] }) {
-  if (requested.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
+  if (requested.length === 0) return { count: 0, reopenedReports: 0, failed: 0 };
   const v3Ids = await v3WriteCommentIds(requested);
   const v3 = await bulkClearCommentV3TosViolation({ ids: v3Ids });
   const ids = requested.filter((id) => !v3Ids.includes(id));
   if (ids.length === 0) return v3;
 
-  const markerView = await holdMarkerViewExists();
-
   let reopenedReports = v3.reopenedReports;
   // Rows actually cleared, NOT ids submitted — a comment already unflagged must not be counted, or the
   // caller reports a restore that restored nothing.
   let count = v3.count;
-  const retained: number[] = [];
-  let retainedHidden = v3.retainedHidden;
   let failed = v3.failed;
 
   for (const id of ids) {
-    const outcome = await clearTosOrKeep('CommentV2', id, markerView);
+    const outcome = await clearTosOrFail('CommentV2', id);
     if (outcome?.failed) failed += 1;
-    if (outcome?.held) {
-      retainedHidden += 1;
-      if (outcome.userId !== null) retained.push(outcome.userId);
-    }
     if (!outcome?.cleared) continue;
     count += 1;
     reopenedReports += outcome.reopened;
   }
 
-  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
-  return { count, reopenedReports, retainedHidden, failed };
+  return { count, reopenedReports, failed };
 }
-
-/**
- * Whether a held author replied anywhere below the comment aliased `c`: a moderator's delete keeps
- * such a comment, hidden, as it keeps a held author's own.
- */
-const heldReplyBelowSql = (table: 'Comment' | 'CommentV2', markerView: boolean) =>
-  table === 'Comment'
-    ? Prisma.sql`EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
-          UNION
-          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
-        )
-        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
-      )`
-    : Prisma.sql`EXISTS (
-        SELECT 1 FROM "Thread" t
-        WHERE t."commentId" = c.id AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
-      )`;
-
-const removedByAuthorSql = {
-  Comment: Prisma.sql`c."removedByAuthor"`,
-  CommentV2: Prisma.sql`(c.metadata ->> 'removedByAuthor')::boolean`,
-};
 
 const reportLinkOf = {
   Comment: { table: Prisma.raw('"CommentReport"'), key: Prisma.raw('"commentId"') },
@@ -1539,31 +1426,18 @@ const reportLinkOf = {
 };
 
 /**
- * Clears the ToS flag on the flagged comment `id` unless a moderator's delete would keep it: its
- * author, or anyone who replied below it, is held. Such a comment stays hidden. The hold is read in
- * the same statement as the write, and the reports the flag actioned reopen in it too, so a clear
- * never lands without them. Null when there is no such flagged comment, or when its author deleted
- * it: clearing that would republish it.
+ * Clears the ToS flag on the flagged comment `id`, and reopens the reports the flag actioned in the
+ * same statement, so a clear never lands without them. Null when there is no such flagged comment.
  */
-export async function clearTosUnlessHeld(
-  table: 'Comment' | 'CommentV2',
-  id: number,
-  markerView: boolean
-) {
+export async function clearTos(table: 'Comment' | 'CommentV2', id: number) {
   const { ReportReason, ReportStatus } = await import('~/shared/utils/prisma/enums');
   const link = reportLinkOf[table];
-  const [row] = await dbWrite.$queryRaw<
-    { userId: number; held: boolean; cleared: boolean; reopened: number }[]
-  >`
+  const [row] = await dbWrite.$queryRaw<{ cleared: boolean; reopened: number }[]>`
     WITH target AS (
-      SELECT c.id, c."userId",
-        (${accountHoldSql(Prisma.raw('c."userId"'), markerView)}
-          OR ${heldReplyBelowSql(table, markerView)}) AS held
-      FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id} AND c."tosViolation"
-        AND ${removedByAuthorSql[table]} IS NOT TRUE
+      SELECT c.id FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id} AND c."tosViolation"
     ), cleared AS (
       UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
-      FROM target t WHERE c.id = t.id AND t.held IS FALSE AND c."tosViolation"
+      FROM target t WHERE c.id = t.id AND c."tosViolation"
       RETURNING c.id
     ), reopened AS (
       -- Only Actioned: a report someone Dismissed was not closed by this flag.
@@ -1575,7 +1449,7 @@ export async function clearTosUnlessHeld(
         AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
       RETURNING r.id
     )
-    SELECT t."userId", t.held IS NOT FALSE AS held, EXISTS (SELECT 1 FROM cleared) AS cleared,
+    SELECT EXISTS (SELECT 1 FROM cleared) AS cleared,
       (SELECT count(*) FROM reopened)::int AS reopened
     FROM target t
   `;
@@ -1583,16 +1457,12 @@ export async function clearTosUnlessHeld(
 }
 
 /**
- * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden and is reported as
- * `failed`, not as held: the rest of the batch still runs and reports what it did.
+ * `clearTos`, where a statement that fails leaves the comment hidden and is reported as `failed`:
+ * the rest of the batch still runs and reports what it did.
  */
-export async function clearTosOrKeep(
-  table: 'Comment' | 'CommentV2',
-  id: number,
-  markerView: boolean
-) {
+export async function clearTosOrFail(table: 'Comment' | 'CommentV2', id: number) {
   try {
-    const row = await clearTosUnlessHeld(table, id, markerView);
+    const row = await clearTos(table, id);
     return row && { ...row, failed: false };
   } catch (e) {
     logToAxiom({
@@ -1601,6 +1471,6 @@ export async function clearTosOrKeep(
       message: 'Clearing a ToS flag failed; the comment stays hidden',
       details: { table, id, error: (e as Error)?.message },
     }).catch(() => undefined);
-    return { userId: null, held: false, cleared: false, reopened: 0, failed: true };
+    return { cleared: false, reopened: 0, failed: true };
   }
 }

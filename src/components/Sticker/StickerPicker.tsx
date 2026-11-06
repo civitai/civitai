@@ -1,4 +1,5 @@
-import { Loader, Popover, ScrollArea, Tabs, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Loader, ScrollArea, Tabs, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconMoodSmile } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { MouseEvent as ReactMouseEvent, ReactElement } from 'react';

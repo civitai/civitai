@@ -3,6 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { setReportStatus, getGameMirrors, getReportedGame } from '$lib/server/reports.service';
 import { delistGame, delistReason } from '$lib/server/game-frame';
 import {
+  getDeletedReportStorylines,
   getReportedStorylines,
   getReportStorylineId,
   getStorylineReportHolds,
@@ -31,14 +32,25 @@ export const load: PageServerLoad = async ({ params, url }) => {
 
   const queue = await loadReportQueue(type, url);
   const entityIds = queue.items.flatMap((r) => (r.entityId != null ? [r.entityId] : []));
-  const [games, storylines, storylineHolds, serviceOfferings] = await Promise.all([
-    type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
-    type === 'storyline' ? getReportedStorylines(entityIds) : [],
-    type === 'storyline' ? getStorylineReportHolds(queue.items.map((r) => r.id)) : [],
-    type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
-  ]);
+  const reportIds = queue.items.map((r) => r.id);
+  const [games, storylines, storylineHolds, deletedStorylines, serviceOfferings] =
+    await Promise.all([
+      type === 'gameFrameGame' ? getGameMirrors(entityIds) : [],
+      type === 'storyline' ? getReportedStorylines(entityIds) : [],
+      type === 'storyline' ? getStorylineReportHolds(reportIds) : [],
+      type === 'storyline' ? getDeletedReportStorylines(reportIds) : [],
+      type === 'serviceOffering' ? getReportedServiceOfferings(entityIds) : [],
+    ]);
 
-  return { ...queue, wide: true, games, storylines, storylineHolds, serviceOfferings };
+  return {
+    ...queue,
+    wide: true,
+    games,
+    storylines,
+    storylineHolds,
+    deletedStorylines,
+    serviceOfferings,
+  };
 };
 
 // The page's route tier is gated in hooks.server.ts; actions on a type with its own tier re-check it here with canAccess.

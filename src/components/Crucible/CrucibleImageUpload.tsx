@@ -1,5 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Input, Paper, Progress, Tooltip } from '@mantine/core';
+import { Input, Paper, Progress } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconTrash } from '@tabler/icons-react';
 import { useEffect } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

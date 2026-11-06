@@ -51,28 +51,6 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
-  // The reads in packages/civitai-db-queries/src/hot-reads-5.db.ts, through Kysely instead of Prisma.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // several of these reads run on most page views.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_5 = 'kysely-hot-reads-5',
-  // The reads in packages/civitai-db-queries/src/hot-reads-6.db.ts, through Kysely instead of Prisma.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // several of these reads run on most page views.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_6 = 'kysely-hot-reads-6',
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
@@ -204,18 +182,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
-  // Turns on the per-instance style hoist in the patched `@mantine/core` `useStyles`
-  // (patches/@mantine__core@7.17.8.patch, a backport of Mantine 9's): vars, styles and classNames
-  // resolved once per component instance instead of once per `getStyles(selector)` call. Same
-  // markup either way. Server only — the gate is installed on globalThis at boot, so the client
-  // always runs the original code. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or
-  // an uninitialized client, which keeps the original path. Global boolean, evaluated with no
-  // entity or context, at most once per 5s per process. See
-  // `src/server/utils/mantine-styles-hoist-gate.ts`.
-  //
-  // Add the key (enabled: false) to flag state before this code serves traffic. A missing key
-  // reads as off.
-  SSR_MANTINE_USESTYLES_HOIST = 'ssr-mantine-usestyles-hoist',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -258,6 +224,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
+  // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
+  // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
+  // the approve gate. Turning it off lets the job's next run take them. EVALUATED PER APP like the
+  // two above (entityId = the app block id, NO context): hold specific apps with an ENTITY_ID
+  // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
+  // `storage-migration-run.service.ts`.
+  APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -404,15 +377,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
 
-  // On: the internal image-delivery lookup (`image-delivery.service.ts`) sends its statement
-  // through the raw pg pools (`pgDbRead`, falling back to `pgDbWrite` on a replica error) instead
-  // of Prisma's `dbRead`/`dbWrite`. Off (and unknown, or a client that has not initialised): Prisma,
-  // as before. Same statement, parameters, row and fallback trigger either way.
+  // On: a verified crawler's page render may be stored by the origin cache and served to other
+  // crawlers (`~/server/bot-cache/bot-cache`). Off (and unknown, or a client that has not
+  // initialised): nothing is stored or served, as before. The key keeps its original name.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, and read at most once per 5s per process
-  // (`createCachedFlagGate`), so `enabled` IS the switch. The key must exist in flag state
-  // (enabled: false is fine) before this code serves traffic.
-  IMAGE_DELIVERY_PG_LOOKUP = 'image-delivery-pg-lookup',
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

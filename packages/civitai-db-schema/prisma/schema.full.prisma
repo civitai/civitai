@@ -607,6 +607,7 @@ model User {
   // Storylines
   storylines                 Storyline[]
   storylineCollaborations    StorylineCollaborator[]
+  storylineFollows           StorylineFollow[]
   storylineEarlyAccess       StorylineEarlyAccessSignup?
   storylineBranchChoices     StorylineBranchChoice[]
   storylineCreateClicks      StorylineCreateClick[]
@@ -3637,6 +3638,14 @@ model AppListing {
   revisionOfId    String?      @map("revision_of_id")
   revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
   revisions       AppListing[] @relation("AppListingRevision")
+  // MODERATOR-SET "Official" flag: the app is made by the Civitai team. A provenance claim
+  // like `Model.isOfficial` / `Article.isOfficial` — set only by `setListingOfficialAsModerator`,
+  // never from an author input or the manifest; renders a badge on the store card and page.
+  // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written
+  // by raw SQL in `app-listing-official.service.ts` only, for the reason `visibility` above
+  // documents (a Prisma-declared scalar is named by every select-less query and would 500
+  // them until the manual migration `20261224120200_app_listing_official` is applied).
+  isOfficial      Boolean      @default(false) @map("is_official") // @no-type
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
@@ -4963,6 +4972,50 @@ model AppStorageImportGrant {
   @@map("app_storage_import_grants")
 }
 
+// App Developer Terms acceptance: one row per (developer, terms version). A developer accepts with
+// the checkbox at app publish; bumping APP_DEVELOPER_TERMS_VERSION asks everyone again. The FK to
+// "User" lives only in migration `20261223120000_app_developer_terms_acceptance`, applied by hand.
+model AppDeveloperTermsAcceptance {
+  userId     Int      @map("user_id")
+  version    String
+  acceptedAt DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  @@id([userId, version])
+  @@map("app_developer_terms_acceptances")
+}
+
+// App Blocks App Storage schema migrations: one run per (approved publish request, collection)
+// over that collection's stored documents. RAW SQL ONLY (`storage-migration-run.service.ts`), so
+// the model is stripped from the generated client; the migration
+// `20261221120000_app_storage_migration_runs` is applied by hand (with its FKs, CHECK and partial
+// index, which live only there) and the service tolerates the table's absence.
+// @no-type
+model AppStorageMigrationRun {
+  publishRequestId String    @map("publish_request_id")
+  collection       String
+  appBlockId       String    @map("app_block_id")
+  ops              Json
+  status           String    @default("pending")
+  cursor           Json?
+  scanned          Int       @default(0)
+  migrated         Int       @default(0)
+  unchanged        Int       @default(0)
+  failed           Int       @default(0)
+  invalid          Int       @default(0)
+  failures         Json      @default("[]")
+  lastError        String?   @map("last_error")
+  attempts         Int       @default(0)
+  claimToken       String?   @map("claim_token")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(6)
+  heartbeatAt      DateTime? @map("heartbeat_at") @db.Timestamptz(6)
+  finishedAt       DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  @@id([publishRequestId, collection])
+  @@index([appBlockId], map: "app_storage_migration_runs_app_block_idx")
+  @@map("app_storage_migration_runs")
+}
+
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo
 /// identity. 1:1 with User (PK is the civitai userId), provisioned LAZILY the
 /// first time a developer requests git access to one of their apps.
@@ -5039,7 +5092,7 @@ model Comment {
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
   pinnedAt     DateTime?
-  /// Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+  /// No longer set; only the reverse copy reads it. Kept until a migration drops it.
   removedByAuthor Boolean @default(false)
 
   comments  Comment[]         @relation("ParentComments")
@@ -5368,7 +5421,7 @@ model CommentV3 {
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
   legacyV1Id    Int?
-  // Deleted by its author while a legal hold kept it: a ToS restore must not republish it.
+  // No longer set; only the reverse copy reads it. Kept until a migration drops it.
   removedByAuthor Boolean @default(false)
 
   reactions CommentV3Reaction[]
@@ -10561,6 +10614,7 @@ model Storyline {
   chapters      StorylineChapter[]
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
+  followers     StorylineFollow[]
   reports       StorylineReport[]
   coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
@@ -10725,6 +10779,30 @@ model StorylineCollaborator {
   @@index([userId])
 }
 
+/// Which new chapters of a storyline a follower is told about. Each scope includes the one before.
+enum StorylineFollowScope {
+  /// Chapters on the main path.
+  Canon
+  /// Also chapters by the owner or an accepted collaborator, judged when the notification is sent.
+  Endorsed
+  /// Every live chapter.
+  Everything
+}
+
+/// A user following a storyline for 'storyline-chapter-added'. The owner and each accepted
+/// collaborator get a row when they start or join, and may delete it; unfollowing deletes it.
+model StorylineFollow {
+  storylineId Int
+  storyline   Storyline            @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope       StorylineFollowScope @default(Canon)
+  createdAt   DateTime             @default(now())
+
+  @@id([storylineId, userId])
+  @@index([userId])
+}
+
 /// A signed-in reader's choice of how to continue at the end of a chapter. One row per reader
 /// per fork point, overwritten when they choose again, so a fork's share of readers counts each
 /// reader once, by their latest choice. Signed-out readers are not counted.
@@ -10781,13 +10859,17 @@ model StorylineCoverUpload {
   @@index([imageId])
 }
 
+/// A report outlives its storyline: the delete sets `storylineId` NULL and fills the snapshot.
 model StorylineReport {
-  storylineId Int
-  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
-  reportId    Int       @unique
-  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reportId        Int        @id
+  report          Report     @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  storylineId     Int?
+  storyline       Storyline? @relation(fields: [storylineId], references: [id], onDelete: SetNull)
+  /// The storyline's id once deleted, when a held copy of it was kept ("HeldStoryline").
+  heldStorylineId Int?
+  /// The storyline's title when it was deleted.
+  storylineTitle  String?
 
-  @@id([reportId, storylineId])
   @@index([storylineId], type: Hash)
 }
 

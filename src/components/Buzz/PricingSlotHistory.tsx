@@ -1,4 +1,5 @@
-import { Anchor, Divider, Loader, Popover, Stack, Table, Text } from '@mantine/core';
+import { Anchor, Divider, Loader, Stack, Table, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useState } from 'react';
 import { PRICING_SLOT_EXPLAINER, formatFeeRatio } from '@civitai/buzz';
 import type { RouterOutput } from '~/types/router';

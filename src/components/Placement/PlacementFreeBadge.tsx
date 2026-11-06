@@ -1,4 +1,5 @@
-import { Anchor, Badge, Popover, Text } from '@mantine/core';
+import { Anchor, Badge, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import Link from 'next/link';
 
 /**

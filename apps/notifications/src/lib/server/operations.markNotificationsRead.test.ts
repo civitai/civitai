@@ -16,7 +16,9 @@ const h = vi.hoisted(() => {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const state: {
     // (sql, params, callIndex) => the result of write.query(). Default set in beforeEach.
-    queryImpl: ((sql: string, params: unknown[], i: number) => Promise<{ rowCount: number }>) | null;
+    queryImpl:
+      | ((sql: string, params: unknown[], i: number) => Promise<{ rowCount: number }>)
+      | null;
     // Row returned by the category-lookup cancellableQuery in the single-id path.
     catRows: Array<{ category: string }>;
   } = { queryImpl: null, catRows: [{ category: 'Comment' }] };
@@ -260,8 +262,8 @@ describe('markReadImpl branches + SQL/param indexing', () => {
 
     expect(h.calls).toHaveLength(1);
     const { sql, params } = h.calls[0];
-    expect(sql).toContain('WHERE id = $1 AND viewed IS FALSE');
-    expect(params).toEqual([99]);
+    expect(sql).toContain('WHERE id = $1 AND "userId" = $2 AND viewed IS FALSE');
+    expect(params).toEqual([99, 4]);
     expect(notificationCache.decrementUser).toHaveBeenCalledWith(4, 'Comment');
     expect(notificationCache.bustUser).not.toHaveBeenCalled();
   });

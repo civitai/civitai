@@ -1,4 +1,5 @@
-import { Button, Loader, Text, Tooltip } from '@mantine/core';
+import { Button, Loader, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconBolt,
   IconCheck,

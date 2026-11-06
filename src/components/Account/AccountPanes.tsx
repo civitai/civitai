@@ -12,6 +12,8 @@ import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { ShowcaseHatSetting } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
+import { HatTurfSetting } from '~/components/Account/HatTurfSetting';
+import { HatTurfOwnerSetting } from '~/components/Account/HatTurfOwnerSetting';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
@@ -52,6 +54,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
         <SettingsStack>
           <ProfileCard flat />
           <ShowcaseHatSetting />
+          <HatTurfSetting />
           <SocialProfileCard flat />
           {features.strikes && <StrikesCard flat />}
           <div className="flex flex-col gap-3">
@@ -76,6 +79,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           {/* Ungated on purpose: the card self-gates, and still owes the sticker pointer with
               every flag off. */}
           <CreatorControlsCard flat stickerFooter={<StickerInventoryCard flat />} />
+          <HatTurfOwnerSetting />
         </SettingsStack>
       );
 

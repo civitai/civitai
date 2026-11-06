@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { refillStock, stepAt } from '~/server/events/turf/schedule';
+import { nextStickerAt, refillStock, stepAt } from '~/server/events/turf/schedule';
 
 // Illustrative numbers, not any event's real schedule.
 const at = (iso: string) => new Date(iso);
@@ -35,5 +35,23 @@ describe('stepAt', () => {
     expect(stepAt(SUPPLY, at('2030-01-05T00:00:00Z'))?.perHour).toBe(5);
     expect(stepAt(SUPPLY, at('2030-01-12T00:00:00Z'))?.perHour).toBe(10);
     expect(stepAt(SUPPLY, at('2029-10-01T00:00:00Z'))).toBeUndefined();
+  });
+});
+
+describe('nextStickerAt', () => {
+  const now = at('2030-01-01T12:00:00Z');
+  const step = { from: at('2030-01-01T00:00:00Z'), perHour: 5, cap: 50 };
+
+  it('is when the fraction in hand reaches the next whole sticker', () => {
+    // 7.4 needs 0.6 more at 5/h: 7m 12s.
+    expect(nextStickerAt(7.4, now, step)).toEqual(at('2030-01-01T12:07:12Z'));
+    expect(nextStickerAt(7, now, step)).toEqual(at('2030-01-01T12:12:00Z'));
+  });
+
+  it('is null at or over the cap, with no rate, or before the first step', () => {
+    expect(nextStickerAt(50, now, step)).toBeNull();
+    expect(nextStickerAt(53, now, step)).toBeNull();
+    expect(nextStickerAt(3, now, { ...step, perHour: 0 })).toBeNull();
+    expect(nextStickerAt(3, now, undefined)).toBeNull();
   });
 });

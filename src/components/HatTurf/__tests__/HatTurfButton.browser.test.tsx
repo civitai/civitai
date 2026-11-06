@@ -30,7 +30,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => features,
 }));
 const h = vi.hoisted(() => ({
-  stock: { available: 3, optedIn: true },
+  stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -173,6 +173,7 @@ function renderCard(ctx: Ctx = {}, ownerId = 2, width = PHONE_CARD) {
         images: {},
         open: {},
         stickers: {},
+        joined: h.stock?.optedIn === true,
         watch: () => () => undefined,
         ...ctx,
       }}
@@ -214,12 +215,28 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
+/** The hat's body in the sticker editor: press it to drag, focus it for the arrow keys. */
+const hatBody = () =>
+  document.body.querySelector<HTMLElement>('[aria-label="Sticker position: arrow keys to move"]');
+const placeHat = () =>
+  [...document.body.querySelectorAll('button')].find((b) => b.textContent === 'Place hat')!.click();
+const pointerAt = (type: string, x: number, y: number, target: EventTarget) =>
+  target.dispatchEvent(
+    new PointerEvent(type, { bubbles: true, pointerId: 1, buttons: 1, clientX: x, clientY: y })
+  );
+
 describe('Hat Turf button on a feed ImageCard', () => {
-  test('shows how many hats are available before pressing, and the gear is already on screen', async () => {
+  test('the button is a square in the team colour with only the hat, and the gear is already on screen', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('3');
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    expect(button.textContent).toBe('');
+    const box = button.getBoundingClientRect();
+    expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(2);
+    // The viewer is on blue: the theme's blue at its primary shade (#228be6), not the grey fallback.
+    expect(getComputedStyle(button).backgroundColor).toBe('rgb(34, 139, 230)');
     const gear = q('hat-turf-gear')!;
+    expect(getComputedStyle(gear).backgroundColor).toBe('rgb(0, 0, 0)');
     expect(getComputedStyle(gear).display).not.toBe('none');
     const card = q('card-root')!.getBoundingClientRect();
     const g = gear.getBoundingClientRect();
@@ -230,6 +247,38 @@ describe('Hat Turf button on a feed ImageCard', () => {
       expect(r.left).toBeGreaterThanOrEqual(card.left);
       expect(r.right).toBeLessThanOrEqual(card.right);
     }
+  });
+
+  test("the gear and the hat button never take each other's taps", async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    const gear = q('hat-turf-gear')!;
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    const g = gear.getBoundingClientRect();
+    const b = button.getBoundingClientRect();
+    const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button');
+
+    expect(hit(g.left + g.width / 2, g.top + g.height / 2)).toBe(gear);
+    // The gear sits on the top-right; the centre and the rest of the circle stay the button's.
+    const [cx, cy, r] = [b.left + b.width / 2, b.top + b.height / 2, b.width / 2 - 2];
+    for (const [x, y] of [
+      [cx, cy],
+      [cx - r * Math.SQRT1_2, cy - r * Math.SQRT1_2],
+      [cx - r * Math.SQRT1_2, cy + r * Math.SQRT1_2],
+      [cx + r * Math.SQRT1_2, cy + r * Math.SQRT1_2],
+    ])
+      expect(hit(x, y)).toBe(button);
+  });
+
+  test('the hat button is a full circle', async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    const b = button.getBoundingClientRect();
+    expect(b.width).toBe(b.height);
+    // A rounded square still takes a tap 2px in from its corner; a circle does not.
+    const corner = document.elementFromPoint(b.left + 2, b.bottom - 2)?.closest('button');
+    expect(corner).not.toBe(button);
   });
 
   test('pressing drops a draft hat on the picture without opening the card', async () => {
@@ -252,23 +301,28 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    const draft = q('hat-turf-draft')!;
     const layer = q('hat-turf-layer')!;
     const img = layer.parentElement!.querySelector('img')!;
     await vi.waitFor(() => {
+      const body = hatBody()!;
+      const hat = body.getBoundingClientRect();
       const media = img.getBoundingClientRect();
-      draft.dispatchEvent(
-        new PointerEvent('pointermove', {
-          bubbles: true,
-          buttons: 1,
-          pointerType: 'mouse',
-          clientX: media.left + media.width * 0.25,
-          clientY: media.top + media.height * 0.3,
-        })
+      pointerAt('pointerdown', hat.left + hat.width / 2, hat.top + hat.height / 2, body);
+      pointerAt(
+        'pointermove',
+        media.left + media.width * 0.25,
+        media.top + media.height * 0.3,
+        window
       );
-      expect(parseFloat(q('hat-turf-draft')!.style.left)).toBeCloseTo(25, -1);
+      pointerAt(
+        'pointerup',
+        media.left + media.width * 0.25,
+        media.top + media.height * 0.3,
+        window
+      );
+      expect(parseFloat(body.parentElement!.style.left)).toBeCloseTo(25, -1);
     });
-    (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
+    placeHat();
     expect(h.mutate).toHaveBeenCalledTimes(1);
     const [input, options] = h.mutate.mock.calls[0];
     expect(input).toMatchObject({
@@ -297,11 +351,10 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    const before = q('hat-turf-draft')!.style.left;
-    q('hat-turf-draft')!.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })
-    );
-    await vi.waitFor(() => expect(q('hat-turf-draft')!.style.left).not.toBe(before));
+    await vi.waitFor(() => expect(hatBody()).not.toBeNull());
+    const before = hatBody()!.parentElement!.style.left;
+    hatBody()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await vi.waitFor(() => expect(hatBody()!.parentElement!.style.left).not.toBe(before));
   });
 
   test('the layer rides the card’s hover zoom and clips to the card', async () => {
@@ -318,7 +371,7 @@ describe('Hat Turf button on a feed ImageCard', () => {
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    (document.body.querySelector('[aria-label="Discard hat"]') as HTMLElement).click();
+    (document.body.querySelector('[aria-label="Remove this sticker"]') as HTMLElement).click();
     await vi.waitFor(() => expect(q('hat-turf-draft')).toBeNull());
     expect(h.mutate).not.toHaveBeenCalled();
   });
@@ -327,25 +380,27 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.stock = { available: 0, optedIn: true };
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('0');
     expect(document.body.querySelector('[aria-label="No hats left to place"]')).not.toBeNull();
     await press();
     expect(q('hat-turf-draft')).toBeNull();
   });
 
-  test('the gear lists the viewer’s hats by name and the pick is the one placed', async () => {
+  test('the gear opens the panel; a hat picked in its tray is the one placed', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Top Hat'));
-    expect(document.body.textContent).toContain('Party Cap');
-    const option = [...document.body.querySelectorAll('[aria-label="Hat to place"] button')].find(
-      (o) => o.textContent?.includes('Top Hat')
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Party Cap'));
+    expect(onCardClick).not.toHaveBeenCalled();
+    q('hat-turf-panel-change')!.click();
+    await vi.waitFor(() => expect(q('hat-turf-tray')).not.toBeNull());
+    const option = [...q('hat-turf-tray')!.querySelectorAll('button[aria-pressed]')].find((o) =>
+      o.textContent?.includes('Top Hat')
     ) as HTMLElement;
     option.click();
+    await vi.waitFor(() => expect(q('hat-turf-panel-hat')?.textContent).toBe('Top Hat'));
     await press();
     await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    (document.body.querySelector('[aria-label^="Place hat"]') as HTMLElement).click();
+    placeHat();
     expect(h.mutate.mock.calls[0][0].cosmeticId).toBe(12);
   });
 
@@ -360,11 +415,33 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(q('hat-turf-button')).toBeNull();
   });
 
-  test('not joined: an image whose owner has not joined still offers Join', async () => {
+  test('not joined: a contest entry offers no Join either', async () => {
+    h.stock = { available: 3, optedIn: false };
+    renderCard({ open: { 77: false }, hidden: { 77: true } });
+    await cardRendered();
+    expect(q('hat-turf-button')).toBeNull();
+  });
+
+  // Until the stock is read, the card cannot tell a joined viewer's hat from the join invite, and a
+  // hat press there would start a placement that no layer draws.
+  test('no button until the viewer’s stock is read', async () => {
+    h.stock = undefined;
+    renderCard();
+    await cardRendered();
+    expect(q('hat-turf-button')).toBeNull();
+  });
+
+  // The control for the absences above: by the time the reactions are drawn, the button is too.
+  test('joined: the button is drawn by the time the reactions are', async () => {
+    renderCard();
+    await cardRendered();
+    expect(q('hat-turf-button')).not.toBeNull();
+  });
+
+  test('not joined: a closed image still offers Join', async () => {
     h.stock = { available: 3, optedIn: false };
     renderCard({ open: { 77: false } });
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('+');
     await press();
     const join = await vi.waitFor(() => {
       const button = [...document.body.querySelectorAll('button')].find(
@@ -388,7 +465,8 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.stock = { available: 3, optedIn: false };
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
-    expect(q('hat-turf-stock')!.textContent).toBe('+');
+    // Not joined has nothing to set yet: no gear.
+    expect(q('hat-turf-gear')).toBeNull();
     await press();
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Join Hat Turf to place hats')
@@ -421,6 +499,7 @@ describe('hats on a feed ImageCard', () => {
     leader: 'pink',
     leaderCosmeticId: 11,
     hatted: false,
+    hattedTeam: null,
     ...over,
   });
   const sticker = (id: number, team: string, userId = 9) => ({
@@ -456,14 +535,16 @@ describe('hats on a feed ImageCard', () => {
     expect(hats().map((el) => el.dataset.tone)).toEqual(['lead', 'dim']);
   });
 
-  test('a protected image shows its hats muted with a lock and who would take it', async () => {
+  test('a protected image shows its hats muted, with no "would take it" pill', async () => {
     renderCard({
       images: { 77: summary({ hatted: true }) },
       stickers: { 77: [sticker(1, 'blue')] },
     });
     await vi.waitFor(() => expect(hats().length).toBe(1));
     expect(hats()[0].dataset.tone).toBe('muted');
-    expect(q('hat-turf-lock')!.textContent).toContain('Pink would take it');
+    expect(getComputedStyle(hats()[0]).filter).not.toMatch(/grayscale|saturate/);
+    expect(q('hat-turf-badge-lock')).not.toBeNull();
+    expect(document.body.textContent).not.toMatch(/would take it/);
   });
 
   test('hats past what is drawn show as a +N chip', async () => {
@@ -477,31 +558,87 @@ describe('hats on a feed ImageCard', () => {
     expect(q('hat-turf-more')!.textContent).toContain('+10');
   });
 
-  test('Show hats off hides the hats but the badge stays', async () => {
-    useHatTurfStore.setState({ showHats: false });
-    renderCard({
-      images: { 77: summary() },
-      stickers: { 77: [sticker(1, 'blue')] },
-    });
-    await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
-    expect(hats().length).toBe(0);
-    useHatTurfStore.setState({ showHats: true });
-  });
-
-  test('turning Show hats off and on again in the gear menu logs both', async () => {
+  test('turning Show hats off in the gear menu logs it, and the card keeps its hat button and gear', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-gear')).not.toBeNull());
     q('hat-turf-gear')!.click();
-    const toggle = () =>
-      (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() =>
       expect(document.body.querySelector('input[type="checkbox"]')).not.toBeNull()
     );
-    toggle();
+    (document.body.querySelector('input[type="checkbox"]') as HTMLElement).click();
     await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(false));
-    toggle();
-    await vi.waitFor(() => expect(useHatTurfStore.getState().showHats).toBe(true));
-    expect(actions()).toEqual(['hide_all_hats_on', 'hide_all_hats_off']);
+    // Give a removal the time to land before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(q('hat-turf-gear')).not.toBeNull();
+    expect(q('hat-turf-button')).not.toBeNull();
+    expect(actions()).toEqual(['hide_all_hats_on']);
+  });
+
+  describe('Show hats off, and the reveal', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const t0 = Date.parse('2026-11-01T00:00:00Z');
+    // Newest first, as the reads return them: 3 went on a day after 2, which went an hour after 1.
+    const timed = () => [
+      { ...sticker(3, 'pink'), createdAt: new Date(t0 + DAY + 3_600_000) },
+      { ...sticker(2, 'pink'), createdAt: new Date(t0 + 3_600_000) },
+      { ...sticker(1, 'blue'), createdAt: new Date(t0) },
+    ];
+    const delayOf = (hat: HTMLElement) => {
+      const wrap = hat.querySelector<HTMLElement>('[class*="appear"]');
+      return wrap ? parseFloat(wrap.style.getPropertyValue('--sticker-delay')) : null;
+    };
+    const ids = () => hats().map((el) => el.dataset.team);
+
+    test('hats on screen at load play no reveal; turning Show hats on plays it', async () => {
+      renderCard({ images: { 77: summary() }, stickers: { 77: timed() } });
+      await vi.waitFor(() => expect(hats().length).toBe(3));
+      expect(hats().map(delayOf)).toEqual([null, null, null]);
+
+      useHatTurfStore.setState({ showHats: false });
+      await vi.waitFor(() => expect(hats().length).toBe(0));
+      useHatTurfStore.setState({ showHats: true });
+      await vi.waitFor(() => expect(hats().length).toBe(3));
+      expect(
+        hats()
+          .map(delayOf)
+          .every((d) => d !== null)
+      ).toBe(true);
+    });
+
+    test('with Show hats off, the hat button reveals every hat, oldest first, within 1.5s', async () => {
+      useHatTurfStore.setState({ showHats: false });
+      renderCard({ images: { 77: summary() }, stickers: { 77: timed() } });
+      await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(hats()).toHaveLength(0);
+
+      await press();
+      await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
+      await vi.waitFor(() => expect(hats()).toHaveLength(3));
+      expect(ids()).toEqual(['pink', 'pink', 'blue']);
+      const [d3, d2, d1] = hats().map(delayOf) as number[];
+      expect(d1).toBe(0);
+      expect(d2).toBeGreaterThan(d1);
+      // A day's gap runs longer than an hour's, and the whole reveal stays inside 1.5s.
+      expect(d3 - d2).toBeGreaterThan(d2 - d1);
+      expect(d3).toBeLessThanOrEqual(1500);
+    });
+
+    test('when placing ends with Show hats off, the hats stay about 2s, then go', async () => {
+      useHatTurfStore.setState({ showHats: false });
+      renderCard({ images: { 77: summary() }, stickers: { 77: timed() } });
+      await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+      await press();
+      await vi.waitFor(() => expect(hats()).toHaveLength(3));
+
+      (document.body.querySelector('[aria-label="Remove this sticker"]') as HTMLElement).click();
+      await vi.waitFor(() => expect(q('hat-turf-draft')).toBeNull());
+      const ended = performance.now();
+      // Read at once, not awaited: the linger ends by itself.
+      expect(hats()).toHaveLength(3);
+      await vi.waitFor(() => expect(hats()).toHaveLength(0), { timeout: 5000 });
+      expect(performance.now() - ended).toBeGreaterThanOrEqual(2000);
+    });
   });
 
   test('tells the provider the card is on screen, and stops when it leaves', async () => {
@@ -516,6 +653,7 @@ describe('hats on a feed ImageCard', () => {
           images: {},
           open: {},
           stickers: {},
+          joined: true,
           watch,
         }}
       >

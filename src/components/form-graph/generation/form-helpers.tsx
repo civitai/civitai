@@ -1,4 +1,5 @@
-import { Button, Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { Button, Input, UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { showNotification } from '@mantine/notifications';
 import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
