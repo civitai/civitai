@@ -108,12 +108,15 @@ import {
   Availability,
   CollectionMode,
   CollectionType,
+  EntityType,
+  JobQueueType,
   MediaType,
   Model3DStatus,
   ModelHashType,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { readImageUploadObjectHead } from '~/utils/s3-utils';
@@ -1219,6 +1222,14 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
 export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
   if (!posts.length) return;
   void onStorySparkPostsHidden({ postIds: posts.map((post) => post.postId) });
+  // The nsfw trigger fires on publish only; the version's level still counts this post's images.
+  await enqueueJobs(
+    posts.map((post) => ({
+      entityId: post.postId,
+      entityType: EntityType.Post,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
+  );
   const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((post) => post.postId) } },
     select: { id: true },
@@ -1972,6 +1983,10 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
   );
 
   await updatePostNsfwLevel(postId);
+  // The version level counts the first 20 images by index, so an order change can move one in or out.
+  await enqueueJobs([
+    { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+  ]);
   await bustCachesForPosts(postId);
 
   return transaction;
