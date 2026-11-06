@@ -635,7 +635,8 @@ export function MixedAuthEndpoint(
     res: NextApiResponse,
     user: Session['user'] | undefined
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowBanned = false }: { allowBanned?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
@@ -672,7 +673,10 @@ export function MixedAuthEndpoint(
     else addPublicCacheHeaders(req, res);
 
     // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
-    const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
     if (session === false) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
