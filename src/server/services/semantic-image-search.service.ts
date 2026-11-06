@@ -137,7 +137,7 @@ async function embedQuery(text: string) {
   const vector = data.embedding?.length
     ? data.embedding
     : await readEmbeddingBlob(data.blob?.url as string);
-  // An empty or short vector would reach Qdrant as a malformed query, and stay cached for a week.
+  // An empty or short vector would reach Qdrant as a malformed query, and stay cached.
   if (vector.length !== EMBED_DIMENSIONS || !vector.every(Number.isFinite)) throw embeddingFailed();
 
   await redis.packed.set(key, vector, { EX: QUERY_VECTOR_TTL });

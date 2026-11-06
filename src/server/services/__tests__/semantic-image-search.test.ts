@@ -1,3 +1,5 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as ImageService from '~/server/services/image.service';
@@ -26,6 +28,7 @@ const h = vi.hoisted(() => {
 vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: { post: h.embed },
 }));
+const realFetch = globalThis.fetch;
 vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) =>
   String(url).includes('/v2/consumer/blobs/')
     ? h.blob(String(url), init)
@@ -318,7 +321,7 @@ describe('query embedding', () => {
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
   });
 
-  // The recipe's answer when the vector's blob was not readable yet (seen in prod 2026-11-06).
+  // The recipe's answer when the vector's blob was not readable yet.
   const BLOB_URL = 'https://orchestrator.test/v2/consumer/blobs/embedding-abc.bin?sig=s';
   const pending = (extra: Record<string, unknown> = {}) => ({
     data: {
@@ -374,6 +377,64 @@ describe('query embedding', () => {
       blobVector,
       expect.anything()
     );
+  });
+
+  it('sends no bearer token to a blob on another origin', async () => {
+    setEnv({
+      QDRANT_URL: 'http://qdrant.test',
+      ORCHESTRATOR_ENDPOINT: 'https://orchestrator.test',
+      ORCHESTRATOR_ACCESS_TOKEN: 'orch-token',
+    });
+    const foreign = 'https://content.test/v2/consumer/blobs/embedding-abc.bin?sig=s';
+    h.embed.mockResolvedValue(pending({ blob: { url: foreign } }));
+    h.blob.mockReset().mockResolvedValue(new Response(blobBytes(blobVector)));
+    const { run, calls } = await search();
+    await run;
+    expect(calls[0].query).toEqual(blobVector);
+    expect(h.blob.mock.calls[0][0]).toBe(foreign);
+    expect(new Headers(h.blob.mock.calls[0][1]?.headers).has('authorization')).toBe(false);
+  });
+
+  it('keeps the bearer token from a foreign host the blob redirects to', async () => {
+    // Real fetch and real servers: the redirect is followed by the runtime, not by our code.
+    const seen: { host: string; authorization?: string }[] = [];
+    const listen = (handler: http.RequestListener) =>
+      new Promise<http.Server>((resolve) => {
+        const server = http.createServer(handler);
+        server.listen(0, '127.0.0.1', () => resolve(server));
+      });
+    const portOf = (s: http.Server) => (s.address() as AddressInfo).port;
+    const foreign = await listen((req, res) => {
+      seen.push({ host: 'foreign', authorization: req.headers.authorization });
+      res.end(Buffer.from(blobBytes(blobVector)));
+    });
+    const own = await listen((req, res) => {
+      seen.push({ host: 'own', authorization: req.headers.authorization });
+      res.writeHead(308, { location: `http://127.0.0.1:${portOf(foreign)}/embedding-abc.bin` });
+      res.end();
+    });
+    try {
+      const origin = `http://127.0.0.1:${portOf(own)}`;
+      setEnv({
+        QDRANT_URL: 'http://qdrant.test',
+        ORCHESTRATOR_ENDPOINT: origin,
+        ORCHESTRATOR_ACCESS_TOKEN: 'orch-token',
+      });
+      h.embed.mockResolvedValue(
+        pending({ blob: { url: `${origin}/v2/consumer/blobs/embedding-abc.bin?sig=s` } })
+      );
+      h.blob.mockReset().mockImplementation((url, init) => realFetch(url, init));
+      const { run, calls } = await search();
+      await run;
+      expect(calls[0].query).toEqual(blobVector);
+      expect(seen).toEqual([
+        { host: 'own', authorization: 'Bearer orch-token' },
+        { host: 'foreign', authorization: undefined },
+      ]);
+    } finally {
+      own.close();
+      foreign.close();
+    }
   });
 
   it('prefers an inline vector over the blob', async () => {
