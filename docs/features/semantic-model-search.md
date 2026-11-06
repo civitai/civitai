@@ -56,10 +56,44 @@ for a first slice. Writing needs `--confirm` and `VECTOR_SYNC_EMBED_ENABLED`; em
 orchestrator call. The embedder's config checks apply, including `VECTOR_IMAGE_LOCATION`.
 
 A model whose document changed keeps its old vector until the re-embed lands, but its payload is
-rewritten at once, so filters never act on a stale `nsfwLevel`.
+rewritten at once.
 
-Run one writer per id range: the post-embed re-read covers what was embedded, not deletes and
-payload rewrites racing a second writer.
+Run one writer per model: the post-embed re-read covers what was embedded, not deletes and
+payload rewrites racing a second writer. Two writers that both sync a model while it changes can
+leave the older read's payload, including its `nsfwLevel`, until the model's next change or a
+re-run. The live consumer is such a writer, so run one replica of it; a backfill alongside it
+races only within one page's read and payload write. The reverse race, a page that read a model as
+ineligible deleting a point the consumer just made, leaves the model missing until its next event.
+
+## Live sync
+
+```
+node dist/vector-sync/models/consumer.js
+```
+
+Its own process and consumer group (`VECTOR_MODEL_CONSUMER_GROUP`, default `model-vector-sync`).
+It reads `postgres.Model`, `postgres.ModelVersion` and `postgres.TagsOnModels`, collects model ids
+for `VECTOR_SYNC_DEBOUNCE_MS`, and runs the same sync as the backfill, committing offsets only
+after the writes land.
+
+- It needs `CDC_MODEL_ENABLED=true`, which adds `public.Model` and `public.ModelVersion` to the
+  connector, without their large text and JSON columns (a record over the producer's size limit would
+  fail the connector for every table). That changes the Debezium publication, and the metrics
+  watcher recreates the connector when its table or column list changes, so set it on the watcher with
+  infra and the consumer together. Off by default: a deploy without it leaves the connector as
+  it was.
+- Start it before the backfill. A new consumer group starts at the latest offset, so changes
+  before its first join are only covered by a backfill that runs after it.
+- It embeds only with `VECTOR_SYNC_EMBED_ENABLED`, once the collection has a recorded model (the
+  backfill's first write), and while Kafka Connect reports both tables streaming. Otherwise
+  deletes and payload updates still run, and new vectors and re-embeds wait for the model's next
+  event once embedding resumes, or for the backfill.
+- A deleted version's event carries only the version id, so it is skipped. Deleting a model's
+  last published version writes nothing to the Model row, so its point keeps that version's text
+  until a backfill re-run.
+- A model whose embed step fails is counted in `failed` and its offset committed; the next change
+  or a backfill re-run embeds it.
+- `HEALTH_CHECK_PORT` reports `healthy`, `pending` and whether it is embedding.
 
 ## Caveats
 
@@ -71,8 +105,6 @@ payload rewrites racing a second writer.
 
 ## Not built yet
 
-- Change capture: Model and ModelVersion are not streamed by the Debezium connector today, so until
-  it lands an edit, unpublish or delete reaches the collection only through a backfill re-run.
 - A creator rename changes the `Creator:` line but is not detected; a re-run picks it up.
 - The 1,024-token cap from the prototype: whether the orchestrator accepts or truncates documents
   that long is being measured.

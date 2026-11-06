@@ -5,7 +5,6 @@ import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle, IconUnlink } from '@tabler/icons-react';
 import { TextStyleKit } from '@tiptap/extension-text-style';
-import ImageExtension from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extensions';
 import type { Editor, Extensions } from '@tiptap/react';
 import { Extension, nodePasteRule, useEditor } from '@tiptap/react';
@@ -19,6 +18,7 @@ import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ImageSizeMenu } from './ImageSizeMenu';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
@@ -32,6 +32,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { EmbedNode } from '~/shared/tiptap/embed.node';
+import { SizedImage } from '~/shared/tiptap/sized-image.node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
@@ -152,6 +153,8 @@ export function RichTextEditor({
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
   const addBlurbs = includeControls.includes('blurb');
+  // Needs the addVideo branch: only it registers the image nodes that carry `size`.
+  const addImageSize = addVideo && includeControls.includes('imageSize');
   const addAlign = includeControls.includes('align');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
@@ -235,7 +238,7 @@ export function RichTextEditor({
     if (addVideo) {
       arr.push(
         EdgeMediaEditNode.configure({ accepts, inline: true }),
-        ImageExtension.configure({ inline: true })
+        SizedImage.configure({ inline: true })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));
@@ -426,6 +429,7 @@ export function RichTextEditor({
             ...props.classNames,
             content: clsx(
               classes.richTextEditor,
+              addImageSize && classes.sizedImages,
               props.classNames && 'content' in props.classNames
                 ? props.classNames.content
                 : undefined
@@ -537,6 +541,7 @@ export function RichTextEditor({
               shouldShow={({ editor }) =>
                 !editor.state.selection.empty &&
                 !editor.isActive('image') &&
+                !editor.isActive('media') &&
                 !editor.isActive('blurb')
               }
               className={classes.bubbleTooltip}
@@ -560,6 +565,8 @@ export function RichTextEditor({
               </RTE.ControlsGroup>
             </BubbleMenu>
           )}
+
+          {editor && addImageSize && <ImageSizeMenu editor={editor} />}
 
           <RTE.Content />
 
@@ -596,6 +603,7 @@ type ControlType =
   | 'timestamp'
   | 'sticker'
   | 'blurb'
+  | 'imageSize'
   | 'align';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {

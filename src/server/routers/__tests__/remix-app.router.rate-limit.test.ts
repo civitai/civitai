@@ -4,7 +4,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * start and advance each reach the orchestrator on every call. The REAL `rateLimit` runs
+ * run, start and advance each reach the orchestrator on every call. The REAL `rateLimit` runs
  * here: `~/env/other` says this is not a test (it skips itself in tests), the caller is not a
  * moderator (it skips them), and redis holds the recorded attempts.
  */
@@ -12,12 +12,17 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const h = vi.hoisted(() => ({
   startRemixRun: vi.fn(async () => ({ status: 'running' })),
   advanceRemixRun: vi.fn(async () => ({ status: 'running' })),
+  runRemixApp: vi.fn(async () => ({ workflowId: 'wf-1' })),
 }));
 
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   startRemixRun: h.startRemixRun,
   advanceRemixRun: h.advanceRemixRun,
+}));
+vi.mock('~/server/services/remix-app.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  runRemixApp: h.runRemixApp,
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
@@ -53,6 +58,11 @@ const attempts = (n: number) =>
   Array.from({ length: n }, (_, i) => Date.now() - Math.round((59_000 * i) / n));
 
 const procedures = [
+  {
+    name: 'run',
+    call: () => caller().run({ slug: 'anime-it', imageId: 5, nonce: 'nonce-0001', quote: 30 }),
+    service: h.runRemixApp,
+  },
   {
     name: 'start',
     call: () => caller().start({ slug: 'anime-it', imageId: 5, nonce: 'nonce-0001' }),

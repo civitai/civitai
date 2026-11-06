@@ -39,7 +39,7 @@ const record = (first: any, rest: unknown[]) => {
   }
 };
 
-// The whole path is on the WRITE client: `getUserWithProfile` reads through `tx ?? dbWrite`
+// The whole path is on the WRITE client: `getUserWithProfile` reads through `dbWrite`
 // (user-profile.service.ts:86), the preferences statement is `dbWrite.$executeRaw` (:242) and the
 // links/profile write is `dbWrite.$transaction` (:275). The one replica read on the path is the
 // stat lookup at :110. The mock this replaces aliased dbRead and dbWrite to a single object, so a

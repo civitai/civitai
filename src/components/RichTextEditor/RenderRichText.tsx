@@ -5,7 +5,6 @@ import clsx from 'clsx';
 import React, { useMemo, useRef } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
-import ImageExtension from '@tiptap/extension-image';
 import { ConsentBlockedEmbed } from '~/components/Consent/ConsentBlockedEmbed';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -13,6 +12,7 @@ import { EdgeMediaComponent } from '~/components/TipTap/EdgeMediaNode';
 import classes from './RichTextEditorComponent.module.scss';
 import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
+import { SizedImage } from '~/shared/tiptap/sized-image.node';
 import { MentionNode } from '~/components/TipTap/MentionNode';
 import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
@@ -33,7 +33,7 @@ const extensions = [
   CustomHeading,
   TextStyleKit,
   EdgeMediaNode,
-  ImageExtension.configure({ inline: true }),
+  SizedImage.configure({ inline: true }),
   CustomYoutubeNode,
   InstagramNode,
   MentionNode,

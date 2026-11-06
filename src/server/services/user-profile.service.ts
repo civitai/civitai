@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { EventViewer } from '~/server/events/event-access';
 import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
-import { userWithProfileSelect } from '~/server/selectors/user.selector';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readUserWithProfileViaKysely,
+  readUserWithProfileViaPrisma,
+} from '~/server/services/hot-reads-9.reads';
 import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
@@ -86,40 +91,29 @@ export const getUserContentOverview = async ({
 export const getUserWithProfile = async ({
   username,
   id,
-  tx,
   isModerator,
   sessionUserId,
   eventViewer = { id: sessionUserId, isModerator },
   domain,
 }: GetUserProfileSchema & {
-  tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
   /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
   eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
-  const dbClient = tx ?? dbWrite;
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
   if (!username && !id) {
     throwBadRequestError('Either username or id must be provided');
   }
+  // `kysely-hot-reads-9` picks the path once per call: Prisma on the primary, or the one-statement
+  // Kysely twin on the primary too.
+  const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
-    const user = await dbClient.user.findUniqueOrThrow({
-      where: {
-        id,
-        username,
-        deletedAt: null,
-      },
-      select: {
-        ...userWithProfileSelect,
-        bannedAt: true,
-        meta: true,
-        publicSettings: true,
-        settings: true,
-      },
-    });
+    const user = viaKysely
+      ? await readUserWithProfileViaKysely(kyselyWrite, { id, username })
+      : await readUserWithProfileViaPrisma(dbWrite, { id, username });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
@@ -221,7 +215,7 @@ export const getUserWithProfile = async ({
 
   if (!user.profile?.userId) {
     // First time visit to this user's profile. Create base profile:
-    await dbClient.userProfile.upsert({
+    await dbWrite.userProfile.upsert({
       where: { userId: user.id },
       create: {
         userId: user.id,
