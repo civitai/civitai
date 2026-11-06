@@ -107,3 +107,47 @@ describe('AVIF', () => {
     expect(await isAnimatedImage(stillAvif())).toBe(false);
   });
 });
+
+describe('isAnimatedImage', () => {
+  const ascii = (text: string) => Uint8Array.from(text, (c) => c.charCodeAt(0));
+  const bigProfile = new Uint8Array(20_000);
+
+  const webp = (vp8xFlags: number, ...chunks: Uint8Array[]) =>
+    new File(
+      [ascii('RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0'), Uint8Array.of(vp8xFlags, 0, 0, 0), ...chunks],
+      'a.webp',
+      { type: 'image/webp' }
+    );
+  const pngChunk = (type: string, payload = new Uint8Array(0)) => {
+    const head = new Uint8Array(8);
+    new DataView(head.buffer).setUint32(0, payload.length);
+    head.set(ascii(type), 4);
+    return [head, payload, new Uint8Array(4)];
+  };
+  const png = (...chunks: Uint8Array[][]) =>
+    new File([new Uint8Array(8), ...chunks.flat()], 'a.png', { type: 'image/png' });
+
+  it.each([
+    ['an animated WebP with its ANIM chunk past a large ICC profile', webp(0x32, bigProfile), true],
+    ['a still extended WebP', webp(0x30, bigProfile), false],
+    [
+      'a still simple WebP',
+      new File([ascii('RIFF\0\0\0\0WEBPVP8 \0\0\0\0\xff')], 'a.webp', { type: 'image/webp' }),
+      false,
+    ],
+    [
+      'an APNG with acTL past a large ICC profile',
+      png(pngChunk('iCCP', bigProfile), pngChunk('acTL'), pngChunk('IDAT')),
+      true,
+    ],
+    ['a still PNG', png(pngChunk('iCCP', bigProfile), pngChunk('IDAT')), false],
+    [
+      'a still PNG with acTL in a payload',
+      png(pngChunk('tEXt', ascii('acTL')), pngChunk('IDAT')),
+      false,
+    ],
+    ['a truncated PNG', png(pngChunk('iCCP', bigProfile)).slice(0, 12, 'image/png'), false],
+  ])('reads %s', async (_, input, expected) => {
+    expect(await isAnimatedImage(input as File)).toBe(expected);
+  });
+});
