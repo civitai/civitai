@@ -23,7 +23,13 @@ export type CachedLookupOptions<T extends object> = {
   // Seconds a bust holds an id back. Unset, each bust flavour keeps its own default (see
   // NON_SWR_BUST_WINDOW and SWR_INVALIDATE_WINDOW); set, it applies to both, as it always did.
   debounceTime?: number;
-  cacheNotFound?: boolean;
+  // Whether an id the lookup finds nothing for is cached as a `{ notFound: true }` marker.
+  // A FUNCTION makes it switchable at runtime (a flag): it is asked once per fetch that reaches
+  // Redis, and while it answers false the fetch behaves exactly like `cacheNotFound: false` and
+  // also treats a marker written while it was on as a miss, so turning it off restores the
+  // uncached behaviour at once rather than when the markers expire. Throwing counts as false.
+  // A static `false` is unchanged: no markers written, and any marker found is still served.
+  cacheNotFound?: boolean | (() => boolean | Promise<boolean>);
   // Separate TTL for negative-cache markers. When the lookupFn legitimately returns nothing for an id
   // we cache `{ notFound: true }` to skip the work next time — but if the empty result is transient
   // (async scan/ingest hasn't populated the row yet, or replication lag), caching it for the full ttl
@@ -434,10 +440,24 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const ttlExpiry = new Date(Date.now() - ttl * 1000);
       const locks = new Set<RedisKeyTemplateCache>();
       let cacheHits = 0;
+      // Resolved once per fetch. `markersLive` is false only while a switchable cacheNotFound
+      // answers false: its markers are then ignored, so the fetch matches the uncached behaviour.
+      let negative: boolean;
+      if (typeof cacheNotFound === 'function') {
+        try {
+          negative = (await cacheNotFound()) === true;
+        } catch {
+          negative = false;
+        }
+      } else negative = cacheNotFound;
+      const markersLive = typeof cacheNotFound !== 'function' || negative;
       for (const id of distinctIds) {
         const cached = cache[id];
         if (cached) {
-          if (cached.notFound) continue;
+          if (cached.notFound) {
+            if (!markersLive) cacheMisses.add(id);
+            continue;
+          }
           // A readable marker is inside its window by construction: bust() writes it with EX = the
           // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW or, from
           // invalidate(), SWR_INVALIDATE_WINDOW), so Redis
@@ -528,7 +548,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           for (const id of cacheMisses) {
             const result = dbResults[id];
             if (!result) {
-              if (cacheNotFound) {
+              if (negative) {
                 // dontCache too: NX against the marker only guards while the marker outlives the
                 // lookup, and an in-window empty result may be replica lag.
                 if (writeBack && !dontCache.has(id))

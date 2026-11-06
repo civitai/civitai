@@ -318,7 +318,12 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      cacheNotFound: false,
+      // Almost no entity wears a frame, so without a marker every frameless id on every feed page
+      // is a miss and the page pays a primary query for it. FRAME_CACHE_NEGATIVE caches that
+      // miss for the same day a frame is cached. A frame put on, taken off or moved reaches the
+      // cache through refresh(), which overwrites or removes the marker: every writer that puts a
+      // frame on content must refresh (equip, the holiday event, the daily-challenge grant).
+      cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
       staleWhileRevalidate: false,
       // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
       debounceTime: 1,
