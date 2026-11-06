@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
@@ -7,6 +8,11 @@ import {
   onlyPrivateHoldsRatingSql,
 } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import {
+  MATURE_LOCK_DEFAULT_CATEGORY,
+  type MatureLockAttribution,
+  type MatureLockField,
+} from '~/shared/constants/mature-lock-reason.constants';
 
 /**
  * The exact keys the interactive upsert paths already write into `Model.meta` / `Bounty.details`.
@@ -18,8 +24,22 @@ export type AutoNsfwMetaPatch = {
   profanityEvaluation: { reason: string; metrics: ProfanityEvaluation['metrics'] };
 };
 
+// Not textScanTextHash: that trims, skips empty fields and follows the scan profile's headings.
+// This one must change exactly when the stored name or description does.
+export function autoNsfwTextHash(name?: string | null, description?: string | null) {
+  return createHash('sha256')
+    .update(JSON.stringify([name ?? '', description ?? '']))
+    .digest('hex');
+}
+
 export type AutoNsfwResult = {
   metaPatch: AutoNsfwMetaPatch;
+  /**
+   * Goes on the `systemNsfwLock` marker so the owner can be told which field set the lock. Never
+   * the matched text: naming it would be a guide to rewording around the filter. `textHash` is the
+   * text as evaluated, so a later edit to either field withdraws the explanation.
+   */
+  attribution: MatureLockAttribution;
   /**
    * False when a moderator has already pinned `nsfw`. The detection is still worth recording for
    * review, but the filter must never overturn a moderator's call.
@@ -53,13 +73,25 @@ export function evaluateAutoNsfw({
   const text = [name, description].filter(Boolean).join(' ');
   if (!text) return null;
 
-  const evaluation = createProfanityFilter().evaluateContent(text);
+  const filter = createProfanityFilter();
+  const evaluation = filter.evaluateContent(text);
   if (!evaluation.shouldMarkNSFW) return null;
+
+  const matches = (value?: string | null) =>
+    !!value && filter.evaluateContent(value).metrics.matchCount > 0;
+  const fields: MatureLockField[] = [];
+  if (matches(name)) fields.push('name');
+  if (matches(description)) fields.push('description');
 
   return {
     metaPatch: {
       profanityMatches: evaluation.matchedWords,
       profanityEvaluation: { reason: evaluation.reason, metrics: evaluation.metrics },
+    },
+    attribution: {
+      fields,
+      category: MATURE_LOCK_DEFAULT_CATEGORY,
+      textHash: autoNsfwTextHash(name, description),
     },
     lock: !lockedProperties.includes('nsfw'),
   };
@@ -76,7 +108,7 @@ export function evaluateAutoNsfw({
  */
 export async function writeAutoNsfw(
   db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },
-  { id, metaPatch, lock }: { id: number } & AutoNsfwResult
+  { id, metaPatch, lock, attribution }: { id: number } & AutoNsfwResult
 ) {
   const nsfwUnlocked = Prisma.sql`NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`;
   const locks = lock
@@ -96,6 +128,7 @@ export async function writeAutoNsfw(
           WHEN ${locks} THEN jsonb_build_object(
             ${SYSTEM_NSFW_LOCK_META_KEY}::text,
             jsonb_build_object('source', 'profanity-filter', 'at', now())
+              || ${JSON.stringify(attribution)}::jsonb
           )
           WHEN ${holds} THEN ${heldLeadSql('profanity-filter')}
           ELSE '{}'::jsonb END,
