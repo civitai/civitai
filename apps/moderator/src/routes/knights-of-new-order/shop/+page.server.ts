@@ -60,10 +60,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       status: STATUSES.find((s) => s === status) ?? 'live',
       kind: KINDS.find((k) => k === kind) ?? ('' as const),
     },
-    todayStock: stockView(items, today).stock.map(({ item, price, deal }) => ({
+    todayStock: stockView(items, today).stock.map(({ item, price, deal, hidden }) => ({
       id: item.id,
       price,
       deal,
+      hidden: hidden !== null,
     })),
     preview: tab === 'preview' ? stockView(items, day) : null,
     itemId: itemId === undefined ? '' : String(itemId),

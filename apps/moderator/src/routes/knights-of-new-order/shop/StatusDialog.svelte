@@ -7,7 +7,7 @@
   import { FormState } from '$lib/form-state.svelte';
   import type { ShopItemRow } from '$lib/server/knights/shop-catalog.service';
   import { impactOfChange } from './impact';
-  import type { StatusTarget } from './shop-view';
+  import { restoreNote, type StatusTarget } from './shop-view';
 
   let {
     target = $bindable(null),
@@ -57,7 +57,7 @@
               It leaves the shop on the next request. Purchases already made keep their record; it
               stays listed here and can be restored.
             {:else}
-              It goes back on sale on the next request, at its current price.
+              {restoreNote(shown.item) ?? 'It goes back on sale on the next request, at its current price.'}
             {/if}
           </AlertDialog.Description>
         </AlertDialog.Header>

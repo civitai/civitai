@@ -8,6 +8,7 @@
 
   let {
     target = $bindable(null),
+    seq,
     items,
     ranks,
     day,
@@ -15,6 +16,8 @@
     onstatus,
   }: {
     target?: SheetTarget | null;
+    /** Bumped by the page on every open, so a reopened sheet remounts its form even mid-close-animation. */
+    seq: number;
     items: readonly ShopItemRow[];
     ranks: readonly string[];
     day: string;
@@ -31,15 +34,10 @@
   const item = $derived(
     shown.mode === 'edit' ? (items.find((row) => row.id === shown.id) ?? null) : null
   );
-  // Remounts the form after each close, so a reopened sheet never shows the previous attempt or its error.
-  let opened = $state(0);
   const close = () => (target = null);
 </script>
 
-<Sheet.Root
-  bind:open={() => target !== null, (open) => !open && close()}
-  onOpenChangeComplete={(open) => !open && opened++}
->
+<Sheet.Root bind:open={() => target !== null, (open) => !open && close()}>
   <Sheet.Content
     side="right"
     class="overflow-y-auto p-5 data-[side=right]:w-full data-[side=right]:sm:max-w-4xl"
@@ -54,7 +52,7 @@
           : 'Changes go live on the next request and are recorded in the audit trail.'}
       </Sheet.Description>
     </Sheet.Header>
-    {#key `${opened}:${shown.mode === 'edit' ? shown.id : 'new'}`}
+    {#key `${seq}:${shown.mode === 'edit' ? shown.id : 'new'}`}
       {#if shown.mode === 'create'}
         <ItemForm item={null} {items} {ranks} {day} {today} ondone={close} onstatus={() => {}} />
       {:else if !item}

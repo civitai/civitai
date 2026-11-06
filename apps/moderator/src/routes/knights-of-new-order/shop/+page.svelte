@@ -15,6 +15,7 @@
   let { data }: { data: PageData } = $props();
 
   let sheet = $state<SheetTarget | null>(null);
+  let sheetSeq = $state(0);
   let status = $state<StatusTarget | null>(null);
 
   const tabs = $derived([
@@ -24,8 +25,12 @@
   ]);
   const today = $derived(todayOf(data.todayStock));
 
+  const open = (target: SheetTarget) => {
+    sheetSeq++;
+    sheet = target;
+  };
   const openEdit = (id: number, tab: 'details' | 'history' = 'details') =>
-    (sheet = { mode: 'edit', id, tab });
+    open({ mode: 'edit', id, tab });
   const askStatus = (item: ShopItemRow, action: 'retire' | 'restore') => (status = { item, action });
 </script>
 
@@ -34,7 +39,7 @@
     <h1>Knights of New Order Shop</h1>
     <p>Gold shop catalog · edits go live on the next request</p>
   </header>
-  <Button onclick={() => (sheet = { mode: 'create' })}>
+  <Button onclick={() => open({ mode: 'create' })}>
     <IconPlus />
     Add item
   </Button>
@@ -50,7 +55,7 @@
     day={data.today}
     now={data.now}
     url={page.url}
-    onadd={() => (sheet = { mode: 'create' })}
+    onadd={() => open({ mode: 'create' })}
     onedit={(id) => openEdit(id)}
     onhistory={(id) => openEdit(id, 'history')}
     onstatus={askStatus}
@@ -71,6 +76,7 @@
 
 <ItemSheet
   bind:target={sheet}
+  seq={sheetSeq}
   items={data.items}
   ranks={data.ranks}
   day={data.today}

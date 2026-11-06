@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
-  import { goto, replaceState } from '$app/navigation';
+  import { onDestroy } from 'svelte';
+  import { afterNavigate, goto } from '$app/navigation';
   import { IconPackage, IconSearch } from '@tabler/icons-svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Empty from '@civitai/ui/components/ui/empty/index.js';
@@ -57,8 +57,17 @@
   } = $props();
 
   const ANY_KIND = 'all';
-  let q = $state(untrack(() => query.q));
+  // What the operator typed; null until they type, and again after back/forward, so the URL's q wins.
+  let typed = $state<string | null>(null);
   let typing: ReturnType<typeof setTimeout>;
+  const q = $derived(typed ?? query.q);
+  // The page URL as the list currently reads, so a tab or kind link never drops a search still in its debounce.
+  const current = $derived(new URL(urlWith(url, { q: q.trim() || null }), url));
+
+  afterNavigate(({ type }) => {
+    if (type === 'popstate') typed = null;
+  });
+  onDestroy(() => clearTimeout(typing));
 
   const filters = $derived({ ...query, q });
   const shown = $derived(filterItems(items, filters));
@@ -77,18 +86,26 @@
     ).map(([value, label]) => ({
       value,
       label,
-      href: urlWith(url, { status: value === 'live' ? null : value }),
+      href: urlWith(current, { status: value === 'live' ? null : value }),
     }))
   );
 
   function search(value: string) {
-    q = value;
+    typed = value;
     clearTimeout(typing);
-    typing = setTimeout(() => replaceState(urlWith(url, { q: value.trim() || null }), {}), 250);
+    typing = setTimeout(
+      () =>
+        void goto(urlWith(url, { q: value.trim() || null }), {
+          replaceState: true,
+          keepFocus: true,
+          noScroll: true,
+        }),
+      300
+    );
   }
   function clear() {
     clearTimeout(typing);
-    q = '';
+    typed = '';
     void goto(urlWith(url, { q: null, status: null, kind: null }), { keepFocus: true });
   }
 </script>
@@ -127,7 +144,7 @@
         bind:value={
           () => query.kind || ANY_KIND,
           (value) =>
-            void goto(urlWith(url, { kind: isKind(value) ? value : null }), { keepFocus: true })
+            void goto(urlWith(current, { kind: isKind(value) ? value : null }), { keepFocus: true })
         }
       >
         <Select.Trigger class="w-40" aria-label="Kind">

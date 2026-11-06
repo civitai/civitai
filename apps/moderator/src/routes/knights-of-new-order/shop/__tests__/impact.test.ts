@@ -64,3 +64,24 @@ describe('impactOfAdd', () => {
     expect(impactOfAdd(false)[0]).toMatch(/move today's deals/);
   });
 });
+
+describe('impactOfChange with a hidden cosmetic', () => {
+  const ghost = {
+    ...item(30, { kind: 'cosmetic', buzz: null, cosmeticId: 9 }),
+    cosmeticType: null,
+  };
+  const items = [ghost, item(31)];
+
+  it('does not announce an item players never see as dropping out or coming in', () => {
+    expect(impactOfChange(items, DAY, ghost.id, { active: false })).toEqual([]);
+    expect(
+      impactOfChange([{ ...ghost, active: false }, item(31)], DAY, ghost.id, { active: true })
+    ).toEqual([]);
+  });
+
+  it('still announces a visible item dropping out when it is retired', () => {
+    expect(impactOfChange(items, DAY, 31, { active: false }).join(' ')).toContain(
+      'item-31 drops out'
+    );
+  });
+});

@@ -39,9 +39,11 @@
       return item ? [{ item, ...entry }] : [];
     })
   );
-  const deals = $derived(stock.filter((entry) => entry.deal));
-  const rotating = $derived(stock.filter((entry) => entry.item.rotating));
-  const fixed = $derived(stock.filter((entry) => !entry.item.rotating));
+  const hiddenCount = $derived(stock.filter((entry) => entry.hidden).length);
+  const visible = $derived(stock.filter((entry) => !entry.hidden));
+  const deals = $derived(visible.filter((entry) => entry.deal));
+  const rotating = $derived(visible.filter((entry) => entry.item.rotating));
+  const fixed = $derived(visible.filter((entry) => !entry.item.rotating));
 </script>
 
 <section class="mb-5 rounded-xl border border-dark-4 bg-dark-6 p-4">
@@ -52,7 +54,7 @@
     </h2>
     <a class="text-sm text-blue-4 hover:underline" href="?tab=preview">Preview another day →</a>
   </div>
-  {#if !stock.length}
+  {#if !visible.length}
     <p class="text-sm text-dark-2">Nothing is on sale today.</p>
   {:else}
     <div class="flex flex-wrap gap-x-8 gap-y-4">
@@ -110,5 +112,10 @@
         <p class="text-sm text-dark-0">{fixed.length} {fixed.length === 1 ? 'item' : 'items'}</p>
       </div>
     </div>
+    {#if hiddenCount}
+      <p class="mt-3 text-xs text-dark-2">
+        {hiddenCount} drawn for today but hidden from players (cosmetic missing); not shown above.
+      </p>
+    {/if}
   {/if}
 </section>

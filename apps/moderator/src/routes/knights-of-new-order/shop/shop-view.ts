@@ -3,7 +3,7 @@ import type { ShopItemRow } from '$lib/server/knights/shop-catalog.service';
 
 export type Kind = 'buzz_pack' | 'membership' | 'cosmetic';
 export type StatusFilter = 'live' | 'retired' | 'all';
-export type TodayEntry = { id: number; price: number; deal: boolean };
+export type TodayEntry = { id: number; price: number; deal: boolean; hidden: boolean };
 export type Today = ReadonlyMap<number, TodayEntry>;
 
 /** The order the Knights shop lays its sections out in. */
@@ -247,4 +247,15 @@ export function previewDays(today: string, selected: string, ahead = 5) {
   return days.some((d) => d.value === selected)
     ? days
     : [...days, { value: selected, label: dayShort.format(at(selected)) }];
+}
+
+/** What restoring does to a retired item that the shop still would not show, or null when it simply goes on sale. */
+export function restoreNote(item: Pick<ShopItemRow, 'kind' | 'months' | 'cosmeticType'>) {
+  if (!isSellable(item))
+    return `It stays off sale: ${NOT_SOLD_REASON.charAt(0).toLowerCase()}${NOT_SOLD_REASON.slice(
+      1
+    )}`;
+  if (item.kind === 'cosmetic' && item.cosmeticType === null)
+    return 'It stays hidden from players: its cosmetic no longer exists.';
+  return null;
 }

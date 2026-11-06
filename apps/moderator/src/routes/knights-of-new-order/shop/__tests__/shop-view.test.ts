@@ -6,6 +6,7 @@ import {
   filterItems,
   groupByKind,
   nameplateGradient,
+  restoreNote,
   secondaryLine,
   previewDays,
   statusCounts,
@@ -39,8 +40,8 @@ const live: Query = { q: '', status: 'live', kind: '' };
 
 describe('availability', () => {
   const today = todayOf([
-    { id: 2, price: 800, deal: true },
-    { id: 3, price: 500, deal: false },
+    { id: 2, price: 800, deal: true, hidden: false },
+    { id: 3, price: 500, deal: false, hidden: false },
   ]);
 
   it('puts retired before every other state', () => {
@@ -201,5 +202,14 @@ describe('secondaryLine', () => {
       'Bronze · 1 month'
     );
     expect(secondaryLine(row(3, { kind: 'cosmetic', cosmeticType: 'Sticker' }))).toBe('Sticker');
+  });
+});
+
+describe('restoreNote', () => {
+  it('says why a restored item still would not sell, and is silent when it will', () => {
+    expect(restoreNote(row(1, { kind: 'membership', months: 3 }))).toMatch(/stays off sale/);
+    expect(restoreNote(row(2, { kind: 'cosmetic', cosmeticId: 9 }))).toMatch(/stays hidden/);
+    expect(restoreNote(row(3))).toBeNull();
+    expect(restoreNote(row(4, { kind: 'cosmetic', cosmeticType: 'Badge' }))).toBeNull();
   });
 });

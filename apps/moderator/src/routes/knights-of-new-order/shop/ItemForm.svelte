@@ -253,7 +253,7 @@
 
       <aside class="flex flex-col gap-2 @3xl:sticky @3xl:top-0 @3xl:self-start">
         <p class="text-xs font-semibold uppercase tracking-wide text-dark-2">How players see it</p>
-        <PlayerCard {card} variant="deal" />
+        <PlayerCard {card} variant={card.listPrice === null ? 'compact' : 'deal'} />
         {#if description.trim()}<p class="text-xs text-dark-2">{description.trim()}</p>{/if}
       </aside>
     </div></div>
