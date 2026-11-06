@@ -158,6 +158,27 @@ describe('ClickHouse', () => {
     });
   });
 
+  it("leaves another user's id out of a Buzz row, as the app's own Buzz export does", () => {
+    const buzz = CH_TABLES.find((t) => t.table === 'default.buzzTransactions')!;
+    const reward = reduceChRow(buzz, {
+      date: '2026-11-01 00:00:00',
+      type: 'reward',
+      amount: 10,
+      details: JSON.stringify({ byUserId: 555, entityId: 3 }),
+      externalTransactionId: 'goodContent:3-7-555',
+    });
+    expect(reward).toMatchObject({ amount: 10, details: { entityId: 3 } });
+    expect(reward.externalTransactionId).toBeNull();
+    expect(JSON.stringify(reward)).not.toContain('555');
+    // Another type keeps its ledger id; only the other user's id goes from its details.
+    const tip = reduceChRow(buzz, {
+      type: 'tip',
+      details: JSON.stringify({ byUserId: 555, note: 'hi' }),
+      externalTransactionId: 'tip-123',
+    });
+    expect(tip).toEqual({ type: 'tip', details: { note: 'hi' }, externalTransactionId: 'tip-123' });
+  });
+
   it('picks the user-id type per table, marks a failing table unavailable and goes on', async () => {
     const queries: { query: string; params?: Record<string, unknown> }[] = [];
     const ch: ClickhouseReader = {

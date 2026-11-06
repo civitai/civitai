@@ -54,7 +54,7 @@ export function exportObjectKey(exportId: number, kind: 'archive' | 'notes') {
   }`;
 }
 
-/** A 48-hour download link, signed against the bucket's own endpoint. */
+/** A download link, signed against the bucket's own endpoint. */
 export async function presignDownload(
   bucket: ExportBucket,
   key: string,
@@ -100,6 +100,7 @@ export async function streamArchiveToBucket(
   const sink = new stream.PassThrough();
   // `pipeline`, not `.pipe()`: a destroyed sink must error the archiver, or every pending append
   // waits forever (see `uploadStream` in csam.service-new.ts).
+  // Not shared with it: its own bucket and credentials, and one awaited entry at a time.
   stream.pipeline(archive, sink, () => undefined);
 
   const upload = new Upload({

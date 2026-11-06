@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mocks = vi.hoisted(() => ({
   holds: vi.fn(),
+  holdSqlArgs: vi.fn(),
   readySend: vi.fn(),
   builtSend: vi.fn(),
 }));
@@ -13,7 +14,10 @@ vi.mock('~/server/services/legal-hold.service', async () => {
   return {
     getAccountLegalHold: mocks.holds,
     // A marker the claim test can find: the claim must carry the hold condition in its own WHERE.
-    accountHoldSql: (id: unknown) => Prisma.sql`HOLD_CONDITION(${id})`,
+    accountHoldSql: (id: unknown, markerView: unknown) => {
+      mocks.holdSqlArgs(id, markerView);
+      return Prisma.sql`HOLD_CONDITION(${id})`;
+    },
   };
 });
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
@@ -118,6 +122,28 @@ describe('releaseExport', () => {
     const at = strings.findIndex((part) => part.trimEnd().endsWith('"releasedById" ='));
     expect(claim[at + 1]).toBe(9);
   });
+
+  it.each([false, true])(
+    "re-checks the owner's holds in the claim, never the actor's (markerView %s)",
+    async (markerView) => {
+      mocks.holds.mockResolvedValue({ legs: [], markerView });
+      expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toMatchObject({
+        ok: true,
+      });
+      expect(mocks.holdSqlArgs).toHaveBeenCalledTimes(1);
+      const [id, view] = mocks.holdSqlArgs.mock.calls[0] as [{ values: unknown[] }, boolean];
+      expect(id.values).toEqual([42]);
+      expect(view).toBe(markerView);
+      // Every other fragment of the claim is over the owner too.
+      const fragments = claimCall()!
+        .slice(1)
+        .filter((v): v is { strings: string[]; values: unknown[] } =>
+          Boolean(v && typeof v === 'object' && 'strings' in v)
+        );
+      const caseHold = fragments.find((f) => f.strings.join('?').includes('"UserReport"'));
+      expect(caseHold?.values).toEqual([42]);
+    }
+  );
 
   it.each([[{ present: true, review: false }], [{ present: false, review: true }]])(
     'refuses when the account is under a hold (#%#)',

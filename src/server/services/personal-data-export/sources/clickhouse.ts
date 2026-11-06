@@ -1,4 +1,6 @@
 import { buzzAccountTypes } from '@civitai/buzz';
+import { fromClickhouseTransactionType } from '~/server/clickhouse/transaction-type';
+import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
 import { columnDecision } from '../column-policy';
 import { jsonLinesFile, type ExportWriter, type ManifestCount, type ManifestFile } from '../output';
 
@@ -50,7 +52,34 @@ type ChTable = {
   add?: Record<string, unknown>;
   /** Read even when it means a full scan: the record is one the export must carry. */
   required?: boolean;
+  /** Applied to each kept record last. */
+  redact?: (row: Record<string, unknown>) => Record<string, unknown>;
 };
+
+/** A Buzz row as the owner sees it in the app: no other user's id from `details` or the ledger id. */
+export function redactBuzzRow(row: Record<string, unknown>) {
+  let details: Record<string, unknown> | null = null;
+  if (row.details && typeof row.details === 'object') {
+    details = row.details as Record<string, unknown>;
+  } else if (typeof row.details === 'string' && row.details) {
+    try {
+      const parsed: unknown = JSON.parse(row.details);
+      if (parsed && typeof parsed === 'object') details = parsed as Record<string, unknown>;
+    } catch {
+      // Unreadable details are dropped rather than passed through unchecked.
+    }
+  }
+  const redacted = redactTransactionCounterparty({
+    type: fromClickhouseTransactionType(String(row.type ?? '')),
+    details,
+    externalTransactionId:
+      typeof row.externalTransactionId === 'string' ? row.externalTransactionId : null,
+  });
+  const out = { ...row };
+  if ('details' in row) out.details = redacted.details;
+  if ('externalTransactionId' in row) out.externalTransactionId = redacted.externalTransactionId;
+  return out;
+}
 
 /** Rows exported in full (after the column policy). */
 export const CH_TABLES: ChTable[] = [
@@ -62,6 +91,7 @@ export const CH_TABLES: ChTable[] = [
     description: 'Your Buzz transactions, in and out, for every account type.',
     // A money record: the ledger is exported even though its key starts with the date.
     required: true,
+    redact: redactBuzzRow,
   },
   {
     file: 'data/clickhouse/account-activity.jsonl',
@@ -135,7 +165,8 @@ export function reduceChRow(table: ChTable, row: Record<string, unknown>) {
       continue;
     out[k] = v;
   }
-  return { ...out, ...table.add };
+  const kept = { ...out, ...table.add };
+  return table.redact ? table.redact(kept) : kept;
 }
 
 /** How the user column compares: `orchestration` stores user ids as strings in some tables. */

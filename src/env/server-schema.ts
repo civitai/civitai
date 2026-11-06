@@ -677,7 +677,7 @@ export const serverSchema = z
     PERSONAL_DATA_EXPORT_BUCKET: z.string().default(''),
     PERSONAL_DATA_EXPORT_KEY: z.string().default(''),
     PERSONAL_DATA_EXPORT_SECRET: z.string().default(''),
-    // Read-only, secondary-preferred connection to the stored generation workflow documents.
+    // Read-only connection to the stored generation workflow documents; reads from a secondary only.
     PERSONAL_DATA_EXPORT_MONGO_URL: z.string().default(''),
     NCMEC_URL: z.string().optional(),
     NCMEC_USERNAME: z.string().default(''),
