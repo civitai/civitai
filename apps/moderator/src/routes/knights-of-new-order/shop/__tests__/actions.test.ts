@@ -4,8 +4,8 @@ const svc = vi.hoisted(() => ({
   createShopItem: vi.fn(),
   listShopChanges: vi.fn(),
   listShopItems: vi.fn(),
-  previewShop: vi.fn(),
   setShopItemActive: vi.fn(),
+  stockView: vi.fn(),
   updateShopItem: vi.fn(),
 }));
 
@@ -64,7 +64,7 @@ describe('Knights shop catalog load', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     svc.listShopItems.mockResolvedValue([]);
-    svc.previewShop.mockResolvedValue({ day: '', stock: [], excluded: [] });
+    svc.stockView.mockReturnValue({ day: '', stock: [], excluded: [] });
   });
 
   const run = (search: string) =>
@@ -77,7 +77,7 @@ describe('Knights shop catalog load', () => {
     for (const day of ['2020-01-01', '2026-02-31', 'soon']) {
       const data = await run(`tab=preview&day=${day}`);
       expect(data.day).toBe(data.today);
-      expect(svc.previewShop).toHaveBeenLastCalledWith(data.today);
+      expect(svc.stockView).toHaveBeenLastCalledWith([], data.today);
     }
   });
 

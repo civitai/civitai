@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { stockFor, type ShopItem } from '@civitai/shared/knights-shop';
+import { impactOfAdd, impactOfChange } from '../impact';
+
+const DAY = '2026-12-20';
+const item = (id: number, o: Partial<ShopItem> = {}): ShopItem => ({
+  id,
+  kind: 'buzz_pack',
+  name: `item-${id}`,
+  description: '',
+  price: 1000,
+  buzz: 50,
+  cosmeticId: null,
+  tier: null,
+  months: null,
+  minRank: null,
+  active: true,
+  rotating: false,
+  sortOrder: id,
+  ...o,
+});
+const catalog = [
+  ...Array.from({ length: 8 }, (_, i) => item(i + 1, { rotating: true })),
+  item(20),
+  item(21),
+];
+const stock = stockFor(catalog, DAY).stock;
+const inToday = stock.find((e) => e.item.rotating)!.item;
+const outToday = catalog.find((c) => c.rotating && !stock.some((e) => e.item.id === c.id))!;
+
+describe('impactOfChange', () => {
+  it("warns about in-flight purchases when the price of an item in today's stock changes", () => {
+    expect(impactOfChange(catalog, DAY, inToday.id, { price: inToday.price + 1 })).toEqual([
+      "This item is in today's shop: a new price refuses purchases already in flight.",
+    ]);
+  });
+
+  it("is silent for a price change on an item that is not in today's stock", () => {
+    expect(impactOfChange(catalog, DAY, outToday.id, { price: 5 })).toEqual([]);
+  });
+
+  it('is silent when nothing moves', () => {
+    expect(impactOfChange(catalog, DAY, inToday.id, { price: inToday.price })).toEqual([]);
+  });
+
+  it("names the item that drops out when one in today's stock is retired", () => {
+    const [message] = impactOfChange(catalog, DAY, inToday.id, { active: false });
+    expect(message).toContain(`${inToday.name} drops out`);
+  });
+
+  it("says nothing about retiring an item that is not in today's stock", () => {
+    expect(impactOfChange(catalog, DAY, outToday.id, { active: false })).toEqual([]);
+  });
+
+  it('reports the redraw when a rotating item is turned off', () => {
+    const messages = impactOfChange(catalog, DAY, inToday.id, { rotating: false });
+    expect(messages.join(' ')).toMatch(/Today's shop changes/);
+  });
+});
+
+describe('impactOfAdd', () => {
+  it('says what a rotating and a fixed item can do', () => {
+    expect(impactOfAdd(true)[0]).toMatch(/redraw today's rotation/);
+    expect(impactOfAdd(false)[0]).toMatch(/move today's deals/);
+  });
+});

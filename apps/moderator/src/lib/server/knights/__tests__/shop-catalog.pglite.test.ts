@@ -26,8 +26,14 @@ vi.mock('../../mod-activity', () => ({
     rows.map(({ userId, ...row }) => ({ ...row, moderatorId: userId, moderatorUsername: null })),
 }));
 
-const { createShopItem, listShopChanges, previewShop, setShopItemActive, updateShopItem } =
-  await import('../shop-catalog.service');
+const {
+  createShopItem,
+  listShopChanges,
+  listShopItems,
+  setShopItemActive,
+  stockView,
+  updateShopItem,
+} = await import('../shop-catalog.service');
 const { diffFields, editShopItemSchema, newShopItemSchema } = await import(
   '../shop-catalog.schema'
 );
@@ -287,7 +293,7 @@ describe('setShopItemActive', () => {
   });
 });
 
-describe('previewShop', () => {
+describe('stockView rotation', () => {
   it('rotates the active, sellable items exactly as the shop does, and reports the rest', async () => {
     for (let i = 0; i < 8; i++) await seedItem(`rot-${i}`, { rotating: true, sortOrder: i });
     const fixed = await seedItem('fixed', { sortOrder: 20 });
@@ -299,7 +305,7 @@ describe('previewShop', () => {
       months: 3,
     });
 
-    const preview = await previewShop('2026-12-20');
+    const preview = stockView(await listShopItems(), '2026-12-20');
     const sellable = (
       await db.query<Parameters<typeof stockFor>[0][number]>(
         `SELECT * FROM "KnightsShopItem" WHERE "active"`
@@ -315,7 +321,7 @@ describe('previewShop', () => {
   });
 });
 
-describe('previewShop cosmetics', () => {
+describe('stockView cosmetics', () => {
   it('keeps an item whose cosmetic is missing in its slot but flags it as hidden from players', async () => {
     await db.query(`INSERT INTO "Cosmetic" ("id","name","type") VALUES (1,'Halo','Badge')`);
     const present = await seedItem('present', {
@@ -332,12 +338,34 @@ describe('previewShop cosmetics', () => {
     });
     const pack = await seedItem('buzz-50', { sortOrder: 3 });
 
-    const { stock } = await previewShop('2026-12-20');
+    const { stock } = stockView(await listShopItems(), '2026-12-20');
     expect(stock.map((s) => [s.item.id, s.hidden])).toEqual([
       [present, null],
       [missing, 'cosmetic missing'],
       [pack, null],
     ]);
+  });
+});
+
+describe('stockView', () => {
+  it('carries each cosmetic along, flags a missing one and holds only the live stock', async () => {
+    await db.query(
+      `INSERT INTO "Cosmetic" ("id","name","type","data") VALUES (1,'Halo','Badge','{"url":"halo.png"}')`
+    );
+    for (let i = 0; i < 6; i++) await seedItem(`rot-${i}`, { rotating: true, sortOrder: i });
+    await seedItem('halo', { kind: 'cosmetic', buzz: null, cosmeticId: 1, sortOrder: 9 });
+    await seedItem('gone', { kind: 'cosmetic', buzz: null, cosmeticId: 2, sortOrder: 10 });
+    await seedItem('retired', { active: false });
+
+    const rows = await listShopItems();
+    const view = stockView(rows, '2026-12-20');
+
+    const halo = view.stock.find((s) => s.item.name === 'halo');
+    expect(halo?.item).toMatchObject({ cosmeticName: 'Halo', cosmeticType: 'Badge' });
+    expect(view.stock.find((s) => s.item.name === 'gone')?.hidden).toBe('cosmetic missing');
+    expect(view.stock.some((s) => s.item.name === 'retired')).toBe(false);
+    expect(view.stock.filter((s) => s.item.rotating)).toHaveLength(4);
+    expect(view.stock.filter((s) => s.deal)).toHaveLength(2);
   });
 });
 

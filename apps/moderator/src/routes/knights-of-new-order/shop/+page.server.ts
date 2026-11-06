@@ -9,8 +9,8 @@ import {
   createShopItem,
   listShopChanges,
   listShopItems,
-  previewShop,
   setShopItemActive,
+  stockView,
   updateShopItem,
 } from '$lib/server/knights/shop-catalog.service';
 import {
@@ -29,6 +29,9 @@ const isDay = (value: string | null): value is string =>
   !Number.isNaN(Date.parse(value)) &&
   new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
+const STATUSES = ['live', 'retired', 'all'] as const;
+const KINDS = ['buzz_pack', 'membership', 'cosmetic'] as const;
+
 const intParam = (value: string | null) =>
   value && /^\d{1,9}$/.test(value) ? Number(value) : undefined;
 
@@ -42,6 +45,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   const itemId = intParam(url.searchParams.get('item'));
   const before = intParam(url.searchParams.get('before'));
   const items = await listShopItems();
+  const status = url.searchParams.get('status');
+  const kind = url.searchParams.get('kind');
   const audit = tab === 'audit' ? await listShopChanges({ itemId, before }) : null;
   return {
     tab,
@@ -49,7 +54,18 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     ranks: SHOP_RANKS,
     today,
     day,
-    preview: tab === 'preview' ? await previewShop(day) : null,
+    now: new Date().toISOString(),
+    query: {
+      q: (url.searchParams.get('q') ?? '').trim().slice(0, 100),
+      status: STATUSES.find((s) => s === status) ?? 'live',
+      kind: KINDS.find((k) => k === kind) ?? ('' as const),
+    },
+    todayStock: stockView(items, today).stock.map(({ item, price, deal }) => ({
+      id: item.id,
+      price,
+      deal,
+    })),
+    preview: tab === 'preview' ? stockView(items, day) : null,
     itemId: itemId === undefined ? '' : String(itemId),
     before: before ?? null,
     changes: audit?.changes ?? [],

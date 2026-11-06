@@ -1,6 +1,6 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { isSellable, stockFor, type ShopItem } from '@civitai/shared/knights-shop';
+import { isSellable, stockFor } from '@civitai/shared/knights-shop';
 import { withModerators } from '../mod-activity';
 import { dbWrite } from '../db';
 import type { Outcome } from './coreset.service';
@@ -157,32 +157,24 @@ export async function setShopItemActive(
     });
 }
 
-/** Mirrors what apps/knights/src/lib/server/shop/catalog.ts reads (active, sellable, same stockFor); change them together or the preview lies. */
-export async function previewShop(day: string) {
-  const rows: ShopItem[] = await db()
-    .selectFrom('KnightsShopItem')
-    .selectAll()
-    .where('active', '=', true)
-    .execute();
-  const { stock } = stockFor(rows.filter(isSellable), day);
-  const cosmeticIds = stock.flatMap(({ item }) => (item.cosmeticId ? [item.cosmeticId] : []));
-  const present = new Set(
-    cosmeticIds.length
-      ? (
-          await db().selectFrom('Cosmetic').select('id').where('id', 'in', cosmeticIds).execute()
-        ).map((row) => row.id)
-      : []
-  );
+/**
+ * What a day's shop holds, drawn from rows already read. Mirrors what apps/knights/src/lib/server/shop/catalog.ts
+ * reads (active, sellable, same stockFor); change them together or the preview lies.
+ */
+export function stockView(rows: ShopItemRow[], day: string) {
+  const live = rows.filter((row) => row.active);
+  const { stock } = stockFor(live.filter(isSellable), day);
+  const byId = new Map(live.map((row) => [row.id, row]));
   return {
     day,
-    stock: stock.map((entry) => ({
-      ...entry,
-      hidden:
-        entry.item.kind === 'cosmetic' && !present.has(entry.item.cosmeticId ?? -1)
-          ? ('cosmetic missing' as const)
-          : null,
-    })),
-    excluded: rows.filter((item) => !isSellable(item)),
+    stock: stock.flatMap(({ item, price, deal }) => {
+      const row = byId.get(item.id);
+      if (!row) return [];
+      const hidden =
+        row.kind === 'cosmetic' && row.cosmeticType === null ? ('cosmetic missing' as const) : null;
+      return [{ item: row, price, deal, hidden }];
+    }),
+    excluded: live.filter((row) => !isSellable(row)),
   };
 }
 
@@ -220,3 +212,4 @@ export async function listShopChanges({
   }));
   return { changes, nextBefore: rows.length > limit ? page[page.length - 1].id : null };
 }
+export type ShopChangeRow = Awaited<ReturnType<typeof listShopChanges>>['changes'][number];
