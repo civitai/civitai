@@ -8,7 +8,7 @@ import {
   cosmeticTypeLabel,
   dealPercentOff,
   membershipPerksUrl,
-  monthsLabel,
+  durationLabel,
   refusalText,
   tierName,
 } from './shop-view';
@@ -35,7 +35,7 @@ const card = (over: Partial<Parameters<typeof cardTitle>[0]> = {}) => ({
   description: '',
   buzz: null,
   tier: null,
-  months: null,
+  days: null,
   cosmeticType: 'Badge',
   uses: null,
   ...over,
@@ -64,10 +64,10 @@ describe('shop wording', () => {
     expect(dealPercentOff(120, 100)).toBe(0);
   });
 
-  it('names tiers and months', () => {
+  it('names tiers and durations', () => {
     expect(tierName('silver')).toBe('Silver');
-    expect(monthsLabel(1)).toBe('1 month');
-    expect(monthsLabel(3)).toBe('3 months');
+    expect(durationLabel(7)).toBe('1 week');
+    expect(durationLabel(30)).toBe('30 days');
   });
 });
 
@@ -88,10 +88,14 @@ describe('card wording', () => {
     ['a Buzz pack', card({ kind: 'buzz_pack', buzz: 1300 }), 'Buzz pack · 1,300'],
     [
       'a membership',
-      card({ kind: 'membership', tier: 'silver', months: 1 }),
-      'Silver membership · 1 month',
+      card({ kind: 'membership', tier: 'silver', days: 7 }),
+      'Silver membership · 1 week',
     ],
-    ['a membership with no months', card({ kind: 'membership', tier: 'gold' }), 'Gold membership'],
+    [
+      'a membership with no duration',
+      card({ kind: 'membership', tier: 'gold' }),
+      'Gold membership',
+    ],
     ['a cosmetic', card(), 'Seal'],
   ])('titles %s', (_, input, title) => {
     expect(cardTitle(input)).toBe(title);
@@ -106,11 +110,11 @@ describe('card wording', () => {
     ],
     [
       'a membership',
-      card({ kind: 'membership', tier: 'bronze', months: 1 }),
-      expect.stringContaining('Bronze perks on Civitai for 1 month.'),
+      card({ kind: 'membership', tier: 'bronze', days: 7 }),
+      expect.stringContaining('Bronze perks on Civitai for 1 week.'),
     ],
     [
-      'a membership with no months',
+      'a membership with no duration',
       card({ kind: 'membership', tier: 'bronze' }),
       expect.stringMatching(/^Bronze perks on Civitai\. /),
     ],
@@ -121,8 +125,8 @@ describe('card wording', () => {
     expect(cardBlurb(input)).toEqual(blurb);
   });
 
-  it('leaves the months empty when there are none to name', () => {
-    expect(monthsLabel(null)).toBe('');
+  it('leaves the duration empty when there are none to name', () => {
+    expect(durationLabel(null)).toBe('');
   });
 });
 

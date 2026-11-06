@@ -15,7 +15,7 @@
       price: card.listPrice ?? card.price,
       buzz: card.buzz,
       tier: card.tier,
-      months: 1,
+      days: 7,
       cosmeticId: null,
       cosmeticType: card.cosmeticType,
     })

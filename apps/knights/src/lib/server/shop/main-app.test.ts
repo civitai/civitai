@@ -5,7 +5,7 @@ const answer = (status: number, body: unknown) =>
   vi.fn(async () => new Response(JSON.stringify(body), { status }));
 const port = (fetcher: typeof fetch) =>
   mainAppPort({ baseUrl: 'https://main.example/', token: 'secret' }, fetcher);
-const grant = { userId: 7, tier: 'silver', months: 1, key: 'knights-shop:abc' };
+const grant = { userId: 7, tier: 'silver', days: 7, key: 'knights-shop:abc' };
 
 describe('the main app port', () => {
   it('posts the membership grant with the webhook token and reads the outcome', async () => {

@@ -50,7 +50,7 @@
 
   const KIND_BLURB: Record<Kind, string> = {
     buzz_pack: 'Sells an amount of Buzz for gold.',
-    membership: 'One perks-only month of a Civitai membership.',
+    membership: 'One perks-only week of a Civitai membership.',
     cosmetic: 'A badge, nameplate, decoration or other cosmetic.',
   };
   const KIND_ICON = { buzz_pack: IconBolt, membership: IconCrown, cosmetic: IconPalette } as const;
@@ -194,8 +194,8 @@
                   <ToggleGroupItem value={option}>{titleCase(option)}</ToggleGroupItem>
                 {/each}
               </ToggleGroup>
-              <input type="hidden" name="months" value="1" />
-              <p class="text-xs text-dark-2">1 month. The shop sells memberships one month at a time.</p>
+              <input type="hidden" name="days" value="7" />
+              <p class="text-xs text-dark-2">1 week. The shop sells memberships one week at a time.</p>
             </div>
           {:else}
             <div class="grid gap-1.5">

@@ -71,7 +71,7 @@ describe('gold balance', () => {
       converted: 2_000,
       onItsWay: 0,
       held: false,
-      buzzOnConvert: 13,
+      buzzOnConvert: 650,
     });
   });
 
@@ -127,31 +127,31 @@ describe('convertGold', () => {
   it('pays the whole Buzz in the convertible gold and records the transaction', async () => {
     const buzz = fakeBuzz();
     await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 12_500 });
+    await setGold(pg, 1, { earned: 12_510 });
 
     const result = await convertGold(db, buzz.port, { playerId: 1, now: NOW });
 
-    expect(result).toEqual({ status: 'converted', gold: 12_000, buzz: 12, transactionId: 'tx-1' });
+    expect(result).toEqual({ status: 'converted', gold: 12_500, buzz: 625, transactionId: 'tx-1' });
     expect(buzz.grantYellow).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 1, amount: 12 })
+      expect.objectContaining({ userId: 1, amount: 625 })
     );
-    expect(await row(1)).toEqual({ goldConverted: 12_000 });
+    expect(await row(1)).toEqual({ goldConverted: 12_500 });
     expect(await conversions()).toEqual([
       expect.objectContaining({
         playerId: 1,
-        gold: 12_000,
-        buzz: 12,
+        gold: 12_500,
+        buzz: 625,
         status: 'paid',
         buzzTransactionId: 'tx-1',
       }),
     ]);
-    expect(await getGoldBalance(db, 1)).toMatchObject({ convertible: 500 });
+    expect(await getGoldBalance(db, 1)).toMatchObject({ convertible: 10 });
   });
 
   it('refuses below the minimum and asks Buzz for nothing', async () => {
     const buzz = fakeBuzz();
     await seedPlayer(pg, 1);
-    await setGold(pg, 1, { earned: 4_999 });
+    await setGold(pg, 1, { earned: 99 });
 
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toEqual({
       status: 'refused',
@@ -169,7 +169,7 @@ describe('convertGold', () => {
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
       status: 'converted',
       gold: 50_000,
-      buzz: 50,
+      buzz: 2_500,
     });
   });
 
@@ -188,7 +188,7 @@ describe('convertGold', () => {
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"=NULL WHERE "userId"=1`);
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
       status: 'converted',
-      buzz: 20,
+      buzz: 1_000,
     });
   });
 
@@ -221,7 +221,7 @@ describe('convertGold', () => {
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toEqual({
       status: 'pending',
       gold: 10_000,
-      buzz: 10,
+      buzz: 500,
     });
     expect(buzz.paid.size).toBe(0);
     const [pending] = await conversions();
@@ -229,7 +229,7 @@ describe('convertGold', () => {
 
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
       status: 'converted',
-      buzz: 10,
+      buzz: 500,
     });
     expect(buzz.paid.size).toBe(1);
     expect(await conversions()).toHaveLength(1);
@@ -268,7 +268,7 @@ describe('a definitive Buzz rejection', () => {
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW, log })).toEqual({
       status: 'failed',
       gold: 10_000,
-      buzz: 10,
+      buzz: 500,
       forfeited: false,
     });
 
@@ -288,7 +288,7 @@ describe('a definitive Buzz rejection', () => {
 
     const next = await convertGold(db, fakeBuzz().port, { playerId: 1, now: NOW });
 
-    expect(next).toMatchObject({ status: 'converted', buzz: 10 });
+    expect(next).toMatchObject({ status: 'converted', buzz: 500 });
     expect(await row(1)).toEqual({ goldConverted: 10_000 });
   });
 

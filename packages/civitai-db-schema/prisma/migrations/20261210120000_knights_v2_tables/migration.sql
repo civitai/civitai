@@ -331,7 +331,7 @@ CREATE TABLE IF NOT EXISTS "KnightsAcolyteLevelGold" (
 );
 
 -- The gold shop: a catalog, and the gold ledger of what was bought. The catalog is managed from the moderator app
--- (/knights-of-new-order/shop); `pnpm run seed:shop` in apps/knights fills a local dev database only.
+-- (/knights-of-new-order/shop) in every environment, dev included.
 CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
   "id" SERIAL PRIMARY KEY,
   "kind" TEXT NOT NULL,
@@ -341,7 +341,7 @@ CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
   "buzz" INTEGER,
   "cosmeticId" INTEGER,
   "tier" TEXT,
-  "months" INTEGER,
+  "days" INTEGER,
   "minRank" TEXT,
   "active" BOOLEAN NOT NULL DEFAULT true,
   "rotating" BOOLEAN NOT NULL DEFAULT false,
@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
   CONSTRAINT "KnightsShopItem_kind_check" CHECK (
     ("kind" = 'buzz_pack' AND "buzz" > 0 AND "cosmeticId" IS NULL AND "tier" IS NULL)
     OR ("kind" = 'cosmetic' AND "cosmeticId" IS NOT NULL AND "buzz" IS NULL AND "tier" IS NULL)
-    OR ("kind" = 'membership' AND "tier" IN ('bronze', 'silver', 'gold') AND "months" > 0 AND "buzz" IS NULL AND "cosmeticId" IS NULL)
+    OR ("kind" = 'membership' AND "tier" IN ('bronze', 'silver', 'gold') AND "days" > 0 AND "buzz" IS NULL AND "cosmeticId" IS NULL)
   ),
   CONSTRAINT "KnightsShopItem_price_check" CHECK ("price" > 0)
 );

@@ -11501,7 +11501,7 @@ model KnightsShopItem {
   buzz        Int?
   cosmeticId  Int?
   tier        String? // bronze | silver | gold
-  months      Int?
+  days        Int?
   minRank     String?
   active      Boolean  @default(true)
   rotating    Boolean  @default(false)

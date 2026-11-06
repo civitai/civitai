@@ -1,4 +1,4 @@
-import { DEAL_PERCENT, isSellable } from '@civitai/shared/knights-shop';
+import { DEAL_PERCENT, MEMBERSHIP_DAYS, isSellable } from '@civitai/shared/knights-shop';
 import type { ShopItemRow } from '$lib/server/knights/shop-catalog.service';
 
 export type Kind = 'buzz_pack' | 'membership' | 'cosmetic';
@@ -19,7 +19,7 @@ export const KIND_ONE: Record<Kind, string> = {
   cosmetic: 'Cosmetic',
 };
 
-export const NOT_SOLD_REASON = 'The shop sells memberships one month at a time.';
+export const NOT_SOLD_REASON = 'The shop sells memberships one week at a time.';
 export const HIDDEN_REASON = 'The cosmetic no longer exists, so players do not see this item.';
 export const DEAL_LABEL = `-${DEAL_PERCENT}%`;
 
@@ -75,7 +75,7 @@ type Describable = {
   price: number | null;
   buzz: number | null;
   tier: string | null;
-  months: number | null;
+  days: number | null;
   cosmeticId: number | null;
   cosmeticType: string | null;
 };
@@ -84,7 +84,9 @@ type Describable = {
 export function whatItIs(item: Describable) {
   if (item.kind === 'buzz_pack') return `${(item.buzz ?? 0).toLocaleString()} Buzz`;
   if (item.kind === 'membership')
-    return `${titleCase(item.tier)} · ${item.months === 1 ? '1 month' : `${item.months} months`}`;
+    return `${titleCase(item.tier)} · ${
+      item.days === MEMBERSHIP_DAYS ? '1 week' : `${item.days} days`
+    }`;
   return item.cosmeticType ? humanize(item.cosmeticType) : `Cosmetic #${item.cosmeticId}`;
 }
 
@@ -250,7 +252,7 @@ export function previewDays(today: string, selected: string, ahead = 5) {
 }
 
 /** What restoring does to a retired item that the shop still would not show, or null when it simply goes on sale. */
-export function restoreNote(item: Pick<ShopItemRow, 'kind' | 'months' | 'cosmeticType'>) {
+export function restoreNote(item: Pick<ShopItemRow, 'kind' | 'days' | 'cosmeticType'>) {
   if (!isSellable(item))
     return `It stays off sale: ${NOT_SOLD_REASON.charAt(0).toLowerCase()}${NOT_SOLD_REASON.slice(
       1

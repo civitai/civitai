@@ -7295,7 +7295,7 @@ export interface KnightsShopItem {
   buzz: number | null;
   cosmeticId: number | null;
   tier: string | null;
-  months: number | null;
+  days: number | null;
   minRank: string | null;
   active: boolean;
   rotating: boolean;

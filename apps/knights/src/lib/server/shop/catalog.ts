@@ -24,7 +24,7 @@ export type ShopCard = {
   deal: boolean;
   buzz: number | null;
   tier: string | null;
-  months: number | null;
+  days: number | null;
   minRank: string | null;
   state: CardState;
   cosmeticType: string | null;
@@ -109,7 +109,7 @@ export async function loadShop(
         deal,
         buzz: item.buzz,
         tier: item.tier,
-        months: item.months,
+        days: item.days,
         minRank: item.minRank,
         state,
         cosmeticType: cosmetic?.type ?? null,

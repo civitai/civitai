@@ -30,7 +30,7 @@ beforeEach(async () => {
     `TRUNCATE "KnightsShopPurchase","KnightsShopItem","UserCosmetic","Cosmetic","CustomerSubscription","Product" RESTART IDENTITY CASCADE`
   );
   await pg.exec(`
-    INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","cosmeticId","tier","months") VALUES
+    INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","cosmeticId","tier","days") VALUES
       (1,'cosmetic','Seal badge',400,NULL,101,NULL,NULL),
       (2,'cosmetic','Wave stickers',300,NULL,102,NULL,NULL),
       (3,'cosmetic','Free stickers',300,NULL,103,NULL,NULL),

@@ -12,7 +12,7 @@ const item = (id: number, o: Partial<ShopItem> = {}): ShopItem => ({
   buzz: 50,
   cosmeticId: null,
   tier: null,
-  months: null,
+  days: null,
   minRank: null,
   active: true,
   rotating: false,
