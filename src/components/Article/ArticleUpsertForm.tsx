@@ -371,6 +371,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'timestamp',
                 'blurb',
                 'imageSize',
+                'align',
               ]}
               withAsterisk
               stickyToolbar

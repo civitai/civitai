@@ -56,6 +56,11 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
 // The article editor's per-image size. sanitize-html blanks any value off this list, so a
 // stored `data-width` can't carry CSS.
 const IMAGE_WIDTH_ATTRIBUTE = { name: 'data-width', multiple: false, values: [...IMAGE_WIDTHS] };
+// `style` is allowed on these tags only because `allowedStyles` limits it to text-align left|center|right.
+const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
+const TEXT_ALIGN_STYLES = Object.fromEntries(
+  TEXT_ALIGN_TAGS.map((tag) => [tag, { 'text-align': [/^(left|center|right)$/] }])
+);
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
   a: ['rel', 'href', 'target'],
@@ -81,6 +86,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   // left to find — the words stay and silently stop updating.
   div: ['data-youtube-video', 'data-type', 'data-id'],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
+  ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
   'edge-media': ['url', 'type', 'filename', 'className', IMAGE_WIDTH_ATTRIBUTE],
@@ -304,11 +310,11 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     },
     ...options,
     allowedAttributes,
-    // Per-tag replace, not merge: a caller's `span` entry replaces SPAN_ALLOWED_STYLES. `*` is
+    // Per-tag replace, not merge: a caller's entry for a tag replaces its default (span, p, h1-h3). `*` is
     // fixed empty, after the spread, because sanitize-html merges it into every tag's rule; it
     // drops style on any tag without its own entry.
     allowedStyles: parsesStyles
-      ? { span: SPAN_ALLOWED_STYLES, ...options.allowedStyles, '*': {} }
+      ? { span: SPAN_ALLOWED_STYLES, ...TEXT_ALIGN_STYLES, ...options.allowedStyles, '*': {} }
       : undefined,
   });
 }

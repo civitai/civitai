@@ -39,6 +39,8 @@ import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
+import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
@@ -154,6 +156,7 @@ export function RichTextEditor({
   const addBlurbs = includeControls.includes('blurb');
   // Needs the addVideo branch: only it registers the image nodes that carry `size`.
   const addImageSize = addVideo && includeControls.includes('imageSize');
+  const addAlign = includeControls.includes('align');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
@@ -271,11 +274,13 @@ export function RichTextEditor({
     // rendering it and having it vanish on save.
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
+    if (addAlign) arr.push(TextAlignExtension);
 
     return arr;
   }, [
     addStickers,
     addBlurbs,
+    addAlign,
     addList,
     addFormatting,
     withoutBlockContainers,
@@ -478,6 +483,12 @@ export function RichTextEditor({
                 </RTE.ControlsGroup>
               )}
 
+              {addAlign && (
+                <RTE.ControlsGroup>
+                  <TextAlignControl />
+                </RTE.ControlsGroup>
+              )}
+
               {addLink && (
                 <RTE.ControlsGroup>
                   <RTE.Link />
@@ -593,7 +604,8 @@ type ControlType =
   | 'timestamp'
   | 'sticker'
   | 'blurb'
-  | 'imageSize';
+  | 'imageSize'
+  | 'align';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
