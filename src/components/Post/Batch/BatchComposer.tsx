@@ -39,7 +39,13 @@ import type { PlannedPost } from './batch-composer.utils';
 import {
   defaultTitleTemplate,
   describeCadence,
+  describeLevelCounts,
   fixSpacing,
+  isBlockedMedia,
+  isFailedMedia,
+  isPersistingMedia,
+  isPostable,
+  isScanningMedia,
   promotedFromResource,
 } from './batch-composer.utils';
 import { BatchMediaGrid } from './BatchMediaGrid';
@@ -54,7 +60,9 @@ import { BatchSummaryRail } from './BatchSummaryRail';
 import type { PreviewView } from './SchedulePreview';
 import { dayElementId } from './SchedulePreview';
 import { ScheduleBuilder } from './ScheduleBuilder';
+import { useBatchMediaPersist } from './useBatchMediaPersist';
 import { useBatchPlan, useBatchScheduleValidation } from './useBatchSchedule';
+import { useBatchScanStatus } from './useBatchScanStatus';
 
 export type BatchComposerProps = {
   modelId?: number;
@@ -114,6 +122,9 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
   const fileUploadContext = useFileUploadContext();
   const trackedFiles = fileUploadContext?.[0] ?? [];
   const uploading = trackedFiles.filter((x) => x.status === 'pending' || x.status === 'uploading');
+  useBatchMediaPersist();
+  useBatchScanStatus();
+  const persisting = media.filter(isPersistingMedia).length;
 
   const { data: model, isLoading: modelLoading } = trpc.model.getById.useQuery(
     { id: modelId ?? 0 },
@@ -209,7 +220,7 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
 
   const submittedRef = useRef(false);
   const uploadingRef = useRef(0);
-  uploadingRef.current = uploading.length;
+  uploadingRef.current = uploading.length + persisting;
   const leavePredicate = useCallback(() => !submittedRef.current && uploadingRef.current > 0, []);
   useCatchNavigation({
     name: 'batch-composer',
@@ -217,14 +228,17 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
     predicate: leavePredicate,
   });
 
-  const failedCount = media.filter((x) => x.status === 'error').length;
-  const blockedCount = media.filter((x) => x.status === 'blocked').length;
+  const failedCount = media.filter(isFailedMedia).length;
+  const blockedCount = media.filter(isBlockedMedia).length;
   const totals = {
     uploaded: media.length,
     eligible: plan.uploaded.length,
     posts: plan.postCount,
-    excluded: failedCount + blockedCount,
+    excluded: failedCount + blockedCount + persisting,
+    blocked: blockedCount,
+    scanning: media.filter(isScanningMedia).length,
   };
+  const levels = describeLevelCounts(media);
   const first = plan.dates[0] ?? null;
   const last = plan.dates[plan.dates.length - 1] ?? null;
   const [schedule] = useBatchComposerStore((state) => [state.schedule]);
@@ -271,23 +285,24 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
     );
   };
 
-  const reviewDisabledReason = !plan.postCount
-    ? 'Add media first'
-    : uploading.length
-    ? 'Wait for uploads to finish'
-    : failedCount
-    ? `${failedCount} upload${
-        failedCount === 1 ? '' : 's'
-      } failed. Retry or remove them to continue.`
-    : plan.generationIssue
-    ? plan.generationIssue
-    : validation.checking
-    ? 'Checking your existing schedule…'
-    : !validation.ok
-    ? `Fix ${validation.issues.length} ${
-        validation.issues.length === 1 ? 'conflict' : 'conflicts'
-      } to continue`
-    : null;
+  const reviewDisabledReason =
+    uploading.length || persisting
+      ? 'Wait for uploads to finish'
+      : failedCount
+      ? `${failedCount} upload${
+          failedCount === 1 ? '' : 's'
+        } failed. Retry or remove them to continue.`
+      : !plan.postCount
+      ? 'Add media first'
+      : plan.generationIssue
+      ? plan.generationIssue
+      : validation.checking
+      ? 'Checking your existing schedule…'
+      : !validation.ok
+      ? `Fix ${validation.issues.length} ${
+          validation.issues.length === 1 ? 'conflict' : 'conflicts'
+        } to continue`
+      : null;
 
   const handleReview = () => {
     rememberShared(shared, currentUser?.id);
@@ -317,6 +332,7 @@ function ComposerBody({ modelId, modelVersionId }: { modelId?: number; modelVers
 
   const railProps = {
     totals,
+    levels,
     first,
     last,
     cadence,
@@ -522,6 +538,7 @@ function ReviewScreen({
 }) {
   const [
     reviewPlan,
+    media,
     shared,
     closeReview,
     updateReviewPost,
@@ -530,6 +547,7 @@ function ReviewScreen({
     reset,
   ] = useBatchComposerStore((state) => [
     state.reviewPlan,
+    state.media,
     state.shared,
     state.closeReview,
     state.updateReviewPost,
@@ -537,7 +555,22 @@ function ReviewScreen({
     state.markSubmitted,
     state.reset,
   ]);
-  const posts = useMemo(() => reviewPlan ?? [], [reviewPlan]);
+  // The plan is a snapshot; scans keep finishing while it is reviewed, so each image reads its
+  // current fields from the grid entry.
+  const posts = useMemo(() => {
+    const byUrl = new Map(media.map((item) => [item.url, item]));
+    return (reviewPlan ?? []).map((post) => ({
+      ...post,
+      media: post.media.map((item) => {
+        const current = byUrl.get(item.url);
+        return current && isPostable(current) ? current : item;
+      }),
+    }));
+  }, [reviewPlan, media]);
+  const scanning = posts.flatMap((post) => post.media).filter(isScanningMedia).length;
+  const blockedNow = posts
+    .flatMap((post) => post.media)
+    .filter((item) => isBlockedMedia(media.find((entry) => entry.url === item.url) ?? item)).length;
   const dates = useMemo(() => posts.map((post) => post.publishedAt), [posts]);
   const [submitting, setSubmitting] = useState<PlannedPost[] | null>(null);
   // While posts are being created, every one already written counts as "existing" on the server
@@ -572,19 +605,38 @@ function ReviewScreen({
     : null;
 
   const handleSubmit = () => {
-    const first = posts[0]?.publishedAt;
+    const toSubmit = posts
+      .map((post) => ({
+        ...post,
+        media: post.media.filter((item) => {
+          const current = media.find((entry) => entry.url === item.url);
+          return !current || isPostable(current);
+        }),
+      }))
+      .filter((post) => post.media.length > 0);
+    const first = toSubmit[0]?.publishedAt;
+    const notes = [
+      `The first goes live ${first ? formatDate(first, 'ddd MMM D, h:mm A') : 'soon'}.`,
+      scanning > 0
+        ? `${scanning} ${
+            scanning === 1 ? 'image is' : 'images are'
+          } still scanning and will be posted with the rating the scan gives.`
+        : '',
+      blockedNow > 0
+        ? `${blockedNow} blocked ${blockedNow === 1 ? 'image' : 'images'} will not be posted.`
+        : '',
+      'You can move or unschedule any of them from your posts.',
+    ].filter(Boolean);
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
-        title: `Schedule ${posts.length} ${posts.length === 1 ? 'post' : 'posts'}?`,
-        message: `The first goes live ${
-          first ? formatDate(first, 'ddd MMM D, h:mm A') : 'soon'
-        }. You can move or unschedule any of them from your posts.`,
+        title: `Schedule ${toSubmit.length} ${toSubmit.length === 1 ? 'post' : 'posts'}?`,
+        message: notes.join(' '),
         labels: { confirm: 'Schedule', cancel: 'Cancel' },
         onConfirm: () => {
           setHardFailure(null);
           onSubmitted();
-          setSubmitting(posts.map((post) => ({ ...post })));
+          setSubmitting(toSubmit);
         },
       },
     });
@@ -627,6 +679,18 @@ function ReviewScreen({
             validation.minGapMinutes ?? POST_BATCH_MIN_GAP_MINUTES
           } min. Days count in UTC.`}
       </Text>
+      {(scanning > 0 || blockedNow > 0) && (
+        <Text size="sm" c={blockedNow ? 'red' : 'dimmed'} data-testid="batch-review-scan-note">
+          {[
+            scanning > 0 ? `${scanning} still scanning; you can schedule without waiting.` : '',
+            blockedNow > 0
+              ? `${blockedNow} blocked since the plan was made and won't be posted.`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        </Text>
+      )}
       {hardFailure && (
         <Alert
           color="red"
@@ -657,7 +721,7 @@ function ReviewScreen({
             tags: shared.tags,
             tools: shared.tools.map((tool) => tool.id),
             techniques: shared.techniques.map((technique) => technique.id),
-            extraResourceIds: shared.resources.map((resource) => resource.id),
+            resourceIds: shared.resources.map((resource) => resource.id),
           }}
           viewScheduledHref={viewScheduledHref}
           calendarHref={calendarHref}

@@ -13,6 +13,12 @@ import {
 } from '@civitai/shared/post-scheduling';
 import * as z from 'zod';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  browsingLevelLabels,
+  getHighestBrowsingLevelBit,
+} from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import type { SharedSettings } from './batch-composer.store';
 
@@ -250,17 +256,107 @@ export function fixSpacing(input: {
   return { dates: result, moved };
 }
 
-export type UploadedMedia = MediaUploadOnCompleteProps & { status: 'added' };
+/** What `post.getBatchMediaStatus` reports for a persisted draft row. */
+export type BatchScanStatus = {
+  ingestion: ImageIngestionStatus;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  minor: boolean;
+  poi: boolean;
+};
+
+/** A grid entry: the upload result, the draft row `persistBatchMedia` made for it, and its scan. */
+export type BatchMedia = MediaUploadOnCompleteProps &
+  Partial<BatchScanStatus> & {
+    imageId?: number;
+    /** The upload finished but `persistBatchMedia` failed; retry re-persists the same key. */
+    persistFailed?: boolean;
+  };
+
+export type UploadedMedia = BatchMedia & { status: 'added' };
+export type PostableMedia = UploadedMedia & { imageId: number };
+
+export function isBlockedMedia(media: BatchMedia): boolean {
+  return media.status === 'blocked' || media.ingestion === ImageIngestionStatus.Blocked;
+}
+
+export function isFailedMedia(media: BatchMedia): boolean {
+  return media.status === 'error' || !!media.persistFailed;
+}
+
+/** Uploaded, with its `persistBatchMedia` call still to answer. */
+export function isPersistingMedia(media: BatchMedia): boolean {
+  return media.status === 'added' && media.imageId === undefined && !media.persistFailed;
+}
+
+/** Persisted and not rated yet. */
+export function isScanningMedia(media: BatchMedia): boolean {
+  return (
+    media.status === 'added' &&
+    media.imageId !== undefined &&
+    (media.ingestion === undefined || media.ingestion === ImageIngestionStatus.Pending)
+  );
+}
+
+/** An image a post can be made of: persisted and not blocked. A pending or failed scan is fine,
+ *  as the editor publishes those too. */
+export function isPostable(media: BatchMedia): media is PostableMedia {
+  return (
+    media.status === 'added' &&
+    media.imageId !== undefined &&
+    !media.persistFailed &&
+    !isBlockedMedia(media)
+  );
+}
+
+const SCAN_POLL_FAST_MS = 5_000;
+const SCAN_POLL_SLOW_MS = 15_000;
+const SCAN_POLL_SLOW_AFTER_MS = 3 * MINUTE_MS;
+
+/** How often to ask for scan results: every 5 s at first, 15 s once a scan has been pending for
+ *  three minutes, and not at all when nothing is pending. */
+export function scanPollInterval(input: {
+  pending: boolean;
+  pendingSince: number | null;
+  now: number;
+}): number | false {
+  if (!input.pending) return false;
+  const waited = input.pendingSince === null ? 0 : input.now - input.pendingSince;
+  return waited >= SCAN_POLL_SLOW_AFTER_MS ? SCAN_POLL_SLOW_MS : SCAN_POLL_FAST_MS;
+}
+
+const LEVEL_ORDER: NsfwLevel[] = [
+  NsfwLevel.PG,
+  NsfwLevel.PG13,
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+];
+
+/** "12 PG · 3 PG-13 · 1 R" over the rated, postable media; empty when none is rated yet. */
+export function describeLevelCounts(media: BatchMedia[]): string {
+  const counts = new Map<NsfwLevel, number>();
+  for (const item of media) {
+    if (!isPostable(item) || !item.nsfwLevel) continue;
+    const level = getHighestBrowsingLevelBit(item.nsfwLevel);
+    if (!level) continue;
+    counts.set(level, (counts.get(level) ?? 0) + 1);
+  }
+  return LEVEL_ORDER.filter((level) => counts.has(level))
+    .map((level) => `${counts.get(level)} ${browsingLevelLabels[level]}`)
+    .join(' · ');
+}
 
 export type PlannedPost = {
   key: string;
   title: string | null;
   publishedAt: Date;
-  media: UploadedMedia[];
+  media: PostableMedia[];
 };
 
 export function buildPlan(input: {
-  media: UploadedMedia[];
+  media: PostableMedia[];
   imagesPerPost: number;
   dates: Date[];
   titleTemplate: string;
@@ -281,28 +377,15 @@ export function buildPlan(input: {
   });
 }
 
-type CivitaiResourceMeta = { modelVersionId: number };
-
-/** One `scheduleBatch` image: the upload result reshaped to `addPostImageSchema` minus the post
- *  fields, with the shared extra resources merged into `meta.civitaiResources` so the resource
- *  detection picks them up like generator metadata. */
-export function toBatchImage(media: UploadedMedia, extraResourceIds: number[]) {
-  const meta = (media.meta ?? {}) as Record<string, unknown> & {
-    civitaiResources?: CivitaiResourceMeta[];
-  };
-  const existingResources = Array.isArray(meta.civitaiResources) ? meta.civitaiResources : [];
-  const additions = extraResourceIds
-    .filter((id) => !existingResources.some((resource) => resource.modelVersionId === id))
-    .map((modelVersionId) => ({ modelVersionId }));
-  const mergedMeta =
-    additions.length || existingResources.length
-      ? { ...meta, civitaiResources: [...existingResources, ...additions] }
-      : meta;
+/** One `persistBatchMedia` image: the upload result reshaped to `addPostImageSchema` minus the
+ *  post fields. */
+export function toPersistImage(media: UploadedMedia) {
   const { width, height, hash } = media.metadata as {
     width?: number;
     height?: number;
     hash?: string;
   };
+  const meta = media.meta as Record<string, unknown> | undefined;
   return {
     name: media.name,
     url: media.url,
@@ -310,11 +393,16 @@ export function toBatchImage(media: UploadedMedia, extraResourceIds: number[]) {
     height,
     width,
     mimeType: media.mimeType,
-    meta: Object.keys(mergedMeta).length ? mergedMeta : undefined,
+    meta: meta && Object.keys(meta).length ? meta : undefined,
     type: media.type,
     metadata: media.metadata,
     generationWorkflowId: media.generationWorkflowId,
   };
+}
+
+/** One `scheduleBatch` image: the draft row to adopt. */
+export function toBatchImage(media: PostableMedia): { imageId: number } {
+  return { imageId: media.imageId };
 }
 
 /** The per-creator schedule lock is held, by an earlier attempt that is still running. */
@@ -362,6 +450,13 @@ const draftMediaSchema = z
     metadata: z.record(z.string(), z.unknown()),
     meta: z.record(z.string(), z.unknown()).optional(),
     generationWorkflowId: z.string().optional(),
+    imageId: z.number().int().positive(),
+    ingestion: z.enum(ImageIngestionStatus).optional(),
+    nsfwLevel: z.number().optional(),
+    blockedFor: z.string().nullable().optional(),
+    needsReview: z.string().nullable().optional(),
+    minor: z.boolean().optional(),
+    poi: z.boolean().optional(),
   })
   .passthrough();
 
@@ -395,14 +490,18 @@ const serializedDraftSchema = z.object({
 
 export type SerializedDraft = z.infer<typeof serializedDraftSchema>;
 
-/** JSON-safe form of the draft; only completed uploads are kept, since a failed or blocked file's
- *  `url` is a blob URL that dies with the page. */
+/** JSON-safe form of the draft; only persisted uploads are kept: a failed or blocked file's `url`
+ *  is a blob URL that dies with the page, and an upload with no row has nothing to reconcile
+ *  against on the next visit. */
 export function serializeDraft(draft: ComposerDraft): SerializedDraft {
   return {
     version: 1,
     media: draft.media
-      .filter((item) => item.status === 'added')
-      .map(({ objectUrl: _objectUrl, ...item }) => item as SerializedDraft['media'][number]),
+      .filter((item) => item.status === 'added' && item.imageId !== undefined)
+      .map(
+        ({ objectUrl: _objectUrl, persistFailed: _persistFailed, ...item }) =>
+          item as SerializedDraft['media'][number]
+      ),
     imagesPerPost: draft.imagesPerPost,
     shared: draft.shared,
     presetId: draft.presetId,

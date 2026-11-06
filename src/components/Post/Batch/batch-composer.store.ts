@@ -7,6 +7,8 @@ import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import type {
+  BatchMedia,
+  BatchScanStatus,
   ComposerDraft,
   PlannedPost,
   PromotedVersion,
@@ -29,7 +31,7 @@ export type SharedSettings = {
 export type ReviewPost = PlannedPost & { removed?: boolean };
 
 export type BatchComposerState = {
-  media: MediaUploadOnCompleteProps[];
+  media: BatchMedia[];
   imagesPerPost: number;
   shared: SharedSettings;
   /** Names behind `shared.promotedVersionId`, from the version query or the picked resource. */
@@ -47,6 +49,11 @@ export type BatchComposerState = {
   /** Set once every post was created; the state still holds the media but is no longer a draft. */
   submitted: boolean;
   addMedia: (media: MediaUploadOnCompleteProps) => void;
+  /** No-op for a url that is no longer in the grid. */
+  patchMedia: (url: string, patch: Partial<Omit<BatchMedia, 'url'>>) => void;
+  /** Applies one `getBatchMediaStatus` answer; an id that was asked for and not answered is no
+   *  longer the creator's draft, so its entry goes. */
+  applyScanStatus: (requestedIds: number[], statuses: Record<number, BatchScanStatus>) => void;
   removeMedia: (url: string) => void;
   shuffleMedia: () => void;
   setImagesPerPost: (count: number) => void;
@@ -77,7 +84,7 @@ export function createBatchComposerStore(input: {
   now?: Date;
 }) {
   const initial = () => ({
-    media: [] as MediaUploadOnCompleteProps[],
+    media: [] as BatchMedia[],
     imagesPerPost: 1,
     shared: {
       promotedVersionId: input.promotedVersionId,
@@ -108,6 +115,26 @@ export function createBatchComposerStore(input: {
             if (index > -1) state.media[index] = media;
             else state.media.push(media);
             state.fixedDates = null;
+          }),
+        patchMedia: (url, patch) =>
+          set((state) => {
+            const entry = state.media.find((x) => x.url === url);
+            if (entry) Object.assign(entry, patch);
+          }),
+        applyScanStatus: (requestedIds, statuses) =>
+          set((state) => {
+            const gone = new Set(requestedIds.filter((id) => !(id in statuses)));
+            for (const entry of state.media) {
+              if (entry.imageId === undefined) continue;
+              const status = statuses[entry.imageId];
+              if (status) Object.assign(entry, status);
+            }
+            if (gone.size) {
+              state.media = state.media.filter(
+                (entry) => entry.imageId === undefined || !gone.has(entry.imageId)
+              );
+              state.fixedDates = null;
+            }
           }),
         removeMedia: (url) =>
           set((state) => {
