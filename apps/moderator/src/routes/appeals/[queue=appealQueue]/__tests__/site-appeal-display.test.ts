@@ -46,6 +46,9 @@ describe('approvalEffect', () => {
     expect(article('UnpublishedViolation', 'Draft')).toBe(
       'Approving returns the article to its author as a draft, as it was when it was taken down. It is not published.'
     );
+    expect(article('UnpublishedViolation', 'Unpublished')).toBe(
+      'Approving returns the article to its author unpublished, as it was when it was taken down. It is not published.'
+    );
     expect(article('Published')).toMatch(/already published/);
     expect(article('Unpublished')).toMatch(/restores nothing/);
     expect(article(null)).toMatch(/no longer exists/);
