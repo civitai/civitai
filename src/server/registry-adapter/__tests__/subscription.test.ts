@@ -8,7 +8,6 @@ import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
 import type { Adapter, Entity } from '~/server/registry-adapter/protocol';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
-import { REGISTRY_SCHEMA_SCHEMA, parseCollectionSchemaUrn } from '~/server/registry-adapter/urn';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import {
@@ -179,10 +178,22 @@ function source(world: { apps: CatalogApp[] }, features = SWITCH_ON) {
   return { adapter: composeAdapter(entities, docs), store };
 }
 
-describe('🔴 end first for a schema this source does not serve (rule 4)', () => {
+describe('end first only for a schema this source can never serve (rule 4: end means never)', () => {
   it.each([
-    ['an unknown app', V('no-such-app', 'notes', 1), SWITCH_ON],
-    ['an unknown collection', V('orbit-notes', 'ghost', 1), SWITCH_ON],
+    ['another namespace', 'urn:schema:elsewhere.example:model@v1'],
+    ['a collection URN this namespace never issues', 'urn:schema:app-blocks:Orbit Notes/notes@v1'],
+    ['a collection URN without a major', 'urn:schema:app-blocks:orbit-notes/notes'],
+  ])('%s: end, and no cursor state read or written', async (_name, schema) => {
+    const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
+    const res = await subscribe(adapter, q(schema));
+    expect([res.status, res.text, store.puts(), store.touches()]).toEqual([200, END_ONLY, 0, 0]);
+  });
+});
+
+describe('🔴 a collection major it may publish later streams empty and writes nothing', () => {
+  it.each([
+    ['an app that does not exist yet', V('no-such-app', 'notes', 1), SWITCH_ON],
+    ['a collection not declared yet', V('orbit-notes', 'ghost', 1), SWITCH_ON],
     ['a collection that is not exported', V('orbit-notes', 'drafts', 1), SWITCH_ON],
     ['a major that has not minted', V('orbit-notes', 'notes', 3), SWITCH_ON],
     [
@@ -190,16 +201,16 @@ describe('🔴 end first for a schema this source does not serve (rule 4)', () =
       V('orbit-notes', 'notes', 1),
       APP_STORAGE_ENABLED_FEATURES,
     ],
-  ])('%s: end, and no cursor state read or written', async (_name, schema, features) => {
+  ])('%s: live with no snapshot, never end, and no state written', async (_n, schema, features) => {
     const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] }, features);
-    const res = await subscribe(adapter, q(schema));
-    expect([res.status, res.text, store.puts(), store.touches()]).toEqual([200, END_ONLY, 0, 0]);
-  });
-
-  it('a resume of one is end too, before its cursor is looked at', async () => {
-    const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
-    const res = await subscribe(adapter, q(V('orbit-notes', 'notes', 3), cursorParam('nope')));
-    expect([res.status, res.text, store.touches()]).toEqual([200, END_ONLY, 0]);
+    const res = await subscribe(adapter, q(schema), (t) => t.includes('event: live'));
+    expect(events(res.text)).toEqual(['live']);
+    // A resume from that cursor is live again, and still writes nothing.
+    const resumed = await subscribe(adapter, q(schema, cursorParam(liveCursor(res.text))), (t) =>
+      t.includes('event: live')
+    );
+    expect(events(resumed.text)).toEqual(['live']);
+    expect([store.puts(), store.touches()]).toEqual([0, 0]);
   });
 
   it('positive control: a published major is a snapshot, then live, and saves its state', async () => {
@@ -210,60 +221,20 @@ describe('🔴 end first for a schema this source does not serve (rule 4)', () =
     expect(events(res.text)).toEqual(['upsert', 'live']);
     expect(store.puts()).toBe(1);
   });
-});
 
-describe('🔴 a major that mints later', () => {
-  /** The collection-schema URNs on this source's schema stream, from its snapshot. */
-  async function onSchemaStream(a: Adapter) {
-    const { entities } = await a.snapshot(REGISTRY_SCHEMA_SCHEMA, {
-      signal: new AbortController().signal,
-    });
-    const urns: string[] = [];
-    for await (const e of entities as AsyncIterable<Entity> | Iterable<Entity>) urns.push(e.urn);
-    return urns.filter((u) => parseCollectionSchemaUrn(u) !== null).sort();
-  }
-  const CANDIDATES = [
-    V('orbit-notes', 'notes', 1),
-    V('orbit-notes', 'notes', 2),
-    V('orbit-notes', 'notes', 3),
-    V('orbit-notes', 'drafts', 1),
-    V('orbit-notes', 'ghost', 1),
-  ];
-  async function served(a: Adapter) {
-    const ctx = { signal: new AbortController().signal };
-    const yes = await Promise.all(CANDIDATES.map((s) => a.serves(s, ctx)));
-    return CANDIDATES.filter((_, i) => yes[i]).sort();
-  }
-
-  // The seam a registry relies on: it subscribes to a collection major once the schema stream
-  // defines it (registry rule 1), so a source must serve exactly the majors it defines there.
-  it.each([
-    ['before the mint', [app(V1_ONLY, HEAD_V1)], SWITCH_ON, [V('orbit-notes', 'notes', 1)]],
-    [
-      'after the mint',
-      [app(MINTED, HEAD_MINTED)],
-      SWITCH_ON,
-      [V('orbit-notes', 'notes', 1), V('orbit-notes', 'notes', 2)],
-    ],
-    ['with the switch off', [app(MINTED, HEAD_MINTED)], APP_STORAGE_ENABLED_FEATURES, []],
-  ])(
-    '%s: it serves exactly the majors its schema stream defines',
-    async (_n, apps, features, expected) => {
-      const { adapter } = source({ apps }, features);
-      expect(await onSchemaStream(adapter)).toEqual(expected);
-      expect(await served(adapter)).toEqual(expected);
-    }
-  );
-
-  it('a subscription that got end before the mint is answered with a stream after it', async () => {
+  it('a stream opened before its major mints receives the documents once it does', async () => {
     const world = { apps: [app(V1_ONLY, HEAD_V1)] };
     const { adapter } = source(world);
-    expect((await subscribe(adapter, q(V('orbit-notes', 'notes', 2)))).text).toBe(END_ONLY);
-    world.apps = [app(MINTED, HEAD_MINTED)];
-    const after = await subscribe(adapter, q(V('orbit-notes', 'notes', 2)), (t) =>
-      t.includes('event: live')
-    );
-    expect(events(after.text)).toEqual(['upsert', 'live']);
+    const mint = setTimeout(() => (world.apps = [app(MINTED, HEAD_MINTED)]), 50);
+    try {
+      const res = await subscribe(adapter, q(V('orbit-notes', 'notes', 2)), (t) =>
+        t.includes('event: upsert')
+      );
+      expect(events(res.text)).toEqual(['live', 'upsert']);
+      expect(res.text).toContain('urn:app-blocks:orbit-notes/notes/n1');
+    } finally {
+      clearTimeout(mint);
+    }
   });
 });
 
@@ -336,6 +307,55 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
       410,
       'cursor_expired',
     ]);
+  });
+});
+
+describe('🔴 progress after changes the filter excluded (rule 9)', () => {
+  const APPS = 'urn:schema:app-blocks:app@v1';
+  const ent = (slug: string, rev: string, kind: string): Entity => ({
+    urn: `urn:app-blocks:app/${slug}`,
+    schemas: [APPS],
+    rev,
+    body: { slug, kind },
+  });
+  const ONSITE = filterParam('{"properties":{"kind":{"const":"onsite"}}}');
+  const catalog = (states: Entity[][], store = createMemorySnapshotStore()) => {
+    let reads = 0;
+    return createPollingAdapter({
+      namespace: 'app-blocks',
+      serves: [APPS],
+      read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
+      store,
+      pollMs: 5,
+      sleep: abortableSleep,
+    });
+  };
+  const after = (n: number) => (t: string) => events(t).length >= n;
+
+  it('a change to an entity the consumer never received, still not matching: progress, not a delete', async () => {
+    const a = catalog([
+      [ent('alpha', 'r1', 'onsite'), ent('beta', 'r1', 'offsite')],
+      [ent('alpha', 'r1', 'onsite'), ent('beta', 'r2', 'offsite')],
+    ]);
+    const res = await subscribe(a, q(APPS, ONSITE), after(3));
+    expect(events(res.text)).toEqual(['upsert', 'live', 'progress']);
+    expect(cursorOf(res.text, 'progress')).not.toBe(liveCursor(res.text));
+    expect(res.text).not.toContain('urn:app-blocks:app/beta');
+  });
+
+  it('positive control: one the consumer holds that stops matching is a delete (rule 6)', async () => {
+    const a = catalog([[ent('alpha', 'r1', 'onsite')], [ent('alpha', 'r2', 'offsite')]]);
+    const res = await subscribe(a, q(APPS, ONSITE), after(3));
+    expect(events(res.text)).toEqual(['upsert', 'live', 'delete']);
+  });
+
+  it('on a resume, where what the consumer holds is unknown, a non-matching change is a delete', async () => {
+    const store = createMemorySnapshotStore();
+    const first = catalog([[ent('alpha', 'r1', 'onsite'), ent('beta', 'r1', 'offsite')]], store);
+    const live = liveCursor((await subscribe(first, q(APPS, ONSITE), after(2))).text);
+    const next = catalog([[ent('alpha', 'r1', 'onsite'), ent('beta', 'r2', 'offsite')]], store);
+    const res = await subscribe(next, q(APPS, ONSITE + cursorParam(live)), after(2));
+    expect(events(res.text)).toEqual(['live', 'delete']);
   });
 });
 

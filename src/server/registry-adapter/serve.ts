@@ -1,11 +1,12 @@
 /**
- * The HTTP binding of the source protocol (spec/registry.md @ 656ba0a, "Bindings" → "HTTP"):
+ * The HTTP binding of the source protocol (spec/registry.md @ 0711244, "Bindings" → "HTTP"):
  * `GET /subscribe?schema=&cursor=&urn=&filter=` streaming `text/event-stream`, plus `/healthz`
  * for a process supervisor. Everything between request and events is the shared core
  * (`subscription.ts`); this file only maps the request in and the events and errors out.
  *
- *   - Each event is an SSE event of its type; one with a cursor also carries it as the SSE `id`,
- *     so a client may resume with `Last-Event-ID` instead of `cursor`. When a request has both,
+ *   - Each event is an SSE event of its type; one with a cursor field also carries it as the SSE
+ *     `id`, an empty `id` when the cursor is empty, so a client may resume with `Last-Event-ID`
+ *     instead of `cursor`. When a request has both,
  *     `Last-Event-ID` wins: an `EventSource` reconnects to its original URL, `cursor` and all,
  *     and sets the header to the last event it received, which is always the later position.
  *   - An error before the stream starts is its HTTP status with `{ "error", "message" }`; after,
@@ -32,10 +33,15 @@ import {
 const HEARTBEAT_MS = 15_000;
 const CORS = { 'access-control-allow-origin': '*' };
 
-/** One SSE frame: the event name, its cursor as the `id` when it has one, then its fields. */
+/**
+ * One SSE frame: the event name, then for an event with a cursor field its cursor as the `id`,
+ * then its fields. An empty cursor (a snapshot upsert: a snapshot cannot be continued) is an
+ * empty `id:` line, not an omitted one, so the client's `Last-Event-ID` resets rather than
+ * keeping an older cursor that would miss deletes. `end` has no cursor field, and no `id`.
+ */
 export function sseFrame(event: StreamEvent): string {
   const { type, ...data } = event;
-  const id = 'cursor' in event && event.cursor !== '' ? `id: ${event.cursor}\n` : '';
+  const id = 'cursor' in event ? (event.cursor === '' ? 'id:\n' : `id: ${event.cursor}\n`) : '';
   return `event: ${type}\n${id}data: ${JSON.stringify(data)}\n\n`;
 }
 
@@ -95,7 +101,11 @@ function openStream(res: ServerResponse, slowConsumerMs: number): EventSink {
   };
 }
 
-/** The cursor a request resumes from: `Last-Event-ID` when set (see the file comment), else `cursor`. */
+/**
+ * The cursor a request resumes from: `Last-Event-ID` when set (see the file comment), else
+ * `cursor`. An empty `Last-Event-ID` is the empty cursor the client stored (a snapshot it must
+ * start over), so it falls through to `cursor`, which such a client does not send either.
+ */
 function resumeCursor(req: IncomingMessage, params: URLSearchParams): string | null {
   const header = req.headers['last-event-id'];
   const lastEventId = Array.isArray(header) ? header[header.length - 1] : header;

@@ -163,7 +163,7 @@ describe('the gRPC binding', () => {
 
   it('🔴 a schema this source does not serve is end, and nothing else', async () => {
     const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {
-      schema: 'urn:schema:app-blocks:no-such-app/notes@v1',
+      schema: 'urn:schema:elsewhere.example:model@v1',
     });
     expect(res).toEqual({ events: [{ type: 'end' }] });
   });
@@ -214,7 +214,7 @@ describe('🔴 HTTP and gRPC serve one core', () => {
   const snapshot = [ent('alpha', 'r1', { kind: 'onsite' }), ent('beta', 'r1', { kind: 'offsite' })];
   const adapter = (): Adapter => ({
     namespace: 'app-blocks',
-    serves: async (s) => s === APPS,
+    serves: (s) => s === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snap', entities: snapshot }),
     changes: async () =>

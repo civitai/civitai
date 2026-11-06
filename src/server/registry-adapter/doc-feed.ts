@@ -16,10 +16,10 @@
  * — the newest document the cursor served — has neither a document nor a tombstone at or past the
  * seq it was served at (purged and written again).
  *
- * A collection major that does not resolve (unknown app or collection, not exported, not minted,
- * the switch off) is not served: the core answers `end` first and this feed is never asked for a
- * snapshot or a cursor, so it writes nothing. When a major mints later, the catalog's schema
- * stream upserts its schema entity, and a registry following that stream subscribes to it then.
+ * A collection major that does not resolve now (unknown app or collection, not exported, not
+ * minted, the switch off) may still be published later, so it is served, empty: a snapshot of
+ * nothing and `live` with {@link EMPTY_CURSOR}, writing no state. The stream keeps polling, and
+ * once the major resolves its documents arrive on it as upserts. (`end` would mean never.)
  *
  * After `live`, a poll that finds the namespace's seq moved with no change for this stream (a
  * private write, another collection) yields `progress` with the new cursor (spec rule 9), so a
@@ -82,9 +82,8 @@ export type ResolveStream = (schema: string) => Promise<CollectionStream | null>
 export const FEED_PAGE = 500;
 const STATE_FORMAT = 'f1';
 /**
- * The cursor of a stream that holds nothing for no app; it names no stored state. Only a stream
- * that stops resolving while open reaches it (its documents leave as deletes); a stream that does
- * not resolve when subscribed is answered `end` instead.
+ * The cursor of a stream that holds nothing for no app; it names no stored state. So a
+ * subscription to a collection major that is not published (or invented) writes nothing.
  */
 export const EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^f1\.([0-9a-f]{32})$/;
@@ -376,11 +375,6 @@ export function createDocFeed(opts: DocFeedOptions) {
   }
 
   return {
-    /** Whether `schema` names a collection major that is published now. */
-    async serves(schema: string): Promise<boolean> {
-      return (await guarded(() => opts.resolve(schema))) !== null;
-    },
-
     async snapshot(schema: string) {
       const { next, entities } = await guarded(() => advance(schema, null));
       return { cursor: await save(next), entities: [...entities.values()] };

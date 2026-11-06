@@ -65,16 +65,16 @@ export function resolveFromCatalog(
 }
 
 /**
- * One source: the entity streams, and a document stream for every collection major that is
- * published now. A collection-schema URN is routed by its shape alone (no entity schema has one,
- * `urn.ts`); whether it is served is the feed's resolve, so an unpublished one is `end` first.
+ * One source: the entity streams, and a document stream for every collection-schema URN of this
+ * namespace, routed by its shape alone (no entity schema has one, `urn.ts`). Every such URN is
+ * served, since its major may be published later; one not published now streams empty. `end` is
+ * only for a schema this source can never serve.
  */
 export function composeAdapter(entities: Adapter, docs: ReturnType<typeof createDocFeed>): Adapter {
   const isDocStream = (schema: string) => parseCollectionSchemaUrn(schema) !== null;
   return {
     namespace: entities.namespace,
-    serves: (schema, ctx) =>
-      isDocStream(schema) ? docs.serves(schema) : entities.serves(schema, ctx),
+    serves: (schema) => isDocStream(schema) || entities.serves(schema),
     snapshot: (schema, ctx) =>
       isDocStream(schema) ? docs.snapshot(schema) : entities.snapshot(schema, ctx),
     changes: (schema, cursor, ctx) =>

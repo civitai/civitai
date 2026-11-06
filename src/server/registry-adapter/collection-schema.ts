@@ -3,14 +3,14 @@
  * (app, collection, major), and the majors themselves, recomputed from the approved manifest
  * history on every read so the adapter keeps no state for them.
  *
- * The rule for a major is the registry's (spec/registry.md @ 656ba0a, "Schemas": a major changes
+ * The rule for a major is the registry's (spec/registry.md @ 0711244, "Schemas": a major changes
  * only additively, by annotations and new optional properties). It is wider than the store's own
  * "breaking" (narrowings only), so it mints on every store-breaking change and on widenings the
  * store accepts in place.
  *
  * A schema, once published, changes only by what its own major allows. A mint adds the new major
- * and leaves every older one as it was, so a registry never sees an old major change because a
- * new one exists.
+ * (with `x-migrateFrom`) and changes an older one only by the 2020-12 annotation
+ * `deprecated: true`, which a major allows in place.
  */
 import { jsonEqual } from '~/server/services/apps/doc-store-schema';
 import type { MigrationMutationOp } from '~/server/services/apps/storage-schema-migrations';
@@ -145,11 +145,14 @@ export function synthesizeCollectionSchema(args: {
   urn: string;
   declared: AppStorageCollectionSchema | undefined;
   migrateFrom?: MigrateFrom;
+  /** A newer major exists: marked with the 2020-12 `deprecated` annotation. */
+  deprecated?: boolean;
 }): Record<string, unknown> {
   return {
     ...(args.declared ?? {}),
     $schema: JSON_SCHEMA_DIALECT,
     $id: args.urn,
+    ...(args.deprecated ? { deprecated: true } : {}),
     ...(args.migrateFrom ? { [MIGRATE_FROM_ANNOTATION]: args.migrateFrom } : {}),
   };
 }
@@ -332,7 +335,11 @@ export function collectionSchemaDocuments(
               steps,
             }
           : undefined;
-      out.push({ urn, body: synthesizeCollectionSchema({ urn, declared, migrateFrom }) });
+      const deprecated = major < state.majors.length;
+      out.push({
+        urn,
+        body: synthesizeCollectionSchema({ urn, declared, migrateFrom, deprecated }),
+      });
     });
   }
   return out;

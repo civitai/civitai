@@ -241,6 +241,7 @@ describe('deriveCollectionMajors', () => {
         body: {
           $schema: DIALECT,
           $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+          deprecated: true,
         },
       },
       {
@@ -381,10 +382,11 @@ describe('x-migrateFrom on a new major', () => {
     expect(docOf(MINT, 1)).not.toHaveProperty('x-migrateFrom');
   });
 
-  it('🔴 a mint leaves the old major exactly as it was published', () => {
+  it('🔴 a mint changes the old major only by the annotation deprecated: true', () => {
     const before = docOf(MINT.slice(0, 1), 1);
     expect(before).toEqual({ ...BEFORE, $schema: DIALECT, $id: V(1) });
-    expect(docOf(MINT, 1)).toEqual(before);
+    expect(docOf(MINT, 1)).toEqual({ ...before, deprecated: true });
+    expect(docOf(MINT, 2)).not.toHaveProperty('deprecated');
   });
 
   it('🔴 fixed at the mint: a later additive step of the same major keeps the steps', () => {

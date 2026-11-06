@@ -19,7 +19,7 @@ const one: Entity = {
 function adapter(over: Partial<Adapter> = {}): Adapter {
   return {
     namespace: 'app-blocks',
-    serves: async (schema) => schema === APPS,
+    serves: (schema) => schema === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [one] }),
     changes: async () => feed({ delete: 'urn:app-blocks:app/tide-log', cursor: 'c1.after-delete' }),
@@ -64,12 +64,12 @@ const sub = (schema: string, extra = '') =>
   `/subscribe?schema=${encodeURIComponent(schema)}${extra}`;
 
 describe('the HTTP/SSE binding', () => {
-  it('snapshot upserts with an empty cursor, then live, then changes, then end', async () => {
+  it('🔴 snapshot upserts with an empty cursor and an EMPTY id, then live, then changes, then end', async () => {
     const res = await get(adapter(), sub(APPS));
     expect(res.status).toBe(200);
     expect(res.type).toBe('text/event-stream');
     expect(res.text).toBe(
-      'event: upsert\n' +
+      'event: upsert\nid:\n' +
         `data: ${JSON.stringify({ entity: one, cursor: '' })}\n\n` +
         'event: live\nid: c1.snapshot-cursor\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
         'event: delete\nid: c1.after-delete\n' +
@@ -279,7 +279,7 @@ describe('🔴 a consumer that stops reading (rule 8)', () => {
     );
     // The first frame filled the buffer: nothing after it but the error.
     expect(res.out).toEqual([
-      `event: upsert\ndata: ${JSON.stringify({ entity: one, cursor: '' })}\n\n`,
+      `event: upsert\nid:\ndata: ${JSON.stringify({ entity: one, cursor: '' })}\n\n`,
       'event: error\ndata: {"error":"slow_consumer","message":"the consumer did not keep up with the stream"}\n\n',
     ]);
   });

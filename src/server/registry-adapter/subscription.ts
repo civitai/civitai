@@ -1,16 +1,18 @@
 /**
- * The one implementation of `Subscribe` (spec/registry.md @ 656ba0a, "Subscribe"), shared by
+ * The one implementation of `Subscribe` (spec/registry.md @ 0711244, "Subscribe"), shared by
  * both bindings: `serve.ts` (HTTP/SSE) and `grpc.ts` (gRPC) only translate a request in and
  * events and errors out, so the two cannot drift.
  *
  * In order, for one request:
  *   1. the filter is compiled (`bad_request` for one that is not a schema);
- *   2. a schema this source does not serve is answered `end` first (rule 4), before any cursor
- *      state is read or written;
+ *   2. a schema this source can never serve is answered `end` first (rule 4), before any cursor
+ *      state is read or written (`Adapter.serves`: `end` means never);
  *   3. a resume's cursor is checked against the request (rule 2, {@link unbindCursor}), then by
  *      the adapter, all before `live`, so a refused cursor is `cursor_expired` with no event;
- *   4. a snapshot (no cursor) is sent with empty cursors, then `live`, then each change, and a
- *      `progress` whenever the position moves with nothing sent for it (rule 9).
+ *   4. a snapshot (no cursor) is sent with empty cursors, since a snapshot cannot be continued
+ *      (rule 2), then `live`, then each change, and a `progress` whenever the position moves
+ *      with nothing sent for it (rule 9): a change of another URN, a change the filter excluded,
+ *      or the adapter's own `progress`.
  * An error is thrown; each binding sends it as its own status, or as an error event once the
  * stream has started.
  */
@@ -107,20 +109,28 @@ export function createSubscriber(adapter: Adapter) {
 
   return async function subscribe(req: SubscribeRequest, sink: EventSink): Promise<void> {
     const { signal } = sink;
-    const matches = compileFilter(req.filter) ?? (() => true);
+    const filter = compileFilter(req.filter);
+    const matches = filter ?? (() => true);
     const ctx = { signal };
-    if (!(await adapter.serves(req.schema, ctx))) return sink.send({ type: 'end' });
+    if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
 
     const binding = requestBinding(req);
     const bind = (cursor: string) => bindCursor(cursor, binding);
     let position = req.cursor === undefined ? undefined : unbindCursor(req.cursor, binding);
     const wanted = (urn: string) => req.urns.length === 0 || req.urns.includes(urn);
+    // The URNs this consumer holds, when a filter applies and this connection sent the snapshot:
+    // then a change to an entity the consumer never received, and that still does not match, is
+    // excluded (only a `progress`) rather than sent as a `delete`. On a resume what the consumer
+    // holds is unknown, so a non-matching change is a `delete`, which rule 7 allows; either way
+    // the consumer's cursor keeps up with the position.
+    const held = filter && position === undefined ? new Set<string>() : null;
 
     if (position === undefined) {
       const snapshot = await adapter.snapshot(req.schema, ctx);
       for await (const entity of snapshot.entities) {
         if (signal.aborted) return;
         if (wanted(entity.urn) && matches(entity.body)) {
+          held?.add(entity.urn);
           await sink.send({ type: 'upsert', entity, cursor: '' });
         }
       }
@@ -147,21 +157,27 @@ export function createSubscriber(adapter: Adapter) {
       if ('progress' in change) {
         await progress(change.progress);
       } else if ('upsert' in change) {
-        if (!wanted(change.upsert.urn)) {
+        const { urn } = change.upsert;
+        if (!wanted(urn)) {
           await progress(change.cursor);
-          continue;
+        } else if (matches(change.upsert.body)) {
+          held?.add(urn);
+          reported = bind(change.cursor);
+          await sink.send({ type: 'upsert', entity: change.upsert, cursor: reported });
+        } else if (held && !held.has(urn)) {
+          await progress(change.cursor);
+        } else {
+          // It stopped matching (rule 6), or what the consumer holds is unknown.
+          held?.delete(urn);
+          reported = bind(change.cursor);
+          await sink.send({ type: 'delete', urn, cursor: reported });
         }
-        reported = bind(change.cursor);
-        await sink.send(
-          matches(change.upsert.body)
-            ? { type: 'upsert', entity: change.upsert, cursor: reported }
-            : { type: 'delete', urn: change.upsert.urn, cursor: reported }
-        );
-      } else if (wanted(change.delete)) {
+      } else if (!wanted(change.delete) || (held && !held.has(change.delete))) {
+        await progress(change.cursor);
+      } else {
+        held?.delete(change.delete);
         reported = bind(change.cursor);
         await sink.send({ type: 'delete', urn: change.delete, cursor: reported });
-      } else {
-        await progress(change.cursor);
       }
     }
     if (!signal.aborted) await sink.send({ type: 'end' });

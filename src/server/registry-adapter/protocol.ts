@@ -1,6 +1,6 @@
 /**
  * The registry source protocol, `Subscribe`, as `civitai/civitai-registry` defines it in
- * `spec/registry.md` @ 656ba0a. It has two bindings, served from one core
+ * `spec/registry.md` @ 0711244. It has two bindings, served from one core
  * (`subscription.ts`): HTTP with server-sent events (`serve.ts`) and gRPC (`grpc.ts`).
  *
  * A subscription streams `upsert`* `live`, then `upsert`/`delete` with cursors, and `progress`
@@ -85,10 +85,12 @@ export interface AdapterContext {
 export interface Adapter {
   namespace: string;
   /**
-   * Whether this source serves anything for `schema` now. One it does not is answered `end`
-   * before anything else, and before any read or write of cursor state.
+   * Whether this source may ever serve `schema`. One it never can (another namespace, a shape its
+   * URNs never take) is answered `end` before anything else; `end` means never. A schema it may
+   * publish later (a major not minted yet, a collection not exported yet) is served, empty until
+   * then.
    */
-  serves(schema: string, ctx: AdapterContext): Promise<boolean>;
+  serves(schema: string): boolean;
   snapshot(
     schema: string,
     ctx: AdapterContext

@@ -155,7 +155,7 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
     namespace: opts.namespace,
     // The served set is the whole schema's, so its cursor moves only with a change: this adapter
     // never yields `progress`. A subscription narrowed by `urns` still gets one, from the core.
-    serves: async (schema) => opts.serves.includes(schema),
+    serves: (schema) => opts.serves.includes(schema),
 
     async snapshot(schema) {
       const entities = await current(schema);
