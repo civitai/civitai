@@ -239,6 +239,22 @@ describe('🔴 a filter this source will not evaluate is not applied', () => {
     expect(res.text.startsWith('event: live')).toBe(true);
   });
 
+  it.each([
+    ['dependencies', { dependencies: { slug: { properties: { slug: { pattern: '^zzz' } } } } }],
+    ['a $ref to a member', { $ref: '#/x', x: { properties: { slug: { pattern: '^zzz' } } } }],
+  ])('🔴 a regex reached through %s is never compiled either', async (_name, f) => {
+    const res = await get(adapter(), sub(APPS, asFilter(f)));
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('a filter whose string value merely contains the word "pattern" is still applied', async () => {
+    const res = await get(
+      adapter(),
+      sub(APPS, asFilter({ properties: { slug: { const: 'pattern' } } }))
+    );
+    expect(res.text.startsWith('event: live')).toBe(true);
+  });
+
   it('a filter over the size bound is not applied', async () => {
     const big = {
       properties: { slug: { const: 'zzz' } },
@@ -255,8 +271,17 @@ describe('usesRegex', () => {
     [{ patternProperties: { '^a': {} } }, true],
     [{ allOf: [{ properties: { a: { items: { pattern: 'x' } } } }] }, true],
     [{ $defs: { d: { not: { pattern: 'x' } } } }, true],
-    [{ properties: { pattern: { const: 'a property named pattern' } } }, false],
-    [{ enum: [{ pattern: 'a value, not a keyword' }] }, false],
+    // The two shapes a keyword-list walk missed: `dependencies`, and a `$ref` to any member.
+    [{ dependencies: { a: { properties: { b: { pattern: '^(a+)+$' } } } } }, true],
+    [{ $ref: '#/x', x: { properties: { b: { pattern: '^(a+)+$' } } } }, true],
+    // Refused too, deliberately: the whole JSON is walked, whatever the key above.
+    [{ properties: { pattern: { const: 'a property named pattern' } } }, true],
+    [{ enum: [{ pattern: 'a value, not a keyword' }] }, true],
+    // A string VALUE mentioning the word is not a key.
+    [
+      { properties: { slug: { const: 'pattern' } }, description: 'no patternProperties here' },
+      false,
+    ],
     [{ properties: { a: { type: 'string', maxLength: 3 } } }, false],
   ])('%o → %s', (schema, expected) => {
     expect(usesRegex(schema)).toBe(expected);

@@ -18,6 +18,7 @@ import {
   SERVICE_SCHEMA,
   registryUrn,
 } from '~/server/registry-adapter/urn';
+import type { UrnRef } from '~/server/registry-adapter/urn';
 
 export const SERVED_SCHEMAS = [
   REGISTRY_SCHEMA_SCHEMA,
@@ -80,7 +81,24 @@ export function runtimeEntity(baseUrl: string): Entity {
   });
 }
 
-export function buildEntities(apps: readonly CatalogApp[], opts: { baseUrl: string }): EntitySets {
+/**
+ * The URN, or null when a segment is out of bounds (the store does not bound every name the
+ * URN grammar does). One bad row then drops only its own entity, never the whole catalog.
+ */
+function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null {
+  try {
+    return registryUrn(ref);
+  } catch (err) {
+    onSkip(err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+export function buildEntities(
+  apps: readonly CatalogApp[],
+  opts: { baseUrl: string; onSkip?: (reason: string) => void }
+): EntitySets {
+  const onSkip = opts.onSkip ?? (() => undefined);
   const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
@@ -88,6 +106,10 @@ export function buildEntities(apps: readonly CatalogApp[], opts: { baseUrl: stri
   for (const app of apps) {
     const { listing, block } = app;
     const slug = block?.blockId ?? listing.slug;
+    // Every other URN of the app embeds its slug, so an app whose own URN cannot be built is
+    // skipped whole.
+    const appUrn = urnOrSkip({ kind: 'app', slug }, (reason) => onSkip(`app skipped: ${reason}`));
+    if (appUrn === null) continue;
     // Releases and schemas are published only while the block itself is approved, as the store
     // requires for storage; the listing alone decides whether the app entity is published.
     const publishable = block !== null && block.status === 'approved';
@@ -102,15 +124,18 @@ export function buildEntities(apps: readonly CatalogApp[], opts: { baseUrl: stri
     const releases = new Map<string, Entity>();
     if (publishable && derivation) {
       for (const r of app.approved) {
-        const urn = registryUrn({ kind: 'release', slug, version: r.version });
-        const collections = Object.fromEntries(
-          [...(derivation.stepMajors.get(r.id) ?? new Map<string, number>())].map(
-            ([collection, major]) => [
-              collection,
-              registryUrn({ kind: 'collection-schema', slug, collection, major }),
-            ]
-          )
-        );
+        const skipRelease = (reason: string) =>
+          onSkip(`release ${r.id} of ${slug} skipped: ${reason}`);
+        const urn = urnOrSkip({ kind: 'release', slug, version: r.version }, skipRelease);
+        if (urn === null) continue;
+        const collectionUrns = [
+          ...(derivation.stepMajors.get(r.id) ?? new Map<string, number>()),
+        ].map(([collection, major]) => [
+          collection,
+          urnOrSkip({ kind: 'collection-schema', slug, collection, major }, skipRelease),
+        ]);
+        if (collectionUrns.some(([, u]) => u === null)) continue;
+        const collections = Object.fromEntries(collectionUrns);
         // A version approved twice: the later review is the release.
         releases.set(
           urn,
@@ -132,13 +157,20 @@ export function buildEntities(apps: readonly CatalogApp[], opts: { baseUrl: stri
     }
     for (const e of releases.values()) add(APP_RELEASE_SCHEMA, e);
 
-    const currentRelease =
-      block && releases.has(registryUrn({ kind: 'release', slug, version: block.version }))
-        ? registryUrn({ kind: 'release', slug, version: block.version })
-        : null;
+    // The app names its head version only when that release was served (a version whose URN
+    // cannot be built never is, and was logged in the loop above).
+    const headUrn = block
+      ? urnOrSkip({ kind: 'release', slug, version: block.version }, () => undefined)
+      : null;
+    const currentRelease = headUrn !== null && releases.has(headUrn) ? headUrn : null;
+    const forkOf = listing.forkOf
+      ? urnOrSkip({ kind: 'app', slug: listing.forkOf }, (reason) =>
+          onSkip(`forkOf of ${slug} dropped: ${reason}`)
+        )
+      : null;
     add(
       APP_SCHEMA,
-      entity(registryUrn({ kind: 'app', slug }), APP_SCHEMA, {
+      entity(appUrn, APP_SCHEMA, {
         slug,
         name: listing.name,
         kind: listing.kind,
@@ -150,7 +182,7 @@ export function buildEntities(apps: readonly CatalogApp[], opts: { baseUrl: stri
         ...(listing.kind === 'onsite' ? { runtime: RUNTIME_URN } : {}),
         ...(listing.kind === 'offsite' ? { externalUrl: listing.externalUrl } : {}),
         ...(currentRelease ? { release: currentRelease } : {}),
-        ...(listing.forkOf ? { forkOf: registryUrn({ kind: 'app', slug: listing.forkOf }) } : {}),
+        ...(forkOf ? { forkOf } : {}),
       })
     );
   }

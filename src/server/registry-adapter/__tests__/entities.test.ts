@@ -147,6 +147,45 @@ describe('buildEntities', () => {
     expect(Object.hasOwn(body('urn:civitai-apps:app/reef-fork'), 'forkOf')).toBe(false);
   });
 
+  it('🔴 a URN segment out of bounds skips only its own entity, never the catalog', () => {
+    // The store bounds none of these the way the URN grammar does: before, the first one threw
+    // out of buildEntities and every app and release in the catalog went unserved.
+    const LONG_VERSION = `1.2.0-${'a'.repeat(70)}`;
+    const LONG_SLUG = 'a'.repeat(70);
+    const skipped: string[] = [];
+    const out = buildEntities(
+      [
+        {
+          ...ORBIT,
+          block: { ...ORBIT.block!, version: LONG_VERSION },
+          approved: [...ORBIT.approved, release('pubreq_3', LONG_VERSION, 20)],
+        },
+        { ...TIDE, listing: listing({ ...TIDE.listing, slug: LONG_SLUG }) },
+        { ...TIDE, listing: listing({ ...TIDE.listing, slug: 'kelp-fork', forkOf: LONG_SLUG }) },
+        TIDE,
+      ],
+      { baseUrl: 'https://site.example', onSkip: (reason) => skipped.push(reason) }
+    );
+    expect(urns(out, APP)).toEqual([
+      'urn:civitai-apps:app/orbit-notes',
+      'urn:civitai-apps:app/kelp-fork',
+      'urn:civitai-apps:app/tide-log',
+    ]);
+    expect(urns(out, RELEASE)).toEqual([
+      'urn:civitai-apps:app/orbit-notes@1.0.0',
+      'urn:civitai-apps:app/orbit-notes@1.1.0',
+    ]);
+    const body = (urn: string) =>
+      (out.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
+    // The head version was the skipped release, so the app names no current release.
+    expect(Object.hasOwn(body('urn:civitai-apps:app/orbit-notes'), 'release')).toBe(false);
+    expect(Object.hasOwn(body('urn:civitai-apps:app/kelp-fork'), 'forkOf')).toBe(false);
+    expect(skipped).toHaveLength(3);
+    expect(skipped[0]).toMatch(/^release pubreq_3 of orbit-notes skipped: .*invalid version/);
+    expect(skipped[1]).toMatch(/^app skipped: .*invalid slug/);
+    expect(skipped[2]).toMatch(/^forkOf of kelp-fork dropped: .*invalid slug/);
+  });
+
   it('one static runtime record', () => {
     expect(sets.get(SERVICE)).toEqual([
       expect.objectContaining({

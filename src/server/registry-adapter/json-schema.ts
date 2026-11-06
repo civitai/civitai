@@ -14,37 +14,28 @@ export function newValidator() {
 /** Largest request filter this source will compile, as JSON. */
 export const FILTER_MAX_BYTES = 8 * 1024;
 
-// Keywords whose value is one schema, an array of schemas, or a map of name → schema.
-const ONE = [
-  'items',
-  'additionalProperties',
-  'not',
-  'if',
-  'then',
-  'else',
-  'contains',
-  'propertyNames',
-  'unevaluatedItems',
-  'unevaluatedProperties',
-  'additionalItems',
-];
-const MANY = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
-const MAP = ['properties', '$defs', 'definitions', 'dependentSchemas'];
-
 /**
- * Whether `schema` uses a regular expression anywhere a schema can appear. ajv evaluates
- * `pattern` with the platform's backtracking RegExp, so a request could hand it one that blocks
- * the event loop. Only schema positions are walked: a property NAMED `pattern` is not a keyword.
+ * Whether `filter` holds a `pattern` or `patternProperties` key ANYWHERE in its JSON — in every
+ * object and array, whatever the key above it. ajv evaluates a pattern with the platform's
+ * backtracking RegExp, so a request could hand it one that blocks the event loop, and a pattern
+ * reaches ajv through more than the schema keywords one would list (`dependencies`, or a `$ref`
+ * to any member of the document). Walking everything is the only complete check. It can refuse a
+ * harmless filter (an `enum` value or a property that happens to be named `pattern`); an unapplied
+ * filter only costs traffic, since the registry checks it anyway.
  */
-export function usesRegex(schema: unknown): boolean {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return false;
-  const s = schema as Record<string, unknown>;
-  if ('pattern' in s || 'patternProperties' in s) return true;
-  for (const k of ONE) if (usesRegex(s[k])) return true;
-  for (const k of MANY) if (Array.isArray(s[k]) && (s[k] as unknown[]).some(usesRegex)) return true;
-  for (const k of MAP) {
-    const m = s[k];
-    if (m && typeof m === 'object' && Object.values(m).some(usesRegex)) return true;
+export function usesRegex(filter: unknown): boolean {
+  const stack: unknown[] = [filter];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (Array.isArray(node)) {
+      stack.push(...node);
+    } else if (node && typeof node === 'object') {
+      const record = node as Record<string, unknown>;
+      if (Object.hasOwn(record, 'pattern') || Object.hasOwn(record, 'patternProperties')) {
+        return true;
+      }
+      stack.push(...Object.values(record));
+    }
   }
   return false;
 }

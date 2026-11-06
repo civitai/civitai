@@ -41,7 +41,11 @@ function main() {
   const entities = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
     serves: SERVED_SCHEMAS,
-    read: async () => buildEntities(await readApps(), { baseUrl: 'https://civitai.example' }),
+    read: async () =>
+      buildEntities(await readApps(), {
+        baseUrl: 'https://civitai.example',
+        onSkip: (reason) => console.warn('registry-adapter (fixture):', reason),
+      }),
     store,
     pollMs,
     sleep: abortableSleep,
