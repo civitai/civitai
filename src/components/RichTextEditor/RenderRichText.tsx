@@ -2,6 +2,7 @@
 import StarterKit from '@tiptap/starter-kit';
 import { renderToReactElement } from '@tiptap/static-renderer';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import React, { useMemo, useRef } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
@@ -27,10 +28,14 @@ import { useMaybeAppContext } from '~/providers/AppProvider';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
 import { collectCivitaiEmbedIds } from '~/shared/tiptap/civitai-embed.utils';
-import { CivitaiEmbedBlock } from '~/components/CivitaiEmbed/CivitaiEmbedBlock';
 import { CivitaiEmbedProvider } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
+
+// The feed cards are heavy and most articles hold none.
+const CivitaiEmbedBlock = dynamic(() =>
+  import('~/components/CivitaiEmbed/CivitaiEmbedBlock').then((m) => m.CivitaiEmbedBlock)
+);
 
 const extensions = [
   StarterKit.configure({ heading: false }),
