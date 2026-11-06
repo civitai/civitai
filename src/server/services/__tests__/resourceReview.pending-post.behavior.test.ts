@@ -40,8 +40,11 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   onModelReviewsChanged: async () => undefined,
 }));
 
-const { getUserRatingTotals, releasePendingReviewsForPosts, upsertResourceReview } = await import(
+const { getUserRatingTotals, upsertResourceReview } = await import(
   '~/server/services/resourceReview.service'
+);
+const { releasePendingReviewsForPosts } = await import(
+  '~/server/services/resourceReview.visibility'
 );
 
 const AUTHOR = 42;

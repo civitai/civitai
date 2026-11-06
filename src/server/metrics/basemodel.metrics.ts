@@ -3,6 +3,7 @@ import { templateHandler } from '~/server/db/db-helpers';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -287,8 +288,6 @@ async function getReviewStatsForBatch(
   ctx: BaseModelMetricContext,
   ids: number[]
 ): Promise<{ modelId: number; baseModel: string; thumbsUpCount: string }[]> {
-  // Imported on use: a static import pulls the metric jobs into the image.service import cycle.
-  const { visibleReviewSql } = await import('~/server/services/resourceReview.service');
   const query = await ctx.pg.cancellableQuery<{
     modelId: number;
     baseModel: string;

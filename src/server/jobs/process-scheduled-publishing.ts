@@ -17,7 +17,7 @@ import {
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
-import { releasePendingReviewsForPosts } from '~/server/services/resourceReview.service';
+import { releasePendingReviewsForPosts } from '~/server/services/resourceReview.visibility';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';

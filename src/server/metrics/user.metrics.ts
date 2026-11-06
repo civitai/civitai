@@ -2,6 +2,7 @@ import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { usersSearchIndex } from '~/server/search-index/users.search-index';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -232,8 +233,6 @@ async function getModelTasks(ctx: UserMetricContext) {
 }
 
 async function getReviewTasks(ctx: UserMetricContext) {
-  // Imported on use: a static import pulls the metric jobs into the image.service import cycle.
-  const { visibleReviewSql } = await import('~/server/services/resourceReview.service');
   const affected = await getAffected(ctx)`
     -- get recent user reviews
     SELECT
