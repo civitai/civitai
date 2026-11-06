@@ -4,13 +4,20 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
 import { decodeHat, eventPointKeys } from '~/server/events/points/keys';
+import { getTeamPoints } from '~/server/events/points/read';
 import {
   applyTurfOverride,
   turfConfigKey,
   TURF_SCORE_TIER_KEY,
   type EventTurfConfig,
 } from '~/server/events/turf/config';
-import { nextStickerAt, refillStock, stepAt } from '~/server/events/turf/schedule';
+import {
+  catchUpMultiplier,
+  nextStickerAt,
+  refillStock,
+  scaleSupply,
+  stepAt,
+} from '~/server/events/turf/schedule';
 import {
   capTurfMap,
   computeImageTurf,
@@ -59,6 +66,7 @@ const ownerAllowsTurf = (event: string) => Prisma.sql`EXISTS (SELECT 1 FROM "Use
     AND (ow.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event}) IS DISTINCT FROM 'true')`;
 
 const CONFIG_TTL_MS = 30_000;
+const TEAM_POINTS_TTL_MS = 60_000;
 const MAP_LOG_MAX = 50_000;
 const RECONCILE_IMAGE_BATCH = 2_000;
 
@@ -122,15 +130,58 @@ const isRunning = (event: TurfEvent, now: Date) =>
   event.turf.mode !== 'off' && now >= event.startDate && now < event.endDate;
 
 // #region supply
+// Live team totals per event, as the standings read them. One read per server per TTL, shared by
+// every concurrent caller; a failed read means no catch-up until the next one.
+const teamPointsCache = new Map<
+  string,
+  { at: number; points: Promise<Record<string, number> | null> }
+>();
+
+function cachedTeamPoints(event: TurfEvent, now: Date) {
+  const cached = teamPointsCache.get(event.name);
+  if (cached && now.getTime() - cached.at < TEAM_POINTS_TTL_MS) return cached.points;
+  const points = getTeamPoints(event, now).catch((error: unknown) => {
+    void logToAxiom({
+      type: 'warning',
+      name: 'event-turf',
+      message: 'team points read failed; no catch-up',
+      event: event.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+  teamPointsCache.set(event.name, { at: now.getTime(), points });
+  return points;
+}
+
+/**
+ * The supply multiplier for `team` now. 1 when no catch-up step is in force (no team read, no points
+ * read), when the team is not one of the event's, or when the points cannot be read.
+ */
+export async function turfCatchUpAt(event: TurfEvent, team: string | null | undefined, now: Date) {
+  const step = stepAt(event.turf.catchUp ?? [], now);
+  if (!step || !team) return 1;
+  const own = event.teams.find((t) => t.toLowerCase() === team.toLowerCase());
+  if (!own) return 1;
+  const points = await cachedTeamPoints(event, now);
+  if (!points) return 1;
+  const total = event.teams.reduce((sum, t) => sum + (points[t] ?? 0), 0);
+  return catchUpMultiplier(step, points[own] ?? 0, total / event.teams.length);
+}
+
+/**
+ * A player's stock at `now`. `multiplier` (their team's catch-up, see turfCatchUpAt) scales every
+ * step's rate and cap for the whole time since the last refill. A stock above a lowered cap is kept.
+ */
 export function turfSupplyAt(
   event: TurfEvent,
   row: { stock: number; refilledAt: Date } | null,
-  now: Date
+  now: Date,
+  multiplier = 1
 ) {
-  const step = stepAt(event.turf.supply, now);
-  const stock = row
-    ? refillStock(row.stock, row.refilledAt, now, event.turf.supply)
-    : step?.cap ?? 0;
+  const supply = scaleSupply(event.turf.supply, multiplier);
+  const step = stepAt(supply, now);
+  const stock = row ? refillStock(row.stock, row.refilledAt, now, supply) : step?.cap ?? 0;
   return {
     stock,
     available: Math.floor(stock),
@@ -144,7 +195,13 @@ export function turfSupplyAt(
 export async function getTurfStock(eventName: string, userId: number, now = new Date()) {
   const event = await getTurfEvent(eventName, now);
   if (!event) throw throwNotFoundError('This event has no turf');
-  const [row, [user]] = await Promise.all([
+  const catchUp = stepAt(event.turf.catchUp ?? [], now)
+    ? event
+        .getUserTeam(userId)
+        .then((team) => turfCatchUpAt(event, team, now))
+        .catch(() => 1)
+    : 1;
+  const [row, [user], multiplier] = await Promise.all([
     dbRead.eventTurfStock.findUnique({
       where: { event_userId: { event: event.name, userId } },
       select: { stock: true, refilledAt: true },
@@ -155,8 +212,9 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
         (u.settings -> ${TURF_OWNER_OFF_SETTING} ->> ${event.name}) = 'true' AS "ownerOff"
       FROM "User" u WHERE u.id = ${userId}
     `,
+    catchUp,
   ]);
-  const { stock: _, ...supply } = turfSupplyAt(event, row, now);
+  const { stock: _, ...supply } = turfSupplyAt(event, row, now, multiplier);
   return {
     ...supply,
     mode: event.turf.mode,
@@ -203,6 +261,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   // Case-insensitive, so a cosmetic spelled 'blue' still matches the event's 'Blue'.
   if (placer.team.toLowerCase() !== team.toLowerCase())
     throw throwBadRequestError("That hat isn't your team's");
+  const multiplier = await turfCatchUpAt(event, team, now);
 
   const [image] = await dbWrite.$queryRaw<
     {
@@ -240,7 +299,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
     await dbWrite.$transaction(async (tx) => {
       // A first placement creates the bucket full, so there is always a row to lock: two placements
       // must not both spend the same sticker.
-      const { stock: full } = turfSupplyAt(event, null, now);
+      const { stock: full } = turfSupplyAt(event, null, now, multiplier);
       await tx.$executeRaw`
         INSERT INTO "EventTurfStock" (event, "userId", stock, "refilledAt")
         VALUES (${event.name}, ${userId}, ${full}, ${now})
@@ -251,7 +310,7 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
         WHERE event = ${event.name} AND "userId" = ${userId}
         FOR UPDATE
       `;
-      const { stock } = turfSupplyAt(event, row ?? null, now);
+      const { stock } = turfSupplyAt(event, row ?? null, now, multiplier);
       if (stock < 1) throw throwBadRequestError('Out of hat stickers. They refill over time');
       await tx.eventTurfSticker.create({
         data: {
