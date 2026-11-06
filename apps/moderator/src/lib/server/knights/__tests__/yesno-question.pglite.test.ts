@@ -290,6 +290,53 @@ describe('unretireYesNoQuestion', () => {
   });
 });
 
+describe('restoring a reworded question', () => {
+  const rewordX = async () => {
+    await seedItem(1, { externalId: 'X' });
+    await rewordYesNoQuestion({ id: 1, prompt: 'New words?', by: MOD, note: 'clearer', now: NOW });
+    return (
+      await db.query<{ id: number }>(
+        `SELECT "id" FROM "KnightsQueueItem" WHERE "externalId" = 'X:r1'`
+      )
+    ).rows[0].id;
+  };
+  const listed = async (id: number) =>
+    (await getYesNoQuestionItems({ page: 1 })).items.find((i) => i.id === id);
+
+  it('refuses while the reworded copy is open, and names it', async () => {
+    await rewordX();
+
+    const result = await unretireYesNoQuestion({ id: 1, by: MOD, now: NOW });
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('X:r1') });
+    expect((await row(1)).status).toBe('Closed');
+    expect((await listed(1))?.replacedBy).toBe('X:r1');
+  });
+
+  it('refuses the same way for an earlier copy of a longer chain', async () => {
+    const r1 = await rewordX();
+    await rewordYesNoQuestion({ id: r1, prompt: 'Again?', by: MOD, note: 'n', now: NOW });
+
+    expect(await unretireYesNoQuestion({ id: r1, by: MOD, now: NOW })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('X:r2'),
+    });
+  });
+
+  it('restores once the copy is retired, leaving one open version', async () => {
+    const r1 = await rewordX();
+    await retireYesNoQuestion({ id: r1, by: MOD, note: 'worse', now: NOW });
+
+    expect((await listed(1))?.replacedBy).toBeNull();
+    expect(await unretireYesNoQuestion({ id: 1, by: MOD, now: NOW })).toEqual({ ok: true });
+
+    const open = await db.query<{ externalId: string }>(
+      `SELECT "externalId" FROM "KnightsQueueItem" WHERE "status" = 'Open'`
+    );
+    expect(open.rows).toEqual([{ externalId: 'X' }]);
+  });
+});
+
 describe('rewordYesNoQuestion', () => {
   const rewordTo = (id: number, prompt: string, note = 'clearer') =>
     rewordYesNoQuestion({ id, prompt, by: MOD, note, now: NOW });

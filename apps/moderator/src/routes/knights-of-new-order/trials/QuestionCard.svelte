@@ -176,6 +176,8 @@
         {#if isOpen}
           <Button size="sm" variant="outline" onclick={() => (mode = 'reword')}>Reword</Button>
           <Button size="sm" variant="outline" onclick={() => (mode = 'retire')}>Retire</Button>
+        {:else if item.replacedBy}
+          <span class="text-xs text-dark-2">Replaced by {item.replacedBy}</span>
         {:else if item.retired}
           <form method="POST" action="?/unretireQuestion" use:enhance={restore.enhance}>
             <input type="hidden" name="id" value={item.id} />

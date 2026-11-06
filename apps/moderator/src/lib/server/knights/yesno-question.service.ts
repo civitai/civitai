@@ -1,4 +1,4 @@
-import { sql, type Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   closeYesNoItemRow,
@@ -40,8 +40,14 @@ export type YesNoQuestionItem = {
   voteCount: number;
   moderation: ModerationNote | null;
   rewordOf: string | null;
+  /** The open reworded copy that replaced this retired question, so it cannot be restored. */
+  replacedBy: string | null;
   createdAt: Date;
 };
+
+const originOf = (item: { externalId: string | null; meta: unknown }) =>
+  ((item.meta as Record<string, unknown> | null)?.[REWORD_OF_META_KEY] as string | undefined) ??
+  item.externalId;
 
 const GONE = 'This question is no longer available. Reload the page.';
 const NEEDS_NOTE = 'Say why, so the next moderator knows.';
@@ -102,10 +108,16 @@ export async function getYesNoQuestionItems(
     .limit(limit)
     .offset(offset)
     .execute();
+  const copies = await openCopies(
+    dbWrite,
+    rows.filter((r) => r.status === 'Closed' && r.reason === MODERATOR_RETIRED).map(originOf)
+  );
   const items = rows.map(({ meta, prompt, ...row }) => {
     const m = (meta ?? {}) as Record<string, unknown>;
+    const origin = originOf({ externalId: row.externalId, meta });
     return {
       ...row,
+      replacedBy: (row.status === 'Closed' && origin && copies.get(origin)) || null,
       prompt: prompt ?? '',
       retired: row.status === 'Closed' && row.reason === MODERATOR_RETIRED,
       moderation: (m[MODERATION_META_KEY] as ModerationNote | undefined) ?? null,
@@ -113,6 +125,20 @@ export async function getYesNoQuestionItems(
     };
   });
   return { items, total, page };
+}
+
+/** Open reworded copies by origin producer id. Filters on audience, status and `meta->>'rewordOf'`, so no index beyond the open-items one is assumed. */
+async function openCopies(db: Kysely<DB> | Trx, origins: (string | null)[]) {
+  const ids = [...new Set(origins.filter((o): o is string => !!o))];
+  if (ids.length === 0) return new Map<string, string>();
+  const rows = await db
+    .selectFrom('KnightsQueueItem')
+    .select(['externalId', sql<string>`"meta" ->> ${sql.lit(REWORD_OF_META_KEY)}`.as('origin')])
+    .where('audience', '=', 'players')
+    .where('status', '=', 'Open')
+    .where(sql<string>`"meta" ->> ${sql.lit(REWORD_OF_META_KEY)}`, 'in', ids)
+    .execute();
+  return new Map(rows.map((r) => [r.origin, r.externalId ?? '']));
 }
 
 export async function getYesNoAxes(): Promise<{ key: string; prompt: string }[]> {
@@ -167,7 +193,6 @@ function checkedPrompt(raw: string): { prompt: string } | { error: string } {
   return prompt.length > YESNO_QUESTION_MAX ? { error: TOO_LONG } : { prompt };
 }
 
-/** Closes an open question as `moderator-retired`. Its pending votes become inconclusive; the Knights tick (`settleFinalItems`) settles them later, dropping their pending gold. */
 export async function retireYesNoQuestion(input: {
   id: number;
   by: number;
@@ -210,6 +235,9 @@ export async function unretireYesNoQuestion(input: {
     if (item.voteCount > 0) {
       return { ok: false, error: 'Players have answered this question, so it stays retired.' };
     }
+    const origin = originOf(item);
+    const copy = origin && (await openCopies(trx, [origin])).get(origin);
+    if (copy) return { ok: false, error: `Retire ${copy} first: it replaced this question.` };
     await trx
       .updateTable('KnightsQueueItem')
       .set({
