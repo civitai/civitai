@@ -489,8 +489,7 @@ flip — these MUST land before the first Phase 4 write flip):
       `simplified-post-metrics` is off) count top-level live comments, which is what the
       root thread counted; `model.metrics.ts`'s distinct commenters read CommentV3 too. The
       question and answer jobs had no entity type and were removed with the feature
-- [x] `daily-challenge-processing.ts` judge gate (both reads), `getJudgeCommentForImage`,
-      `api/mod/daily-challenge/re-review.ts`
+- [x] `daily-challenge-processing.ts` judge gate (both reads), `getJudgeCommentForImage`
 - [x] `collection.service.ts` judged check; `challenge.service.ts`'s four comment counts and
       `resourceReview`'s two count top-level live comments on CommentV3. Not
       `CommentTopic.commentCount`: that counts replies and tombstones, so the numbers shown would jump
@@ -587,8 +586,9 @@ Surface-specific extras:
 - [ ] **article/post**: purge `articleStatCache` / `postStatCache` after count recompute. Article:
       nothing to add, the article metrics job already counts from CommentV3 and purges it (checked
       2026-10-29); post still to do
-- [ ] **image**: re-point the `EntityMetric` (`metricType='Comment'`) writer (the judge gate and
-      `getJudgeCommentForImage` read CommentV3 since Phase 3)
+- [x] **image**: the `EntityMetric` (`metricType='Comment'`) writer is re-pointed: the image entry in
+      `commentv3/surfaces.ts` writes it on a v3 create, as v2 did (built 2026-11-04, release 1, not
+      deployed). The judge gate and `getJudgeCommentForImage` read CommentV3 since Phase 3
 - [ ] **comicChapter**: reads built 2026-11-03 (`CommentSection` on the comics page keyed by
       `ComicChapter.id`; `getChapterThread` removed). Left for its write flip:
       `createChapterComment` (now addressed by chapter id) is removed and chapter comments write
@@ -607,14 +607,12 @@ Surface-specific extras:
       `MODEL_ONLY` set empties
 - [ ] `commentOld` reaction type removed after model flip soaks
 
-Order (decided 2026-10-30): article writes (stage B), then every other surface's read flip with
-the remaining cross-surface readers in one PR, then the old-row sync removed, then the other
-surfaces' write flips one at a time with no sync (`docs/plans/comments-v3-article-flip.md`).
+Order (decided 2026-10-30, revised 2026-11-03): article writes (stage B), then every other
+surface's read flip with the remaining cross-surface readers in one PR, then every other surface's
+write flip at once in two releases (`docs/plans/comments-v3-write-flip.md`), model comments last.
+The old-row sync stays until Phase 6.
 
-- [ ] Old-row sync removed once every reader is on CommentV3: `syncOldRows` in
-      `commentv3/write.service.ts` and its callers
-
-**Gate:** every surface reading+writing CommentV3; old tables receiving no new rows.
+**Gate:** every surface reading+writing CommentV3.
 
 ## Phase 5 — Post-flip cleanup
 
@@ -670,9 +668,9 @@ Notifications:
 
 Event-engine / metrics:
 
-- [ ] CDC handler `comment-v3.ts` counts every comment on a `v3WriteSurfaces` surface, whichever
+- [ ] CDC handler `comment-v3.ts` counts every comment on a `v3ReadSurfaces` surface, whichever
       table it was written to; `comment-v2.ts` skips those surfaces, so either service can deploy
-      first (a test pins `COMMENT_V3_SURFACES` to `v3WriteSurfaces`). The old handlers retire in
+      first (a test pins `COMMENT_V3_SURFACES` to `v3ReadSurfaces`). The old handlers retire in
       Phase 6. Code built 2026-10-29: `REPLICA IDENTITY FULL` (`scripts/sql/replica-identity.sql`),
       `public.CommentV3` in `apps/event-engine/src/config/index.ts` (the connector's
       `table.include.list`; tables are added to the publication by hand),
@@ -740,6 +738,8 @@ the named arm is gone), and the transition-only tests are gone with them.
 
 After the last surface's write flip has soaked:
 
+- [ ] Old-row sync: `syncOldRows` in `commentv3/write.service.ts` and its callers (kept through the
+      write flip; old reports still key on the old link tables)
 - [ ] Surface switches: `constants.comments.v3ReadSurfaces` (and the `deepLinkParentId` CASE in
       `comment.notifications.ts` collapses to `parentId`), `v3WriteSurfaces`, `isV3WriteSurface` and
       `v3WriteSurfaceSql` (in `commentv3/write.service.ts`), the v2 arm of `CommentsV3/useCommentMutations.ts`, the report-entity

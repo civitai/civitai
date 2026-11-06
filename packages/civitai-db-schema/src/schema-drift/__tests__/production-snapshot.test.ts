@@ -271,6 +271,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   the two `app_blocks.storage_*` columns: `20261218120000_app_block_storage_deleted_at`
     //   `Storyline.sparkImageId`: `20261220120000_storyline_spark_image`
     //   `StorylineReport.heldStorylineId` / `.storylineTitle`: `20261222120000_held_storyline`
+    //   `app_listings.is_official`: `20261224120200_app_listing_official`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
@@ -304,6 +305,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'Storyline.sparkImageId',
       'StorylineReport.heldStorylineId',
       'StorylineReport.storylineTitle',
+      'app_listings.is_official',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

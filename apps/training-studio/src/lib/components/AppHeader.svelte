@@ -5,6 +5,7 @@
   import { buzzMode, type BuzzMode } from '$lib/buzz-mode.svelte';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
   import { dismiss } from '$lib/actions/dismiss';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
 
   let {
     username,
@@ -66,31 +67,25 @@
           <IconBoltFilled size={11} stroke={2} />{blue.toLocaleString()}
         </span>
       {/snippet}
-      {#if buzzMode.locked}
-        <!-- Host-dictated mode: the balance pill without the picker. -->
-        <span
-          class="flex items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz"
+      <details
+        class="relative"
+        bind:open={buzzMenuOpen}
+        use:dismiss={{ enabled: buzzMenuOpen, onDismiss: () => (buzzMenuOpen = false) }}
+      >
+        <summary
+          class="flex cursor-pointer list-none items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-buzz [&::-webkit-details-marker]:hidden"
         >
           {@render balancePill(buzz.blue)}
-        </span>
-      {:else}
-        <details
-          class="relative"
-          bind:open={buzzMenuOpen}
-          use:dismiss={{ enabled: buzzMenuOpen, onDismiss: () => (buzzMenuOpen = false) }}
+          <IconChevronDown size={13} stroke={2} class="opacity-70" />
+        </summary>
+        <div
+          class="absolute right-0 z-20 mt-2 min-w-[240px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
         >
-          <summary
-            class="flex cursor-pointer list-none items-center gap-1.5 rounded-full bg-buzz/15 px-2.5 py-1 font-mono text-sm font-semibold text-buzz transition-colors hover:bg-buzz/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-buzz [&::-webkit-details-marker]:hidden"
-          >
-            {@render balancePill(buzz.blue)}
-            <IconChevronDown size={13} stroke={2} class="opacity-70" />
-          </summary>
-          <div
-            class="absolute right-0 z-20 mt-2 min-w-[240px] rounded-md border border-dark-4 bg-dark-6 p-1 shadow-lg"
-          >
-            <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-wider text-dark-2">
-              Buzz to spend
-            </div>
+          <div class="px-3 py-1.5 text-xs font-mono uppercase tracking-wider text-dark-2">
+            Buzz to spend
+          </div>
+          <!-- Host-dictated mode: the paid account is fixed, so only the Blue-first choice is offered. -->
+          {#if !buzzMode.locked}
             {#each [{ mode: 'yellow', label: 'Yellow', balance: buzz.yellow }, { mode: 'green', label: 'Green', balance: buzz.green }] as const as opt (opt.mode)}
               <button
                 type="button"
@@ -109,14 +104,30 @@
                 {/if}
               </button>
             {/each}
-            <p class="px-3 pb-1.5 pt-1 text-xs leading-snug text-dark-2">
-              <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train
-              NSFW content. <span class="text-blue-400">Blue</span> (free) always spends first; your
-              pick covers the rest.
-            </p>
+          {/if}
+          <!-- id/for, not a wrapping label: the Checkbox is a button, as elsewhere in the app. -->
+          <div class="flex items-center gap-2 px-3 py-2 text-sm">
+            <Checkbox
+              id="buzz-blue-first"
+              bind:checked={() => buzzMode.blueFirst, (v) => buzzMode.setBlueFirst(v)}
+            />
+            <label for="buzz-blue-first" class="cursor-pointer text-dark-0">
+              Spend <span class="text-blue-400">Blue</span> first
+            </label>
+            <span class="ml-auto font-mono text-xs text-blue-400">{buzz.blue.toLocaleString()}</span>
           </div>
-        </details>
-      {/if}
+          <p class="px-3 pb-1.5 pt-1 text-xs leading-snug text-dark-2">
+            <span class="text-emerald-400">Green</span> (membership) Buzz can't be used to train NSFW
+            content.
+            {#if buzzMode.blueFirst}
+              <span class="text-blue-400">Blue</span> (free) spends first; your
+              <span class="capitalize">{buzzMode.value}</span> covers the rest.
+            {:else}
+              Only your <span class="capitalize">{buzzMode.value}</span> Buzz is spent.
+            {/if}
+          </p>
+        </div>
+      </details>
     {/if}
     {#if username}
       <details

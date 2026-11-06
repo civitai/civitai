@@ -641,6 +641,7 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
+export const POST_TITLE_MAX_LENGTH = 255;
 // The scheduling window lives in @civitai/shared so the planner element and Creator Studio read the
 // same numbers; re-exported here for the many existing importers.
 export {
