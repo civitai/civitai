@@ -5,11 +5,11 @@ import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
-const APPS = 'urn:schema:civitai-schemas:app@v1';
-const RELEASES = 'urn:schema:civitai-schemas:app-release@v1';
+const APPS = 'urn:schema:app-blocks:app@v1';
+const RELEASES = 'urn:schema:app-blocks:app-release@v1';
 
 const e = (slug: string, rev: string): Entity => ({
-  urn: `urn:civitai-apps:app/${slug}`,
+  urn: `urn:app-blocks:app/${slug}`,
   schemas: [APPS],
   rev,
   body: { slug, rev },
@@ -24,7 +24,7 @@ function harness(store: SnapshotStore, states: Entity[][], maxPolls = 3) {
   let polls = 0;
   const abort = new AbortController();
   const adapter = createPollingAdapter({
-    namespace: 'civitai-apps',
+    namespace: 'app-blocks',
     serves: [APPS, RELEASES],
     read: async () => {
       const state = states[Math.min(reads++, states.length - 1)];
@@ -69,18 +69,18 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
     const snap = await first.adapter.snapshot(APPS, { signal: first.signal });
     expect(snap.cursor).toMatch(/^c1\.[0-9a-f]{32}$/);
     expect((snap.entities as Entity[]).map((x) => x.urn)).toEqual([
-      'urn:civitai-apps:app/alpha-app',
-      'urn:civitai-apps:app/beta-app',
-      'urn:civitai-apps:app/gamma-app',
+      'urn:app-blocks:app/alpha-app',
+      'urn:app-blocks:app/beta-app',
+      'urn:app-blocks:app/gamma-app',
     ]);
 
     // The first process is gone; only the store remains.
     const second = harness(store, [V2]);
     const changes = await second.drain(APPS, snap.cursor);
     expect(changes.map(shape)).toEqual([
-      ['delete', 'urn:civitai-apps:app/beta-app'],
-      ['upsert', 'urn:civitai-apps:app/alpha-app', 'r-a2'],
-      ['upsert', 'urn:civitai-apps:app/delta-app', 'r-d1'],
+      ['delete', 'urn:app-blocks:app/beta-app'],
+      ['upsert', 'urn:app-blocks:app/alpha-app', 'r-a2'],
+      ['upsert', 'urn:app-blocks:app/delta-app', 'r-d1'],
     ]);
     expect(second.polls()).toBe(3);
   });
@@ -105,9 +105,9 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
     const { cursor } = await a.adapter.snapshot(APPS, { signal: a.signal });
     const changes = await harness(store, [[]]).drain(APPS, cursor);
     expect(changes.map(shape)).toEqual([
-      ['delete', 'urn:civitai-apps:app/alpha-app'],
-      ['delete', 'urn:civitai-apps:app/beta-app'],
-      ['delete', 'urn:civitai-apps:app/gamma-app'],
+      ['delete', 'urn:app-blocks:app/alpha-app'],
+      ['delete', 'urn:app-blocks:app/beta-app'],
+      ['delete', 'urn:app-blocks:app/gamma-app'],
     ]);
   });
 
@@ -117,9 +117,9 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
     const { cursor } = await h.adapter.snapshot(APPS, { signal: h.signal });
     const changes = await h.drain(APPS, cursor);
     expect(changes.map(shape)).toEqual([
-      ['delete', 'urn:civitai-apps:app/beta-app'],
-      ['upsert', 'urn:civitai-apps:app/alpha-app', 'r-a2'],
-      ['upsert', 'urn:civitai-apps:app/delta-app', 'r-d1'],
+      ['delete', 'urn:app-blocks:app/beta-app'],
+      ['upsert', 'urn:app-blocks:app/alpha-app', 'r-a2'],
+      ['upsert', 'urn:app-blocks:app/delta-app', 'r-d1'],
     ]);
   });
 
@@ -157,7 +157,7 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
 
   it('a failed catalog read is `unavailable` and names nothing', async () => {
     const adapter = createPollingAdapter({
-      namespace: 'civitai-apps',
+      namespace: 'app-blocks',
       serves: [APPS],
       read: async () => {
         throw new Error('connect ECONNREFUSED db-host-canary-58:5432');
@@ -210,8 +210,8 @@ describe('states kept per stream', () => {
     const { cursor: first } = await h.adapter.snapshot(APPS, { signal: h.signal });
     const changes = await h.drain(APPS, first);
     expect(changes.map(shape)).toEqual([
-      ['upsert', 'urn:civitai-apps:app/alpha-app', 'r-2'],
-      ['upsert', 'urn:civitai-apps:app/alpha-app', 'r-3'],
+      ['upsert', 'urn:app-blocks:app/alpha-app', 'r-2'],
+      ['upsert', 'urn:app-blocks:app/alpha-app', 'r-3'],
     ]);
     expect(await codeOf(harness(store, [s3]).drain(APPS, first))).toBe('cursor_expired');
     expect(await harness(store, [s3]).drain(APPS, changes[1].cursor)).toEqual([]);

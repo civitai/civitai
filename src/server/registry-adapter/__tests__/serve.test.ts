@@ -6,9 +6,9 @@ import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { FILTER_MAX_BYTES, usesRegex } from '~/server/registry-adapter/json-schema';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 
-const APPS = 'urn:schema:civitai-schemas:app@v1';
+const APPS = 'urn:schema:app-blocks:app@v1';
 const one: Entity = {
-  urn: 'urn:civitai-apps:app/orbit-notes',
+  urn: 'urn:app-blocks:app/orbit-notes',
   schemas: [APPS],
   rev: 'rev-7a',
   body: { slug: 'orbit-notes' },
@@ -17,12 +17,12 @@ const one: Entity = {
 /** A source whose change feed has one delete and then ends, so every stream closes. */
 function adapter(over: Partial<Adapter> = {}): Adapter {
   return {
-    namespace: 'civitai-apps',
+    namespace: 'app-blocks',
     serves: (schema) => schema === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [one] }),
     async *changes(): AsyncGenerator<Change> {
-      yield { delete: 'urn:civitai-apps:app/tide-log', cursor: 'c1.after-delete' };
+      yield { delete: 'urn:app-blocks:app/tide-log', cursor: 'c1.after-delete' };
     },
     ...over,
   };
@@ -54,7 +54,7 @@ describe('the HTTP/SSE binding', () => {
       'event: upsert\n' +
         `data: ${JSON.stringify({ entity: one, cursor: '' })}\n\n` +
         'event: live\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
-        'event: delete\ndata: {"urn":"urn:civitai-apps:app/tide-log","cursor":"c1.after-delete"}\n\n' +
+        'event: delete\ndata: {"urn":"urn:app-blocks:app/tide-log","cursor":"c1.after-delete"}\n\n' +
         'event: end\ndata: {}\n\n'
     );
   });
@@ -67,7 +67,7 @@ describe('the HTTP/SSE binding', () => {
   it('a urn filter drops other entities', async () => {
     const res = await get(
       adapter(),
-      sub(APPS, `&urn=${encodeURIComponent('urn:civitai-apps:app/other')}`)
+      sub(APPS, `&urn=${encodeURIComponent('urn:app-blocks:app/other')}`)
     );
     expect(res.text).toBe(
       'event: live\ndata: {"cursor":"c1.snapshot-cursor"}\n\nevent: end\ndata: {}\n\n'
@@ -211,7 +211,7 @@ describe('a request filter', () => {
       sub(APPS, filter({ properties: { slug: { const: 'orbit-notes' } } }))
     );
     expect(res.text).toContain(
-      'event: delete\ndata: {"urn":"urn:civitai-apps:app/orbit-notes","cursor":"c1.after-rename"}'
+      'event: delete\ndata: {"urn":"urn:app-blocks:app/orbit-notes","cursor":"c1.after-rename"}'
     );
     expect(res.text).not.toContain('renamed-orbit');
   });

@@ -31,7 +31,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MOD = 9_302;
 const SLUG = 'seam-board';
-const V1 = `urn:schema:civitai-apps:${SLUG}/board@v1`;
+const V1 = `urn:schema:app-blocks:${SLUG}/board@v1`;
 // Every object fits, so what streams is decided by the store's reads alone.
 const FAMILY: CollectionStream['family'] = [
   {
@@ -39,7 +39,7 @@ const FAMILY: CollectionStream['family'] = [
     body: { $schema: 'https://json-schema.org/draft/2020-12/schema', $id: V1, type: 'object' },
   },
 ];
-const urn = (key: string) => `urn:civitai-apps:${SLUG}/board/${key}`;
+const urn = (key: string) => `urn:app-blocks:${SLUG}/board/${key}`;
 const shape = (c: Change) => ('upsert' in c ? ['upsert', c.upsert.urn] : ['delete', c.delete]);
 
 async function codeOf(p: Promise<unknown>) {

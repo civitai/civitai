@@ -1,23 +1,17 @@
 /**
- * DRAFT documents for the shared schemas this adapter's entities claim. They belong to the
- * shared schemas source, not to this adapter; they are here only so a local registry can
- * validate the adapter's entities. `service@v1` is the registry demo's, unchanged.
+ * The schema documents of the app, release and runtime entities. The adapter brings its own: they
+ * are published as schema entities of its namespace beside the collection schemas, and every app,
+ * release and runtime entity claims one of them.
+ *
+ * A schema changes only additively (annotations and new optional properties) within its `@v1`;
+ * anything else is a new major.
  */
-import type { Entity } from '~/server/registry-adapter/protocol';
-import { sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
-import {
-  APP_RELEASE_SCHEMA,
-  APP_SCHEMA,
-  REGISTRY_SCHEMA_SCHEMA,
-  SERVICE_SCHEMA,
-} from '~/server/registry-adapter/urn';
+import { APP_RELEASE_SCHEMA, APP_SCHEMA, SERVICE_SCHEMA } from '~/server/registry-adapter/urn';
 
 const DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 const nullableString = { type: ['string', 'null'] };
 
-export const SHARED_SCHEMA_NAMESPACE = 'civitai-schemas';
-
-export const SHARED_SCHEMA_DOCUMENTS: Record<string, unknown>[] = [
+export const ENTITY_SCHEMA_DOCUMENTS: ReadonlyArray<Record<string, unknown>> = [
   {
     $schema: DIALECT,
     $id: APP_SCHEMA,
@@ -28,7 +22,11 @@ export const SHARED_SCHEMA_DOCUMENTS: Record<string, unknown>[] = [
       slug: { type: 'string' },
       name: { type: 'string' },
       kind: { enum: ['onsite', 'offsite'] },
-      contentRating: nullableString,
+      contentRating: {
+        ...nullableString,
+        description:
+          'The content rating of the app, or null when it has none (an off-site app may have no rating). Also the rating of every document this app publishes: a document carries no rating of its own, so a consumer joins it to its app entity.',
+      },
       tagline: nullableString,
       category: nullableString,
       iconUrl: nullableString,
@@ -84,12 +82,3 @@ export const SHARED_SCHEMA_DOCUMENTS: Record<string, unknown>[] = [
     },
   },
 ];
-
-export function sharedSchemaEntities(): Entity[] {
-  return SHARED_SCHEMA_DOCUMENTS.map((body) => ({
-    urn: body.$id as string,
-    schemas: [REGISTRY_SCHEMA_SCHEMA],
-    rev: sha256Hex(sortedKeyJson(body)).slice(0, 16),
-    body,
-  }));
-}

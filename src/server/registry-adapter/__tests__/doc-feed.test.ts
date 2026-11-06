@@ -9,8 +9,8 @@ import {
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
-const V1 = 'urn:schema:civitai-apps:orbit-notes/notes@v1';
-const V2 = 'urn:schema:civitai-apps:orbit-notes/notes@v2';
+const V1 = 'urn:schema:app-blocks:orbit-notes/notes@v1';
+const V2 = 'urn:schema:app-blocks:orbit-notes/notes@v2';
 const DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 const title = (maxLength: number) => ({
   type: 'object',
@@ -24,7 +24,7 @@ const TWO_MAJORS: CollectionStream['family'] = [
   { urn: V2, body: { ...title(100), $schema: DIALECT, $id: V2 } },
 ];
 
-const urn = (key: string) => `urn:civitai-apps:orbit-notes/notes/${key}`;
+const urn = (key: string) => `urn:app-blocks:orbit-notes/notes/${key}`;
 const doc = (key: string, t: string, seq: number, extra: Record<string, unknown> = {}) => ({
   appId: 'ab_orbit_7',
   ns: 'prod',
@@ -244,7 +244,7 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
   it('a snapshot of a collection URN that resolves to nothing gets a constant cursor and no write', async () => {
     const { world, store, make } = setup();
     world.stream = null;
-    const snap = await make().feed.snapshot('urn:schema:civitai-apps:no-such-app/invented@v1');
+    const snap = await make().feed.snapshot('urn:schema:app-blocks:no-such-app/invented@v1');
     expect([snap.cursor, store.puts()]).toEqual([EMPTY_CURSOR, 0]);
   });
 
