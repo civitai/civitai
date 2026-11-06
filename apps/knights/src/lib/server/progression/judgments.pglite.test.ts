@@ -300,6 +300,33 @@ describe('listJudgments', () => {
       expect(judgments[0].imageKey).toBe('key-61');
     });
 
+    it("shows the pair's own question in an Acolyte's history, and the axis question when it has none or a blank one", async () => {
+      await pg.exec(
+        `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('knights.yesno.practice','bool','Does this show violence?','[]') ON CONFLICT DO NOTHING`
+      );
+      const prompts = ['Is a knife held in the hand?', null, '   '];
+      for (const [index, prompt] of prompts.entries()) {
+        const imageId = 80 + index;
+        await seedImage(pg, imageId);
+        const pair = await pg.query<{ id: number }>(
+          `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","createdBy","prompt") VALUES ($1,'knights.yesno.practice',true,1,$2) RETURNING id`,
+          [imageId, prompt]
+        );
+        await pg.query(
+          `INSERT INTO "KnightsApprenticeAnswer" ("playerId","yesNoReferenceId","answer","correctAnswer","correct","xp","createdAt") VALUES (1,$1,'yes','yes',true,100,$2)`,
+          [pair.rows[0].id, new Date(Date.UTC(2026, 11, 15, 9, index))]
+        );
+      }
+
+      const { judgments } = await listJudgments(db, 1, { page: 1 });
+
+      expect(judgments.map((j) => j.prompt)).toEqual([
+        'Does this show violence?',
+        'Does this show violence?',
+        'Is a knife held in the hand?',
+      ]);
+    });
+
     it('keeps listing an answer after its reference is deleted', async () => {
       await seedImage(pg, 70);
       await pg.exec(

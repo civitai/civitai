@@ -134,6 +134,7 @@ async function answerNext(userId: number, right: boolean | ((n: number) => boole
       userId,
       kind: item.kind,
       referenceId: item.referenceId,
+      version: item.version,
       answer: isRight ? await correctFor(item) : await wrongFor(item),
     },
     deps()
@@ -311,6 +312,56 @@ describe('grading and XP', () => {
     ).rows;
     expect(await promptOf(ids[0].id)).toBe('Is a knife held in the hand?');
     expect(await promptOf(ids[1].id)).toBe('Does this show violence?');
+  });
+
+  it('grades a yes/no answer only against the pair the player was shown', async () => {
+    await player(1);
+    await player(2);
+    const id = await yesNo(1, { answer: true, prompt: 'Is a knife held?' });
+    const shown = question(await getApprentice(db, 1)).item;
+    const alsoShown = question(await getApprentice(db, 2)).item;
+    expect(shown.version).toEqual(expect.any(String));
+
+    await pg.query(
+      `UPDATE "KnightsYesNoReference" SET "answer"=false, "prompt"='Is a sword held?', "updatedAt"="updatedAt" + interval '1 second' WHERE "id"=$1`,
+      [id]
+    );
+    const stale = await answerApprentice(
+      db,
+      { userId: 1, kind: 'yesno', referenceId: id, version: shown.version, answer: 'yes' },
+      deps()
+    );
+
+    expect(stale).toEqual({ status: 'rejected', reason: 'not-current' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsApprenticeAnswer"`)).rows).toHaveLength(0);
+    expect(await expOf(1)).toBe(0);
+
+    const refreshed = question(await getApprentice(db, 1)).item;
+    expect(refreshed.version).not.toBe(shown.version);
+    expect(refreshed.prompt).toBe('Is a sword held?');
+    const fresh = await answerApprentice(
+      db,
+      { userId: 1, kind: 'yesno', referenceId: id, version: refreshed.version, answer: 'no' },
+      deps()
+    );
+    expect(fresh).toMatchObject({ status: 'recorded', correct: true });
+
+    const stored = await pg.query<{ correctAnswer: string }>(
+      `SELECT "correctAnswer" FROM "KnightsApprenticeAnswer"`
+    );
+    expect(stored.rows).toEqual([{ correctAnswer: 'no' }]);
+    expect(alsoShown.version).toBe(shown.version);
+  });
+
+  it('refuses a yes/no answer that carries no version', async () => {
+    await player(1);
+    const id = await yesNo(1);
+    const result = await answerApprentice(
+      db,
+      { userId: 1, kind: 'yesno', referenceId: id, answer: 'yes' },
+      deps()
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'not-current' });
   });
 
   it('never smites an Acolyte for wrong answers', async () => {

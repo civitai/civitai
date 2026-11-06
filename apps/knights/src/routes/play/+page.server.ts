@@ -316,6 +316,7 @@ export const actions: Actions = {
     const kind = form.get('kind');
     const referenceId = Number(form.get('referenceId'));
     const answer = form.get('answer');
+    const version = form.get('version');
     if (
       (kind !== 'rating' && kind !== 'yesno') ||
       !Number.isInteger(referenceId) ||
@@ -327,7 +328,13 @@ export const actions: Actions = {
     try {
       const result = await answerApprentice(
         db,
-        { userId: locals.user.id, kind, referenceId, answer },
+        {
+          userId: locals.user.id,
+          kind,
+          referenceId,
+          version: typeof version === 'string' ? version : null,
+          answer,
+        },
         apprenticeDeps
       );
       if (result.status === 'rejected') {
