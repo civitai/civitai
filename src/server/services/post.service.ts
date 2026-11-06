@@ -1172,6 +1172,20 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
   else await userPostCountCache.refresh(post.userId);
+  // A scheduled date writes publishedAt too; the scheduled-publishing job releases those reviews.
+  // Imported on use: a static import grows the image.service import cycle.
+  if (publishedAtWritten && post.publishedAt && post.publishedAt <= new Date())
+    await import('~/server/services/resourceReview.service')
+      .then(({ releasePendingReviewsForPosts }) => releasePendingReviewsForPosts([post.id]))
+      .catch((error) =>
+        logToAxiom({
+          name: 'post-service',
+          type: 'error',
+          message: 'Failed to release pending resource reviews',
+          postId: post.id,
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
   const textChanged = data.title !== undefined || data.detail !== undefined;
   if (publishedAtWritten || (textChanged && post.publishedAt))
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
