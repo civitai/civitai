@@ -91,15 +91,20 @@ describe('mergeShardReports', () => {
   });
 
   it('ignores a report for a shard index outside 1..total', () => {
-    const { ok, lines } = mergeShardReports(
+    const { ok, merged } = mergeShardReports(
       [
         { shard: 1, report: S1 },
+        { shard: 2, report: S2 },
         { shard: 4, report: S3 },
       ],
       2
     );
-    expect(ok).toBe(false);
-    expect(lines.join('\n')).toContain('shard 2/2: NO REPORT');
+    expect(ok).toBe(true);
+    expect(merged.testResults.map((f: { name: string }) => f.name)).toEqual([
+      '/r/src/a.browser.test.tsx',
+      '/r/src/b.browser.test.tsx',
+    ]);
+    expect(merged.numTotalTests).toBe(8);
   });
 });
 

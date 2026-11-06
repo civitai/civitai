@@ -1007,9 +1007,8 @@ jobs:
     # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
     # EVERY shard, and geometry rides on shard 1. 3, not 4: a fourth shard saves under a minute
     # of wall clock while adding another setup and one more slot of the plan's org-wide
-    # concurrent-job limit (see the `unit` job's "WHY 4 AND NOT MORE" for that trade). The
-    # measurements behind the choice are in the PR that introduced the sharding. Geometry and
-    # the quarantine run are put on DIFFERENT shards so neither stacks on the other; shard 3
+    # concurrent-job limit (see the `unit` job's "WHY 4 AND NOT MORE" for that trade). Geometry
+    # and the quarantine run are put on DIFFERENT shards so neither stacks on the other; shard 3
     # carries `component` only.
     #
     # `--shard` is not cost-aware: it splits by FILE COUNT, so READ THE THREE DURATIONS after
@@ -1035,8 +1034,6 @@ jobs:
     # it, and every job a run starts queues someone else's. Every suite step carries its own
     # selector (`only: component` runs component + quarantine, `only: geometry` runs geometry),
     # and every suite after the first is `!cancelled()`, so one red suite never hides the others.
-    # `component` itself is now split across a 3-way matrix (see `strategy` above); geometry and
-    # the quarantine run still share a shard's setup rather than taking a job of their own.
     #
     # 🔴 THE ONLY JOB IN THIS WORKFLOW THAT INSTALLS A BROWSER, AND THAT IS ALIGNED WITH THE
     # `unit` JOB'S COMMENT RATHER THAN AN OVERRIDE OF IT. That comment gives exactly one reason
@@ -1381,18 +1378,11 @@ jobs:
 
   # ── THE WHOLE-SUITE VERDICT FOR THE SHARDED `component` JOB ─────────────────────────────
   #
-  # Named `Component + geometry tests` — the unsharded job's check name — so anything that
-  # waits on or reads that check by name keeps working (`main` has no required checks, so
-  # nothing here blocks a merge either way). It is red when ANY shard job did not succeed
-  # (geometry's report-only `continue-on-error` already turns its own red into a shard
-  # success on PRs, so that stays report-only here too), and when the merged reports fail
-  # the full ledger: a missing shard, a `*.browser.test.tsx`
-  # on disk that no shard ran, zero executed, or fewer than the floor. Those are exactly the
-  # checks the unsharded `pnpm run test:component` gate ran, applied to the union.
-  #
-  # `!cancelled()` rather than `always()`, like the shards' guards; the same `only` and draft
-  # gates as `component` (minus `geometry`, which has no component reports to grade), so it
-  # is skipped exactly when the shards are.
+  # Named `Component + geometry tests`, the unsharded job's check name, so anything that reads
+  # that check by name keeps working. Red when any shard job did not succeed (geometry stays
+  # report-only on PRs via its own `continue-on-error`) or when the merged reports fail the
+  # full ledger. On an `only: geometry` dispatch this job is skipped — there are no component
+  # reports to grade — so geometry's verdict is only on the `(1/3)` shard job.
   component-ledger:
     name: Component + geometry tests
     needs: component
