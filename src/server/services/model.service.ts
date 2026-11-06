@@ -64,6 +64,7 @@ import {
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
@@ -2087,7 +2088,8 @@ export const getModelVersionsMicro = async ({
 // these rows feed many callers, and the keys are only ever read back through the
 // minor-hash service's own raw SQL.
 function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
-  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+  const meta = stripMinorHashMeta(model.meta as ModelMeta | null);
+  return { ...model, meta: meta && filterSensitiveProfanityData(meta, false) } as T;
 }
 
 export const updateModelById = async ({
@@ -4163,7 +4165,11 @@ export const upsertModel = async (
       isModerator,
     }).catch(() => null);
 
-    return { ...result, meta: stripMinorHashMeta(modelMeta) };
+    const returnedMeta = stripMinorHashMeta(modelMeta);
+    return {
+      ...result,
+      meta: returnedMeta && filterSensitiveProfanityData(returnedMeta, false),
+    };
   } else {
     if (!beforeUpdate) return null;
 

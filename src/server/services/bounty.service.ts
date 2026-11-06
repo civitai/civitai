@@ -103,6 +103,7 @@ import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createProfanityFilter } from '~/libs/profanity-simple';
+import { keepStoredProfanityData } from '~/libs/profanity-simple/helpers';
 import { logToAxiom } from '~/server/logging/client';
 
 // Unique per request: a refund by prefix must never reach another request's charge. The
@@ -594,10 +595,11 @@ export const upsertBounty = async ({
   const stored = id
     ? await dbRead.bounty.findUnique({
         where: { id },
-        select: { lockedProperties: true, userId: true },
+        select: { lockedProperties: true, userId: true, details: true },
       })
     : null;
   const storedLockedProperties = stored?.lockedProperties ?? [];
+  if (!isModerator) data.details = keepStoredProfanityData(data.details, stored?.details);
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
   // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write

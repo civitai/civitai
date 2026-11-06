@@ -310,6 +310,20 @@ describe('bounty write responses', () => {
     expect(result).toEqual({ id: 9, name: 'B' });
   });
 
+  it('upsert returns the profanity details to a moderator only', async () => {
+    const details = {
+      baseModel: 'SD 1.5',
+      profanityMatches: ['term'],
+      profanityEvaluation: { reason: 'test reason' },
+    };
+    mockUpsertBounty.mockResolvedValue({ ...row, details });
+    const asUser = await upsertBountyHandler({ input: { id: 9 } as never, ctx });
+    expect(asUser).toEqual({ id: 9, name: 'B', details: { baseModel: 'SD 1.5' } });
+    const modCtx = { ...(ctx as object), user: { id: 5, isModerator: true } } as never;
+    const asMod = await upsertBountyHandler({ input: { id: 9 } as never, ctx: modCtx });
+    expect(asMod).toEqual({ id: 9, name: 'B', details });
+  });
+
   it('delete never returns meta', async () => {
     mockDeleteBounty.mockResolvedValue(row);
     const result = await deleteBountyHandler({ input: { id: 9 }, ctx });

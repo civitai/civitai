@@ -74,8 +74,15 @@ function mockStored({
   complete = false,
   poi = false,
   meta = null as unknown,
-}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean; meta?: unknown } = {}) {
-  mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
+  details = null as unknown,
+}: {
+  lockedProperties?: string[];
+  complete?: boolean;
+  poi?: boolean;
+  meta?: unknown;
+  details?: unknown;
+} = {}) {
+  mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties, details });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
     entryLimit: null,
@@ -264,6 +271,24 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data).not.toHaveProperty('nsfw');
     expect(data).not.toHaveProperty('lockedProperties');
     expect(data.details).toEqual(expect.objectContaining({ profanityMatches: ['bad'] }));
+  });
+
+  it("keeps the stored detection when an owner's edit sends details without it", async () => {
+    const stored = {
+      baseModel: 'SD 1.5',
+      profanityMatches: ['term'],
+      profanityEvaluation: { reason: 'test reason' },
+    };
+    mockStored({ details: stored });
+    mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false });
+
+    await upsert({ details: { baseModel: 'SDXL 1.0', profanityMatches: ['other'] } });
+
+    expect(updateData().details).toEqual({
+      baseModel: 'SDXL 1.0',
+      profanityMatches: ['term'],
+      profanityEvaluation: { reason: 'test reason' },
+    });
   });
 
   it('does not run for a moderator', async () => {
