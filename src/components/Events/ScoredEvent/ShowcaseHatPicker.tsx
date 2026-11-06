@@ -3,6 +3,7 @@ import { IconCheck, IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ShowcaseHatPickerToggle } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isShowcaseLive, SHOWCASE_EVENT } from '~/shared/constants/showcase-hat.constants';
@@ -59,6 +60,9 @@ function ShowcaseHatModal({ event, color }: { event: string; color?: string }) {
   ];
   const pending = isPending ? variables?.cosmeticId : undefined;
   const pick = current?.pick ?? null;
+  // Nothing to show on the default: they have not placed a hat yet (and have not switched it off).
+  const noDefaultHat =
+    !!current && !current.off && current.pick === null && current.showing === null;
 
   return (
     <Modal {...dialog} title="Pick your showcase hat" size="lg" radius="md">
@@ -67,9 +71,10 @@ function ShowcaseHatModal({ event, color }: { event: string; color?: string }) {
           It shows on your avatar on your profile, your creator card, your comments and the team
           roster until the event ends. It stays on your content too.
         </Text>
+        <ShowcaseHatPickerToggle />
         <SimpleGrid cols={{ base: 3, xs: 4 }} spacing="sm">
           <Tile
-            selected={pick === null}
+            selected={pick === null && !current?.off}
             busy={pending === null}
             disabled={isPending || !current}
             onClick={() => mutate({ event, cosmeticId: null })}
@@ -78,7 +83,7 @@ function ShowcaseHatModal({ event, color }: { event: string; color?: string }) {
           >
             <div className="grid aspect-square w-full place-items-center rounded-md border border-dashed border-gray-4 px-2 text-center dark:border-dark-3">
               <Text size="xs" c="dimmed">
-                Your top hat
+                {noDefaultHat ? 'No hat until you place one' : 'Your top hat'}
               </Text>
             </div>
           </Tile>

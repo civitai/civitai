@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeAll, describe, it, expect, vi, beforeEach } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 
 // Unit tests for the private-model flow (privateModelFromTraining / publishPrivateModel): it must
@@ -101,6 +104,28 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   getTextScanMode: vi.fn(),
 }));
 
+const {
+  mockApplyHeldVerdict,
+  mockLeavingPrivate,
+  mockFinishApply,
+  mockDropLiftedBy,
+  mockHoldLead,
+} = vi.hoisted(() => ({
+  mockDropLiftedBy: vi.fn(async (..._args: unknown[]) => undefined),
+  mockHoldLead: vi.fn(async (..._args: unknown[]) => undefined),
+  mockApplyHeldVerdict: vi.fn(async (): Promise<null> => null),
+  mockLeavingPrivate: vi.fn(async (_db: unknown, _id: number) => false),
+  mockFinishApply: vi.fn(async (_id: number) => undefined),
+}));
+vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelNsfw>()),
+  applyHeldRestrictedVerdict: mockApplyHeldVerdict,
+  applyHeldVerdictLeavingPrivate: mockLeavingPrivate,
+  finishHeldVerdictApply: mockFinishApply,
+  dropLiftedBy: mockDropLiftedBy,
+  holdLeadAfterFlagLift: mockHoldLead,
+}));
+
 import {
   privateModelFromTraining,
   publishPrivateModel,
@@ -110,7 +135,9 @@ import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { deleteBidsForModel } from '~/server/services/auction.service';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -264,6 +291,114 @@ describe('privateModelFromTraining — gallery settings cache', () => {
 
     expect(mockDbWrite.model.update).toHaveBeenCalled();
     expect(redisMock.redis.del).toHaveBeenCalledWith([`model:gallery-settings:${MODEL_ID}`]);
+  });
+});
+
+describe('privateModelFromTraining — a held scan verdict', () => {
+  const lifted = {
+    restrictedNsfwVerdict: {
+      source: 'text-scan',
+      at: 'x',
+      restriction: 'minor',
+      liftedBy: 'moderator',
+    },
+  };
+
+  it('a save that keeps the flag forgets an earlier lift', async () => {
+    mockStored({ minor: true, sfwOnly: true, meta: lifted });
+    await privateFromTraining({ user: owner, minor: true });
+    expect(mockDropLiftedBy.mock.calls.map((c) => c.slice(1))).toEqual([
+      [MODEL_ID, { flagged: true }],
+    ]);
+  });
+
+  it('leaves the lead alone when no lift is recorded (control)', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await privateFromTraining({ user: owner, minor: true });
+    expect(mockDropLiftedBy).not.toHaveBeenCalled();
+  });
+
+  it('a moderator untick is a moderator lift: the lead waits', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await privateFromTraining({ user: moderator, minor: false });
+    expect(mockHoldLead.mock.calls.map((c) => c.slice(1))).toEqual([[MODEL_ID, 'moderator']]);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: false });
+  });
+
+  it.each(['minor', 'poi'] as const)('is applied when the owner unticks %s', async (flag) => {
+    mockStored({ [flag]: true, sfwOnly: true });
+    await privateFromTraining({ user: owner, [flag]: false });
+    expect(mockApplyHeldVerdict).toHaveBeenCalledTimes(1);
+    expect(mockApplyHeldVerdict).toHaveBeenCalledWith(MODEL_ID, { ownerCleared: true });
+    expect(mockHoldLead).not.toHaveBeenCalled();
+  });
+
+  it('is left held while the flag stays ticked (control)', async () => {
+    mockStored({ minor: true, sfwOnly: true });
+    await privateFromTraining({ user: owner, minor: true });
+    expect(mockApplyHeldVerdict).not.toHaveBeenCalled();
+  });
+
+  it('is applied when a failed flow puts the model back out of Private', async () => {
+    mockStored({});
+    mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow();
+    expect(mockDbWrite.model.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
+    );
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate).toHaveBeenCalledWith(expect.anything(), MODEL_ID);
+  });
+
+  it('puts the model back out of Private only together with the apply', async () => {
+    mockStored({});
+    let inTransaction = false;
+    const writesInTransaction: boolean[] = [];
+    mockDbWrite.$transaction.mockImplementation((async (arg: unknown) => {
+      if (typeof arg !== 'function') return Promise.all(arg as unknown[]);
+      inTransaction = true;
+      try {
+        return await arg(mockDbWrite);
+      } finally {
+        inTransaction = false;
+      }
+    }) as never);
+    mockDbWrite.model.updateMany.mockImplementation((async () => {
+      writesInTransaction.push(inTransaction);
+      return { count: 1 };
+    }) as never);
+    mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
+    mockLeavingPrivate.mockImplementationOnce(async () => {
+      writesInTransaction.push(inTransaction);
+      throw new Error('apply failed');
+    });
+
+    // The apply's failure rolls the revert back with it: the model stays Private, its versions stay
+    // with it, and the caller sees the flow's own error.
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow('write failed');
+    expect(writesInTransaction).toEqual([true, true]);
+    expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ availability: 'Public' }) })
+    );
+    expect(mockFinishApply).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the revert write', 'revert write failed: the model stayed Private'],
+    ['the held-verdict apply', 'revert left the model Private: held scan verdict not applied'],
+  ])('logs a failure of %s as its own', async (failing, message) => {
+    mockStored({});
+    mockDbWrite.model.update.mockRejectedValueOnce(new Error('write failed'));
+    if (failing === 'the revert write')
+      mockDbWrite.model.updateMany.mockRejectedValueOnce(new Error('revert failed'));
+    else mockLeavingPrivate.mockRejectedValueOnce(new Error('apply failed'));
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow();
+
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { name?: string; message?: string })
+      .filter((entry) => entry.name === 'private-model-from-training');
+    expect(logged.map((entry) => entry.message)).toEqual([message]);
   });
 });
 
@@ -511,52 +646,93 @@ describe('privateModelFromTraining — stored snapshot', () => {
   });
 });
 
-describe('toggleCannotPromote on a private model', () => {
+describe('toggleCannotPromote', () => {
   const toggle = () => toggleCannotPromote({ id: MODEL_ID, isModerator: true });
-  const mockPrivate = (meta: Record<string, unknown>) =>
-    mockDbWrite.model.findUnique.mockResolvedValue({
-      id: MODEL_ID,
-      availability: Availability.Private,
-      meta,
-    });
+  let pg: PGlite;
 
-  it('reads the stored row from the primary', async () => {
-    mockPrivate({ cannotPromote: true });
-
-    await toggle();
-
-    expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
-    expect(mockDbWrite.model.findUnique).toHaveBeenCalled();
+  beforeAll(async () => {
+    pg = new PGlite();
+    await pg.exec(
+      `CREATE TABLE "Model" (id int PRIMARY KEY, availability text NOT NULL, meta jsonb)`
+    );
+  });
+  afterAll(() => pg.close());
+  beforeEach(async () => {
+    await pg.exec(`TRUNCATE "Model"`);
+    mockDbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
+    // What a read-then-write-back toggle would see and do: the row as it was before a scan's hold.
+    mockDbWrite.model.findUnique.mockImplementation((async () => {
+      const [row] = (
+        await pg.query<{ meta: Record<string, unknown> | null }>(
+          `SELECT id, availability, meta FROM "Model" WHERE id = $1`,
+          [MODEL_ID]
+        )
+      ).rows;
+      if (!row) return null;
+      const { restrictedNsfwVerdict: _lead, ...stale } = row.meta ?? {};
+      return { ...row, meta: stale };
+    }) as never);
+    mockDbWrite.model.update.mockImplementation((async ({ data }: { data: { meta: unknown } }) => {
+      await pg.query(`UPDATE "Model" SET meta = $1 WHERE id = $2`, [
+        JSON.stringify(data.meta),
+        MODEL_ID,
+      ]);
+      return { id: MODEL_ID, meta: data.meta };
+    }) as never);
   });
 
-  it('records a ban for publish while keeping cannotPromote forced on', async () => {
-    mockPrivate({ cannotPromote: true });
+  const seed = (availability: string, meta: Record<string, unknown> | null) =>
+    pg.query(`INSERT INTO "Model" (id, availability, meta) VALUES ($1, $2, $3)`, [
+      MODEL_ID,
+      availability,
+      meta === null ? null : JSON.stringify(meta),
+    ]);
+  const stored = async () =>
+    (await pg.query<{ meta: Record<string, unknown> }>(`SELECT meta FROM "Model"`)).rows[0].meta;
+
+  const lead = { source: 'text-scan', at: '2026-11-01T00:00:00.000Z', restriction: 'sfwOnly' };
+
+  it('keeps a scan hold that landed after the toggle could have read the row', async () => {
+    await seed(Availability.Public, { cannotPromote: false, restrictedNsfwVerdict: lead });
 
     await toggle();
 
-    expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+    expect(await stored()).toEqual({ cannotPromote: true, restrictedNsfwVerdict: lead });
+  });
+
+  it('records a ban for publish on a private model while keeping cannotPromote forced on', async () => {
+    await seed(Availability.Private, { cannotPromote: true, restrictedNsfwVerdict: lead });
+
+    const result = await toggle();
+
+    const meta = { cannotPromote: true, restoreCannotPromote: true, restrictedNsfwVerdict: lead };
+    expect(await stored()).toEqual(meta);
+    expect(result).toEqual({ id: MODEL_ID, meta });
+    expect(deleteBidsForModel).toHaveBeenCalledWith({ modelId: MODEL_ID });
   });
 
   it('drops the recorded ban on an unban while keeping cannotPromote forced on', async () => {
-    mockPrivate({ cannotPromote: true, restoreCannotPromote: true });
+    await seed(Availability.Private, { cannotPromote: true, restoreCannotPromote: true });
 
     await toggle();
 
-    const meta = updateData().meta as Record<string, unknown>;
-    expect(meta.cannotPromote).toBe(true);
-    expect(meta).not.toHaveProperty('restoreCannotPromote');
+    expect(await stored()).toEqual({ cannotPromote: true });
+    expect(deleteBidsForModel).not.toHaveBeenCalled();
   });
 
-  it('still toggles a public model directly', async () => {
-    mockDbWrite.model.findUnique.mockResolvedValue({
-      id: MODEL_ID,
-      availability: Availability.Public,
-      meta: { cannotPromote: false },
-    });
+  it('toggles a public model directly, from a JSON-null meta too', async () => {
+    await seed(Availability.Public, null);
+    await pg.exec(`UPDATE "Model" SET meta = 'null'::jsonb`);
 
     await toggle();
+    expect(await stored()).toEqual({ cannotPromote: true });
 
-    expect(updateData().meta).toEqual({ cannotPromote: true });
+    await toggle();
+    expect(await stored()).toEqual({ cannotPromote: false });
+  });
+
+  it('refuses a model that does not exist', async () => {
+    await expect(toggle()).rejects.toThrow(/No model/);
   });
 });
 
@@ -580,6 +756,40 @@ describe('publishPrivateModel', () => {
 
   const publish = (isModerator: boolean, publishVersions = true) =>
     publishPrivateModel({ modelId: MODEL_ID, publishVersions, isModerator });
+
+  it('applies a held scan verdict in the publish transaction, after the availability write', async () => {
+    mockPrivateModel({});
+    // The transaction's own model.update, so a write on the global client cannot satisfy it.
+    const txModelUpdate = vi.fn();
+    const tx = Object.create(mockDbWrite);
+    Object.defineProperty(tx, 'model', {
+      value: { findUnique: mockDbWrite.model.findUnique, update: txModelUpdate },
+    });
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
+      fn(tx)) as never);
+    mockLeavingPrivate.mockResolvedValueOnce(true);
+    await publish(false);
+    expect(txModelUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ availability: Availability.Public }),
+      })
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockLeavingPrivate.mock.calls[0][0]).toBe(tx);
+    expect(mockLeavingPrivate.mock.calls[0][1]).toBe(MODEL_ID);
+    expect(mockLeavingPrivate.mock.invocationCallOrder[0]).toBeGreaterThan(
+      txModelUpdate.mock.invocationCallOrder[0]
+    );
+    expect(mockFinishApply).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('finishes nothing when there was no lead to apply (control)', async () => {
+    mockPrivateModel({});
+    await publish(false);
+    expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
+    expect(mockFinishApply).not.toHaveBeenCalled();
+  });
 
   it('restores a moderator-set cannotPromote and drops the marker', async () => {
     mockPrivateModel({ meta: { cannotPromote: true, restoreCannotPromote: true } });

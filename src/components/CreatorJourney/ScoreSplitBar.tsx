@@ -1,4 +1,5 @@
-import { ColorSwatch, Group, Progress, Stack, Text, Tooltip } from '@mantine/core';
+import { ColorSwatch, Group, Progress, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { scoreCategories } from '~/components/Account/UserScoreDisplay';
 import type { CreatorScoreSplit } from '~/shared/utils/creator-score';
 

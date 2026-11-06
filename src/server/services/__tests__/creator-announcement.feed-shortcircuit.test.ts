@@ -162,12 +162,10 @@ describe('the live-author short-circuit', () => {
 
     await getFollowedAnnouncements({ userId: VIEWER });
 
-    // The narrowed path ran: the follow read happened.
     expect(dbMock.dbRead.userEngagement.findMany).toHaveBeenCalledTimes(1);
-    // The gauge is how an ON window sees the set's size. Deduped: three rows, two authors.
+    // Deduped: three rows, two authors.
     expect(creatorFeedLiveAuthorsGauge.set).toHaveBeenCalledWith({ domain: 'any' }, 2);
     expect(creatorFeedShortcircuitCounter.inc).toHaveBeenCalledWith({ outcome: 'narrowed' });
-    // Negative control for the fallback test: a narrowing that worked logs nothing.
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
@@ -201,11 +199,7 @@ describe('the live-author short-circuit', () => {
 
 describe('the live-author set window', () => {
   const START = Date.parse('2031-03-04T05:06:07.000Z');
-  /**
-   * The one `field: { op: Date }` bound anywhere in a where tree. Read structurally rather than by
-   * position, so the window can be built by any helper; more or fewer than one match throws, which
-   * is what keeps a bound dropped or duplicated from reading as a pass.
-   */
+  // Throws unless exactly one match, so a dropped or duplicated bound cannot pass.
   function findBound(where: unknown, field: 'startsAt' | 'endsAt', op: 'lte' | 'gte'): Date {
     const found: Date[] = [];
     const walk = (node: unknown) => {

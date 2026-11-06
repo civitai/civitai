@@ -10,7 +10,7 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
-import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
+import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   assertLockReviewAllowed,
@@ -23,7 +23,7 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
-  isAppealBlockedByHoldMarker,
+  isImageAppealRefused,
   getLatestAppeal,
   reopenAppeal,
 } from '~/server/services/report.service';
@@ -57,12 +57,9 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    if (
-      input.type === ReportEntity.CommentV2 &&
-      !ctx.user.isModerator &&
-      (await isCommentGoneForMembers(input.id))
-    )
-      throw throwNotFoundError('The content you are trying to report no longer exists');
+    // Gated like reacting. A pre-flip comment keeps its id in both tables, so the old type is too.
+    if (input.type === ReportEntity.CommentV2 || input.type === ReportEntity.CommentV3)
+      await assertCommentActionable(input.id, ctx);
     const result = await createReport({
       ...input,
       userId: ctx.user.id,
@@ -127,9 +124,9 @@ export async function createEntityAppealHandler({
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
         if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
-        // A hold marker's kept image reads as a moderator block. Refused in the same words, so the
-        // refusal says no more than that.
-        if (await isAppealBlockedByHoldMarker({ imageId: image.id, userId }))
+        // A refused image still reads as a moderator block, so it gets the same words as an image
+        // that is not one.
+        if (await isImageAppealRefused({ imageId: image.id, userId }))
           throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { buzzMode } from '$lib/buzz-mode.svelte';
   import JSZip from 'jszip';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Alert from '@civitai/ui/components/ui/alert/index.js';
@@ -736,7 +737,9 @@
             {rating}
           </Tooltip.Trigger>
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            {#if isMember}
+            {#if !buzzMode.blueFirst}
+              Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
+            {:else if isMember}
               Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
               Blue Buzz is charged in Yellow.
             {:else}
@@ -1031,7 +1034,6 @@
     </button>
   {:else}
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       {...drop}
       class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
@@ -1181,7 +1183,6 @@
                 {:else if img.mediaType === 'image'}
                   <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
                 {:else if img.mediaType === 'video'}
-                  <!-- svelte-ignore a11y_media_has_caption -->
                   <video
                     src={img.previewUrl}
                     muted
@@ -1285,7 +1286,8 @@
         </div>
       </div>
 
-      <StickySummary>
+      <!-- Below lg the trigger word comes before the image grid, not after an arbitrarily long one. -->
+      <StickySummary class="order-first lg:order-none">
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
           <Tooltip.Provider>
@@ -1312,11 +1314,15 @@
     </div>
   {/if}
 
-  <div class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
+  <!-- Below lg the actions float over a long image grid instead of waiting at its end. Embedded, they
+       clear the host's sticky footer (`--footer-height`); standalone the var is unset and adds 0. -->
+  <div
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-[calc(0.75rem+var(--footer-height,0px)+var(--safe-area-inset-bottom-unpaid,0px))] max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+  >
     <Button variant="outline" onclick={onBack}>
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
     </Button>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
       {#if uploadedCount > 0 && !busy && !allLabeled}
         <button
           id="continue-blocked-reason"

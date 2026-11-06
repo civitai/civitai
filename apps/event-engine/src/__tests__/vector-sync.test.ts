@@ -1027,6 +1027,40 @@ describe('backfill', () => {
     await run1;
   });
 
+  test('timers that wake late do not lower the step rate', async () => {
+    const pg = new FakePg().put(...ids(1, 400).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const c = clock();
+    const submits: number[] = [];
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 400,
+      maxRetries: 0,
+      batchSize: 1,
+      priority: 'low',
+      maxStepsPerSecond: 800,
+      now: () => c.t,
+      sleep: async () => undefined,
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        submits.push(c.t);
+        return okWorkflow(init);
+      }) as unknown as typeof fetch,
+    });
+    await runBackfill(
+      { watermark: 400, floor: 0, span: 400 },
+      {
+        ...deps(pg, store, null),
+        embedder: e,
+        state: memoryState(),
+        now: c.now,
+        sleep: (ms) => c.sleep(ms + 2),
+      }
+    );
+    expect(store.points.size).toBe(400);
+    expect(Math.max(...submits)).toBeLessThanOrEqual(520);
+  });
+
   // Reserving a full batch of step rate for a short one ran the embedder's schedule ahead on
   // sparse pages, so batches queued inside it, out of a pause's reach.
   test('sparse pages: short batches are paced by their length and never wait inside the embedder', async () => {

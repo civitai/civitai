@@ -18,7 +18,7 @@ Workstreams (most are independent):
 |----|------------|--------|-----------------|-------|
 | A  | Backend foundation: `model3d.service.ts`, `model3d.router.ts`, `model3d-review.service.ts` | pending | — | — |
 | B  | Orchestrator PolyGen: `polygen.schema.ts` (Zod), `polyGen.handler.ts`, `generation.config.ts` registration | pending | — | — |
-| C  | Existing-file touch points: `ReportEntity` / `SearchIndexEntityTypes` / `commentv2.schema.ts` / `buzz.schema.ts` / `image-scan-result.ts` enum + allow-list edits | pending | — | — |
+| C  | Existing-file touch points: `ReportEntity` / `SearchIndexEntityTypes` / `commentv3/surfaces.ts` / `buzz.schema.ts` / `image-scan-result.ts` enum + allow-list edits | pending | — | — |
 | D  | UI scaffold: install three.js, build `Model3DViewer` component, scaffold `/3d-models/[id]` page stub | pending | — | — |
 | E  | Jobs + notifications: `updateModel3DNsfwLevels`, `updateModel3DMetrics`, comment notification SQL | pending (depends on A) | — | — |
 | F  | Generation form integration: add 3D Model tab to `GenerationForm.tsx`, build text-to-3D + image-to-3D sub-tabs | pending (depends on B) | — | — |

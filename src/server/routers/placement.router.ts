@@ -293,6 +293,8 @@ export const placementRouter = router({
    */
   createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
     assertPlacementEnabled(ctx);
+    if (input.track && !ctx.features.stickerVideoTracks)
+      throw throwAuthorizationError('placement: moving stickers are not available yet');
     return createStickerPlacement({
       ...input,
       // After the spread, and the schema has no `placerId` to strip anyway —
@@ -466,6 +468,10 @@ export const placementRouter = router({
       getRemixGalleryCardSummaries({
         imageIds: input.imageIds,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        storylinesFor:
+          ctx.features.storylines && ctx.features.remixGallery
+            ? { viewer: ctx.user && { id: ctx.user.id, isModerator: ctx.user.isModerator } }
+            : undefined,
       })
     ),
 

@@ -1,11 +1,13 @@
 import { browser } from '$lib/host';
+import { spendOrder } from '$lib/mature-charge';
 
-// The global Buzz spend mode. Blue (generation) is ALWAYS available; this toggle picks the primary
-// account — yellow (purchased) or green (membership). It drives two things app-wide: the `--color-buzz`
-// theme var (so every `buzz`-colored surface recolors at once) and the submit `currencies`.
+// The global Buzz spend mode: the paid account — yellow (purchased) or green (membership) — and whether
+// Blue (free) spends ahead of it. It drives two things app-wide: the `--color-buzz` theme var (so every
+// `buzz`-colored surface recolors at once) and the submit `currencies`.
 export type BuzzMode = 'yellow' | 'green';
 
 const KEY = 'ts-buzz-mode';
+const BLUE_FIRST_KEY = 'ts-buzz-blue-first';
 
 function stored(): BuzzMode {
   if (!browser) return 'yellow';
@@ -17,6 +19,8 @@ function stored(): BuzzMode {
 // cookie/session or call `set()` in a server load — that would leak one user's choice into another's render.
 let mode = $state<BuzzMode>(stored());
 let locked = $state(false);
+// Default on: only an explicit opt-out ('0') skips Blue.
+let blueFirst = $state(!browser || localStorage.getItem(BLUE_FIRST_KEY) !== '0');
 
 function applyClass(next: BuzzMode) {
   if (browser) document.documentElement.classList.toggle('buzz-green', next === 'green');
@@ -27,7 +31,7 @@ export const buzzMode = {
   get value(): BuzzMode {
     return mode;
   },
-  /** True when the host dictates the mode (embed on a green/yellow domain) — toggle surfaces hide. */
+  /** True when the host dictates the mode (embed on a green/yellow domain) — the paid-account picker hides. */
   get locked(): boolean {
     return locked;
   },
@@ -48,9 +52,15 @@ export const buzzMode = {
   toggle() {
     this.set(mode === 'yellow' ? 'green' : 'yellow');
   },
-  /** Accounts to charge, in priority order: Blue (the free sub-currency) always spends first —
-   *  that's why it isn't offered in the picker — then the chosen yellow/green. */
+  /** Blue spends before the paid account. The user's choice even when the host locks the paid account. */
+  get blueFirst(): boolean {
+    return blueFirst;
+  },
+  setBlueFirst(next: boolean) {
+    blueFirst = next;
+    if (browser) localStorage.setItem(BLUE_FIRST_KEY, next ? '1' : '0');
+  },
   get currencies(): string[] {
-    return ['blue', mode];
+    return spendOrder(mode, blueFirst);
   },
 };

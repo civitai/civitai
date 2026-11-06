@@ -42,7 +42,7 @@ type Decision =
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/services/model.service.ts': {
-    lockWrites: 17,
+    lockWrites: 18,
     decision: {
       kind: 'clears',
       except:
@@ -60,6 +60,10 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/services/text-scan/actions/model-nsfw.ts': {
     lockWrites: 4,
     decision: { kind: 'sets' },
+  },
+  'src/server/services/text-scan/actions/restricted-nsfw-verdict.ts': {
+    lockWrites: 8,
+    decision: { kind: 'clears' },
   },
   'src/server/services/text-scan/actions/model-poi-minor.ts': {
     lockWrites: 9,

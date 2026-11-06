@@ -1,5 +1,6 @@
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { onStorySparked } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { contentRestriction } from '~/server/common/content-restriction';
 import { createNotification } from '~/server/services/notification.service';
@@ -244,8 +245,9 @@ const aboveRatingWait = (gap: StorylineRatingGap): PendingChapterPromotion => {
  * it, except past the safe-for-work cap of a minor-flagged title.
  */
 export async function promotePendingChapter(postId: number): Promise<PendingChapterPromotion> {
+  let root = false;
   try {
-    return await dbWrite.$transaction(async (tx): Promise<PendingChapterPromotion> => {
+    const result = await dbWrite.$transaction(async (tx): Promise<PendingChapterPromotion> => {
       const [link] = await tx.$queryRaw<
         { storylineId: number; parentChapterId: number | null; userId: number }[]
       >`
@@ -308,6 +310,7 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           postId,
           userId: link.userId,
         }));
+        root = true;
       } else {
         const parentChapter = await tx.storylineChapter.findUnique({
           where: { id: link.parentChapterId },
@@ -339,6 +342,8 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
         ceilingRaisedTo,
       };
     });
+    if (root && result.status === 'written') void onStorySparked(result.storylineId);
+    return result;
   } catch (error) {
     // The post's chapter row, or the storyline's chapter 1, committed by a writer that got there
     // between this one's checks and its insert.

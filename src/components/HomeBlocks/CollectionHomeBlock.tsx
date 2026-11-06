@@ -6,11 +6,11 @@ import {
   Text,
   ThemeIcon,
   Box,
-  Popover,
   Anchor,
   AspectRatio,
   Skeleton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useMemo } from 'react';
 import {
   IconArrowRight,
@@ -39,6 +39,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -259,6 +260,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <RemixFlyoutLayoutProvider layout="side">
             <ImagesProvider
               hideReactionCount={collection?.mode === CollectionMode.Contest}
+              hideHatTurf={collectionHidesHatTurf(collection)}
               images={type === 'image' ? (items as any) : undefined}
             >
               <ReactionSettingsProvider

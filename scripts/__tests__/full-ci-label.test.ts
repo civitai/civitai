@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-// The `full-ci` PR label: lint.yml and apps.yml read it on every PR run, and full-ci.yml
-// dispatches both when it is added.
+// The `full-ci` PR label: lint.yml, apps.yml and moderator-boot.yml read it on every PR run, and
+// full-ci.yml dispatches all three when it is added.
 //
 // INVARIANT GUARD, not a regression test. It pins the shape of the change that added the label;
 // the behaviour behind that shape was proven on a live throwaway PR when it shipped (see the PR
@@ -98,11 +98,14 @@ function conjuncts(ifExpr: string): string[] {
 describe('the full-ci label', () => {
   // The masking hazard: a `labeled` trigger here means every label starts a run of same-named
   // skipped jobs.
-  it.each(['lint.yml', 'apps.yml'])('%s does not fire on labeled events', (file) => {
-    const types = load(file).on?.pull_request?.types;
-    expect(types, `${file} must list its pull_request types explicitly`).toBeDefined();
-    expect(types).not.toContain('labeled');
-  });
+  it.each(['lint.yml', 'apps.yml', 'moderator-boot.yml'])(
+    '%s does not fire on labeled events',
+    (file) => {
+      const types = load(file).on?.pull_request?.types;
+      expect(types, `${file} must list its pull_request types explicitly`).toBeDefined();
+      expect(types).not.toContain('labeled');
+    }
+  );
 
   it('lint.yml runs the unit job on a PR only when it has the label', () => {
     expect(conjuncts(load('lint.yml').jobs?.unit?.if ?? '')).toContain(UNIT_PR_GATE);
@@ -115,7 +118,9 @@ describe('the full-ci label', () => {
     ['lint.yml', 'typecheck-tests'],
     ['lint.yml', 'packages'],
     ['lint.yml', 'component'],
+    ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
+    ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
   });
@@ -123,8 +128,12 @@ describe('the full-ci label', () => {
   // Ledger: the job set the assertions above were written against. A new job fails here so its
   // author decides which draft gate it takes.
   it.each([
-    ['lint.yml', ['component', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit']],
+    [
+      'lint.yml',
+      ['component', 'component-ledger', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit'],
+    ],
     ['apps.yml', ['apps']],
+    ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
   });
@@ -173,6 +182,7 @@ describe('the full-ci label', () => {
         'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all'
       );
       expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
+      expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
     });
   });
 });

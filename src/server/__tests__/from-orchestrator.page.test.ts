@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Workflows from '~/server/services/orchestrator/workflows';
@@ -107,5 +108,13 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
       redirect: { destination: '/models', permanent: false },
     });
     expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it('redirects when the orchestrator token is refused', async () => {
+    vi.mocked(getOrchestratorToken).mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN' }));
+    await expect(resolve()).resolves.toEqual({
+      redirect: { destination: '/models', permanent: false },
+    });
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 });

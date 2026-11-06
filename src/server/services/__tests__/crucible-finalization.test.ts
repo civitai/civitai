@@ -11,6 +11,7 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
+import type * as BradleyTerry from '~/server/services/crucible-bradley-terry';
 import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
 
@@ -28,6 +29,8 @@ const setTTL = vi.fn();
 const afterPostsPublish = vi.fn();
 const createPrizes = vi.fn();
 const voidPrizes = vi.fn();
+const fitCrucibleScoresForPrizes = vi.fn();
+const usesBradleyTerryRanking = vi.fn(() => false);
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -52,6 +55,12 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
 vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
   ...(await importOriginal<typeof EloService>()),
   getAllEntryElos,
+}));
+
+vi.mock('~/server/services/crucible-bradley-terry', async (importOriginal) => ({
+  ...(await importOriginal<typeof BradleyTerry>()),
+  fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
 }));
 
 vi.mock('~/server/services/prize.service', async (importOriginal) => ({
@@ -1281,5 +1290,64 @@ describe('finalizeCrucible — entry posts', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
     );
+  });
+});
+
+describe('finalizeCrucible — Bradley-Terry ranking', () => {
+  // Elo says 1 > 2 > 3; the fit says the reverse, so the paid order shows which one ranked.
+  const fitReversed = new Map([
+    [1, 1400],
+    [2, 1500],
+    [3, 1600],
+  ]);
+  const paidOrder = () =>
+    awarded()
+      .sort((a, b) => a.position - b.position)
+      .map((prize) => prize.subjectId);
+  beforeEach(() => {
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000 });
+    fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+  });
+
+  it('pays by the fit for a crucible the switch covers', async () => {
+    const endAt = new Date(Date.now() - 1000);
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000, endAt });
+    usesBradleyTerryRanking.mockReturnValue(true);
+    await finalizeCrucible(1);
+    // The guard's ingest wait counts from endedAt: a missing one would defer a short count forever.
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledTimes(1);
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledWith(1, { endedAt: endAt });
+    // The switch dates a crucible by startAt, else createdAt: both must be read for it.
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, createdAt: true, endAt: true }),
+      })
+    );
+    expect(usesBradleyTerryRanking).toHaveBeenCalledWith(
+      expect.objectContaining({ startAt: null, endAt })
+    );
+    expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
+  });
+
+  it('pays by Elo when the guard falls back', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockResolvedValue(null);
+    await finalizeCrucible(1);
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('pays by Elo without fitting when the switch does not cover the crucible', async () => {
+    usesBradleyTerryRanking.mockReturnValue(false);
+    await finalizeCrucible(1);
+    expect(fitCrucibleScoresForPrizes).not.toHaveBeenCalled();
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('writes and pays nothing while the guard defers for ingest lag', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockRejectedValue(new Error('waiting'));
+    await expect(finalizeCrucible(1)).rejects.toThrow('waiting');
+    expect(entryWrites()).toHaveLength(0);
+    expect(createPrizes).not.toHaveBeenCalled();
   });
 });

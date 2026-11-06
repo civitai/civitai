@@ -50,6 +50,8 @@ export const FilterButton = forwardRef<HTMLButtonElement, FilterButtonProps>(
           <>
             <span suppressHydrationWarning>{children}</span>
             <IconChevronDown
+              // Lets the sub nav drop it on phones without touching any other icon in the button.
+              data-chevron
               className={clsx(
                 'ml-1 transition-transform',
                 active ? 'rotate-180' : 'group-data-[expanded=true]:rotate-180'

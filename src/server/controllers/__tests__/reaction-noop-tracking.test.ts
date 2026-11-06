@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectedContext } from '~/server/createContext';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 const {
   mockToggleReaction,
@@ -23,12 +24,18 @@ const {
         postId: 42,
         resourceHelper: [],
       })),
-      findUniqueOrThrow: vi.fn(async () => ({ postId: 42 })),
     },
     imageReaction: { count: vi.fn(async () => 5) },
   },
 }));
 
+// The handler's two image reads, through Kysely: the access check's post and the tracker event's
+// owner and level.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImagePostId: vi.fn(async () => ({ postId: 42 })),
+  getImageNsfwLevelAndOwner: vi.fn(async () => ({ nsfwLevel: 1, userId: 99 })),
+}));
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
 vi.mock('~/server/utils/metric-helpers', () => ({ updateEntityMetric: mockUpdateEntityMetric }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));

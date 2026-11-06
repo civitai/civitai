@@ -17,7 +17,7 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -163,7 +163,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
-    const session = await getServerAuthSession({ req, res });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
     // Handle pagination
     const {

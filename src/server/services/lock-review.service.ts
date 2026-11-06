@@ -10,6 +10,7 @@ import {
   type RequestableLock,
 } from '@civitai/shared/lock-review';
 import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -19,6 +20,7 @@ import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-ho
 import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
+import { MATURE_LOCK_ATTRIBUTION_KEYS } from '~/shared/constants/mature-lock-reason.constants';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 type LockReviewDb = Pick<typeof dbRead, 'model' | 'appeal'>;
@@ -246,6 +248,17 @@ export async function resolveLockReviewAppeal({
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
     }
+
+    // Appeal rows are reopened in place, which erases this ruling from the row: the owner's
+    // explanation of a filter-set nsfw lock is dropped here instead, so it stays gone.
+    if (asked.locks.includes('nsfw'))
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET meta = jsonb_set(meta, ARRAY[${SYSTEM_NSFW_LOCK_META_KEY}::text],
+          (meta -> ${SYSTEM_NSFW_LOCK_META_KEY}::text) - ${MATURE_LOCK_ATTRIBUTION_KEYS}::text[])
+        WHERE id = ${modelId}
+          AND jsonb_typeof(meta -> ${SYSTEM_NSFW_LOCK_META_KEY}::text) = 'object'
+      `;
 
     // Closed under the same lock, so a second moderator's ruling finds nothing pending.
     const claimed = await tx.$queryRaw<ResolvedAppeal[]>`

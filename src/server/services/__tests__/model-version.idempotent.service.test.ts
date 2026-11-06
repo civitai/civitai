@@ -499,6 +499,48 @@ describe('mergeVersions training runs', () => {
 
     await expect(merge()).rejects.toThrow(PAST_CHECKS);
   });
+
+  const withBaseModels = (source: string, target: string, targetStatus = 'Published') =>
+    versionRows.mockResolvedValue([
+      { ...row(TARGET, targetStatus, null), baseModel: target },
+      { ...row(SOURCE, 'Published', null), baseModel: source },
+    ]);
+
+  it('refuses merging a non-commercial source into a version on another base model', async () => {
+    withBaseModels('Flux.2 Klein 9B', 'SDXL 1.0');
+
+    await expect(merge()).rejects.toThrow(
+      "Files from a version on a non-commercial base model can't be merged into a version on a different base model. Contact a moderator."
+    );
+    expect(fileMove).not.toHaveBeenCalled();
+  });
+
+  it('refuses merging a published non-commercial source into a draft', async () => {
+    withBaseModels('Flux.2 Klein 9B', 'Flux.2 Klein 9B', 'Draft');
+
+    await expect(merge()).rejects.toThrow(
+      'Files from a published version on a non-commercial base model can only be merged into a published version. Contact a moderator.'
+    );
+    expect(fileMove).not.toHaveBeenCalled();
+  });
+
+  it('merges a non-commercial draft into a draft on the same base model (control)', async () => {
+    versionRows.mockResolvedValue([
+      { ...row(TARGET, 'Draft', null), baseModel: 'Flux.2 Klein 9B' },
+      { ...row(SOURCE, 'Draft', null), baseModel: 'Flux.2 Klein 9B' },
+    ]);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
+
+  it.each([
+    ['a non-commercial source into the same base model', 'Flux.2 Klein 9B', 'Flux.2 Klein 9B'],
+    ['a commercial source into a non-commercial target', 'SDXL 1.0', 'Flux.2 Klein 9B'],
+  ])('merges %s', async (_, source, target) => {
+    withBaseModels(source, target);
+
+    await expect(merge()).rejects.toThrow(PAST_CHECKS);
+  });
 });
 
 // ---------------------------------------------------------------------------

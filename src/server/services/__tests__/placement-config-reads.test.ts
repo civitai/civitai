@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubscriptionsService from '~/server/services/subscriptions.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -9,9 +10,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  *
  * `placement.service` and `placement-space.service` are real here, which is the
  * point: the suites beside this one replace one or the other, so none of them
- * can see a read that crosses the seam between the two.
+ * can see a read that crosses the seam between the two. The row is read through
+ * Kysely (its rows, against a real database, are pinned in
+ * hot-reads-5.kysely-parity.test.ts).
  */
-const configRead = dbMock.dbRead.keyValue.findUnique;
+const { configRead } = vi.hoisted(() => ({ configRead: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRead,
+}));
 
 // The Kysely placement reads these paths make. Their rows, against a real database, are pinned in
 // placement-reads.kysely-parity.test.ts.
@@ -70,7 +77,7 @@ const target = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  configRead.mockResolvedValue({ value: STORED });
+  configRead.mockResolvedValue({ key: 'placement:config', value: STORED });
   placementReads.getImagePlacementTarget.mockResolvedValue({
     id: HOST_IMAGE,
     userId: OWNER,
@@ -83,7 +90,9 @@ beforeEach(() => {
   placementReads.listPlacementSpacesFor.mockResolvedValue([
     { entityType: 'user', mode: 'review', price: 450, freeSlots: 5, settings: {} },
   ]);
-  placementReads.countPlacements.mockResolvedValue(1);
+  placementReads.countPlacements.mockImplementation(async (_db, where) =>
+    'data' in where ? 0 : 1
+  );
   placementReads.getUserPlacementScore.mockResolvedValue([{ score: 0 }]);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'host-owner' });
   // One row answering every raw read on these paths: the has-entries probe and the host image.
@@ -101,6 +110,7 @@ describe('placement config reads per call', () => {
     expect(space).toEqual({
       ownerId: OWNER,
       ownerUsername: 'host-owner',
+      mediaType: 'image',
       mode: 'review',
       setPrice: 450,
       price: 300,
@@ -179,6 +189,7 @@ describe('placementPriceRange and a supplied config', () => {
     // would answer 900 and 9.
     configRead.mockClear();
     configRead.mockResolvedValue({
+      key: 'placement:config',
       value: {
         priceCapTiers: [{ minScore: 0, caps: { free: 900, bronze: 901, silver: 902, gold: 903 } }],
         freeSlotTiers: [{ minScore: 0, caps: { free: 9, bronze: 9, silver: 9, gold: 9 } }],

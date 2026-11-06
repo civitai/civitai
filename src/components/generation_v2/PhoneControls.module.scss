@@ -39,8 +39,9 @@
 
   // Buttons clip their overflow, so they can't take the invisible tap area icon buttons get; they
   // grow to 44px instead. A pill radius on a short label (Swap) would then turn into a circle, so
-  // they square off and keep enough side padding to stay wider than tall.
-  :global(.mantine-Button-root) {
+  // they square off and keep enough side padding to stay wider than tall. A button already that
+  // tall and meant to be a pill (the Create button) opts out with `data-pill`.
+  :global(.mantine-Button-root):not([data-pill]) {
     min-height: 44px;
     border-radius: var(--mantine-radius-md);
     padding-inline: max(var(--button-padding-x, 0px), 14px);
@@ -69,6 +70,17 @@
   }
 
   :global(.mantine-ActionIcon-root)::after {
+    content: '';
+    position: absolute;
+    inset: min(0px, calc((100% - 44px) / 2));
+  }
+
+  // Small text buttons keep their look and get the same 44px tap area as icon buttons.
+  [data-tap-area] {
+    position: relative;
+  }
+
+  [data-tap-area]::after {
     content: '';
     position: absolute;
     inset: min(0px, calc((100% - 44px) / 2));

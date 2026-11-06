@@ -81,6 +81,7 @@ export const PROMPT_KEYS = [
   'label:minor',
   'label:scam',
   'label:csam',
+  'label:model-com-face-intent',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 

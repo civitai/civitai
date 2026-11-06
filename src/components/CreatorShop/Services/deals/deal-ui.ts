@@ -187,6 +187,16 @@ export const dealStatusLabel: Record<ServiceDealStatus, string> = {
   Disputed: 'In dispute',
 };
 
+/** A deal a moderator settled shows how the dispute ended; its status alone reads as a plain cancel or completion. */
+export function dealStatusBadge(deal: {
+  status: ServiceDealStatus;
+  disputeResolution?: 'Refund' | 'Release' | null;
+}) {
+  if (deal.disputeResolution === 'Refund') return 'Refunded';
+  if (deal.disputeResolution === 'Release') return 'Released';
+  return dealStatusLabel[deal.status];
+}
+
 export const dealActionLabel: Record<DealAction, string> = {
   accept: 'Accept request',
   decline: 'Decline',

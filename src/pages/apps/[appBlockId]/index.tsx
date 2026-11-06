@@ -34,6 +34,7 @@ import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import {
   approvedListingSlugQuery,
+  legacyListingSlugForViewer,
   resolveLegacyAppRoute,
 } from '~/components/Apps/resolveLegacyAppRedirect';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -53,6 +54,9 @@ import {
 import { dbRead } from '~/server/db/client';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { matureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
@@ -164,8 +168,16 @@ export const getServerSideProps = createServerSideProps({
       features,
       storeScope: await resolveStoreVisibilityScope({ user: session?.user }),
       appBlockId: ctx.params?.appBlockId,
+      // The R/X gate (site + the viewer's browsing level), so an app they may not see is not
+      // redirected to — the route 404s instead of disclosing its slug.
       findApprovedListingSlug: async (appBlockId) =>
-        (await dbRead.appListing.findFirst(approvedListingSlugQuery(appBlockId)))?.slug ?? null,
+        legacyListingSlugForViewer(
+          await dbRead.appListing.findFirst(approvedListingSlugQuery(appBlockId)),
+          matureRatingsAllowed(
+            isRedCapableHost(ctx.req.headers.host),
+            getServerBrowsingLevel({ canViewNsfw: !!features?.canViewNsfw, user: session?.user })
+          )
+        ),
     }),
 });
 

@@ -216,9 +216,11 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
       '(apps/auth), so the relationship is pinned behaviourally from both ends rather than ' +
       'asserted here. Falsy sentinel preserved — the bridge omits the header on undefined.',
   },
-  'server/middleware.trpc.ts': {
+  'server/utils/rate-limit-bucket.ts': {
     symbol: 'resolveClientIp',
-    why: 'Rate-limit bucket key across many procedures — a limiter, not the control itself.',
+    why:
+      'Bucket key of the tRPC rateLimit() middleware across many procedures, and of the ' +
+      'usage-limits read — a limiter, not the control itself.',
   },
   'server/utils/public-api-rate-limit.ts': {
     symbol: 'resolveClientIp',
@@ -236,7 +238,10 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
  * edge. Kept as an explicit inverse list: the ledger above says what they DO
  * bind, this says what they must not.
  */
-const MUST_NOT_HOLD_EDGE = ['server/middleware.trpc.ts', 'server/utils/public-api-rate-limit.ts'];
+const MUST_NOT_HOLD_EDGE = [
+  'server/utils/rate-limit-bucket.ts',
+  'server/utils/public-api-rate-limit.ts',
+];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

@@ -371,6 +371,8 @@ export const serverSchema = z
     DISCORD_BOT_TOKEN: z.string().optional(),
     DISCORD_GUILD_ID: z.string().optional(),
     DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
+    // The training canary's Discord channel. Unset: canary results are only logged to Axiom.
+    DISCORD_WEBHOOK_TRAINING_CANARY: z.string().optional(),
     EMAIL_HOST: z.string(),
     EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
     EMAIL_SECURE: zc.booleanString,
@@ -393,6 +395,9 @@ export const serverSchema = z
     S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
     CF_API_TOKEN: z.string().optional(),
     CF_ZONE_ID: z.string().optional(),
+    // The value the edge puts in `x-civ-cf-verified-bot` on a verified crawler's request. Unset or
+    // empty: no request is treated as one (`~/server/bot-cache/bot-cache`).
+    CF_VERIFIED_BOT_HEADER_SECRET: z.string().optional(),
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
@@ -493,6 +498,9 @@ export const serverSchema = z
     // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
     // `src/server/trpc/batch-cap.ts`.
     TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
+    BLUE_PAID_ACCESS_RING_WINDOW_DAYS: z.coerce.number().int().min(1).max(90).catch(7),
+    BLUE_PAID_ACCESS_RING_MIN_BUYERS: z.coerce.number().int().min(2).max(1_000).catch(5),
+    BLUE_PAID_ACCESS_RING_MIN_SHARE_PCT: z.coerce.number().int().min(1).max(100).catch(80),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),

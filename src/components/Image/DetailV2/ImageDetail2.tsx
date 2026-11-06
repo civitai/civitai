@@ -3,16 +3,15 @@ import {
   Anchor,
   Badge,
   Button,
-  Card,
   CloseButton,
   Group,
-  Menu,
   RingProgress,
   ScrollArea,
   Text,
   useMantineTheme,
   rgba,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import {
@@ -27,7 +26,6 @@ import {
   IconDownload,
   IconFlag,
   IconInfoCircle,
-  IconLayoutList,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
@@ -35,6 +33,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef } from 'react';
 import {
+  StorylineChapterDescription,
   StorylineStageOverlay,
   StorylineToolbarChip,
 } from '~/components/Storyline/StorylineDetail';
@@ -57,11 +56,9 @@ import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelP
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
-import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -74,6 +71,7 @@ import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailCommen
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
+import { ImageDetailPostCard } from '~/components/Image/DetailV2/ImageDetailPostCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
@@ -87,6 +85,15 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailProvider,
+  HatTurfDetailReset,
+  takesHats,
+} from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
@@ -97,7 +104,6 @@ import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -142,6 +148,15 @@ const sharedIconProps: IconProps = {
 };
 
 export function ImageDetail2() {
+  const { images } = useImageDetailContext();
+  return (
+    <HatTurfDetailProvider images={images}>
+      <ImageDetail2Content />
+    </HatTurfDetailProvider>
+  );
+}
+
+function ImageDetail2Content() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
@@ -310,6 +325,13 @@ export function ImageDetail2() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
+      {/* On a phone the badge is in the top toolbar and the hat button is here, by Save and Tip. */}
+      {withStoryline && !narrowStage && takesHats(image) && (
+        <HatTurfDetailBadge imageId={image.id} />
+      )}
+      {!withStoryline && narrowStage && takesHats(image) && (
+        <HatTurfDetailControls imageId={image.id} large />
+      )}
     </>
   );
 
@@ -342,11 +364,12 @@ export function ImageDetail2() {
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
+      <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[60px]">
+              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
@@ -372,6 +395,9 @@ export function ImageDetail2() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-1">
+                            {narrowStage && takesHats(image) && (
+                              <HatTurfDetailBadge imageId={image.id} />
+                            )}
                             <ImageGuard2.BlurToggle
                               {...sharedBadgeProps}
                               className={clsx('@md:hidden', sharedBadgeProps.className)}
@@ -488,6 +514,7 @@ export function ImageDetail2() {
                       </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
+                        <StorylineChapterDescription imageId={image?.id} />
                         <div className="flex justify-center">
                           <ReactionSettingsProvider
                             settings={{
@@ -522,6 +549,11 @@ export function ImageDetail2() {
                               imageNsfwLevel={image.nsfwLevel}
                               className="ml-2"
                             />
+                            {!narrowStage && takesHats(image) && (
+                              <div className="ml-2">
+                                <HatTurfDetailControls imageId={image.id} />
+                              </div>
+                            )}
                           </ReactionSettingsProvider>
                         </div>
                         {storyline.active ? (
@@ -563,6 +595,7 @@ export function ImageDetail2() {
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
+                data-testid="image-detail-sheet"
               >
                 {/* The padding is on the `!active` branch only. Expanded, this row
                     is at the TOP of the panel and the inset below it would be a
@@ -574,7 +607,11 @@ export function ImageDetail2() {
                   }`}
                 >
                   <div className="flex gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                  <LegacyActionIcon
+                    {...sharedActionIconProps}
+                    onClick={toggleInfo}
+                    data-testid="image-detail-chevron"
+                  >
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>
                 </div>
@@ -660,9 +697,7 @@ export function ImageDetail2() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {isAppealableImage(image) && isOwner && (
-                      <OwnerBlockedImageNotice imageId={image.id} />
-                    )}
+                    {isOwner && <OwnerBlockedImageNotice image={image} />}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>
@@ -684,19 +719,7 @@ export function ImageDetail2() {
                       nsfwLevel={image.nsfwLevel}
                       mediaType={image.type}
                     />
-                    {post && (post.title || post.detail) && (
-                      <Card className="flex flex-col gap-3 rounded-xl">
-                        <Text className="flex items-center gap-2 text-xl font-semibold">
-                          <IconLayoutList />
-                          <span>{post.title}</span>
-                        </Text>
-                        {post.detail && (
-                          <ContentClamp maxHeight={75}>
-                            <RenderHtml html={post.detail} />
-                          </ContentClamp>
-                        )}
-                      </Card>
-                    )}
+                    <ImageDetailPostCard post={post} />
                     <ImageProcess imageId={image.id} />
                     <ImageRemixOfDetails imageId={image.id} />
                     <RemixGalleryCard imageId={image.id} />

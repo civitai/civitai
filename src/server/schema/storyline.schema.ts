@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import {
+  StorylineFollowScope,
+  StorylineStatus,
+  StorylineWhoCanContinue,
+} from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
 import { imageInputSchema } from '~/server/schema/image.schema';
 import {
@@ -28,6 +32,8 @@ const picksSchema = {
 export const createStorylineSchema = z.object({
   /** Chapter 1, when the storyline starts from a post already published. Omitted, it starts empty. */
   postId: z.number().int().positive().optional(),
+  /** Someone's image the storyline starts from, credited above chapter 1. Not a chapter. */
+  sparkImageId: z.number().int().positive().optional(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
@@ -150,9 +156,17 @@ export const joinStorylineEarlyAccessSchema = z
   .object({ storylineId: z.number().int().positive().optional() })
   .default({});
 
+export const followStorylineSchema = z.object({
+  storylineId: z.number().int().positive(),
+  scope: z.nativeEnum(StorylineFollowScope).default(StorylineFollowScope.Canon),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine']).default('all'),
-  sort: z.enum(['newest', 'mostChapters']).default('newest'),
+  filter: z
+    .enum(['all', 'ongoing', 'complete', 'open', 'mine', 'participated', 'following'])
+    .default('all'),
+  sort: z.enum(['newest', 'mostChapters', 'recentlyUpdated']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),
   browsingLevel: z.number().int().min(0).optional(),

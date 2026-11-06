@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'vitest';
 import {
   APPS_STORE_DEFAULTS,
+  APPS_STORE_QUERY_KEYS,
   appsStoreCategoryHref,
   appsStoreFiltersToQuery,
   countActiveAppsStoreFilters,
   hasActiveAppsStoreFilters,
+  hasAppsStoreQueryParams,
   parseAppsStoreFilters,
   resolveAppsStoreFilters,
 } from '~/components/Apps/appsStoreQueryParams';
@@ -169,9 +171,12 @@ describe('hasActiveAppsStoreFilters — the empty state, DELIBERATELY broader', 
 });
 
 describe('appsStoreCategoryHref — the store filtered to one category', () => {
-  test('a known category → exactly `/apps?category=<value>` (literals, not re-derived)', () => {
-    expect(appsStoreCategoryHref('utility')).toBe('/apps?category=utility');
-    expect(appsStoreCategoryHref('games')).toBe('/apps?category=games');
+  test('a known category → exactly `/apps/store?category=<value>` (literals, not re-derived)', () => {
+    // 🔴 REGRESSION: the store moved from `/apps` to `/apps/store` (`/apps` is now the
+    // viewer's app home). At the pre-move code this returned `/apps?category=utility`,
+    // which lands a signed-in viewer on their launcher via a redirect hop.
+    expect(appsStoreCategoryHref('utility')).toBe('/apps/store?category=utility');
+    expect(appsStoreCategoryHref('games')).toBe('/apps/store?category=games');
   });
 
   test('the link READS BACK as that one filter and nothing else', () => {
@@ -191,5 +196,24 @@ describe('appsStoreCategoryHref — the store filtered to one category', () => {
     expect(appsStoreCategoryHref('')).toBeNull();
     expect(appsStoreCategoryHref(null)).toBeNull();
     expect(appsStoreCategoryHref(undefined)).toBeNull();
+  });
+});
+
+describe('hasAppsStoreQueryParams — recognising an old store link on /apps', () => {
+  test('the keys are exactly the four the store reads', () => {
+    expect([...APPS_STORE_QUERY_KEYS].sort()).toEqual(['category', 'kind', 'query', 'sort']);
+  });
+
+  test('any one store key, valid or not, counts', () => {
+    expect(hasAppsStoreQueryParams({ kind: 'onsite' })).toBe(true);
+    expect(hasAppsStoreQueryParams({ category: 'hats' })).toBe(true);
+    expect(hasAppsStoreQueryParams({ sort: ['a', 'b'] })).toBe(true);
+    expect(hasAppsStoreQueryParams({ query: '' })).toBe(true);
+  });
+
+  test('no store key → false, whatever else is on the URL', () => {
+    expect(hasAppsStoreQueryParams({})).toBe(false);
+    expect(hasAppsStoreQueryParams({ utm_source: 'mail', ref: 'x' })).toBe(false);
+    expect(hasAppsStoreQueryParams({ category: undefined })).toBe(false);
   });
 });

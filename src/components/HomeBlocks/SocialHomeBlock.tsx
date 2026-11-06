@@ -1,4 +1,5 @@
-import { Box, Group, Popover, Stack, Text, Title } from '@mantine/core';
+import { Box, Group, Stack, Text, Title } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, useRef } from 'react';

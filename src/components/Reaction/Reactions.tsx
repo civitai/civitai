@@ -1,5 +1,6 @@
 import type { ButtonProps, GroupProps } from '@mantine/core';
-import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useSessionStorage } from '@mantine/hooks';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {

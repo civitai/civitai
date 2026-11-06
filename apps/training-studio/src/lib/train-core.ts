@@ -45,6 +45,7 @@ import {
   ecosystemTakesSampleImages,
   ecosystemTrainsPairs,
   isRetiredBaseAir,
+  isRetiredEcosystem,
 } from '$lib/data/trainingModels';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 import { slugify } from '$lib/slug';
@@ -107,7 +108,7 @@ export interface TrainingRunInput {
    *  by `resolveCurrencies` — never trusted from the wire. */
   currencies?: string[];
   /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
-   *  charged from Blue + Yellow. */
+   *  charged in Yellow (after Blue when `currencies` spends Blue). */
   matureAck?: boolean;
   meta: TrainingStudioMeta;
 }
@@ -126,8 +127,11 @@ export interface SubmitOptions {
 const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
 const runCurrencies = (input?: string[]) => resolveCurrencies(input, CURRENCIES);
 
-// Members may pay for mature content in Blue; the orchestrator drops it for everyone else.
-const MATURE_CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
+/** The accounts that may pay for mature content: Yellow, after Blue only if the user's order spends Blue
+ *  (members may pay for mature content in Blue; the orchestrator drops it for everyone else). Never Green. */
+function matureCurrencies(currencies: string[] | undefined): BuzzClientAccount[] {
+  return runCurrencies(currencies).includes('blue') ? ['blue', 'yellow'] : ['yellow'];
+}
 
 /** How a submit is charged. Always `manual`, so viewing a run never changes what it was charged; a run the
  *  user confirmed as mature unlocks at submit instead, and is charged once, in the accounts that may pay
@@ -137,7 +141,7 @@ function chargeFields(currencies: string[] | undefined, matureUnlock: boolean) {
     ? {
         upgradeMode: 'manual' as const,
         allowMatureContent: true,
-        currencies: [...MATURE_CURRENCIES],
+        currencies: matureCurrencies(currencies),
       }
     : { upgradeMode: 'manual' as const, currencies: runCurrencies(currencies) };
 }
@@ -423,6 +427,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   // A restored selection or sweep row can still name a retired card's base.
   if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
     fail(`${field}.model`, 'is no longer offered for training.');
+  if (isRetiredEcosystem(run.ecosystem))
+    fail(`${field}.ecosystem`, 'is no longer offered for training.');
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
 }
@@ -672,6 +678,8 @@ async function buildContinuation(
   const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
+  if (isRetiredEcosystem(ecosystem))
+    throw new Error('keep training: this model is no longer offered for training');
   const continueFrom = continueFromAir(ecosystem, modelKey);
 
   const origEpochs = Number(input.epochs) || 10;

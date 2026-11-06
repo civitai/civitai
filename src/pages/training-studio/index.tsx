@@ -1,6 +1,5 @@
 import type { FC, Ref } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ParsedUrlQuery } from 'querystring';
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { env } from '~/env/client';
@@ -49,12 +48,6 @@ const hrefFor = (loc: StudioLocation) =>
     : loc.view === 'new'
     ? '/training-studio?view=new'
     : `/training-studio?run=${encodeURIComponent(loc.workflowId)}`;
-
-const locationFromQuery = (query: ParsedUrlQuery): StudioLocation => {
-  if (typeof query.run === 'string' && query.run) return { view: 'run', workflowId: query.run };
-  if (query.view === 'new') return { view: 'new' };
-  return { view: 'home' };
-};
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -323,7 +316,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       : `/user/${currentUser.username}/models?section=training`;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+    <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
       <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>

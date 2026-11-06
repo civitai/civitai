@@ -234,6 +234,7 @@
   }
   // A Custom run needs a valid pasted AIR before it can continue.
   const customIncomplete = $derived(runs.some((r) => isCustom(r) && !isValidAir(r.customAir ?? '')));
+  const continueToData = () => onContinue({ media, loraType, runs, userPickedModel });
 
   // The host's model picker (the embed's resource-select modal); absent standalone — the paste
   // input then stands alone. Resolved at use time, like every other capability accessor.
@@ -300,6 +301,14 @@
   }
 </script>
 
+{#snippet customIncompleteNote()}
+  {#if customIncomplete}
+    <p class="mb-0 mt-1.5 text-center font-mono text-xs text-buzz">
+      Paste a Civitai model AIR for the custom base to continue.
+    </p>
+  {/if}
+{/snippet}
+
 <!-- A "from" price with a bolt, or a muted em-dash when there's no quote — used by the run summaries. -->
 {#snippet priceTag(amount: number | null, size: string)}
   {#if amount != null}
@@ -309,6 +318,23 @@
   {:else}
     <span class="whitespace-nowrap font-mono {size} text-dark-2">—</span>
   {/if}
+{/snippet}
+
+<!-- The "Starting at" total, shared by the summary aside and the mobile sticky bar. -->
+{#snippet totalTag(size: string, iconSize: number)}
+  {#if total != null}
+    <span class="whitespace-nowrap font-mono {size} font-bold text-buzz"
+      ><IconBoltFilled size={iconSize} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}</span
+    >
+  {:else}
+    <span class="font-mono {size} font-bold text-dark-2">—</span>
+  {/if}
+{/snippet}
+
+{#snippet continueButton(placement: string)}
+  <Button class="h-11 {placement}" disabled={customIncomplete} onclick={continueToData}>
+    Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
+  </Button>
 {/snippet}
 
 <!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
@@ -378,7 +404,7 @@
          that would under-sell them. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div id="media-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
+        <div id="media-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Media
         </div>
         <div
@@ -417,7 +443,7 @@
         </p>
       {:else}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div id="type-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
+        <div id="type-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Type
         </div>
         <div
@@ -569,7 +595,7 @@
         <button
           type="button"
           onclick={() => (showAllModels = !showAllModels)}
-          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 py-2 font-mono text-xs text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
+          class="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-dark-4 px-3 py-2 font-mono text-xs text-dark-2 transition-colors hover:border-dark-3 hover:text-dark-1"
         >
           {#if modelsExpanded}
             <IconMinus size={12} stroke={2} />Show fewer models
@@ -577,10 +603,12 @@
             <IconPlus size={12} stroke={2} />Show {otherCards.length} more model{otherCards.length ===
             1
               ? ''
-              : 's'} ({otherCards
-              .slice(0, 3)
-              .map((c) => c.name)
-              .join(', ')}…)
+              : 's'}<span class="hidden sm:inline">
+              ({otherCards
+                .slice(0, 3)
+                .map((c) => c.name)
+                .join(', ')}…)</span
+            >
           {/if}
         </button>
       {/if}
@@ -644,9 +672,9 @@
         <button
           type="button"
           onclick={openSweep}
-          class="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition hover:bg-dark-6"
+          class="flex w-full flex-col items-start gap-0.5 px-3.5 py-2.5 text-left transition hover:bg-dark-6 sm:flex-row sm:items-center sm:justify-between sm:gap-2"
         >
-          <span class="inline-flex items-center gap-1 text-sm font-semibold text-dark-1">
+          <span class="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold text-dark-1">
             <IconPlus size={14} stroke={2} />Train an additional model
           </span>
           <span class="font-mono text-xs text-dark-2">same dataset · another model or settings</span>
@@ -771,49 +799,49 @@
     </div>
     <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm font-semibold text-white">Starting at</span>
-      {#if total != null}
-        <span class="font-mono text-2xl font-bold text-buzz">
-          <IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}
-        </span>
-      {:else}
-        <span class="font-mono text-2xl font-bold text-dark-2">—</span>
-      {/if}
+      {@render totalTag('text-2xl', 20)}
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
       price depends on data and settings
     </div>
-    <Button
-      class="mt-4 h-11 w-full"
-      disabled={customIncomplete}
-      onclick={() => onContinue({ media, loraType, runs, userPickedModel })}
-    >
-      Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
-    </Button>
-    {#if customIncomplete}
-      <p class="mt-1.5 text-center font-mono text-xs text-buzz">
-        Paste a Civitai model AIR for the custom base to continue.
-      </p>
-    {/if}
+    <!-- Below lg the summary sits under the whole form, so the action lives in the sticky bar instead. -->
+    <div class="hidden lg:block">
+      {@render continueButton('mt-4 w-full')}
+      {@render customIncompleteNote()}
+    </div>
     {#snippet footer()}
-    <p
-      class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="var(--color-buzz)"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        class="h-3 w-3 shrink-0"
-        aria-hidden="true"
+      <p
+        class="mt-3 flex items-center justify-center gap-1.5 whitespace-nowrap font-mono text-xs text-dark-2"
       >
-        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-        <path d="M12 9v4" />
-        <path d="M12 17h.01" />
-      </svg>
-      Nothing is saved until you start training
-    </p>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--color-buzz)"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="h-3 w-3 shrink-0"
+          aria-hidden="true"
+        >
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </svg>
+        Nothing is saved until you start training
+      </p>
     {/snippet}
   </StickySummary>
+
+  <div
+    class="sticky bottom-3 z-20 rounded-xl border border-dark-4 bg-dark-6 p-3 shadow-lg lg:hidden"
+  >
+    <div class="flex items-center gap-3">
+      <div class="min-w-0 flex-1 leading-tight">
+        <div class="font-mono text-xs text-dark-2">Starting at</div>
+        {@render totalTag('text-lg', 16)}
+      </div>
+      {@render continueButton('shrink-0')}
+    </div>
+    {@render customIncompleteNote()}
+  </div>
 </div>

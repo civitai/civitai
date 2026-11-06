@@ -1,4 +1,5 @@
-import { Box, Button, Container, Drawer, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Box, Button, Container, Drawer, Group, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
@@ -241,7 +242,13 @@ export function AppsPageLayout({
    */
   const bounded = (node: ReactNode) =>
     measure != null ? (
-      <Box maw={appsMeasureCss(measure)} mx={align === 'center' ? 'auto' : undefined}>
+      // Auto margins make a flex item shrink-wrap to its content, which on a phone is wider than
+      // the column and pushes the page past the screen; `w="100%"` keeps it to the column.
+      <Box
+        maw={appsMeasureCss(measure)}
+        mx={align === 'center' ? 'auto' : undefined}
+        w={align === 'center' ? '100%' : undefined}
+      >
         {node}
       </Box>
     ) : (

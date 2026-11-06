@@ -167,10 +167,43 @@ async function main() {
       console.error(`Connected to ${dbType} (timeout: ${timeoutSeconds}s)\n`);
     }
 
+    // READ-ONLY BY CONSTRUCTION. Every run without --writable runs in a READ ONLY transaction, so the
+    // SERVER refuses a write, whatever the SQL is and whatever server it lands on (this copy falls
+    // back to DATABASE_URL when no replica URL is set, and after a failover a read pooler can hold
+    // connections to the new primary). Three parts, each needed:
+    //   1. BEGIN READ ONLY, and the query below runs inside it.
+    //   2. A SELECT pins the snapshot. After it, Postgres refuses to turn transaction_read_only off
+    //      ("transaction read-write mode must be set before any query"), even from inside a function.
+    //   3. The user's SQL goes out as ONE statement on the extended protocol, so it cannot COMMIT the
+    //      read-only transaction and then run a second statement outside it. Several statements fail
+    //      with "cannot insert multiple commands into a prepared statement".
+    // The transaction is rolled back, never committed.
+    // Part 3 needs a pg that honours `queryMode: 'extended'`. An older pg (8.11.3 was measured) ignores
+    // the option and sends the simple protocol, where `COMMIT; INSERT ...` ends the read-only
+    // transaction and the INSERT lands. Refuse rather than run unprotected.
+    const readOnlyRun = !writable;
+    if (readOnlyRun && !new pg.Query({ text: 'SELECT 1', queryMode: 'extended' }).requiresPreparation()) {
+      console.error('Error: the installed pg package cannot send a single extended-protocol statement, so a read cannot be kept read-only. Upgrade pg.');
+      await client.end();
+      process.exit(1);
+    }
+    if (readOnlyRun) {
+      await client.query('BEGIN READ ONLY');
+      const { rows } = await client.query("SELECT current_setting('transaction_read_only') AS ro");
+      if (rows[0]?.ro !== 'on') {
+        console.error(`Error: could not open a read-only transaction (transaction_read_only=${rows[0]?.ro}).`);
+        await client.end();
+        process.exit(1);
+      }
+    }
+
     const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
     const start = Date.now();
-    const result = await client.query(finalQuery);
+    const result = await client.query(
+      readOnlyRun ? { text: finalQuery, queryMode: 'extended' } : finalQuery
+    );
     const elapsed = Date.now() - start;
+    if (readOnlyRun) await client.query('ROLLBACK');
 
     if (jsonOutput) {
       console.log(JSON.stringify({
@@ -207,6 +240,8 @@ async function main() {
     if (err.message.includes('timeout') || err.message.includes('canceling statement')) {
       console.error(`Error: Query timed out after ${timeoutSeconds} seconds`);
       console.error('Use --timeout <seconds> to increase the limit if needed.');
+    } else if (err.message.includes('multiple commands into a prepared statement')) {
+      console.error('Error: a read runs ONE statement (it stays inside a read-only transaction). Run each statement on its own.');
     } else {
       console.error('Query error:', err.message);
     }

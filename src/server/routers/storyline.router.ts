@@ -1,7 +1,9 @@
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   addOwnerChapterSchema,
   createStorylineSchema,
   getStorylinesInfiniteSchema,
+  followStorylineSchema,
   insertStorylineChapterSchema,
   joinStorylineEarlyAccessSchema,
   leaveStorylineSchema,
@@ -55,6 +57,9 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  followStoryline,
+  getStorylineFollow,
+  unfollowStoryline,
   setCanonChapter,
   setFirstChapter,
   setStorylineTakedown,
@@ -211,6 +216,25 @@ export const storylineRouter = router({
       removePendingChapter({ postId: input.postId, userId: ctx.user.id })
     ),
 
+  getFollow: storylineMemberProcedure
+    .input(storylineIdSchema)
+    .query(({ input, ctx }) => getStorylineFollow({ storylineId: input.id, userId: ctx.user.id })),
+
+  follow: storylineMemberProcedure.input(followStorylineSchema).mutation(({ input, ctx }) =>
+    followStoryline({
+      storylineId: input.storylineId,
+      scope: input.scope,
+      viewer: ctx.user,
+      browsingLevel: storylineReaderLevel(ctx, input.browsingLevel),
+    })
+  ),
+
+  unfollow: storylineMemberProcedure
+    .input(storylineIdSchema)
+    .mutation(({ input, ctx }) =>
+      unfollowStoryline({ storylineId: input.id, userId: ctx.user.id })
+    ),
+
   getEarlyAccessStatus: storylineMemberProcedure.query(({ ctx }) =>
     getStorylineEarlyAccessStatus(ctx.user.id)
   ),
@@ -225,11 +249,12 @@ export const storylineRouter = router({
     .input(setStorylineTakedownSchema)
     .mutation(({ input }) => setStorylineTakedown(input)),
 
-  create: storylineWriteProcedure
-    .input(createStorylineSchema)
-    .mutation(({ input, ctx }) =>
-      createStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+  create: storylineWriteProcedure.input(createStorylineSchema).mutation(({ input, ctx }) => {
+    // A creator turns sparks off through their remix gallery, which only this flag shows them.
+    if (input.sparkImageId && !ctx.features.remixGallery)
+      throw throwAuthorizationError('Starting a story from an image is not available yet');
+    return createStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  }),
 
   update: storylineWriteProcedure
     .input(updateStorylineSchema)

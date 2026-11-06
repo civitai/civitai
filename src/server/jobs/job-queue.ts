@@ -13,7 +13,6 @@ import {
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -301,8 +300,7 @@ const handleJobQueueCleanIfEmpty = createJob(
               )
               AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
               AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
-          ),
-          ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
+          )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       });

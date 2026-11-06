@@ -143,6 +143,7 @@ async function keyFor(opts: {
   redCapable?: boolean;
   floor?: ListingAudienceFloor;
   includeSubListings?: boolean;
+  viewerBrowsingLevel?: number | null;
 }) {
   await listAvailableListings({ ...BASE_INPUT }, opts);
   return deriveKey(lastCall().sql);
@@ -172,6 +173,7 @@ async function prefixFor(opts: {
   redCapable?: boolean;
   floor?: ListingAudienceFloor;
   includeSubListings?: boolean;
+  viewerBrowsingLevel?: number | null;
 }) {
   return keyPrefix(await keyFor(opts));
 }
@@ -510,5 +512,49 @@ describe('/apps catalog cache — the key separates viewers', () => {
         'Prisma.Sql. This suite derives keys that way, so it is now measuring itself. ' +
         'Re-derive `deriveKey` against the new formula before trusting any result here.'
     ).toContain("[key, version, hashifyObject(query).toString()].filter(isDefined).join(':')");
+  });
+});
+
+describe("/apps catalog cache — the viewer's browsing level", () => {
+  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16, Blocked=32.
+  const red = { scope: 'full', redCapable: true } as const;
+
+  /**
+   * 🔴 Whether R and X are allowed decides which ROWS the cached statement returns, so two
+   * viewers who differ there must never share an entry — and, like `scope` and `redCapable`,
+   * they must be separated in the LITERAL key, not only inside the 32-bit statement hash.
+   */
+  it('🔴 R allowed vs not, and X allowed vs not, never share an entry (hash-independent prefix)', async () => {
+    const pgOnly = await prefixFor({ ...red, viewerBrowsingLevel: 1 });
+    const withR = await prefixFor({ ...red, viewerBrowsingLevel: 7 });
+    const withRX = await prefixFor({ ...red, viewerBrowsingLevel: 13 });
+    const withX = await prefixFor({ ...red, viewerBrowsingLevel: 10 });
+    expect(new Set([pgOnly, withR, withRX, withX]).size).toBe(4);
+  });
+
+  it('levels that differ only in PG / PG-13 / XXX / Blocked share one entry', async () => {
+    const pgOnly = await keyFor({ ...red, viewerBrowsingLevel: 1 });
+    for (const level of [undefined, null, 0, 2, 3, 16, 1 | 32]) {
+      expect(await keyFor({ ...red, viewerBrowsingLevel: level }), `level ${level}`).toBe(pgOnly);
+    }
+    const withR = await keyFor({ ...red, viewerBrowsingLevel: 7 });
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 4 })).toBe(withR);
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 5 | 16 })).toBe(withR);
+  });
+
+  it('off a red-capable host the level changes nothing: every level shares one entry', async () => {
+    const sfw = { scope: 'full', redCapable: false } as const;
+    const base = await keyFor({ ...sfw, viewerBrowsingLevel: 1 });
+    for (const level of [undefined, 7, 13, 31]) {
+      expect(await keyFor({ ...sfw, viewerBrowsingLevel: level }), `level ${level}`).toBe(base);
+    }
+  });
+
+  it('the level adds at most four key prefixes (R allowed × X allowed), whatever is sent', async () => {
+    const prefixes = new Set<string>();
+    for (const viewerBrowsingLevel of [...Array(64).keys(), 1 << 20, 2 ** 31 - 1]) {
+      prefixes.add(await prefixFor({ ...red, viewerBrowsingLevel }));
+    }
+    expect(prefixes.size).toBe(4);
   });
 });

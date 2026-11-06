@@ -36,13 +36,14 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`, `label-store`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
   `convention-guards.md` (every guard and what it enforces).
 - **`docs/features/`** — check before implementing a feature (index: `docs/features/README.md`).
-- **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`, etc.
+- **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`,
+  `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
 
 ## Commands
 - **Dev servers: always the `dev-server` skill**, never `pnpm run dev` directly. `start --app moderator|creator-studio`
@@ -57,6 +58,7 @@ where it loads on demand:
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
   `prettier --write`, and never `prettier --plugin=prettier-plugin-svelte` (it empties `.svelte` files).
+- **CI runs on CI:** never run the whole workspace locally (all `scripts/ci/*.mjs`, `turbo`, recursive `pnpm`); see `docs/dev/local-ci.md`.
 - **Releases** (`pnpm run release[:minor|:major]`) need explicit user approval — they bump, tag and push.
 
 ## Tests
@@ -88,7 +90,8 @@ Commands, generation and migration details: `.claude/rules/database.md`.
   `pnpm run db:generate`. Every other `schema.prisma` is generated or introspected.
 - **Migrations are applied by hand. Never suggest `prisma migrate deploy`, `migrate resolve` or any
   auto-apply path.** Write the SQL under `packages/civitai-db-schema/prisma/migrations/`, commit it, and
-  tell the user it needs applying manually (preview / staging / prod).
+  tell the user it needs applying manually to each writable environment, with the dry run and the
+  post-apply scoped drift check from "Migration details" in `.claude/rules/database.md`.
 - Adding an enum value: deploy the regenerated client **before** the migration and any backfill.
 
 ## Security — this repository is public
@@ -122,10 +125,11 @@ anything committed counts as disclosed and must be fixed and rotated.
    suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Want it on every PR? Always add it: `gh pr create ... --label full-ci` or
    `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
-5. Before merging, check the PR's CI — `main` has no required checks, so a red run doesn't block.
-6. Run `comment-review` over the diff and `docs-drift-review` over the commits — the two lanes with no
-   automated gate. Required when you moved a file, renamed a script or command, retired an env var, or
-   completed a tracked item.
+5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
+   required checks, so a red run doesn't block.
+6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, the lanes with no
+   automated gate. Required when you moved a file, renamed a script or command, retired an env var,
+   completed a tracked item, or a pushback has turned up an overstatement.
 
 **Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the
 version-bump commit a release script (`release[:minor|:major]`, `release:<app>`) pushes, run only with

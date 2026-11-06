@@ -8,29 +8,44 @@ import {
   useState,
 } from 'react';
 import { useHatTurfFeed } from '~/components/HatTurf/useHatTurfFeed';
+import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
+import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `turfSummariesSchema`. */
 const SUMMARY_CHUNK = 100;
-/** Hats read per image. */
-const STICKERS_PER_IMAGE = 5;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
-const STICKER_REFRESH_DEBOUNCE_MS = 800;
+// Cards mount a few at a time while scrolling; their marks go out together.
+const WATCH_COALESCE_MS = 250;
+// Only for a push that carries no stickers (an older server): every viewer of a hot image reads, so
+// each reads at most this often per image, spread so they do not arrive together.
+const STICKER_REREAD_MIN_MS = 10_000;
+const STICKER_REREAD_JITTER_MS = 750;
 
 export type TurfSummaries = {
   event: string;
+  /** The viewer's `hatTurfFeedCard` arm; null on a surface outside that experiment (image detail). */
+  arm: HatTurfFeedArm | null;
   /** The viewer's team, or null (signed out, or not in the event). */
   team: string | null;
+  /**
+   * The viewer opted in to Hat Turf. Only a joined viewer sees turf: hats, counts and pushes. Anyone
+   * else gets the join invite and nothing drawn.
+   */
+  joined: boolean;
   images: Record<number, TurfSummary>;
-  /** Per requested image: published, visible and its owner opted in, so it can take a hat now. */
+  /** Per requested image: published and visible, so it can take a hat now. */
   open: Record<number, boolean>;
+  /** Contest entries: no Hat Turf on them at all. */
+  hidden?: Record<number, boolean>;
   stickers: Record<number, HatSticker[]>;
   /** A card on screen says so: its count changes are pushed. Returns the way to stop. */
   watch: (imageId: number) => () => void;
@@ -47,14 +62,26 @@ export const TurfSummaryContext = createContext<TurfSummaries | null>(null);
  */
 export function TurfSummaryProvider({
   imageIds,
+  gate: gateOverride,
   children,
 }: {
   imageIds: number[];
+  /** Another surface's own gate (image detail has its own flag); omitted, the feed gate decides. */
+  gate?: { event: string } | null;
   children: React.ReactNode;
 }) {
-  const gate = useHatTurfFeed();
+  const feedGate = useHatTurfFeed();
+  const gate = gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
+  const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
+  const user = useCurrentUser();
+  // The same query as useHatStock, so the two share one cache entry.
+  const { data: stock } = trpc.hatTurf.getStock.useQuery(
+    { event: event ?? '' },
+    { enabled: !!event && !!user, staleTime: 30_000 }
+  );
+  const joined = !!user && stock?.optedIn === true;
 
   const chunks = useMemo(
     () => (event ? chunkIds(imageIds, SUMMARY_CHUNK) : []),
@@ -68,9 +95,9 @@ export function TurfSummaryProvider({
     )
   );
   const stickerQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
+    (joined ? chunks : []).map((chunk) =>
       t.hatTurf.getStickersForImages(
-        { event: event ?? '', imageIds: chunk, perImage: STICKERS_PER_IMAGE },
+        { event: event ?? '', imageIds: chunk, perImage: TURF_FEED_STICKERS },
         { staleTime: 30_000 }
       )
     )
@@ -93,13 +120,15 @@ export function TurfSummaryProvider({
     let team: string | null = null;
     const images: Record<number, TurfSummary> = {};
     const open: Record<number, boolean> = {};
+    const hidden: Record<number, boolean> = {};
     for (const query of summaryQueries) {
       if (!query.data) continue;
       team = query.data.team ?? team;
       Object.assign(images, query.data.images);
       Object.assign(open, query.data.open);
+      Object.assign(hidden, query.data.hidden);
     }
-    return { team, images, open };
+    return { team, images, open, hidden };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summaryStamp]);
 
@@ -111,22 +140,31 @@ export function TurfSummaryProvider({
   }, [stickerStamp]);
 
   const refreshTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const lastReread = useRef(new Map<number, number>());
   const refresh = useCallback(
     (imageId: number) => {
-      if (!event) return;
-      clearTimeout(refreshTimers.current.get(imageId));
+      if (!event || refreshTimers.current.has(imageId)) return;
+      const wait = Math.max(
+        0,
+        (lastReread.current.get(imageId) ?? -Infinity) + STICKER_REREAD_MIN_MS - Date.now()
+      );
       refreshTimers.current.set(
         imageId,
         setTimeout(async () => {
+          refreshTimers.current.delete(imageId);
+          const started = Date.now();
+          lastReread.current.set(imageId, started);
           const read = await utils.hatTurf.getStickersForImages
-            .fetch({ event, imageIds: [imageId], perImage: STICKERS_PER_IMAGE })
+            .fetch({ event, imageIds: [imageId], perImage: TURF_FEED_STICKERS })
             .catch(() => null);
           if (read)
-            setReread((current) => ({
-              ...current,
-              [imageId]: { at: Date.now(), stickers: read[imageId] ?? [] },
-            }));
-        }, STICKER_REFRESH_DEBOUNCE_MS)
+            setReread((current) =>
+              // A push that landed while this was in flight is newer than it.
+              (current[imageId]?.at ?? 0) > started
+                ? current
+                : { ...current, [imageId]: { at: Date.now(), stickers: read[imageId] ?? [] } }
+            );
+        }, wait + Math.random() * STICKER_REREAD_JITTER_MS)
       );
     },
     [event, utils]
@@ -140,8 +178,14 @@ export function TurfSummaryProvider({
     (raw: unknown) => {
       const push = event ? readTurfPush(raw, event) : null;
       if (!push) return;
-      setPushed((current) => ({ ...current, [push.imageId]: { ...push, at: Date.now() } }));
-      refresh(push.imageId);
+      const at = Date.now();
+      const { imageId, stickers } = push;
+      setPushed((current) => ({ ...current, [imageId]: { ...push, at } }));
+      if (stickers === undefined) return refresh(imageId);
+      if (stickers === null) return;
+      clearTimeout(refreshTimers.current.get(imageId));
+      refreshTimers.current.delete(imageId);
+      setReread((current) => ({ ...current, [imageId]: { at, stickers } }));
     },
     [event, refresh]
   );
@@ -165,18 +209,41 @@ export function TurfSummaryProvider({
       queries[chunkOf.get(imageId) ?? -1]?.dataUpdatedAt ?? 0;
     let images = base.images;
     for (const push of Object.values(pushed))
-      if (push.at > stampOf(summaryQueries, push.imageId))
+      if (!base.hidden[push.imageId] && push.at > stampOf(summaryQueries, push.imageId))
         images = applyTurfPush(images, push.imageId, push.counts);
     const stickers = { ...baseStickers };
     for (const [id, read] of Object.entries(reread))
       if (read.at > stampOf(stickerQueries, Number(id))) stickers[Number(id)] = read.stickers;
-    return { event, team: base.team, images, open: base.open, stickers, watch };
+    for (const id of Object.keys(base.hidden)) delete stickers[Number(id)];
+    return {
+      event,
+      arm,
+      team: base.team,
+      joined,
+      images: joined ? images : {},
+      open: base.open,
+      hidden: base.hidden,
+      stickers: joined ? stickers : {},
+      watch,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event, base, pushed, baseStickers, reread, watch, summaryStamp, stickerStamp, chunkOf]);
+  }, [
+    event,
+    arm,
+    joined,
+    base,
+    pushed,
+    baseStickers,
+    reread,
+    watch,
+    summaryStamp,
+    stickerStamp,
+    chunkOf,
+  ]);
 
   return (
     <TurfSummaryContext.Provider value={value}>
-      {event && (
+      {event && joined && (
         <>
           <TurfPushes onPush={onPush} />
           <TurfWatcher event={event} watching={watching} version={watchVersion} />
@@ -189,7 +256,7 @@ export function TurfSummaryProvider({
 
 type Pushed = NonNullable<ReturnType<typeof readTurfPush>> & { at: number };
 
-/** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
+/** Mounted only for a joined viewer, so the signals hub isn't required otherwise. */
 function TurfPushes({ onPush }: { onPush: (raw: unknown) => void }) {
   useSignalConnection(SignalMessages.EventPointsTurf, onPush);
   return null;
@@ -215,12 +282,18 @@ function TurfWatcher({
     [event, mark]
   );
 
+  const flush = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
-    const current = [...watching.current.keys()];
-    const added = current.filter((id) => !marked.current.has(id));
-    marked.current = new Set(current);
-    if (added.length) send(added);
+    if (flush.current) return;
+    flush.current = setTimeout(() => {
+      flush.current = undefined;
+      const current = [...watching.current.keys()];
+      const added = current.filter((id) => !marked.current.has(id));
+      marked.current = new Set(current);
+      if (added.length) send(added);
+    }, WATCH_COALESCE_MS);
   }, [version, watching, send]);
+  useEffect(() => () => clearTimeout(flush.current), []);
 
   useEffect(() => {
     const timer = setInterval(() => {

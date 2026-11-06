@@ -35,14 +35,19 @@ import { hashify } from '~/utils/string-helpers';
 import { useSelfHostedBlock, SelfHostedBlockedAlert } from '~/components/Generation/footer-parts';
 import { FooterStrips, footerStripsFrame } from '~/components/generation_v2/FooterStrips';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import classes from './GenerationLayout.module.scss';
 
 // =============================================================================
 // Slots
 // =============================================================================
 
-const { SlotProvider, Footer, RenderFooter, useHasSlots } = createSlots(['footer']);
+// `setupModel`: the form's model and versions draw into the model card at the top (WorkflowRow).
+const { SlotProvider, Footer, RenderFooter, SetupModel, RenderSetupModel, useHasSlots } =
+  createSlots(['footer', 'setupModel']);
 
 export { Footer as GenerationFooter };
+export { SetupModel as GenerationSetupModel, RenderSetupModel as RenderGenerationSetupModel };
+export { SlotProvider as GenerationSlotProvider };
 export { useHasSlots as useHasGenerationSlots };
 
 // =============================================================================
@@ -52,7 +57,7 @@ export { useHasSlots as useHasGenerationSlots };
 export function GenerationLayout({ children }: { children: ReactNode }) {
   return (
     <SlotProvider>
-      <div className="flex size-full flex-1 flex-col">
+      <div className={clsx(classes.root, 'flex size-full flex-1 flex-col')}>
         <div className="flex w-full flex-1 flex-col gap-3 p-2">{children}</div>
         <GenerationLayoutFooter>
           <RenderFooter className="flex flex-col gap-2" />

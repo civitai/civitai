@@ -1,7 +1,10 @@
+import { isSystemAccountMeta } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
 import { env } from '~/env/server';
+import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
+import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
 import {
@@ -16,9 +19,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 
-/** Unused since the cookie store was retired. Kept (optional) so existing call sites don't churn;
- *  server-side callers with no request in hand (e.g. the publish → workflow stamp) omit it. */
+/** The caller's request, whose credential is checked. Server-side callers with no request in hand
+ *  (e.g. the publish → workflow stamp) omit it. */
 type Context = {
   req: NextApiRequest;
   res: NextApiResponse;
@@ -60,6 +65,8 @@ export async function getOrchestratorToken(
   ctx?: Context,
   options: GetOrchestratorTokenOptions = {}
 ) {
+  // Before both caches, so a token cached for another credential is not served either.
+  await assertCredentialMayUseOrchestrator(userId, ctx);
   // Before any cache: a token cached before a restriction must not be served after it. The standing
   // read is cached and falls back to the primary; when neither answers, it refuses. `allowRestricted`
   // admits a muted account only, never a banned or missing one.
@@ -171,4 +178,60 @@ export async function getOrchestratorToken(
     });
   }
   return token;
+}
+
+// Off while `orchestrator-token-system-read-would-refuse` counts show which system integrations
+// still use a key without AI Services write scope.
+let enforceSystemReadRefusal = false;
+
+export const __testing = {
+  isEnforcing: () => enforceSystemReadRefusal,
+  setEnforceSystemReadRefusal(value: boolean) {
+    enforceSystemReadRefusal = value;
+  },
+};
+
+type RequestSessionUser = { id?: number; meta?: unknown };
+
+/**
+ * A system account's bearer key needs AI Services write scope to use the orchestrator token. Other
+ * accounts, sessions and server-side calls (no request) pass.
+ * The session user's meta decides when it is this account's and says ordinary; otherwise the
+ * account is read from the primary, and a failed read counts as a system account.
+ */
+async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context) {
+  if (!ctx?.req) return;
+  const credential = getRequestCredential(ctx.req);
+  const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
+  const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
+  if (!presentedBearer || Flags.hasFlag(tokenScope, TokenScope.AIServicesWrite)) return;
+
+  const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
+    .context?.session?.user;
+  if (
+    sessionUser?.id === userId &&
+    sessionUser.meta != null &&
+    !isSystemAccountMeta(sessionUser.meta)
+  )
+    return;
+
+  const account = await dbWrite.user
+    .findUnique({ where: { id: userId }, select: { meta: true } })
+    .catch(() => undefined);
+  if (account !== undefined && !isSystemAccountMeta(account?.meta)) return;
+
+  if (!enforceSystemReadRefusal) {
+    logToAxiom({
+      name: 'orchestrator-token-system-read-would-refuse',
+      type: 'info',
+      route: ctx.req.url?.split('?')[0],
+      accountUnreadable: account === undefined,
+      ...credentialLogFields(credential),
+    }).catch(() => undefined);
+    return;
+  }
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'Your API key does not have the required scope for this action',
+  });
 }

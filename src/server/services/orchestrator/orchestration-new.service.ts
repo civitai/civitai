@@ -118,6 +118,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { REMIX_APP_TAG } from '~/shared/remix-apps/tags';
 import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -204,6 +205,8 @@ export type GenerationContext = {
   externalId?: string;
   /** User saw a soft-block prompt warning and chose to proceed. See `auditPromptServer`. */
   acknowledgedSoftBlock?: boolean;
+  /** Stored as `metadata.remixRun`; user-writable afterwards, like the rest of the metadata. */
+  remixRun?: Record<string, unknown>;
 };
 
 /** Options for submitting a generation */
@@ -1871,6 +1874,7 @@ export async function generateFromGraph({
   acknowledgedSoftBlock,
   downloadPriority,
   inputGate,
+  remixRun,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, userId, inputGate);
@@ -2040,6 +2044,9 @@ export async function generateFromGraph({
           [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions,
         }
       : workflowMetadata;
+  const metadata = remixRun
+    ? { ...(metadataWithSubstitutions as Record<string, unknown> | undefined), remixRun }
+    : metadataWithSubstitutions;
 
   const priceDownloads = () =>
     submitWorkflow({
@@ -2093,8 +2100,8 @@ export async function generateFromGraph({
       steps,
       tips,
       experimental,
-      metadata: metadataWithSubstitutions,
-      callbacks: getOrchestratorCallbacks(userId),
+      metadata,
+      callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,

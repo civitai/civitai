@@ -96,7 +96,7 @@ const SURFACES: Record<string, number> = {
   // a per-alias one, which runs only to find which alias the batch refused.
   'src/server/services/user-hub.service.ts': 4,
   'src/server/services/user-link.service.ts': 2,
-  'src/server/services/user-profile.service.ts': 1,
+  'src/server/services/user-profile.service.ts': 2,
 };
 
 /**
@@ -212,7 +212,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     withoutBlockedAliases: 2,
   },
   'src/server/services/user-link.service.ts': { upsertManyUserLinks: 1, upsertUserLink: 1 },
-  'src/server/services/user-profile.service.ts': { updateUserProfile: 1 },
+  'src/server/services/user-profile.service.ts': { updateUserProfile: 1, setShowcaseSections: 1 },
 };
 
 function read(rel: string) {

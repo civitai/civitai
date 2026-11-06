@@ -1,6 +1,12 @@
 export function TeamHat({ color, size }: { color: string; size: number }) {
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      aria-hidden="true"
+      data-testid="hat-turf-cone"
+    >
       <path
         d="M12 2.5 L18 17 H6Z"
         fill={color}

@@ -130,6 +130,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     installCount: 4213,
+    openCount: 2718,
     sourceRepoUrl: null,
     betaMessage: null,
     forkable: false,
@@ -183,6 +184,17 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     const plainRow = card.querySelector(`[data-permission-row="${PLAIN_SCOPE}"]`)!;
     expect(sensitiveRow.textContent).toContain('Sensitive');
     expect(plainRow.textContent).not.toContain('Sensitive');
+  });
+
+  test('a divider sits between permission rows, not before the first or after the last', async () => {
+    const { container } = await renderBody(
+      base({ scopes: [PLAIN_SCOPE, 'images:read:self', SENSITIVE_SCOPE] })
+    );
+    const card = container.querySelector('[data-testid="apps-listing-permissions"]') as HTMLElement;
+    const rows = card.querySelectorAll('[data-permission-row]');
+    expect(rows).toHaveLength(3);
+    // One sensitive row (no divider) and two other rows (one divider between them).
+    expect(card.querySelectorAll('[role="separator"]')).toHaveLength(1);
   });
 
   test('the section is ABSENT — not empty — when the app declares no scopes', async () => {
