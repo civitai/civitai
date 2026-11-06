@@ -10,7 +10,8 @@ export const animeIt = defineRemixApp({
   async run(ctx) {
     const { images } = await ctx.workflow({
       kind: 'image',
-      prompt: 'Redraw this image as a high-quality anime illustration, keeping the composition.',
+      prompt:
+        "Redraw this image as a 2D anime illustration with clean black line art, flat cel shading with hard-edged shadow shapes, and simple flat colors. If the source is a photo or a 3D render, convert every surface into hand-drawn anime style, with no photographic texture and no realistic rendering. Keep the subject, pose and composition. Don't add any text or lettering.",
       images: [ctx.source],
       aspectRatio: 'source',
       quantity: 1,
@@ -31,7 +32,7 @@ export const pickOfFour = defineRemixApp({
     const takes = await ctx.workflow({
       kind: 'image',
       prompt:
-        'Reimagine this image: keep its subject and composition, and give it a fresh style, lighting and detail.',
+        "Reimagine this image: keep its subject and composition, and give it a fresh style, lighting and detail. Don't add any text or lettering.",
       images: [ctx.source],
       aspectRatio: 'source',
       quantity: 4,
@@ -73,6 +74,8 @@ export const RESTYLE_STYLES = [
     value: 'ukiyo-e',
     label: 'Ukiyo-e',
     style: 'a Japanese ukiyo-e woodblock print, with flat colour, bold outlines and paper grain',
+    /** Ukiyo-e outputs drew a seal stamp with characters under the plain no-text line. */
+    noText: "Don't add any text, lettering, seals or stamps.",
   },
   {
     value: 'cyberpunk-neon',
@@ -89,10 +92,14 @@ export const RESTYLE_STYLES = [
 
 export const RESTYLE_EXTRA_MAX_LENGTH = 120;
 
+const NO_TEXT = "Don't add any text or lettering.";
+
 export function restylePrompt(style: string, extra: string) {
-  const { style: look } = RESTYLE_STYLES.find((s) => s.value === style) ?? RESTYLE_STYLES[0];
-  const base = `Restyle this image as ${look}. Keep the subject, their pose and the composition the same.`;
-  return extra ? `${base} Also add to the scene: ${extra}` : base;
+  const picked: { style: string; noText?: string } =
+    RESTYLE_STYLES.find((s) => s.value === style) ?? RESTYLE_STYLES[0];
+  const base = `Restyle this image as ${picked.style}. Keep the subject, their pose and the composition the same.`;
+  const withExtra = extra ? `${base} Also add to the scene: ${extra}.` : base;
+  return `${withExtra} ${picked.noText ?? NO_TEXT}`;
 }
 
 /** Asks first: an optional addition, then a style whose options show the edit's price. */
