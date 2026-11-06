@@ -1,3 +1,4 @@
+import type { StorageAdapter } from 'form-graph';
 import { ecosystemRefusal } from '~/shared/form-graph/generation/ecosystem-gates';
 import type { GenerationStore } from './store';
 
@@ -9,9 +10,9 @@ type EcosystemMeta = {
 };
 
 /**
- * The ecosystem to move to when `value` is one this viewer can't generate with:
- * the field's own default, so it lands where a fresh session would. Undefined
- * keeps the value — it is available, or nothing is.
+ * Where an ecosystem this viewer can't generate with falls back to: the field's
+ * own default, so it lands where a fresh session would. Undefined keeps the
+ * value, because it is available or because nothing is.
  */
 export function unavailableEcosystemReplacement(
   value: unknown,
@@ -28,19 +29,60 @@ export function unavailableEcosystemReplacement(
   return target;
 }
 
+export type PreservingStorage = StorageAdapter & {
+  /** Keep saving these stored entries while the store holds no value at their address. */
+  preserve(entries: Record<string, unknown>): void;
+};
+
+const isEcosystemAddress = (address: string) =>
+  address === 'ecosystem' || address.startsWith('ecosystem@');
+
 /**
- * Moves a stored, remixed or picked ecosystem off one that has become
- * unavailable (gate rules and the self-hosted toggle load after the store does).
- * An adopted default needs no help: `setExt` re-derives it. Returns the
- * unsubscribe.
+ * Storage that can keep a stored entry the store has cleared in memory. The
+ * store has no non-persisting write: every save is its whole durable intent.
+ * A preserved entry is written back on each save until the store writes that
+ * address again, and from then on the new value is saved as usual.
  */
-export function repickUnavailableEcosystem(store: GenerationStore): () => void {
-  const check = () => {
-    const field = store.getField('ecosystem');
-    if (!field) return;
-    const target = unavailableEcosystemReplacement(field.value, field.meta as EcosystemMeta);
-    if (target) store.set({ ecosystem: target });
+export function preservingStorage<S extends StorageAdapter>(
+  inner: S | undefined
+): (S & PreservingStorage) | undefined {
+  if (!inner) return undefined;
+  const held = new Map<string, unknown>();
+  return {
+    ...inner,
+    save(intent) {
+      if (!held.size) return inner.save(intent);
+      const out = { ...intent };
+      for (const [address, value] of [...held]) {
+        if (address in intent) held.delete(address);
+        else out[address] = value;
+      }
+      inner.save(out);
+    },
+    preserve(entries) {
+      for (const [address, value] of Object.entries(entries)) held.set(address, value);
+    },
   };
-  check();
-  return store.subscribe(check);
+}
+
+/**
+ * One-shot, for when the gates first load: an ecosystem this viewer can't use
+ * (default, stored, remixed or from a URL) is cleared in memory so the field
+ * falls to its default, an adopted value the store never saves. The stored
+ * choice is preserved, so it returns once the gate lifts. Later picks are not
+ * touched: a disabled ecosystem stays selectable and the form explains it.
+ */
+export function correctUnavailableEcosystem(
+  store: GenerationStore,
+  storage?: PreservingStorage
+): boolean {
+  const field = store.getField('ecosystem');
+  if (!field) return false;
+  if (!unavailableEcosystemReplacement(field.value, field.meta as EcosystemMeta)) return false;
+  const stored = Object.fromEntries(
+    Object.entries(store.getIntent()).filter(([address]) => isEcosystemAddress(address))
+  );
+  storage?.preserve(stored);
+  store.set({ ecosystem: undefined });
+  return true;
 }

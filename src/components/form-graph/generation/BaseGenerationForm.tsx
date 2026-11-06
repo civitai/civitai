@@ -53,7 +53,7 @@ import { FormFooter } from './FormFooter';
 import { WhatIfProvider } from './WhatIfProvider';
 import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
-import { repickUnavailableEcosystem } from './ecosystem-repick';
+import { correctUnavailableEcosystem, preservingStorage } from './ecosystem-repick';
 import { useOutputType, type GenerationStore } from './store';
 import { useWhatIfContext } from './WhatIfProvider';
 import { useActiveGenerationForm } from '~/store/active-generation-form.store';
@@ -118,11 +118,19 @@ export function BaseGenerationForm() {
 
   const storage = useMemo(() => {
     migrateV1GenerationStorage(STORAGE_KEY);
-    return persistedStorage(STORAGE_KEY);
+    return preservingStorage(persistedStorage(STORAGE_KEY));
   }, []);
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
+  // Once, when the gates first load. Declared after useForm so its setExt has
+  // already applied them; a child's effect would run before it.
+  const correctedStore = useRef<GenerationStore | undefined>(undefined);
+  useEffect(() => {
+    if (!generationConfigFetched || correctedStore.current === store) return;
+    correctedStore.current = store;
+    correctUnavailableEcosystem(store, storage);
+  }, [generationConfigFetched, store, storage]);
   useEffect(() => {
     useActiveGenerationForm.setState({ store });
     return () => useActiveGenerationForm.setState({ store: undefined });
@@ -208,7 +216,6 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   useResourceHydrationSync(store);
   useModelWriteBack(store);
   useGenerationIngestion(store);
-  useEffect(() => repickUnavailableEcosystem(store), [store]);
   useGenerationTour();
   const output = useOutputType(store);
   const workflow = useField<string>(store, 'workflow')?.value;
