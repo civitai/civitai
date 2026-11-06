@@ -122,6 +122,7 @@ import { submitTextModeration } from '~/server/services/text-moderation.service'
 import {
   articleAwaitsTextVerdict,
   isPublicArticle,
+  isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
@@ -1332,6 +1333,9 @@ export const upsertArticle = async ({
         },
       });
       if (!updated) return null;
+      // A link made for the draft must not reopen it after a later unpublish.
+      if (data.status && !isShareableArticleStatus(data.status as ArticleStatus))
+        await revokeActiveAccessTokens('Article', updated.id, tx);
       // A tag rewrite above drops the official row like any other; the column restores it.
       if (officialTag && (tags || data.isOfficial !== undefined))
         await writeOfficialArticleTag({

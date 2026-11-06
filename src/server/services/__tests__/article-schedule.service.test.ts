@@ -48,6 +48,10 @@ function matches(row: Row, where: Where) {
 
 let table: Row[] = [];
 const article = dbMock.dbWrite.article;
+const revokedArticles = () =>
+  dbMock.dbWrite.accessToken.updateMany.mock.calls
+    .map(([args]) => (args as { where: { resourceId: number } }).where.resourceId)
+    .sort();
 
 const NOW = new Date('2026-10-20T16:00:00.000Z');
 const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000);
@@ -147,6 +151,25 @@ describe('publishDueScheduledArticles', () => {
         scheduledAt: null,
       });
     expect(mockProcessEngagement).not.toHaveBeenCalled();
+  });
+
+  // A link made for the draft must not reopen it after a later unpublish.
+  it('revokes the share links of each draft it takes live or to Processing, and only those', async () => {
+    table = [
+      draft({ id: 1 }),
+      draft({ id: 2, ingestion: ArticleIngestionStatus.Pending }),
+      draft({ id: 3, scheduledAt: minutes(1) }),
+      draft({ id: 4, ingestion: ArticleIngestionStatus.Blocked }),
+    ];
+    await publishDueScheduledArticles(NOW);
+    expect(revokedArticles()).toEqual([1, 2]);
+  });
+
+  it('leaves the share links of a draft whose state changed after the read', async () => {
+    table = [draft({ id: 1 })];
+    changeAfterRead(() => (table[0].scheduledAt = null));
+    await publishDueScheduledArticles(NOW);
+    expect(revokedArticles()).toEqual([]);
   });
 
   it('drops the schedule of a blocked article, keeps it a draft and tells the owner', async () => {

@@ -351,6 +351,15 @@ describe('createArticleShareLink', () => {
     }
   );
 
+  it('refuses a draft that was published before its lock was taken', async () => {
+    // The first read is the ownership check; the second is the one under the lock.
+    dbMock.dbWrite.article.findUnique
+      .mockResolvedValueOnce({ id: ARTICLE, userId: AUTHOR, status: ArticleStatus.Draft } as never)
+      .mockResolvedValueOnce({ status: ArticleStatus.Published } as never);
+    await expect(create()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.accessToken.create).not.toHaveBeenCalled();
+  });
+
   it('refuses a sixth active link', async () => {
     dbMock.dbWrite.accessToken.count.mockResolvedValue(5);
     await expect(create()).rejects.toMatchObject({ code: 'BAD_REQUEST' });

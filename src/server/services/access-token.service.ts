@@ -46,6 +46,7 @@ export function isUsableAccessToken(
 const activeWhere = (now = new Date()) => ({ revokedAt: null, expiresAt: { gt: now } });
 
 export class AccessTokenLimitError extends Error {}
+export class AccessTokenNotAllowedError extends Error {}
 
 // Namespaces the advisory lock so it never collides with a single-key lock on the same id.
 const ACCESS_TOKEN_LOCK_CLASS = 0x41544b; // 'ATK'
@@ -68,16 +69,20 @@ export async function createAccessToken({
   createdById,
   expiresAt,
   maxActive,
+  allowed,
 }: {
   resourceType: AccessTokenResourceType;
   resourceId: number;
   createdById: number;
   expiresAt: Date;
   maxActive: number;
+  /** Re-checked under the lock, which the resource's own state changes also take. */
+  allowed?: (tx: Prisma.TransactionClient) => Promise<boolean>;
 }) {
   const token = randomBytes(32).toString('base64url');
   const row = await dbWrite.$transaction(async (tx) => {
     await lockAccessTokens(tx, resourceId);
+    if (allowed && !(await allowed(tx))) throw new AccessTokenNotAllowedError();
     const active = await tx.accessToken.count({
       where: { resourceType, resourceId, ...activeWhere() },
     });

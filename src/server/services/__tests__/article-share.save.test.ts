@@ -39,8 +39,14 @@ import {
   unpublishArticleById,
   upsertArticle,
 } from '~/server/services/article.service';
+import { sharedArticleTextHash } from '~/server/services/article-share.helpers';
+import { getArticleByShareToken } from '~/server/services/article-share.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
-import { ArticleStatus } from '~/shared/utils/prisma/enums';
+import {
+  ArticleIngestionStatus,
+  ArticleStatus,
+  EntityModerationStatus,
+} from '~/shared/utils/prisma/enums';
 
 const ARTICLE = 21;
 const AUTHOR = 7;
@@ -267,6 +273,104 @@ describe('saving a shared draft from the editor', () => {
     dbMock.dbWrite.accessToken.findMany.mockResolvedValue([]);
     await save();
     expect(formWrite().ingestion).toBeUndefined();
+  });
+});
+
+describe('publishing a draft that has a share link', () => {
+  const draft = {
+    id: ARTICLE,
+    title: 'Title',
+    cover: null,
+    coverId: null,
+    userId: AUTHOR,
+    publishedAt: null,
+    status: ArticleStatus.Draft,
+    nsfwLevel: 1,
+    userNsfwLevel: 1,
+    moderatorNsfwLevel: null,
+    lockedProperties: [],
+    metadata: {},
+    content: '<p>Body</p>',
+  };
+  // One link, made on the draft, that only a revoke can end.
+  let link: ReturnType<typeof activeLink> & {
+    id: number;
+    createdById: number;
+    revokedAt: Date | null;
+  };
+
+  beforeEach(() => {
+    link = { ...activeLink(), id: 3, createdById: AUTHOR };
+    dbMock.dbWrite.accessToken.findMany.mockImplementation((async () =>
+      link.revokedAt ? [] : [link]) as never);
+    dbMock.dbWrite.accessToken.findUnique.mockImplementation((async () => link) as never);
+    dbMock.dbWrite.accessToken.updateMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { resourceId?: number };
+    }) => {
+      if (where.resourceId === ARTICLE && !link.revokedAt) link.revokedAt = new Date();
+      return { count: 1 };
+    }) as never);
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(draft as never);
+    dbMock.dbWrite.article.findFirst.mockResolvedValue(draft as never);
+    dbMock.dbRead.article.findUnique.mockResolvedValue(draft as never);
+  });
+
+  const saveAs = (status: ArticleStatus) => {
+    dbMock.dbWrite.article.update.mockResolvedValue({
+      ...draft,
+      status,
+      tags: [],
+    } as never);
+    return upsertArticle({ id: ARTICLE, userId: AUTHOR, title: 'Title', status } as never);
+  };
+
+  it.each([ArticleStatus.Published, ArticleStatus.Processing])(
+    'revokes the link in the save that sends it %s',
+    async (status) => {
+      await saveAs(status);
+      expect(link.revokedAt).not.toBeNull();
+    }
+  );
+
+  it('keeps the link on a save that leaves it a draft', async () => {
+    await saveAs(ArticleStatus.Draft);
+    expect(link.revokedAt).toBeNull();
+  });
+
+  // Deliberate: the link was made for the draft, not for the article. Delete this and a link a
+  // reviewer kept reopens every later unpublished version, for up to 30 days.
+  it('a link made on the draft does not read the article once it is published and then unpublished', async () => {
+    await saveAs(ArticleStatus.Published);
+    const published = { ...draft, status: ArticleStatus.Published, publishedAt: new Date() };
+    dbMock.dbRead.article.findUnique.mockResolvedValue(published as never);
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(published as never);
+    await unpublishArticleById({ id: ARTICLE, userId: AUTHOR });
+
+    // Everything else the read requires is in place, so only the link can refuse it.
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...draft,
+      status: ArticleStatus.Unpublished,
+      ingestion: ArticleIngestionStatus.Scanned,
+      updatedAt: new Date(),
+      coverImage: null,
+      user: { id: AUTHOR, username: 'author', bannedAt: null, muted: false, deletedAt: null },
+    } as never);
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      status: EntityModerationStatus.Succeeded,
+      blocked: false,
+      workflowId: 'wf',
+      updatedAt: new Date(),
+    } as never);
+    dbMock.dbWrite.articleShareCheck.findUnique.mockResolvedValue({
+      workflowId: 'wf',
+      textHash: sharedArticleTextHash({ title: 'Title', content: '<p>Body</p>' }),
+    } as never);
+
+    expect(
+      await getArticleByShareToken({ articleId: ARTICLE, shareToken: 'a'.repeat(43) })
+    ).toEqual({ status: 'unavailable' });
   });
 });
 

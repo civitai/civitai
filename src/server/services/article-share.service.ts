@@ -6,6 +6,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   AccessTokenLimitError,
+  AccessTokenNotAllowedError,
   createAccessToken,
   getAccessTokenById,
   getActiveAccessTokens,
@@ -36,6 +37,7 @@ import {
 import { getArticleUrl } from '~/utils/string-helpers';
 
 export const ARTICLE_SHARE_MAX_ACTIVE = 5;
+const NOT_SHAREABLE = 'Only an unpublished draft can be shared with a link';
 
 async function getOwnArticle(articleId: number, userId: number) {
   const article = await dbWrite.article.findUnique({
@@ -67,8 +69,7 @@ export async function createArticleShareLink({
   userId: number;
 }) {
   const article = await getOwnArticle(articleId, userId);
-  if (!isShareableArticleStatus(article.status))
-    throw throwBadRequestError('Only an unpublished draft can be shared with a link');
+  if (!isShareableArticleStatus(article.status)) throw throwBadRequestError(NOT_SHAREABLE);
 
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
   let created: Awaited<ReturnType<typeof createAccessToken>>;
@@ -79,8 +80,17 @@ export async function createArticleShareLink({
       createdById: userId,
       expiresAt,
       maxActive: ARTICLE_SHARE_MAX_ACTIVE,
+      // A publish landing after the check above revokes under this lock; a link made after it must not survive.
+      allowed: async (tx) => {
+        const current = await tx.article.findUnique({
+          where: { id: articleId },
+          select: { status: true },
+        });
+        return !!current && isShareableArticleStatus(current.status);
+      },
     });
   } catch (e) {
+    if (e instanceof AccessTokenNotAllowedError) throw throwBadRequestError(NOT_SHAREABLE);
     if (e instanceof AccessTokenLimitError)
       throw throwBadRequestError(
         `An article can have at most ${ARTICLE_SHARE_MAX_ACTIVE} active share links. Revoke one to create another.`
