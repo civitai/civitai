@@ -42,6 +42,8 @@ class FakeDb {
   }
   /** Runs once, after the first read, as a write committed while vectors are made. */
   onRead?: () => void;
+  /** One hook per document read, in order, for writes across several rounds. */
+  onReads: Array<() => void> = [];
   query = async (sql: string, params: unknown[]) => {
     // The backfill's page query: ids in [from, cursor), newest first.
     if (sql.startsWith('SELECT id FROM')) {
@@ -51,7 +53,7 @@ class FakeDb {
     }
     const [ids] = params as [number[]];
     const rows = ids.flatMap((id) => (this.rows.has(id) ? [{ ...this.rows.get(id)! }] : []));
-    const hook = this.onRead;
+    const hook = this.onRead ?? this.onReads.shift();
     this.onRead = undefined;
     hook?.();
     return { rows };
@@ -181,7 +183,7 @@ describe('syncModelIds', () => {
     expect(embedder.texts).toHaveLength(1);
 
     db.rows.set(1, model(1, { description: 'now about castles' }));
-    expect(await syncModelIds([1], deps)).toMatchObject({ embedded: 1 });
+    expect(await syncModelIds([1], deps)).toMatchObject({ embedded: 1, updated: 0 });
     expect(embedder.texts[1]).toContain('now about castles');
   });
 
@@ -303,5 +305,59 @@ describe('review fixes', () => {
     const rest = await backfillModels({ from: 0, to: first.next, page: 2 }, deps);
     expect(rest.complete).toBe(true);
     expect([...store.points.keys()].sort()).toEqual([2, 3, 5, 8, 9]);
+  });
+});
+
+describe('second review fixes', () => {
+  test('an edit during the last round still lands its payload, and is counted stale', async () => {
+    const { db, store, deps } = setup();
+    db.rows.set(1, model(1));
+    const edit =
+      (n: number, nsfwLevel = 1) =>
+      () =>
+        db.rows.set(1, model(1, { description: `edit ${n}`, nsfwLevel }));
+    // Reads alternate: a round's read, then its post-embed re-read. Each embed sees an edit.
+    db.onReads = [edit(1), () => undefined, edit(2), () => undefined, edit(3, 16)];
+    const stats = await syncModelIds([1], deps);
+    expect(stats.stale).toBe(1);
+    expect(store.points.get(1)!.payload.nsfwLevel).toEqual([16]);
+  });
+
+  test('image and text inputs in one call keep separate stamps, so neither is refused', async () => {
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        steps: Array<{ name: string; input: { text?: string } }>;
+      };
+      return new Response(
+        JSON.stringify({
+          id: 'wf',
+          status: 'succeeded',
+          steps: body.steps.map((s) => ({
+            name: s.name,
+            status: 'succeeded',
+            output: {
+              ...STAMP,
+              profile: s.input.text === undefined ? 'image-512' : 'text',
+              precision: 'float32',
+              embedding: VECTOR,
+            },
+          })),
+        })
+      );
+    }) as unknown as typeof fetch;
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 8,
+      maxRetries: 0,
+      priority: 'low',
+      fetch: fetchImpl,
+    });
+    const result = await e.embed([
+      { id: '1', imageUrl: 'https://cdn.example/a.jpeg' },
+      { id: '2', text: 'Name: Model 2' },
+    ]);
+    expect(result.error).toBeUndefined();
+    expect([...result.vectors.keys()].sort()).toEqual([1, 2]);
   });
 });

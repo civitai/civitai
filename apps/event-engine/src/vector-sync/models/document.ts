@@ -1,6 +1,7 @@
 /**
  * The canonical model document: one text per model, embedded for semantic search and stored as
- * `search_text` for phrase filters, so the two always describe the same text. Ported from
+ * `search_text` for phrase filters. Until a changed document's re-embed lands, the vector is the
+ * previous text's. Ported from
  * civitai/model-search-demo catalog_demo/common.py `document()`.
  */
 import { createHash } from 'crypto';
@@ -59,7 +60,7 @@ export function cleanHtml(value: string | null | undefined) {
   const text = value
     .replace(/<!--[\s\S]*?(-->|$)/g, ' ')
     // `$`: the description is read truncated, which can end inside a script.
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?(<\/\1\s*>|$)/gi, ' ')
+    .replace(/<(script|style)(?=[\s>/])[^>]*>[\s\S]*?(<\/\1\s*>|$)/gi, ' ')
     .replace(BLOCK_TAGS, ' ')
     .replace(/<[^>]*>/g, '');
   return decodeEntities(text).replace(/\s+/g, ' ').trim();

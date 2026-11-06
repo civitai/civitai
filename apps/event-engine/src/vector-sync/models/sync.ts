@@ -85,7 +85,8 @@ async function syncRound(
     if (stored) update.set(id, { ...payload, docHash: stored.docHash! });
   }
   stats.deleted += remove.length;
-  stats.updated += update.size;
+  // Payload-only syncs; a point awaiting its re-embed counts once, as embedded.
+  stats.updated += update.size - inputs.filter((i) => update.has(Number(i.id))).length;
   if (deps.dryRun) {
     stats.embedded += inputs.length;
     return [];
@@ -121,14 +122,18 @@ async function syncRound(
   const changed: number[] = [];
   const repayload = new Map<number, ModelPayload>();
   for (const [id, payload] of now) {
-    if (payload.docHash !== docs.get(id)!.docHash) changed.push(id);
-    else if (JSON.stringify(payload) !== JSON.stringify(docs.get(id))) repayload.set(id, payload);
+    const embeddedHash = docs.get(id)!.docHash;
+    if (payload.docHash !== embeddedHash) {
+      changed.push(id);
+      // As at the start of a round: current payload, the hash of the vector it sits on.
+      repayload.set(id, { ...payload, docHash: embeddedHash });
+    } else if (JSON.stringify(payload) !== JSON.stringify(docs.get(id))) repayload.set(id, payload);
   }
   await deps.store.delete(lapsed);
   await deps.store.setPayloads(repayload);
   stats.embedded -= lapsed.length;
   stats.deleted += lapsed.length;
-  stats.updated += repayload.size;
+  stats.updated += repayload.size - changed.length;
 
   if (result.error) throw result.error;
   return changed;

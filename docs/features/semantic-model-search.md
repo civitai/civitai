@@ -12,7 +12,7 @@ Code: `apps/event-engine/src/vector-sync/models/`.
 `modelDocument` ports `document()` from the model-search prototype: name, type, creator, tags,
 base models, trigger words (first 64), description, and the names and descriptions of the first
 three published versions, as labelled lines, cut to 5,000 code points. The same text is embedded
-and stored as `search_text`, so phrase filters and the vector see one text. `docHash` (its sha256)
+and stored as `search_text`. `docHash` (its sha256)
 is stored with the point: a model whose document changed is re-embedded, and any other change
 only rewrites the payload.
 
