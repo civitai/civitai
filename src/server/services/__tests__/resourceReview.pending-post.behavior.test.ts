@@ -6,6 +6,7 @@ import type * as BlockCheck from '~/server/services/block-check.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PointsHooks from '~/server/events/points/hooks';
+import type * as ReviewCache from '~/server/services/resourceReview.cache';
 
 /**
  * A review written from the edit page of an unpublished post went public at once and notified the
@@ -14,8 +15,9 @@ import type * as PointsHooks from '~/server/events/points/hooks';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { createNotification } = vi.hoisted(() => ({
+const { createNotification, bustRatingTotalsForRows } = vi.hoisted(() => ({
   createNotification: vi.fn<(row: unknown) => Promise<void>>(async () => undefined),
+  bustRatingTotalsForRows: vi.fn<(rows: unknown[]) => Promise<void>>(async () => undefined),
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -31,19 +33,20 @@ vi.mock('~/server/services/block-check.service', async (importOriginal) => ({
   getBlockCheckOwnerIds: async () => [],
   throwIfBlockedByOwners: async () => undefined,
 }));
-vi.mock('~/server/services/resourceReview.cache', () => ({
+vi.mock('~/server/services/resourceReview.cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewCache>()),
   bustRatingTotalsCache: vi.fn(async () => undefined),
-  bustRatingTotalsForRows: vi.fn(async () => undefined),
+  bustRatingTotalsForRows,
 }));
 vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof PointsHooks>()),
   onModelReviewsChanged: async () => undefined,
 }));
 
-const { getUserRatingTotals, upsertResourceReview } = await import(
+const { createResourceReview, getUserRatingTotals, upsertResourceReview } = await import(
   '~/server/services/resourceReview.service'
 );
-const { releasePendingReviewsForPosts } = await import(
+const { releasePendingReviewsForPosts, visibleReviewForViewerSql } = await import(
   '~/server/services/resourceReview.visibility'
 );
 
@@ -123,6 +126,24 @@ describe('creating a review from a post', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
+  it('holds the notification when a plain create races a pending review from a post', async () => {
+    dbMock.dbWrite.resourceReview.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '1',
+      }) as never
+    );
+    dbMock.dbWrite.resourceReview.findUniqueOrThrow.mockResolvedValueOnce({
+      id: 1,
+      ...review,
+      postId: 5,
+    } as never);
+
+    await createResourceReview({ ...review, userId: AUTHOR });
+
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
   it('never moves an existing review onto a post', async () => {
     dbMock.dbWrite.resourceReview.findUnique.mockResolvedValue({ modelId: 10 } as never);
     postIs({ userId: AUTHOR, publishedAt: null });
@@ -178,6 +199,31 @@ describe('against Postgres', () => {
         .join(', ')}`
     );
 
+  const visibleIds = async (viewerId?: number) => {
+    const { rows } = await pg.query<{ id: number }>(
+      `SELECT rr.id FROM "ResourceReview" rr WHERE ${
+        Prisma.sql`${visibleReviewForViewerSql('rr', viewerId)}`.text
+      } ORDER BY rr.id`,
+      viewerId ? [viewerId] : []
+    );
+    return rows.map((row) => row.id);
+  };
+
+  it.each([
+    ['anyone signed out', undefined, [1, 4]],
+    ['a stranger', 999, [1, 4]],
+    ['the author of the pending reviews', AUTHOR, [1, 2, 3, 4]],
+  ])('shows %s only the reviews they may see', async (_label, viewerId, expected) => {
+    await insertReviews([
+      [1, 101, null],
+      [2, AUTHOR, DRAFT],
+      [3, AUTHOR, SCHEDULED],
+      [4, 104, LIVE],
+    ]);
+
+    expect(await visibleIds(viewerId)).toEqual(expected);
+  });
+
   it("leaves reviews from posts not yet live out of the model owner's totals", async () => {
     await insertReviews([
       [1, 101, null],
@@ -210,6 +256,18 @@ describe('against Postgres', () => {
       { id: 1, touched: true },
       { id: 2, touched: false },
     ]);
+    expect(bustRatingTotalsForRows).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({ id: 1, modelId: 10, modelVersionId: 21 }),
+    ]);
+  });
+
+  it('busts nothing and notifies no one while the post is still scheduled', async () => {
+    await insertReviews([[1, 101, SCHEDULED]]);
+
+    await releasePendingReviewsForPosts([SCHEDULED]);
+
+    expect(bustRatingTotalsForRows).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
   });
 
   it('releases a review only once when the sweep hands its post over again', async () => {
