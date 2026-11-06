@@ -5087,6 +5087,15 @@ model AccessToken {
   @@index([createdById])
 }
 
+// The check a shared draft's read requires: the workflow whose verdict covers the draft's text, and
+// a hash of that text. Written only by the share flow, under the share-token lock.
+model ArticleShareCheck {
+  articleId  Int      @id
+  workflowId String
+  textHash   String
+  updatedAt  DateTime @updatedAt
+}
+
 model AdToken {
   id        Int       @id @default(autoincrement())
   token     String    @unique

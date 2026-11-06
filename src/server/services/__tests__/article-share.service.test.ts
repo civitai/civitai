@@ -18,6 +18,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 import { hashAccessToken } from '~/server/services/access-token.service';
+import { sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import {
   createArticleShareLink,
   getArticleByShareToken,
@@ -81,13 +82,23 @@ const articles = (over: ArticleOver = {}) => {
   }) => base(where.id)) as never);
 };
 
-const read = (viewerId?: number) => getArticleByShareToken({ shareToken: TOKEN, viewerId });
+const read = (viewerId?: number, articleId = ARTICLE) =>
+  getArticleByShareToken({ articleId, shareToken: TOKEN, viewerId });
+
+/** The check the shared read requires, as the share flow records it. */
+const shareCheck = (over: Record<string, unknown> = {}) =>
+  dbMock.dbWrite.articleShareCheck.findUnique.mockResolvedValue({
+    workflowId: 'wf',
+    textHash: sharedArticleTextHash({ title: `Article ${ARTICLE}`, content: '<p>Body</p>' }),
+    ...over,
+  } as never);
 
 /** The text check as the read and the share create see it. */
 const textCheck = (over: Record<string, unknown> = {}) =>
   dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
     status: EntityModerationStatus.Succeeded,
     blocked: false,
+    workflowId: 'wf',
     updatedAt: new Date(Date.now() + 1000),
     ...over,
   } as never);
@@ -97,6 +108,7 @@ beforeEach(() => {
   dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(tokenRow() as never);
   articles();
   textCheck();
+  shareCheck();
 });
 
 describe('getArticleByShareToken', () => {
@@ -110,11 +122,15 @@ describe('getArticleByShareToken', () => {
   });
 
   it('opens only the article the token names, never another', async () => {
-    dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(
-      tokenRow({ resourceId: OTHER_ARTICLE }) as never
-    );
-    const result = await read();
-    expect(result.status === 'ok' && result.article.title).toBe(`Article ${OTHER_ARTICLE}`);
+    // The token is for ARTICLE; a request for OTHER_ARTICLE carrying it gets nothing.
+    expect(await read(undefined, OTHER_ARTICLE)).toEqual({ status: 'unavailable' });
+  });
+
+  it('refuses a request that carries no token', async () => {
+    expect(await getArticleByShareToken({ articleId: ARTICLE, shareToken: undefined })).toEqual({
+      status: 'unavailable',
+    });
+    expect(dbMock.dbWrite.accessToken.findUnique).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -185,6 +201,16 @@ describe('getArticleByShareToken: the text check', () => {
     }
   );
 
+  it.each([
+    ['no check on record', null],
+    ['a check for other text', { textHash: 'other' }],
+    ['a different check than the verdict on record', { workflowId: 'older' }],
+  ])('waits when the share flow has %s', async (_, over) => {
+    if (over === null) dbMock.dbWrite.articleShareCheck.findUnique.mockResolvedValue(null);
+    else shareCheck(over);
+    expect(await read()).toEqual({ status: 'checking' });
+  });
+
   it('needs no text check for an article with no text', async () => {
     articles({ title: '', content: null });
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null);
@@ -254,6 +280,21 @@ describe('createArticleShareLink', () => {
       expect.objectContaining({ entityId: ARTICLE, force: true })
     );
     expect(updateArticleImageScanStatus).toHaveBeenCalledWith([ARTICLE]);
+    expect(dbMock.dbWrite.articleShareCheck.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          articleId: ARTICLE,
+          workflowId: 'wf',
+          textHash: sharedArticleTextHash({ title: `Article ${ARTICLE}`, content: '<p>Body</p>' }),
+        }),
+      })
+    );
+  });
+
+  it('withdraws the link when the check comes back with no workflow to bind', async () => {
+    vi.mocked(submitTextModerationOrScan).mockResolvedValueOnce(null);
+    await expect(create()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.articleShareCheck.upsert).not.toHaveBeenCalled();
   });
 
   it('withdraws the link when the check record was not reset by the submit', async () => {

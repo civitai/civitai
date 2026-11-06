@@ -176,7 +176,8 @@ export const createArticleShareLinkSchema = z.object({
 export const getArticleShareLinksSchema = z.object({ articleId: z.number() });
 // 32 random bytes in base64url is 43 characters; anything else cannot be a token.
 export const shareTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
-export const getSharedArticleSchema = z.object({ shareToken: shareTokenSchema });
+export const openShareLinkSchema = z.object({ shareToken: shareTokenSchema });
+export const getSharedArticleSchema = z.object({ articleId: z.number().int().positive() });
 export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
 // Each new link starts a fresh content check.
 export const articleShareCreateRateLimits: RateLimit[] = [{ limit: 10, period: CacheTTL.hour }];

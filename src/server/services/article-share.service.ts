@@ -16,6 +16,8 @@ import {
   submitSharedArticleText,
   updateArticleImageScanStatus,
 } from '~/server/services/article.service';
+import { sharedArticleTextHash } from '~/server/services/article-share.helpers';
+import { shareTokenSchema } from '~/server/schema/article.schema';
 import { isShareableArticleStatus } from '~/server/services/text-scan/public-content';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
@@ -123,6 +125,15 @@ export async function revokeArticleShareLink({ id, userId }: { id: number; userI
   await revokeAccessToken(id);
 }
 
+/**
+ * Which article a link opens, or null. Unknown, expired and revoked tokens answer the same, so the
+ * link page reveals nothing about a dead one.
+ */
+export async function openArticleShareLink(shareToken: string) {
+  const row = await resolveAccessToken(shareToken, 'Article');
+  return row ? { articleId: row.resourceId, expiresAt: row.expiresAt } : null;
+}
+
 export type SharedArticleResult =
   | { status: 'unavailable' }
   | { status: 'checking' }
@@ -138,14 +149,17 @@ const UNAVAILABLE = { status: 'unavailable' } as const;
  * else: the token never reaches `getById` or the session.
  */
 export async function getArticleByShareToken({
+  articleId,
   shareToken,
   viewerId,
 }: {
-  shareToken: string;
+  articleId: number;
+  shareToken: string | undefined;
   viewerId?: number;
 }): Promise<SharedArticleResult> {
+  if (!shareToken || !shareTokenSchema.safeParse(shareToken).success) return UNAVAILABLE;
   const row = await resolveAccessToken(shareToken, 'Article');
-  if (!row) return UNAVAILABLE;
+  if (!row || row.resourceId !== articleId) return UNAVAILABLE;
 
   // One read, so the text shown is the text whose state was checked.
   const article = await readSharedArticle(row.resourceId);
@@ -168,17 +182,27 @@ export async function getArticleByShareToken({
     return settling ? { status: 'checking' } : UNAVAILABLE;
   }
 
-  // Ingestion alone is not enough: a rating override can mark it Scanned with no text verdict.
+  // Ingestion alone is not enough: it can read Scanned with no verdict for this text. The read
+  // requires the verdict of the current text's check.
   if (articleHasText(article.title, article.content)) {
-    const check = await dbWrite.entityModeration.findUnique({
-      where: { entityType_entityId: { entityType: 'Article', entityId: article.id } },
-      select: { status: true, blocked: true },
-    });
+    const [check, required] = await Promise.all([
+      dbWrite.entityModeration.findUnique({
+        where: { entityType_entityId: { entityType: 'Article', entityId: article.id } },
+        select: { status: true, blocked: true, workflowId: true },
+      }),
+      dbWrite.articleShareCheck.findUnique({
+        where: { articleId: article.id },
+        select: { workflowId: true, textHash: true },
+      }),
+    ]);
     if (check?.blocked) return UNAVAILABLE;
-    if (check?.status !== EntityModerationStatus.Succeeded) {
-      const settling = !check || check.status === EntityModerationStatus.Pending;
-      return settling ? { status: 'checking' } : UNAVAILABLE;
-    }
+    if (check?.status === EntityModerationStatus.Failed) return UNAVAILABLE;
+    const current =
+      !!required &&
+      required.textHash === sharedArticleTextHash(article) &&
+      check?.workflowId === required.workflowId &&
+      check.status === EntityModerationStatus.Succeeded;
+    if (!current) return { status: 'checking' };
   }
 
   return { status: 'ok', article: toSharedArticle(article) };

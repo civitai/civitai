@@ -36,7 +36,7 @@ export function ArticleShareDraftModal({ articleId }: { articleId: number }) {
 
   const createMutation = trpc.article.createShareLink.useMutation({
     onSuccess: async ({ token }) => {
-      setCreatedUrl(`${window.location.origin}/articles/shared#token=${token}`);
+      setCreatedUrl(`${window.location.origin}/articles/shared/${token}`);
       await invalidate();
     },
     onError,

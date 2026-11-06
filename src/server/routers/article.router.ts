@@ -19,6 +19,7 @@ import {
   createArticleShareLinkSchema,
   getArticleShareLinksSchema,
   getSharedArticleSchema,
+  openShareLinkSchema,
   articleShareTokenRateLimits,
   articleShareCreateRateLimits,
 } from '~/server/schema/article.schema';
@@ -26,8 +27,10 @@ import {
   createArticleShareLink,
   getArticleByShareToken,
   getArticleShareLinks,
+  openArticleShareLink,
   revokeArticleShareLink,
 } from '~/server/services/article-share.service';
+import { articleShareCookieName } from '~/server/services/article-share.helpers';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
@@ -127,12 +130,27 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => revokeArticleShareLink({ ...input, userId: ctx.user.id })),
-  // A mutation only for its transport: POST keeps the token out of URLs and every cache.
+  // Called only by the link page's server render, which turns a valid token into a cookie.
+  openShareLink: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(openShareLinkSchema)
+    .use(rateLimit(articleShareTokenRateLimits, undefined, { sharedKey: 'article:share-token' }))
+    .query(({ input, ctx }) => {
+      if (ctx.cache) ctx.cache.skip = true;
+      return openArticleShareLink(input.shareToken);
+    }),
+  // The token arrives in its HttpOnly cookie, never in the input. A mutation, so no cache keeps it.
   getShared: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getSharedArticleSchema)
-    .use(rateLimit(articleShareTokenRateLimits))
-    .mutation(({ input, ctx }) => getArticleByShareToken({ ...input, viewerId: ctx.user?.id })),
+    .use(rateLimit(articleShareTokenRateLimits, undefined, { sharedKey: 'article:share-token' }))
+    .mutation(({ input, ctx }) =>
+      getArticleByShareToken({
+        articleId: input.articleId,
+        shareToken: ctx.req?.cookies?.[articleShareCookieName(input.articleId)],
+        viewerId: ctx.user?.id,
+      })
+    ),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)

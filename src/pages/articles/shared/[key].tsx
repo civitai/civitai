@@ -1,7 +1,7 @@
 import { AspectRatio, Container, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { IconEye } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import type { InferGetServerSidePropsType } from 'next';
+import { useEffect, useMemo } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Page } from '~/components/AppLayout/Page';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -14,78 +14,51 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
-import { shareTokenSchema } from '~/server/schema/article.schema';
 import type { SharedArticle } from '~/server/services/article-share.service';
+import { resolveSharedArticleRequest } from '~/server/services/article-share.page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { useRouter } from 'next/router';
 import { formatDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-// The token rides in the fragment (`/articles/shared#token=…`), which no request carries: not to
-// this server, a CDN, analytics or a Referer. The page reads it and asks for the draft by POST.
+// `/articles/shared/<token>` never renders: it trades the token for an HttpOnly cookie and
+// redirects, so no script ever runs on a URL holding it. `/articles/shared/<articleId>` renders the
+// draft, fetched after load with that cookie, so the server-rendered page names nothing about it.
 export const getServerSideProps = createServerSideProps({
-  resolver: async ({ ctx }) => {
-    ctx.res.setHeader('Cache-Control', 'private, no-store');
-    ctx.res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    ctx.res.setHeader('Referrer-Policy', 'no-referrer');
-    return { props: {}, suppressAds: true };
-  },
+  useSSG: true,
+  prefetch: 'always',
+  resolver: async ({ ctx, ssg }) =>
+    resolveSharedArticleRequest({
+      key: String(ctx.query.key ?? ''),
+      res: ctx.res,
+      open: (shareToken) =>
+        ssg
+          ? ssg.article.openShareLink.fetch({ shareToken }).catch(() => null)
+          : Promise.resolve(null),
+    }),
 });
 
-const TOKEN_KEY = 'civ-shared-draft-token';
-
-/**
- * Takes the token out of the address bar before anything else on the page can read it: login
- * links, page tracking and third-party scripts all copy the URL. Kept for this tab only, so a
- * reload still opens the draft.
- */
-function takeShareToken(): string | null {
-  const fromHash = new URLSearchParams(window.location.hash.slice(1)).get('token');
-  let token = fromHash;
-  try {
-    if (fromHash) sessionStorage.setItem(TOKEN_KEY, fromHash);
-    else token = sessionStorage.getItem(TOKEN_KEY);
-  } catch {
-    // Storage unavailable: the token still works for this page view.
-  }
-  if (fromHash) history.replaceState(history.state, '', window.location.pathname);
-  return token && shareTokenSchema.safeParse(token).success ? token : null;
-}
-
-// Runs when the page module loads, ahead of hydration and of every script hydration starts.
-const initialToken = typeof window === 'undefined' ? undefined : takeShareToken();
-
-function SharedArticlePage() {
+function SharedArticlePage({ articleId }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  // Set after mount, so the first client render matches the server's.
-  const [token, setToken] = useState<string | null>();
-  const { mutate, data, isPending, isError } = trpc.article.getShared.useMutation();
+  const { mutate, data, isError } = trpc.article.getShared.useMutation();
 
   useEffect(() => {
-    setToken(initialToken ?? null);
-    const onHash = () => {
-      const next = takeShareToken();
-      if (next) setToken(next);
-    };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
-  useEffect(() => {
-    // The router captured the URL before this module ran; bring it in line without the token.
-    if (router.asPath.includes('#'))
-      void router.replace(router.pathname, undefined, { shallow: true });
-  }, [router]);
-  useEffect(() => {
-    if (token) mutate({ shareToken: token });
-  }, [token, mutate]);
+    if (articleId) mutate({ articleId });
+  }, [articleId, mutate]);
   useEffect(() => {
     if (data?.status === 'published') void router.replace(data.url);
   }, [data, router]);
 
-  if (token === undefined || (token && !isError && (isPending || !data))) return <PageLoader />;
   if (data?.status === 'ok') return <SharedArticleView article={data.article} />;
-  if (data?.status === 'published') return <PageLoader />;
+  if (articleId && !isError && (!data || data.status === 'published'))
+    return (
+      <>
+        <Meta title="Shared draft | Civitai" deIndex />
+        <PageLoader />
+      </>
+    );
   return (
     <SharedArticleMessage
       message={

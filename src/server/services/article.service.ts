@@ -40,7 +40,7 @@ import { imageSelect, profileImageSelect } from '~/server/selectors/image.select
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
-import { isSharedArticle } from '~/server/services/article-share.helpers';
+import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -2629,19 +2629,20 @@ const SHARED_CHECK_ATTEMPTS = 3;
 
 /**
  * A shared draft passes the same content checks as a published article before it can be viewed.
- * Sends the text stored now for a fresh check. True only once a check this call started is on
- * record for the text still stored afterwards: a save that lands meanwhile is checked again
- * rather than left to an older text's result. Throws when the submit does.
+ * Sends the text stored now for a fresh check, and records that check as the one the shared read
+ * requires once the text it covers is confirmed, under the share lock, to still be the stored
+ * text. A save that lands meanwhile is checked again. False when no check can be shown to have
+ * started; throws when the submit does.
  */
 export async function submitSharedArticleText(id: number): Promise<boolean> {
-  const readText = () =>
-    dbWrite.article.findUnique({ where: { id }, select: { title: true, content: true } });
+  const readText = (db: Prisma.TransactionClient | typeof dbWrite = dbWrite) =>
+    db.article.findUnique({ where: { id }, select: { title: true, content: true } });
   let current = await readText();
   for (let attempt = 0; attempt < SHARED_CHECK_ATTEMPTS && current; attempt++) {
     if (!articleHasText(current.title, current.content)) return true;
     const submitted = current;
     const startedAt = new Date();
-    await submitTextModerationOrScan({
+    const workflow = await submitTextModerationOrScan({
       entityType: 'Article',
       entityId: id,
       force: true,
@@ -2656,13 +2657,27 @@ export async function submitSharedArticleText(id: number): Promise<boolean> {
           rearmRetries: true,
         }),
     });
+    const workflowId = workflow?.id;
     const row = await dbWrite.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
       select: { updatedAt: true },
     });
-    if (!row || row.updatedAt < startedAt) return false;
-    current = await readText();
-    if (current?.title === submitted.title && current?.content === submitted.content) return true;
+    if (!workflowId || !row || row.updatedAt < startedAt) return false;
+
+    const confirmed = await dbWrite.$transaction(async (tx) => {
+      await lockAccessTokens(tx, id);
+      current = await readText(tx);
+      if (current?.title !== submitted.title || current?.content !== submitted.content)
+        return false;
+      const textHash = sharedArticleTextHash(submitted);
+      await tx.articleShareCheck.upsert({
+        where: { articleId: id },
+        create: { articleId: id, workflowId, textHash },
+        update: { workflowId, textHash },
+      });
+      return true;
+    });
+    if (confirmed) return true;
   }
   return false;
 }

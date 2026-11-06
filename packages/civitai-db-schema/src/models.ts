@@ -2978,6 +2978,13 @@ export interface AccessToken {
   revokedAt: Date | null;
 }
 
+export interface ArticleShareCheck {
+  articleId: number;
+  workflowId: string;
+  textHash: string;
+  updatedAt: Date;
+}
+
 export interface AdToken {
   id: number;
   token: string;

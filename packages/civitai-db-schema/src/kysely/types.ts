@@ -968,6 +968,12 @@ export type ArticleReport = {
   articleId: number;
   reportId: number;
 };
+export type ArticleShareCheck = {
+  articleId: number;
+  workflowId: string;
+  textHash: string;
+  updatedAt: Timestamp;
+};
 export type ArticleStat = {
   articleId: number;
   cryCountDay: Generated<number>;
@@ -6510,6 +6516,7 @@ export type DB = {
   ArticleRatingReview: ArticleRatingReview;
   ArticleReaction: ArticleReaction;
   ArticleReport: ArticleReport;
+  ArticleShareCheck: ArticleShareCheck;
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;

@@ -1,6 +1,6 @@
 -- AccessToken: a generic, revocable, expiring bearer link to one resource. First use is private
 -- share links to draft articles (`resourceType = 'Article'`). Only the sha256 of the token is
--- stored.
+-- stored. ArticleShareCheck: the content check a shared draft's read requires.
 --
 -- MANUAL APPLY. Migrations are not auto-applied to the main database: a human runs this SQL on
 -- each environment (preview / dev, then production).
@@ -28,3 +28,12 @@ CREATE INDEX "AccessToken_createdById_idx" ON "AccessToken"("createdById");
 
 ALTER TABLE "AccessToken" ADD CONSTRAINT "AccessToken_createdById_fkey"
   FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+CREATE TABLE "ArticleShareCheck" (
+  "articleId" INTEGER NOT NULL,
+  "workflowId" TEXT NOT NULL,
+  "textHash" TEXT NOT NULL,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+
+  CONSTRAINT "ArticleShareCheck_pkey" PRIMARY KEY ("articleId")
+);
