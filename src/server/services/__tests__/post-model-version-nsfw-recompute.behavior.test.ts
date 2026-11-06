@@ -52,8 +52,8 @@ function wireDb() {
     ) => {
       const [first] = a;
       const text = Array.isArray(first) ? first.join('') : (first as { text: string }).text;
-      // Post.nsfwLevel's own recompute reads the scan-floor tables; the version and model
-      // levels under test do not depend on it.
+      // Post.nsfwLevel's own recompute reads the scan-floor tables and is not covered here; the
+      // version and model levels under test do not depend on it.
       if (text.includes('WITH next AS')) return [];
       return raw().queryRaw(...a);
     }) as never);
@@ -86,7 +86,7 @@ function wireDb() {
       (async () =>
         (
           await query(
-            `SELECT "entityId", "entityType", type FROM "JobQueue" WHERE type = 'UpdateNsfwLevel'`
+            `SELECT "entityId", "entityType", type FROM "JobQueue" WHERE type = 'UpdateNsfwLevel' AND "entityType" <> 'Collection'`
           )
         ).rows) as never
     );
@@ -105,7 +105,7 @@ function wireDb() {
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'ModelVersion', 'Model');
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'ModelVersion', 'Model', 'Collection');
     CREATE TYPE "JobQueueType" AS ENUM ('UpdateNsfwLevel', 'CleanIfEmpty', 'CleanUp');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, nsfw boolean NOT NULL,
