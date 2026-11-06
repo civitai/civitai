@@ -153,6 +153,37 @@ describe('rated-entity profiles', () => {
     }
   );
 
+  it.each([
+    ['Draft', 'an active', false],
+    ['Unpublished', 'an active', false],
+    ['UnpublishedViolation', 'an active', true],
+    ['Draft', 'an expired', true],
+    ['Draft', 'a revoked', true],
+  ])(
+    'Article: a %s article with %s share link is marked notPublic=%s',
+    async (status, state, notPublic) => {
+      const link = {
+        expiresAt: new Date(Date.now() + (state === 'an expired' ? -60_000 : 60_000)),
+        revokedAt: state === 'a revoked' ? new Date() : null,
+      };
+      dbMock.dbWrite.article.findMany.mockResolvedValue([
+        {
+          id: 1,
+          userId: 9,
+          title: 'T',
+          content: null,
+          userNsfwLevel: 1,
+          status,
+          scheduledAt: null,
+        },
+      ]);
+      dbMock.dbWrite.accessToken.findMany.mockResolvedValueOnce([
+        { resourceId: 1, resourceType: 'Article', ...link },
+      ] as never);
+      expect(Boolean((await load('Article')).notPublic)).toBe(notPublic);
+    }
+  );
+
   it('Post, BountyEntry: declared is the stored level', async () => {
     dbMock.dbWrite.post.findMany.mockResolvedValue([
       { id: 1, userId: 9, title: 'T', detail: '<p>D</p>', nsfwLevel: 5 },

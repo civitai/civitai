@@ -1,0 +1,30 @@
+-- AccessToken: a generic, revocable, expiring bearer link to one resource. First use is private
+-- share links to draft articles (`resourceType = 'Article'`). Only the sha256 of the token is
+-- stored.
+--
+-- MANUAL APPLY. Migrations are not auto-applied to the main database: a human runs this SQL on
+-- each environment (preview / dev, then production).
+--
+-- DEPLOY ORDER: apply this BEFORE deploying the code that reads it. A new table has no readers on
+-- the previous build, so applying early is safe; deploying first makes every share-link procedure
+-- fail until it is applied.
+
+CREATE TABLE "AccessToken" (
+  "id" SERIAL NOT NULL,
+  "resourceType" TEXT NOT NULL,
+  "resourceId" INTEGER NOT NULL,
+  "tokenHash" TEXT NOT NULL,
+  "createdById" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "expiresAt" TIMESTAMP(3) NOT NULL,
+  "revokedAt" TIMESTAMP(3),
+
+  CONSTRAINT "AccessToken_pkey" PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX "AccessToken_tokenHash_key" ON "AccessToken"("tokenHash");
+CREATE INDEX "AccessToken_resourceType_resourceId_idx" ON "AccessToken"("resourceType", "resourceId");
+CREATE INDEX "AccessToken_createdById_idx" ON "AccessToken"("createdById");
+
+ALTER TABLE "AccessToken" ADD CONSTRAINT "AccessToken_createdById_fkey"
+  FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

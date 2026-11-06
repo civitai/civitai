@@ -564,6 +564,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  accessTokens               AccessToken[]
   ratingRequests             ImageRatingRequest[]
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
@@ -5065,6 +5066,25 @@ model TrustedSpokeDomain {
   enabled           Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt
+}
+
+// A bearer link to one resource (first use: a private share link to a draft article). Only the
+// sha256 of the token is stored; the raw token is shown to its creator once. A row grants nothing
+// once `revokedAt` is set or `expiresAt` has passed, and readers check both on every lookup.
+// `resourceType` is text, not an enum, so a new kind of link needs no enum migration.
+model AccessToken {
+  id           Int       @id @default(autoincrement())
+  resourceType String
+  resourceId   Int
+  tokenHash    String    @unique
+  createdById  Int
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([resourceType, resourceId])
+  @@index([createdById])
 }
 
 model AdToken {

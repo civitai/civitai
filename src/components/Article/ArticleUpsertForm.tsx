@@ -2,7 +2,7 @@ import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
 import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
-import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
+import { IconLink, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -10,6 +10,7 @@ import * as z from 'zod';
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
 import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -744,6 +745,19 @@ function ActionButtons({
           )}
         </>
       )}
+      {article?.id &&
+        (article.status === ArticleStatus.Draft ||
+          article.status === ArticleStatus.Unpublished) && (
+          <Button
+            variant="default"
+            type="button"
+            fullWidth
+            leftSection={<IconLink size={16} />}
+            onClick={() => openArticleShareDraftModal(article.id)}
+          >
+            Share draft
+          </Button>
+        )}
       {article?.publishedAt ? (
         <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}

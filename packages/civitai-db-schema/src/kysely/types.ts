@@ -156,6 +156,16 @@ import type {
   PrizeSourceType,
 } from './enums';
 
+export type AccessToken = {
+  id: Generated<number>;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+  revokedAt: Timestamp | null;
+};
 export type Account = {
   id: Generated<number>;
   userId: number;
@@ -6453,6 +6463,7 @@ export type WorkerDevice = {
 };
 export type DB = {
   _LicenseToModel: LicenseToModel;
+  AccessToken: AccessToken;
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;

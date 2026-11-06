@@ -1,5 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getResourceIdsWithActiveAccessTokens } from '~/server/services/access-token.service';
 import { recomputeArticleIngestion } from '~/server/services/article.service';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -38,7 +39,10 @@ export const articleModerationAdapter: ModerationAdapter = {
       where: { id: entityId },
       select: { status: true, scheduledAt: true },
     });
-    if (article && !isPublicArticle(article)) return TEXT_SCAN_ENTITY_NOT_PUBLIC;
+    if (article) {
+      const shared = await getResourceIdsWithActiveAccessTokens('Article', [entityId]);
+      if (!isPublicArticle(article, shared.has(entityId))) return TEXT_SCAN_ENTITY_NOT_PUBLIC;
+    }
     return submitTextModerationOrScan({
       entityType: 'Article',
       entityId,

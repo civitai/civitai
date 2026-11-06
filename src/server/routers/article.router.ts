@@ -16,7 +16,17 @@ import {
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
   setArticleOfficialSchema,
+  createArticleShareLinkSchema,
+  getArticleShareLinksSchema,
+  getSharedArticleSchema,
+  articleShareTokenRateLimits,
 } from '~/server/schema/article.schema';
+import {
+  createArticleShareLink,
+  getArticleByShareToken,
+  getArticleShareLinks,
+  revokeArticleShareLink,
+} from '~/server/services/article-share.service';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
@@ -101,6 +111,25 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
     .query(({ input }) => isArticleProcessing(input)),
+  // Draft share links. The token opens only `getShared`; nothing else reads it.
+  createShareLink: guardedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesWrite })
+    .input(createArticleShareLinkSchema)
+    .use(isFlagProtected('articleCreate'))
+    .mutation(({ input, ctx }) => createArticleShareLink({ ...input, userId: ctx.user.id })),
+  getShareLinks: protectedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getArticleShareLinksSchema)
+    .query(({ input, ctx }) => getArticleShareLinks({ ...input, userId: ctx.user.id })),
+  revokeShareLink: protectedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesWrite })
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) => revokeArticleShareLink({ ...input, userId: ctx.user.id })),
+  getShared: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getSharedArticleSchema)
+    .use(rateLimit(articleShareTokenRateLimits))
+    .query(({ input, ctx }) => getArticleByShareToken({ ...input, viewerId: ctx.user?.id })),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)

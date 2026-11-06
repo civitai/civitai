@@ -18,8 +18,22 @@ export function isPublicModel(model: { status: ModelStatus; availability: Availa
 
 // Availability is deliberately not read: a Private article's ingestion waits on the verdict too.
 // Keep in step with `article-schedule.helpers.ts`, which decides when a scheduled Draft goes live.
-export function isPublicArticle(article: { status: ArticleStatus; scheduledAt: Date | null }) {
-  return article.status === ArticleStatus.Published || articleAwaitsTextVerdict(article);
+// `shared`: the article has an active share link. A shared draft passes the same content checks as
+// a published article before it can be viewed.
+export function isPublicArticle(
+  article: { status: ArticleStatus; scheduledAt: Date | null },
+  shared = false
+) {
+  return (
+    article.status === ArticleStatus.Published ||
+    articleAwaitsTextVerdict(article) ||
+    (shared && isShareableArticleStatus(article.status))
+  );
+}
+
+/** Statuses a share link may be created for and read in. */
+export function isShareableArticleStatus(status: ArticleStatus) {
+  return status === ArticleStatus.Draft || status === ArticleStatus.Unpublished;
 }
 
 // Processing and a scheduled Draft go live only once the text verdict is in.

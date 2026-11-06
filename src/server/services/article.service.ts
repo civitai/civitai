@@ -39,6 +39,7 @@ import type {
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
+import { getResourceIdsWithActiveAccessTokens } from '~/server/services/access-token.service';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -120,6 +121,7 @@ import { submitTextModeration } from '~/server/services/text-moderation.service'
 import {
   articleAwaitsTextVerdict,
   isPublicArticle,
+  isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
@@ -1573,12 +1575,17 @@ export async function applyArticleContentChange({
   {
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
+    // Only asked when it can change the answer.
+    const shared =
+      !isPublicArticle(publication) &&
+      isShareableArticleStatus(publication.status) &&
+      (await getResourceIdsWithActiveAccessTokens('Article', [id])).has(id);
 
     if (!hasText) {
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
-    } else if (isPublicArticle(publication)) {
+    } else if (isPublicArticle(publication, shared)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
       const submitted = submitTextModerationOrScan({
@@ -1601,8 +1608,9 @@ export async function applyArticleContentChange({
           articleId: id,
         }).catch();
       });
-      // Otherwise the recompute below can count a verdict for older text and take it live.
-      if (articleAwaitsTextVerdict(publication)) await submitted;
+      // Otherwise the recompute below can count a verdict for older text and take it live. A
+      // shared draft is live to its link holders, so it waits too.
+      if (articleAwaitsTextVerdict(publication) || shared) await submitted;
     }
   }
 
@@ -2388,7 +2396,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   };
   textModeration: ArticleTextModerationStatus;
 }> {
-  const [connections, article, moderation] = await Promise.all([
+  const [connections, article, moderation, sharedIds] = await Promise.all([
     dbRead.imageConnection.findMany({
       where: {
         entityId: id,
@@ -2415,6 +2423,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
       select: { status: true, blocked: true, retryCount: true, updatedAt: true },
     }),
+    getResourceIdsWithActiveAccessTokens('Article', [id]),
   ]);
 
   // Cover lives on `Article.coverId`, not in `ImageConnection`, so a cover-only
@@ -2457,7 +2466,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
   const required =
     !!article &&
-    (isPublicArticle(article) || textBlocked) &&
+    (isPublicArticle(article, sharedIds.has(id)) || textBlocked) &&
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
@@ -3038,7 +3047,8 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content && isPublicArticle(article)) {
+  const sharedIds = await getResourceIdsWithActiveAccessTokens('Article', [id]);
+  if (article.content && isPublicArticle(article, sharedIds.has(id))) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');

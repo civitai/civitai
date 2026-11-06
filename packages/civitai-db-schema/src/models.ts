@@ -678,6 +678,7 @@ export interface User {
   collaboratingOn?: EntityCollaborator[];
   collaborationsCreated?: EntityCollaborator[];
   adTokens?: AdToken[];
+  accessTokens?: AccessToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
@@ -2963,6 +2964,18 @@ export interface TrustedSpokeDomain {
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface AccessToken {
+  id: number;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
 }
 
 export interface AdToken {

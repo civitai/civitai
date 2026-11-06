@@ -167,3 +167,15 @@ export const setArticleOfficialSchema = z.object({
   id: z.number(),
   isOfficial: z.boolean(),
 });
+
+export const articleShareExpiryDays = [1, 7, 30] as const;
+export const createArticleShareLinkSchema = z.object({
+  articleId: z.number(),
+  expiresInDays: z.union([z.literal(1), z.literal(7), z.literal(30)]).default(7),
+});
+export const getArticleShareLinksSchema = z.object({ articleId: z.number() });
+// 32 random bytes in base64url is 43 characters; anything else cannot be a token.
+export const getSharedArticleSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+});
+export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
