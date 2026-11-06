@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { NsfwLevel, Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
-import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  bustQueriedWorkflowsCache,
+  normalizeStepOutput,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import {
   submitPresetImageGen,
   whatIfPresetImageGen,
@@ -22,6 +25,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   assertInputsUsable,
+  assertWithinQuote,
   buildRuntimeRequest,
   loadSource,
   remixRunId,
@@ -154,25 +158,22 @@ function runSourceId(segments: Segment[]) {
 
 type RunImage = RemixImage & { nsfwLevel?: NsfwLevel };
 
+/** Read through the generator queue's normalizer: an upscale is a comfy step that returns `blobs`, not `images`. */
 function outputImages(workflow: Workflow): RunImage[] {
-  return (workflow.steps ?? []).flatMap((step) => {
-    const images = ((step as { output?: { images?: unknown[] } }).output?.images ?? []) as {
-      url?: string | null;
-      width?: number | null;
-      height?: number | null;
-      available?: boolean | null;
-      blockedReason?: string | null;
-      nsfwLevel?: NsfwLevel;
-    }[];
-    return images
-      .filter((image) => image.url && image.available !== false && !image.blockedReason)
-      .map(({ url, width, height, nsfwLevel }) => ({
-        url: url as string,
-        width: width ?? undefined,
-        height: height ?? undefined,
-        nsfwLevel,
-      }));
-  });
+  return (workflow.steps ?? [])
+    .flatMap((step) => normalizeStepOutput(step as Parameters<typeof normalizeStepOutput>[0]))
+    .flatMap((blob) =>
+      blob.type === 'image' && blob.url && blob.available !== false && !blob.blockedReason
+        ? [
+            {
+              url: blob.url,
+              width: blob.width ?? undefined,
+              height: blob.height ?? undefined,
+              nsfwLevel: blob.nsfwLevel,
+            },
+          ]
+        : []
+    );
 }
 
 type Gate = 'shown' | 'hidden' | 'unrated';
@@ -365,7 +366,8 @@ async function advance({
   if (pending.length) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Too many answers' });
 
   if (outcome.status === 'done') {
-    const workflowId = last?.workflow.id as string;
+    if (!last) throw damaged('it finished without running anything');
+    const workflowId = last.workflow.id as string;
     // No later segment will record these answers, so the latest one keeps them, or a reload would
     // ask them again.
     if (answers.length) await recordTail(workflowId, [...tail, ...answers], caller);
@@ -416,11 +418,7 @@ async function advance({
     flags: caller.features,
   });
   if (quote == null) return { status: 'priced', runId, ...priced };
-  if (priced.cost > quote)
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: `The price changed to ${priced.cost.toLocaleString()} Buzz. Check it and run again.`,
-    });
+  assertWithinQuote(priced.cost, quote);
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, answers };
@@ -439,16 +437,19 @@ async function advance({
   return { status: 'running', runId, workflowId: result.id as string };
 }
 
+/** `answers`: to asks before the app's first workflow, which records them when it submits. */
 export async function startRemixRun({
   slug,
   imageId,
   nonce,
+  answers = [],
   quote,
   caller,
 }: {
   slug: string;
   imageId: number;
   nonce: string;
+  answers?: RemixAnswer[];
   quote?: number;
   caller: RemixAppCaller;
 }) {
@@ -457,7 +458,9 @@ export async function startRemixRun({
   const image = await loadSource(imageId, caller, true);
   const runId = remixRunId({ userId: caller.user.id, slug, imageId, nonce });
   const segments = await readRun(runId, caller);
-  return advance({ runId, app, image, segments, answers: [], quote, caller });
+  // Started already: its first workflow holds these answers, and a repeat tap only reloads it.
+  const given = segments.length ? [] : answers;
+  return advance({ runId, app, image, segments, answers: given, quote, caller });
 }
 
 export async function advanceRemixRun({
