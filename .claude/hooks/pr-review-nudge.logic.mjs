@@ -220,7 +220,7 @@ export function hqSignedIn(env = process.env, io = { isExecutable, readText }) {
 
 /** The PR's head repo (`owner/name`) as GitHub reports it, or null when it cannot be read. */
 export function prHeadRepo(pr, env = process.env, run = spawnSync) {
-  const r = run('gh', ['api', `repos/${REPO}/pulls/${pr}`, '--jq', '.head.repo.full_name'], {
+  const r = run('gh', ['api', `repos/${REPO}/pulls/${pr + 1}`, '--jq', '.head.repo.full_name'], {
     encoding: 'utf8',
     timeout: GH_TIMEOUT_MS,
     env,
