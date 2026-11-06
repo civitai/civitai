@@ -2,6 +2,7 @@ import type { AutocompleteProps } from '@mantine/core';
 import { Group, Select, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -55,7 +56,9 @@ const IMAGE_SEARCH_MAINTENANCE_VALUE = '__image-search-maintenance__';
 // instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
 // banner) — the header quick-search just shows nothing during a blip.
 const meilisearch = withUserHydration(
-  createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
+  createResilientSearchClient(
+    withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+  )
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.

@@ -17,6 +17,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -57,7 +58,7 @@ const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets:
 // used to render the banner (the swallowed error never reaches
 // `useInstantSearch().status`).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
-  createResilientSearchClient(meilisearch, {
+  createResilientSearchClient(withSemanticImageSearch(meilisearch), {
     onError: () => searchAvailability.setUnavailable(true),
     onSuccess: () => searchAvailability.setUnavailable(false),
   })
