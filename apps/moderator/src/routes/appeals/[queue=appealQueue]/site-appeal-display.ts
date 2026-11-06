@@ -52,7 +52,7 @@ export function approvalEffect(
         ? subject.kind === 'article' && subject.restoresTo === 'Draft' && subject.scheduledAt
           ? `Approving returns the article to its author as a draft scheduled to publish on ${formatUtc(
               subject.scheduledAt
-            )}. It goes live then.`
+            )}. It goes live then, or at once if that time has passed.`
           : subject.kind === 'article' && subject.restoresTo !== 'Published'
           ? `Approving returns the article to its author ${
               subject.restoresTo === 'Draft' ? 'as a draft' : 'unpublished'

@@ -72,7 +72,7 @@ describe('approvalEffect', () => {
       ...unpublished,
     } satisfies SiteAppealSubject;
     expect(approvalEffect(subject, true).text).toBe(
-      'Approving returns the article to its author as a draft scheduled to publish on Dec 1, 2026, 3:30 PM UTC. It goes live then.'
+      'Approving returns the article to its author as a draft scheduled to publish on Dec 1, 2026, 3:30 PM UTC. It goes live then, or at once if that time has passed.'
     );
   });
 });
