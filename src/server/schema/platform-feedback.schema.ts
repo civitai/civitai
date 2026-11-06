@@ -92,6 +92,21 @@ export const getPlatformFeedbackStatusSchema = z.object({
 });
 export type GetPlatformFeedbackStatusInput = z.infer<typeof getPlatformFeedbackStatusSchema>;
 
+export const PLATFORM_FEEDBACK_CHANGES_LIMIT_MAX = 100;
+
+/**
+ * The moderator change feed. `cursor` is the `nextCursor` a previous page returned, opaque to the
+ * caller; absent, the feed starts from the oldest row. Only the shape is checked here.
+ */
+export const listPlatformFeedbackChangesSchema = z.object({
+  cursor: z
+    .string()
+    .regex(/^\d{1,15}:\d{1,10}$/)
+    .optional(),
+  limit: z.number().int().min(1).max(PLATFORM_FEEDBACK_CHANGES_LIMIT_MAX).default(50),
+});
+export type ListPlatformFeedbackChangesInput = z.input<typeof listPlatformFeedbackChangesSchema>;
+
 export const PLATFORM_FEEDBACK_READBACK_STATUSES = [
   'received',
   'acknowledged',
@@ -116,6 +131,16 @@ export const platformFeedbackServerStateSchema = z.object({
   lastSeenAt: z.string().nullable().catch(null),
   regressionOf: z.number().int().optional().catch(undefined),
   reopenOf: z.number().int().optional().catch(undefined),
+  /** Read only by the moderator change feed; every reporter-facing read strips it in SQL. */
+  samples: z
+    .array(
+      z.object({
+        text: z.string().catch(''),
+        clientVersion: z.string().nullable().catch(null),
+      })
+    )
+    .optional()
+    .catch(undefined),
   resolution: z
     .object({
       fixedIn: fixedInSchema.optional().catch(undefined),
