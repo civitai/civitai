@@ -1,4 +1,5 @@
 import { Switch } from '@mantine/core';
+import { HAT_TURF_SETTING_LABEL } from '~/components/Account/HatTurfSetting';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
@@ -33,10 +34,11 @@ export function useHatTurfOwnerSwitch() {
 
   return {
     description: stock.optedIn ? (
+      // The switch that leaves is in the Profile pane, not this Creator one.
       <>
-        Leave Hat Turf on the{' '}
-        <NextLink href={`/events/${event}#hat-turf`} className="underline">
-          event page
+        Turn off{' '}
+        <NextLink href="/user/account/profile#hat-turf" className="underline">
+          &ldquo;{HAT_TURF_SETTING_LABEL}&rdquo;
         </NextLink>{' '}
         first
       </>

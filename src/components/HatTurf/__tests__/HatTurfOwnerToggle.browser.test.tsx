@@ -73,9 +73,11 @@ describe("owner's Hat Turf switch in account settings", () => {
     await render();
     await vi.waitFor(() => expect(toggle()).not.toBeNull());
     expect(toggle()!.disabled).toBe(true);
-    expect(document.body.textContent).toMatch(/Leave Hat Turf on the event page first/);
-    const link = [...document.querySelectorAll('a')].find((a) => a.textContent === 'event page');
-    expect(link?.getAttribute('href')).toBe('/events/birthday2026#hat-turf');
+    expect(document.body.textContent).toMatch(/Turn off “Take part in Hat Turf” first/);
+    const link = [...document.querySelectorAll('a')].find((a) =>
+      /Take part/.test(a.textContent ?? '')
+    );
+    expect(link?.getAttribute('href')).toBe('/user/account/profile#hat-turf');
   });
 
   test.each([
