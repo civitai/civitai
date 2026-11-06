@@ -7,12 +7,15 @@ import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
+  type BadgeFigure,
   RING_LENGTH,
   RING_RADIUS,
+  badgeFigure,
   badgeLeader,
   ringArcs,
   standingsLabel,
 } from '~/components/HatTurf/hat-turf.utils';
+import { useHatStock } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
@@ -21,6 +24,13 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 // In the ring's 48-unit viewBox.
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
+
+const figureLabel = (figure: BadgeFigure | null) =>
+  figure?.kind === 'toTake'
+    ? ` Your team is ${figure.value} ${figure.value === 1 ? 'hat' : 'hats'} from the lead.`
+    : figure?.kind === 'points'
+    ? ` This image holds ${figure.value} ${figure.value === 1 ? 'point' : 'points'}.`
+    : '';
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
@@ -44,14 +54,11 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const guard = summary?.hatted ? summary.hattedTeam : null;
   const holder = guard ?? leader;
   const blocked = guard && leader && leader !== guard ? leader : null;
-  // A protected image earns one point, for its hat's team; otherwise the holder's counted stickers.
-  const shownCount = summary
-    ? summary.hatted
-      ? 1
-      : holder
-      ? summary.counted[holder] ?? 0
-      : 0
-    : null;
+  const stock = useHatStock();
+  // What the dial reads depends on the viewer: hats to take the lead when trailing, the points the
+  // image holds when leading, a protected image's single point.
+  const figure = summary ? badgeFigure(summary, feed?.team, stock?.creditedPlayers) : null;
+  const shownCount = figure ? figure.value : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
   const [seenCount, setSeenCount] = useState(shownCount);
@@ -65,9 +72,10 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
-  const discColor = holder ? colorOf(holder) : summary.hatted ? FALLBACK_COLOR : undefined;
+  const discTeam = figure?.kind === 'protected' ? holder : figure?.team ?? null;
+  const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
 
-  const label = `${standingsLabel(summary, feed.team)}${
+  const label = `${standingsLabel(summary, feed.team)}${figureLabel(figure)}${
     summary.hatted
       ? summary.hattedTeam
         ? ` A ${summary.hattedTeam} hat protects this image.`
@@ -83,6 +91,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
       className={clsx(classes.count, !countBeside && classes.countInside, bump && classes.bump)}
       data-testid="hat-turf-count"
     >
+      {figure?.kind === 'toTake' ? '\u2212' : ''}
       {abbreviateNumber(count)}
     </span>
   );

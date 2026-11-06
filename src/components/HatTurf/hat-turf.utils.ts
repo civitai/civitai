@@ -73,6 +73,43 @@ export function standingsLabel(
   }`;
 }
 
+export type BadgeFigure = {
+  /**
+   * `protected`: a hat guards the image and it earns one point. `toTake`: the viewer's team trails
+   * and needs this many hats to lead. `points`: the viewer's team leads and the image scores this
+   * many. `count`: the leader's counted hats (no team, or credit not yet known).
+   */
+  kind: 'protected' | 'toTake' | 'points' | 'count';
+  value: number;
+  /** The team whose colour the number is in; null is neutral. */
+  team: string | null;
+};
+
+/**
+ * The number in the badge's dial, for this viewer. A trailing viewer sees what it would take to
+ * lead (the same figure as the standings popover); a leading one sees the points the image holds,
+ * capped at the players the event credits.
+ */
+export function badgeFigure(
+  summary: Pick<TurfSummary, 'counted' | 'leader' | 'hatted' | 'hattedTeam'>,
+  viewerTeam: string | null | undefined,
+  creditedPlayers: number | null | undefined
+): BadgeFigure {
+  const lead = badgeLeader(summary);
+  if (summary.hatted) return { kind: 'protected', value: 1, team: summary.hattedTeam ?? lead };
+  if (!lead) return { kind: 'count', value: 0, team: null };
+  const leadCount = summary.counted[lead] ?? 0;
+  if (viewerTeam && viewerTeam !== lead)
+    return {
+      kind: 'toTake',
+      value: leadCount - (summary.counted[viewerTeam] ?? 0) + 1,
+      team: viewerTeam,
+    };
+  if (viewerTeam && creditedPlayers != null)
+    return { kind: 'points', value: Math.min(leadCount, creditedPlayers), team: lead };
+  return { kind: 'count', value: leadCount, team: lead };
+}
+
 /**
  * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
  * viewer's team needs to lead outright: a tie stays with the current leader.
