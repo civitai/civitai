@@ -119,8 +119,42 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
     return new Map(set.entries);
   };
 
+  /** The changes after a cursor already loaded: what `changes` resolves to. */
+  async function* follow(
+    schema: string,
+    cursor: string,
+    loaded: Map<string, string>,
+    signal: AbortSignal
+  ): AsyncGenerator<Change> {
+    let served = loaded;
+    let position = cursor;
+    while (!signal.aborted) {
+      const entities = await current(schema);
+      const diff = diffServed(served, entities);
+      if (diff.length > 0) {
+        const set = servedSet(schema, entities);
+        const next = await save(set);
+        // Until the last change of a batch, resuming means re-reading the batch from the
+        // cursor it started at: repeats are harmless (latest state wins), a gap would not be.
+        for (let i = 0; i < diff.length; i++) {
+          if (signal.aborted) return;
+          const at = i === diff.length - 1 ? next : position;
+          const change = diff[i];
+          yield 'upsert' in change
+            ? { upsert: change.upsert, cursor: at }
+            : { delete: change.delete, cursor: at };
+        }
+        served = new Map(set.entries);
+        position = next;
+      }
+      await opts.sleep(opts.pollMs, signal);
+    }
+  }
+
   return {
     namespace: opts.namespace,
+    // The served set is the whole schema's, so its cursor moves only with a change: this adapter
+    // never yields `progress`. A subscription narrowed by `urns` still gets one, from the core.
     serves: (schema) => opts.serves.includes(schema),
 
     async snapshot(schema) {
@@ -133,30 +167,9 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
       };
     },
 
-    async *changes(schema, cursor, { signal }): AsyncGenerator<Change> {
-      let served = await load(schema, cursor);
-      let position = cursor;
-      while (!signal.aborted) {
-        const entities = await current(schema);
-        const diff = diffServed(served, entities);
-        if (diff.length > 0) {
-          const set = servedSet(schema, entities);
-          const next = await save(set);
-          // Until the last change of a batch, resuming means re-reading the batch from the
-          // cursor it started at: repeats are harmless (latest state wins), a gap would not be.
-          for (let i = 0; i < diff.length; i++) {
-            if (signal.aborted) return;
-            const at = i === diff.length - 1 ? next : position;
-            const change = diff[i];
-            yield 'upsert' in change
-              ? { upsert: change.upsert, cursor: at }
-              : { delete: change.delete, cursor: at };
-          }
-          served = new Map(set.entries);
-          position = next;
-        }
-        await opts.sleep(opts.pollMs, signal);
-      }
+    async changes(schema, cursor, { signal }) {
+      const served = await load(schema, cursor);
+      return follow(schema, cursor, served, signal);
     },
   };
 }

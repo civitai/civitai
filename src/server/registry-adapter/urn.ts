@@ -1,18 +1,28 @@
 /**
  * The adapter's namespace and the one function that builds every URN in it.
  *
- * The namespace is pending agreement with the registry's owners; settle it before a registry
- * consumes it. `civitai` is taken by
- * another source and `apps` by the registry's demo; `civitai-apps` is a placeholder. URNs are
- * never rewritten once a registry has seen them, so change it here, before anything consumes it.
+ * `apps.civitai.com`: a domain the operator controls, as the spec asks of a namespace that is not
+ * a well-known name, so it cannot clash with anyone else's. URNs are never rewritten once a
+ * registry has seen them, so settle any change here before a registry consumes them. Registry
+ * issue #6 (URNs or https URLs as identifiers) may still change the identifier FORM; that would
+ * be a mechanical change of these builders, with the namespace staying `apps.civitai.com`.
+ *
+ * Length: the longest URN built here is a document's, `urn:apps.civitai.com:` plus a 64-char
+ * slug, a 32-char collection and a 128-char key with their two `/`: 247 characters.
  */
-export const REGISTRY_NAMESPACE = 'civitai-apps';
+export const REGISTRY_NAMESPACE = 'apps.civitai.com';
 
-/** Schemas this adapter claims but does not define: they belong to the shared schemas source. */
+/** The registry's own schema of schemas: every schema entity claims it. Not ours. */
 export const REGISTRY_SCHEMA_SCHEMA = 'urn:schema:registry:schema@v1';
-export const APP_SCHEMA = 'urn:schema:civitai-schemas:app@v1';
-export const APP_RELEASE_SCHEMA = 'urn:schema:civitai-schemas:app-release@v1';
-export const SERVICE_SCHEMA = 'urn:schema:civitai-schemas:service@v1';
+
+/**
+ * The schemas of the app, release and runtime entities. This adapter defines them
+ * (`schemas.ts`) and publishes them as schema entities of its own namespace. None holds a `/`, so
+ * none can be read as a collection schema URN ({@link parseCollectionSchemaUrn}).
+ */
+export const APP_SCHEMA = `urn:schema:${REGISTRY_NAMESPACE}:app@v1`;
+export const APP_RELEASE_SCHEMA = `urn:schema:${REGISTRY_NAMESPACE}:app-release@v1`;
+export const SERVICE_SCHEMA = `urn:schema:${REGISTRY_NAMESPACE}:service@v1`;
 
 export type UrnRef =
   | { kind: 'app'; slug: string }

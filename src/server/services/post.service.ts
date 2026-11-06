@@ -10,6 +10,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readPostDetailViaKysely,
@@ -74,11 +75,11 @@ import {
   createImageResources,
   deleteImageFromS3,
   deleteImagesForModelVersionCache,
+  getImageMetricsObject,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   invalidateManyImageExistence,
-  purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
   isPlainOwnerDelete,
   imagesWithOpenReports,
@@ -726,7 +727,8 @@ export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const images = await getPostEditImages({ id, user });
+  const editImages = await getPostEditImages({ id, user });
+  const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -756,6 +758,31 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
 };
+
+/**
+ * Reaction totals for the editor's image cards. Edit-load only: uploads share
+ * `combinePostEditImageData` and must not pay a metrics read. Published posts only; an image the
+ * read could not resolve gets no count (absent, not 0).
+ */
+export async function withReactionCounts<T extends { id: number }>(
+  images: T[],
+  publishedAt: Date | null
+): Promise<(T & { reactionCount?: number })[]> {
+  if (!publishedAt || publishedAt > new Date() || !images.length) return images;
+  const metrics = await getImageMetricsObject(images);
+  return images.map((image) => {
+    const m = metrics[image.id];
+    if (!m) return image;
+    const { reactionLike, reactionHeart, reactionLaugh, reactionCry } = m;
+    if ([reactionLike, reactionHeart, reactionLaugh, reactionCry].every((n) => n == null))
+      return image;
+    return {
+      ...image,
+      reactionCount:
+        (reactionLike ?? 0) + (reactionHeart ?? 0) + (reactionLaugh ?? 0) + (reactionCry ?? 0),
+    };
+  });
+}
 
 async function getPostModel({
   modelVersionId,
@@ -1828,8 +1855,6 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       userId: result.userId,
     });
   }
-
-  purgeImageGenerationDataCache(image.id);
 };
 
 export const addResourceToPostImage = async ({
@@ -2114,6 +2139,7 @@ export const updatePostCollectionTagId = async ({
       tagId: collectionTagId,
     },
   });
+  await bustContestCollectionItemsCache(images.map((i) => i.id));
 };
 
 async function refreshSfwFaceLevels(modelIds: number[]) {

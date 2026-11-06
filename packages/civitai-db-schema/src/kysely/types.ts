@@ -156,6 +156,16 @@ import type {
   PrizeSourceType,
 } from './enums';
 
+export type AccessToken = {
+  id: Generated<number>;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+  revokedAt: Timestamp | null;
+};
 export type Account = {
   id: Generated<number>;
   userId: number;
@@ -807,6 +817,7 @@ export type Article = {
   content: string;
   cover: string | null;
   coverId: number | null;
+  bannerId: number | null;
   publishedAt: Timestamp | null;
   scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
@@ -957,6 +968,13 @@ export type ArticleReaction = {
 export type ArticleReport = {
   articleId: number;
   reportId: number;
+};
+export type ArticleShareCheck = {
+  articleId: number;
+  generation: Generated<number>;
+  workflowId: string | null;
+  textHash: string | null;
+  updatedAt: Timestamp;
 };
 export type ArticleStat = {
   articleId: number;
@@ -3387,22 +3405,6 @@ export type GenerationSizePreset = {
   width: number;
   height: number;
   createdAt: Generated<Timestamp>;
-};
-export type HeldAnswer = {
-  /**
-   * The original Answer id.
-   */
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-  heldAt: Generated<Timestamp>;
-  /**
-   * The holds on the author when it was copied.
-   */
-  holdReasons: string[];
 };
 export type HeldResourceReview = {
   /**
@@ -6468,6 +6470,7 @@ export type WorkerDevice = {
 };
 export type DB = {
   _LicenseToModel: LicenseToModel;
+  AccessToken: AccessToken;
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
@@ -6514,6 +6517,7 @@ export type DB = {
   ArticleRatingReview: ArticleRatingReview;
   ArticleReaction: ArticleReaction;
   ArticleReport: ArticleReport;
+  ArticleShareCheck: ArticleShareCheck;
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
@@ -6672,7 +6676,6 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
-  HeldAnswer: HeldAnswer;
   HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;

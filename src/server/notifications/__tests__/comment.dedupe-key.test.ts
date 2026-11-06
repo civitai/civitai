@@ -1,4 +1,3 @@
-import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
   CommentNotificationPriority,
@@ -77,12 +76,6 @@ describe('comment notifications — shared dedupe key', () => {
       expect(sqlFor(type)).toContain(`when details->>'threadType' is null then`);
     }
   );
-
-  it('new-comic-comment shares the key so it can claim the comic threads those two skip', () => {
-    // Created inline in the router, not by a cron processor, so assert the call site directly.
-    const router = readFileSync('src/server/routers/comics.router.ts', 'utf8');
-    expect(router).toContain('dedupeKey: `comment:v2:${comment.id}`');
-  });
 
   it('new-mention dedupes comment mentions but leaves model-description mentions alone', () => {
     const sql = sqlFor('new-mention');

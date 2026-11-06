@@ -196,10 +196,11 @@ describe('creator shop item history', () => {
     });
   });
 
-  it('leaves history untouched when an edit moves nothing', async () => {
-    await updateCreatorShopItem({ id: 42, userId: 11, price: 500 });
-
-    expect(historyOf(0)).toEqual(requestedChangesItem.meta.history);
+  it('refuses a resubmit that moves nothing, writing no history', async () => {
+    await expect(updateCreatorShopItem({ id: 42, userId: 11, price: 500 })).rejects.toThrow(
+      /Make the requested changes/
+    );
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
   it('records a rejection with its note and reviewer', async () => {

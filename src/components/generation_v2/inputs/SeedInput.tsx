@@ -1,6 +1,7 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Group, Input, NumberInput, SegmentedControl } from '@mantine/core';
+import { Group, Input, NumberInput } from '@mantine/core';
 import { useEffect, useRef } from 'react';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { MAX_SEED, MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 
 // =============================================================================
@@ -81,7 +82,9 @@ export function SeedInput({
   return (
     <Input.Wrapper {...inputWrapperProps}>
       <Group>
-        <SegmentedControl
+        <ChoiceGroup
+          aria-label="Seed"
+          className="w-44 shrink-0"
           value={control}
           onChange={handleControlChange}
           data={[

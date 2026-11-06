@@ -35,6 +35,14 @@ export type CachedLookupOptions<T extends object> = {
   // a stale value is served while a background revalidate runs. Defaults to `ttl`, reproducing the
   // historical `ttl * 2` physical expiry. Only consulted when `staleWhileRevalidate` is true.
   staleWhileRevalidateTtl?: number;
+  // Opt-in, for a non-SWR cache whose writers bust(). A miss fill's lookup can read the origin (often a
+  // replica) BEFORE a bust and write AFTER it; a plain SET then overwrites the bust's debounce marker
+  // with the pre-write value, which is served until `ttl`. With this set the fill is a SET NX, so it
+  // loses to any key already there: the marker of a bust that landed during its lookup, or a
+  // concurrent fill. The guarantee lasts as long as the marker, so pair it with a `debounceTime` that
+  // outlasts the lookup plus replica lag. Not for an SWR cache, whose revalidate overwrites a
+  // present, stale entry by design.
+  fillIfAbsent?: boolean;
   // --- In-process (per-pod) L1 in front of the Redis per-id cache -----------------------------------
   // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also held in a bounded per-pod
   // LRU. An L1 hit skips the Redis read for that id entirely — the win on hot feed hydration.
@@ -213,6 +221,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     dontCacheFn,
     staleWhileRevalidate = true,
     staleWhileRevalidateTtl,
+    fillIfAbsent = false,
     localTtl,
     localMax = 10000,
     localMaxBytes,
@@ -434,10 +443,18 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const ttlExpiry = new Date(Date.now() - ttl * 1000);
       const locks = new Set<RedisKeyTemplateCache>();
       let cacheHits = 0;
+      // A notFound marker served from Redis is a hit too: the lookup it stands for is skipped. Counted
+      // apart from `cachedArray` so that series keeps meaning "a row was served", while a hit ratio
+      // summed over cache_type stops reading a mostly-negative cache as near-zero (its refills are
+      // misses, so leaving these out counted only the cost of the markers and none of their benefit).
+      let notFoundHits = 0;
       for (const id of distinctIds) {
         const cached = cache[id];
         if (cached) {
-          if (cached.notFound) continue;
+          if (cached.notFound) {
+            notFoundHits++;
+            continue;
+          }
           // A readable marker is inside its window by construction: bust() writes it with EX = the
           // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW or, from
           // invalidate(), SWR_INVALIDATE_WINDOW), so Redis
@@ -461,6 +478,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
 
       if (cacheHits > 0) metrics.hit(key, 'cachedArray', cacheHits);
+      if (notFoundHits > 0) metrics.hit(key, 'cachedArrayNotFound', notFoundHits);
 
       const toRevalidateIds = Object.keys(toRevalidate).map(Number);
       if (toRevalidateIds.length > 0) {
@@ -556,7 +574,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
                   redis.packed.set(
                     `${key}:${id}` as RedisKeyTemplateCache,
                     value,
-                    { EX },
+                    fillIfAbsent ? { EX, NX: true } : { EX },
                     packedOptions
                   )
                 )

@@ -618,7 +618,7 @@ export const TOOLS = [
   tool({
     name: 'buzz_flows',
     description:
-      "Where a set of accounts' Buzz came from and went (1-100 accounts): blue Buzz each was rewarded, Buzz sent to and received from other accounts by account type (blue = reward Buzz), trainings and how many were paid with blue Buzz, and the account-to-account flows (tips, model purchases with the model version ids) with withinSet marking flows between two listed accounts. For alts pooling Buzz into a main and burners farming free trainings.",
+      "Where a set of accounts' Buzz came from and went (1-100 accounts): blue Buzz each was rewarded, Buzz sent to and received from other accounts by account type (blue = reward Buzz), trainings and how many were paid with blue Buzz, Buzz paid to the platform by type and account type (generation, training, purchases, bids, fees) Buzz the platform refunded, and Buzz the platform paid out as compensation (creator compensation, and generation tips, which the platform pays out so the tipper is not named), and the account-to-account flows (tips, model purchases with the model version ids) with withinSet marking flows between two listed accounts. For alts pooling Buzz into a main and burners farming free trainings. Before calling an account one that accumulates rather than spends, read platformSpend net of platformRefunds (platformEarnings is income, not a refund; a chargeBack row is a clawback, not spend): most blue Buzz is spent on generation, which never shows as a flow to another account.",
     input: z.object({
       userIds: userIdList(100),
       days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(90),

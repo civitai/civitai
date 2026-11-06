@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -5,10 +6,11 @@ import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { FILTER_MAX_BYTES, usesRegex } from '~/server/registry-adapter/json-schema';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
+import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
-const APPS = 'urn:schema:civitai-schemas:app@v1';
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
 const one: Entity = {
-  urn: 'urn:civitai-apps:app/orbit-notes',
+  urn: 'urn:apps.civitai.com:app/orbit-notes',
   schemas: [APPS],
   rev: 'rev-7a',
   body: { slug: 'orbit-notes' },
@@ -17,15 +19,25 @@ const one: Entity = {
 /** A source whose change feed has one delete and then ends, so every stream closes. */
 function adapter(over: Partial<Adapter> = {}): Adapter {
   return {
-    namespace: 'civitai-apps',
+    namespace: 'apps.civitai.com',
     serves: (schema) => schema === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [one] }),
-    async *changes(): AsyncGenerator<Change> {
-      yield { delete: 'urn:civitai-apps:app/tide-log', cursor: 'c1.after-delete' };
-    },
+    changes: async () =>
+      feed({ delete: 'urn:apps.civitai.com:app/tide-log', cursor: 'c1.after-delete' }),
     ...over,
   };
+}
+
+/** A change feed of `changes`, then its end. */
+async function* feed(...changes: Change[]): AsyncGenerator<Change> {
+  yield* changes;
+}
+
+/** A change feed that fails on its first read, once the stream is live. */
+// eslint-disable-next-line require-yield
+async function* failing(err: Error): AsyncGenerator<Change> {
+  throw err;
 }
 
 let server: Server | undefined;
@@ -33,44 +45,67 @@ afterEach(
   () => new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()))
 );
 
-async function get(a: Adapter, query: string) {
+/**
+ * The response, its text with each cursor's request binding (`b1.<digest>.`) taken out: these
+ * cases are about the frames, and `subscription.test.ts` pins the binding.
+ */
+async function get(a: Adapter, query: string, headers: Record<string, string> = {}) {
   server = createRegistryServer(a);
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
-  const res = await fetch(`http://127.0.0.1:${port}${query}`);
-  return { status: res.status, type: res.headers.get('content-type'), text: await res.text() };
+  const res = await fetch(`http://127.0.0.1:${port}${query}`, { headers });
+  const text = (await res.text()).replace(/b1\.[0-9a-f]{24}\./g, '');
+  return { status: res.status, type: res.headers.get('content-type'), text };
 }
+
+/** `cursor` as this source hands it out for an unfiltered request of `APPS`. */
+const issued = (cursor: string) => bindCursor(cursor, requestBinding({ schema: APPS, urns: [] }));
 
 const asFilter = (f: unknown) => `&filter=${encodeURIComponent(JSON.stringify(f))}`;
 const sub = (schema: string, extra = '') =>
   `/subscribe?schema=${encodeURIComponent(schema)}${extra}`;
 
 describe('the HTTP/SSE binding', () => {
-  it('snapshot upserts with an empty cursor, then live, then changes, then end', async () => {
+  it('🔴 snapshot upserts with an empty cursor and an EMPTY id, then live, then changes, then end', async () => {
     const res = await get(adapter(), sub(APPS));
     expect(res.status).toBe(200);
     expect(res.type).toBe('text/event-stream');
     expect(res.text).toBe(
-      'event: upsert\n' +
+      'event: upsert\nid:\n' +
         `data: ${JSON.stringify({ entity: one, cursor: '' })}\n\n` +
-        'event: live\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
-        'event: delete\ndata: {"urn":"urn:civitai-apps:app/tide-log","cursor":"c1.after-delete"}\n\n' +
+        'event: live\nid: c1.snapshot-cursor\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
+        'event: delete\nid: c1.after-delete\n' +
+        'data: {"urn":"urn:apps.civitai.com:app/tide-log","cursor":"c1.after-delete"}\n\n' +
         'event: end\ndata: {}\n\n'
     );
   });
 
   it('a cursor skips the snapshot', async () => {
-    const res = await get(adapter(), sub(APPS, '&cursor=c1.resume-here'));
-    expect(res.text.startsWith('event: live\ndata: {"cursor":"c1.resume-here"}')).toBe(true);
+    const res = await get(adapter(), sub(APPS, `&cursor=${issued('c1.resume-here')}`));
+    expect(res.text.startsWith('event: live\nid: c1.resume-here\n')).toBe(true);
+  });
+
+  it('🔴 Last-Event-ID resumes as a cursor does', async () => {
+    const res = await get(adapter(), sub(APPS), { 'last-event-id': issued('c1.resume-here') });
+    expect(res.text.startsWith('event: live\nid: c1.resume-here\n')).toBe(true);
+  });
+
+  it('🔴 with both, Last-Event-ID wins: it is the later position an EventSource reconnects with', async () => {
+    const res = await get(adapter(), sub(APPS, `&cursor=${issued('c1.in-the-url')}`), {
+      'last-event-id': issued('c1.last-received'),
+    });
+    expect(res.text.startsWith('event: live\nid: c1.last-received\n')).toBe(true);
   });
 
   it('a urn filter drops other entities', async () => {
     const res = await get(
       adapter(),
-      sub(APPS, `&urn=${encodeURIComponent('urn:civitai-apps:app/other')}`)
+      sub(APPS, `&urn=${encodeURIComponent('urn:apps.civitai.com:app/other')}`)
     );
     expect(res.text).toBe(
-      'event: live\ndata: {"cursor":"c1.snapshot-cursor"}\n\nevent: end\ndata: {}\n\n'
+      'event: live\nid: c1.snapshot-cursor\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
+        'event: progress\nid: c1.after-delete\ndata: {"cursor":"c1.after-delete"}\n\n' +
+        'event: end\ndata: {}\n\n'
     );
   });
 
@@ -79,19 +114,34 @@ describe('the HTTP/SSE binding', () => {
     expect(res.text).toBe('event: end\ndata: {}\n\n');
   });
 
-  it('cursor_expired on resume arrives as an error event naming it, as the SDK sends it', async () => {
+  it('a cursor the source refuses is answered with its own status, before any event', async () => {
     const res = await get(
       adapter({
-        // eslint-disable-next-line require-yield
-        async *changes() {
+        changes: async () => {
           throw new ProtocolError('cursor_expired', 'gone');
         },
       }),
-      sub(APPS, '&cursor=c1.stale')
+      sub(APPS, `&cursor=${issued('c1.stale')}`)
     );
-    // `live` precedes the first read of the change feed, so the stream has started.
+    expect([res.status, res.type, JSON.parse(res.text)]).toEqual([
+      410,
+      'application/json',
+      { error: 'cursor_expired', message: 'gone' },
+    ]);
+  });
+
+  it('a feed that fails once live arrives as an error event naming it, after live', async () => {
+    const res = await get(
+      adapter({
+        changes: async () => failing(new ProtocolError('cursor_expired', 'gone later')),
+      }),
+      sub(APPS, `&cursor=${issued('c1.resume-here')}`)
+    );
     expect(res.status).toBe(200);
-    expect(res.text).toContain('event: error\ndata: {"error":"cursor_expired","message":"gone"}');
+    expect(res.text).toBe(
+      'event: live\nid: c1.resume-here\ndata: {"cursor":"c1.resume-here"}\n\n' +
+        'event: error\ndata: {"error":"cursor_expired","message":"gone later"}\n\n'
+    );
   });
 
   it('🔴 an unexpected error is `unavailable` and its text never reaches the client', async () => {
@@ -183,13 +233,98 @@ describe('🔴 a snapshot slower than the heartbeat', () => {
   });
 });
 
+describe('🔴 a consumer that stops reading (rule 8)', () => {
+  /**
+   * A response whose socket never drains, as Node's behaves: `end()` does NOT emit `close` while
+   * the socket is stalled (only `destroy()` does, later), and a write after `end()` emits `error`,
+   * which throws when nothing listens for it (the process would exit).
+   */
+  class StalledRes extends EventEmitter {
+    out: string[] = [];
+    writesAfterEnd = 0;
+    closed = false;
+    destroyed = false;
+    writableEnded = false;
+    headersSent = false;
+    writeHead() {
+      this.headersSent = true;
+      return this;
+    }
+    write(chunk: string) {
+      if (this.writableEnded) {
+        this.writesAfterEnd++;
+        this.emit(
+          'error',
+          Object.assign(new Error('write after end'), { code: 'ERR_STREAM_WRITE_AFTER_END' })
+        );
+        return false;
+      }
+      this.out.push(chunk);
+      return false;
+    }
+    end(chunk?: string) {
+      if (chunk) this.write(chunk);
+      this.writableEnded = true;
+      return this;
+    }
+    destroy() {
+      this.destroyed = true;
+      setImmediate(() => {
+        this.closed = true;
+        this.emit('close');
+      });
+      return this;
+    }
+  }
+
+  it('is ended with slow_consumer, its socket freed, and no timer ever writes to it again', async () => {
+    vi.useFakeTimers();
+    try {
+      const res = new StalledRes();
+      const done = handleRequest(adapter(), { slowConsumerMs: 20 })(
+        { url: sub(APPS), headers: {} } as unknown as IncomingMessage,
+        res as unknown as ServerResponse
+      );
+      await vi.advanceTimersByTimeAsync(50);
+      await done;
+      // Well past several heartbeat periods: before the fix, the first one wrote after end.
+      await vi.advanceTimersByTimeAsync(60_000);
+      // The first frame filled the buffer: nothing after it but the error.
+      expect(res.out).toEqual([
+        `event: upsert\nid:\ndata: ${JSON.stringify({ entity: one, cursor: '' })}\n\n`,
+        'event: error\ndata: {"error":"slow_consumer","message":"the consumer did not keep up with the stream"}\n\n',
+      ]);
+      expect([res.writesAfterEnd, res.destroyed, vi.getTimerCount()]).toEqual([0, true, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a socket error on the response is never unhandled', async () => {
+    vi.useFakeTimers();
+    try {
+      const res = new StalledRes();
+      const done = handleRequest(adapter(), { slowConsumerMs: 60_000 })(
+        { url: sub(APPS), headers: {} } as unknown as IncomingMessage,
+        res as unknown as ServerResponse
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      expect(() => res.emit('error', new Error('ECONNRESET'))).not.toThrow();
+      res.destroy();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await done;
+      expect([res.writesAfterEnd, vi.getTimerCount()]).toEqual([0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('a request filter', () => {
   const filter = (f: unknown) => `&filter=${encodeURIComponent(JSON.stringify(f))}`;
   const changed: Entity = { ...one, rev: 'rev-8b', body: { slug: 'renamed-orbit' } };
   const withChange = adapter({
-    async *changes(): AsyncGenerator<Change> {
-      yield { upsert: changed, cursor: 'c1.after-rename' };
-    },
+    changes: async () => feed({ upsert: changed, cursor: 'c1.after-rename' }),
   });
 
   it('drops a snapshot entity that does not match', async () => {
@@ -211,7 +346,8 @@ describe('a request filter', () => {
       sub(APPS, filter({ properties: { slug: { const: 'orbit-notes' } } }))
     );
     expect(res.text).toContain(
-      'event: delete\ndata: {"urn":"urn:civitai-apps:app/orbit-notes","cursor":"c1.after-rename"}'
+      'event: delete\nid: c1.after-rename\n' +
+        'data: {"urn":"urn:apps.civitai.com:app/orbit-notes","cursor":"c1.after-rename"}'
     );
     expect(res.text).not.toContain('renamed-orbit');
   });

@@ -1,6 +1,6 @@
 /**
  * The shared-document feed: one stream per collection major
- * (`urn:schema:civitai-apps:<slug>/<coll>@vN`), carrying every visible shared document of that
+ * (`urn:schema:apps.civitai.com:<slug>/<coll>@vN`), carrying every visible shared document of that
  * collection that satisfies the major. Each document claims every major of its collection it
  * satisfies, so a mint brings unchanged documents into the new major's stream.
  *
@@ -15,6 +15,22 @@
  * different app (re-created), the namespace's seq is behind the cursor's (reset), or the witness
  * — the newest document the cursor served — has neither a document nor a tombstone at or past the
  * seq it was served at (purged and written again).
+ *
+ * A collection major that does not resolve now (unknown app or collection, not exported, not
+ * minted, the switch off) may still be published later, so it is served, empty: a snapshot of
+ * nothing and `live` with {@link EMPTY_CURSOR}, writing no state. The stream keeps polling, and
+ * once the major resolves its documents arrive on it as upserts. (`end` would mean never.)
+ *
+ * After `live`, a poll that finds the namespace's seq moved with no change for this stream (a
+ * private write, another collection) is a POSITION-ONLY move. Its new state is saved, and
+ * reported as `progress` (spec rule 9), at most once per stream per
+ * {@link PROGRESS_EVERY_MS} (any save of the stream, a snapshot or a real change included,
+ * restarts that clock). Otherwise the newer position is kept in memory only, and the consumer's
+ * cursor is still the stream's newest stored state, so a position-only move never evicts it and
+ * a resume from it reads the (cheap, collection-scoped) seq range since. Saving on every move
+ * would fill the stream's `STATES_KEPT_PER_STREAM` with time, expiring disconnected
+ * consumers' cursors early, and multiply the writes. The seq is never put in the cursor instead:
+ * private writes share it, and a cursor must not tell their volume.
  */
 import type { ValidateFunction } from 'ajv';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
@@ -71,8 +87,14 @@ export type CollectionStream = {
 export type ResolveStream = (schema: string) => Promise<CollectionStream | null>;
 
 export const FEED_PAGE = 500;
+/** At most one position-only save (and `progress`) per stream in this interval. */
+export const PROGRESS_EVERY_MS = 10 * 60 * 1000;
+const PROGRESS_STREAMS_TRACKED = 10_000;
 const STATE_FORMAT = 'f1';
-/** The cursor of a stream that holds nothing for no app; it names no stored state. */
+/**
+ * The cursor of a stream that holds nothing for no app; it names no stored state. So a
+ * subscription to a collection major that is not published (or invented) writes nothing.
+ */
 export const EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^f1\.([0-9a-f]{32})$/;
 
@@ -132,10 +154,24 @@ export type DocFeedOptions = {
   pollMs: number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   onError?: (err: unknown) => void;
+  /** {@link PROGRESS_EVERY_MS} by default. */
+  progressEveryMs?: number;
+  now?: () => number;
 };
 
 export function createDocFeed(opts: DocFeedOptions) {
   const claimer = createClaimer();
+  const progressEveryMs = opts.progressEveryMs ?? PROGRESS_EVERY_MS;
+  const now = opts.now ?? Date.now;
+  /** Stream → when its state was last saved, by any subscription of this process. */
+  const lastSaved = new Map<string, number>();
+  const noteSaved = (state: FeedState) => {
+    // Only a stream of an app takes an entry: an unpublished (or invented) URN never writes, so
+    // it must not grow this map either. The bound is a backstop.
+    if (state.appId === null) return;
+    if (lastSaved.size >= PROGRESS_STREAMS_TRACKED) lastSaved.clear();
+    lastSaved.set(state.schema, now());
+  };
 
   const save = async (state: FeedState): Promise<string> => {
     // A stream of no app serving nothing needs no record: its cursor is a constant. So a
@@ -311,54 +347,80 @@ export function createDocFeed(opts: DocFeedOptions) {
     }
   };
 
+  /** The changes after a loaded `state`, starting from its first poll, `first`, already made. */
+  async function* follow(
+    schema: string,
+    cursor: string,
+    loaded: FeedState,
+    first: Awaited<ReturnType<typeof advance>>,
+    signal: AbortSignal
+  ): AsyncGenerator<Change> {
+    let state = loaded;
+    let position = cursor;
+    let pending: Awaited<ReturnType<typeof advance>> | null = first;
+    while (!signal.aborted) {
+      const before = state;
+      const { next, entities } = pending ?? (await guarded(() => advance(schema, before)));
+      pending = null;
+      if (next === before) {
+        await opts.sleep(opts.pollMs, signal);
+        continue;
+      }
+      const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
+      const still = new Set(next.served.map(([urn]) => urn));
+      const deletes = [...was.keys()]
+        .filter((urn) => !still.has(urn))
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const upserts = next.served
+        .filter(([urn, rev]) => was.get(urn) !== rev)
+        .map(([urn]) => entities.get(urn))
+        .filter((e): e is Entity => e !== undefined);
+      const diff: Array<{ delete: string } | { upsert: Entity }> = [
+        ...deletes.map((urn) => ({ delete: urn })),
+        ...upserts.map((upsert) => ({ upsert })),
+      ];
+      state = next;
+      if (diff.length > 0) {
+        const nextCursor = await save(next);
+        noteSaved(next);
+        for (let i = 0; i < diff.length; i++) {
+          if (signal.aborted) return;
+          const at = i === diff.length - 1 ? nextCursor : position;
+          const c = diff[i];
+          yield 'upsert' in c ? { upsert: c.upsert, cursor: at } : { delete: c.delete, cursor: at };
+        }
+        position = nextCursor;
+      } else if (now() - (lastSaved.get(schema) ?? -Infinity) >= progressEveryMs) {
+        // A position-only move, and none saved for this stream lately: save it, so the
+        // `progress` cursor is one a consumer can resume from. Otherwise `position` stays the
+        // last saved cursor, which remains valid: the in-memory state only moved past seqs
+        // that changed nothing here.
+        const nextCursor = await save(next);
+        noteSaved(next);
+        if (nextCursor !== position) yield { progress: nextCursor };
+        position = nextCursor;
+      }
+      await opts.sleep(opts.pollMs, signal);
+    }
+  }
+
   return {
     async snapshot(schema: string) {
       const { next, entities } = await guarded(() => advance(schema, null));
-      return { cursor: await save(next), entities: [...entities.values()] };
+      const cursor = await save(next);
+      noteSaved(next);
+      return { cursor, entities: [...entities.values()] };
     },
 
-    async *changes(
-      schema: string,
-      cursor: string,
-      { signal }: AdapterContext
-    ): AsyncGenerator<Change> {
-      let state = await guarded(() => load(schema, cursor));
-      let position = cursor;
-      while (!signal.aborted) {
-        const before = state;
-        const { next, entities } = await guarded(() => advance(schema, before));
-        if (next === before) {
-          await opts.sleep(opts.pollMs, signal);
-          continue;
-        }
-        const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
-        const still = new Set(next.served.map(([urn]) => urn));
-        const deletes = [...was.keys()]
-          .filter((urn) => !still.has(urn))
-          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-        const upserts = next.served
-          .filter(([urn, rev]) => was.get(urn) !== rev)
-          .map(([urn]) => entities.get(urn))
-          .filter((e): e is Entity => e !== undefined);
-        const diff: Array<{ delete: string } | { upsert: Entity }> = [
-          ...deletes.map((urn) => ({ delete: urn })),
-          ...upserts.map((upsert) => ({ upsert })),
-        ];
-        if (diff.length > 0) {
-          const nextCursor = await save(next);
-          for (let i = 0; i < diff.length; i++) {
-            if (signal.aborted) return;
-            const at = i === diff.length - 1 ? nextCursor : position;
-            const c = diff[i];
-            yield 'upsert' in c
-              ? { upsert: c.upsert, cursor: at }
-              : { delete: c.delete, cursor: at };
-          }
-          position = nextCursor;
-        }
-        state = next;
-        await opts.sleep(opts.pollMs, signal);
-      }
+    /**
+     * Resolves only once the cursor is checked, which here takes the first poll as well: the
+     * history checks of {@link advance} (a re-created app, a seq reset, a purge) are cursor
+     * checks too, so each of them rejects before `live` rather than after it.
+     */
+    async changes(schema: string, cursor: string, { signal }: AdapterContext) {
+      const state = await guarded(() => load(schema, cursor));
+      const first = await guarded(() => advance(schema, state));
+      return follow(schema, cursor, state, first, signal);
     },
   };
 }

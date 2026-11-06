@@ -18,8 +18,8 @@
 
 // Padding is on this wrapper, not the rows, so the :has() rule below can hide it when nothing rendered.
 .actionsFooter {
-  // --footer-height is IMAGES_CARD_FOOTER_HEIGHT: the masonry reserves exactly that, and a taller
-  // footer takes its excess from the picture.
+  // --footer-height is getImagesCardFooterHeight(width): the masonry reserves exactly that, and a
+  // taller footer takes its excess from the picture.
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -39,8 +39,8 @@
   }
 }
 
-// The masonry reserved one row, so the row never wraps. The tip and badges keep their width; when
-// the reactions don't fit beside them, the last ones drop to a second line that is clipped away.
+// One-row footer, used only on cards wide enough for every reaction beside the tip and badges
+// (IMAGES_CARD_ONE_ROW_MIN_WIDTH). Narrower cards take the shared two-row footer instead.
 .actionsFooter .fitRow {
   flex-wrap: nowrap;
 }

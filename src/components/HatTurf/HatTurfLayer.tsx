@@ -381,7 +381,12 @@ function HatTurfLayerContent({
   );
 
   return (
-    <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
+    <div
+      ref={ref}
+      className={clsx(classes.layer, (source !== 'feed' || draft) && classes.raised)}
+      data-testid="hat-turf-layer"
+      data-sticker-overlay
+    >
       {feed?.joined && <HatTurfLive imageId={imageId} />}
       {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
       {!box && corner && <div className={classes.corner}>{corner}</div>}

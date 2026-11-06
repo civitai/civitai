@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.450",
+  "version": "5.1.453",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -167,6 +167,7 @@
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
     "@grafana/faro-web-sdk": "2.8.2",
     "@grafana/faro-web-tracing": "2.8.2",
+    "@grpc/grpc-js": "1.13.4",
     "@headlessui/react": "2.2",
     "@hookform/resolvers": "^5.1.1",
     "@mantine/core": "^7.17.7",
@@ -288,6 +289,7 @@
     "path-to-regexp": "^6.2.1",
     "pg": "^8.11.3",
     "prom-client": "^14.2.0",
+    "protobufjs": "^7.5.6",
     "qrcode.react": "^4.2.0",
     "query-string": "^9.5.1",
     "rand-seed": "^1.0.2",
@@ -456,7 +458,9 @@
       "react-dom@18.3.1": "patches/react-dom@18.3.1.patch",
       "@mantine/core@7.17.8": "patches/@mantine__core@7.17.8.patch",
       "@trpc/next@11.17.0": "patches/@trpc__next@11.17.0.patch",
-      "@civitai/cybertipline-tools@0.1.0": "patches/@civitai__cybertipline-tools@0.1.0.patch"
+      "@civitai/cybertipline-tools@0.1.0": "patches/@civitai__cybertipline-tools@0.1.0.patch",
+      "@civitai/generation-metadata@0.4.0": "patches/@civitai__generation-metadata@0.4.0.patch",
+      "@civitai/next-axiom@0.17.0": "patches/@civitai__next-axiom@0.17.0.patch"
     }
   }
 }
