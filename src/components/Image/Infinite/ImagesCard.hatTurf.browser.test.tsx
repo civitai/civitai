@@ -452,7 +452,7 @@ describe('the /images card footer fits the height the masonry gives it', () => {
     expect(new Set(reactions.map((r) => Math.round(r.top))).size).toBe(1);
   }
 
-  // RisingV: "No crying emoji displayed on some images in feed". Every non-zero reaction stays
+  // A tester reported the Cry reaction missing on feed images. Every non-zero reaction stays
   // seen and tappable at every width, with the footer exactly the height the masonry reserves.
   // The widths straddle IMAGES_CARD_ONE_ROW_MIN_WIDTH, where the footer changes from two rows to one.
   test.each([

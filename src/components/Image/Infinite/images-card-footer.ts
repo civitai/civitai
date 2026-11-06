@@ -4,7 +4,8 @@ export const IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT = 38;
 export const IMAGES_CARD_FOOTER_TWO_ROW_HEIGHT = 59;
 /**
  * A card at least this wide fits every reaction, the tip and the badges on one row. Below it the
- * footer takes two rows. Set from measurement, see ImagesCard.hatTurf.browser.test.tsx.
+ * footer takes two rows. The worst case (four 3-digit counts, a 3-digit tip, the sticker chip and the
+ * hat button) fit one row from 352px in local measurement; 400 leaves a margin for narrower fonts.
  */
 export const IMAGES_CARD_ONE_ROW_MIN_WIDTH = 400;
 
