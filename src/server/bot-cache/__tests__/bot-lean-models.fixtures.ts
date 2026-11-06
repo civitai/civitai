@@ -25,6 +25,8 @@ export type ModelFixture = {
   creator: Row | null;
   showcase: Row | null;
   headers?: Record<string, string>;
+  /** Flipt flags on for this render (every other Flipt-backed flag is unset). */
+  flipt?: string[];
   expect: 'lean' | 'none' | BotLeanFallback;
 };
 
@@ -181,6 +183,15 @@ export const FIXTURES: ModelFixture[] = [
     defaultVersion: defaultVersion(),
     ...common,
     expect: 'gated',
+  },
+  {
+    label: 'the defer-below-fold trial on (creator card and license move client-side)',
+    url: PATH,
+    model: baseModel(),
+    defaultVersion: defaultVersion(),
+    ...common,
+    flipt: ['model-page-defer-below-fold'],
+    expect: 'unsupported',
   },
   {
     label: 'a crawler from a blocked region: not a bot-cache render',

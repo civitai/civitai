@@ -25,6 +25,7 @@ import { filterPreferences } from '~/components/HiddenPreferences/useApplyHidden
 import { serializeJsonLd } from '@civitai/shared/json-ld';
 import { getDisplayName, getInitials, removeTags, slugit } from '~/utils/string-helpers';
 import { getImageProps } from 'next/image';
+import { getRemixKinds } from '~/components/Image/Remix/remix.utils';
 import dayjs from '~/shared/utils/dayjs';
 import { residencyLabel } from '~/components/ResourceLoad/ResourceResidency';
 import { howToUseModelHref } from '~/components/Model/HowToUseModel/HowToUseModel';
@@ -93,6 +94,7 @@ type CarouselImage = {
   url: string;
   nsfwLevel: number;
   name?: string | null;
+  type: string;
   width?: number | null;
   poi?: boolean;
   user: { id: number };
@@ -251,6 +253,10 @@ export async function renderModelDetailLean({
     verifiedBot: false,
   });
   if (state !== 'page') return { fallback: 'gated' };
+  // Trials that change what the page's server render carries (the creator card and license move
+  // client-side; the design-system markup): only the default render is drawn here.
+  if (features.modelPageDeferBelowFold || features.modelPageDesignSystemMarkup)
+    return { fallback: 'unsupported' };
 
   // The page reads `?modelVersionId=`, falling back to the first published version.
   const requested = Number(query.modelVersionId);
@@ -268,7 +274,8 @@ export async function renderModelDetailLean({
   };
   if (unsupported(model, selected, versions, ctx) || !creator) return { fallback: 'unsupported' };
   const images = carouselImages(ssg, hidden);
-  if (!images) return { fallback: 'unsupported' };
+  // The first slide is drawn as a still image; a video, audio or 3D slide is not.
+  if (!images || (images[0] && images[0].type !== 'image')) return { fallback: 'unsupported' };
   // A description with markup `RenderHtml` rewrites (links, mentions, media, embeds, styles).
   const html = [model.description, selected.description].join('');
   if (/<(a|img|iframe|edge-media|time|span|div)\b|style=/i.test(html)) return { fallback: 'unsupported' };
@@ -591,14 +598,23 @@ function creatorCard(creator: Creator) {
 }
 
 /**
- * `ModelCarousel`: only the first slide is in view on the server, so only its image is drawn — a
- * link to the image, the preview, and its reactions (`Reactions`, not read-only: the reactions
- * with a count, then the Buzz tip count, shown even at zero).
+ * `ModelCarousel`: only the first slide is in view on the server, so only its image is drawn — the
+ * Remix button's label, a link to the image around the preview (`ImagePreview` → `EdgeMedia2`, a
+ * still at 800px), and its reactions (`Reactions`, not read-only: the reactions with a count,
+ * then the Buzz tip count, shown even at zero).
  */
-function carousel(images: CarouselImage[]) {
+function carousel(images: CarouselImage[], features: FeatureAccess) {
   const [image] = images;
   if (!image) return '';
-  const src = getEdgeUrl(image.url, { width: 800, name: image.name ?? undefined });
+  const source = { id: image.id, url: image.url, type: image.type, nsfwLevel: image.nsfwLevel };
+  const remix =
+    features.imageGeneration && getRemixKinds(source as never).length > 0 ? p('Remix') : '';
+  const src = getEdgeUrl(image.url, {
+    anim: false,
+    width: 800,
+    optimized: true,
+    name: image.name ?? undefined,
+  });
   const preview = `<img src="${esc(src)}"${attr('alt', image.name ?? undefined)}>`;
   const stats = image.stats ?? {};
   const emoji = constants.availableReactions as Record<string, string>;
@@ -613,7 +629,7 @@ function carousel(images: CarouselImage[]) {
     .map((key) => `<button>${p(emoji[key])} ${count(metrics[key]!, false)}</button>`)
     .join('');
   const tip = image.poi ? '' : `<span>${count(0)}</span>`;
-  return link(`/images/${image.id}`, preview) + `<div>${badges}${tip}</div>`;
+  return remix + link(`/images/${image.id}`, preview) + `<div>${badges}${tip}</div>`;
 }
 
 /** The license block under the creator card. */
@@ -750,7 +766,7 @@ function renderPage(args: PageArgs) {
     versionDetails(args) +
     creatorCard(creator) +
     licenseBlock(args) +
-    (model.mode !== 'TakenDown' ? carousel(images) : '') +
+    (model.mode !== 'TakenDown' ? carousel(images, features) : '') +
     (model.description ? sanitizeHtml(model.description) : '') +
     '</main>' +
     siteFooter();

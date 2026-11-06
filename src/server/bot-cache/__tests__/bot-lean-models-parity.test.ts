@@ -58,6 +58,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
     if (key === 'bot-html-edge-cache') return true;
     if (key === 'bot-lean-render') return h.serve;
     if (key === 'bot-lean-render-shadow') return h.shadow;
+    if (h.fixture?.flipt?.includes(key)) return true;
     return null;
   }),
 }));
