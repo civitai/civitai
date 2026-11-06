@@ -187,7 +187,7 @@ describe('remix app seed', () => {
     const sql = readFileSync(
       join(
         process.cwd(),
-        'packages/civitai-db-schema/prisma/migrations/20261225120000_remix_apps_as_rows/migration.sql'
+        'packages/civitai-db-schema/prisma/migrations/20261225120200_remix_apps_as_rows/migration.sql'
       ),
       'utf8'
     );

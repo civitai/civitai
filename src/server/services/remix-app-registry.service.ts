@@ -2,9 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
-import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
 import {
@@ -143,9 +143,15 @@ export async function readRemixAppRows(): Promise<RemixAppRow[]> {
  * advance and post. Until any row exists, the seed.
  */
 export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
-  const rows = await fetchThroughCache(REDIS_KEYS.CACHES.REMIX_APP_REGISTRY, readRemixAppRows, {
-    ttl: REGISTRY_TTL,
-  });
+  const generation = await registryGeneration();
+  const rows =
+    generation === null
+      ? await readRemixAppRows()
+      : await fetchThroughCache(
+          `${REDIS_KEYS.CACHES.REMIX_APP_REGISTRY}:${generation}`,
+          readRemixAppRows,
+          { ttl: REGISTRY_TTL }
+        );
   if (!rows.length) return seedRegistry();
   return rows
     .map(registerRow)
@@ -153,11 +159,26 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
     .sort((a, b) => a.order - b.order || a.slug.localeCompare(b.slug));
 }
 
-/** Caches the rows as written, so no reader is served the old ones while a refill runs. */
-export async function refreshRemixAppRegistry() {
-  await setFetchThroughCache(REDIS_KEYS.CACHES.REMIX_APP_REGISTRY, await readRemixAppRows(), {
-    ttl: REGISTRY_TTL,
-  });
+/**
+ * The registry is cached per generation, and every mod write bumps it after it commits. A refill
+ * that read the rows before a write landed fills the old generation's entry, which no reader uses
+ * once the bump is done: a bust or a set can't promise that, since a refill already in flight
+ * writes after either. `null` when Redis can't say; the caller then reads the primary uncached.
+ */
+async function registryGeneration() {
+  try {
+    const generation = await withSysReadDeadline(
+      sysRedis.get(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION)
+    );
+    return generation ?? '0';
+  } catch {
+    return null;
+  }
+}
+
+/** After a mod write has committed: moves every reader to a fresh read of the primary. */
+export async function bumpRemixAppRegistry() {
+  await sysRedis.incr(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION);
 }
 
 /** The apps the menu lists and the quote prices. */
@@ -180,7 +201,7 @@ export async function getRegisteredRemixApp(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Mod writes. Each one recaches the registry, so every server reads the change on its next request.
+// Mod writes. Each one bumps the registry generation, so every server reads the change on its next request.
 
 /** The fields a change to which makes recorded runs mean something else. */
 function runShape(spec: RemixAppSpec) {
@@ -262,7 +283,7 @@ export async function saveRemixApp(input: RemixAppInput) {
       },
     });
   }
-  await refreshRemixAppRegistry();
+  await bumpRemixAppRegistry();
   return { slug: input.slug, version: runVersion };
 }
 
@@ -272,7 +293,7 @@ export async function setRemixAppEnabled({ slug, enabled }: { slug: string; enab
     data: { status: enabled ? REMIX_STATUS.enabled : REMIX_STATUS.disabled },
   });
   if (!count) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
-  await refreshRemixAppRegistry();
+  await bumpRemixAppRegistry();
 }
 
 /** `slugs` in menu order; apps it leaves out keep their place after these. */
@@ -285,7 +306,7 @@ export async function orderRemixApps(slugs: string[]) {
       })
     )
   );
-  await refreshRemixAppRegistry();
+  await bumpRemixAppRegistry();
 }
 
 /** Every row as stored, with why it is skipped when it no longer validates: the mod list. */

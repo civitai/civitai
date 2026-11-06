@@ -1,26 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
-// The registry's one entry, as Redis holds it.
-const cache = vi.hoisted(() => ({
-  entry: undefined as { data: unknown; stale: boolean } | undefined,
+// Redis as the registry sees it: cache entries by key (a bust only marks one stale, so the next
+// read refetches), and the sys keys.
+const redis = vi.hoisted(() => ({
+  cache: new Map<string, { data: unknown; stale: boolean }>(),
+  sys: new Map<string, number>(),
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  fetchThroughCache: async (_key: string, fetch: () => Promise<unknown>) => {
-    if (!cache.entry || cache.entry.stale) cache.entry = { data: await fetch(), stale: false };
-    return cache.entry.data;
+  fetchThroughCache: async (key: string, fetch: () => Promise<unknown>) => {
+    const entry = redis.cache.get(key);
+    if (entry && !entry.stale) return entry.data;
+    const data = await fetch();
+    redis.cache.set(key, { data, stale: false });
+    return data;
   },
-  setFetchThroughCache: vi.fn(async (_key: string, data: unknown) => {
-    cache.entry = { data, stale: false };
-  }),
-  // A bust only marks the entry stale, so the next read refetches.
-  bustFetchThroughCache: vi.fn(async () => {
-    if (cache.entry) cache.entry.stale = true;
-  }),
+  setFetchThroughCache: async (key: string, data: unknown) => {
+    redis.cache.set(key, { data, stale: false });
+  },
+  bustFetchThroughCache: async (key: string) => {
+    const entry = redis.cache.get(key);
+    if (entry) entry.stale = true;
+  },
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   getRegisteredRemixApp,
   getRemixAppRegistry,
@@ -47,7 +53,14 @@ const written = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  cache.entry = undefined;
+  redis.cache.clear();
+  redis.sys.clear();
+  redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+    redis.sys.has(key) ? String(redis.sys.get(key)) : null) as never);
+  redisMock.sysRedis.incr.mockImplementation((async (key: string) => {
+    redis.sys.set(key, (redis.sys.get(key) ?? 0) + 1);
+    return redis.sys.get(key);
+  }) as never);
   dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ id: 'civitai-remix-apps' } as never);
 });
 
@@ -124,5 +137,69 @@ describe('a stored row whose engine has left the allowlist', () => {
     const registry = await getRemixAppRegistry();
     expect(registry.map((app) => app.slug)).toEqual(['pixel-art']);
     expect(registry[0].spec).toMatchObject({ engine: { safe: { versionId: 1 } } });
+  });
+});
+
+describe('overlapping mod writes', () => {
+  it('serve the later write, though the earlier one reads the rows last', async () => {
+    // The primary, as each write leaves it.
+    let status = 'remix_disabled';
+    dbMock.dbWrite.appBlock.updateMany.mockImplementation((async (args: {
+      data: { status: string };
+    }) => {
+      status = args.data.status;
+      return { count: 1 };
+    }) as never);
+    // The first read of the rows is slow: it holds what it read until released.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let reads = 0;
+    dbMock.dbWrite.appBlock.findMany.mockImplementation((async () => {
+      const seen = status;
+      if (reads++ === 0) await released;
+      return [stored(pixelArt, 1, seen)];
+    }) as never);
+
+    const enable = setRemixAppEnabled({ slug: 'pixel-art', enabled: true });
+    await vi.waitFor(() => expect(status).toBe('remix'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    release();
+    await enable;
+
+    await expect(
+      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('a refill in flight across a mod write', () => {
+  it('does not bring back the rows it read before the write', async () => {
+    let status = 'remix';
+    dbMock.dbWrite.appBlock.updateMany.mockImplementation((async (args: {
+      data: { status: string };
+    }) => {
+      status = args.data.status;
+      return { count: 1 };
+    }) as never);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let reads = 0;
+    dbMock.dbWrite.appBlock.findMany.mockImplementation((async () => {
+      const seen = status;
+      if (reads++ === 0) await released;
+      return [stored(pixelArt, 1, seen)];
+    }) as never);
+
+    // A menu read starts a refill, which reads the app enabled and is slow to cache it.
+    const menu = getRemixAppRegistry();
+    await vi.waitFor(() => expect(reads).toBe(1));
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    release();
+    await menu;
+
+    await expect(
+      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

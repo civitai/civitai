@@ -2902,6 +2902,8 @@ export const REDIS_SYS_KEYS = {
   REMIX_APP: {
     // A choice ask's per-option prices, per run, segment and step, while that ask is open.
     OPTION_PRICES: 'remix-app:option-prices',
+    // Bumped after every mod write; the registry cache key carries it.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',

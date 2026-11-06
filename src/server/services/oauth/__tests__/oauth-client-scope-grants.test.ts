@@ -210,7 +210,7 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
       },
     ],
   },
-  '20261225120000_remix_apps_as_rows': {
+  '20261225120200_remix_apps_as_rows': {
     liveReferences: 1,
     grants: [
       {

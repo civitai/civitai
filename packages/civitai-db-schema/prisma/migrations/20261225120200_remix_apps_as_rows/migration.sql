@@ -20,10 +20,16 @@
 -- IDEMPOTENT: ON CONFLICT DO NOTHING, so re-applying never overwrites a mod's edits.
 --
 -- MANUAL APPLY, per writable env:
+--   0. Pre-check (read-only role). Both must hold, or the guarded inserts skip rows silently:
+--      a. no remix row exists yet:  SELECT count(*) FROM app_blocks WHERE block_id LIKE 'remix-%';  -> 0
+--      b. the owner exists:         SELECT count(*) FROM "User" WHERE id = -1;                      -> 1
 --   1. Dry run: this file inside BEGIN; ... ROLLBACK;
 --   2. Apply.
 --   3. Scoped drift check (read-only role):
---        pnpm --filter @civitai/db-schema drift --migration prisma/migrations/20261225120000_remix_apps_as_rows/migration.sql
+--        pnpm --filter @civitai/db-schema drift --migration prisma/migrations/20261225120200_remix_apps_as_rows/migration.sql
+--   4. After-read (read-only role):
+--        SELECT count(*) FROM "OauthClient" WHERE id = 'civitai-remix-apps' AND "accessMode" = 'disabled';  -> 1
+--        SELECT count(*) FROM app_blocks WHERE status = 'remix';                                         -> 8
 INSERT INTO "OauthClient" (
   "id",
   "secret",
