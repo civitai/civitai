@@ -599,7 +599,7 @@ const resolveBuzzMembershipPrice = async (ref: BuzzMembershipPriceRef) => {
       'unavailable',
       'This membership cannot be purchased with Buzz'
     );
-  // The grant is hard-coded to one month, so a multi-month price would be sold short.
+  // The price is only the product pointer, but a multi-month one would still be sold short on the month path.
   if (price.interval !== 'month' || (price.intervalCount ?? 1) !== 1)
     throw new BuzzMembershipRefusedError(
       'not-monthly',
@@ -623,21 +623,24 @@ const resolveBuzzMembershipPrice = async (ref: BuzzMembershipPriceRef) => {
 type ResolvedBuzzMembershipPrice = Awaited<ReturnType<typeof resolveBuzzMembershipPrice>>;
 
 /**
- * Writes the month: the conflict re-check, the subscription row and the badge delivery, in one transaction.
+ * Writes the membership period (one month, or `days`): the conflict re-check, the subscription row and the badge delivery, in one transaction.
  * The user row is locked first, for every caller. With `idempotencyKey` a key already on the row answers
  * `already`, before any refusal, so a replay is never refused and never adds a second month. The slot's
  * stored keys survive whichever path writes it; the rest of its metadata starts over each month.
  */
-const commitBuzzMembershipMonth = async ({
+const commitBuzzMembership = async ({
   userId,
   resolved: { price },
   subscriptionId,
   idempotencyKey,
+  days,
 }: {
   userId: number;
   resolved: ResolvedBuzzMembershipPrice;
   subscriptionId: string;
   idempotencyKey?: string;
+  /** Length of the period in days; one calendar month when absent. */
+  days?: number;
 }): Promise<{ outcome: 'granted' | 'already'; currentPeriodEnd: Date }> => {
   const dayjs = (await import('~/shared/utils/dayjs')).default;
   const now = dayjs.utc();
@@ -676,7 +679,7 @@ const commitBuzzMembershipMonth = async ({
       // Upsert rather than insert: a repeat buyer's lapsed row still holds the
       // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
       // conflicting check above already proved this row carries no live benefit.
-      const currentPeriodEnd = now.add(1, 'month').toDate();
+      const currentPeriodEnd = (days ? now.add(days, 'day') : now.add(1, 'month')).toDate();
       const grantKeys = idempotencyKey
         ? [...priorKeys, idempotencyKey].slice(-MAX_BUZZ_GRANT_KEYS)
         : priorKeys;
@@ -727,19 +730,20 @@ const afterBuzzMembershipGrant = async (userId: number) => {
 };
 
 /**
- * Grants one perks-only month in the Buzz-membership slot, without taking payment: the caller has already been
- * paid in some other currency (the Knights gold shop). Same rules as `purchaseMembershipWithBuzz`: one month, only
- * when the user holds no membership, no monthly Buzz.
+ * Grants a perks-only membership in the Buzz-membership slot, without taking payment: the caller has already been
+ * paid in some other currency (the Knights gold shop). Same rules as `purchaseMembershipWithBuzz`: only when the
+ * user holds no membership, no monthly Buzz. It lasts `days` days, or one month when `days` is absent.
  *
  * With `idempotencyKey` a retry after a successful grant answers `already` and grants nothing, whatever the user's
  * membership has become since. Refusals throw `BuzzMembershipRefusedError`; any other throw is transient and safe
  * to retry with the same key.
  */
-export const grantBuzzPurchaseMembershipMonth = async ({
+export const grantBuzzPurchaseMembership = async ({
   userId,
   idempotencyKey,
+  days,
   ...ref
-}: { userId: number; idempotencyKey?: string } & BuzzMembershipPriceRef) => {
+}: { userId: number; idempotencyKey?: string; days?: number } & BuzzMembershipPriceRef) => {
   if (idempotencyKey) {
     const prior = await dbWrite.customerSubscription.findUnique({
       where: { userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE } },
@@ -752,13 +756,14 @@ export const grantBuzzPurchaseMembershipMonth = async ({
   }
 
   const resolved = await resolveBuzzMembershipPrice(ref);
-  const result = await commitBuzzMembershipMonth({
+  const result = await commitBuzzMembership({
     userId,
     resolved,
     subscriptionId: `buzz-membership:${userId}:${resolved.price.id}:${
       idempotencyKey ?? Date.now()
     }`,
     idempotencyKey,
+    days,
   });
   await afterBuzzMembershipGrant(userId);
   return result;
@@ -833,7 +838,7 @@ export const purchaseMembershipWithBuzz = async ({
 
   let currentPeriodEnd: Date;
   try {
-    ({ currentPeriodEnd } = await commitBuzzMembershipMonth({
+    ({ currentPeriodEnd } = await commitBuzzMembership({
       userId,
       resolved,
       subscriptionId: externalTransactionId,

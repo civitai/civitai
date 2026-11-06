@@ -31,7 +31,7 @@ vi.mock('~/server/utils/subscription.utils', async (importOriginal) => ({
 
 import {
   BuzzMembershipRefusedError,
-  grantBuzzPurchaseMembershipMonth,
+  grantBuzzPurchaseMembership,
   purchaseMembershipWithBuzz,
 } from '~/server/services/subscriptions.service';
 
@@ -119,9 +119,9 @@ beforeEach(() => {
   }) as never);
 });
 
-describe('grantBuzzPurchaseMembershipMonth', () => {
+describe('grantBuzzPurchaseMembership', () => {
   it('grants one month in the Buzz-purchase slot, renewing never, and delivers the monthly badge', async () => {
-    const result = await grantBuzzPurchaseMembershipMonth({
+    const result = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -144,13 +144,53 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
     expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(USER_ID);
   });
 
+  it('ends a 7-day grant seven days out and a grant without days one month out', async () => {
+    const before = Date.now();
+    const week = await grantBuzzPurchaseMembership({
+      userId: USER_ID,
+      tier: 'silver',
+      days: 7,
+      idempotencyKey: 'knights-shop:key-week',
+    });
+    const weekDays = (week.currentPeriodEnd.getTime() - before) / 86_400_000;
+    expect(weekDays).toBeGreaterThan(6.99);
+    expect(weekDays).toBeLessThan(7.01);
+
+    row = null;
+    const month = await grantBuzzPurchaseMembership({
+      userId: USER_ID,
+      tier: 'silver',
+      idempotencyKey: 'knights-shop:key-month',
+    });
+    const monthDays = (month.currentPeriodEnd.getTime() - before) / 86_400_000;
+    expect(monthDays).toBeGreaterThanOrEqual(28);
+    expect(monthDays).toBeLessThanOrEqual(31.01);
+  });
+
+  it('still refuses a second grant while a 7-day membership is running', async () => {
+    await grantBuzzPurchaseMembership({
+      userId: USER_ID,
+      tier: 'silver',
+      days: 7,
+      idempotencyKey: 'knights-shop:key-1',
+    });
+    await expect(
+      grantBuzzPurchaseMembership({
+        userId: USER_ID,
+        tier: 'silver',
+        days: 7,
+        idempotencyKey: 'knights-shop:key-2',
+      })
+    ).rejects.toMatchObject({ reason: 'active-membership' });
+  });
+
   it('answers already on a retry of the same key and grants no second month', async () => {
-    const first = await grantBuzzPurchaseMembershipMonth({
+    const first = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
     });
-    const again = await grantBuzzPurchaseMembershipMonth({
+    const again = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -163,14 +203,14 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
   });
 
   it('answers already even when the product has since been withdrawn', async () => {
-    await grantBuzzPurchaseMembershipMonth({
+    await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
     });
     dbMock.dbWrite.price.findFirst.mockResolvedValue(null as never);
 
-    const again = await grantBuzzPurchaseMembershipMonth({
+    const again = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -187,7 +227,7 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
         currentPeriodEnd: new Date(Date.now() + 86_400_000),
       })) as never);
 
-    const result = await grantBuzzPurchaseMembershipMonth({
+    const result = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -197,14 +237,14 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
   });
 
   it('refuses a different key while a month is running, with a typed refusal', async () => {
-    await grantBuzzPurchaseMembershipMonth({
+    await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
     });
 
     await expect(
-      grantBuzzPurchaseMembershipMonth({
+      grantBuzzPurchaseMembership({
         userId: USER_ID,
         tier: 'silver',
         idempotencyKey: 'knights-shop:key-2',
@@ -219,12 +259,12 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
       metadata: { grantKeys: ['knights-shop:key-0'] },
       currentPeriodEnd: new Date(Date.now() - 86_400_000),
     };
-    await grantBuzzPurchaseMembershipMonth({
+    await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
     });
-    const old = await grantBuzzPurchaseMembershipMonth({
+    const old = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-0',
@@ -254,7 +294,7 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
   ])('refuses %s as a final refusal', async (_name, found, reason) => {
     dbMock.dbWrite.price.findFirst.mockResolvedValue(found as never);
 
-    const error = await grantBuzzPurchaseMembershipMonth({
+    const error = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -267,7 +307,7 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
   it('keeps an infrastructure failure retryable: not a refusal, and the key is not recorded', async () => {
     subscription.upsert.mockRejectedValueOnce(new Error('connection reset'));
 
-    const error = await grantBuzzPurchaseMembershipMonth({
+    const error = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -277,7 +317,7 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
 
   it('does not fail a committed grant when the support-desk sync fails', async () => {
     upsertContact.mockRejectedValue(new Error('freshdesk down'));
-    const result = await grantBuzzPurchaseMembershipMonth({
+    const result = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',
@@ -288,7 +328,7 @@ describe('grantBuzzPurchaseMembershipMonth', () => {
 
 describe('the product a tier sells', () => {
   it('looks up the monthly Buzz-purchase product of the requested tier, so gold is not sold as silver', async () => {
-    const result = await grantBuzzPurchaseMembershipMonth({
+    const result = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'gold',
       idempotencyKey: 'knights-shop:key-1',
@@ -318,7 +358,7 @@ describe('the product a tier sells', () => {
   });
 
   it('refuses a tier with no product rather than falling back to another', async () => {
-    const error = await grantBuzzPurchaseMembershipMonth({
+    const error = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'bronze',
       idempotencyKey: 'knights-shop:key-1',
@@ -334,7 +374,7 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
   };
 
   it('keeps the gold grant keys through a Buzz purchase, so the old key still answers already', async () => {
-    await grantBuzzPurchaseMembershipMonth({
+    await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-K',
@@ -344,7 +384,7 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
     expect(row?.metadata.grantKeys).toEqual(['knights-shop:key-K']);
     lapse();
 
-    const retry = await grantBuzzPurchaseMembershipMonth({
+    const retry = await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-K',
@@ -364,7 +404,7 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
       return null;
     }) as never);
 
-    await grantBuzzPurchaseMembershipMonth({ userId: USER_ID, tier: 'silver' });
+    await grantBuzzPurchaseMembership({ userId: USER_ID, tier: 'silver' });
     await purchaseMembershipWithBuzz({ userId: USER_ID, priceId: 'p', buzzType: 'green' });
 
     expect(queries).toHaveLength(4);
@@ -388,7 +428,7 @@ describe('a Buzz purchase and a gold grant share one slot', () => {
       metadata: { grantKeys: ['knights-shop:key-0'], renewalEmailSent: true },
       currentPeriodEnd: new Date(Date.now() - 86_400_000),
     };
-    await grantBuzzPurchaseMembershipMonth({
+    await grantBuzzPurchaseMembership({
       userId: USER_ID,
       tier: 'silver',
       idempotencyKey: 'knights-shop:key-1',

@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
-  grantBuzzPurchaseMembershipMonth: mocks.grant,
+  grantBuzzPurchaseMembership: mocks.grant,
 }));
 vi.mock('~/server/services/knights/shop.service', () => ({
   refreshKnightsShopCosmetics: mocks.refresh,
@@ -99,6 +99,15 @@ describe('/api/mod/knights/shop/membership', () => {
     expect(replay.status).toHaveBeenCalledWith(200);
   });
 
+  it('passes a 7-day request to the grant and grants the default length without days', async () => {
+    mocks.grant.mockResolvedValue({ outcome: 'granted' });
+    await call(membership, 'POST', { ...GRANT, days: 7 });
+    await call(membership, 'POST', GRANT);
+
+    expect(mocks.grant.mock.calls[0][0]).toMatchObject({ days: 7 });
+    expect(mocks.grant.mock.calls[1][0].days).toBeUndefined();
+  });
+
   it('answers 409 with the reason when the grant is refused for good', async () => {
     mocks.grant.mockRejectedValue(
       new BuzzMembershipRefusedError('active-membership', 'You already have an active membership')
@@ -121,6 +130,7 @@ describe('/api/mod/knights/shop/membership', () => {
     ['an unknown tier', { ...GRANT, tier: 'platinum' }],
     ['a key under 8 characters', { ...GRANT, key: 'short-k' }],
     ['a key over 100 characters', { ...GRANT, key: 'k'.repeat(101) }],
+    ['a length that is not a week', { ...GRANT, days: 30 }],
     ['a user id of zero', { ...GRANT, userId: '0' }],
     ['a missing user', { ...GRANT, userId: undefined }],
   ])('answers 400 for %s', async (_label, body) => {
