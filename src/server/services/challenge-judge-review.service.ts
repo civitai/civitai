@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { judgeReviewCommentSql } from '~/server/games/daily-challenge/challenge-helpers';
 import { clearLadder } from '~/server/games/daily-challenge/challenge-pairwise-store';
 import { bulkDeleteComments } from '~/server/services/comment.service';
@@ -34,6 +35,7 @@ export async function writeJudgeReview({
     SET "tagId" = ${judgedTagId}, note = ${note}
     WHERE "collectionId" = ${collectionId} AND "imageId" = ${imageId};
   `;
+  await bustContestCollectionItemsCache([imageId]);
   await writeJudgeComment({ userId: judgeUserId, imageId, content: comment });
   try {
     return await toggleReaction({
@@ -106,5 +108,6 @@ export async function rejudgeEntries({
       WHERE id = ${challengeId}
     `,
   ]);
+  await bustContestCollectionItemsCache(imageIds);
   return { entries: imageIds.length, comments: commentIds.length };
 }
