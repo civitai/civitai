@@ -98,7 +98,7 @@ export function HatTurfEventSection({
             src={HAT_TURF_ART}
             width={640}
             alt=""
-            className={`${styles.art} absolute inset-0 size-full object-cover object-[75%_45%]`}
+            className={`${styles.art} absolute inset-0 size-full object-cover object-[75%_15%]`}
             data-testid="hat-turf-art"
           />
           {video && (
@@ -106,7 +106,7 @@ export function HatTurfEventSection({
               onClick={watch}
               aria-label={`Watch the ${HAT_TURF_VIDEO_TITLE} video`}
               data-testid="hat-turf-play"
-              className="group absolute left-1/2 top-1/2 z-[3] -translate-x-1/2 -translate-y-1/2"
+              className="group absolute left-[30%] top-1/2 z-[3] -translate-x-1/2 -translate-y-1/2"
             >
               <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
                 <IconPlayerPlayFilled size={22} />
