@@ -14,13 +14,13 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * flag landing between the two). It runs here against Postgres, not as a string.
  */
 
-const m = vi.hoisted(() => ({ readySend: vi.fn() }));
+const m = vi.hoisted(() => ({ readySend: vi.fn(), accountHeld: false }));
 vi.mock('~/server/services/legal-hold.service', async () => {
   const { Prisma: P } = await import('@prisma/client');
   return {
     getAccountLegalHold: async () => ({ legs: [], markerView: true }),
-    // No account hold: the claim's outcome rests on the image condition alone.
-    accountHoldSql: () => P.sql`false`,
+    // The account-hold clause of the claim, as SQL the claim runs: held or not, per test.
+    accountHoldSql: () => (m.accountHeld ? P.sql`true` : P.sql`false`),
   };
 });
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
@@ -60,6 +60,7 @@ afterAll(() => db?.close());
 
 beforeEach(async () => {
   m.readySend.mockReset().mockResolvedValue(undefined);
+  m.accountHeld = false;
   await db.exec(`DELETE FROM "Image"; DELETE FROM "PersonalDataExport";`);
   await db.query(
     `INSERT INTO "PersonalDataExport" (id, "userId", "requestedById", status, "archiveKey", "builtAt")
@@ -115,5 +116,29 @@ describe('release claim, run', () => {
     });
     expect(m.readySend).toHaveBeenCalledTimes(1);
     expect(await status()).toBe('released');
+  });
+
+  it('claims nothing, and sends nothing, when an account hold lands before the claim', async () => {
+    await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (1, ${OWNER})`);
+    m.accountHeld = true;
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+      ok: false,
+      reason: 'not-releasable',
+    });
+    expect(m.readySend).not.toHaveBeenCalled();
+    expect(await status()).toBe('built');
+  });
+
+  it('clears the error a failed earlier release left on the row', async () => {
+    await db.exec(
+      `UPDATE "PersonalDataExport" SET error = 'release email failed: smtp' WHERE id = 5`
+    );
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toMatchObject({
+      ok: true,
+    });
+    const { rows } = await db.query<{ error: string | null }>(
+      `SELECT error FROM "PersonalDataExport" WHERE id = 5`
+    );
+    expect(rows[0].error).toBeNull();
   });
 });

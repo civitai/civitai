@@ -84,7 +84,7 @@ export function exportRecipient(
 }
 
 /** Back to queued for another attempt, or failed once the attempts are used. */
-async function recordFailure(row: Pick<ExportRow, 'id' | 'attempts'>, error: string) {
+export async function recordFailure(row: Pick<ExportRow, 'id' | 'attempts'>, error: string) {
   const next: ExportStatus = row.attempts >= MAX_ATTEMPTS ? 'failed' : 'queued';
   // `attempts` pins the attempt: a run recovered as stale must not touch a later attempt's row.
   await dbWrite.$executeRaw`
@@ -479,7 +479,8 @@ export async function releaseExport({
   // Claim the release before sending, so two presses cannot both send.
   const claimed = await dbWrite.$executeRaw`
     UPDATE "PersonalDataExport"
-    SET status = 'released', "releasedAt" = ${now}, "releasedById" = ${actorId}, "holdReasons" = '{}'
+    SET status = 'released', "releasedAt" = ${now}, "releasedById" = ${actorId}, "holdReasons" = '{}',
+        error = NULL
     WHERE id = ${row.id} AND status = 'built'
       AND NOT ${accountHoldSql(Prisma.sql`${row.userId}::int`, markerView)}
       AND NOT EXISTS (
@@ -523,9 +524,18 @@ export async function releaseExport({
 }
 
 /** One job tick: recover abandoned builds, then build queued exports one at a time. */
-export async function runPersonalDataExports({ maxPerRun = 1 }: { maxPerRun?: number } = {}) {
+export async function runPersonalDataExports({
+  maxPerRun = 1,
+  resolveDeps = resolveExportDeps,
+  build = buildExport,
+}: {
+  maxPerRun?: number;
+  /** For tests: the bucket, Mongo and ClickHouse a run uses, and the build itself. */
+  resolveDeps?: typeof resolveExportDeps;
+  build?: typeof buildExport;
+} = {}) {
   await recoverStaleExports();
-  const deps = await resolveExportDeps();
+  const deps = await resolveDeps();
   if ('missing' in deps) {
     const queued = await dbWrite.$queryRaw<{ n: number }[]>(
       Prisma.sql`SELECT count(*)::int AS n FROM "PersonalDataExport" WHERE status = 'queued'`
@@ -543,7 +553,7 @@ export async function runPersonalDataExports({ maxPerRun = 1 }: { maxPerRun?: nu
     const row = await claimNextExport();
     if (!row) break;
     try {
-      await buildExport(row, deps);
+      await build(row, deps);
     } catch (e) {
       // Anything buildExport did not handle itself: never leave the row building until it goes stale.
       await recordFailure(row, errorMessage(e)).catch(() => undefined);
