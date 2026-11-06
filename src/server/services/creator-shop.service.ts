@@ -1284,8 +1284,11 @@ export const setCreatorShopItemListed = async ({
     if (current.status === CosmeticShopItemStatus.Rejected)
       throw throwBadRequestError(REJECTED_IS_FINAL);
     const meta = current.meta as CosmeticShopItemMeta | null;
-    // Still waiting on the creator: listing again must not put it back in the queue unaltered.
-    const keepsVerdict = current.status === CosmeticShopItemStatus.RequestedChanges;
+    // Still waiting on the creator: listing again must not put it back in the queue unaltered. A
+    // pack stays RequestedChanges through a cover or text edit, so the history decides.
+    const keepsVerdict =
+      current.status === CosmeticShopItemStatus.RequestedChanges &&
+      (!meta?.history?.length || awaitsRequestedChanges(meta.history));
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {

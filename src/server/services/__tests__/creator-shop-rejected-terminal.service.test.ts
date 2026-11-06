@@ -304,6 +304,19 @@ describe('an item not waiting on changes re-enters review', () => {
     });
   });
 
+  // A pack edit other than contents or price leaves it RequestedChanges; re-listing is how it
+  // gets back in front of a reviewer.
+  it('re-lists a sent-back item edited since into PendingReview', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      item('RequestedChanges', [
+        reviewed('request-changes', '2026-08-02T00:00:00.000Z'),
+        { at: '2026-08-03T00:00:00.000Z', userId: 11, kind: 'edited', status: 'RequestedChanges' },
+      ])
+    );
+    await setCreatorShopItemListed({ id: 42, userId: 11, listed: true });
+    expect(mocks.shopItemUpdate.mock.calls[0][0].data).toMatchObject({ status: 'PendingReview' });
+  });
+
   it('re-lists a published item into PendingReview', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(item('Published', []));
     await setCreatorShopItemListed({ id: 42, userId: 11, listed: true });
