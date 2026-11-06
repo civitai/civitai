@@ -22,9 +22,15 @@ type FakeWorkflow = {
   allowMatureContent?: boolean;
   externalId?: string;
   createdAt: string;
+  /** As the orchestrator returns them: `$type` decides whether images sit under `images` or `blobs`. */
   steps: {
     $type?: string;
-    output?: Record<string, { url: string; available?: boolean; nsfwLevel?: string }[]>;
+    name?: string;
+    status?: string;
+    output?: Record<
+      string,
+      { url: string; available?: boolean; nsfwLevel?: string; [field: string]: unknown }[]
+    >;
   }[];
   cost: { total: number };
 };
@@ -1072,7 +1078,7 @@ describe('Pick of four', () => {
             },
           ],
         },
-      } as (typeof upscale.steps)[number],
+      },
     ];
 
     const state = await advanceRemixRun({ runId, caller: caller() });
