@@ -271,6 +271,7 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
   const ALPHA = 'urn:app-blocks:app/alpha';
   const BETA = 'urn:app-blocks:app/beta';
   const APPS = 'urn:schema:app-blocks:app@v1';
+  const RELEASES = 'urn:schema:app-blocks:app-release@v1';
   const ent = (slug: string, rev: string): Entity => ({
     urn: `urn:app-blocks:app/${slug}`,
     schemas: [APPS],
@@ -280,8 +281,12 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
   const catalog = () =>
     createPollingAdapter({
       namespace: 'app-blocks',
-      serves: [APPS],
-      read: async () => new Map([[APPS, [ent('alpha', 'r1'), ent('beta', 'r1')]]]),
+      serves: [APPS, RELEASES],
+      read: async () =>
+        new Map([
+          [APPS, [ent('alpha', 'r1'), ent('beta', 'r1')]],
+          [RELEASES, []],
+        ]),
       store: createMemorySnapshotStore(),
       pollMs: 5,
       sleep: abortableSleep,
@@ -299,19 +304,21 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
   const outcome = (res: { status: number; text: string }) =>
     res.status === 200 ? events(res.text)[0] : (JSON.parse(res.text) as { error: string }).error;
 
+  // Issued for urns [alpha, beta] and FILTER. The first three are invariant guards (a resume of
+  // the same request was accepted before the change too); the last four are the change.
   it.each([
-    ['the same request', urnParam(ALPHA) + filterParam(FILTER), 'live'],
-    ['the same urns in another order', urnParam(BETA, ALPHA) + filterParam(FILTER), 'live'],
+    ['the same request', 'live', urnParam(ALPHA, BETA) + filterParam(FILTER)],
+    ['the same urns in another order', 'live', urnParam(BETA, ALPHA) + filterParam(FILTER)],
     [
       'the same filter with its keys in another order',
-      urnParam(ALPHA, BETA) + filterParam(FILTER_REORDERED),
       'live',
+      urnParam(ALPHA, BETA) + filterParam(FILTER_REORDERED),
     ],
-    ['other urns', urnParam(ALPHA) + filterParam(FILTER), 'cursor_expired'],
-    ['no urns', filterParam(FILTER), 'cursor_expired'],
-    ['another filter', urnParam(ALPHA, BETA) + filterParam(FILTER_OTHER), 'cursor_expired'],
-    ['no filter', urnParam(ALPHA, BETA), 'cursor_expired'],
-  ])('resumed with %s: %s', async (_n, extra, expected) => {
+    ['other urns', 'cursor_expired', urnParam(ALPHA) + filterParam(FILTER)],
+    ['no urns', 'cursor_expired', filterParam(FILTER)],
+    ['another filter', 'cursor_expired', urnParam(ALPHA, BETA) + filterParam(FILTER_OTHER)],
+    ['no filter', 'cursor_expired', urnParam(ALPHA, BETA)],
+  ])('resumed with %s: %s', async (_n, expected, extra) => {
     const a = catalog();
     const cursor = await issuedFor(a, urnParam(ALPHA, BETA) + filterParam(FILTER));
     const res = await resume(a, extra, cursor);
@@ -320,10 +327,11 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
       expect([res.status, res.text.includes('event: live')]).toEqual([410, false]);
   });
 
-  it('a cursor of another schema is cursor_expired', async () => {
+  // Invariant guard: the adapter's stored set names its schema, so this held before the change.
+  it('a cursor of another schema this source serves is cursor_expired', async () => {
     const a = catalog();
     const cursor = await issuedFor(a, '');
-    const res = await subscribe(a, q(SERVED_SCHEMAS[0], cursorParam(cursor)));
+    const res = await subscribe(a, q(RELEASES, cursorParam(cursor)));
     expect([res.status, (JSON.parse(res.text) as { error: string }).error]).toEqual([
       410,
       'cursor_expired',
