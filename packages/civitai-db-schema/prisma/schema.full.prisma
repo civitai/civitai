@@ -8198,6 +8198,8 @@ model KnightsYesNoReference {
   question    KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
   answer      Boolean
   explanation String?
+  /// The question text Acolytes see for this pair. Null on pairs made before it existed: they show the axis question's prompt.
+  prompt      String?
   active      Boolean         @default(true)
   createdBy   Int
   createdAt   DateTime        @default(now())

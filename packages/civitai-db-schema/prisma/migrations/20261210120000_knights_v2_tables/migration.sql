@@ -272,8 +272,12 @@ CREATE TABLE IF NOT EXISTS "KnightsYesNoReference" (
   "active" BOOLEAN NOT NULL DEFAULT true,
   "createdBy" INTEGER NOT NULL,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "prompt" TEXT
 );
+
+-- A database that applied an earlier copy of this file has the table without the column, so the guard does not check it.
+ALTER TABLE "KnightsYesNoReference" ADD COLUMN IF NOT EXISTS "prompt" TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsYesNoReference_imageId_questionKey_key"
   ON "KnightsYesNoReference" ("imageId", "questionKey");

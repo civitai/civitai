@@ -3885,6 +3885,10 @@ export type KnightsYesNoReference = {
   questionKey: string;
   answer: boolean;
   explanation: string | null;
+  /**
+   * The question text Acolytes see for this pair. Null on pairs made before it existed: they show the axis question's prompt.
+   */
+  prompt: string | null;
   active: Generated<boolean>;
   createdBy: number;
   createdAt: Generated<Timestamp>;

@@ -206,7 +206,7 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
       'y.imageId',
       'y.answer',
       'y.questionKey',
-      'q.prompt',
+      sql<string>`COALESCE(y."prompt", q."prompt")`.as('prompt'),
       'img.url as imageKey',
       'img.width',
       'img.height',

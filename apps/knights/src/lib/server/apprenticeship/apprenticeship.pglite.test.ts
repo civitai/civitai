@@ -70,13 +70,13 @@ async function rating(
 
 async function yesNo(
   imageId: number,
-  o: { answer?: boolean; active?: boolean; explanation?: string } = {}
+  o: { answer?: boolean; active?: boolean; explanation?: string; prompt?: string } = {}
 ) {
   await seedImage(pg, imageId);
   const { rows } = await pg.query<{ id: number }>(
-    `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","explanation","active","createdBy")
-     VALUES ($1,$2,$3,$4,$5,1) RETURNING "id"`,
-    [imageId, YESNO_Q, o.answer ?? true, o.explanation ?? null, o.active ?? true]
+    `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","explanation","active","createdBy","prompt")
+     VALUES ($1,$2,$3,$4,$5,1,$6) RETURNING "id"`,
+    [imageId, YESNO_Q, o.answer ?? true, o.explanation ?? null, o.active ?? true, o.prompt ?? null]
   );
   return rows[0].id;
 }
@@ -294,6 +294,23 @@ describe('grading and XP', () => {
       `SELECT "answer","correctAnswer" FROM "KnightsApprenticeAnswer"`
     );
     expect(stored.rows[0]).toEqual({ answer: 'yes', correctAnswer: 'no' });
+  });
+
+  it("shows a yes/no pair's own question, and the axis question for a pair without one", async () => {
+    await player(1);
+    await yesNo(1, { prompt: 'Is a knife held in the hand?' });
+    await yesNo(2);
+
+    const served = await play(1, 2);
+    const promptOf = async (referenceId: number) =>
+      served.find((s) => s.referenceId === referenceId)?.prompt;
+    const ids = (
+      await pg.query<{ id: number; imageId: number }>(
+        `SELECT "id","imageId" FROM "KnightsYesNoReference" ORDER BY "imageId"`
+      )
+    ).rows;
+    expect(await promptOf(ids[0].id)).toBe('Is a knife held in the hand?');
+    expect(await promptOf(ids[1].id)).toBe('Does this show violence?');
   });
 
   it('never smites an Acolyte for wrong answers', async () => {
