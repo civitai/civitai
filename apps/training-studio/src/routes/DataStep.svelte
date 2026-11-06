@@ -222,12 +222,12 @@
   const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
   const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
   const labelingActive = $derived(images.some((i) => i.labeling));
+  // The card whose inline editor has focus: an auto-label pass taking it would unmount the editor and
+  // drop what's being typed. Focus leaving commits the draft, then re-offers the card to auto-label.
+  let inlineFocusId = $state<number | null>(null);
   // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
   // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
   // returned nothing (failed steps go to the editor's Re-run).
-  // The card whose inline editor has focus: an auto-label pass taking it would unmount the editor and
-  // drop what's being typed. Focus leaving commits the draft, and the next pass can have it.
-  let inlineFocusId = $state<number | null>(null);
   const unlabeled = $derived(
     images.filter(
       (i) =>
@@ -1328,8 +1328,10 @@
                     }
                   : undefined}
                 onfocusout={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null) && inlineFocusId === img.id)
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null) && inlineFocusId === img.id) {
                     inlineFocusId = null;
+                    void maybeAutoLabel();
+                  }
                 }}
               >
                 {#if img.status !== 'uploaded'}
