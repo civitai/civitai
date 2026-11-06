@@ -29,6 +29,7 @@ const listing = (over: Partial<CatalogApp['listing']>): CatalogApp['listing'] =>
   creatorUsername: 'maker-k',
   externalUrl: null,
   sourceRepoUrl: null,
+  forkOf: null,
   ...over,
 });
 
@@ -130,6 +131,20 @@ describe('buildEntities', () => {
     expect(Object.hasOwn(body('urn:civitai-apps:app/tide-log'), 'contentRating')).toBe(true);
     expect(body('urn:civitai-apps:app/tide-log').contentRating).toBeNull();
     expect(body('urn:civitai-apps:app/tide-log').externalUrl).toBe('https://tide.example');
+  });
+
+  it('🔴 forkOf is the parent app URN when the catalog read named a parent, and absent otherwise', () => {
+    const forked = buildEntities(
+      [
+        { ...TIDE, listing: listing({ ...TIDE.listing, slug: 'kelp-fork', forkOf: 'tide-log' }) },
+        { ...TIDE, listing: listing({ ...TIDE.listing, slug: 'reef-fork', forkOf: null }) },
+      ],
+      { baseUrl: 'https://site.example' }
+    );
+    const body = (urn: string) =>
+      (forked.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
+    expect(body('urn:civitai-apps:app/kelp-fork').forkOf).toBe('urn:civitai-apps:app/tide-log');
+    expect(Object.hasOwn(body('urn:civitai-apps:app/reef-fork'), 'forkOf')).toBe(false);
   });
 
   it('one static runtime record', () => {

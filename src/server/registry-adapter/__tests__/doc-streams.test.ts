@@ -30,6 +30,7 @@ function app(
       creatorUsername: null,
       externalUrl: null,
       sourceRepoUrl: null,
+      forkOf: null,
     },
     block: {
       id: 'ab_orbit_31',

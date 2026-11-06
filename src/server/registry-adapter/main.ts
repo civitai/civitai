@@ -1,6 +1,7 @@
 /**
  * Entrypoint of the registry adapter for Civitai apps: a process of its own, separate from the
- * web tier, serving the registry source protocol over HTTP/SSE. `pnpm run registry-adapter`.
+ * web tier, serving the registry source protocol over HTTP/SSE. Built with
+ * `pnpm run build:registry-adapter` and run as `node dist/registry-adapter.js`.
  *
  * Environment: the app's server env (database read client, Redis, and the App Blocks datastore
  * connection for the shared-document feed), plus

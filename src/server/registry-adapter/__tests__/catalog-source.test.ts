@@ -62,6 +62,7 @@ function deps(over: Partial<CatalogReadDeps> & { calls?: string[] } = {}): Catal
       approved('pubreq_early', '1.0.0', '2026-08-01T00:00:00Z'),
     ],
     loadSourceRepoUrl: async () => null,
+    loadForkOfListingId: async () => null,
     ...over,
   };
 }
@@ -230,5 +231,70 @@ describe('readCatalog — the public-catalog decision comes first', () => {
       [],
       'https://tide.example',
     ]);
+  });
+});
+
+describe('readCatalog — forkOf names a parent only when the parent is in the same public catalog', () => {
+  // Pairwise-distinct slugs and ids, none equal to the default listing's.
+  const parent = listing({
+    id: 'apl_lumen_parent',
+    slug: 'lumen-parent',
+    kind: 'offsite',
+    appBlockId: null,
+  });
+  const forkOfPublic = listing({
+    id: 'apl_lumen_fork',
+    slug: 'lumen-fork',
+    kind: 'offsite',
+    appBlockId: null,
+  });
+  const forkOfHidden = listing({
+    id: 'apl_shade_fork',
+    slug: 'shade-fork',
+    kind: 'offsite',
+    appBlockId: null,
+  });
+  const FORKS: Record<string, string> = {
+    apl_lumen_fork: 'apl_lumen_parent',
+    apl_shade_fork: 'apl_hidden_parent_77',
+  };
+
+  async function read(items: CatalogListing[]) {
+    const asked: string[] = [];
+    const apps = await readCatalog(
+      deps({
+        listPage: async () => ({ items }),
+        loadForkOfListingId: async (id) => {
+          asked.push(id);
+          return FORKS[id] ?? null;
+        },
+      })
+    );
+    return {
+      forkOf: Object.fromEntries(apps.map((a) => [a.listing.slug, a.listing.forkOf])),
+      asked,
+    };
+  }
+
+  it('🔴 a public parent is named by its slug', async () => {
+    const { forkOf } = await read([parent, forkOfPublic]);
+    expect(forkOf).toEqual({ 'lumen-parent': null, 'lumen-fork': 'lumen-parent' });
+  });
+
+  it('🔴 a parent outside the catalog is omitted, and its id is never looked up', async () => {
+    const { forkOf, asked } = await read([parent, forkOfHidden]);
+    expect(forkOf).toEqual({ 'lumen-parent': null, 'shade-fork': null });
+    expect(asked.sort()).toEqual(['apl_lumen_parent', 'apl_shade_fork']);
+  });
+
+  it('a parent that leaves the catalog stops being named', async () => {
+    const { forkOf } = await read([forkOfPublic]);
+    expect(forkOf).toEqual({ 'lumen-fork': null });
+  });
+
+  it("an on-site parent is named by its block's slug, as its app entity is", async () => {
+    const onsiteParent = listing({ id: 'apl_lumen_parent', slug: 'lumen-listing-slug' });
+    const { forkOf } = await read([onsiteParent, forkOfPublic]);
+    expect(forkOf['lumen-fork']).toBe('orbit-notes');
   });
 });

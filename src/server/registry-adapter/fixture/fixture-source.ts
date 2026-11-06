@@ -23,6 +23,8 @@ export type FixtureCatalog = {
   blocks?: CatalogBlock[];
   approved?: Array<Omit<CatalogApprovedRequest, 'reviewedAt'> & { reviewedAt: string | null }>;
   sourceRepoUrls?: Record<string, string>;
+  /** Fork listing id → the listing id it was forked from (which need not be in `listings`). */
+  forkOf?: Record<string, string>;
   /** App Storage rows, as the store holds them: every namespace and key space. */
   documents?: Array<{
     appId: string;
@@ -116,6 +118,7 @@ export function fixtureCatalogDeps(read: () => FixtureCatalog): CatalogReadDeps 
         .filter((r) => ids.includes(r.appBlockId))
         .map((r) => ({ ...r, reviewedAt: r.reviewedAt ? new Date(r.reviewedAt) : null })),
     loadSourceRepoUrl: async (listingId) => read().sourceRepoUrls?.[listingId] ?? null,
+    loadForkOfListingId: async (listingId) => read().forkOf?.[listingId] ?? null,
   };
 }
 

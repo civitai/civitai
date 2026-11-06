@@ -55,6 +55,8 @@ export type CatalogReadDeps = {
   loadBlocks: (ids: string[]) => Promise<CatalogBlock[]>;
   loadApproved: (appBlockIds: string[]) => Promise<CatalogApprovedRequest[]>;
   loadSourceRepoUrl: (listingId: string) => Promise<string | null>;
+  /** The listing id this listing was forked from, or null. Never used to read the parent. */
+  loadForkOfListingId: (listingId: string) => Promise<string | null>;
 };
 
 /** Pages the catalog may take before the read fails. A truncated catalog would read as deletes. */
@@ -96,9 +98,17 @@ export async function readCatalog(deps: CatalogReadDeps): Promise<CatalogApp[]> 
     return at !== 0 ? at : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   };
 
+  const blockOf = (l: CatalogListing) =>
+    l.kind === 'onsite' && l.appBlockId ? blockById.get(l.appBlockId) ?? null : null;
+  // A parent is named only when it is in THIS snapshot, i.e. it passed the same public-catalog
+  // gate. A parent outside it (private, removed, unapproved, deleted) is never looked up, so its
+  // slug cannot leave through a fork.
+  const publicSlugById = new Map(listings.map((l) => [l.id, blockOf(l)?.blockId ?? l.slug]));
+
   const apps: CatalogApp[] = [];
   for (const l of listings) {
-    const block = l.kind === 'onsite' && l.appBlockId ? blockById.get(l.appBlockId) ?? null : null;
+    const block = blockOf(l);
+    const parentId = await deps.loadForkOfListingId(l.id);
     apps.push({
       listing: {
         slug: l.slug,
@@ -111,6 +121,7 @@ export async function readCatalog(deps: CatalogReadDeps): Promise<CatalogApp[]> 
         creatorUsername: l.creatorUsername,
         externalUrl: l.kind === 'offsite' ? l.externalUrl : null,
         sourceRepoUrl: await deps.loadSourceRepoUrl(l.id),
+        forkOf: (parentId !== null && parentId !== l.id && publicSlugById.get(parentId)) || null,
       },
       block,
       approved: block

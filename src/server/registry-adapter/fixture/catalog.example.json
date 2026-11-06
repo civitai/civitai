@@ -281,5 +281,9 @@
   "lastSeq": {
     "ab_fixture_orbit": 8,
     "ab_fixture_ember": 1
+  },
+  "forkOf": {
+    "apl_fixture_ember": "apl_fixture_orbit",
+    "apl_fixture_tide": "apl_fixture_private_parent"
   }
 }

@@ -41,6 +41,8 @@ export type CatalogApp = {
     creatorUsername: string | null;
     externalUrl: string | null;
     sourceRepoUrl: string | null;
+    /** The slug of the app this one was forked from, only when that app is in the same catalog. */
+    forkOf: string | null;
   };
   /** The backing block of an on-site listing. */
   block: {
@@ -148,6 +150,7 @@ export function buildEntities(apps: readonly CatalogApp[], opts: { baseUrl: stri
         ...(listing.kind === 'onsite' ? { runtime: RUNTIME_URN } : {}),
         ...(listing.kind === 'offsite' ? { externalUrl: listing.externalUrl } : {}),
         ...(currentRelease ? { release: currentRelease } : {}),
+        ...(listing.forkOf ? { forkOf: registryUrn({ kind: 'app', slug: listing.forkOf }) } : {}),
       })
     );
   }

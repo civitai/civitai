@@ -36,6 +36,10 @@ export const SHARED_SCHEMA_DOCUMENTS: Record<string, unknown>[] = [
       runtime: { type: 'string', description: 'URN of the runtime record its releases run on' },
       externalUrl: nullableString,
       release: { type: 'string', description: 'URN of the current release' },
+      forkOf: {
+        type: 'string',
+        description: 'URN of the app this one was forked from, when that app is listed too',
+      },
     },
   },
   {
