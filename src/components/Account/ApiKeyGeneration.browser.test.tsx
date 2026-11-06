@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as CurrentUserModule from '~/hooks/useCurrentUser';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as TrpcModule from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -37,6 +38,11 @@ const keys = [
 
 vi.mock('next/router', () => ({
   useRouter: () => ({ isReady: true, query: {}, pathname: '/', replace: vi.fn() }),
+}));
+// The modal reads the viewer to decide whether to offer the moderator-only scope; no session here.
+vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
+  ...(await importOriginal<typeof CurrentUserModule>()),
+  useCurrentUser: () => null,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
