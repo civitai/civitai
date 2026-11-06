@@ -110,7 +110,7 @@ function EmbedUrlModal({ editor }: { editor: Editor }) {
       <Stack gap="sm">
         <Textarea
           label="Link or embed code"
-          description="YouTube, Vimeo, Twitch, Spotify, SoundCloud, Bandcamp, Instagram, Hugging Face Spaces. Any other link is inserted as a normal link."
+          description="YouTube, Vimeo, Twitch, Spotify, SoundCloud, Bandcamp, Instagram. Any other link is inserted as a normal link."
           placeholder="https://vimeo.com/76979871"
           autosize
           minRows={1}

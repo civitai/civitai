@@ -2,7 +2,7 @@ import { Node } from '@tiptap/core';
 import type { EmbedProvider } from '~/shared/utils/embed-providers';
 import {
   EMBED_HEIGHTS,
-  embedRenderAttrs,
+  EMBED_PLAYER_ALLOW,
   embedRenderSrc,
   isAllowedPlayerUrl,
 } from '~/shared/utils/embed-providers';
@@ -18,7 +18,7 @@ declare module '@tiptap/core' {
 
 /**
  * Player iframe for the providers in embed-providers (Bandcamp, SoundCloud, Spotify, Vimeo,
- * Twitch, Hugging Face Spaces). Stored as `<div data-type="embed" data-provider><iframe>`. The
+ * Twitch). Stored as `<div data-type="embed" data-provider><iframe>`. The
  * provider is always re-derived from `src`, never trusted from the attribute, and a src that is
  * not an allowed player URL renders no iframe at all.
  *
@@ -74,7 +74,7 @@ export function embedIframeAttrs(provider: EmbedProvider, src: string, host?: st
     width: '100%',
     height: String(EMBED_HEIGHTS[provider]),
     allowfullscreen: 'true',
-    ...embedRenderAttrs(provider),
+    allow: EMBED_PLAYER_ALLOW,
   };
 }
 

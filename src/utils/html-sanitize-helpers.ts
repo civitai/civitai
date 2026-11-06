@@ -324,10 +324,9 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     },
     ...options,
     allowedAttributes,
-    // After the spread so no caller option can widen which iframes load. hf.space is a coarse
-    // gate (any subdomain); isRefusedEmbedIframe is the exact check (one label, https, path).
+    // After the spread so no caller option can widen which iframes load.
     allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
-    allowedIframeDomains: ['hf.space'],
+    allowedIframeDomains: [],
     allowIframeRelativeUrls: false,
     // Per-tag replace, not merge: a caller's entry for a tag replaces its default (span, p, h1-h3). `*` is
     // fixed empty, after the spread, because sanitize-html merges it into every tag's rule; it

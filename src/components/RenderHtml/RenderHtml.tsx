@@ -9,7 +9,7 @@ import { DEFAULT_ALLOWED_ATTRIBUTES, sanitizeHtml } from '~/utils/html-sanitize-
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { useMaybeAppContext } from '~/providers/AppProvider';
 import {
-  embedRenderAttrs,
+  EMBED_PLAYER_ALLOW,
   embedRenderSrc,
   isAllowedPlayerUrl,
   isEmbedPlayerHost,
@@ -82,7 +82,7 @@ export function RenderHtml({
         div: ['data-youtube-video', 'data-type', 'data-provider', 'style', 'data-consent-blocked'],
         // Set by the iframe transform below from the validated provider; any stored value is
         // dropped there first.
-        iframe: [...DEFAULT_ALLOWED_ATTRIBUTES.iframe, 'allow', 'sandbox'],
+        iframe: [...DEFAULT_ALLOWED_ATTRIBUTES.iframe, 'allow'],
         // Attributes are filtered against the tag a transform produced, so the
         // mention span's data attributes are dropped once it becomes a link
         // unless `a` allows them too. The hover card reads the user from them.
@@ -97,7 +97,7 @@ export function RenderHtml({
         // For unconsented CA visitors, replace third-party iframes with a
         // placeholder div so no third-party network request fires. The kind
         // attribute drives the CSS-only placeholder shown in its place.
-        iframe: function (_tagName, { allow: _allow, sandbox: _sandbox, ...attribs }) {
+        iframe: function (_tagName, { allow: _allow, ...attribs }) {
           if (thirdPartyAllowed) {
             const provider = isAllowedPlayerUrl(attribs.src);
             if (!provider) {
@@ -111,7 +111,7 @@ export function RenderHtml({
               attribs: {
                 ...attribs,
                 src: embedRenderSrc(provider, attribs.src, host),
-                ...embedRenderAttrs(provider),
+                allow: EMBED_PLAYER_ALLOW,
               },
             };
           }

@@ -1,16 +1,8 @@
 // Host checks compare `URL.hostname` for equality, never `endsWith`/`includes`: that would let
 // `evilvimeo.com` or `vimeo.com.evil.test` through. The exceptions are the anchored
-// single-label regexes (`<label>.bandcamp.com`, `<label>.hf.space`) and `isEmbedPlayerHost`,
-// whose broad `.hf.space` match only decides whether the exact player check must run.
+// single-label regex for `<label>.bandcamp.com` page URLs.
 
-export const EMBED_PROVIDERS = [
-  'bandcamp',
-  'soundcloud',
-  'spotify',
-  'vimeo',
-  'twitch',
-  'huggingface',
-] as const;
+export const EMBED_PROVIDERS = ['bandcamp', 'soundcloud', 'spotify', 'vimeo', 'twitch'] as const;
 export type EmbedProvider = (typeof EMBED_PROVIDERS)[number];
 
 /** The pre-existing embeds, which keep their own tiptap nodes. */
@@ -27,13 +19,12 @@ export const EMBED_PROVIDER_LABELS: Record<EmbedProvider | LegacyEmbedKind, stri
   spotify: 'Spotify',
   vimeo: 'Vimeo',
   twitch: 'Twitch',
-  huggingface: 'Hugging Face Space',
   youtube: 'YouTube',
   instagram: 'Instagram',
   strawpoll: 'StrawPoll',
 };
 
-/** Hosts of the player iframes, exactly. hf.space subdomains are matched by HF_SPACE_HOST. */
+/** Hosts of the player iframes, exactly. */
 export const EMBED_PLAYER_HOSTS = [
   'bandcamp.com',
   'w.soundcloud.com',
@@ -44,7 +35,6 @@ export const EMBED_PLAYER_HOSTS = [
 ] as const;
 
 const BANDCAMP_PAGE_HOST = /^(?:[a-z0-9-]+\.)?bandcamp\.com$/;
-const HF_SPACE_HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.hf\.space$/;
 
 function parseUrl(input: string, { allowHttp }: { allowHttp: boolean }): URL | null {
   const trimmed = input.trim();
@@ -179,20 +169,6 @@ function parseTwitch(url: URL): ParsedEmbed | null {
   return null;
 }
 
-function parseHuggingface(url: URL): ParsedEmbed | null {
-  const space = (sub: string): ParsedEmbed | null => {
-    const host = `${sub}.hf.space`;
-    if (!HF_SPACE_HOST.test(host)) return null;
-    return { kind: 'embed', provider: 'huggingface', playerUrl: `https://${host}/` };
-  };
-  if (HF_SPACE_HOST.test(url.hostname)) return space(url.hostname.slice(0, -'.hf.space'.length));
-  if (!oneOf(url.hostname, ['huggingface.co', 'www.huggingface.co'])) return null;
-  const match = /^\/spaces\/([\w.-]+)\/([\w.-]+)(?:\/.*)?$/.exec(url.pathname);
-  if (!match) return null;
-  // How Hugging Face derives a Space's subdomain: owner-name, lowercased, `.`/`_` as `-`.
-  return space(`${match[1]}-${match[2]}`.toLowerCase().replace(/[._]/g, '-'));
-}
-
 function parseLegacy(url: URL, input: string): ParsedEmbed | null {
   const host = url.hostname;
   if (oneOf(host, ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com']))
@@ -226,8 +202,7 @@ export function parseEmbedUrl(input: string): ParsedEmbed | null {
     parseSoundcloud(url) ??
     parseSpotify(url) ??
     parseVimeo(url) ??
-    parseTwitch(url) ??
-    parseHuggingface(url)
+    parseTwitch(url)
   );
 }
 
@@ -269,7 +244,7 @@ function onlyParams(url: URL, allowed: string[]) {
 
 /**
  * Returns the provider when `src` matches a provider's player URL shape, otherwise
- * null. The sanitizer drops any iframe on an EMBED_PLAYER_HOSTS / hf.space host that fails this.
+ * null. The sanitizer drops any iframe on an EMBED_PLAYER_HOSTS host that fails this.
  * Twitch may carry `parent`: render-time sanitizing sees the src after embedRenderSrc added it.
  * Whatever is stored is overwritten at render, so a stored value is inert.
  */
@@ -330,8 +305,6 @@ export function isAllowedPlayerUrl(src: string | undefined | null): EmbedProvide
       ? 'twitch'
       : null;
 
-  if (HF_SPACE_HOST.test(host)) return path === '/' && !url.search ? 'huggingface' : null;
-
   return null;
 }
 
@@ -340,7 +313,7 @@ export function isEmbedPlayerHost(src: string | undefined | null): boolean {
   if (!src) return false;
   // True if EITHER reading of `src` lands on a provider host: the browser's (https page base)
   // or sanitize-html's own host gate (a non-special `relative:` base, after its `//` rewrite).
-  // They disagree on forms like `//x.hf.space/p` and `https:x.hf.space/p`; whichever one admits
+  // They disagree on forms like `//host/p` and `https:host/p`; whichever one admits
   // the host, the exact player check must then run.
   const hosts: string[] = [];
   const read = (value: string, base: string) => {
@@ -350,9 +323,7 @@ export function isEmbedPlayerHost(src: string | undefined | null): boolean {
   };
   read(src.trim().replace(/\\/g, '/'), 'https://relative.invalid');
   read(src.replace(/^(\w+:)?\s*[\\/]\s*[\\/]/, '$1//'), 'relative://relative-site/0');
-  return hosts.some(
-    (host) => oneOf(host, EMBED_PLAYER_HOSTS) || host === 'hf.space' || host.endsWith('.hf.space')
-  );
+  return hosts.some((host) => oneOf(host, EMBED_PLAYER_HOSTS));
 }
 
 const FALLBACK_PARENT = 'civitai.com';
@@ -375,7 +346,8 @@ export function embedRenderSrc(provider: EmbedProvider, src: string, host?: stri
   return url.toString();
 }
 
-const PLAYER_ALLOW = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+export const EMBED_PLAYER_ALLOW =
+  'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
 
 export const EMBED_HEIGHTS: Record<EmbedProvider, number> = {
   bandcamp: 120,
@@ -383,14 +355,4 @@ export const EMBED_HEIGHTS: Record<EmbedProvider, number> = {
   spotify: 352,
   vimeo: 360,
   twitch: 378,
-  huggingface: 600,
 };
-
-export function embedRenderAttrs(provider: EmbedProvider): Record<string, string> {
-  if (provider === 'huggingface')
-    // A Space is arbitrary third-party code. No allow-forms blocks native form submission only
-    // (scripts can still send input, so it is not a phishing guard alone); no
-    // allow-top-navigation means it cannot redirect the page.
-    return { sandbox: 'allow-scripts allow-same-origin allow-popups allow-downloads' };
-  return { allow: PLAYER_ALLOW };
-}

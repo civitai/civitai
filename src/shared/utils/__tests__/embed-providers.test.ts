@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  embedRenderAttrs,
   embedRenderSrc,
   isAllowedPlayerUrl,
   legacyPreviewSrc,
@@ -61,18 +60,6 @@ const SITES = [
       'https://twitch.tv@evil.test/videos/1234567890',
     ],
     badPlayers: ['https://player.twitch.tv/?video=v1&channel=x'],
-  },
-  {
-    provider: 'huggingface',
-    page: 'https://huggingface.co/spaces/black-forest-labs/FLUX.1-schnell',
-    player: 'https://black-forest-labs-flux-1-schnell.hf.space/',
-    lookalikes: [
-      'https://evilhuggingface.co/spaces/a/b',
-      'https://huggingface.co.evil.test/spaces/a/b',
-      'https://x.hf.space.evil.test/',
-      'https://huggingface.co@evil.test/spaces/a/b',
-    ],
-    badPlayers: ['https://a.b.hf.space/', 'https://x.hf.space/login'],
   },
 ] as const;
 
@@ -162,8 +149,7 @@ describe('sanitizeHtml embed iframes', () => {
   // Each resolves in a browser to a provider host. The player check accepts only a literal
   // `https://host` prefix, so relative, backslash and entity-encoded spellings are refused.
   it.each([
-    '//civitai-login.hf.space/signin',
-    '//x.hf.space/',
+    '//w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb',
     '  //w.soundcloud.com/signin',
     '/\\bandcamp.com/login',
     '//player.vimeo.com/video/1',
@@ -172,15 +158,14 @@ describe('sanitizeHtml embed iframes', () => {
     // Scheme-less: not an absolute https URL, so the player check refuses it.
     'player.twitch.tv/?video=v1',
     // Read as absolute by sanitize-html's host gate, as a same-origin path by a browser.
-    'https:/x.hf.space/../../user/account',
-    'https:x.hf.space/../../../user/account',
+    'https:/player.vimeo.com/../../user/account',
+    'https:player.vimeo.com/../../../user/account',
     'https:open.spotify.com/login',
-    '/ /x.hf.space/../../user/account',
+    '/ /player.vimeo.com/../../user/account',
     // Lookalike hosts: sanitize-html's host list already removes the src.
     'https://w.soundcloud.com.evil.test/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb',
     'https://player.vimeo.com.evil.test/video/1',
     'https://player.twitch.tv.evil.test/?video=v1',
-    'https://evilhf.space/',
   ])('drops relative, backslash or lookalike src %s', (src) => {
     expect(sanitizeHtml(iframe(src))).not.toMatch(/src=/);
   });
@@ -239,22 +224,18 @@ describe('embedRenderSrc', () => {
   });
 });
 
-// Product decision: no allow-forms and no allow-top-navigation for Spaces. Adding either flag
-// back reverses that decision; revisit it first, not this test.
-describe('embedRenderAttrs', () => {
-  it('sandboxes Hugging Face Spaces without forms or top navigation', () => {
-    const { sandbox, allow } = embedRenderAttrs('huggingface');
-    expect(allow).toBeUndefined();
-    expect(sandbox.split(' ').sort()).toEqual(
-      ['allow-downloads', 'allow-popups', 'allow-same-origin', 'allow-scripts'].sort()
+// Product decision: Hugging Face Spaces are not embeddable. Enabling them is a separate,
+// reviewed change; do not loosen this test to get there.
+describe('Hugging Face Spaces are not embeddable', () => {
+  it('inserts a Space link as a plain link and drops a stored Space iframe', () => {
+    expect(
+      parseEmbedUrl('https://huggingface.co/spaces/black-forest-labs/FLUX.1-schnell')
+    ).toBeNull();
+    expect(parseEmbedUrl('https://black-forest-labs-flux-1-schnell.hf.space/')).toBeNull();
+    expect(isAllowedPlayerUrl('https://black-forest-labs-flux-1-schnell.hf.space/')).toBeNull();
+    expect(sanitizeHtml(iframe('https://black-forest-labs-flux-1-schnell.hf.space/'))).not.toMatch(
+      /src=/
     );
-  });
-
-  it('gives the media players permissions but no sandbox', () => {
-    for (const provider of ['bandcamp', 'soundcloud', 'spotify', 'vimeo', 'twitch'] as const) {
-      expect(embedRenderAttrs(provider).sandbox).toBeUndefined();
-      expect(embedRenderAttrs(provider).allow).toContain('encrypted-media');
-    }
   });
 });
 

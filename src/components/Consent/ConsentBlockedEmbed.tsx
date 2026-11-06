@@ -10,7 +10,6 @@ import {
   IconBrandX,
   IconBrandYoutube,
   IconChartBar,
-  IconCode,
   IconShieldLock,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -26,7 +25,6 @@ export type ConsentEmbedKind =
   | 'bandcamp'
   | 'soundcloud'
   | 'spotify'
-  | 'huggingface'
   | 'generic';
 
 const KIND_LABELS: Record<ConsentEmbedKind, string> = {
@@ -39,7 +37,6 @@ const KIND_LABELS: Record<ConsentEmbedKind, string> = {
   bandcamp: 'Bandcamp',
   soundcloud: 'SoundCloud',
   spotify: 'Spotify',
-  huggingface: 'Hugging Face',
   generic: 'third-party',
 };
 
@@ -53,7 +50,6 @@ const KIND_ICONS: Record<ConsentEmbedKind, Icon> = {
   bandcamp: IconBrandBandcamp,
   soundcloud: IconBrandSoundcloud,
   spotify: IconBrandSpotify,
-  huggingface: IconCode,
   generic: IconShieldLock,
 };
 
