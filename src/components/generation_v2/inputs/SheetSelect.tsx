@@ -57,6 +57,7 @@ function SelectInSheet({
   style,
   size,
   id,
+  'aria-label': ariaLabel,
 }: SheetSelectProps) {
   const [opened, setOpened] = useState(false);
   const [search, setSearch] = useState('');
@@ -114,6 +115,7 @@ function SelectInSheet({
       component="button"
       type="button"
       id={id}
+      aria-label={ariaLabel}
       pointer
       label={label}
       description={description}
