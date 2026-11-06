@@ -41,6 +41,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreMaintenance, MigrationCursor } from '~/server/services/apps/doc-store';
 import { getDocStoreMaintenance } from '~/server/services/apps/doc-store-maintenance.instance';
+import { resolveSchemaMajor } from '~/server/services/apps/doc-store-schema-major';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import type { MigrationMutationOp } from '~/server/services/apps/storage-schema-migrations';
@@ -457,10 +458,12 @@ async function save(run: StorageMigrationRun, done: boolean): Promise<void> {
 /**
  * The collection as the approved request declares it; whether a newer approval superseded it; and
  * `awaitingApproval` while the request is still pending (reserved at approve, approval not written yet — or an
- * approve that failed and will be retried).
+ * approve that failed and will be retried). The collection carries its current schema major
+ * (`DocCollection.schemaMajor`, derived against the enforced manifest), which every document the
+ * run rewrites is stamped with, as a write is.
  */
 async function loadTarget(
-  run: Pick<StorageMigrationRun, 'publishRequestId' | 'collection'>
+  run: Pick<StorageMigrationRun, 'publishRequestId' | 'collection' | 'appBlockId'>
 ): Promise<{ collection: DocCollection | null; superseded: boolean; awaitingApproval?: boolean }> {
   const request = await dbWrite.appBlockPublishRequest.findUnique({
     where: { id: run.publishRequestId },
@@ -491,7 +494,17 @@ async function loadTarget(
   const config = parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).collections.get(
     run.collection
   );
-  return { collection: config ? { name: run.collection, config } : null, superseded: false };
+  if (!config) return { collection: null, superseded: false };
+  const head = await dbWrite.appBlock.findUnique({
+    where: { id: run.appBlockId },
+    select: { manifest: true },
+  });
+  const schemaMajor = await resolveSchemaMajor({
+    appBlockId: run.appBlockId,
+    head: head?.manifest,
+    collection: run.collection,
+  });
+  return { collection: { name: run.collection, config, schemaMajor }, superseded: false };
 }
 
 /**

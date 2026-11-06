@@ -85,6 +85,12 @@ export type StorageAccess = {
   importedFrom?: string;
   /** With `importedFrom`: the import's access. A `read` import refuses every write. */
   importAccess?: 'read' | 'readwrite';
+  /**
+   * The approved app's enforced manifest (`app_blocks.manifest`) that `collections` were parsed
+   * from — the source app's, through an import. What a production write's schema major is
+   * derived against (`doc-store-schema-major.ts`). Unset for a review token.
+   */
+  enforcedManifest?: unknown;
 };
 
 const notEligible = (reason: string, message: string) =>
@@ -224,6 +230,7 @@ export async function resolveStorageAccess(
     tokenKind: claims.dev === true ? 'dev' : isHubTokenClaims(claims) ? 'hub' : 'app',
     ctx: { appId: approval.appBlockId, ns, viewerUid },
     ...declaredStorage(approval.appBlockId, row?.manifest),
+    enforcedManifest: row?.manifest,
   };
 }
 
@@ -361,5 +368,6 @@ export async function resolveImportAccess(
     maxBrowsingLevel: consumer.maxBrowsingLevel,
     importedFrom: from,
     importAccess: declared.access,
+    enforcedManifest: source.manifest,
   };
 }
