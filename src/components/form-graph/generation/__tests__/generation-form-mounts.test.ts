@@ -76,6 +76,14 @@ describe('the generation form', () => {
     }
   });
 
+  // The re-pick is tested on a bare store (ecosystem-repick.test.ts); this pins that the form
+  // runs it, and that the cost quote waits for the gates it depends on.
+  it('re-picks an unavailable ecosystem and waits for the gates before quoting', () => {
+    expect(lane).toContain('repickUnavailableEcosystem(store)');
+    expect(lane).toMatch(/<WhatIfProvider[^>]*enabled=\{generationConfigFetched\}/);
+    expect(lane).toContain('isFetched: generationConfigFetched');
+  });
+
   it('gives the workflow and ecosystem pickers their compatibility props', () => {
     expect(lane).toContain('isCompatible={compatibility.isWorkflowCompatible}');
     expect(lane).toContain('isCompatible={compatibility.isEcosystemKeyCompatible}');

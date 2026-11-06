@@ -53,6 +53,7 @@ import { FormFooter } from './FormFooter';
 import { WhatIfProvider } from './WhatIfProvider';
 import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
+import { repickUnavailableEcosystem } from './ecosystem-repick';
 import { useOutputType, type GenerationStore } from './store';
 import { useWhatIfContext } from './WhatIfProvider';
 import { useActiveGenerationForm } from '~/store/active-generation-form.store';
@@ -78,7 +79,12 @@ export function BaseGenerationForm() {
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-  const { selfHostedDisabledEcosystems, selfHostedMode, gateRules } = useGenerationConfig();
+  const {
+    selfHostedDisabledEcosystems,
+    selfHostedMode,
+    gateRules,
+    isFetched: generationConfigFetched,
+  } = useGenerationConfig();
 
   const isModerator = !!currentUser?.isModerator;
 
@@ -125,7 +131,8 @@ export function BaseGenerationForm() {
   return (
     <FormProvider store={store}>
       <ExperimentalRulesSync />
-      <WhatIfProvider store={store} ext={ext}>
+      {/* No quote until availability is known: before it, a gated selection quotes and fails. */}
+      <WhatIfProvider store={store} ext={ext} enabled={generationConfigFetched}>
         <GenerationFormBody store={store} isMember={ext.user?.isMember ?? false} />
       </WhatIfProvider>
     </FormProvider>
@@ -201,6 +208,7 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   useResourceHydrationSync(store);
   useModelWriteBack(store);
   useGenerationIngestion(store);
+  useEffect(() => repickUnavailableEcosystem(store), [store]);
   useGenerationTour();
   const output = useOutputType(store);
   const workflow = useField<string>(store, 'workflow')?.value;
