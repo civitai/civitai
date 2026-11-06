@@ -7,7 +7,7 @@ import {
   nsfwLevels,
   type ModelSource,
 } from '@/vector-sync/models/document';
-import type { ModelPayload } from '@/vector-sync/models/source';
+import { getModelDocs, type ModelPayload } from '@/vector-sync/models/source';
 import { backfillModels } from '@/vector-sync/models/backfill';
 import { syncModelIds, type ModelSyncDeps } from '@/vector-sync/models/sync';
 import {
@@ -15,7 +15,13 @@ import {
   ModelSyncQueue,
   type ModelQueueDeps,
 } from '@/vector-sync/models/consumer';
-import { ModelMismatchError, type ModelStamp, type VectorPoint } from '@/vector-sync/qdrant';
+import type { QdrantClient } from '@qdrant/js-client-rest';
+import {
+  ModelMismatchError,
+  VectorStore,
+  type ModelStamp,
+  type VectorPoint,
+} from '@/vector-sync/qdrant';
 
 const VECTOR = Array.from({ length: 256 }, (_, i) => (i === 0 ? 1 : 0));
 const STAMP = { model: 'wemm-2b', modelRevision: 'r1', profile: 'text', dimensions: 256 };
@@ -424,16 +430,19 @@ describe('model CDC consumer', () => {
   });
 
   test('a deleted version whose lookup fails is retried on the next flush', async () => {
-    const { db, store, q } = queue();
+    const { db, store, q, commits } = queue();
     db.rows.set(1, model(1));
     q.add({ model: 1 }, at(0));
     await q.flush();
     db.rows.set(1, model(1, { versions: [] }));
     vi.spyOn(store, 'idsMatching').mockRejectedValueOnce(new Error('qdrant down'));
     q.add({ version: 10 }, at(1, 'postgres.ModelVersion'));
+    const committed = commits.length;
     await expect(q.flush()).rejects.toThrow('qdrant down');
+    expect(commits).toHaveLength(committed);
     await q.flush();
     expect(store.points.has(1)).toBe(false);
+    expect(commits.at(-1)).toEqual([at(2, 'postgres.ModelVersion')]);
   });
 
   test('a burst for one model is one embed; offsets commit only after a flush succeeds', async () => {
@@ -624,5 +633,60 @@ describe('model CDC consumer', () => {
     await q.flush();
     expect(store.points.has(2)).toBe(false);
     expect(embedder.texts).toEqual([]);
+  });
+});
+
+describe('version-delete lookup against the real query and client', () => {
+  // The version ids come from the json_agg in getModelDocs; a fake pg would hide a missing column.
+  test('getModelDocs records the ids of the published, searchable versions it read', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    await pg.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, username text);
+        CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
+        CREATE TABLE "TagsOnModels" ("modelId" int, "tagId" int);
+        CREATE TABLE "Model" (id int PRIMARY KEY, name text, type text, "checkpointType" text,
+          "nsfwLevel" int, "publishedAt" timestamp, "userId" int, description text, status text,
+          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text);
+        CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, name text,
+          description text, "baseModel" text, "trainedWords" text[], status text,
+          availability text, index int);
+        INSERT INTO "User" VALUES (7, 'someone');
+        INSERT INTO "Model" VALUES (1, 'M', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published',
+          NULL, false, false, 'Public');
+        INSERT INTO "ModelVersion" VALUES
+          (11, 1, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (12, 1, 'b', NULL, 'SDXL 1.0', '{}', 'Draft', 'Public', 1),
+          (13, 1, 'c', NULL, 'SDXL 1.0', '{}', 'Published', 'Unsearchable', 2),
+          (14, 1, 'd', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 3);
+      `);
+    try {
+      const docs = await getModelDocs(pg as unknown as Parameters<typeof getModelDocs>[0], [1]);
+      expect(docs.get(1)?.versionIds).toEqual([11, 14]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
+  test('idsMatching filters on any of the values and follows every page', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const pages = [
+      { points: [{ id: 1 }, { id: 2 }], next_page_offset: 3 },
+      { points: [{ id: 3 }], next_page_offset: null },
+    ];
+    const client = {
+      scroll: async (_c: string, body: Record<string, unknown>) => {
+        calls.push(body);
+        return pages[calls.length - 1];
+      },
+    };
+    const store = new VectorStore<ModelPayload>(client as unknown as QdrantClient, 'c');
+    expect(await store.idsMatching('versionIds', [10, 20], 2)).toEqual([1, 2, 3]);
+    expect(calls.map((c) => [c.filter, c.offset])).toEqual([
+      [{ must: [{ key: 'versionIds', match: { any: [10, 20] } }] }, undefined],
+      [{ must: [{ key: 'versionIds', match: { any: [10, 20] } }] }, 3],
+    ]);
+    expect(await store.idsMatching('versionIds', [])).toEqual([]);
+    expect(calls).toHaveLength(2);
   });
 });

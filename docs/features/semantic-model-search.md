@@ -92,7 +92,8 @@ after the writes land.
 - A deleted version's event carries only the version id (and deleting a model's last published
   version writes nothing to the Model row), so the consumer finds the model through the point's
   `versionIds` and re-syncs it. A point written before `versionIds` existed is not found this
-  way; a backfill re-run gives it the field.
+  way, so run a full backfill after this field first deploys; until then those deletes are
+  missed (logged as `deleted versions matched no point`).
 - A model whose embed step fails is counted in `failed` and its offset committed; the next change
   or a backfill re-run embeds it.
 - `HEALTH_CHECK_PORT` reports `healthy`, `pending` and whether it is embedding.

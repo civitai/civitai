@@ -136,8 +136,11 @@ export class ModelSyncQueue {
     this.deletedVersions = new Set();
     this.offsets = new Map();
     try {
-      // A model whose point never recorded the version has nothing in the index to fix.
-      ids.push(...(await this.deps.store.idsMatching('versionIds', versions)));
+      // No match: no point holds the version, or the point predates versionIds.
+      const owners = await this.deps.store.idsMatching('versionIds', versions);
+      if (versions.length && !owners.length)
+        logger.info({ versions: versions.length }, 'model-sync: deleted versions matched no point');
+      ids.push(...owners);
       // A new collection's model is recorded by the backfill canary first, so two writers
       // cannot stamp it differently.
       if (ids.length) {
