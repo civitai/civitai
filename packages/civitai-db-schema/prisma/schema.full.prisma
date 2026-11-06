@@ -2244,7 +2244,8 @@ model Image {
   clubAvatar          Club[]                @relation("avatarImage")
   clubTierCover       ClubTier[]
   clubPostCoverImage  ClubPost[]
-  article             Article?
+  article             Article?              @relation("ArticleCover")
+  articleBanner       Article?              @relation("ArticleBanner")
   purchasableRewards  PurchasableReward[]
   tools               ImageTool[]
   techniques          ImageTechnique[]
@@ -6305,7 +6306,10 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  coverImage       Image?        @relation("ArticleCover", fields: [coverId], references: [id], onDelete: SetNull)
+  // Optional wide banner across the top of the article page; coverId stays the feed card image.
+  bannerId         Int?          @unique
+  bannerImage      Image?        @relation("ArticleBanner", fields: [bannerId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   // Go-live time for a never-published Draft; publishedAt stays NULL until then.
   scheduledAt      DateTime?
@@ -7074,6 +7078,26 @@ model EvidenceHoldPost {
   collectionId   Int?
   metadata       Json?
   keptAt         DateTime  @default(now())
+}
+
+/// An archived comment kept for a held owner, with its thread row in `thread`. Held here is a
+/// marker or a report that still holds (`evidence_hold_comment_owner_held`); purged once neither does.
+model EvidenceHoldComment {
+  commentId    Int       @id
+  userId       Int
+  threadId     Int?
+  content      String
+  createdAt    DateTime?
+  updatedAt    DateTime?
+  nsfw         Boolean?
+  tosViolation Boolean?
+  hidden       Boolean?
+  metadata     Json?
+  thread       Json?
+  source       String
+  keptAt       DateTime  @default(now())
+
+  @@index([userId])
 }
 
 /// @view

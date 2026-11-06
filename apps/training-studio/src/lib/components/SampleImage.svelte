@@ -57,7 +57,6 @@
       <audio {src} controls preload="metadata" class="h-9 w-full" onerror={refreshExpired}></audio>
     </div>
   {:else if isVideo}
-    <!-- svelte-ignore a11y_media_has_caption -->
     <video
       {src}
       muted

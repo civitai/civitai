@@ -52,7 +52,7 @@ async function settleArticle(articleId: number, now: Date) {
   // Read here, not with the batch: a save since then replaced the content the hold was taken on.
   const article = await dbWrite.article.findUnique({
     where: { id: articleId },
-    select: { userId: true, content: true, coverId: true, status: true },
+    select: { userId: true, content: true, coverId: true, bannerId: true, status: true },
   });
   if (!before || !article) return;
   await linkArticleContentImages({
@@ -61,6 +61,7 @@ async function settleArticle(articleId: number, now: Date) {
     userId: before.editorId,
     ownerId: article.userId,
     coverId: article.coverId,
+    bannerId: article.bannerId,
     now,
   });
 

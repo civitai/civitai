@@ -6,7 +6,9 @@
  *   REGISTRY_ADAPTER_FIXTURE               path of the fixture catalog JSON (required)
  *   REGISTRY_ADAPTER_PORT                  adapter port (default 7130)
  *   REGISTRY_ADAPTER_POLL_SECONDS          poll interval (default 1)
- *   REGISTRY_ADAPTER_SCHEMAS_PORT          also serve the draft shared schemas on this port
+ *
+ * The app, release and service schemas are served on the adapter's own schema stream, as the live
+ * adapter serves them.
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
@@ -19,9 +21,8 @@ import {
   fixtureDocSource,
   fixtureFile,
 } from './fixture-source';
-import { SHARED_SCHEMA_NAMESPACE, sharedSchemaEntities } from './shared-schemas';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
-import { REGISTRY_NAMESPACE, REGISTRY_SCHEMA_SCHEMA } from '~/server/registry-adapter/urn';
+import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 function main() {
@@ -68,22 +69,6 @@ function main() {
   createRegistryServer(adapter, { onError }).listen(port, () =>
     console.log(`registry-adapter (fixture ${path}) on :${port}`)
   );
-
-  const schemasPort = process.env.REGISTRY_ADAPTER_SCHEMAS_PORT;
-  if (schemasPort) {
-    const schemas = createPollingAdapter({
-      namespace: SHARED_SCHEMA_NAMESPACE,
-      serves: [REGISTRY_SCHEMA_SCHEMA],
-      read: async () => new Map([[REGISTRY_SCHEMA_SCHEMA, sharedSchemaEntities()]]),
-      store: createMemorySnapshotStore(),
-      pollMs,
-      sleep: abortableSleep,
-      onError,
-    });
-    createRegistryServer(schemas, { onError }).listen(Number(schemasPort), () =>
-      console.log(`draft shared schemas (${SHARED_SCHEMA_NAMESPACE}) on :${schemasPort}`)
-    );
-  }
 }
 
 main();

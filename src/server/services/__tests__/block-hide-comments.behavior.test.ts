@@ -50,6 +50,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     ${ownerTables}
+    CREATE TABLE "ComicChapter" (id int PRIMARY KEY, "projectId" int);
     CREATE TABLE "Thread" (
       id int PRIMARY KEY, "commentId" int, "rootThreadId" int, "comicChapterPosition" int,
       ${THREAD_CONTENT_OWNERS.map(({ column }) => `"${column}" int`).join(', ')}
@@ -66,11 +67,15 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "Thread", "CommentV2", "CommentV3", "Image", "Article", "Challenge", app_listings;
+    TRUNCATE "Thread", "CommentV2", "CommentV3", "Image", "Article", "Challenge", app_listings,
+      "Model", "ComicProject", "ComicChapter";
     INSERT INTO "Image" (id, "userId") VALUES (10, ${BLOCKER}), (20, ${OTHER_OWNER});
     INSERT INTO "Article" (id, "userId") VALUES (30, ${BLOCKER}), (31, ${OTHER_OWNER});
     INSERT INTO "Challenge" (id, "createdById") VALUES (40, ${BLOCKER});
     INSERT INTO app_listings (serial_id, user_id) VALUES (50, ${BLOCKER});
+    INSERT INTO "Model" (id, "userId") VALUES (10, ${BLOCKER});
+    INSERT INTO "ComicProject" (id, "userId") VALUES (60, ${BLOCKER}), (62, ${OTHER_OWNER});
+    INSERT INTO "ComicChapter" (id, "projectId") VALUES (61, 60), (63, 62);
 
     INSERT INTO "Thread" (id, "imageId") VALUES (100, 10);
     INSERT INTO "Thread" (id, "imageId") VALUES (300, 20);
@@ -107,14 +112,17 @@ beforeEach(async () => {
     INSERT INTO "CommentV2" VALUES (9001, ${BLOCKED}, 900, false);
 
     -- Comments only in CommentV3, on a surface that writes there directly: the blocker's article
-    -- (a live one, a deleted one and a bystander's), someone else's article, and an image comment,
-    -- which is not such a surface.
+    -- (a live one, a deleted one and a bystander's), someone else's article, a chapter of the
+    -- blocker's comic and one of someone else's, owned through their projects, and a comment on the
+    -- blocker's model, which is not such a surface.
     INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", "deletedAt") VALUES
       (2001, ${BLOCKED}, 'article', 30, NULL),
       (2002, ${BLOCKED}, 'article', 30, now()),
       (2003, ${BYSTANDER}, 'article', 30, NULL),
       (2004, ${BLOCKED}, 'article', 31, NULL),
-      (2005, ${BLOCKED}, 'image', 10, NULL),
+      (2005, ${BLOCKED}, 'model', 10, NULL),
+      (2006, ${BLOCKED}, 'comicChapter', 61, NULL),
+      (2007, ${BLOCKED}, 'comicChapter', 63, NULL),
       -- 5001's own row: a pre-flip comment, hidden here first with its CommentV2 row in step.
       (5001, ${BLOCKED}, 'article', 30, NULL);
   `);
@@ -155,14 +163,14 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       blockedUserId: BLOCKED,
     });
 
-    expect(result).toEqual({ status: 'hidden', count: 6, capped: false });
+    expect(result).toEqual({ status: 'hidden', count: 7, capped: false });
     // 1004 was already hidden. Everything on OTHER_OWNER's image (3001, 3003 despite its forged
     // root, and 9001), the bystander's comment 1002 and the orphaned 8001 stay visible. 5001's
     // CommentV2 row is hidden in step with its CommentV3 row.
     expect(await hiddenIds()).toEqual([1001, 1003, 1004, 5001, 6001, 7001]);
-    // On the article, only the blocked user's live comments on the blocker's; 5001 counted once, as
-    // a CommentV3 comment.
-    expect(await hiddenIds('CommentV3')).toEqual([2001, 5001]);
+    // Only the blocked user's live comments on the blocker's article and chapter; 5001 counted once,
+    // as a CommentV3 comment.
+    expect(await hiddenIds('CommentV3')).toEqual([2001, 2006, 5001]);
   });
 
   it("leaves other people's content alone when they are not the blocker", async () => {

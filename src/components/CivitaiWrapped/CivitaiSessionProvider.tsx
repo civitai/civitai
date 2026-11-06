@@ -24,7 +24,7 @@ export function CivitaiSessionProvider({
   children: React.ReactNode;
   disableHidden?: boolean;
 }) {
-  const { data, update, status } = useSession();
+  const { data, update } = useSession();
   const user = data?.user;
   const { allowMatureContent, region, verifiedBot } = useAppContext();
   // `AppContext.region` is optional because _app's `region` PROP is SSR-only. This CONTEXT

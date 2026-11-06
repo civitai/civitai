@@ -1,6 +1,8 @@
 /**
- * The HTTP/SSE binding of the source protocol, matching the registry SDK's `serve()`: one
- * route, `GET /subscribe`, plus `/healthz` for a process supervisor.
+ * The HTTP/SSE binding of the source protocol, after the registry SDK's `serve()`: one route,
+ * `GET /subscribe`, plus `/healthz` for a process supervisor. Unlike the demo SDK, a
+ * resume checks the cursor before `live`: a refused cursor gets HTTP 410 `cursor_expired` with no
+ * event, where the SDK sends `live` first and then the error.
  *
  * A request's `filter` is applied as the SDK applies it: a snapshot entity that does not match
  * is left out, and a change that stops matching is sent as a delete. A filter this source will
@@ -104,9 +106,13 @@ export function handleRequest(
         }
         position = snapshot.cursor;
       }
+      // The cursor is checked before `live`: one the source cannot resume from rejects here, and
+      // on a resume nothing has been sent yet, so it is answered with its own status.
+      const changes = await adapter.changes(schema, position, ctx);
+      if (stream.signal.aborted) return;
       stream.send({ type: 'live', cursor: position });
 
-      for await (const change of adapter.changes(schema, position, ctx)) {
+      for await (const change of changes) {
         if (stream.signal.aborted) return;
         if ('upsert' in change) {
           if (wanted(change.upsert.urn)) {

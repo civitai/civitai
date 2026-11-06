@@ -81,8 +81,8 @@ function fakeRedis() {
   return { client: client as unknown as SnapshotRedis, strings, lists, ttl, counts };
 }
 
-const S1 = 'urn:schema:civitai-apps:orbit-notes/notes@v1';
-const S2 = 'urn:schema:civitai-apps:orbit-notes/notes@v2';
+const S1 = 'urn:schema:app-blocks:orbit-notes/notes@v1';
+const S2 = 'urn:schema:app-blocks:orbit-notes/notes@v2';
 
 describe('createRedisSnapshotStore', () => {
   it('a snapshot written is read back', async () => {

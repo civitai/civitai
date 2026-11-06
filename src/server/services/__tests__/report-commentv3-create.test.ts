@@ -54,8 +54,11 @@ describe('reporting a CommentV3 comment', () => {
   it('looks only at comments on a surface that writes CommentV3', async () => {
     txQueryRaw.mockResolvedValueOnce([]);
     await expect(report()).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(lookup().values.map((v) => (v as { sql?: string })?.sql)).toContain(
-      `"entityType"::text IN ('article')`
-    );
+    const filter = lookup()
+      .values.map((v) => (v as { sql?: string })?.sql)
+      .find((s) => s?.startsWith(`"entityType"::text IN (`));
+    // Model is the one surface that does not write CommentV3.
+    expect(filter).toContain(`'image'`);
+    expect(filter).not.toContain(`'model'`);
   });
 });

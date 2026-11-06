@@ -1033,7 +1033,6 @@
     </button>
   {:else}
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       {...drop}
       class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
@@ -1183,7 +1182,6 @@
                 {:else if img.mediaType === 'image'}
                   <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
                 {:else if img.mediaType === 'video'}
-                  <!-- svelte-ignore a11y_media_has_caption -->
                   <video
                     src={img.previewUrl}
                     muted
@@ -1315,9 +1313,10 @@
     </div>
   {/if}
 
-  <!-- Below lg the actions float over a long image grid instead of waiting at its end. -->
+  <!-- Below lg the actions float over a long image grid instead of waiting at its end. Embedded, they
+       clear the host's sticky footer (`--footer-height`); standalone the var is unset and adds 0. -->
   <div
-    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-3 max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
+    class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5 max-lg:sticky max-lg:bottom-[calc(0.75rem+var(--footer-height,0px)+var(--safe-area-inset-bottom-unpaid,0px))] max-lg:z-20 max-lg:rounded-xl max-lg:border max-lg:bg-dark-6 max-lg:p-3 max-lg:shadow-lg"
   >
     <Button variant="outline" onclick={onBack}>
       <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
