@@ -20,9 +20,10 @@ import {
 
 // Image search answers from the semantic search, not a Meilisearch index, so it declares no
 // attributes for these contracts to check.
-const meiliIndexKeys = (Object.keys(searchIndexMap) as SearchIndexKey[]).filter(
+const meiliIndexKeys: SearchIndexKey[] = (Object.keys(searchIndexMap) as SearchIndexKey[]).filter(
   (key) => key !== 'images'
 );
+const declaredFilterable: Record<string, readonly string[]> = filterableAttributesByIndex;
 
 describe('BROWSING_LEVEL_ATTRIBUTE', () => {
   it.each(
@@ -31,7 +32,7 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
     )
   )('"%s" filters on an attribute its index actually declares', (key, attribute) => {
     const indexName = searchIndexMap[key];
-    const filterable = filterableAttributesByIndex[indexName];
+    const filterable = declaredFilterable[indexName];
 
     expect(
       filterable,
@@ -42,7 +43,7 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
   it('covers every index that can filter on a browsing level', () => {
     const unmapped = meiliIndexKeys.filter(
       (key) =>
-        filterableAttributesByIndex[searchIndexMap[key]].includes('nsfwLevel') &&
+        declaredFilterable[searchIndexMap[key]].includes('nsfwLevel') &&
         !BROWSING_LEVEL_ATTRIBUTE[key]
     );
 
@@ -65,7 +66,7 @@ describe('queryFilters', () => {
       const indexName = searchIndexMap[key];
 
       expect(
-        filterableAttributesByIndex[indexName],
+        declaredFilterable[indexName],
         `"${key}" autocomplete turns a search token into \`${attribute} = ...\`, but ${indexName} does not declare ${attribute} filterable — Meilisearch answers 400 invalid_search_filter and the dropdown goes empty`
       ).toContain(attribute);
     }
