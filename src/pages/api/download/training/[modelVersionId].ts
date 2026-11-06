@@ -13,6 +13,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResults } from '~/server/schema/model-file.schema';
 import { normalizeEpochs } from '~/server/services/orchestrator/training/epoch-archive';
 import { resolveTrainingRun } from '~/server/services/orchestrator/training/training-state';
+import { attachmentContentDisposition } from '~/utils/content-disposition';
 
 // Disable body parser size limit and response size limit for large epoch files
 export const config = {
@@ -109,7 +110,7 @@ export default AuthedEndpoint(
 
     // Stream the response to the client
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Disposition', attachmentContentDisposition(fileName));
 
     const contentLength = orchestratorResponse.headers.get('content-length');
     if (contentLength) {

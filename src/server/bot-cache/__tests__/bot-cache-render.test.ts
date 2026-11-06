@@ -359,7 +359,7 @@ describe('origin cache: a stored render is served to the next crawler', () => {
     return runMiddlewares(request, [botCacheMiddleware]);
   };
 
-  /** A render, then what Next's `sendRenderResult` does with it (`send-payload.js`, 16.4.3). */
+  /** A render, then what Next's `sendRenderResult` does with it (`send-payload.js`, 16.4.5). */
   async function renderAndSend(url: string, variant: Variant = CRAWLER_A) {
     const res = makeRes();
     const html = await renderPage(IMAGE_PAGE, makeReq(url, variant), res);

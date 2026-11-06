@@ -174,15 +174,15 @@ describe('updateFile', () => {
   });
 
   it('still writes the fields an owner may legitimately change', async () => {
-    await updateFile({ id: 1, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 });
 
-    expect(writtenData()).toMatchObject({ overrideName: 'renamed' });
+    expect(writtenData()).toMatchObject({ overrideName: 'renamed.safetensors' });
   });
 
   it('edits the same record in place when the url is unchanged', async () => {
-    const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
+    const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7 });
 
-    expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed', metadata: undefined });
+    expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed.safetensors', metadata: undefined });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 1, replacedFileId: undefined });
   });
@@ -190,7 +190,7 @@ describe('updateFile', () => {
   it('reports a file replaced since the lookup as not found, rather than a silent success', async () => {
     dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).rejects.toMatchObject({
+    await expect(updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
@@ -327,7 +327,7 @@ describe('a new upload creates a new file record', () => {
 
     mockResourceDataBust.mockClear();
     mockBustOrchestrator.mockClear();
-    await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7 });
     expect(mockResourceDataBust).not.toHaveBeenCalled();
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
   });
@@ -416,7 +416,7 @@ describe('a published version keeps its files', () => {
   it('still allows metadata edits on a published version', async () => {
     withFile({ status: 'Published' });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed', userId: 7 })).resolves.toMatchObject({
+    await expect(updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })).resolves.toMatchObject({
       id: 1,
     });
   });
@@ -627,7 +627,7 @@ describe('a new url from a client', () => {
 
   it('is not checked when the url is the one the file already has', async () => {
     await expect(
-      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed', userId: 7, urlFromClient: true })
+      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7, urlFromClient: true })
     ).resolves.toMatchObject({ id: 1 });
     expect(dbMock.dbWrite.modelFile.findFirst).not.toHaveBeenCalled();
   });
