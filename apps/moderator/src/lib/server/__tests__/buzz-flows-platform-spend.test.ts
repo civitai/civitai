@@ -120,4 +120,22 @@ describe('buzz_flows platform spend', () => {
     });
     expect(spend.reduce((s, r) => s + r.amount, 0)).toBe((n * (n + 1)) / 2);
   });
+
+  it('marks the folded row mixed when the folded spend came from more than one account type', async () => {
+    const n = PLATFORM_SPEND_SHOWN + 1;
+    // The two smallest fold: t0 from yellow, t1 from blue.
+    const keys = Array.from({ length: n }, (_, i) => `t${i}:${i === 0 ? 'yellow' : 'blue'}`);
+    summaryRows = [
+      summary({
+        spend: [keys, keys.map((_, i) => String(i + 1)), keys.map(() => '1')],
+      }),
+    ];
+    const spend = (await getBuzzFlows([5])).accounts[0].platformSpend;
+    expect(spend.at(-1)).toEqual({
+      type: 'other',
+      accountType: 'mixed',
+      transactions: 2,
+      amount: 3,
+    });
+  });
 });
