@@ -1052,9 +1052,8 @@ jobs:
     # is the PR's. (`main` has no required checks; this cannot block a merge, only
     # show red on it.) There is no job-level `continue-on-error`: report-only is per step.
     #
-    # Per shard. 25, not 35/3: setup does not shard, and the Chromium install alone can take
-    # over 10 minutes on a loaded runner. If a shard nears the limit, raise the shard count
-    # rather than this.
+    # Per shard. 25, not 35/3: setup does not shard. If a shard nears the limit, raise the
+    # shard count rather than this.
     timeout-minutes: 25
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.

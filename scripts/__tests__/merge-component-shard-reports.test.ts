@@ -1,6 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -10,8 +12,8 @@ import {
 } from '../ci/merge-component-shard-reports.mjs';
 
 /**
- * Fixture counts are pairwise distinct, and the failed-suite and failed-test totals differ
- * (7 vs 14), so a merge that keeps one shard or sums the wrong field cannot match.
+ * Failed-suite and failed-test totals differ (7 vs 14), so a merge that sums the wrong field
+ * cannot match.
  */
 function file(name: string, statuses: string[], status = 'passed') {
   return { name, status, assertionResults: statuses.map((s) => ({ status: s })) };
@@ -129,5 +131,50 @@ describe('readShardReport', () => {
     expect(readShardReport(dir, 2)).toMatchObject({ report: null });
     expect(readShardReport(dir, 2).problem).toContain('does not exist');
     expect(readShardReport(dir, 3).problem).toContain('not valid JSON');
+  });
+});
+
+describe('the CLI', () => {
+  const script = fileURLToPath(new URL('../ci/merge-component-shard-reports.mjs', import.meta.url));
+  let dir: string | null = null;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  function writeShard(root: string, i: number, r: unknown) {
+    const p = shardReportPath(root, i);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, JSON.stringify(r));
+  }
+
+  it('exits 1 on a missing shard but still writes the merged report for the full ledger', () => {
+    dir = mkdtempSync(join(tmpdir(), 'merge-component-cli-'));
+    writeShard(dir, 1, S1);
+    writeShard(dir, 3, S3);
+    const out = join(dir, 'merged.json');
+
+    const run = spawnSync(process.execPath, [script, dir, '3', out], { encoding: 'utf8' });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('shard 2/3: NO REPORT');
+    expect(existsSync(out)).toBe(true);
+    expect(
+      JSON.parse(readFileSync(out, 'utf8')).testResults.map((f: { name: string }) => f.name)
+    ).toEqual([
+      '/r/src/a.browser.test.tsx',
+      '/r/src/c.browser.test.tsx',
+      '/r/src/d.browser.test.tsx',
+    ]);
+  });
+
+  it('exits 0 when every shard reported, and 2 on bad usage', () => {
+    dir = mkdtempSync(join(tmpdir(), 'merge-component-cli-'));
+    writeShard(dir, 1, S1);
+    writeShard(dir, 2, S2);
+    const out = join(dir, 'merged.json');
+
+    expect(spawnSync(process.execPath, [script, dir, '2', out]).status).toBe(0);
+    expect(spawnSync(process.execPath, [script, dir, 'x', out]).status).toBe(2);
   });
 });

@@ -10,11 +10,8 @@
  * Only the union of all shards can be compared with the `*.browser.test.tsx` files on disk.
  * Each shard still runs the zero check (`--narrowed`) on its own report.
  *
- * What this script itself adds, a way sharding can go wrong while every shard is green: a
- * shard's report is MISSING (the shard aborted before writing it, its upload failed, or the
- * matrix and the `/N` denominator drifted apart so a shard never ran). A missing report is a
- * failure, never "nothing to merge": the on-disk ledger would then name its files as absent,
- * but this says WHICH shard, which is the actionable part.
+ * A missing or unreadable shard report fails the merge and names the shard (aborted shard,
+ * failed upload, or matrix and `/N` drifted apart); the on-disk ledger alone could not say which.
  *
  * Usage:  node scripts/ci/merge-component-shard-reports.mjs <reports-dir> <shard-total> <out>
  *
