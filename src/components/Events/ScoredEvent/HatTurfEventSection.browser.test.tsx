@@ -84,7 +84,7 @@ describe('Hat Turf on the event page', () => {
   });
 
   test('the art shows with no video, and no play button', async () => {
-    await render('blue');
+    await render('blue', '');
     await vi.waitFor(() => expect(section()).not.toBeNull());
     expect(section()!.querySelector('[data-testid="hat-turf-art"]')).not.toBeNull();
     expect(section()!.querySelector('[data-testid="hat-turf-play"]')).toBeNull();
