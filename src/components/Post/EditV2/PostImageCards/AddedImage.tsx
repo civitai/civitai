@@ -103,6 +103,10 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import {
+  spaceRowInput,
+  STICKER_PRICE_RANGE_INPUT,
+} from '~/components/Sticker/PlacementSpaceToggle';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import { isDefined } from '~/utils/type-guards';
@@ -1301,12 +1305,8 @@ function useWarmImageMenu(imageId: number, isOwner: boolean) {
   return () => {
     if (imageId <= 0) return;
     if (features.stickerPlacement) {
-      void utils.placement.getSpaceRow.prefetch({
-        surface: 'sticker',
-        entityType: 'image',
-        entityId: imageId,
-      });
-      void utils.placement.getPriceRange.prefetch({ surface: 'sticker' });
+      void utils.placement.getSpaceRow.prefetch(spaceRowInput('image', imageId));
+      void utils.placement.getPriceRange.prefetch(STICKER_PRICE_RANGE_INPUT);
     }
     if (hatEvent)
       void utils.event.getAccess.prefetch({ event: hatEvent }, { staleTime: 5 * 60 * 1000 });

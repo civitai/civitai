@@ -43,5 +43,10 @@ describe('PlacementSpaceToggle size', () => {
     await vi.waitFor(() => expect(heightOf('loaded')).toBeGreaterThan(40));
 
     expect(heightOf('loading')).toBe(heightOf('loaded'));
+    // Held at the same size, but not usable: a click before the row is known would write blind.
+    const radios = (id: string) =>
+      Array.from(page.getByTestId(id).element().querySelectorAll('input[type="radio"]'));
+    expect(radios('loading').every((r) => (r as HTMLInputElement).disabled)).toBe(true);
+    expect(radios('loaded').some((r) => (r as HTMLInputElement).disabled)).toBe(false);
   });
 });

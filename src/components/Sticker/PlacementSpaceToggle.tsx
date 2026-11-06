@@ -19,6 +19,11 @@ const COPY: Record<Level, { label: string; inherit: string }> = {
   },
 };
 
+/** The query inputs, shared with callers that prefetch them so the cache keys cannot drift. */
+export const spaceRowInput = (level: Level, entityId: number) =>
+  ({ surface: 'sticker', entityType: level, entityId } as const);
+export const STICKER_PRICE_RANGE_INPUT = { surface: 'sticker' } as const;
+
 /**
  * Per-post and per-image override of who may place stickers here.
  *
@@ -38,14 +43,12 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
     data: row,
     isPending: rowPending,
     isError: rowFailed,
-  } = trpc.placement.getSpaceRow.useQuery(
-    { surface: 'sticker', entityType: level, entityId },
-    { enabled: !!features.stickerPlacement }
-  );
-  const { data: range } = trpc.placement.getPriceRange.useQuery(
-    { surface: 'sticker' },
-    { enabled: !!features.stickerPlacement }
-  );
+  } = trpc.placement.getSpaceRow.useQuery(spaceRowInput(level, entityId), {
+    enabled: !!features.stickerPlacement,
+  });
+  const { data: range } = trpc.placement.getPriceRange.useQuery(STICKER_PRICE_RANGE_INPUT, {
+    enabled: !!features.stickerPlacement,
+  });
 
   const [mode, setMode] = useState<string>('inherit');
   const [price, setPrice] = useState<number | ''>('');
