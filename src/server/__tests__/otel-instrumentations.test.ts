@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RequestOptions } from 'node:http';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { buildOtelInstrumentations } from '~/server/otel-instrumentations';
+import {
+  buildOtelInstrumentations,
+  isHttpOutgoingPatchEnabled,
+} from '~/server/otel-instrumentations';
 
 // What these pin: the list handed to the OTEL NodeSDK in instrumentation.node.ts. An unset
 // OTEL_HTTP_INSTRUMENTATION must keep today's behaviour (inbound HttpInstrumentation ON), and
@@ -54,6 +57,43 @@ describe('buildOtelInstrumentations', () => {
       expect(build({ OTEL_HTTP_INSTRUMENTATION: value })).toEqual([]);
     }
   );
+
+  // OTEL_HTTP_OUTGOING: unset must leave the option exactly as before the switch existed (absent),
+  // so the default config is today's; off must stop the outbound patch while keeping the inbound
+  // instrumentation and the ignore hook unchanged.
+  it('leaves disableOutgoingRequestInstrumentation unset when OTEL_HTTP_OUTGOING is unset', () => {
+    const [http] = httpInstrumentations(build({}));
+    expect('disableOutgoingRequestInstrumentation' in http.getConfig()).toBe(false);
+  });
+
+  it.each(['on', 'true', '1', '', 'patched'])(
+    'keeps the outbound patch for OTEL_HTTP_OUTGOING=%j',
+    (value) => {
+      const [http] = httpInstrumentations(build({ OTEL_HTTP_OUTGOING: value }));
+      expect(http.getConfig().disableOutgoingRequestInstrumentation).toBeUndefined();
+      expect(isHttpOutgoingPatchEnabled({ OTEL_HTTP_OUTGOING: value })).toBe(true);
+    }
+  );
+
+  it.each(['off', 'OFF', ' off ', 'false', '0'])(
+    'stops patching outbound calls, and only that, for OTEL_HTTP_OUTGOING=%j',
+    (value) => {
+      const list = build({ OTEL_HTTP_OUTGOING: value });
+      const [http] = httpInstrumentations(list);
+      expect(list).toHaveLength(1);
+      const config = http.getConfig();
+      expect(config.disableOutgoingRequestInstrumentation).toBe(true);
+      expect(config.disableIncomingRequestInstrumentation).toBeUndefined();
+      expect(config.ignoreOutgoingRequestHook?.({} as RequestOptions)).toBe(true);
+      expect(config.ignoreIncomingRequestHook).toBeUndefined();
+      expect(isHttpOutgoingPatchEnabled({ OTEL_HTTP_OUTGOING: value })).toBe(false);
+    }
+  );
+
+  it('registers nothing when the instrumentation is off, whatever OTEL_HTTP_OUTGOING says', () => {
+    expect(build({ OTEL_HTTP_INSTRUMENTATION: 'off', OTEL_HTTP_OUTGOING: 'off' })).toEqual([]);
+    expect(build({ OTEL_HTTP_INSTRUMENTATION: 'off', OTEL_HTTP_OUTGOING: 'on' })).toEqual([]);
+  });
 
   it('reads process.env by default', () => {
     const saved = process.env.OTEL_HTTP_INSTRUMENTATION;

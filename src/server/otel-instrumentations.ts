@@ -21,6 +21,31 @@ export function isHttpInstrumentationEnabled(env: NodeJS.ProcessEnv = process.en
 }
 
 /**
+ * Values of `OTEL_HTTP_OUTGOING` that stop HttpInstrumentation from patching Node's outbound
+ * `http.request` / `http.get` (and the https ones). Anything else — including unset — keeps the
+ * patch, so a deployment that never sets the variable behaves exactly as before it existed.
+ */
+const HTTP_OUTGOING_OFF_VALUES = new Set(['off', 'false', '0']);
+
+/**
+ * Whether HttpInstrumentation should patch OUTBOUND core-http calls at all.
+ *
+ * The outbound side already exports nothing: `ignoreOutgoingRequestHook` below returns true for
+ * every request, so no client span is started and no `traceparent` is injected. But the patch
+ * still runs on every outbound call: the wrapper parses the call's options into a fresh options
+ * object (`getRequestInfo`) and calls the hook before handing that copy to the real
+ * `http.request`. With this switch off the module is never patched, so outbound calls run Node's
+ * own `http.request` with the caller's own arguments, and the exported telemetry is the same.
+ *
+ * Read once, at process start, like `OTEL_HTTP_INSTRUMENTATION`: a patch cannot be applied or
+ * removed per request.
+ */
+export function isHttpOutgoingPatchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.OTEL_HTTP_OUTGOING?.trim().toLowerCase();
+  return raw === undefined || !HTTP_OUTGOING_OFF_VALUES.has(raw);
+}
+
+/**
  * The auto-instrumentations handed to the OTEL NodeSDK.
  *
  * HttpInstrumentation, when enabled, is narrowed to INBOUND-only. It only ever patched Node
@@ -30,9 +55,10 @@ export function isHttpInstrumentationEnabled(env: NodeJS.ProcessEnv = process.en
  * client span is another async_hooks context.with + span alloc on the hot path — the
  * structural cost head sampling can't remove. ignoreOutgoingRequestHook returning true for
  * every outgoing request suppresses those client spans (and their traceparent injection)
- * while keeping incoming server-request spans. (instrumentation-http@0.213.0 also exposes
- * disableOutgoingRequestInstrumentation, which skips patching outbound entirely; the ignore
- * hook is used here to keep the path patched for future per-call allow-listing.) Tradeoff:
+ * while keeping incoming server-request spans. By default the outbound path stays PATCHED (the
+ * hook only ignores each call), which keeps it ready for per-call allow-listing;
+ * `OTEL_HTTP_OUTGOING=off` sets `disableOutgoingRequestInstrumentation` so it is never patched,
+ * which exports the same telemetry for less work per outbound call. Tradeoff:
  * no cross-service trace linkage for S3/ClickHouse — observability-only.
  *
  * What turning it OFF (`OTEL_HTTP_INSTRUMENTATION=off`) removes: the outer per-request
@@ -63,5 +89,12 @@ export function buildOtelInstrumentations(
   env: NodeJS.ProcessEnv = process.env
 ): NodeSDKConfiguration['instrumentations'] {
   if (!isHttpInstrumentationEnabled(env)) return [];
-  return [new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })];
+  return [
+    new HttpInstrumentation({
+      ignoreOutgoingRequestHook: () => true,
+      // OTEL_HTTP_OUTGOING=off: do not patch outbound calls at all (see isHttpOutgoingPatchEnabled).
+      // Unset keeps the option unset, exactly the config every deployment ran before the switch.
+      ...(isHttpOutgoingPatchEnabled(env) ? {} : { disableOutgoingRequestInstrumentation: true }),
+    }),
+  ];
 }

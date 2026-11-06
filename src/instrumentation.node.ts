@@ -21,6 +21,7 @@ import { trace } from '@opentelemetry/api';
 import {
   buildOtelInstrumentations,
   isHttpInstrumentationEnabled,
+  isHttpOutgoingPatchEnabled,
 } from '~/server/otel-instrumentations';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
@@ -200,6 +201,12 @@ if (!OTEL_ENABLED) {
     console.log(
       `[instrumentation.node] OTEL inbound HTTP instrumentation: ${
         isHttpInstrumentationEnabled() ? 'on' : 'off (OTEL_HTTP_INSTRUMENTATION)'
+      }`
+    );
+    // Only meaningful while the instrumentation is on; with it off nothing is patched either way.
+    console.log(
+      `[instrumentation.node] OTEL outbound http patch: ${
+        isHttpOutgoingPatchEnabled() ? 'on' : 'off (OTEL_HTTP_OUTGOING)'
       }`
     );
 
