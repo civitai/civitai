@@ -520,17 +520,41 @@ describe("an owner's request", () => {
     );
   });
 
-  it.each([{ poi: true }, { minor: true }, { lockedProperties: ['nsfw', 'poi'] }])(
-    'is refused on a model flagged as a real person or a minor (%o)',
-    async (flag) => {
-      ownModel(flag);
+  it.each([
+    { poi: true },
+    { minor: true },
+    { lockedProperties: ['nsfw', 'poi'], poi: true },
+    { lockedProperties: ['nsfw', 'minor'], minor: true },
+  ])('is refused on a model flagged as a real person or a minor (%o)', async (flag) => {
+    ownModel(flag);
 
-      expect(
-        await refusal(createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() }))
-      ).toEqual({ code: 'BAD_REQUEST', message: LOCK_REVIEW_UNAVAILABLE });
-      expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
+    expect(
+      await refusal(createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() }))
+    ).toEqual({ code: 'BAD_REQUEST', message: LOCK_REVIEW_UNAVAILABLE });
+    expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  it.each([['poi'], ['minor'], ['poi', 'minor']].map((marks) => [marks.join(' and '), marks]))(
+    'is filed while %s is locked off',
+    async (_, marks) => {
+      ownModel({ lockedProperties: [...marks, 'sfwOnly', 'nsfw'] });
+
+      await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+      expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
+      );
     }
   );
+
+  it('is refused when it names a locked poi or minor', async () => {
+    ownModel({ lockedProperties: ['poi', 'minor', 'nsfw'] });
+
+    expect(
+      await refusal(createEntityAppealHandler({ input: request(['nsfw', 'poi']), ctx: owner() }))
+    ).toEqual({ code: 'BAD_REQUEST', message: LOCK_REVIEW_UNAVAILABLE });
+    expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
+  });
 
   it("reopens only the owner's flag-appeal row for a flag appeal, never a lock review", async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
