@@ -36,7 +36,11 @@ import {
   constants,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile, groupFilesByVariant, resolveActiveFile } from '~/server/utils/model-helpers';
+import {
+  getPrimaryFile,
+  groupFilesByVariant,
+  resolveActiveFile,
+} from '~/server/utils/model-helpers';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
@@ -278,7 +282,8 @@ export async function renderModelDetailLean({
   if (!images || (images[0] && images[0].type !== 'image')) return { fallback: 'unsupported' };
   // A description with markup `RenderHtml` rewrites (links, mentions, media, embeds, styles).
   const html = [model.description, selected.description].join('');
-  if (/<(a|img|iframe|edge-media|time|span|div)\b|style=/i.test(html)) return { fallback: 'unsupported' };
+  if (/<(a|img|iframe|edge-media|time|span|div)\b|style=/i.test(html))
+    return { fallback: 'unsupported' };
 
   return { html: renderPage({ req, model, selected, versions, images, creator, features }) };
 }
@@ -338,7 +343,16 @@ function siteHeader(asPath: string) {
 
 /** The site footer (`AppFooter`). */
 function siteFooter() {
-  const social = ['discord', 'twitter', 'instagram', 'youtube', 'tiktok', 'reddit', 'github', 'twitch'];
+  const social = [
+    'discord',
+    'twitter',
+    'instagram',
+    'youtube',
+    'tiktok',
+    'reddit',
+    'github',
+    'twitch',
+  ];
   const links: [string, string, string?][] = [
     ['/content/tos', 'Terms of Service'],
     ['/content/privacy', 'Privacy'],
@@ -418,7 +432,8 @@ function downloadCard({ model, selected }: PageArgs) {
       type: file.type,
       meta: file.metadata,
     });
-  const header = p('Download') + p(`${files.length} variant${files.length !== 1 ? 's' : ''} available`);
+  const header =
+    p('Download') + p(`${files.length} variant${files.length !== 1 ? 's' : ''} available`);
   const summary = (file: File, bestMatch: boolean) => {
     const label = getFileLabel(file);
     const description = getFileDescription(file);
@@ -487,7 +502,9 @@ function versionDetails({ model, selected, features }: PageArgs) {
   const published = selected.status === 'Published' && selected.publishedAt;
   const ecosystem = getEcosystemSeoPageForKey(getBaseModelGroup(selected.baseModel));
   const baseType =
-    selected.baseModelType && selected.baseModelType !== 'Standard' ? ` ${selected.baseModelType}` : '';
+    selected.baseModelType && selected.baseModelType !== 'Standard'
+      ? ` ${selected.baseModelType}`
+      : '';
   const baseModel = ecosystem
     ? link(`/ecosystems/${ecosystem.slug}`, esc(selected.baseModel)) + esc(baseType)
     : esc(`${selected.baseModel}${baseType}`);
@@ -546,15 +563,22 @@ function versionDetails({ model, selected, features }: PageArgs) {
   );
 }
 
-const BADGE_IMAGE = getImageProps({ src: '/images/base-badge.png', alt: '', width: 32, height: 32 })
-  .props;
+const BADGE_IMAGE = getImageProps({
+  src: '/images/base-badge.png',
+  alt: '',
+  width: 32,
+  height: 32,
+}).props;
 
 /** `SmartCreatorCard` → `CreatorCardSimple`, with the `user.getCreator` prefetch. */
 function creatorCard(creator: Creator) {
   const rank = creator.rank;
   const rankBadge =
     rank?.leaderboardRank && rank.leaderboardRank <= 100
-      ? link(`/leaderboard/${rank.leaderboardId}#${rank.leaderboardRank}`, p(`#${rank.leaderboardRank}`))
+      ? link(
+          `/leaderboard/${rank.leaderboardId}#${rank.leaderboardRank}`,
+          p(`#${rank.leaderboardRank}`)
+        )
       : '';
   const settings = (creator.publicSettings ?? {}) as { creatorCardStatsPreferences?: string[] };
   const display = new Set(settings.creatorCardStatsPreferences ?? creatorCardStatsDefaults);
@@ -753,9 +777,7 @@ function renderPage(args: PageArgs) {
     jsonLd(breadcrumb);
 
   const canGenerate = !!features.imageGeneration && !!selected.canGenerate;
-  const generate = canGenerate
-    ? p('Create') + p(residencyLabel(generatorReadiness(selected)))
-    : '';
+  const generate = canGenerate ? p('Create') + p(residencyLabel(generatorReadiness(selected))) : '';
   const asPath = req.url ?? `/models/${model.id}/${slug}`;
   const body =
     siteHeader(asPath) +

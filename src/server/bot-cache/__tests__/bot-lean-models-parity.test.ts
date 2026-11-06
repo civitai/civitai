@@ -58,7 +58,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
     if (key === 'bot-html-edge-cache') return true;
     if (key === 'bot-lean-render') return h.serve;
     if (key === 'bot-lean-render-shadow') return h.shadow;
-    if (h.fixture?.flipt?.includes(key)) return true;
     return null;
   }),
 }));
@@ -190,7 +189,10 @@ import {
 import { extractSeo, seoOf } from '~/server/bot-cache/bot-lean-seo';
 import type { RoutePage } from './bot-cache-render.harness';
 import { makeReq, NOW, renderPage, SECRET } from './bot-cache-render.harness';
-import { FIXTURES } from './bot-lean-models.fixtures';
+import { FIXTURES, SLUG } from './bot-lean-models.fixtures';
+import { createServerSideHelpers } from '@trpc/react-query/server';
+import { renderModelDetailLean } from '~/server/bot-cache/lean/models-lean';
+import { BOT_LEAN_CHROME_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 
 /**
  * The resolver's prefetches, answered from the fixture: their entries in the REAL router's
@@ -315,7 +317,11 @@ function outcomeOf(html: string, status: number): Outcome {
     const { pageProps } = JSON.parse(html) as {
       pageProps: { __N_REDIRECT: string; __N_REDIRECT_STATUS: number };
     };
-    return { kind: 'redirect', status: pageProps.__N_REDIRECT_STATUS, location: pageProps.__N_REDIRECT };
+    return {
+      kind: 'redirect',
+      status: pageProps.__N_REDIRECT_STATUS,
+      location: pageProps.__N_REDIRECT,
+    };
   }
   return { kind: 'page', status };
 }
@@ -422,11 +428,17 @@ describe('the lean page', () => {
   });
 
   it('a query key the renderer does not read falls back', async () => {
-    const before = await counterTotal(BOT_LEAN_RENDER_METRIC, { event: 'fallback', reason: 'query' });
+    const before = await counterTotal(BOT_LEAN_RENDER_METRIC, {
+      event: 'fallback',
+      reason: 'query',
+    });
     const fixture = { ...FIXTURES[0]!, url: `${FIXTURES[0]!.url}?view=basic` };
     const lean = await renderModel(fixture, { serve: true });
     expect(extractSeo(lean.html).hasNextData).toBe(true);
-    const after = await counterTotal(BOT_LEAN_RENDER_METRIC, { event: 'fallback', reason: 'query' });
+    const after = await counterTotal(BOT_LEAN_RENDER_METRIC, {
+      event: 'fallback',
+      reason: 'query',
+    });
     expect(after - before).toBe(1);
   });
 
@@ -448,6 +460,45 @@ describe('the lean page', () => {
   });
 });
 
+describe('the renderer, called directly', () => {
+  // Feature flags are evaluated once per host here, so a per-render trial cannot be switched on
+  // through the page; the renderer is handed the flags instead, over the same SSG helpers.
+  async function primedSsg(fixture: ModelFixture) {
+    h.fixture = fixture;
+    const ssg = createServerSideHelpers({ router: standIns, ctx: {} });
+    await ssg.model.getById.prefetch({ id: 4201, excludeTrainingData: true });
+    await ssg.hiddenPreferences.getHidden.prefetch();
+    await ssg.model.getCollectionShowcase.prefetch({ id: 4201 });
+    await ssg.user.getCreator.prefetch({ id: 77 });
+    await ssg.common.getEntityAccess.prefetch({ entityId: [9301], entityType: 'ModelVersion' });
+    await ssg.image.getInfinite.prefetchInfinite({
+      modelVersionId: 9301,
+      browsingLevel: 1,
+      excludedTagIds: [],
+      disablePoi: false,
+      disableMinor: false,
+    });
+    return ssg;
+  }
+  const leanReq = () =>
+    Object.assign(makeReq(FIXTURES[0]!.url), { [BOT_LEAN_CHROME_REQ_KEY]: false });
+
+  it.each([['modelPageDeferBelowFold'], ['modelPageDesignSystemMarkup']])(
+    'falls back under the %s trial',
+    async (flag) => {
+      const ssg = await primedSsg(FIXTURES[0]!);
+      const query = { id: '4201', slug: [SLUG] };
+      const args = { req: leanReq() as never, query, ssg: ssg as never };
+      const refused = await renderModelDetailLean({ ...args, features: { [flag]: true } as never });
+      expect(refused).toEqual({ fallback: 'unsupported' });
+      // INSTRUMENT CHECK: the same call without the trial draws the page, so the trial is what
+      // refused above.
+      const without = await renderModelDetailLean({ ...args, features: {} as never });
+      expect(without).toHaveProperty('html');
+    }
+  );
+});
+
 describe('shadow mode', () => {
   /** A render, then what Next's `sendRenderResult` does with it (`send-payload.js`). */
   async function renderAndSend(fixture: ModelFixture) {
@@ -461,9 +512,9 @@ describe('shadow mode', () => {
     const html = await renderAndSend(FIXTURES[0]!);
     expect(extractSeo(html).hasNextData, 'shadow serves the full page').toBe(true);
     await vi.waitFor(async () =>
-      expect(
-        await counterTotal(BOT_LEAN_SHADOW_METRIC, { route: 'models', result: 'match' })
-      ).toBe(before + 1)
+      expect(await counterTotal(BOT_LEAN_SHADOW_METRIC, { route: 'models', result: 'match' })).toBe(
+        before + 1
+      )
     );
   });
 
@@ -473,15 +524,23 @@ describe('shadow mode', () => {
     const lean = '<html><head><title>Not the page</title></head><body><a href="/x">x</a></body>';
     const full = '<html><head><title>The page</title></head><body><a href="/y">y</a></body>';
     const before = await counterTotal(BOT_LEAN_SHADOW_METRIC, { result: 'diff', field: 'links' });
-    await shadowBotLeanRender('models', req as never, res as unknown as ServerResponse, [], async () => ({
-      html: lean,
-    }));
+    await shadowBotLeanRender(
+      'models',
+      req as never,
+      res as unknown as ServerResponse,
+      [],
+      async () => ({
+        html: lean,
+      })
+    );
     (res.end as (chunk: string) => void).call(res, full);
     await vi.waitFor(async () =>
       expect(await counterTotal(BOT_LEAN_SHADOW_METRIC, { result: 'diff', field: 'links' })).toBe(
         before + 1
       )
     );
-    expect(await counterTotal(BOT_LEAN_SHADOW_METRIC, { result: 'diff', field: 'title' })).toBeGreaterThan(0);
+    expect(
+      await counterTotal(BOT_LEAN_SHADOW_METRIC, { result: 'diff', field: 'title' })
+    ).toBeGreaterThan(0);
   });
 });
