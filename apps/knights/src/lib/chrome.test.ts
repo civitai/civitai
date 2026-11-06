@@ -41,9 +41,9 @@ describe('watchStrip', () => {
     });
   });
 
-  it('says so once the Watch is done', () => {
+  it('treats a done Watch as a goal reached, not the end of the day', () => {
     expect(watchStrip({ ...daily, votes: 10, watchDone: true }).note).toBe(
-      'Complete · +500 gold earned'
+      '+500 gold bonus earned · keep judging'
     );
   });
 

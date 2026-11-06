@@ -179,7 +179,7 @@
         <p>
           Judge {facts.watch.size} images in a UTC day to complete that day's Watch. A completed Watch pays a
           streak bonus of {count(facts.watch.bonusGold)} gold per day of streak, up to {facts.watch.streakCap}
-          days.
+          days. The Watch is a goal, not a limit: keep judging after it and you keep earning, up to your rank's daily gold cap.
         </p>
         <p>
           Miss a day and the streak resets. You hold up to {facts.watch.maxShields} free shield, granted

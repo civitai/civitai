@@ -59,8 +59,9 @@
     {#if daily.watchDone}
       <p class="status done">
         <OverlayIcon name="circle-check" size={20} />
-        Complete, +{count(daily.bonusGold)} gold streak bonus
+        Watch complete, +{count(daily.bonusGold)} gold streak bonus
       </p>
+      <p class="line">Judgments past the Watch keep earning XP, and gold up to today's cap.</p>
     {:else}
       <p class="status">{left} more {left === 1 ? 'judgment' : 'judgments'} to complete the Watch</p>
     {/if}
