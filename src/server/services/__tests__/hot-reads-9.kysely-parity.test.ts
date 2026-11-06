@@ -43,9 +43,11 @@ const SCHEMA = 'hot_reads_9_parity';
 const here = dirname(fileURLToPath(import.meta.url));
 const schemaStatements = loadParitySchema(resolve(here, 'fixtures/hot-reads-9-parity-schema.sql'));
 
+// ONE connection, so the search_path set in beforeAll holds for every Prisma statement (see there).
 const withSchema = (url: string) => {
   const parsed = new URL(url);
   parsed.searchParams.set('schema', SCHEMA);
+  parsed.searchParams.set('connection_limit', '1');
   return parsed.toString();
 };
 
@@ -143,6 +145,12 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
   }).withSchema(SCHEMA);
 
   beforeAll(async () => {
+    // Prisma's `?schema=` sets the session's search_path to that schema ALONE, which hides the
+    // citext operators (in "public"), so `"username" = $1` would compare as text, case-sensitively.
+    // Prisma's default schema is "public", where the extension lives, so this puts "public" back on
+    // this session's path to match a production URL that names no other schema (this suite cannot
+    // check the production URL). The mixed-case case below checks the setting took.
+    await exec(`SET search_path TO "${SCHEMA}", public`);
     for (const statement of schemaStatements) await exec(statement);
     await exec(`
       INSERT INTO ${t('User')}
@@ -269,6 +277,10 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
   // "username" is CITEXT: a lookup that differs from the stored name only in case finds the user,
   // on both paths. A path whose comparison were case-sensitive would reject with P2025 here.
   it('a mixed-case username finds the lowercase-stored user on both paths', async () => {
+    const [{ search_path: prismaPath }] = await prisma.$queryRawUnsafe<{ search_path: string }[]>(
+      'SHOW search_path'
+    );
+    expect(prismaPath).toContain('public');
     const where = { username: 'Full-PROFILE' };
     const viaKysely = await readUserWithProfileViaKysely(kysely, where);
     const viaPrisma = await readUserWithProfileViaPrisma(prisma, where);
