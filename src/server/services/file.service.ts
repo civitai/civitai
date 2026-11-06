@@ -9,7 +9,9 @@ import { isPaidAccessActive } from '@civitai/buzz';
 import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import type { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { ModelModifier, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import type { ResolveAttribution } from '~/utils/resolve-attribution';
@@ -352,6 +354,7 @@ export const getFileForModelVersion = async ({
     }
   }
   if (!file) return { status: 'not-found' };
+  if (!isMod && hasFailedScan(file)) return { status: 'failed-scan' };
 
   // Named against every file on the version, not only the files this request could pick from:
   // otherwise two files sharing an uploaded name both download under it and overwrite each other.
@@ -449,6 +452,7 @@ type ModelVersionFileResult =
         | 'no-access'
         | 'archived'
         | 'downloads-disabled'
+        | 'failed-scan'
         | 'error';
     }
   | {
@@ -485,4 +489,6 @@ type FileResult = {
     hash: string;
   }[];
   url: string;
+  pickleScanResult: ScanResultCode;
+  virusScanResult: ScanResultCode;
 };

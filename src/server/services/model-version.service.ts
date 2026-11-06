@@ -166,6 +166,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
   versionAcceptsNewTrainingData,
@@ -2042,6 +2043,7 @@ export const publishModelVersionById = async ({
     versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
   });
   await assertNonCommercialVersionsUnmonetized([currentVersion]);
+  await assertNoFailedScanFiles({ id });
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
@@ -2256,7 +2258,10 @@ export const unpublishModelVersionById = async ({
   refundEarlyAccess,
   meta,
   user,
-}: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+}: UnpublishModelSchema & {
+  meta?: ModelMeta;
+  user: Pick<SessionUser, 'id' | 'isModerator'>;
+}) => {
   // Same obligation as unpublishing the whole model, scoped to this version: taking a version down
   // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
   // exactly as they do in unpublishModelById.
