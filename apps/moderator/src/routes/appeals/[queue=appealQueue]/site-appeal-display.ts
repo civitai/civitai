@@ -16,6 +16,14 @@ export const rowTitle = (row: Pick<SiteAppealRow, 'subject' | 'context' | 'entit
   return row.context?.subject ?? 'Other';
 };
 
+// UTC, so the server render and the hydrated client agree.
+const formatUtc = (d: Date) =>
+  `${new Date(d).toLocaleString('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'UTC',
+  })} UTC`;
+
 /**
  * What approving will change, said before the moderator confirms. `blocked` mirrors the server's
  * refusal, so the control is not offered when its one outcome is an error.
@@ -41,7 +49,11 @@ export function approvalEffect(
       const text = gone
         ? `The ${noun} no longer exists, so approving restores nothing.`
         : subject.status === 'UnpublishedViolation'
-        ? subject.kind === 'article' && subject.restoresTo !== 'Published'
+        ? subject.kind === 'article' && subject.restoresTo === 'Draft' && subject.scheduledAt
+          ? `Approving returns the article to its author as a draft scheduled to publish on ${formatUtc(
+              subject.scheduledAt
+            )}. It goes live then.`
+          : subject.kind === 'article' && subject.restoresTo !== 'Published'
           ? `Approving returns the article to its author ${
               subject.restoresTo === 'Draft' ? 'as a draft' : 'unpublished'
             }, as it was when it was taken down. It is not published.`

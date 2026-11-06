@@ -92,6 +92,7 @@ CREATE TABLE "Article" (
   "status" TEXT,
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
   "publishedAt" TIMESTAMP,
+  "scheduledAt" TIMESTAMP,
   "metadata" JSONB
 );
 CREATE TABLE "Model" (
@@ -155,10 +156,10 @@ beforeEach(async () => {
       (6, 'clean', 'six@test', NULL, false),
       (7, 'no-email', NULL, NULL, false),
       (8, 'banned-owner', 'eight@test', '2026-09-01', false);
-    INSERT INTO "Article" ("id", "userId", "title", "status", "publishedAt", "metadata") VALUES
-      (20, 2, 'Removed', 'UnpublishedViolation', now(), '{"unpublishedReason":"spam"}'),
-      (21, 2, 'Live again', 'Published', now(), NULL),
-      (22, 8, 'Banned owner article', 'UnpublishedViolation', NULL, NULL);
+    INSERT INTO "Article" ("id", "userId", "title", "status", "publishedAt", "scheduledAt", "metadata") VALUES
+      (20, 2, 'Removed', 'UnpublishedViolation', now(), NULL, '{"unpublishedReason":"spam"}'),
+      (21, 2, 'Live again', 'Published', now(), NULL, NULL),
+      (22, 8, 'Banned owner article', 'UnpublishedViolation', NULL, '2026-12-01T15:30:00Z', NULL);
     INSERT INTO "Model" ("id", "userId", "name", "status", "meta") VALUES
       (30, 2, 'Removed model', 'UnpublishedViolation', NULL),
       (31, 8, 'Banned owner model', 'UnpublishedViolation', NULL);
@@ -235,6 +236,7 @@ describe('site appeal queues', () => {
       title: 'Removed',
       status: 'UnpublishedViolation',
       restoresTo: 'Published',
+      scheduledAt: null,
       ownerBanned: false,
       unpublishedReason: 'spam',
       customMessage: null,
@@ -244,6 +246,7 @@ describe('site appeal queues', () => {
     expect(articles.items.find((r) => r.id === 112)!.subject).toMatchObject({
       ownerBanned: true,
       restoresTo: 'Draft',
+      scheduledAt: new Date('2026-12-01T15:30:00Z'),
     });
     const accounts = await getSiteAppealQueue({ category: 'Account', limit: 10, offset: 0 });
     expect(accounts.items.find((r) => r.id === 101)!.subject).toMatchObject({
