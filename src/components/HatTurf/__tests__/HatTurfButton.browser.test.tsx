@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 import type * as Trpc from '~/utils/trpc';
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
@@ -605,10 +606,17 @@ describe('hats on a feed ImageCard', () => {
       return x > hat.left && x < hat.right && y > hat.top && y < hat.bottom;
     };
 
-    test('the badge, top left', async () => {
+    // Hovered, the card's zoom transforms the hat layer, which makes it a stacking context.
+    test.each([false, true])('the badge, top left (hovered: %s)', async (hovered) => {
       renderCard({ images: { 77: summary() }, stickers: { 77: [big(0.15, 0.1)] } });
       await vi.waitFor(() => expect(hats()[0]?.getBoundingClientRect().width).toBeGreaterThan(0));
       const badge = await vi.waitFor(() => q('hat-turf-badge')!);
+      if (hovered) {
+        await userEvent.hover(document.body.querySelector<HTMLElement>('[data-card-hover]')!);
+        await vi.waitFor(() =>
+          expect(getComputedStyle(q('hat-turf-layer')!).transform).not.toBe('none')
+        );
+      }
       expect(hatCovers(badge), 'the hat is not over the badge: the test proves nothing').toBe(true);
       expect(badge.contains(topAt(badge)), 'a hat paints over the badge').toBe(true);
     });
