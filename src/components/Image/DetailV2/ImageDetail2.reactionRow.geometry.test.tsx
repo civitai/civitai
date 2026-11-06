@@ -365,6 +365,15 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
     expect(drawn(document.querySelectorAll('[data-testid="image-detail-tip"]'))).toBeUndefined();
   });
 
+  test('the hat sheet spans the screen', async () => {
+    await renderDetail(width);
+    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    q('hat-turf-detail-badge')!.click();
+    await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
+    const sheet = q('hat-turf-panel')!.closest<HTMLElement>('.mantine-Drawer-content')!;
+    await vi.waitFor(() => expect(Math.round(sheet.getBoundingClientRect().width)).toBe(width));
+  });
+
   test('with Hat Turf off, both bars keep their order without the badge or hat', async () => {
     ctx.hats = false;
     await renderDetail(width);
