@@ -151,7 +151,7 @@ export function PresetControl() {
   return (
     <Group
       gap="xs"
-      className="rounded border border-gray-3 bg-gray-0 px-2 py-1 dark:border-dark-4 dark:bg-dark-6"
+      className="rounded border border-[var(--mantine-color-default-border)] bg-[var(--mantine-color-body)] px-2 py-1"
     >
       <IconBookmark size={14} />
       <Text size="sm" fw={500} lineClamp={1} className="flex-1">

@@ -1,20 +1,11 @@
 /**
- * WorkflowInput
+ * WorkflowPicker
  *
- * A form input for selecting generation features (workflows).
- * One segment per category (image, video, audio, 3D), each opening its own picker. The mobile
- * generator uses WorkflowPicker instead.
+ * The generator's workflow control: the selected workflow, opening a picker of every workflow by
+ * category.
  */
 
-import {
-  Badge,
-  Group,
-  SegmentedControl,
-  Text,
-  Tooltip,
-  UnstyledButton,
-  Stack,
-} from '@mantine/core';
+import { Badge, Group, Text, Tooltip, UnstyledButton, Stack } from '@mantine/core';
 import {
   IconArrowLeft,
   IconCheck,
@@ -27,9 +18,11 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactElement } from 'react';
-import { cloneElement, forwardRef, useMemo, useState } from 'react';
+import { cloneElement, useMemo, useState } from 'react';
 
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import {
@@ -64,21 +57,18 @@ export interface WorkflowCategoryGroup {
   workflows: WorkflowOption[];
 }
 
-export interface WorkflowInputProps {
+export interface WorkflowPickerProps {
   /** Graph workflow key (e.g., 'img2vid') */
   value?: string;
   /** Called with (graphKey, ecosystemIds, optionId) when user selects a workflow */
   onChange?: (graphKey: string, ecosystemIds: number[], optionId: string) => void;
   /** Current ecosystem ID — used to highlight the correct alias entry */
   ecosystemId?: number;
-  /** Whether the control is disabled */
-  disabled?: boolean;
-  /** Additional class name for the container */
-  className?: string;
   /** Check if a workflow option is compatible with the current ecosystem */
   isCompatible?: (optionId: string) => boolean;
   /** Whether the current user is a member */
   isMember?: boolean;
+  onBack?: () => void;
 }
 
 // =============================================================================
@@ -164,7 +154,7 @@ function WorkflowMenuItem({
       >
         <UnstyledButton
           onClick={onSelect}
-          className="w-full rounded-md px-3 py-2.5 opacity-60 hover:bg-gray-1 dark:hover:bg-dark-5"
+          className="w-full rounded-md px-3 py-2.5 opacity-60 hover:bg-gray-1 dark:hover:bg-dark-4"
         >
           <Group gap="sm" wrap="nowrap" justify="space-between">
             <div className="min-w-0 flex-1">
@@ -222,7 +212,7 @@ function WorkflowMenuItem({
       onClick={onSelect}
       className={clsx(
         'w-full rounded-md px-3 py-2.5 text-left transition-colors',
-        isSelected ? 'bg-blue-0 dark:bg-blue-9/20' : 'hover:bg-gray-1 dark:hover:bg-dark-5'
+        isSelected ? 'bg-blue-0 dark:bg-blue-9/20' : 'hover:bg-gray-1 dark:hover:bg-dark-4'
       )}
     >
       <Group gap="sm" wrap="nowrap" justify="space-between">
@@ -257,81 +247,42 @@ function WorkflowMenuItem({
   );
 }
 
-// =============================================================================
-// Workflow Segment Button (icon-only segment within the segmented control)
-// =============================================================================
-
-interface WorkflowSegmentButtonProps {
-  icon: React.ReactNode;
-  label: string;
-  isActive: boolean;
-  hasDivider: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
-}
-
-const WorkflowSegmentButton = forwardRef<HTMLButtonElement, WorkflowSegmentButtonProps>(
-  ({ icon, label, isActive, hasDivider, disabled, onClick, onMouseEnter, onMouseLeave }, ref) => {
-    return (
-      <UnstyledButton
-        ref={ref}
-        onClick={onClick}
-        onMouseEnter={onMouseEnter}
-        onMouseLeave={onMouseLeave}
-        disabled={disabled}
-        title={label}
-        aria-label={label}
-        className={clsx(
-          'flex h-full items-center justify-center px-3.5 transition-colors',
-          hasDivider && 'border-l border-gray-3 dark:border-dark-4',
-          isActive
-            ? 'bg-blue-0 text-blue-7 dark:bg-blue-9/20 dark:text-blue-4'
-            : 'text-gray-6 hover:bg-gray-1 hover:text-gray-9 dark:text-dark-2 dark:hover:bg-dark-5 dark:hover:text-gray-2',
-          disabled && 'cursor-not-allowed opacity-50'
-        )}
-      >
-        {icon}
-      </UnstyledButton>
-    );
-  }
-);
-
-WorkflowSegmentButton.displayName = 'WorkflowSegmentButton';
-
-/** Capped to the viewport so a long list scrolls instead of running off the bottom. */
-const DROPDOWN_CLASS = 'max-h-[70vh] overflow-y-auto';
+/**
+ * Capped to the viewport so a long list scrolls instead of running off the bottom. A step lighter
+ * than the generator's cards (the fields' shade), so it stands off the form it opens over.
+ */
+const DROPDOWN_CLASS = 'max-h-[70vh] overflow-y-auto bg-white dark:bg-dark-5';
 
 const SEGMENTS: {
   category: WorkflowCategory;
   icon: ReactElement<{ size?: number }>;
   label: string;
-  title: string;
+  /** The category's colour, on its icon and its tag. Whole class names, so Tailwind finds them. */
+  tone: string;
 }[] = [
   {
     category: 'image',
     icon: <IconPhoto size={16} />,
     label: 'Image',
-    title: 'Select Image Workflow',
+    tone: 'bg-blue-0 text-blue-6 dark:bg-blue-9/20 dark:text-blue-4',
   },
   {
     category: 'video',
     icon: <IconVideo size={16} />,
     label: 'Video',
-    title: 'Select Video Workflow',
+    tone: 'bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300',
   },
   {
     category: 'audio',
     icon: <IconMusic size={16} />,
     label: 'Audio',
-    title: 'Select Audio Workflow',
+    tone: 'bg-green-0 text-green-7 dark:bg-green-9/20 dark:text-green-4',
   },
   {
     category: 'model3d',
     icon: <IconCube size={16} />,
     label: '3D Models',
-    title: 'Select 3D Model Workflow',
+    tone: 'bg-orange-0 text-orange-7 dark:bg-orange-9/20 dark:text-orange-4',
   },
 ];
 
@@ -429,79 +380,12 @@ function WorkflowListContent({
 }
 
 // =============================================================================
-// Selected Workflow Display (standalone component)
+// Workflow Picker
 // =============================================================================
-
-export interface SelectedWorkflowDisplayProps {
-  /** The workflow graph key to display */
-  workflowId?: string;
-  /** Current ecosystem ID — used to show alias-aware label */
-  ecosystemId?: number;
-  /** Additional class name */
-  className?: string;
-  /** When provided, renders a back arrow button (used for enhancement workflows) */
-  onBack?: () => void;
-}
 
 /**
- * Displays the currently selected workflow label and description.
- * Resolves variants to their parent workflow so e.g. "img2vid:first-last"
- * displays as "Image to Video".
- */
-export function SelectedWorkflowDisplay({
-  workflowId,
-  ecosystemId,
-  className,
-  onBack,
-}: SelectedWorkflowDisplayProps) {
-  const display = resolveWorkflowDisplay(workflowId, ecosystemId);
-  if (!display) return null;
-  const { workflow, label } = display;
-
-  return (
-    <div
-      className={clsx(
-        'rounded-lg border border-gray-2 bg-gray-0 px-3 py-2.5 dark:border-dark-4 dark:bg-dark-6',
-        className
-      )}
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1">
-          {onBack && (
-            <UnstyledButton
-              onClick={onBack}
-              data-tap-target
-              className="flex shrink-0 items-center rounded p-0.5 text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-dark-0"
-              aria-label="Back to previous workflow"
-            >
-              <IconArrowLeft size={18} />
-            </UnstyledButton>
-          )}
-          <Text size="md" fw={600} className="leading-tight">
-            {label}
-          </Text>
-        </div>
-        {workflow.description && (
-          <Text size="sm" c="dimmed" className="mt-0.5">
-            {workflow.description}
-          </Text>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// =============================================================================
-// Workflow Picker (the mobile generator's one workflow control)
-// =============================================================================
-
-export interface WorkflowPickerProps extends Omit<WorkflowInputProps, 'className' | 'disabled'> {
-  /** Renders a back arrow beside the card. */
-  onBack?: () => void;
-}
-
-/**
- * The selected workflow as a card that opens a sheet of every workflow, by category.
+ * The selected workflow as a row that opens every workflow, by category: a popover, or a sheet on
+ * a phone. Drawn without an outline of its own: it heads the workflow card.
  */
 export function WorkflowPicker({
   value,
@@ -512,6 +396,8 @@ export function WorkflowPicker({
   onBack,
 }: WorkflowPickerProps) {
   const [opened, setOpened] = useState(false);
+  // Off a phone there is room to say what the workflow does.
+  const describe = useGeneratorLayout() !== 'mobile';
   const options = useAvailableWorkflowGroups();
   const selected = getSelectedWorkflow(options, value, ecosystemId);
   const display = resolveWorkflowDisplay(value, ecosystemId);
@@ -521,7 +407,7 @@ export function WorkflowPicker({
   const segments = getVisibleSegments(options);
   const segment = segments.find((s) => s.category === category) ?? segments[0];
   if (!display) return null;
-  const { workflow, label } = display;
+  const { label, workflow } = display;
 
   return (
     <div className="flex items-center gap-2">
@@ -539,32 +425,58 @@ export function WorkflowPicker({
         opened={opened}
         onClose={() => setOpened(false)}
         title="Choose a workflow"
+        narrow="fullscreen"
         tall
+        popoverProps={{
+          position: 'bottom-end',
+          width: 'target',
+          shadow: 'xl',
+          // Flush with the button: Mantine's default gap shows the card's mode buttons through it.
+          offset: 0,
+          // On a wide panel the cap leaves it hanging under Change. A styles prop, not a class: the
+          // theme sets the dropdown's max-width inline.
+          styles: { dropdown: { maxWidth: 380 } },
+        }}
+        dropdownProps={{ p: 'xs', className: DROPDOWN_CLASS }}
         target={
           <button
             type="button"
             onClick={() => {
+              if (opened) return setOpened(false);
               setTab(category);
               setOpened(true);
             }}
             aria-label={`Workflow: ${label}. Change workflow`}
-            className="flex min-h-16 w-full min-w-0 flex-1 items-center gap-3 rounded-lg border border-solid border-blue-6 bg-white px-3 py-2.5 text-left font-[inherit] text-inherit dark:bg-dark-7"
+            className="flex w-full min-w-0 flex-1 items-center gap-2.5 border-0 bg-transparent p-2 text-left font-[inherit] text-inherit"
           >
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-blue-0 text-blue-6 dark:bg-blue-9/20 dark:text-blue-4">
-              {cloneElement(segment.icon, { size: 20 })}
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-6 dark:text-dark-2">
-                {segment.label} workflow
-              </span>
-              <span className="text-base font-semibold leading-tight">{label}</span>
-              {workflow.description && (
-                <span className="text-sm leading-tight text-gray-6 dark:text-dark-2">
-                  {workflow.description}
-                </span>
+            {/* Sized to line up with the model's thumbnail in the card beneath. */}
+            <span
+              className={clsx(
+                'flex size-10 shrink-0 items-center justify-center rounded-md',
+                segment.tone
               )}
+            >
+              {cloneElement(segment.icon, { size: 18 })}
             </span>
-            <span className="flex h-8 shrink-0 items-center gap-1 rounded-full bg-gray-1 px-2.5 text-sm font-semibold text-blue-6 dark:bg-dark-5 dark:text-blue-4">
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-[15px] font-semibold leading-tight">{label}</span>
+                {describe && workflow.description && (
+                  <span
+                    className={clsx(
+                      'shrink-0 rounded px-1.5 py-px text-[11px] font-semibold leading-tight',
+                      segment.tone
+                    )}
+                  >
+                    {segment.label}
+                  </span>
+                )}
+              </span>
+              <span className="text-xs leading-tight text-gray-6 dark:text-dark-2">
+                {(describe && workflow.description) || `${segment.label} workflow`}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1 text-sm font-semibold text-blue-6 dark:text-blue-4">
               Change
               <IconChevronDown size={14} stroke={2.5} />
             </span>
@@ -573,8 +485,8 @@ export function WorkflowPicker({
       >
         <Stack gap="sm">
           {segments.length > 1 && (
-            <SegmentedControl
-              fullWidth
+            <ChoiceGroup
+              aria-label="Workflow category"
               value={tab}
               onChange={(next) => setTab(next as WorkflowCategory)}
               data={segments.map((s) => ({ value: s.category, label: s.label }))}
@@ -592,80 +504,6 @@ export function WorkflowPicker({
           />
         </Stack>
       </PopoverOrSheet>
-    </div>
-  );
-}
-
-// =============================================================================
-// Component
-// =============================================================================
-
-export function WorkflowInput({
-  value,
-  onChange,
-  ecosystemId,
-  disabled,
-  className,
-  isCompatible,
-  isMember = false,
-}: WorkflowInputProps) {
-  const [openSegment, setOpenSegment] = useState<WorkflowCategory | null>(null);
-
-  const options = useAvailableWorkflowGroups();
-  const selected = getSelectedWorkflow(options, value, ecosystemId);
-
-  const segments = getVisibleSegments(options);
-
-  const handleSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
-    onChange?.(graphKey, ecosystemIds, optionId);
-    setOpenSegment(null);
-  };
-
-  return (
-    <div
-      className={clsx(
-        'flex h-8 shrink-0 items-center overflow-hidden rounded-md border bg-white dark:bg-dark-6',
-        'border-gray-3 dark:border-dark-4',
-        className
-      )}
-      data-tap-target="group"
-    >
-      {segments.map((segment, index) => (
-        <PopoverOrSheet
-          key={segment.category}
-          opened={openSegment === segment.category}
-          onClose={() => setOpenSegment(null)}
-          title={segment.title}
-          narrow="fullscreen"
-          popoverProps={{ position: 'bottom-start', width: 300 }}
-          dropdownProps={{ p: 'xs', className: DROPDOWN_CLASS }}
-          target={
-            <WorkflowSegmentButton
-              icon={segment.icon}
-              label={segment.label}
-              isActive={selected?.category.category === segment.category}
-              hasDivider={index > 0}
-              disabled={disabled}
-              onClick={() => {
-                if (disabled) return;
-                setOpenSegment((open) => (open === segment.category ? null : segment.category));
-              }}
-            />
-          }
-        >
-          {(surface) => (
-            <Stack gap="xs" pt={surface === 'fullscreen' ? 'md' : undefined}>
-              <WorkflowListContent
-                categories={segment.categories}
-                selectedValue={selected?.workflow.id}
-                onSelect={handleSelect}
-                isCompatible={isCompatible}
-                isMember={isMember}
-              />
-            </Stack>
-          )}
-        </PopoverOrSheet>
-      ))}
     </div>
   );
 }
