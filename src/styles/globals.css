@@ -169,6 +169,14 @@
   --safe-area-inset-bottom-page: 0px;
 }
 
+/* How far the app footer's bar rises above the viewport bottom right now: unset
+   while it is slid out on scroll or absent, so a fixed bar reading
+   `var(--app-footer-offset, 0px)` drops to the edge with it instead of leaving
+   a footer-sized gap. `footer` excludes `PageActionBar`, which shares the mark. */
+#__next:has(footer[data-app-footer]:not([data-hidden])) {
+  --app-footer-offset: calc(var(--footer-height) + var(--safe-area-inset-bottom-unpaid));
+}
+
 @layer tailwind-preflight {
   @tailwind base;
 }

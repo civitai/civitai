@@ -8,7 +8,7 @@ import { deleteImageRows, finishImageDeletes } from './image-deletion';
 import { syncSearchIndex } from './search-index';
 import { logToAxiom } from './axiom';
 import type { KeptImage } from '$lib/image-kept-reasons';
-import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import { ArticleStatus, restoreStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
 type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
@@ -109,6 +109,9 @@ async function unpublishArticle(
       customMessage,
       unpublishedAt: new Date().toISOString(),
       unpublishedBy: moderatorId,
+      // Only a Published article gets here: a restore must publish it again, whatever an earlier
+      // block recorded.
+      statusBeforeViolation: undefined,
     };
     await trx
       .updateTable('Article')
@@ -140,8 +143,23 @@ export function withContentLinkHold(
   return derived;
 }
 
+// The main app's share-link lock (`lockAccessTokens` in access-token.service.ts), taken before the
+// row lock as it is there, so a link being created waits for this transaction.
+const ACCESS_TOKEN_LOCK_CLASS = 0x41544b;
+
 async function restoreArticle(id: number): Promise<void> {
   const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
+    // A share link made while it was unpublished must not read it again after a later unpublish.
+    await sql`SELECT pg_advisory_xact_lock(${ACCESS_TOKEN_LOCK_CLASS}::int, ${id}::int)`.execute(
+      trx
+    );
+    await trx
+      .updateTable('AccessToken')
+      .set({ revokedAt: new Date() })
+      .where('resourceType', '=', 'Article')
+      .where('resourceId', '=', id)
+      .where('revokedAt', 'is', null)
+      .execute();
     const article = await trx
       .selectFrom('Article')
       .select([
@@ -167,13 +185,18 @@ async function restoreArticle(id: number): Promise<void> {
     delete meta.customMessage;
     delete meta.unpublishedAt;
     delete meta.unpublishedBy;
+    delete meta.statusBeforeViolation;
+    const status = restoreStatus(article.metadata as ArticleMetadata, article.publishedAt);
 
     await trx
       .updateTable('Article')
       .set({
-        status: ArticleStatus.Published,
+        status,
         // Preserve the original publishedAt so a restored article doesn't bump to the top of the feed.
-        publishedAt: article.publishedAt ?? new Date(),
+        publishedAt:
+          status === ArticleStatus.Published
+            ? article.publishedAt ?? new Date()
+            : article.publishedAt,
         metadata: sql`${JSON.stringify(meta)}::jsonb`,
       })
       .where('id', '=', id)

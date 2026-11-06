@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { cachedFactory, defFamily, defineGraph, rootScope, type Scope } from 'form-graph';
 import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
-import { ecosystemRefusal, resolveCompatibleEcosystem } from './ecosystem-gates';
+import { resolveCompatibleEcosystem } from './ecosystem-gates';
 
 import type { GenerationCtx } from '~/shared/generation/context';
 import {
@@ -284,7 +284,7 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
   usableEcosystems: readonly string[]
 ) {
   const hiddenSet = new Set(hiddenEcosystems);
-  const isRefused = ecosystemRefusal(hiddenEcosystems, disabledKeys);
+  const disabledSet = new Set(disabledKeys);
   return {
     input: z
       .string()
@@ -299,8 +299,8 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
         return v;
       }),
     output:
-      hiddenSet.size || disabledKeys.length
-        ? z.string().refine((v) => !isRefused(v), {
+      hiddenSet.size || disabledSet.size
+        ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
             message: 'Ecosystem is currently unavailable',
           })
         : z.string(),

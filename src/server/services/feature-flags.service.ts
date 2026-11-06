@@ -11,6 +11,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
+import { formatDate } from '~/utils/date-helpers';
 
 export type ServerAvailability = ColorDomain;
 
@@ -372,7 +374,11 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Training Studio',
     badge: 'Beta',
-    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
+      CLASSIC_TRAINER_RETIRES_AT,
+      'MMMM D, YYYY',
+      true
+    )}.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },

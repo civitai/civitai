@@ -344,7 +344,7 @@ describe('adding one item to a section from the review drawer', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it("refuses a creator cosmetic whose creator hasn't allowed resale", async () => {
+  it('refuses a creator cosmetic that is not published', async () => {
     dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
       status: 'Published',
       archivedAt: null,
@@ -352,21 +352,30 @@ describe('adding one item to a section from the review drawer', () => {
     dbMock.dbWrite.cosmeticShopItem.findMany.mockResolvedValueOnce([{ title: 'Pumpkin hat' }]);
 
     await expect(addShopItemToSection({ shopItemId: 7, sectionId: 5 })).rejects.toThrow(
-      'These creator items are not published resellable cosmetics: Pumpkin hat'
+      'These creator items are not published: Pumpkin hat'
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
-    // The mock returns the row whatever it is asked, so the consent rule is pinned here.
+  });
+
+  // The mock returns rows whatever it is asked, so the rule is read off the query. An owner-only
+  // item is published with no `sellableByOthers`; only a query naming that field could refuse it.
+  it('does not ask whether a published owner-only item allows resale', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValueOnce({
+      status: 'Published',
+      archivedAt: null,
+    });
+
+    await addShopItemToSection({ shopItemId: 7, sectionId: 5 });
+
     expect(dbMock.dbWrite.cosmeticShopItem.findMany).toHaveBeenLastCalledWith({
       where: {
         id: { in: [7] },
         cosmetic: { createdById: { not: null } },
-        OR: [
-          { status: { not: 'Published' } },
-          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
-        ],
+        status: { not: 'Published' },
       },
       select: { title: true },
     });
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a mystery box', async () => {

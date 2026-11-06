@@ -157,6 +157,7 @@ describe('article ingestion recompute', () => {
       },
       entityModeration: { findUnique: vi.fn(async () => null) },
       articleContentLinkHold: { findUnique: vi.fn(async () => null) },
+      accessToken: { updateMany: vi.fn(async () => ({ count: 0 })) },
     };
     const result = await recomputeArticleIngestionInTx(
       tx as unknown as Prisma.TransactionClient,
@@ -167,6 +168,7 @@ describe('article ingestion recompute', () => {
       ingestion: update?.values[0],
       published: result.publishedNotificationUserId != null,
       blockedImages: result.problemsNotification?.blockedImages ?? 0,
+      revokedShareLinks: tx.accessToken.updateMany.mock.calls.length > 0,
     };
   };
 
@@ -175,6 +177,7 @@ describe('article ingestion recompute', () => {
       ingestion: ArticleIngestionStatus.Pending,
       published: false,
       blockedImages: 0,
+      revokedShareLinks: false,
     });
   });
 
@@ -183,6 +186,7 @@ describe('article ingestion recompute', () => {
       ingestion: ArticleIngestionStatus.Blocked,
       published: false,
       blockedImages: 1,
+      revokedShareLinks: false,
     });
   });
 
@@ -191,6 +195,7 @@ describe('article ingestion recompute', () => {
       ingestion: ArticleIngestionStatus.Scanned,
       published: true,
       blockedImages: 0,
+      revokedShareLinks: true,
     });
   });
 });

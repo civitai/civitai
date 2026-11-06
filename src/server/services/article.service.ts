@@ -42,6 +42,8 @@ import {
   articleOwnImageIds,
   deriveArticleIngestionState,
 } from '~/server/services/article-ingestion.helpers';
+import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
+import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -123,6 +125,7 @@ import { submitTextModeration } from '~/server/services/text-moderation.service'
 import {
   articleAwaitsTextVerdict,
   isPublicArticle,
+  isShareableArticleStatus,
 } from '~/server/services/text-scan/public-content';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
@@ -1306,13 +1309,38 @@ export const upsertArticle = async ({
       : writingWithoutViolationStatus
       ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
       : { id };
+    let sharedTextChanged = false;
     const result = await dbWrite.$transaction(async (tx) => {
+      // A shared draft leaves Scanned in the same write that changes its text. Under the lock, so
+      // neither a link being created nor a concurrent save can slip between the read and the write.
+      await lockAccessTokens(tx, id as number);
+      const stored = await tx.article.findUnique({
+        where: { id: id as number },
+        select: { title: true, content: true, metadata: true },
+      });
+      const textChanged =
+        (data.title !== undefined && data.title !== stored?.title) ||
+        (data.content !== undefined && data.content !== stored?.content);
+      const sharedSave =
+        textChanged &&
+        (await isSharedArticle(
+          id as number,
+          (data.status as ArticleStatus | undefined) ?? (article.status as ArticleStatus),
+          tx
+        ));
+      if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
+      sharedTextChanged = sharedSave;
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
+          ...(sharedSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
-          metadata: { ...prevMetadata, ...data.metadata },
+          // The locked read: a block may have written its own keys since the first read.
+          metadata: {
+            ...((stored?.metadata as ArticleMetadata | null) ?? prevMetadata),
+            ...data.metadata,
+          },
           publishedAt,
           scheduledAt: scheduledAtWrite,
           coverId,
@@ -1344,6 +1372,9 @@ export const upsertArticle = async ({
         },
       });
       if (!updated) return null;
+      // A link made for the draft must not reopen it after a later unpublish.
+      if (data.status && !isShareableArticleStatus(data.status as ArticleStatus))
+        await revokeActiveAccessTokens('Article', updated.id, tx);
       // A tag rewrite above drops the official row like any other; the column restores it.
       if (officialTag && (tags || data.isOfficial !== undefined))
         await writeOfficialArticleTag({
@@ -1446,6 +1477,7 @@ export const upsertArticle = async ({
         ownerId: result.userId,
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
+        sharedTextChanged,
         coverId: result.coverId,
         bannerId: result.bannerId,
         publication: { status: result.status, scheduledAt: result.scheduledAt },
@@ -1494,6 +1526,8 @@ type ArticleContentChangeContext = {
   ownerId: number;
   title: string | null;
   previousContent: string | null;
+  /** The write voided a shared draft's verdict, so a fresh check must follow. */
+  sharedTextChanged?: boolean;
   coverId: number | null;
   bannerId: number | null;
   publication: { status: ArticleStatus; scheduledAt: Date | null };
@@ -1562,6 +1596,7 @@ export async function applyArticleContentChange({
     };
   }
   const { ownerId, title, previousContent, coverId, bannerId, publication } = resolved;
+  let sharedTextChanged = !!resolved.sharedTextChanged;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
   // it would reinstate the older body over a save that committed in between.
@@ -1569,10 +1604,26 @@ export async function applyArticleContentChange({
     // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
-    const affected =
-      await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}${
+    // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
+    // draft leaves Scanned in the same statement that changes its text.
+    const affected = await dbWrite.$transaction(async (tx) => {
+      await lockAccessTokens(tx, id);
+      const locked = (await isSharedArticle(id, publication.status, tx))
+        ? await tx.article.findUnique({ where: { id }, select: { content: true } })
+        : null;
+      const resetting = !!locked && locked.content !== content;
+      const written = await tx.$executeRaw`UPDATE "Article" SET content = ${content}${
+        resetting ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+      } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;
+      // Only a write that landed voids the verdict, or no check would follow the reset.
+      if (resetting && written) {
+        await resetSharedArticleTextCheck(tx, id);
+        sharedTextChanged = true;
+      }
+      return written;
+    });
     if (expectedContent !== undefined && !affected) return false;
   }
 
@@ -1649,11 +1700,22 @@ export async function applyArticleContentChange({
   {
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
+    const shared = await isSharedArticle(id, publication.status);
 
     if (!hasText) {
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
+    } else if (shared) {
+      // Link holders see the text as soon as it passes, so a check that cannot be shown to have
+      // started withdraws the links.
+      const checked =
+        !sharedTextChanged ||
+        (await submitSharedArticleText(id).catch((e) => {
+          handleLogError(e as Error, 'article-share-check', { articleId: id });
+          return false;
+        }));
+      if (!checked) await revokeActiveAccessTokens('Article', id);
     } else if (isPublicArticle(publication)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
@@ -1984,7 +2046,7 @@ export async function unpublishArticleById({
       const unpublishedAt = new Date().toISOString();
 
       // Build updated metadata
-      const updatedMetadata = {
+      const updatedMetadata: ArticleMetadata = {
         ...metadata,
         ...(reason
           ? {
@@ -1995,6 +2057,12 @@ export async function unpublishArticleById({
         unpublishedAt,
         unpublishedBy: userId,
       };
+      // Only a Published article gets here, so a restore must publish it, whatever an earlier
+      // block recorded.
+      delete updatedMetadata.statusBeforeViolation;
+
+      // An old share link must not reopen what a moderator took down.
+      if (isModerator) await revokeActiveAccessTokens('Article', id, tx);
 
       // Update article status and metadata
       return await tx.article.update({
@@ -2506,6 +2574,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       select: { status: true, blocked: true, retryCount: true, updatedAt: true },
     }),
   ]);
+  const shared = !!article && (await isSharedArticle(id, article.status));
 
   // Cover and banner live on `Article`, not in `ImageConnection`, so a cover- or banner-only
   // problem (no content images) would otherwise render nothing. Fold them into the
@@ -2548,7 +2617,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
   const required =
     !!article &&
-    (isPublicArticle(article) || textBlocked) &&
+    (isPublicArticle(article, shared) || textBlocked) &&
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
@@ -2626,6 +2695,8 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
     const result = await dbWrite.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+        // Before the row lock below, in the order every share-link writer takes them.
+        await lockAccessTokens(tx, articleId);
 
         await updateArticleNsfwLevels([articleId], tx);
 
@@ -2636,6 +2707,91 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
 
     await dispatchArticleIngestionPostCommit(result);
   }
+}
+
+/**
+ * Written in the same transaction as a shared draft's new text: the earlier verdict stops
+ * counting, and its in-flight check can no longer land (callbacks match on `workflowId`).
+ */
+export async function resetSharedArticleTextCheck(tx: Prisma.TransactionClient, id: number) {
+  await tx.entityModeration.updateMany({
+    where: { entityType: 'Article', entityId: id },
+    data: { status: EntityModerationStatus.Pending, workflowId: null },
+  });
+  await tx.articleShareCheck.upsert({
+    where: { articleId: id },
+    create: { articleId: id, generation: 1 },
+    update: { generation: { increment: 1 }, workflowId: null, textHash: null },
+  });
+}
+
+const SHARED_CHECK_ATTEMPTS = 3;
+
+/**
+ * A shared draft passes the same content checks as a published article before it can be viewed.
+ * Sends the stored text for a fresh check and records that check as the one the shared read
+ * requires, but only if no write changed the text meanwhile: every such write bumps the check's
+ * generation under the share lock, and the record is made under the same lock. A changed text is
+ * checked again. False when no check can be shown to have started; throws when the submit does.
+ */
+export async function submitSharedArticleText(id: number): Promise<boolean> {
+  const snapshot = (tx: Prisma.TransactionClient) =>
+    Promise.all([
+      tx.article.findUnique({ where: { id }, select: { title: true, content: true } }),
+      tx.articleShareCheck.findUnique({ where: { articleId: id }, select: { generation: true } }),
+    ]);
+  const underLock = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    dbWrite.$transaction(async (tx) => {
+      await lockAccessTokens(tx, id);
+      return fn(tx);
+    });
+
+  for (let attempt = 0; attempt < SHARED_CHECK_ATTEMPTS; attempt++) {
+    const [text, check] = await underLock(snapshot);
+    if (!text) return false;
+    if (!articleHasText(text.title, text.content)) return true;
+    const generation = check?.generation ?? 0;
+
+    const startedAt = new Date();
+    const workflow = await submitTextModerationOrScan({
+      entityType: 'Article',
+      entityId: id,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          labels: ['nsfw'],
+          recordForReview: true,
+          forceRescan: true,
+          rearmRetries: true,
+        }),
+    });
+    const workflowId = workflow?.id;
+    const row = await dbWrite.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+      select: { updatedAt: true },
+    });
+    if (!workflowId || !row || row.updatedAt < startedAt) return false;
+
+    const recorded = await underLock(async (tx) => {
+      const [now, nowCheck] = await snapshot(tx);
+      const unchanged =
+        (nowCheck?.generation ?? 0) === generation &&
+        now?.title === text.title &&
+        now?.content === text.content;
+      if (!unchanged) return false;
+      await tx.articleShareCheck.upsert({
+        where: { articleId: id },
+        create: { articleId: id, generation, workflowId, textHash: sharedArticleTextHash(text) },
+        update: { workflowId, textHash: sharedArticleTextHash(text) },
+      });
+      return true;
+    });
+    if (recorded) return true;
+  }
+  return false;
 }
 
 /**
@@ -2693,6 +2849,8 @@ export async function recomputeArticleIngestionInTx(
   articleId: number
 ): Promise<RecomputeIngestionResult> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+  // Held to commit, so a share link cannot be made between the go-live revoke below and the flip.
+  await lockAccessTokens(tx, articleId);
 
   // --- Image side (content images + cover) ---
   //
@@ -2823,6 +2981,8 @@ export async function recomputeArticleIngestionInTx(
   if (flipToPublished) {
     setFragments.push(Prisma.sql`status = ${ArticleStatus.Published}::"ArticleStatus"`);
     setFragments.push(Prisma.sql`"publishedAt" = ${flipPublishedAt}`);
+    // A link made for the draft must not reopen it after a later unpublish.
+    await revokeActiveAccessTokens('Article', articleId, tx);
   }
   await tx.$executeRaw`
     UPDATE "Article"
@@ -3137,7 +3297,10 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  if (article.content && isPublicArticle(article)) {
+  if (
+    article.content &&
+    (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
+  ) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');

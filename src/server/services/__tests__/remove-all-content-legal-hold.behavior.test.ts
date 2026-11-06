@@ -545,7 +545,7 @@ describe('removeAllContent', () => {
           (91, 'article', 1, NULL, '91', ${CLEAN}, 'gone'),
           (92, 'article', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
           (93, 'article', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
-          (94, 'image', 1, NULL, '94', ${CLEAN}, 'an image comment, wiped through CommentV2'),
+          (94, 'model', 1, NULL, '94', ${CLEAN}, 'a model comment, wiped through CommentV2'),
           (95, 'article', 1, NULL, '95', ${CLEAN}, 'above a held author''s reply'),
           (96, 'article', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
         INSERT INTO "CommentV3Reaction" ("commentId", "userId") VALUES (93, ${CLEAN}), (93, ${BYSTANDER});
@@ -568,7 +568,7 @@ describe('removeAllContent', () => {
         { id: 93, content: 'a reply by someone else', deleted: false, tos: false },
         {
           id: 94,
-          content: 'an image comment, wiped through CommentV2',
+          content: 'a model comment, wiped through CommentV2',
           deleted: false,
           tos: false,
         },

@@ -82,7 +82,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   });
   return {
     ...original,
-    trpc: makeTrpcProxy({}, { orchestrator }),
+    trpc: makeTrpcProxy(
+      // The tray names a run from the app list.
+      { 'remixApp.list': { useQuery: () => ({ data: [{ slug: 'anime-it', name: 'Anime it' }] }) } },
+      { orchestrator }
+    ),
     trpcVanilla: { orchestrator: { getWorkflow: { query: h.getWorkflow } } },
   };
 });

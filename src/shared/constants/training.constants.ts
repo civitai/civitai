@@ -71,6 +71,22 @@ export const datasetEditableTrainingStatuses: (TrainingStatus | null)[] = [
 export const isDatasetEditable = (status: TrainingStatus | null | undefined) =>
   datasetEditableTrainingStatuses.includes(status ?? null);
 
+/** A dataset under moderator review, or denied, stays on record: only a moderator may delete it. */
+export const reviewedDatasetTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Paused,
+  TrainingStatus.Denied,
+];
+
+/**
+ * A run reads its dataset, and an InReview run is published from it, so the owner can't delete it
+ * meanwhile. Keyed on the version: a new version can train on an already-published model.
+ */
+export const liveRunDatasetTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Submitted,
+  TrainingStatus.Processing,
+  TrainingStatus.InReview,
+];
+
 /** A run in progress or under moderation keeps its version: the owner can't delete it or merge it away. */
 export const versionRemovalLockedTrainingStatuses: TrainingStatus[] = [
   TrainingStatus.Submitted,
@@ -78,3 +94,12 @@ export const versionRemovalLockedTrainingStatuses: TrainingStatus[] = [
   TrainingStatus.Paused,
   TrainingStatus.Denied,
 ];
+
+/**
+ * The classic trainer (/models/train) stops starting runs at this instant; Training Studio is
+ * unaffected. The banners quote it, so change it only alongside the announcement.
+ */
+export const CLASSIC_TRAINER_RETIRES_AT = new Date('2026-11-16T00:00:00Z');
+export const isClassicTrainerRetired = (now = new Date()) => now >= CLASSIC_TRAINER_RETIRES_AT;
+export const CLASSIC_TRAINER_RETIRED_MESSAGE =
+  'The classic trainer has been retired and no longer starts new runs. Use Training Studio to train.';

@@ -84,7 +84,7 @@ const ruleSections: { comment?: string[]; rules: string[] }[] = [
 
 // AI training crawlers request HTML pages continuously. Crawl-delay asks each of them to wait 30 s
 // between requests; it slows them down, it does not block them.
-const slowCrawlers = ['GPTBot', 'ClaudeBot', 'Amazonbot'];
+const slowCrawlers = ['GPTBot', 'ClaudeBot', 'Amazonbot', 'meta-externalagent'];
 const slowCrawlerDelaySeconds = 30;
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {

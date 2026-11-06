@@ -759,7 +759,7 @@ describe('a comment that exists only in CommentV3', () => {
   });
 
   it('is not found when it is on a surface that still writes CommentV2', async () => {
-    mockDb.$queryRaw.mockResolvedValueOnce([{ ...v3Row, entityType: 'image' }]);
+    mockDb.$queryRaw.mockResolvedValueOnce([{ ...v3Row, entityType: 'model' }]);
     await expect(getBlockCheckOwnerIdsForReply(5)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
