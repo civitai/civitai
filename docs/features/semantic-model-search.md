@@ -50,8 +50,24 @@ node dist/vector-sync/models/backfill.js --to <id> [--from <id>] [--limit N] [--
 ```
 
 Walks model ids downward from `--to`, newest first, and logs `next` per page (the `--to` that
-resumes). `--limit` stops after N models have a point, for a first slice. Writing needs `--confirm`
-and `VECTOR_SYNC_EMBED_ENABLED`; embedding is a paid orchestrator call.
+resumes). Each page also takes the collection's ids in its range, so the point of a hard-deleted
+model is removed. `--limit N` stops after the first page by which N eligible models were synced,
+for a first slice. Writing needs `--confirm` and `VECTOR_SYNC_EMBED_ENABLED`; embedding is a paid
+orchestrator call. The embedder's config checks apply, including `VECTOR_IMAGE_LOCATION`.
+
+A model whose document changed keeps its old vector until the re-embed lands, but its payload is
+rewritten at once, so filters never act on a stale `nsfwLevel`.
+
+Run one writer per id range: the post-embed re-read covers what was embedded, not deletes and
+payload rewrites racing a second writer.
+
+## Caveats
+
+- `title_normalized` is computed with the Unicode version of the Node runtime and the query key
+  with Python's. They agree except for characters one version knows and the other does not.
+- Private-availability models are indexed, as on the current search index, with their name and
+  description in the payload. Results must be hydrated through the site's access rules, never
+  returned from the payload.
 
 ## Not built yet
 

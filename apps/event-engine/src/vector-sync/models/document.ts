@@ -43,16 +43,24 @@ function decodeEntities(text: string) {
     if (ref[0] !== '#') return ENTITIES[ref.toLowerCase()] ?? match;
     const code =
       ref[1] === 'x' || ref[1] === 'X' ? parseInt(ref.slice(2), 16) : Number(ref.slice(1));
-    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    // A lone surrogate is invalid JSON to Qdrant and would fail the whole upsert batch, every
+    // retry; Python's html.unescape maps these, NUL and out-of-range codes to U+FFFD too.
+    const valid = code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff);
+    return valid ? String.fromCodePoint(code) : '\ufffd';
   });
 }
+
+const BLOCK_TAGS =
+  /<\/?(p|br|li|ul|ol|div|h[1-6]|td|th|tr|table|blockquote|pre|hr|section|article)\b[^>]*>/gi;
 
 /** Rich-text HTML to one line of plain text: block tags become spaces, script and style vanish. */
 export function cleanHtml(value: string | null | undefined) {
   if (!value) return '';
   const text = value
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<\/?(p|br|li|div|h1|h2|h3)\b[^>]*>/gi, ' ')
+    .replace(/<!--[\s\S]*?(-->|$)/g, ' ')
+    // `$`: the description is read truncated, which can end inside a script.
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?(<\/\1\s*>|$)/gi, ' ')
+    .replace(BLOCK_TAGS, ' ')
     .replace(/<[^>]*>/g, '');
   return decodeEntities(text).replace(/\s+/g, ' ').trim();
 }

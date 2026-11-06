@@ -8,6 +8,7 @@ import {
   type ModelSource,
 } from '@/vector-sync/models/document';
 import type { ModelPayload } from '@/vector-sync/models/source';
+import { backfillModels } from '@/vector-sync/models/backfill';
 import { syncModelIds, type ModelSyncDeps } from '@/vector-sync/models/sync';
 import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
 
@@ -34,9 +35,21 @@ function model(id: number, over: Partial<ModelSource & { nsfwLevel: number }> = 
 /** Postgres as the query sees it: only eligible models come back. */
 class FakeDb {
   rows = new Map<number, ReturnType<typeof model>>();
+  /** Every Model row, eligible or not; defaults to the eligible ones. */
+  extraIds = new Set<number>();
+  get ids() {
+    return new Set([...this.rows.keys(), ...this.extraIds]);
+  }
   /** Runs once, after the first read, as a write committed while vectors are made. */
   onRead?: () => void;
-  query = async (_sql: string, [ids]: [number[]]) => {
+  query = async (sql: string, params: unknown[]) => {
+    // The backfill's page query: ids in [from, cursor), newest first.
+    if (sql.startsWith('SELECT id FROM')) {
+      const [from, cursor, limit] = params as number[];
+      const ids = [...this.ids].filter((id) => id >= from && id < cursor).sort((a, b) => b - a);
+      return { rows: ids.slice(0, limit).map((id) => ({ id })) };
+    }
+    const [ids] = params as [number[]];
     const rows = ids.flatMap((id) => (this.rows.has(id) ? [{ ...this.rows.get(id)! }] : []));
     const hook = this.onRead;
     this.onRead = undefined;
@@ -61,18 +74,24 @@ class FakeStore {
   upsert = async (points: VectorPoint<ModelPayload>[]) =>
     void points.forEach((p) => this.points.set(p.id, p));
   assertModel = async (_stamp: ModelStamp) => undefined;
+  idsInRange = async (lo: number, hi: number) =>
+    [...this.points.keys()].filter((id) => id >= lo && id < hi).sort((a, b) => a - b);
 }
 
 class FakeEmbedder {
   texts: string[] = [];
+  /** Steps that fail, as the orchestrator reports them: counted, no vector. */
+  failIds = new Set<string>();
   embed = async (
     inputs: EmbedInput[],
     { onVectors }: { onVectors?: (v: Map<number, number[]>) => Promise<void> } = {}
   ) => {
     this.texts.push(...inputs.map((i) => i.text!));
-    const vectors = new Map(inputs.map((i) => [Number(i.id), [Number(i.id)]]));
+    const ok = inputs.filter((i) => !this.failIds.has(i.id));
+    const vectors = new Map(ok.map((i) => [Number(i.id), [Number(i.id)]]));
     await onVectors?.(vectors);
-    return { vectors, failed: [], stamp: STAMP };
+    const failed = inputs.filter((i) => this.failIds.has(i.id)).map((i) => i.id);
+    return { vectors, failed, stamp: STAMP };
   };
 }
 
@@ -80,7 +99,9 @@ function setup() {
   const db = new FakeDb();
   const store = new FakeStore();
   const embedder = new FakeEmbedder();
-  const deps = { pg: db, store, embedder } as unknown as ModelSyncDeps;
+  const deps = { pg: db, store, embedder } as unknown as ModelSyncDeps & {
+    store: FakeStore;
+  };
   return { db, store, embedder, deps };
 }
 
@@ -230,8 +251,57 @@ test('a text input is sent to the orchestrator as text', async () => {
     priority: 'low',
     fetch: fetchImpl,
   });
-  const result = await e.embed([{ id: '5', text: 'Name: Model 5' }]);
+  const stamps: ModelStamp[] = [];
+  const result = await e.embed([{ id: '5', text: 'Name: Model 5' }], {
+    acceptStamp: async (stamp) => void stamps.push(stamp),
+  });
+  // The model check sees a text step's profile where the site's query path reads it.
+  expect(stamps).toEqual([STAMP]);
   expect(body!.steps[0].input).toMatchObject({ text: 'Name: Model 5' });
   expect(body!.steps[0].input).not.toHaveProperty('imageUrl');
   expect(result.vectors.get(5)).toEqual(VECTOR);
+});
+
+describe('review fixes', () => {
+  test('a re-embed that fails still moves the payload, and keeps the old hash so it retries', async () => {
+    const { db, store, embedder, deps } = setup();
+    db.rows.set(1, model(1));
+    await syncModelIds([1], deps);
+    const oldHash = store.points.get(1)!.payload.docHash;
+
+    db.rows.set(1, model(1, { description: 'now explicit', nsfwLevel: 16 }));
+    embedder.failIds.add('1');
+    expect(await syncModelIds([1], deps)).toMatchObject({ embedded: 0, failed: 1 });
+    // A stale nsfwLevel would let a browsing filter match what it must not.
+    expect(store.points.get(1)!.payload).toMatchObject({ nsfwLevel: [16], docHash: oldHash });
+
+    embedder.failIds.clear();
+    expect(await syncModelIds([1], deps)).toMatchObject({ embedded: 1 });
+    expect(store.points.get(1)!.payload.docHash).not.toBe(oldHash);
+  });
+
+  test('a lone surrogate or NUL reference becomes U+FFFD, not invalid JSON', () => {
+    expect(cleanHtml('a&#xD800;b&#0;c')).toBe('a\ufffdb\ufffdc');
+  });
+
+  test('table cells and lists are spaced; a script cut short by truncation is dropped', () => {
+    expect(cleanHtml('<td>foo</td><td>bar</td><h4>baz</h4><!-- x > y -->q')).toBe('foo bar baz q');
+    expect(cleanHtml('kept <script>var leaked = 1')).toBe('kept');
+  });
+
+  test('the backfill walks every id once, deletes points of hard-deleted models, and resumes', async () => {
+    const { db, store, deps } = setup();
+    for (const id of [2, 3, 5, 8, 9]) db.rows.set(id, model(id));
+    db.extraIds.add(7); // a draft: a row, not eligible
+    // A model that had a point, then was hard-deleted: no row at all.
+    store.points.set(6, { id: 6, vector: [6], payload: {} as ModelPayload });
+
+    const first = await backfillModels({ from: 0, to: 10, page: 2, limit: 3 }, deps);
+    expect(first).toMatchObject({ complete: false, next: 5 });
+    expect([...store.points.keys()].sort()).toEqual([5, 8, 9]);
+
+    const rest = await backfillModels({ from: 0, to: first.next, page: 2 }, deps);
+    expect(rest.complete).toBe(true);
+    expect([...store.points.keys()].sort()).toEqual([2, 3, 5, 8, 9]);
+  });
 });

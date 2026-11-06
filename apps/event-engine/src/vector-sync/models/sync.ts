@@ -24,6 +24,8 @@ export type ModelSyncStats = {
   failed: number;
   /** Models that needed a vector while embedding was off. */
   embedOff: number;
+  /** Still edited after the last round; the next sync of the id re-embeds them. */
+  stale: number;
 };
 
 export const emptyModelStats = (): ModelSyncStats => ({
@@ -33,6 +35,7 @@ export const emptyModelStats = (): ModelSyncStats => ({
   deleted: 0,
   failed: 0,
   embedOff: 0,
+  stale: 0,
 });
 
 /** A model edited while its vector was being made is synced again, at most this many times. */
@@ -49,6 +52,7 @@ export async function syncModelIds(ids: number[], deps: ModelSyncDeps): Promise<
   for (let round = 0; pending.length && round < MAX_ROUNDS; round++) {
     pending = await syncRound(pending, deps, stats, round === 0);
   }
+  stats.stale = pending.length;
   return stats;
 }
 
@@ -69,8 +73,16 @@ async function syncRound(
   const update = new Map<number, ModelPayload>();
   const inputs: EmbedInput[] = [];
   for (const [id, payload] of docs) {
-    if (points.get(id)?.docHash === payload.docHash) update.set(id, payload);
-    else inputs.push({ id: String(id), text: payload.search_text });
+    const stored = points.get(id);
+    if (stored?.docHash === payload.docHash) {
+      update.set(id, payload);
+      continue;
+    }
+    inputs.push({ id: String(id), text: payload.search_text });
+    // Until the re-embed lands, the old vector serves with the current payload: a stale nsfwLevel
+    // would let filters match what they must not. The old hash stays, so a failed re-embed is
+    // retried by the next sync.
+    if (stored) update.set(id, { ...payload, docHash: stored.docHash! });
   }
   stats.deleted += remove.length;
   stats.updated += update.size;

@@ -84,12 +84,3 @@ export async function getModelDocs(
   }
   return docs;
 }
-
-/** Model ids with lo <= id < hi, eligible or not, newest first. */
-export async function modelIdsInRange(pg: Pick<Pool, 'query'>, lo: number, hi: number) {
-  const { rows } = await pg.query<{ id: number }>(
-    `SELECT id FROM "Model" WHERE id >= $1 AND id < $2 ORDER BY id DESC`,
-    [lo, hi]
-  );
-  return rows.map((r) => r.id);
-}
