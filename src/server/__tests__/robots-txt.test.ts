@@ -130,10 +130,10 @@ const PROFILE_TABS = `Disallow: /user/*/storylines
 Disallow: /user/*/sticker-book
 Disallow: /user/*/comics
 Disallow: /user/*/3d-models
-Disallow: /user/*/collections
 Disallow: /user/*/articles
 Disallow: /user/*/followers
 Disallow: /user/*/following`;
+const IMAGE_DETAIL = `Disallow: /images/`;
 
 const EXPECTED_ROBOTS_TXT = `# AI training crawlers — same rules as *, plus a crawl delay
 User-agent: GPTBot
@@ -145,6 +145,7 @@ ${LOGIN}
 ${ADID}
 ${QUERY}
 ${PROFILE_TABS}
+${IMAGE_DETAIL}
 
 # *
 User-agent: *
@@ -162,6 +163,9 @@ ${QUERY}
 
 # Low-value profile tabs — the items they list stay crawlable at their own URLs
 ${PROFILE_TABS}
+
+# Image detail pages — noindex on every domain, so a crawl only costs a render
+${IMAGE_DETAIL}
 
 # Host
 Host: https://civitai.test
@@ -225,11 +229,10 @@ describe('robots.txt', () => {
         '/user/alice/sticker-book',
         '/user/alice/comics',
         '/user/alice/3d-models',
-        '/user/alice/collections',
         '/user/alice/articles',
         '/user/alice/followers',
         '/user/alice/following',
-        '/user/alice/collections?sort=Newest',
+        '/user/alice/comics?sort=Newest',
       ])
         expect(isDisallowed(rules, path), `${group.agents.join(',')} ${path}`).toBe(true);
 
@@ -241,10 +244,25 @@ describe('robots.txt', () => {
         '/user/alice/videos',
         '/user/alice/posts',
         '/user/alice/achievements',
+        '/user/alice/collections',
+        '/user/alice/collections?sort=Newest',
         '/articles/123/some-article',
         '/collections/123',
         '/comics/123',
       ])
+        expect(isDisallowed(rules, path), `${group.agents.join(',')} ${path}`).toBe(false);
+    }
+  });
+
+  it('disallows image detail pages and keeps the image index crawlable', async () => {
+    const { ai, star } = await groups();
+
+    for (const group of [ai!, star!]) {
+      const rules = accessRules(group);
+      for (const path of ['/images/123', '/images/123?x=1'])
+        expect(isDisallowed(rules, path), `${group.agents.join(',')} ${path}`).toBe(true);
+
+      for (const path of ['/images', '/images?sort=Newest', '/user/alice/images'])
         expect(isDisallowed(rules, path), `${group.agents.join(',')} ${path}`).toBe(false);
     }
   });
