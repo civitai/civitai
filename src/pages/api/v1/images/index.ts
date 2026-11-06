@@ -160,7 +160,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   // this metric exists to measure. (Also the correct slot for the bulkhead merge:
   // the #2428 acquire goes immediately above this, so a 503-rejected request is
   // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
-  let endTimer: (() => void) | undefined;
+  let endTimer: ReturnType<typeof requestDurationSeconds.startTimer> | undefined;
 
   let releaseSlot: (() => void) | undefined;
   try {
