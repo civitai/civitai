@@ -222,18 +222,18 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   // Style filtering needs the parser. Without it the `style` attribute would pass raw, so the
   // alignment blocks lose theirs rather than gain a way past the property allowlist.
   const parsesStyles = options.parseStyleAttributes !== false;
-  const allowedAttributes = parsesStyles
-    ? options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES
-    : Object.fromEntries(
-        Object.entries(options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES).map(
-          ([tag, attrs]) => [
+  const suppliedAttributes = options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES;
+  const allowedAttributes =
+    parsesStyles || typeof suppliedAttributes !== 'object'
+      ? suppliedAttributes
+      : Object.fromEntries(
+          Object.entries(suppliedAttributes).map(([tag, attrs]) => [
             tag,
             TEXT_ALIGN_TAGS.includes(tag) && Array.isArray(attrs)
               ? attrs.filter((attr) => attr !== 'style')
               : attrs,
-          ]
-        )
-      );
+          ])
+        );
 
   const stripBlurbMarker: Transformer = (tagName, attribs) => {
     const supplied = transformTags?.div;

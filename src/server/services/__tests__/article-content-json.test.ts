@@ -1,6 +1,7 @@
 import { generateHTML, generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 // `upsertArticleInput.content` runs through sanitize-html, which only strips markup — a JSON
 // body carries no tags and survives byte-identical. So anything here is storable in
@@ -56,5 +57,13 @@ describe('article content is interpreted as HTML, never as JSON', () => {
     const doc = generateJSON('<p>hi</p>', tiptapExtensions);
 
     expect(generateHTML(doc, tiptapExtensions)).not.toContain('text-align');
+  });
+
+  it('keeps a centered paragraph through the save sanitizer, generateJSON and back', () => {
+    const saved = sanitizeHtml('<p style="text-align: center; position: fixed">hi</p>');
+    const html = generateHTML(generateJSON(saved, tiptapExtensions), tiptapExtensions);
+
+    expect(html).toContain('text-align: center');
+    expect(html).not.toContain('position');
   });
 });

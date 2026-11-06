@@ -62,7 +62,9 @@ describe('text alignment control', () => {
 
     await userEvent.click(page.getByRole('button', { name: 'Text alignment: Right' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Left' }));
-    await expect.poll(() => textAlignOf('.ProseMirror p')).toBe('start');
+    await expect
+      .element(page.getByRole('button', { name: 'Text alignment: Left' }))
+      .toBeInTheDocument();
     expect(document.querySelector('.ProseMirror p')?.getAttribute('style')).toBeNull();
   });
 
