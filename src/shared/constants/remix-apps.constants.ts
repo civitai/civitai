@@ -34,7 +34,8 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'camera',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Turn this image into a realistic photograph, keeping the subject and composition.',
+    prompt:
+      "Turn this image into a live-action photograph of the real person (or the real animal or object) shown, in the same outfit, pose and setting, as if shot on a DSLR in natural light: real skin, hair, fabric and materials, and real surroundings. Nothing may look drawn, painted or rendered, with no line art, no cel shading and no glossy anime eyes. Keep the pose, outfit and composition. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
   },
   {
@@ -43,7 +44,8 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'toy',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Turn the subject into a collectible toy figure in its packaging box, product photo.',
+    prompt:
+      "Turn the subject into a collectible toy figure in its packaging box, product photo. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
   },
   {
@@ -52,7 +54,8 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'grid',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Redraw this image as detailed 16-bit pixel art, keeping the composition.',
+    prompt:
+      "Redraw this image as true low-resolution pixel art, as if drawn on a 160 by 240 pixel grid and scaled up with nearest-neighbor: large, clearly visible square pixels, hard stair-stepped edges, no anti-aliasing or smooth gradients, and a limited palette of about 16 flat colors with simple dithering. Keep the subject, pose and composition. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
   },
   {
@@ -61,7 +64,8 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'pencil',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Redraw this image as a detailed graphite pencil sketch on paper.',
+    prompt:
+      "Redraw this image as a detailed graphite pencil sketch on paper. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
   },
   {
@@ -70,7 +74,8 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     icon: 'clay',
     output: 'image',
     engine: DEFAULT_ENGINE,
-    prompt: 'Recreate this image as a stop-motion claymation scene with plasticine figures.',
+    prompt:
+      "Recreate this image as a stop-motion claymation scene with plasticine figures. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
   },
 ];

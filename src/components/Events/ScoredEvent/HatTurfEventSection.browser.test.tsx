@@ -83,6 +83,47 @@ describe('Hat Turf on the event page', () => {
     expect(h.mutate).toHaveBeenCalledWith({ event: 'birthday2026', optedIn: false });
   });
 
+  const stats = () => section()!.querySelector('[data-testid="hat-turf-section-stats"]');
+  const notice = () => section()!.querySelector('[data-testid="hat-turf-catch-up"]');
+  const joinedWith = (extra: object) => {
+    h.stock = { available: 3, optedIn: true, mode: 'live', ...extra } as typeof h.stock;
+  };
+
+  test('joined: the refill as a duration, the caps, and a trailing team\u2019s notice', async () => {
+    joinedWith({ perHour: 15, cap: 30, creditedPlayers: 6, multiplier: 1.5 });
+    await render('blue');
+    await vi.waitFor(() => expect(stats()).not.toBeNull());
+    const tile = (key: string) =>
+      section()!.querySelector(`[data-testid="hat-turf-stat-${key}"]`)!.textContent;
+    expect(tile('refill')).toBe('4 minHat refill');
+    expect(tile('cap')).toBe('30Hat cap');
+    expect(tile('scoring')).toBe('6Scoring cap');
+    expect(notice()!.textContent).toBe(
+      'Your team is behind: hats come 1.5\u00d7 faster and you can hold more.'
+    );
+  });
+
+  test('joined and leading: the slower notice', async () => {
+    joinedWith({ perHour: 3.75, cap: 15, creditedPlayers: 6, multiplier: 0.75 });
+    await render('blue');
+    await vi.waitFor(() => expect(stats()).not.toBeNull());
+    expect(notice()!.textContent).toBe('Your team leads: hats come slower (0.75\u00d7).');
+  });
+
+  test('at 1x there is no notice', async () => {
+    joinedWith({ perHour: 5, cap: 20, creditedPlayers: 6, multiplier: 1 });
+    await render('blue');
+    await vi.waitFor(() => expect(stats()).not.toBeNull());
+    expect(notice()).toBeNull();
+  });
+
+  test('not joined: the stats stay hidden', async () => {
+    h.stock = { available: 3, optedIn: false, mode: 'live', perHour: 5, cap: 20 } as typeof h.stock;
+    await render('blue');
+    await vi.waitFor(() => expect(section()).not.toBeNull());
+    expect(stats()).toBeNull();
+  });
+
   test('the art shows with no video, and no play button', async () => {
     await render('blue', '');
     await vi.waitFor(() => expect(section()).not.toBeNull());

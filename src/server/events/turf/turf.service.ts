@@ -212,6 +212,8 @@ export async function getTurfStock(eventName: string, userId: number, now = new 
   const { stock: _, ...supply } = turfSupplyAt(event, row, now, multiplier);
   return {
     ...supply,
+    /** The team's catch-up now: above 1 a trailing team refills faster and holds more, below 1 a leading one slower. */
+    multiplier,
     mode: event.turf.mode,
     optedIn: !!user?.optedIn,
     /** Joined once and then left: they rejoin from the button, unprompted. */
