@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
@@ -19,6 +20,15 @@ const assertCanPlace = vi.fn();
 // placement-reads.kysely-parity.test.ts.
 const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
 vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
 // `reservedFreeSlots` is deliberately NOT stubbed: it is the predicate the claim
 // decides on, and a double would let the count-under-lock be tested against a
 // shape the real query does not have.
@@ -123,6 +133,21 @@ describe('createFreePlacement', () => {
     // query is `expiresAt <= now()`, which NULL never satisfies.
     expect(written.expiresAt).toBeInstanceOf(Date);
     expect(written.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(written).not.toHaveProperty('track');
+  });
+
+  it('stores a moving sticker’s track beside its data', async () => {
+    const track = { v: 1, ms: 100, x: [[0, 0.2]], y: [[0, 0.5]], s: [[0, 0.1]], r: [[0, 0]] };
+    await createFreePlacement({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { cosmeticId: 5 },
+      track,
+    });
+
+    expect(placementCreate.mock.calls[0][0].data.track).toEqual(track);
   });
 
   // The owner is taken from the space this function resolved, from the target it

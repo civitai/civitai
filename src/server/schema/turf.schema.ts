@@ -1,15 +1,21 @@
 import * as z from 'zod';
 import { stickerPlacementDataSchema } from '~/server/schema/placement.schema';
+import {
+  STICKER_PLACEMENT_DEFAULT_MAX_SCALE,
+  STICKER_PLACEMENT_MIN_SCALE,
+} from '~/shared/utils/sticker-placement';
 
-// Where a hat sticker sits on the image: a regular sticker's geometry, without its comment or
-// opacity (a turf sticker's opacity says whether a hat protects the image).
-export const turfStickerDataSchema = stickerPlacementDataSchema.pick({
-  x: true,
-  y: true,
-  scale: true,
-  rotation: true,
-  flip: true,
-});
+/** A hat is free and can go on anyone's picture, so it gets the size a sticker gets by default. */
+export const HAT_MAX_SCALE = STICKER_PLACEMENT_DEFAULT_MAX_SCALE;
+
+// Where a hat sticker sits on the image: a regular sticker's pose, without its comment.
+// Hats are always opaque (a product decision), so only full opacity is accepted.
+export const turfStickerDataSchema = stickerPlacementDataSchema
+  .pick({ x: true, y: true, rotation: true, flip: true })
+  .extend({
+    scale: z.number().finite().min(STICKER_PLACEMENT_MIN_SCALE).max(HAT_MAX_SCALE),
+    opacity: z.literal(1).optional(),
+  });
 export type TurfStickerData = z.infer<typeof turfStickerDataSchema>;
 
 const eventName = z.string().min(1).max(64);
@@ -62,3 +68,10 @@ export const watchTurfImagesSchema = z.object({
   event: eventName,
   imageIds: z.array(z.number().int().positive()).max(50),
 });
+
+/** A sticker's hat art: the cosmetic's image, and where its visible pixels sit (fit canvas, bounds). */
+export type TurfHatArt = {
+  url: string;
+  canvas?: [number, number] | null;
+  bounds?: [number, number, number, number] | null;
+};

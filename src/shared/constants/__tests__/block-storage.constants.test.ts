@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  APP_STORAGE_ALL_FEATURES_ON,
   APP_STORAGE_ENABLED_FEATURES,
   appStorageScopeErrors,
+  isCollectionRegistryPublic,
   parseManifestStorage,
 } from '../block-storage.constants';
 
@@ -24,13 +26,14 @@ const REQUESTS = {
 describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
   // runtime behind it.
-  it('ships with anyone-writes, owner writes, log collections, TTL and per-author write budgets switched off', () => {
+  it('ships with anyone-writes, owner writes, log collections, TTL, per-author write budgets and registry export switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
       anyoneWrites: false,
       ownerWrites: false,
       logCollections: false,
       ttl: false,
       perAuthorWriteBudget: false,
+      registryExport: false,
     });
     expect(Object.isFrozen(APP_STORAGE_ENABLED_FEATURES)).toBe(true);
   });
@@ -43,6 +46,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
     ['logCollections', { visibility: 'private', kind: 'log', maxEntries: 500 }],
     ['ttl', { visibility: 'private', ttlSeconds: 86400 }],
     ['perAuthorWriteBudget', { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 200 }],
+    ['registryExport', { visibility: 'shared', write: 'own', registry: 'public' }],
   ] as const;
 
   // Updating the ledger above for a new switch key is not enough: the key must also get a
@@ -59,6 +63,43 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
     expect(
       parseManifestStorage({ storage }, { ...APP_STORAGE_ENABLED_FEATURES, [feature]: true }).errors
     ).toEqual([]);
+  });
+});
+
+describe('registry (publishing a collection to registries)', () => {
+  const parse = (decl: Record<string, unknown>) =>
+    parseManifestStorage(
+      { storage: { collections: { notes: decl } } },
+      APP_STORAGE_ALL_FEATURES_ON
+    );
+
+  it('absent: not published', () => {
+    const c = parse({ visibility: 'shared', write: 'own' }).collections.get('notes')!;
+    expect([c.registry, isCollectionRegistryPublic(c)]).toEqual([undefined, false]);
+  });
+
+  it('"public" on a shared collection: published', () => {
+    const c = parse({ visibility: 'shared', write: 'own', registry: 'public' }).collections.get(
+      'notes'
+    )!;
+    expect([c.registry, isCollectionRegistryPublic(c)]).toEqual(['public', true]);
+  });
+
+  it.each([
+    [
+      { visibility: 'private', registry: 'public' },
+      'storage.collections.notes.registry applies to shared collections only',
+    ],
+    [
+      { visibility: 'shared', write: 'own', registry: 'everyone' },
+      'storage.collections.notes.registry must be one of public',
+    ],
+    [
+      { visibility: 'shared', write: 'own', registry: true },
+      'storage.collections.notes.registry must be one of public',
+    ],
+  ])('refuses %o', (decl, message) => {
+    expect(parse(decl).errors).toEqual([message]);
   });
 });
 

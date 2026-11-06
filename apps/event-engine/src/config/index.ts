@@ -80,7 +80,10 @@ export const config = {
     // Streamed by the connector but not consumed by the metrics watcher (only by
     // vector-sync). Adding a table here changes the Debezium publication, and the
     // watcher recreates the connector on startup, so each entry is opt-in.
-    cdcOnlyTables: process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : [],
+    cdcOnlyTables: [
+      ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
+      ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
+    ],
 
     // ClickHouse topics streamed directly to Kafka
     clickhouseTopics: [
@@ -149,6 +152,7 @@ export const config = {
   // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
   vectorSync: {
     consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
+    modelConsumerGroup: process.env.VECTOR_MODEL_CONSUMER_GROUP ?? 'model-vector-sync',
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
@@ -162,6 +166,9 @@ export const config = {
     // collection while the old one keeps serving.
     collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
     alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Semantic model search, the same way: the search service reads the alias.
+    modelCollection: process.env.VECTOR_MODEL_COLLECTION ?? 'models_wemm2b_256_v1',
+    modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

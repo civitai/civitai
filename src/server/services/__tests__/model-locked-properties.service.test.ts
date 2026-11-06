@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as HoldVerdict from '~/server/services/text-scan/actions/hold-restricted-verdict';
 
 // Unit tests for upsertModel's lockedProperties enforcement — locks are read from the
 // stored row, never from the client payload. model.service.ts has a very large import
@@ -101,6 +102,16 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
 }));
+const { mockHoldVerdict } = vi.hoisted(() => ({
+  mockHoldVerdict: vi.fn(async (..._args: unknown[]) => true),
+}));
+vi.mock('~/server/services/text-scan/actions/hold-restricted-verdict', async (importOriginal) => {
+  const actual = await importOriginal<typeof HoldVerdict>();
+  mockHoldVerdict.mockImplementation((...args) =>
+    actual.holdRestrictedVerdict(...(args as Parameters<typeof actual.holdRestrictedVerdict>))
+  );
+  return { ...actual, holdRestrictedVerdict: mockHoldVerdict };
+});
 
 import {
   MINOR_LOCKED_PROPERTIES,
@@ -110,6 +121,7 @@ import {
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { autoNsfwTextHash } from '~/server/services/auto-nsfw';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -339,7 +351,10 @@ describe('upsertModel — ownership guard', () => {
 describe('upsertModel — profanity lock', () => {
   it('marks the model nsfw and locks nsfw for a non-moderator', async () => {
     mockStored({ lockedProperties: [] });
-    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    // Only the name matches, so the lock is attributed to it alone.
+    mockEvaluateContent.mockImplementation((text: string) =>
+      text.includes('Renamed') ? profaneEvaluation : cleanEvaluation
+    );
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
 
@@ -349,7 +364,17 @@ describe('upsertModel — profanity lock', () => {
     expect(data.meta).toEqual(
       expect.objectContaining({
         profanityMatches: ['badword'],
-        systemNsfwLock: { source: 'profanity-filter', at: expect.any(String) },
+        profanityEvaluation: {
+          reason: profaneEvaluation.reason,
+          metrics: profaneEvaluation.metrics,
+        },
+        systemNsfwLock: {
+          source: 'profanity-filter',
+          at: expect.any(String),
+          fields: ['name'],
+          category: 'mature-language',
+          textHash: autoNsfwTextHash('Renamed Model', 'A description'),
+        },
       })
     );
   });
@@ -439,6 +464,67 @@ describe('upsertModel — system nsfw lock marker', () => {
   });
 });
 
+describe('upsertModel — restricted nsfw verdict lead', () => {
+  const lead = { source: 'text-scan', at: '2026-11-04T00:00:00.000Z', restriction: 'minor' };
+  const ruling = { ruling: 'keep', at: '2026-11-04T01:00:00.000Z', by: MODERATOR_ID };
+
+  // Only the lead's ruling clears it, so a moderator's model form is held to it as well.
+  it.each([false, true])(
+    'keeps the stored lead and rulings when the client sends them cleared (moderator %s)',
+    async (isModerator) => {
+      mockStored({
+        minor: true,
+        sfwOnly: true,
+        meta: {
+          restrictedNsfwVerdict: lead,
+          restrictedNsfwVerdictRulings: [ruling],
+          restrictedNsfwVerdictDormant: lead,
+        },
+      });
+
+      await upsert({
+        id: MODEL_ID,
+        userId: isModerator ? MODERATOR_ID : OWNER_ID,
+        isModerator,
+        name: 'Cleaned',
+        meta: {
+          restrictedNsfwVerdict: null,
+          restrictedNsfwVerdictRulings: [],
+          restrictedNsfwVerdictDormant: null,
+        },
+      } as never);
+
+      expect(updateData().meta).toEqual(
+        expect.objectContaining({
+          restrictedNsfwVerdict: lead,
+          restrictedNsfwVerdictRulings: [ruling],
+          restrictedNsfwVerdictDormant: lead,
+        })
+      );
+    }
+  );
+
+  it.each([false, true])('ignores a lead the client sends (moderator %s)', async (isModerator) => {
+    mockStored({ minor: true, sfwOnly: true, meta: null });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: isModerator ? MODERATOR_ID : OWNER_ID,
+      isModerator,
+      name: 'Cleaned',
+      meta: {
+        restrictedNsfwVerdict: lead,
+        restrictedNsfwVerdictRulings: [ruling],
+        restrictedNsfwVerdictDormant: lead,
+      },
+    } as never);
+
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdict');
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictDormant');
+    expect(updateData().meta ?? {}).not.toHaveProperty('restrictedNsfwVerdictRulings');
+  });
+});
+
 describe('upsertModel — profanity lock against a lock that landed after the read', () => {
   it("neither rewrites the lock nor marks it the system's", async () => {
     mockDbWrite.model.findUnique
@@ -453,6 +539,85 @@ describe('upsertModel — profanity lock against a lock that landed after the re
     expect(data).not.toHaveProperty('nsfw');
     expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
     expect(data.meta).not.toHaveProperty('systemNsfwLock');
+  });
+});
+
+describe('upsertModel — the returned row', () => {
+  it('writes the profanity detection but does not return it to the owner', async () => {
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    const result = await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(result?.meta).not.toHaveProperty('profanityMatches');
+    expect(result?.meta).not.toHaveProperty('profanityEvaluation');
+  });
+
+  it('does not return the detection from a create either', async () => {
+    mockDbWrite.model.create.mockResolvedValueOnce({
+      id: MODEL_ID,
+      nsfwLevel: 1,
+      meta: { profanityMatches: ['badword'], profanityEvaluation: { reason: 'test reason' } },
+      availability: 'Public',
+    });
+
+    const result = await upsert({ userId: OWNER_ID });
+
+    expect(result?.meta).not.toHaveProperty('profanityMatches');
+    expect(result?.meta).not.toHaveProperty('profanityEvaluation');
+  });
+});
+
+// A Private model stays SFW until it leaves Private: the profanity detection waits as a lead.
+describe('upsertModel — profanity on a Private model', () => {
+  // Its own object, so a hold written outside the save's transaction does not pass for one inside it.
+  const tx = new Proxy(mockDbWrite, {});
+  beforeEach(() => {
+    mockDbWrite.$transaction.mockImplementation((async (fn: (t: typeof tx) => unknown) =>
+      fn(tx)) as never);
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+  });
+  afterEach(() => {
+    mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+      typeof arg === 'function' ? arg(mockDbWrite) : Promise.all(arg as unknown[])) as never);
+  });
+
+  it('keeps the model SFW and holds the detection as a lead, in the transaction', async () => {
+    mockStored({ availability: 'Private' } as Partial<typeof storedModel>);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    const data = updateData();
+    expect(data.nsfw).toBeUndefined();
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(data.meta).not.toHaveProperty('systemNsfwLock');
+    expect(mockHoldVerdict).toHaveBeenCalledWith(tx, MODEL_ID, 'profanity-filter', {
+      privateOnly: true,
+    });
+  });
+
+  it('drops the rating and holds the lead when the model turned Private after the read', async () => {
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...storedModel })
+      .mockResolvedValue({ ...storedModel, availability: 'Private' });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().nsfw).toBeUndefined();
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+    expect(mockHoldVerdict).toHaveBeenCalledWith(tx, MODEL_ID, 'profanity-filter', {
+      privateOnly: true,
+    });
+  });
+
+  it('holds no lead on a public model, which takes the rating', async () => {
+    mockStored({ availability: 'Public' } as Partial<typeof storedModel>);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().nsfw).toBe(true);
+    expect(mockHoldVerdict).not.toHaveBeenCalled();
   });
 });
 
@@ -958,6 +1123,82 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(updateData().meta).toEqual(
       expect.objectContaining({ ownerFlagOverride: expect.objectContaining({ flags: ['poi'] }) })
     );
+  });
+
+  describe("over the scan's nsfw lock", () => {
+    const scanLock = { source: 'text-scan', at: '2026-11-01T00:00:00.000Z' };
+
+    it.each([
+      ['minor', { minor: true }, ['nsfw', 'minor', 'sfwOnly']],
+      ['poi', { poi: true, minor: false }, ['nsfw', 'poi', 'sfwOnly']],
+    ] as const)(
+      'holds the scan verdict as a %s lead and leaves the rest as the flag sets it',
+      async (restriction, flag, locks) => {
+        mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: scanLock } });
+
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, ...flag, sfwOnly: false, nsfw: false });
+
+        expect(updateData()).toEqual(
+          expect.objectContaining({ ...flag, nsfw: false, sfwOnly: true, lockedProperties: locks })
+        );
+        expect(updateData().meta).toEqual(
+          expect.objectContaining({
+            systemNsfwLock: scanLock,
+            ownerFlagOverride: expect.objectContaining({ flags: [restriction] }),
+            restrictedNsfwVerdict: { source: 'text-scan', at: scanLock.at, restriction },
+          })
+        );
+        // In the save itself, not a write of its own.
+        expect(mockDbWrite.model.update).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it("writes no lead over a moderator's lock (control)", async () => {
+      mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: null });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
+      expect(updateData().meta).toEqual(
+        expect.objectContaining({ ownerFlagOverride: expect.anything() })
+      );
+      expect(updateData().meta).not.toHaveProperty('restrictedNsfwVerdict');
+    });
+
+    it('keeps a lead already waiting', async () => {
+      const waiting = {
+        source: 'text-scan',
+        at: '2026-10-01T00:00:00.000Z',
+        restriction: 'sfwOnly',
+      };
+      mockStored({
+        nsfw: true,
+        lockedProperties: ['nsfw'],
+        meta: { systemNsfwLock: scanLock, restrictedNsfwVerdict: waiting },
+      });
+      await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });
+      expect((updateData().meta as Record<string, unknown>).restrictedNsfwVerdict).toEqual(waiting);
+    });
+
+    it('takes no lead the owner sends, and the owner cannot strip the one it writes', async () => {
+      mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: scanLock } });
+      await upsert({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        minor: true,
+        sfwOnly: false,
+        nsfw: false,
+        meta: {
+          restrictedNsfwVerdict: {
+            source: 'owner',
+            at: '2000-01-01T00:00:00.000Z',
+            restriction: 'poi',
+          },
+        },
+      } as never);
+      expect((updateData().meta as Record<string, unknown>).restrictedNsfwVerdict).toEqual({
+        source: 'text-scan',
+        at: scanLock.at,
+        restriction: 'minor',
+      });
+    });
   });
 
   // An automated revert of the later flag must know the owner declared it too.

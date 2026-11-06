@@ -216,6 +216,7 @@ export class DebeziumManager {
         'database.dbname': database,
         'database.server.name': 'civitai',
         'table.include.list': DebeziumManager.getConnectorTables().join(','),
+        ...DebeziumManager.getColumnExclusions(),
         'plugin.name': 'pgoutput',
         'publication.name': 'debezium_publication',
         'publication.autocreate.mode': 'filtered',
@@ -262,6 +263,7 @@ export class DebeziumManager {
     // Check if critical configuration has changed
     const criticalFields = [
       'table.include.list',
+      'column.exclude.list',
       'database.hostname',
       'database.port',
       'database.dbname',
@@ -389,6 +391,22 @@ export class DebeziumManager {
   /** Every table the connector streams: the watcher's tables plus the opt-in CDC-only ones. */
   public static getConnectorTables(): string[] {
     return [...config.kafka.monitoredTables, ...config.kafka.cdcOnlyTables];
+  }
+
+  /**
+   * Model text and JSON columns are unbounded, and a record over the producer's size limit fails
+   * the task, which stops every table. Model sync re-reads rows from Postgres and needs only the
+   * keys. Keyed on the flag so a deploy without it leaves the connector config as it was.
+   */
+  public static getColumnExclusions(): Record<string, string> {
+    if (!config.kafka.cdcOnlyTables.includes('public.Model')) return {};
+    const columns = [
+      ...['description', 'sfwDescription', 'meta', 'gallerySettings'].map(c => `public.Model.${c}`),
+      ...['description', 'trainedWords', 'trainingDetails', 'meta', 'settings'].map(
+        c => `public.ModelVersion.${c}`
+      ),
+    ];
+    return { 'column.exclude.list': columns.join(',') };
   }
 
   /**

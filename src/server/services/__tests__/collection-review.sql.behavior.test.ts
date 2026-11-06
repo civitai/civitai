@@ -12,6 +12,7 @@ const STRANGER = 30;
 const OTHER_OWNER = 40;
 const OTHER_MANAGER = 50;
 const ALL_LEVELS = 31;
+const UPLOADER = 60;
 
 let db: PGlite;
 beforeAll(async () => {
@@ -31,14 +32,14 @@ beforeAll(async () => {
     );
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int, status "CollectionItemStatus",
-      "imageId" int, "postId" int, "modelId" int, "articleId" int
+      "imageId" int, "postId" int, "modelId" int, "articleId" int, "addedById" int DEFAULT ${UPLOADER}
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "publishedAt" timestamp(3), availability "Availability" DEFAULT 'Public',
       "nsfwLevel" int DEFAULT 1, metadata jsonb DEFAULT '{}'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "postId" int, "nsfwLevel" int DEFAULT 1, "needsReview" text,
+      id int PRIMARY KEY, "postId" int, "userId" int DEFAULT ${UPLOADER}, "nsfwLevel" int DEFAULT 1, "needsReview" text,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "blockedFor" text,
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
       metadata jsonb DEFAULT '{}', "scanJobs" jsonb DEFAULT '{}', "acceptableMinor" boolean DEFAULT false
@@ -81,7 +82,9 @@ beforeAll(async () => {
 
     INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "nsfwLevelLocked", "acceptableMinor") VALUES
       (15, 100, 1, 'Pending', true, false),   -- rated by a locked rating before its scan finished
-      (16, 100, 1, 'Scanned', false, true);   -- acceptable in a collection, not in the public feeds
+      (16, 100, 1, 'Scanned', false, true),   -- acceptable in a collection, not in the public feeds
+      (17, 100, 0, 'Pending', false, false),  -- not yet rated, added by someone other than its uploader
+      (18, 100, 1, 'Scanned', false, true);   -- acceptableMinor, added by someone other than its uploader
 
     INSERT INTO "Article" VALUES (200, 'Published', now(), 'Scanned', 1), (201, 'Published', now(), 'Pending', 1);
     INSERT INTO "ModelMetric" VALUES (300, 'Published', 1, NULL, 'Public'), (301, 'Published', 1, NULL, 'Private');
@@ -91,6 +94,8 @@ beforeAll(async () => {
       (1, 'REVIEW', 6), (1, 'REVIEW', 7), (1, 'REVIEW', 8), (1, 'ACCEPTED', 9), (2, 'REVIEW', 10),
       (1, 'REJECTED', 11), (1, 'REVIEW', 12), (1, 'REVIEW', 13), (1, 'REVIEW', 14),
       (1, 'REVIEW', 15), (1, 'REVIEW', 16);
+    INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES
+      (1, 'REVIEW', 17, ${OWNER}), (1, 'REVIEW', 18, ${OWNER});
     INSERT INTO "CollectionItem" ("collectionId", status, "postId") VALUES (1, 'REVIEW', 100), (1, 'REVIEW', 101);
     INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201);
     INSERT INTO "CollectionItem" ("collectionId", status, "modelId") VALUES (1, 'REVIEW', 300), (1, 'REVIEW', 301);
@@ -128,6 +133,10 @@ describe('the images a collection reviewer sees before they are rated', () => {
     expect(await visibleTo(STRANGER)).toEqual([]);
   });
 
+  it('does not reach an item someone other than its uploader added', async () => {
+    expect(await visibleTo(OWNER)).not.toContain(17);
+  });
+
   it("does not reach an ACCEPTED item or another collection's items", async () => {
     expect(await visibleTo(OWNER)).not.toContain(9);
     expect(await visibleTo(OWNER)).not.toContain(10);
@@ -156,6 +165,14 @@ describe('the review queue count', () => {
 
   it('counts only the rated images the requesting domain can serve, and the unrated ones', async () => {
     expect(await counted('imageId', 1)).toEqual([1, 2, 15, 16]);
+  });
+
+  it('leaves out unrated and acceptableMinor images someone other than their uploader added', async () => {
+    for (const levels of [ALL_LEVELS, 1]) {
+      const ids = await counted('imageId', levels);
+      expect(ids).not.toContain(17);
+      expect(ids).not.toContain(18);
+    }
   });
 
   it('leaves out posts, articles and models the queue does not show', async () => {

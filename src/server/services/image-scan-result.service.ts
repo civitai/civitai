@@ -36,7 +36,7 @@ export async function isExemptFromAiVerification(
     SELECT (
       EXISTS(SELECT 1 FROM "User" WHERE "profilePictureId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
-      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId} OR "bannerId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty', 'Article'))
     ) AS exempt

@@ -37,7 +37,7 @@ const findManyArg = () =>
     where: Record<string, unknown>;
     take?: number;
     skip?: number;
-    orderBy: { createdAt?: 'asc' | 'desc'; id?: 'asc' | 'desc' }[];
+    orderBy: Record<string, unknown>[];
   };
 
 describe('getCreatorShopReviewQueue', () => {
@@ -53,14 +53,24 @@ describe('getCreatorShopReviewQueue', () => {
     expect(baseInput.sort).toBe('oldest');
   });
 
-  it('orders oldest-first with an id tiebreak', async () => {
-    await getCreatorShopReviewQueue({ ...baseInput, sort: 'oldest' });
+  it('orders pending items by submission, oldest-first, with an id tiebreak', async () => {
+    await getCreatorShopReviewQueue({ ...baseInput, status: 'PendingReview', sort: 'oldest' });
     expect(findManyArg().orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
   });
 
-  it('orders newest-first with an id tiebreak', async () => {
-    await getCreatorShopReviewQueue({ ...baseInput, sort: 'newest' });
+  it('orders pending items newest-first with an id tiebreak', async () => {
+    await getCreatorShopReviewQueue({ ...baseInput, status: 'PendingReview', sort: 'newest' });
     expect(findManyArg().orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+  });
+
+  // An item approved long after it was submitted (a re-review) belongs with this week's approvals.
+  it('orders reviewed items by when they were reviewed', async () => {
+    await getCreatorShopReviewQueue({ ...baseInput, status: 'Published', sort: 'newest' });
+    expect(findManyArg().orderBy).toEqual([
+      { reviewedAt: { sort: 'desc', nulls: 'last' } },
+      { createdAt: 'desc' },
+      { id: 'desc' },
+    ]);
   });
 
   it('pages by skip/take and reports the page count from the total', async () => {

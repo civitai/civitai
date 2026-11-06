@@ -35,7 +35,18 @@ The implementation followed the plan; the notable specifics and deviations:
 
 - **`canGenerate` is not gated** — `resolveCanGenerateForVersions` / `getResourceCanGenerate` already enforce the _operator_ ecosystem gates but **not** the self-hosted toggle, so "Create" buttons on model pages/cards stay enabled site-wide even when self-hosted is off. Enforcement is generator-form + submit-time only. (Deliberately scoped out to avoid touching the shared canGenerate path.)
 - **Propagation** — `getGenerationConfig` is `staleTime: Infinity` and only invalidated on the toggling mod's own client, so already-open generator sessions don't reflect a toggle change until reload.
-- **Default ecosystem** — on fresh load with self-hosted disabled, the form can still land on a disabled default (the node _factory_ computes `defaultValue` and doesn't re-run on async `ext`); the alert + hidden submit cover it, the user switches models manually.
+
+### Unavailable ecosystem on load (resolved)
+
+The gates (this toggle and gate rules) arrive with `getGenerationConfig`, after the form store is built. When they first land, the form corrects the selected ecosystem **once, for this session only**:
+
+- If the current value (the default, a stored choice, or one remixed or deep-linked in before the config loaded) is one the viewer can't use, the form clears it in memory and the field falls to its default: the preferred default when usable, else the first usable ecosystem in workflow order (`getEcosystemField`). "Can't use" is `ecosystemRefusal`, the predicate the field's output refine applies.
+- The stored choice is **not** overwritten. The store has no non-persisting write (every save is its whole durable intent), so `preservingStorage` keeps writing the stored entry back until the user picks an ecosystem in that slot themselves. Once the gate lifts, the next session loads the user's own model again.
+- An available value is never touched. When nothing is usable, the state is left alone for the alert to explain.
+- There is no ongoing re-pick. After load, a `disabled` ecosystem picked in the picker, remixed or deep-linked stays selected, and the form shows the "currently unavailable" alert and blocks generation, as below.
+- The cost quote (`WhatIfProvider`) waits for the config query to settle, so it never quotes a selection that only looked available.
+
+Code: `src/components/form-graph/generation/ecosystem-repick.ts`, run from `BaseGenerationForm`.
 
 ## The crux: what "self-hosted" means in code
 
@@ -149,7 +160,7 @@ The disabled list flows the **same path `gatedEcosystems` already takes**, but w
 
    - Add `disabledEcosystems` to the node's `meta` (the resolved list intersected with `compatibleEcosystems`), plus the reason/`selfHostedMode` (or a pre-derived badge label) so the picker can label the badge without re-reading config.
    - Add a `.refine()` on the node's `output` schema rejecting a selected disabled ecosystem (`message: 'Ecosystem is currently unavailable'`), mirroring the gated refine beside it. **This is where validation lives** — a disabled selection makes the graph invalid, which is what blocks submission.
-   - Do **not** add it to the `input` transform's drop logic — we want the disabled value to stay selected so the alert + disabled state show, rather than silently snapping to a default.
+   - Do **not** add it to the `input` transform's drop logic — we want the disabled value to stay selected so the alert + disabled state show, rather than silently snapping to a default. _(Still the case for a disabled value chosen after load. A value that is already unavailable when the gates first load is corrected for that session only — see "Unavailable ecosystem on load".)_
 
 3. **`BaseModelInput`** (`src/components/generation_v2/inputs/BaseModelInput.tsx`): add a `disabledEcosystems` prop fed from `meta?.disabledEcosystems` (`GenerationForm.tsx:470`). Render those items present-but-disabled, distinct from the `applyExcludeFilter` _removal_ used for gated items (line 624). The item rows are `UnstyledButton`s rendered in **two places** — the recent list (~line 344) and the grouped list (~line 400) — so factor a small per-item renderer or apply the treatment in both. For a disabled item:
 

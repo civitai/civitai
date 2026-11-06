@@ -245,24 +245,38 @@ afterEach(() => {
 });
 
 describe('image detail on a phone', () => {
-  test.each([0, 34])(
-    'the collapsed sheet leaves the controls under the image uncovered (bottom inset %ipx)',
-    async (inset) => {
-      renderDetail(inset);
-      await vi.waitFor(() => expect(q('hat-controls')).not.toBeNull());
+  const shown = (id: string) =>
+    [...document.body.querySelectorAll(`[data-testid="${id}"]`)].filter((el) =>
+      el.checkVisibility()
+    );
+
+  // Hat Turf in the reaction row squeezed the reaction counts on a phone: the badge goes to the top
+  // toolbar and the hat button to the bottom strip, by Save and Tip.
+  test.each([false, true])(
+    'the badge shows once, in the top toolbar (sheet expanded: %s)',
+    async (active) => {
+      ctx.active = active;
+      renderDetail(0);
       await vi.waitFor(() => expect(sheet()).not.toBeNull());
-      const controls = q('hat-controls')!.getBoundingClientRect();
-      const strip = sheet()!.getBoundingClientRect();
-      expect(strip.top).toBeLessThan(PHONE.height);
-      expect(controls.bottom).toBeLessThanOrEqual(strip.top);
+      const badges = shown('hat-badge');
+      expect(badges).toHaveLength(1);
+      expect(sheet()!.contains(badges[0])).toBe(false);
+      // The toolbar is the first thing under the page's top edge, above the picture.
+      expect(badges[0].getBoundingClientRect().top).toBeLessThan(PHONE.height / 4);
     }
   );
 
-  test('the expanded sheet has no Hat Turf badge: the one on the image is the control', async () => {
-    ctx.active = true;
-    renderDetail(0);
-    await vi.waitFor(() => expect(sheet()).not.toBeNull());
-    expect(q('hat-controls')).not.toBeNull();
-    expect(sheet()!.querySelector('[data-testid="hat-badge"]')).toBeNull();
-  });
+  test.each([false, true])(
+    'the hat button shows once, in the bottom strip after Save (sheet expanded: %s)',
+    async (active) => {
+      ctx.active = active;
+      renderDetail(0);
+      await vi.waitFor(() => expect(sheet()).not.toBeNull());
+      const hats = shown('hat-controls');
+      expect(hats).toHaveLength(1);
+      expect(sheet()!.contains(hats[0])).toBe(true);
+      const save = [...sheet()!.querySelectorAll('button')].find((b) => b.textContent === 'Save')!;
+      expect(save.compareDocumentPosition(hats[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  );
 });

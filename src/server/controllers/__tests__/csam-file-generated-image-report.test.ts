@@ -39,24 +39,41 @@ beforeEach(() => {
 });
 
 describe('fileCsamReport (GeneratedImage)', () => {
-  it('removes the account when the strikes review route is not found', async () => {
-    const fetch = orchestratorAnswers(404);
+  it('reviews the strikes and removes the account', async () => {
+    const fetch = orchestratorAnswers(200);
 
-    await file();
-
+    await expect(file()).resolves.toMatchObject({ strikesReviewFailed: false });
     expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining(`/strikes/review`),
+      expect.stringContaining(`/civitai-${USER}/strikes/review`),
       expect.objectContaining({ method: 'POST' })
     );
     expect(createCsamReport).toHaveBeenCalledTimes(1);
     expect(softDeleteUser).toHaveBeenCalledWith({ id: USER, userId: MOD });
+    // A stalled orchestrator must not hold up the removal.
+    expect(softDeleteUser.mock.invocationCallOrder[0]).toBeLessThan(
+      fetch.mock.invocationCallOrder[0]
+    );
   });
 
-  it('still fails, before removing the account, when the review fails any other way', async () => {
-    orchestratorAnswers(500);
+  it('removes the account when the strikes review route is not found', async () => {
+    orchestratorAnswers(404);
 
-    await expect(file()).rejects.toThrow('500');
+    await expect(file()).resolves.toMatchObject({ strikesReviewFailed: false });
     expect(createCsamReport).toHaveBeenCalledTimes(1);
-    expect(softDeleteUser).not.toHaveBeenCalled();
+    expect(softDeleteUser).toHaveBeenCalledWith({ id: USER, userId: MOD });
+  });
+
+  it.each([
+    ['the orchestrator errors', () => orchestratorAnswers(500)],
+    [
+      'the orchestrator is unreachable',
+      () => vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed')),
+    ],
+  ])('still removes the account, and says the review failed, when %s', async (_, fail) => {
+    fail();
+
+    await expect(file()).resolves.toMatchObject({ strikesReviewFailed: true });
+    expect(createCsamReport).toHaveBeenCalledTimes(1);
+    expect(softDeleteUser).toHaveBeenCalledWith({ id: USER, userId: MOD });
   });
 });

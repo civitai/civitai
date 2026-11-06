@@ -4,6 +4,7 @@ import {
   dealButtons,
   dealEscrowState,
   dealPageState,
+  dealStatusBadge,
   dealQueryError,
   escrowCopy,
   disputeNotice,
@@ -334,5 +335,17 @@ describe('moderator holds', () => {
       disputeNotice({ status: 'Disputed', settled: false, events: [event('Disputed', 'buyer')] })
     ).toMatch(/in dispute/);
     expect(disputeNotice({ status: 'Completed', settled: false, events })).toBeNull();
+  });
+});
+
+describe('deal list status badge', () => {
+  it('shows how a settled dispute ended, not the status it left behind', () => {
+    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: 'Refund' })).toBe('Refunded');
+    expect(dealStatusBadge({ status: 'Completed', disputeResolution: 'Release' })).toBe('Released');
+  });
+
+  it('leaves deals no moderator settled on their status label', () => {
+    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Cancelled');
+    expect(dealStatusBadge({ status: 'Completed' })).toBe('Complete');
   });
 });

@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   stock: { available: 3, optedIn: true, mode: 'live' } as {
     available: number;
     optedIn: boolean;
+    left?: boolean;
+    ownerOff?: boolean;
     mode: string;
     cap?: number;
     nextAt?: Date | null;
@@ -96,7 +98,10 @@ vi.mock('~/components/Signals/SignalsProvider', () => ({
 import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
 import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
-import { HatTurfDetailControls } from '~/components/HatTurf/detail/HatTurfDetailControls';
+import {
+  HatTurfDetailBadge,
+  HatTurfDetailControls,
+} from '~/components/HatTurf/detail/HatTurfDetailControls';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
@@ -137,6 +142,13 @@ function render(ctx: Partial<TurfSummaries> = {}, width = 390) {
     >
       <HatTurfCardProvider>
         <div style={{ width }}>
+          {/* ImageDetail2's action row: Tip is a 36px (`h-9`) badge and the turf badge follows it. */}
+          <div className="flex items-center gap-1" data-testid="action-row">
+            <span className="inline-flex h-9 min-w-9 items-center rounded-full" data-testid="tip">
+              Tip
+            </span>
+            <HatTurfDetailBadge imageId={9} />
+          </div>
           <div style={{ position: 'relative', width, height: 300 }}>
             <img src={LOADABLE_IMAGE_DATA_URI} style={{ width: '100%', height: '100%' }} alt="" />
             <HatTurfDetailLayer imageId={9} />
@@ -176,6 +188,16 @@ beforeEach(() => {
   useHatTurfStore.setState({ cosmeticId: null, showHats: true });
 });
 afterEach(() => cleanup());
+
+/** The sticker editor's commit on the draft hat (the panel has its own "Place hat"). */
+const placeHatButton = () =>
+  vi.waitFor(() => {
+    const button = [...(q('hat-turf-draft')?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === 'Place hat'
+    );
+    if (!button) throw new Error('no Place hat on the draft');
+    return button;
+  });
 
 describe('Hat Turf on image detail', () => {
   test('not joined: the purple invite shows, Join turns turf on', async () => {
@@ -219,6 +241,26 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-detail-closed')).toBeNull();
   });
 
+  // Justin's call: a leaver is not invited again unprompted; the hat button still rejoins.
+  test('left: no invite opens by itself, and pressing the hat opens it', async () => {
+    h.stock = { available: 3, optedIn: false, left: true, mode: 'live' };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(q('hat-turf-detail-invite')).toBeNull();
+    click(q('hat-turf-detail-hat'));
+    await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
+  });
+
+  // Join refuses a user who keeps Hat Turf off their images, so inviting them is a dead end.
+  test('owner-off, never joined: no invite opens by itself', async () => {
+    h.stock = { available: 3, optedIn: false, ownerOff: true, mode: 'live' };
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 300));
+    expect(q('hat-turf-detail-invite')).toBeNull();
+  });
+
   test('Not now closes the invite and records the dismissal', async () => {
     h.stock = { available: 3, optedIn: false, mode: 'live' };
     render();
@@ -247,12 +289,23 @@ describe('Hat Turf on image detail', () => {
     await vi.waitFor(() => expect(q('hat-turf-detail-invite')).not.toBeNull());
   });
 
+  test('the hat button is a full circle', async () => {
+    render();
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    const button = q('hat-turf-detail-hat')!;
+    const b = button.getBoundingClientRect();
+    expect(b.width).toBe(30);
+    expect(b.height).toBe(30);
+    // A rounded square still takes a tap 2px in from its corner; a circle does not.
+    expect(document.elementFromPoint(b.left + 2, b.bottom - 2)?.closest('button')).not.toBe(button);
+    expect(document.elementFromPoint(b.left + 15, b.top + 15)?.closest('button')).toBe(button);
+  });
+
   test('one press drops the active hat as a draft; the check places it from image-detail', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
     click(q('hat-turf-detail-hat'));
-    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    click(document.body.querySelector('[aria-label^="Place hat"]'));
+    click(await placeHatButton());
     expect(h.place).toHaveBeenCalledTimes(1);
     const input = h.place.mock.calls[0][0];
     expect(input).toMatchObject({ imageId: 9, source: 'image-detail', cosmeticId: 11 });
@@ -262,8 +315,7 @@ describe('Hat Turf on image detail', () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
     click(q('hat-turf-detail-hat'));
-    await vi.waitFor(() => expect(q('hat-turf-draft')).not.toBeNull());
-    click(document.body.querySelector('[aria-label^="Place hat"]'));
+    click(await placeHatButton());
     // The server read (h.stickers) never changes in this test: only the mutation succeeds.
     h.place.mock.calls[0][1].onSuccess();
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
@@ -343,7 +395,7 @@ describe('Hat Turf on image detail', () => {
     await vi.waitFor(() => expect(q('hat-turf-panel')).toBeNull());
   });
 
-  test('the panel shows every team count, hats left of the cap, and Show hats off hides all of Hat Turf', async () => {
+  test('the panel shows every team count, hats left of the cap, and Show hats off hides only the hats', async () => {
     render();
     await vi.waitFor(() => expect(hats().length).toBe(3));
     expect(q('hat-turf-detail-hat')).not.toBeNull();
@@ -354,19 +406,13 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-panel-supply')!.textContent).toMatch(/^3 of 50 hats/);
     click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
     await vi.waitFor(() => expect(hats().length).toBe(0));
-    expect(q('hat-turf-detail-badge')).toBeNull();
-    expect(q('hat-turf-badge')).toBeNull();
-    expect(q('hat-turf-detail-hat')).toBeNull();
-    expect(q('hat-turf-gear')).toBeNull();
-
-    // The one control left is the way back to the switch.
-    click(q('hat-turf-detail-hidden'));
-    await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
-    click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
-    await vi.waitFor(() => expect(hats().length).toBe(3));
+    // The game stays: standings, the hat button and its gear.
     expect(q('hat-turf-detail-badge')).not.toBeNull();
     expect(q('hat-turf-detail-hat')).not.toBeNull();
-    expect(q('hat-turf-detail-hidden')).toBeNull();
+    expect(q('hat-turf-gear')).not.toBeNull();
+
+    click(q('hat-turf-panel')!.querySelector('input[type="checkbox"]'));
+    await vi.waitFor(() => expect(hats().length).toBe(3));
   });
 
   test('the next hat counts down', async () => {
@@ -429,6 +475,9 @@ describe('Hat Turf on image detail', () => {
     const opacities = new Set([...hats()].map((hat) => getComputedStyle(hat).opacity));
     expect(opacities.size).toBe(1);
     expect(Number([...opacities][0])).toBeLessThan(1);
+    // Faded, not greyed: every team's hat still shows its colour.
+    for (const hat of hats())
+      expect(getComputedStyle(hat).filter).not.toMatch(/grayscale|saturate/);
     // The badge's lock says it; the picture carries no "would take it" pill any more.
     expect(q('hat-turf-badge-lock')).not.toBeNull();
     expect(document.body.textContent).not.toMatch(/would take it/);
@@ -448,18 +497,71 @@ describe('Hat Turf on image detail', () => {
     expect(toneAt(30, 30)).toBe('lead');
   });
 
-  test("the viewer's own-hat dot sits on the cone, not off in the hat's padding", async () => {
-    h.mine = { ...sticker(99, 'blue', 0.4, 0.4), userId: 1 };
+  // Deliberate (event owner's call, 2026-11-04): the hat's own art is the sticker, with no team cone
+  // and no corner marker on the viewer's own.
+  test("a hat draws as its own art, the viewer's own included, with no cone or marker", async () => {
+    const art = { url: 'blue-cap-art', canvas: [128, 160], bounds: [24, 40, 104, 150] };
+    h.stickers = [{ ...sticker(1, 'blue', 0.3, 0.3), art }];
+    h.mine = { ...sticker(99, 'blue', 0.6, 0.6), userId: 1, art };
     render({}, 900);
-    await vi.waitFor(() => expect(hats().length).toBe(4));
-    const own = [...hats()].find((hat) => hat.querySelector('i'))!;
-    const svg = own.querySelector('svg')!.getBoundingClientRect();
-    const dot = own.querySelector('i')!.getBoundingClientRect();
-    // The cone's bottom-right corner in TeamHat's 24-unit viewBox is (18, 17).
-    const cornerX = svg.left + (svg.width * 18) / 24;
-    const cornerY = svg.top + (svg.height * 17) / 24;
-    expect(Math.abs(dot.left + dot.width / 2 - cornerX)).toBeLessThan(4);
-    expect(Math.abs(dot.top + dot.height / 2 - cornerY)).toBeLessThan(4);
+    await vi.waitFor(() => expect(hats().length).toBe(2));
+    for (const hat of hats()) {
+      const box = hat.querySelector<HTMLElement>('[data-testid="hat-turf-art"]')!;
+      expect(box.querySelector('img')?.getAttribute('src')).toContain('blue-cap-art');
+      expect(hat.querySelector('svg')).toBeNull();
+      expect(hat.querySelector('i')).toBeNull();
+      // A square at the hat's drawn size, with the visible art centred in it.
+      const { width, height } = box.getBoundingClientRect();
+      expect(width).toBeGreaterThan(40);
+      expect(height).toBeCloseTo(width, 0);
+    }
+  });
+
+  test('the art is scaled and centred by its visible pixels, and art with no fit fills most of the square', async () => {
+    const canvas = [128, 160];
+    const bounds = [24, 40, 104, 150];
+    h.stickers = [
+      { ...sticker(1, 'blue', 0.3, 0.3), art: { url: 'cap-art', canvas, bounds } },
+      { ...sticker(2, 'blue', 0.6, 0.6), art: { url: 'beanie-art' } },
+    ];
+    render({}, 900);
+    await vi.waitFor(() => expect(hats().length).toBe(2));
+    const rects = (url: string) => {
+      const box = [...document.body.querySelectorAll('[data-testid="hat-turf-art"]')].find((el) =>
+        el.querySelector('img')?.getAttribute('src')?.includes(url)
+      )!;
+      return [box.getBoundingClientRect(), box.querySelector('img')!.getBoundingClientRect()];
+    };
+
+    const [square, img] = rects('cap-art');
+    const [cw, ch] = canvas;
+    const [l, t, r, b] = bounds;
+    const visible = {
+      left: img.left + (img.width * l) / cw,
+      right: img.left + (img.width * r) / cw,
+      top: img.top + (img.height * t) / ch,
+      bottom: img.top + (img.height * b) / ch,
+    };
+    // The visible pixels, not the canvas, sit in the middle of the square.
+    expect((visible.left + visible.right) / 2).toBeCloseTo(square.left + square.width / 2, 0);
+    expect((visible.top + visible.bottom) / 2).toBeCloseTo(square.top + square.height / 2, 0);
+    // They cover 62% of the side by area (the hat previews' rule), so every design reads the same size.
+    const side = Math.sqrt((visible.right - visible.left) * (visible.bottom - visible.top));
+    expect(side / square.width).toBeCloseTo(0.62, 2);
+
+    const [plainSquare, plainImg] = rects('beanie-art');
+    expect(plainImg.width / plainSquare.width).toBeCloseTo(0.8, 2);
+    expect(plainImg.height / plainSquare.height).toBeCloseTo(1, 2);
+    expect((plainImg.left - plainSquare.left) / plainSquare.width).toBeCloseTo(0.1, 2);
+    expect(plainImg.top - plainSquare.top).toBeCloseTo(0, 0);
+  });
+
+  test('a hat whose art is unknown falls back to the team cone', async () => {
+    h.stickers = [sticker(1, 'blue', 0.3, 0.3)];
+    render({}, 900);
+    await vi.waitFor(() => expect(hats().length).toBe(1));
+    expect(hats()[0].querySelector('svg')).not.toBeNull();
+    expect(hats()[0].querySelector('img')).toBeNull();
   });
 
   test('past the draw cap a "more" button asks for the next hats', async () => {
@@ -536,16 +638,18 @@ describe('Hat Turf on image detail', () => {
     expect(q('hat-turf-gear')).not.toBeNull();
   });
 
-  test('the badge sits on the picture’s top-left corner, not in the action row', async () => {
+  test('the badge sits in the action row at Tip’s height, off the picture', async () => {
     render();
-    await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
-    expect(q('hat-turf-detail-controls')!.contains(q('hat-turf-detail-badge'))).toBe(false);
-    const picture = document.body.querySelector('img')!.getBoundingClientRect();
+    await vi.waitFor(() => expect(q('hat-turf-badge')).not.toBeNull());
+    const tip = q('tip')!.getBoundingClientRect();
     const badge = q('hat-turf-detail-badge')!.getBoundingClientRect();
-    expect(badge.left - picture.left).toBeGreaterThanOrEqual(0);
-    expect(badge.left - picture.left).toBeLessThan(16);
-    expect(badge.top - picture.top).toBeGreaterThanOrEqual(0);
-    expect(badge.top - picture.top).toBeLessThan(16);
+    expect(tip.height).toBe(36);
+    expect(badge.height).toBe(tip.height);
+    expect(q('hat-turf-badge')!.getBoundingClientRect().height).toBe(tip.height);
+    const picture = document.body.querySelector('img')!.getBoundingClientRect();
+    expect(badge.bottom <= picture.top || badge.top >= picture.bottom).toBe(true);
+    // The picture's layer draws no badge of its own.
+    expect(document.body.querySelectorAll('[data-testid="hat-turf-detail-badge"]')).toHaveLength(1);
   });
 
   test('the hat button’s gear opens the same panel as the badge', async () => {
@@ -588,6 +692,7 @@ describe('Hat Turf on image detail', () => {
     // in reach of the layer, which must still not draw them.
     render({ joined: false, images: {}, stickers: { 9: h.stickers as never } });
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
+    expect(q('action-row')!.contains(q('hat-turf-detail-badge'))).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(hats().length).toBe(0);
     click(q('hat-turf-detail-badge'));

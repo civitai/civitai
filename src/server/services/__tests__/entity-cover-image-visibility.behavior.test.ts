@@ -57,7 +57,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "userId" int DEFAULT ${OWNER}, status text,
-      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned'
+      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,

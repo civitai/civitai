@@ -1,6 +1,22 @@
+/** `.GLB ` → `glb`: formats arrive from the orchestrator and file names un-normalised. */
+export function normalizeModel3DFormat(format: string | null | undefined) {
+  return (format ?? '').trim().toLowerCase().replace(/^\./, '');
+}
+
 /** GLB is the only format the inline viewer and the `model3DPreview` render can load. */
 export function isGlbFormat(format: string | null | undefined) {
-  return (format ?? '').trim().toLowerCase().replace(/^\./, '') === 'glb';
+  return normalizeModel3DFormat(format) === 'glb';
+}
+
+/**
+ * Files the inline three.js viewer can show: GLB only (GLTFLoader doesn't read FBX), minus
+ * armature-only meshes, which have no visible geometry.
+ */
+export function isInlineViewableModel3DFile(file: {
+  format: string | null | undefined;
+  variant?: string | null;
+}) {
+  return isGlbFormat(file.format) && !(file.variant ?? 'primary').endsWith('-armature');
 }
 
 type Model3DStepLike = {
@@ -27,11 +43,6 @@ export function isFbxOnlyDelivered(steps: Model3DStepLike[]) {
 
 type Model3DFileLike = { format: string; variant: string | null; isPrimary: boolean };
 
-/** Whether the inline viewer can show a saved Model3D file. Armature-only meshes have no visible geometry. */
-export function isViewableModel3DFile(file: Model3DFileLike) {
-  return isGlbFormat(file.format) && !(file.variant ?? 'primary').endsWith('-armature');
-}
-
 /**
  * The file a single-file preview should mount: the primary when it's viewable, else the first viewable
  * file (an FBX-primary model can still ship a GLB variant). With nothing viewable it returns the
@@ -39,8 +50,8 @@ export function isViewableModel3DFile(file: Model3DFileLike) {
  */
 export function pickModel3DPreviewFile<T extends Model3DFileLike>(files: T[]): T | null {
   return (
-    files.find((f) => f.isPrimary && isViewableModel3DFile(f)) ??
-    files.find(isViewableModel3DFile) ??
+    files.find((f) => f.isPrimary && isInlineViewableModel3DFile(f)) ??
+    files.find(isInlineViewableModel3DFile) ??
     files.find((f) => f.isPrimary) ??
     files[0] ??
     null

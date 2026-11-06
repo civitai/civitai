@@ -15,6 +15,7 @@ import {
   parseModelTensorMetadata,
   supportsTensorVramEstimate,
 } from '~/utils/model-tensor-metadata';
+import { FAILED_SCAN_DOWNLOAD_MESSAGE } from '~/server/utils/failed-scan';
 
 /**
  * 🔴 `id` is bounded to a Postgres int4, and the bound is load-bearing — this is
@@ -207,6 +208,7 @@ function getStatusCode(
     case 'no-access':
     case 'downloads-disabled':
     case 'early-access':
+    case 'failed-scan':
       return 403;
     case 'archived':
       return 410;
@@ -230,6 +232,8 @@ function getErrorMessage(
       return 'Downloads are disabled for this file';
     case 'early-access':
       return 'File is in early access';
+    case 'failed-scan':
+      return FAILED_SCAN_DOWNLOAD_MESSAGE;
     case 'archived':
       return 'Model archived, not available';
     case 'not-found':

@@ -18,6 +18,17 @@ import { bustCacheTag } from '~/server/utils/cache-helpers';
 // the factory is an `import()` type annotation, which `consistent-type-imports` forbids.
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { APP_LISTING_CATALOG_TAG } from '~/server/services/blocks/app-listing-cache.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * W13 — ONSITE listing-media revision CONSOLIDATION service tests.

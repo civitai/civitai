@@ -24,6 +24,9 @@ patchedDependencies:
   '@civitai/cybertipline-tools@0.1.0':
     hash: b5c92914227f8e97ba962a6763022ab306cdab165a2c34a834b4d182e51a8846
     path: patches/@civitai__cybertipline-tools@0.1.0.patch
+  '@civitai/generation-metadata@0.4.0':
+    hash: 784a3c8758faaa98273e1937cc9d161e11c103bca62047e084681366ebd772b8
+    path: patches/@civitai__generation-metadata@0.4.0.patch
   '@mantine/core@7.17.8':
     hash: 35f18881be9a89ce42df2638cbce6563d7d11e3a3c8b96047325c10d9e82a4fd
     path: patches/@mantine__core@7.17.8.patch
@@ -42,9 +45,9 @@ patchedDependencies:
   '@trpc/next@11.17.0':
     hash: 5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69
     path: patches/@trpc__next@11.17.0.patch
-  next@16.4.3:
-    hash: 516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2
-    path: patches/next@16.4.3.patch
+  next@16.4.5:
+    hash: dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399
+    path: patches/next@16.4.5.patch
   react-dom@18.3.1:
     hash: 7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14
     path: patches/react-dom@18.3.1.patch
@@ -94,7 +97,7 @@ importers:
         version: link:packages/civitai-flipt
       '@civitai/generation-metadata':
         specifier: ^0.4.0
-        version: 0.4.0
+        version: 0.4.0(patch_hash=784a3c8758faaa98273e1937cc9d161e11c103bca62047e084681366ebd772b8)
       '@civitai/mod-utils':
         specifier: workspace:*
         version: link:packages/civitai-mod-utils
@@ -103,7 +106,7 @@ importers:
         version: link:packages/civitai-moderation
       '@civitai/next-axiom':
         specifier: ^0.17.0
-        version: 0.17.0(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))
+        version: 0.17.0(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/orchestration-client':
         specifier: 0.2.0
         version: 0.2.0
@@ -189,11 +192,11 @@ importers:
         specifier: ^7.0.10
         version: 7.0.14(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@next/bundle-analyzer':
-        specifier: ^16.3.0
-        version: 16.3.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+        specifier: ^16.4.5
+        version: 16.4.5(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@next/third-parties':
         specifier: ^15.0.3
-        version: 15.4.6(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
+        version: 15.4.6(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
       '@number-flow/react':
         specifier: ^0.5.7
         version: 0.5.10(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
@@ -296,6 +299,9 @@ importers:
       '@tiptap/extension-mention':
         specifier: 3.16.0
         version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)(@tiptap/suggestion@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0))
+      '@tiptap/extension-text-align':
+        specifier: 3.16.0
+        version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))
       '@tiptap/extension-text-style':
         specifier: 3.16.0
         version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))
@@ -328,13 +334,16 @@ importers:
         version: 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/next':
         specifier: ^11.17.0
-        version: 11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(typescript@5.9.2)
+        version: 11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(typescript@5.9.2)
       '@trpc/react-query':
         specifier: ^11.17.0
         version: 11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2)
       '@trpc/server':
         specifier: ^11.17.0
         version: 11.17.0(typescript@5.9.2)
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       algoliasearch:
         specifier: ^4.23.3
         version: 4.25.2
@@ -472,7 +481,7 @@ importers:
         version: 11.2.2
       mantine-react-table:
         specifier: ^2.0.0-beta.9
-        version: 2.0.0-beta.9(f9d0fda811c1be3a41e3eac75f2d989f)
+        version: 2.0.0-beta.9(be749f7ad460d53b639f4d21d2fc05ad)
       meilisearch:
         specifier: 0.33.0
         version: 0.33.0
@@ -483,8 +492,8 @@ importers:
         specifier: ^1.10.2
         version: 1.11.5
       next:
-        specifier: 16.4.3
-        version: 16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+        specifier: 16.4.5
+        version: 16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       nodemailer:
         specifier: ^7.0.11
         version: 7.0.13
@@ -541,7 +550,7 @@ importers:
         version: 7.12.0(algoliasearch@4.25.2)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
       react-instantsearch-router-nextjs:
         specifier: 7.12.0
-        version: 7.12.0(algoliasearch@4.25.2)(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
+        version: 7.12.0(algoliasearch@4.25.2)(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)
       react-intersection-observer:
         specifier: ^9.4.0
         version: 9.16.0(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
@@ -3586,59 +3595,59 @@ packages:
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
 
-  '@next/bundle-analyzer@16.3.0':
-    resolution: {integrity: sha512-o8OiXKIATcSC6kHm5BIEmaDEDTFUDhpy9POQIbzAQTlb8NWwFhEQheTLFSbyQXxH2ywhjZ/e8EUlbOjj2k22Yg==}
+  '@next/bundle-analyzer@16.4.5':
+    resolution: {integrity: sha512-kIlb+9t1i/Zg7yuRXN7I9nhEb92UGbnMfIzpZPps7YoCgmneCMpmN6zG6mduUluhI+y00MGLytkDsccVCujrGw==}
 
-  '@next/env@16.4.3':
-    resolution: {integrity: sha512-a7tz1QCcWWkwC/rPJcPMJk/UNRu9CFhDd3OHYE5hddbJrs8BqRTalxI6GlKCWEGzRLHN+S/B7a4PAHCtm25aBQ==}
+  '@next/env@16.4.5':
+    resolution: {integrity: sha512-JwSPwpdkZL5VMl2jA/q+JI8MZdweAL3xmw5/tb9y/TLtmS0YXZnmYDzSihwk8xTj1OL+WM53gTqaj96yuLp6Xw==}
 
   '@next/eslint-plugin-next@15.5.19':
     resolution: {integrity: sha512-Ctwb4qYuMbHN/1oXLlTdMchwG8h8Xzwq+wGZZMgF3o6+uwyBKAI2c96bdOsl+C62PaUD0Jkh+QpNkhUeDlam0Q==}
 
-  '@next/swc-darwin-arm64@16.4.3':
-    resolution: {integrity: sha512-4yq5EXBt+VDtAZwTyfijaFp5D2C5oz3Ikw5a2kiX2K9nw72vrZX2q5UuAlkPtUMO1tQz6JTKpaKWjS7OOefTDQ==}
+  '@next/swc-darwin-arm64@16.4.5':
+    resolution: {integrity: sha512-W5TniBzWKASbNNwHZ/S/f1MxQUXU/LdjklVMWA0Ujbfl7SZnUzFls45hO0i/sF7Bx1jJBWp7WWmoQajXtX/O8A==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@next/swc-darwin-x64@16.4.3':
-    resolution: {integrity: sha512-1Rvkn/LUhnEF8WxnRkOrqGhbwXui1bkWFxONKIbN+r7C+9KHDSZ+iUoj4CzymVMWUyZIyx9szcb9+kbKhD500A==}
+  '@next/swc-darwin-x64@16.4.5':
+    resolution: {integrity: sha512-uWq4qkHapBDS1oFltWS4YxTb9pLHAtLNcpbuK6SmRsebLYZqpBML/j/C0op+50JYGTpZgVL/DWNt/6oWlamrrw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@next/swc-linux-arm64-gnu@16.4.3':
-    resolution: {integrity: sha512-dCKpXErGg3abUM6t5JTJV/ottVBTStJB5lRJTbgdUdQaQ+jNHiK56Hsc0YAEg/rinSh42hYG3HWiYmEMdilnxg==}
+  '@next/swc-linux-arm64-gnu@16.4.5':
+    resolution: {integrity: sha512-FdRcyOx5u5P51mlAqLB9EXdd8jZO5fsdHtk4BAQSkqOywCsbTNN/rmw+jO7pnmjNdAtu2AG46NzbCL2FPDrrgw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@next/swc-linux-arm64-musl@16.4.3':
-    resolution: {integrity: sha512-WwYbhWkhYBvBtib1K4W0kL8MW2snBD2A5b3SN4vPpqalZbZs5+bQ1yzAdepVoOqrFfEW3dmREy4Zs1MrWcrFbw==}
+  '@next/swc-linux-arm64-musl@16.4.5':
+    resolution: {integrity: sha512-cyvmmgtRXR8aGVT86wi9Py53IlfyCx7P2fZxuAXAoTummDnhKtUyjrMeXfapqp4qgD+gT5RqyGD/VfA16jEK7Q==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
 
-  '@next/swc-linux-x64-gnu@16.4.3':
-    resolution: {integrity: sha512-QymWvfUwDEC5/lpJOsxX5VAbyoR2D13+2Jsjz4be7gT4LPqEgdpkeLIR/HFfCLgKzoMhpJbp6I/JnogyNZHcaA==}
+  '@next/swc-linux-x64-gnu@16.4.5':
+    resolution: {integrity: sha512-hPc+Fl+N22DAvqZHq559NmamXboOX5Lu8I5Wl0DezfrhTk1Zz21NQeYoZDmNI/NjTcrdsVxM72Fzn2lI+Q+vAw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@next/swc-linux-x64-musl@16.4.3':
-    resolution: {integrity: sha512-Vmjd9D7DpA4Vv3cUlr82QWgJD/BQZmns801vtC5VWHg6jCIA4a5vMKpQnfrM2pyCrp2eV0ENdUg4PlN3bAc2Yw==}
+  '@next/swc-linux-x64-musl@16.4.5':
+    resolution: {integrity: sha512-gbACYE8IP/jlprNTpiWXHb8N9CofOzpnEwH2SrIz1dUbiJf1FbDssDupCAPeP1Taxe8mgG20sGZamJI7KFOdZw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
 
-  '@next/swc-win32-arm64-msvc@16.4.3':
-    resolution: {integrity: sha512-lG1pPdPLk7gTyGb00n5JIMLdBJgjb+UEhSdZvFbhUMg0DyC6z4B7RnpSKF9VCd4imkLObVbXOFA0kFCpw7yFow==}
+  '@next/swc-win32-arm64-msvc@16.4.5':
+    resolution: {integrity: sha512-+8gj++ZMo8H20Xh2ijjNqyFk5LPLw0AC4Fs4Tq/G94rjjQXhOjN4jgSWsWKPFsyY26hfIeemJIwKtMxOsp5GBA==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [win32]
 
-  '@next/swc-win32-x64-msvc@16.4.3':
-    resolution: {integrity: sha512-NmQC9RkJdnPXRaMxtkCzobB3teVjqF33oSOnwDfi+XYGWWYpt+xlGK3mtktSKLbdjwaWbJu2OkkMiRFGUUncKg==}
+  '@next/swc-win32-x64-msvc@16.4.5':
+    resolution: {integrity: sha512-qNZj66pYXnaWLiF9R9GUbfBdrCv7kC6TaZfIwB2KH5WPc/8pEM3nVOj8hpQhWJU8S94rlH5MPDcX15+RrgUhiw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -5334,6 +5343,11 @@ packages:
     resolution: {integrity: sha512-Vnq5vW801zPbu1LtKeA5k4R241jY+hRjXeijYwIPxy15KzIiipY12518HiCf6/8kkRbMxgOfdYg9X4BRV3HV3g==}
     peerDependencies:
       '@tiptap/core': 3.23.4
+
+  '@tiptap/extension-text-align@3.16.0':
+    resolution: {integrity: sha512-+9mgmd9rSM394/wwBBcxLW9/xzz66j+vUSYMeWcZFC0so/jibu4HcW1lPqKJfQ2F6xAD/xe4cQfckvpdjQaR1Q==}
+    peerDependencies:
+      '@tiptap/core': ^3.16.0
 
   '@tiptap/extension-text-style@3.16.0':
     resolution: {integrity: sha512-D+gIqMvCDYTCvnOVpFwfqjSi0UVAbe/9jXP765WlZsN5SOZm4tGOCo+AGxdxReWHsfteM+bdxaK6It1EDRrmiA==}
@@ -9506,8 +9520,8 @@ packages:
     resolution: {integrity: sha512-NMPBRMJgiQHjbd8phG3Vebdx4kZ1H121rbl5IkMqeOsahptB9BKo/d7oJ3zTXqTgagn2bWlNSXkh0QUGM31RYg==}
     engines: {node: '>=18'}
 
-  next@16.4.3:
-    resolution: {integrity: sha512-OqxKTGi9u80FydydsMNYNjnuje9Au+kvHlt2GZ//ftdpDHm1dxKqAaENoOOTX5wKzn+9vaKUNIfZeyZUuLhCnA==}
+  next@16.4.5:
+    resolution: {integrity: sha512-rmdfsWosjTUO+6R0S3KokoIk6Kj0sWDRTe86tZHdqaWH/oXq/udX3/4xb+YQi7aWbyEFoglDU54kaifLCdXbBw==}
     engines: {node: '>=20.9.0'}
     hasBin: true
     peerDependencies:
@@ -13537,14 +13551,14 @@ snapshots:
     dependencies:
       fast-xml-parser: 5.10.1
 
-  '@civitai/generation-metadata@0.4.0':
+  '@civitai/generation-metadata@0.4.0(patch_hash=784a3c8758faaa98273e1937cc9d161e11c103bca62047e084681366ebd772b8)':
     dependencies:
       exifreader: 4.52.0
       zod: 4.6.7
 
-  '@civitai/next-axiom@0.17.0(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
+  '@civitai/next-axiom@0.17.0(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
     dependencies:
-      next: 16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
   '@civitai/orchestration-client@0.2.0':
@@ -14701,46 +14715,46 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
-  '@next/bundle-analyzer@16.3.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)':
+  '@next/bundle-analyzer@16.4.5(bufferutil@4.0.9)(utf-8-validate@5.0.10)':
     dependencies:
       webpack-bundle-analyzer: 4.10.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@next/env@16.4.3': {}
+  '@next/env@16.4.5': {}
 
   '@next/eslint-plugin-next@15.5.19':
     dependencies:
       fast-glob: 3.3.1
 
-  '@next/swc-darwin-arm64@16.4.3':
+  '@next/swc-darwin-arm64@16.4.5':
     optional: true
 
-  '@next/swc-darwin-x64@16.4.3':
+  '@next/swc-darwin-x64@16.4.5':
     optional: true
 
-  '@next/swc-linux-arm64-gnu@16.4.3':
+  '@next/swc-linux-arm64-gnu@16.4.5':
     optional: true
 
-  '@next/swc-linux-arm64-musl@16.4.3':
+  '@next/swc-linux-arm64-musl@16.4.5':
     optional: true
 
-  '@next/swc-linux-x64-gnu@16.4.3':
+  '@next/swc-linux-x64-gnu@16.4.5':
     optional: true
 
-  '@next/swc-linux-x64-musl@16.4.3':
+  '@next/swc-linux-x64-musl@16.4.5':
     optional: true
 
-  '@next/swc-win32-arm64-msvc@16.4.3':
+  '@next/swc-win32-arm64-msvc@16.4.5':
     optional: true
 
-  '@next/swc-win32-x64-msvc@16.4.3':
+  '@next/swc-win32-x64-msvc@16.4.5':
     optional: true
 
-  '@next/third-parties@15.4.6(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)':
+  '@next/third-parties@15.4.6(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1)':
     dependencies:
-      next: 16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       react: 18.3.1
       third-party-capital: 1.0.20
 
@@ -16750,6 +16764,10 @@ snapshots:
     dependencies:
       '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
 
+  '@tiptap/extension-text-align@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))':
+    dependencies:
+      '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
+
   '@tiptap/extension-text-style@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))':
     dependencies:
       '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
@@ -16861,11 +16879,11 @@ snapshots:
       '@trpc/server': 11.17.0(typescript@5.9.2)
       typescript: 5.9.2
 
-  '@trpc/next@11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(typescript@5.9.2)':
+  '@trpc/next@11.17.0(patch_hash=5798a0e6887c5f9a43534217055fe24cd16fa84a4914f07175115a2f43758b69)(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/react-query@11.17.0(@tanstack/react-query@5.101.0(react@18.3.1))(@trpc/client@11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(react@18.3.1)(typescript@5.9.2))(@trpc/server@11.17.0(typescript@5.9.2))(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(typescript@5.9.2)':
     dependencies:
       '@trpc/client': 11.17.0(@trpc/server@11.17.0(typescript@5.9.2))(typescript@5.9.2)
       '@trpc/server': 11.17.0(typescript@5.9.2)
-      next: 16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       react: 18.3.1
       react-dom: 18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1)
       typescript: 5.9.2
@@ -17819,7 +17837,7 @@ snapshots:
 
   acorn-walk@8.3.4:
     dependencies:
-      acorn: 8.16.0
+      acorn: 8.18.0
 
   acorn@8.15.0: {}
 
@@ -21367,7 +21385,7 @@ snapshots:
   make-error@1.3.6:
     optional: true
 
-  mantine-react-table@2.0.0-beta.9(f9d0fda811c1be3a41e3eac75f2d989f):
+  mantine-react-table@2.0.0-beta.9(be749f7ad460d53b639f4d21d2fc05ad):
     dependencies:
       '@mantine/core': 7.17.8(patch_hash=35f18881be9a89ce42df2638cbce6563d7d11e3a3c8b96047325c10d9e82a4fd)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
       '@mantine/dates': 7.17.8(@mantine/core@7.17.8(patch_hash=35f18881be9a89ce42df2638cbce6563d7d11e3a3c8b96047325c10d9e82a4fd)(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1))(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(dayjs@1.11.13)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)
@@ -22105,9 +22123,9 @@ snapshots:
     dependencies:
       content-type: 2.1.0
 
-  next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0):
+  next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0):
     dependencies:
-      '@next/env': 16.4.3
+      '@next/env': 16.4.5
       '@swc/helpers': 0.5.23
       baseline-browser-mapping: 2.11.21
       caniuse-lite: 1.0.30001810
@@ -22116,14 +22134,14 @@ snapshots:
       react-dom: 18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1)
       styled-jsx: 5.1.6(@babel/core@7.29.0)(react@18.3.1)
     optionalDependencies:
-      '@next/swc-darwin-arm64': 16.4.3
-      '@next/swc-darwin-x64': 16.4.3
-      '@next/swc-linux-arm64-gnu': 16.4.3
-      '@next/swc-linux-arm64-musl': 16.4.3
-      '@next/swc-linux-x64-gnu': 16.4.3
-      '@next/swc-linux-x64-musl': 16.4.3
-      '@next/swc-win32-arm64-msvc': 16.4.3
-      '@next/swc-win32-x64-msvc': 16.4.3
+      '@next/swc-darwin-arm64': 16.4.5
+      '@next/swc-darwin-x64': 16.4.5
+      '@next/swc-linux-arm64-gnu': 16.4.5
+      '@next/swc-linux-arm64-musl': 16.4.5
+      '@next/swc-linux-x64-gnu': 16.4.5
+      '@next/swc-linux-x64-musl': 16.4.5
+      '@next/swc-win32-arm64-msvc': 16.4.5
+      '@next/swc-win32-x64-msvc': 16.4.5
       '@opentelemetry/api': 1.9.0
       '@playwright/test': 1.57.0
       sass: 1.90.0
@@ -23272,10 +23290,10 @@ snapshots:
       react: 18.3.1
       use-sync-external-store: 1.5.0(react@18.3.1)
 
-  react-instantsearch-router-nextjs@7.12.0(algoliasearch@4.25.2)(next@16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1):
+  react-instantsearch-router-nextjs@7.12.0(algoliasearch@4.25.2)(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))(react@18.3.1):
     dependencies:
       instantsearch.js: 4.73.0(algoliasearch@4.25.2)
-      next: 16.4.3(patch_hash=516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
+      next: 16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       react-instantsearch-core: 7.12.0(algoliasearch@4.25.2)(react@18.3.1)
     transitivePeerDependencies:
       - algoliasearch
@@ -25538,7 +25556,7 @@ snapshots:
   webpack-bundle-analyzer@4.10.1(bufferutil@4.0.9)(utf-8-validate@5.0.10):
     dependencies:
       '@discoveryjs/json-ext': 0.5.7
-      acorn: 8.16.0
+      acorn: 8.18.0
       acorn-walk: 8.3.4
       commander: 7.2.0
       debounce: 1.2.1

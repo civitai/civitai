@@ -27,6 +27,8 @@ import {
 } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
+import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
 // the notifications client in its body). approve/reject call it POST-COMMIT to notify
 // the submitting developer of the moderator decision — best-effort, wrapped in a
@@ -68,6 +70,10 @@ import {
 // invariant that module documents holds on all write paths — not just the
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
+import {
+  appOwnerTermsRefusalMessage,
+  AppDeveloperTermsNotAcceptedError,
+} from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 
@@ -100,6 +106,25 @@ import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-run
  *   - Rate limit per submitter (Phase 6).
  */
 
+/**
+ * Whose terms acceptance an app's publish needs: the listing's canonical owner, resolved as the
+ * listing gates resolve it.
+ */
+async function resolveAppTermsOwner(appBlockId: string, blockOwnerUserId: number | undefined) {
+  const { dbRead } = await import('~/server/db/client');
+  const listing = await dbRead.appListing.findUnique({
+    where: { appBlockId },
+    select: { kind: true, userId: true },
+  });
+  if (!listing) return blockOwnerUserId;
+  const { resolveCanonicalListingOwner } = await import('./app-access.service');
+  return resolveCanonicalListingOwner({
+    kind: listing.kind,
+    blockOwnerUserId,
+    listingUserId: listing.userId,
+  });
+}
+
 export type FileMeta = {
   path: string;
   sha256: string;
@@ -113,14 +138,22 @@ export type FileSummary = {
   changed: string[];
 };
 
-export type ManifestDiffSummary =
+export type ManifestDiffSummary = (
   | { kind: 'first-version'; fields: string[] }
   | {
       kind: 'update';
       added: string[];
       removed: string[];
       changed: Array<{ field: string; from: unknown; to: unknown }>;
-    };
+    }
+) & {
+  /**
+   * Collections published to registries (`storage.collections.<c>.registry`), for the reviewer.
+   * Present only when this version or the previous one publishes any; absent on rows written
+   * before it existed.
+   */
+  registryExports?: RegistryExportDiff;
+};
 
 /** `submitVersion`'s refusal of a version of an existing app the submitter may not ship. */
 export const appOwnedByAnotherUser = (slug: string) =>
@@ -943,10 +976,14 @@ export function computeManifestDiff(
   currentManifest: Record<string, unknown>,
   previousManifest: Record<string, unknown> | null
 ): ManifestDiffSummary {
+  const exports = registryExportDiff(currentManifest, previousManifest);
+  const registryExports =
+    exports.exported.length > 0 || exports.removed.length > 0 ? { registryExports: exports } : {};
   if (previousManifest === null) {
     return {
       kind: 'first-version',
       fields: Object.keys(currentManifest).sort(),
+      ...registryExports,
     };
   }
   const allKeys = new Set([...Object.keys(currentManifest), ...Object.keys(previousManifest)]);
@@ -975,7 +1012,7 @@ export function computeManifestDiff(
   added.sort();
   removed.sort();
   changed.sort((a, b) => a.field.localeCompare(b.field));
-  return { kind: 'update', added, removed, changed };
+  return { kind: 'update', added, removed, changed, ...registryExports };
 }
 
 /**
@@ -1042,6 +1079,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     ]);
   const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
     params;
+
+  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+  await assertAcceptedAppDeveloperTerms(submittedByUserId);
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1124,12 +1164,23 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // read: the row gated here is the row the request links to below (`appBlockId`).
   const existingApp = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
-    select: { id: true, appId: true },
+    select: { id: true, appId: true, app: { select: { userId: true } } },
   });
   if (existingApp && !submitterIsModerator) {
     const { mayShipAppVersion } = await import('./app-access.service');
     if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
       throw new Error(appOwnedByAnotherUser(slug));
+  }
+  // An editor ships in the owner's name, so the owner must have accepted too.
+  const ownerUserId = existingApp
+    ? await resolveAppTermsOwner(existingApp.id, existingApp.app?.userId)
+    : undefined;
+  if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
+    const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
   }
 
   // Block double-submit on the same slug — only one pending request per
@@ -2144,11 +2195,40 @@ export async function recordPendingFromPush(args: {
   appBlockId: string;
   manifest: object;
   version: string;
+  /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
+  pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
   ]);
+
+  // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
+  // is required + FK-constrained, and the owner is the most meaningful actor for
+  // a commit to their repo.
+  const ownerRow = await dbRead.appBlock.findUnique({
+    where: { id: args.appBlockId },
+    select: { app: { select: { userId: true } } },
+  });
+  const ownerUserId = ownerRow?.app?.userId;
+  if (typeof ownerUserId !== 'number') {
+    throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
+  }
+  // A push has no checkbox, so the app owner, in whose name the request is filed, must have accepted.
+  // Before the refresh and supersede below, so a refused push leaves pending requests untouched.
+  const { assertAcceptedAppDeveloperTerms, hasAcceptedAppDeveloperTerms } = await import(
+    './app-developer-terms.service'
+  );
+  if (args.pusherUserId != null && args.pusherUserId !== ownerUserId) {
+    // The pusher sees this message, so it names the owner when the owner is the blocker.
+    if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
+    await assertAcceptedAppDeveloperTerms(args.pusherUserId);
+  } else {
+    await assertAcceptedAppDeveloperTerms(ownerUserId);
+  }
 
   // Already captured this exact (slug, sha) as pending? Refresh + done.
   const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
@@ -2171,17 +2251,6 @@ export async function recordPendingFromPush(args: {
     data: { status: 'withdrawn' },
   });
 
-  // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
-  // is required + FK-constrained, and the owner is the most meaningful actor for
-  // a commit to their repo.
-  const ownerRow = await dbRead.appBlock.findUnique({
-    where: { id: args.appBlockId },
-    select: { app: { select: { userId: true } } },
-  });
-  const ownerUserId = ownerRow?.app?.userId;
-  if (typeof ownerUserId !== 'number') {
-    throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
-  }
   const publishRequestId = `pubreq_${newUlid()}`;
 
   // Park the review IMMEDIATELY with an empty summary, then enrich the real
@@ -2927,10 +2996,24 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appId: true,
       repoUrl: true,
       trustTier: true,
-      app: { select: { allowedScopes: true, allowedOrigins: true } },
+      app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
   const isFirstVersion = !existingAppBlock;
+
+  // A request filed before the owner accepted must not go live.
+  // A first version has no app yet, so its submitter is the owner.
+  const termsOwnerUserId =
+    (existingAppBlock &&
+      (await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId))) ??
+    request.submittedByUserId;
+  {
+    const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    if (!(await hasAcceptedAppDeveloperTerms(termsOwnerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
+  }
 
   // SECURITY: trust tier is moderator-controlled, NOT publisher-declared.
   // A manifest must never be able to self-escalate to `internal`/`verified`

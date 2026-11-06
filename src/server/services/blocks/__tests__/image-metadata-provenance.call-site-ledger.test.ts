@@ -742,6 +742,7 @@ describe('Image metadata provenance — write-site ledger', () => {
     expect(files).toContain('src/server/services/image.service.ts');
     expect(IMAGE_RELATION_FIELDS).toEqual([
       'avatar',
+      'bannerImage',
       'cover',
       'coverImage',
       'headerImage',

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { commentV2Handler } from '@/handlers/comment-v2';
-import { commentV3Handler } from '@/handlers/comment-v3';
+import { COMMENT_V3_SURFACES, commentV3Handler } from '@/handlers/comment-v3';
 import { commentHandler } from '@/handlers/comments';
 
 type Add = { entityType: string; entityId: number; as: number; metric: string; value: number };
@@ -36,12 +36,7 @@ function pgReturning(row: unknown) {
   };
 }
 
-const noEntity = {
-  postId: null,
-  imageId: null,
-  articleId: null,
-  bountyId: null,
-};
+const uncountedSurfaceThread = { surface: null };
 
 function expectAdds(adds: Add[], expected: Add[]) {
   // Order between the entity emit and the owner emit is incidental, so it is not asserted — a
@@ -71,7 +66,7 @@ const entity = (entityType: string, entityId: number, as: number, value: number)
 
 test('a comment on a surface with no entity metric still counts toward its owner', async () => {
   const { adds, actions } = recorder();
-  const { pg } = pgReturning({ ...noEntity, ownerId: 555 });
+  const { pg } = pgReturning({ ...uncountedSurfaceThread, ownerId: 555 });
 
   await commentV2Handler.process({
     operation: 'create',
@@ -80,14 +75,12 @@ test('a comment on a surface with no entity metric still counts toward its owner
     pg,
   } as never);
 
-  // A review/model/challenge/comic thread resolves no Post/Image/Article/Bounty id at all, so this
-  // is the whole emission for those surfaces — the 45% the metric used to miss.
   expectAdds(adds, [user(555, 42, 1)]);
 });
 
 test('self-authored comments are excluded', async () => {
   const { adds, actions } = recorder();
-  const { pg } = pgReturning({ ...noEntity, ownerId: 42 });
+  const { pg } = pgReturning({ ...uncountedSurfaceThread, ownerId: 42 });
 
   await commentV2Handler.process({
     operation: 'create',
@@ -101,7 +94,7 @@ test('self-authored comments are excluded', async () => {
 
 test('an unresolved owner emits nothing rather than a metric keyed on null', async () => {
   const { adds, actions } = recorder();
-  const { pg } = pgReturning({ ...noEntity, ownerId: null });
+  const { pg } = pgReturning({ ...uncountedSurfaceThread, ownerId: null });
 
   await commentV2Handler.process({
     operation: 'create',
@@ -129,29 +122,10 @@ test('a thread that no longer exists is skipped without throwing', async () => {
   expect(adds).toEqual([]);
 });
 
-test.each([
-  ['post', 'postId', 'Post'],
-  ['image', 'imageId', 'Image'],
-  ['bounty', 'bountyId', 'Bounty'],
-])('a %s comment counts for the entity and its owner', async (_name, idField, entityType) => {
-  const { adds, actions } = recorder();
-  const { pg } = pgReturning({ ...noEntity, [idField]: 77, ownerId: 555 });
-
-  await commentV2Handler.process({
-    operation: 'create',
-    record: { userId: 42, threadId: 1 },
-    actions,
-    pg,
-  } as never);
-
-  expectAdds(adds, [user(555, 42, 1), entity(entityType, 77, 42, 1)]);
-});
-
-// Article comments are counted from CommentV3 (comment-v3.ts), whichever table they were written to.
-test('an article comment is left to the CommentV3 handler', async () => {
+test.each(COMMENT_V3_SURFACES)('a %s comment is left to the CommentV3 handler', async (surface) => {
   for (const operation of ['create', 'delete']) {
     const { adds, actions } = recorder();
-    const { pg } = pgReturning({ ...noEntity, articleId: 77, ownerId: 555 });
+    const { pg } = pgReturning({ surface, ownerId: 555 });
     await commentV2Handler.process({
       operation,
       record: { userId: 42, threadId: 1 },
@@ -162,9 +136,9 @@ test('an article comment is left to the CommentV3 handler', async () => {
   }
 });
 
-test('a delete backs out both the entity and the owner', async () => {
+test('a delete backs out the owner count', async () => {
   const { adds, actions } = recorder();
-  const { pg } = pgReturning({ ...noEntity, imageId: 77, ownerId: 555 });
+  const { pg } = pgReturning({ ...uncountedSurfaceThread, ownerId: 555 });
 
   await commentV2Handler.process({
     operation: 'delete',
@@ -173,12 +147,12 @@ test('a delete backs out both the entity and the owner', async () => {
     pg,
   } as never);
 
-  expectAdds(adds, [user(555, 42, -1), entity('Image', 77, 42, -1)]);
+  expectAdds(adds, [user(555, 42, -1)]);
 });
 
 test('the owner is looked up by thread, not by commenter', async () => {
   const { actions } = recorder();
-  const { pg, calls } = pgReturning({ ...noEntity, ownerId: 555 });
+  const { pg, calls } = pgReturning({ ...uncountedSurfaceThread, ownerId: 555 });
 
   await commentV2Handler.process({
     operation: 'create',
@@ -203,7 +177,7 @@ test('the owner is looked up by thread, not by commenter', async () => {
 // by keeping the substring. Only executing the query against a seeded database would.
 test('the owner query still mentions every commentable surface', async () => {
   const { actions } = recorder();
-  const { pg, calls } = pgReturning({ ...noEntity, ownerId: 1 });
+  const { pg, calls } = pgReturning({ ...uncountedSurfaceThread, ownerId: 1 });
 
   await commentV2Handler.process({
     operation: 'create',
@@ -235,11 +209,27 @@ test('the owner query still mentions every commentable surface', async () => {
     expect(sql).toContain(`= COALESCE(r."${column}", t."${column}")`);
   }
 
-  // The four ids that are also selected carry the same fallback twice — once to find the owner and
-  // once to decide which entity metric to emit. Asserting only the join form leaves the selected
-  // half free to collapse to `t.x`, which drops every reply from the entity counts alone.
-  for (const column of ['postId', 'imageId', 'articleId', 'bountyId']) {
-    expect(sql).toContain(`COALESCE(r."${column}", t."${column}") AS "${column}"`);
+  // The surface is classified with the same fallback, or a reply on a CommentV3 surface would
+  // classify as none and be counted twice.
+  const surfaceColumn: Record<(typeof COMMENT_V3_SURFACES)[number], string> = {
+    article: 'articleId',
+    post: 'postId',
+    image: 'imageId',
+    review: 'reviewId',
+    bounty: 'bountyId',
+    bountyEntry: 'bountyEntryId',
+    challenge: 'challengeId',
+    crucible: 'crucibleId',
+    storyline: 'storylineId',
+    model3d: 'model3dId',
+    appListing: 'appListingId',
+    comicChapter: 'comicProjectId',
+  };
+  for (const surface of COMMENT_V3_SURFACES) {
+    const column = surfaceColumn[surface];
+    expect(sql).toContain(
+      `WHEN COALESCE(r."${column}", t."${column}") IS NOT NULL THEN '${surface}'`
+    );
   }
 
   // And the root thread has to be joined on rootThreadId — joined on anything else, every COALESCE
@@ -400,5 +390,37 @@ test('a CommentV3 delete backs a live comment out, and a tombstone only once', a
 
 test('CommentV3 skips self-comments for the owner and surfaces it does not count', async () => {
   expectAdds((await v3('create', {}, { ownerId: 42 })).adds, [entity('Article', 77, 42, 1)]);
-  expect((await v3('create', { entityType: 'image' }, { ownerId: 555 })).adds).toEqual([]);
+  // Model comments are counted from `Comment` and CommentV2, not here; crucible and storyline are
+  // not counted.
+  for (const entityType of ['model', 'crucible', 'storyline'])
+    expect((await v3('create', { entityType }, { ownerId: 555 })).adds).toEqual([]);
+});
+
+test.each([
+  ['image', 'Image'],
+  ['post', 'Post'],
+  ['bounty', 'Bounty'],
+])('a CommentV3 %s comment counts for the entity and its owner', async (entityType, metric) => {
+  const { adds, calls } = await v3('create', { entityType }, { ownerId: 555 });
+  expectAdds(adds, [user(555, 42, 1), entity(metric, 77, 42, 1)]);
+  expect(calls[0].sql).toContain(`FROM "${metric}" WHERE id = $1`);
+});
+
+// Pin the owner query's table and columns: a wrong name throws in production and stalls the topic,
+// and a canned owner row would hide it.
+test.each([
+  ['review', ['"ResourceReview"', '"userId"', 'id = $1']],
+  ['bountyEntry', ['"BountyEntry"', '"userId"', 'id = $1']],
+  ['challenge', ['"Challenge"', '"createdById"', 'id = $1']],
+  ['model3d', ['"Model3D"', '"userId"', 'id = $1']],
+  ['appListing', ['app_listings', 'user_id', 'serial_id = $1']],
+  [
+    'comicChapter',
+    ['"ComicChapter" c', 'JOIN "ComicProject" p ON p.id = c."projectId"', 'p."userId"'],
+  ],
+])('a CommentV3 %s comment counts for its owner only', async (entityType, sqlParts) => {
+  const { adds, calls } = await v3('create', { entityType }, { ownerId: 555 });
+  expectAdds(adds, [user(555, 42, 1)]);
+  expect(calls[0].params).toEqual([77]);
+  for (const part of sqlParts) expect(calls[0].sql).toContain(part);
 });

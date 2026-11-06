@@ -260,7 +260,10 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 let mockIsFlipt: (...args: unknown[]) => unknown = async () => false;
 let recordedArchiveCalls: Array<[string, string, string]> = [];
 
-import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
+import {
+  archiveCsamDataForReport,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
+} from '~/server/services/csam.service-new';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
@@ -667,7 +670,12 @@ describe('csam archive streaming upload', () => {
     ];
     mockIsFlipt = async () => false;
 
-    await archiveCsamDataForReport({ ...report, type: 'GeneratedImage' } as never);
+    // Past the give-up window, so the absent URLs are counted misses rather than failing the pass.
+    await archiveCsamDataForReport({
+      ...report,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
+    } as never);
 
     const stored = storedObjects.get('generated-images.zip');
     expect(

@@ -14,6 +14,7 @@ import type * as Region from '~/server/utils/region-blocking';
 import type * as Meili from '~/server/meilisearch/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as PromClient from '~/server/prom/client';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 const h = vi.hoisted(() => ({
   restFlagOn: vi.fn(() => true),
@@ -34,6 +35,14 @@ const h = vi.hoisted(() => ({
   // When set, the production hydrate runs through getAllImagesUncaptured to the raw query.
   realHydrate: false,
   rawQuery: vi.fn(),
+  // The replica's user-id-by-username read (a Kysely statement); a miss falls back to the primary
+  // through Prisma.
+  userIdByUsername: vi.fn(),
+}));
+
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getUserIdByUsername: (...args: unknown[]) => h.userIdByUsername(...args),
 }));
 
 vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
@@ -281,7 +290,7 @@ describe('/api/v1/images served by the feed service', () => {
     h.meiliSearch.mockResolvedValue(MEILI_PAGE);
     h.enforce.mockImplementation(async () => ({ emptyResult: false }));
     h.realHydrate = false;
-    dbMock.dbRead.user.findUnique.mockResolvedValue(null);
+    h.userIdByUsername.mockResolvedValue(undefined);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
     h.counted.length = 0;
   });
@@ -649,7 +658,7 @@ describe('/api/v1/images served by the feed service', () => {
     });
 
     it('scopes the feed to the creator a username names', async () => {
-      dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+      h.userIdByUsername.mockResolvedValue({ id: 7 });
       await get({ username: 'someone' });
       expect(feedQuery().get('userIds')).toBe('7');
     });
@@ -676,7 +685,7 @@ describe('/api/v1/images served by the feed service', () => {
     });
 
     it('hydrates with the enforced tags, the maturity filters and the resolved creator', async () => {
-      dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+      h.userIdByUsername.mockResolvedValue({ id: 7 });
       h.enforce.mockImplementation(
         async (input: { tags?: number[]; excludedTagIds?: number[] }) => {
           input.tags = [5];
@@ -869,7 +878,7 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
   });
 
   it('[invariant on the pre-change code] answers an unknown username with NOT_FOUND', async () => {
-    dbMock.dbRead.user.findUnique.mockResolvedValue(null);
+    h.userIdByUsername.mockResolvedValue(undefined);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
     await expect(
       getAllImagesIndex({ ...request(undefined), username: 'ghost' } as Parameters<

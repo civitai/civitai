@@ -2581,6 +2581,10 @@ export const REDIS_SYS_KEYS = {
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
     IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
+    // Sorted set of imageIds whose upload prompt scan had no verdict, scored by when to scan them
+    // again; `:attempts` is a hash of imageId -> the attempt that entry is. See
+    // src/server/services/upload-prompt-retry.service.ts.
+    UPLOAD_PROMPT_SCAN_RETRY: 'system:upload-prompt-scan-retry',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2892,6 +2896,13 @@ export const REDIS_SYS_KEYS = {
     // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
     LOCK: 'membership-extend:lock',
   },
+  HEADLESS_POST: {
+    IDEMPOTENCY: 'headless-post:idempotency',
+  },
+  REMIX_APP: {
+    // A choice ask's per-option prices, per run, segment and step, while that ask is open.
+    OPTION_PRICES: 'remix-app:option-prices',
+  },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
     SEND_LOCK: 'message-as-civitai:send-lock',
@@ -2908,6 +2919,16 @@ export const REDIS_SYS_KEYS = {
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 
@@ -3034,6 +3055,10 @@ const REDIS_KEYS_UNPREFIXED = {
     // suggestions — omitting it let one prompt's entry be reused across limits.
     JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
+    // `<prefix>:<userId>:<type|all>` — the ranked ids behind /api/v1/creator/engagement?sort=engagement.
+    CREATOR_ENGAGEMENT_RANKING: 'packed:caches:creator-engagement-ranking:v1',
+    // `<prefix>:<userId>` — the 30-day reacted-image candidates, shared by every ranking type.
+    CREATOR_ENGAGEMENT_CANDIDATES: 'packed:caches:creator-engagement-candidates:v1',
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
@@ -3310,6 +3335,14 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+  },
+  BOT_CACHE: {
+    /*
+      Use: a verified crawler's page HTML, so a repeat request for the URL is not rendered again.
+      Structure: packed { pattern, headers, body (brotli HTML) }, key =
+      `botcache:v1:${buildId}:${host}:${path}?${sortedQuery}`, TTL 300s.
+     */
+    HTML: 'botcache:v1',
   },
   SEMANTIC_SEARCH: {
     /*

@@ -60,20 +60,26 @@ WHERE ${threadOwnerSql('t')} = $2
 ORDER BY top."seedId"
 LIMIT $3`;
 
+/** A section's owner where it is not a `THREAD_CONTENT_OWNERS` column: a chapter's is its project's. */
+const V3_SECTION_OWNERS: Record<string, (entityId: string) => string> = {
+  comicChapter: (entityId) =>
+    `(SELECT p."userId" FROM "ComicChapter" ch JOIN "ComicProject" p ON p.id = ch."projectId" WHERE ch.id = ${entityId})`,
+};
+
 /**
  * The CommentV3 twin, for the surfaces that write there directly: a comment there names its section,
- * so its owner is one lookup by entity type. A surface with no `THREAD_CONTENT_OWNERS` row under
- * `<entityType>Id` resolves no owner and hides nothing, which a test guards against.
+ * so its owner is one lookup by entity type. A surface with no owner here hides nothing.
  */
 export const v3SectionOwnerSql = (alias: string) =>
   `CASE ${constants.comments.v3WriteSurfaces
     .flatMap((type) => {
+      const entityId = `${alias}."entityId"`;
+      const own = V3_SECTION_OWNERS[type];
       const o = THREAD_CONTENT_OWNERS.find((x) => x.column === `${type}Id`);
-      return o
-        ? [
-            `WHEN ${alias}."entityType" = '${type}' THEN (SELECT o.${o.owner} FROM ${o.table} o WHERE o.${o.key} = ${alias}."entityId")`,
-          ]
-        : [];
+      const owner = own
+        ? own(entityId)
+        : o && `(SELECT o.${o.owner} FROM ${o.table} o WHERE o.${o.key} = ${entityId})`;
+      return owner ? [`WHEN ${alias}."entityType" = '${type}' THEN ${owner}`] : [];
     })
     .join(' ')} END`;
 

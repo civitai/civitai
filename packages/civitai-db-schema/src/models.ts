@@ -266,6 +266,8 @@ export type StorylineStatus = "Ongoing" | "Complete";
 
 export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
 
+export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
+
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
@@ -713,6 +715,7 @@ export interface User {
   comicChapterReads?: ComicChapterRead[];
   storylines?: Storyline[];
   storylineCollaborations?: StorylineCollaborator[];
+  storylineFollows?: StorylineFollow[];
   storylineEarlyAccess?: StorylineEarlyAccessSignup | null;
   storylineBranchChoices?: StorylineBranchChoice[];
   storylineCreateClicks?: StorylineCreateClick[];
@@ -1754,6 +1757,7 @@ export interface Image {
   clubTierCover?: ClubTier[];
   clubPostCoverImage?: ClubPost[];
   article?: Article | null;
+  articleBanner?: Article | null;
   purchasableRewards?: PurchasableReward[];
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
@@ -2926,6 +2930,12 @@ export interface AppUserScopeGrant {
   buzzBudgetPerDay: number | null;
 }
 
+export interface AppDeveloperTermsAcceptance {
+  userId: number;
+  version: string;
+  acceptedAt: Date;
+}
+
 export interface AppDevForgejoIdentity {
   userId: number;
   user?: User;
@@ -3808,6 +3818,8 @@ export interface Article {
   cover: string | null;
   coverId: number | null;
   coverImage?: Image | null;
+  bannerId: number | null;
+  bannerImage?: Image | null;
   publishedAt: Date | null;
   scheduledAt: Date | null;
   contentScannedAt: Date | null;
@@ -4301,6 +4313,22 @@ export interface EvidenceHoldPost {
   modelVersionId: number | null;
   collectionId: number | null;
   metadata: JsonValue | null;
+  keptAt: Date;
+}
+
+export interface EvidenceHoldComment {
+  commentId: number;
+  userId: number;
+  threadId: number | null;
+  content: string;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  nsfw: boolean | null;
+  tosViolation: boolean | null;
+  hidden: boolean | null;
+  metadata: JsonValue | null;
+  thread: JsonValue | null;
+  source: string;
   keptAt: Date;
 }
 
@@ -5927,6 +5955,7 @@ export interface UserProfile {
   privacySettings: JsonValue;
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
+  showcaseSections: JsonValue;
 }
 
 export interface BountyStat {
@@ -6656,6 +6685,7 @@ export interface Placement {
   placerId: number;
   placer?: User;
   data: JsonValue;
+  track: JsonValue | null;
   status: string;
   removedBy: string | null;
   amount: number;
@@ -6724,6 +6754,7 @@ export interface Storyline {
   chapters?: StorylineChapter[];
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
+  followers?: StorylineFollow[];
   reports?: StorylineReport[];
   coverUploads?: StorylineCoverUpload[];
   thread?: Thread | null;
@@ -6804,6 +6835,15 @@ export interface StorylineCollaborator {
   user?: User;
   createdAt: Date;
   acceptedAt: Date | null;
+}
+
+export interface StorylineFollow {
+  storylineId: number;
+  storyline?: Storyline;
+  userId: number;
+  user?: User;
+  scope: StorylineFollowScope;
+  createdAt: Date;
 }
 
 export interface StorylineBranchChoice {

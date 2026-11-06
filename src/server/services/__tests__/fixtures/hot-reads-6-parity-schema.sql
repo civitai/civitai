@@ -1,6 +1,6 @@
 -- Minimal schema for hot-reads-6.kysely-parity.test.ts.
 --
--- Only the tables the reads behind kysely-hot-reads-6 touch, and only the columns those reads
+-- Only the tables the hot-reads-6 reads touch, and only the columns those reads
 -- select, filter, join or order on. Types, nullability and primary keys follow schema.full.prisma,
 -- except that the CITEXT column ("User"."username") is TEXT here, as in the other parity fixtures,
 -- so the throwaway database needs no extension. Foreign keys are left out where a fixture row must
@@ -166,7 +166,9 @@ CREATE TABLE "hot_reads_6_parity"."ModelFile" (
   "modelVersionId" INTEGER                                     NOT NULL,
   "metadata"       JSONB,
   "visibility"     "hot_reads_6_parity"."ModelFileVisibility" NOT NULL DEFAULT 'Public',
-  "replacedAt"     TIMESTAMP(3)
+  "replacedAt"     TIMESTAMP(3),
+  "pickleScanResult" TEXT                                      NOT NULL DEFAULT 'Pending',
+  "virusScanResult"  TEXT                                      NOT NULL DEFAULT 'Pending'
 );
 
 CREATE TABLE "hot_reads_6_parity"."ModelFileHash" (

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { reviewCollectionImageSql } from '~/server/services/collection-review.sql';
+import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -61,6 +61,7 @@ import {
 import {
   hasBlockMarker,
   imageReviewedSql,
+  pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '~/server/common/image-visibility';
 import {
@@ -324,10 +325,7 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
-import {
-  readUserIdByUsernameViaKysely,
-  readUserIdByUsernameViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readUserIdByUsernameViaKysely } from '~/server/services/hot-reads-6.reads';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -2792,17 +2790,7 @@ const getAllImagesUncaptured = async (
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${
-          reviewCollectionId
-            ? Prisma.sql` OR ${reviewCollectionImageSql({
-                collectionId: reviewCollectionId,
-                userId,
-              })}`
-            : Prisma.empty
-        })`
-      );
+      AND.push(pendingViewerImageSql({ userId, browsingLevel, reviewCollectionId }));
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
@@ -3260,9 +3248,7 @@ type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
 };
 export async function findUserIdByUsername(username: string) {
   const user =
-    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readUserIdByUsernameViaKysely(kyselyRead, username)
-      : await readUserIdByUsernameViaPrisma(dbRead, username)) ??
+    (await readUserIdByUsernameViaKysely(kyselyRead, username)) ??
     (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
   return user?.id;
 }
@@ -6411,7 +6397,7 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
@@ -6670,7 +6656,7 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );

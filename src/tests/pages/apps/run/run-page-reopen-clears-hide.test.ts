@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
@@ -46,7 +47,10 @@ vi.mock('next/dynamic', () => ({
     return null;
   },
 }));
-vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
+  ratingAllowedOnHost: () => true,
+}));
 vi.mock('@mantine/core', () => ({
   Box: ({ children }: { children?: unknown }) => children ?? null,
   Alert: () => null,

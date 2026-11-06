@@ -387,12 +387,8 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     // the page the app is mounted on", i.e. exactly the mis-description the notes exist to prevent.
     // Found by the test-review lane.
     for (const scope of EXEMPT_IN_FIXTURE) {
-      const id = Array.from(
-        document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-      ).find((el) => el.textContent === scope);
-      expect(id, `${name}: no row rendered for ${scope}`).toBeTruthy();
-      const row = id!.closest('[data-testid="block-scope-list"] > *');
-      expect(row, `${name}: ${scope}'s id is not inside a scope row`).toBeTruthy();
+      const row = document.querySelector(`[data-permission-row="${scope}"]`);
+      expect(row, `${name}: no row rendered for ${scope}`).toBeTruthy();
       const note = row!.querySelector('[data-testid="scope-fixed-note"]');
       expect(note, `${name}: no note in ${scope}'s OWN row`).toBeTruthy();
       // The row carries the map's sentence for THIS scope…
@@ -460,32 +456,20 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     const [revokedScope] = GRANT.revokedScopes;
     // It is present AT ALL — this scope is deliberately absent from `scopes`, so a surface that
     // rendered the manifest intersection alone would have forgotten the withdrawal entirely.
-    const ids = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-    ).map((el) => el.textContent);
+    const ids = Array.from(document.querySelectorAll<HTMLElement>('[data-permission-row]')).map(
+      (el) => el.dataset.permissionRow
+    );
     expect(ids, `${name}: the withdrawn scope vanished from the list`).toContain(revokedScope);
-    // …marked, not merely present. TWO independent marks, because either alone is weak: the
-    // `data-revoked` hook on the Badge ROOT, and the strike on its LABEL.
-    //
-    // ⚠️ THE STRIKE CLASS IS ON THE LABEL, NOT THE ROOT — this arm asserted the root first and
-    // went red on `'m_347db0ec mantine-Badge-root'`. `BlockScopeList` passes it through Mantine's
-    // `classNames={{ label: … }}`, which is also where phase 1's `whitespace-normal break-all
-    // text-start` live, so reading the root would have been a guard on the wrong box.
-    const marked = document.querySelector<HTMLElement>('[data-revoked="true"]');
-    expect(marked?.textContent, name).toBe(revokedScope);
-    const markedLabel = marked?.querySelector<HTMLElement>('.mantine-Badge-label');
-    expect(markedLabel, `${name}: the revoked badge has no Mantine label box`).toBeTruthy();
-    expect(markedLabel!.className, name).toContain('line-through');
-    // 🔴 AND PHASE 1'S THREE UTILITIES SURVIVE ON THAT SAME LABEL. `line-through` is APPENDED to
-    // the truncation fix, not substituted for it, and a revoked row is the one row where a
-    // careless rewrite of that template string would drop them — silently, since only an
-    // over-long id at 408px shows the difference.
-    for (const util of ['whitespace-normal', 'break-all', 'text-start']) {
-      expect(
-        markedLabel!.className,
-        `${name}: phase-1 utility ${util} lost on a revoked row`
-      ).toContain(util);
-    }
+    // …marked, not merely present: ONLY that row carries `data-revoked`, and its title is struck.
+    const marked = Array.from(document.querySelectorAll<HTMLElement>('[data-revoked="true"]'));
+    expect(
+      marked.map((el) => el.dataset.permissionRow),
+      name
+    ).toEqual([revokedScope]);
+    const title = marked[0].querySelector<HTMLElement>('[data-testid="permission-title"]');
+    expect(title?.style.textDecoration, `${name}: the withdrawn title is not struck`).toContain(
+      'line-through'
+    );
     await expect.element(page.getByTestId('scope-revoked-mark')).toBeVisible();
     // 🔴 THE "WHEN" IS APP-LEVEL AND APPEARS EXACTLY ONCE. `scopesRevokedAt` is ONE timestamp per
     // (user, app) — `revoked_scopes` is a TEXT[] with nowhere to hold per-entry times — so a
@@ -884,8 +868,15 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       m.notify.warning,
       `${name}: a clean success was announced as a warning`
     ).not.toHaveBeenCalled();
-    // The message names the scope that was actually removed, not the app's whole set.
-    expect(String(m.notify.success.mock.calls[0][0].message), name).toContain(scope);
+    // The message names the permission that was actually removed, in plain language, not the
+    // app's whole set and not the raw id.
+    const removedTitle: Record<string, string> = {
+      'posts:write:self': 'Publish posts to your profile',
+      'ai:write:budgeted': 'Run AI work with your Buzz',
+    };
+    const message = String(m.notify.success.mock.calls[0][0].message);
+    expect(message, name).toContain(removedTitle[scope] ?? '\u0000');
+    expect(message, name).not.toContain(scope);
     // …and no inline failure notice on a success.
     expect(document.querySelector('[data-testid="scope-revoke-failure"]'), name).toBeNull();
   });
@@ -1124,10 +1115,11 @@ describe.each(SURFACES)('a PRE-PHASE-2 payload — $name', ({ name, render }) =>
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     // The rows are still disclosed — the viewer must still see what the app may use.
-    const ids = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-    ).map((el) => el.textContent);
-    expect(ids, name).toEqual(GRANT.scopes);
+    const ids = Array.from(document.querySelectorAll<HTMLElement>('[data-permission-row]')).map(
+      (el) => el.dataset.permissionRow
+    );
+    // Sorted: the list groups sensitive scopes first, and this arm is about presence, not order.
+    expect([...ids].sort(), name).toEqual([...GRANT.scopes].sort());
     // No control — the server did not say any of these is withdrawable.
     expect(revokeButtons(), `${name}: offered a control the server never authorised`).toHaveLength(
       0
@@ -1198,9 +1190,9 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
     // The row is still DISCLOSED — the app really does declare this permission.
-    const ids = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')
-    ).map((el) => el.textContent);
+    const ids = Array.from(document.querySelectorAll<HTMLElement>('[data-permission-row]')).map(
+      (el) => el.dataset.permissionRow
+    );
     expect(ids, name).toContain(UNGRANTED);
     expect(
       revokableScopesOnScreen(),
@@ -1215,9 +1207,7 @@ describe.each(SURFACES)('a DECLARED scope the viewer never granted — $name', (
   test('🔴 says so, and does NOT use the "granted by platform policy" note', async () => {
     render();
     await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
-    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]'))
-      .find((el) => el.textContent === UNGRANTED)
-      ?.closest('[data-testid="block-scope-list"] > *');
+    const row = document.querySelector(`[data-permission-row="${UNGRANTED}"]`);
     if (!row) throw new Error(`${name}: no row for ${UNGRANTED}`);
     // Silence is the rejected option: a row with no affordance and no explanation, next to rows
     // that have one, reads as an oversight rather than as a statement.
@@ -1386,32 +1376,28 @@ test('🔴 the drawer and the activity page render ONE consent ledger from one f
   const ledger = (): string[] => {
     const list = document.querySelector('[data-testid="scope-consent-list"]');
     if (!list) throw new Error('no scope-consent-list rendered');
-    return Array.from(list.querySelectorAll<HTMLElement>('[data-testid="block-scope-id"]')).map(
-      (id) => {
-        const row = id.closest('[data-testid="block-scope-list"] > *');
-        if (!row) throw new Error(`scope id ${id.textContent} is not inside a scope row`);
-        const control = row.querySelector('[data-testid="scope-revoke-button"]');
-        const note = row.querySelector('[data-testid="scope-fixed-note"]');
-        const mark = row.querySelector('[data-testid="scope-revoked-mark"]');
-        // `not-granted` is enumerated here rather than collapsing into `NOTHING`: the positive
-        // control below asserts NO row is in the `NOTHING` state, and that assertion is only about
-        // "no affordance and no explanation" if every state that DOES carry an explanation is
-        // named. A not-granted row carries one.
-        const notGranted = row.querySelector('[data-testid="scope-not-granted-note"]');
-        const state = control
-          ? 'revokable'
-          : mark
-          ? 'revoked'
-          : note
-          ? 'fixed'
-          : notGranted
-          ? 'not-granted'
-          : 'NOTHING';
-        // The note text is part of the pair, so a surface rendering the right STATE with the wrong
-        // sentence is still a divergence.
-        return `${id.textContent}|${state}|${(note ?? notGranted)?.textContent ?? ''}`;
-      }
-    );
+    return Array.from(list.querySelectorAll<HTMLElement>('[data-permission-row]')).map((row) => {
+      const control = row.querySelector('[data-testid="scope-revoke-button"]');
+      const note = row.querySelector('[data-testid="scope-fixed-note"]');
+      const mark = row.querySelector('[data-testid="scope-revoked-mark"]');
+      // `not-granted` is enumerated here rather than collapsing into `NOTHING`: the positive
+      // control below asserts NO row is in the `NOTHING` state, and that assertion is only about
+      // "no affordance and no explanation" if every state that DOES carry an explanation is
+      // named. A not-granted row carries one.
+      const notGranted = row.querySelector('[data-testid="scope-not-granted-note"]');
+      const state = control
+        ? 'revokable'
+        : mark
+        ? 'revoked'
+        : note
+        ? 'fixed'
+        : notGranted
+        ? 'not-granted'
+        : 'NOTHING';
+      // The note text is part of the pair, so a surface rendering the right STATE with the wrong
+      // sentence is still a divergence.
+      return `${row.dataset.permissionRow}|${state}|${(note ?? notGranted)?.textContent ?? ''}`;
+    });
   };
 
   SURFACES[0].render();

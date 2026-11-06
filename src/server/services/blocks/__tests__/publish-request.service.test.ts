@@ -14,6 +14,17 @@ import {
   MAX_FILE_SIZE_BYTES,
   MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 // submitVersion dynamically imports these; mock them so the sensitive-scope
 // gate can be exercised end-to-end without a real DB / MinIO / Forgejo. The
@@ -39,7 +50,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
-    appListing: { findFirst: dbMocks.appListingFindFirst },
+    appListing: { findFirst: dbMocks.appListingFindFirst, findUnique: async () => null },
     appListingPublishRequest: { findFirst: dbMocks.listingReqFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },
@@ -139,6 +150,49 @@ describe('computeFileDiff', () => {
 });
 
 describe('computeManifestDiff', () => {
+  const withStorage = (collections: Record<string, unknown>) => ({
+    blockId: 'x',
+    storage: { collections },
+  });
+  const sharedColl = (extra: Record<string, unknown> = {}) => ({
+    visibility: 'shared',
+    write: 'own',
+    ...extra,
+  });
+
+  it('🔴 names the collections a version newly publishes to registries', () => {
+    const prev = withStorage({ notes: sharedColl(), pins: sharedColl({ registry: 'public' }) });
+    const curr = withStorage({
+      notes: sharedColl({ registry: 'public' }),
+      pins: sharedColl({ registry: 'public' }),
+    });
+    expect(computeManifestDiff(curr, prev).registryExports).toEqual({
+      exported: ['notes', 'pins'],
+      added: ['notes'],
+      removed: [],
+    });
+  });
+
+  it('names a collection that stops being published, and a first version that publishes', () => {
+    expect(
+      computeManifestDiff(
+        withStorage({ notes: sharedColl() }),
+        withStorage({
+          notes: sharedColl({ registry: 'public' }),
+        })
+      ).registryExports
+    ).toEqual({ exported: [], added: [], removed: ['notes'] });
+    expect(
+      computeManifestDiff(withStorage({ notes: sharedColl({ registry: 'public' }) }), null)
+        .registryExports
+    ).toEqual({ exported: ['notes'], added: ['notes'], removed: [] });
+  });
+
+  it('says nothing about registries when no version publishes', () => {
+    const diff = computeManifestDiff(withStorage({ notes: sharedColl() }), withStorage({}));
+    expect(Object.hasOwn(diff, 'registryExports')).toBe(false);
+  });
+
   it('treats null previous as a first-version diff', () => {
     const curr = { blockId: 'x', version: '0.1.0', name: 'X' };
     const result = computeManifestDiff(curr, null);
