@@ -17,7 +17,8 @@
 --
 -- Privileges. SECURITY DEFINER, so a caller needs EXECUTE on this function and NO privilege on
 -- "Image": it runs as the function's OWNER, which must be a role that can SELECT "Image". Apply it as
--- the table owner (not a superuser), or ALTER FUNCTION ... OWNER TO that role afterwards. The
+-- the owner of "Image" (from a superuser session: SET ROLE <that owner>; first). The file REFUSES to
+-- run as a superuser, so the function can never be created owned by one. The
 -- search_path is pinned and every name is schema-qualified, so a caller cannot point it at objects
 -- of its own. EXECUTE is revoked from PUBLIC (functions are executable by PUBLIC by default), so
 -- grant it to each role that calls it:
@@ -27,6 +28,18 @@
 --
 -- STABLE: it reads, never writes, so it runs on a read replica. STRICT: a NULL url returns no row,
 -- as `url = NULL` does.
+--
+-- One transaction, so the function never exists with PUBLIC still holding EXECUTE.
+
+BEGIN;
+
+DO $$
+BEGIN
+    IF (SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user) THEN
+        RAISE EXCEPTION 'apply as the owner of "Image" (SET ROLE <owner>), not a superuser';
+    END IF;
+END
+$$;
 
 CREATE OR REPLACE FUNCTION public.image_delivery_lookup(p_url text)
 RETURNS TABLE (
@@ -51,3 +64,5 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION public.image_delivery_lookup(text) FROM PUBLIC;
+
+COMMIT;

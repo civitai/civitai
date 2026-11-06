@@ -328,6 +328,37 @@ describe.skipIf(!adminUrl)(
         });
       });
 
+      // beforeAll applied the file as the owner of "Image", which succeeded. Applied as a superuser
+      // (CI's own user, checked first so the refusal cannot come from a missing privilege instead),
+      // it must refuse before creating anything: the function is dropped inside a transaction, the
+      // file run, and the function is still absent afterwards. All of it is rolled back.
+      it('refuses to run as a superuser, and creates nothing', async () => {
+        const client = await pool.connect();
+        try {
+          const [me] = (
+            await client.query('SELECT rolsuper FROM pg_roles WHERE rolname = current_user')
+          ).rows;
+          expect(me).toStrictEqual({ rolsuper: true });
+
+          await client.query('BEGIN');
+          await client.query('DROP FUNCTION public.image_delivery_lookup(text)');
+          await client.query('SAVEPOINT before_apply');
+          await expect(client.query(readFileSync(MIGRATION, 'utf8'))).rejects.toThrow(
+            'apply as the owner of "Image" (SET ROLE <owner>), not a superuser'
+          );
+          await client.query('ROLLBACK TO SAVEPOINT before_apply');
+          const [fn] = (
+            await client.query(
+              `SELECT to_regprocedure('public.image_delivery_lookup(text)') IS NULL AS absent`
+            )
+          ).rows;
+          expect(fn).toStrictEqual({ absent: true });
+        } finally {
+          await client.query('ROLLBACK');
+          client.release();
+        }
+      });
+
       it('is SECURITY DEFINER, STABLE, owned by the table owner, with a pinned search_path', async () => {
         const [fn] = (
           await pool.query(`
