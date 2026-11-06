@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { EventViewer } from '~/server/events/event-access';
 import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
-import { userWithProfileSelect } from '~/server/selectors/user.selector';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readUserWithProfileViaKysely,
+  readUserWithProfileViaPrisma,
+} from '~/server/services/hot-reads-9.reads';
 import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
@@ -105,21 +110,14 @@ export const getUserWithProfile = async ({
   if (!username && !id) {
     throwBadRequestError('Either username or id must be provided');
   }
+  // Inside a caller's transaction the read stays on that transaction's Prisma client. Otherwise
+  // `kysely-hot-reads-9` picks the path once per call: Prisma on the primary, or the one-statement
+  // Kysely twin on the primary too.
+  const viaKysely = !tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9));
   const getUser = async () => {
-    const user = await dbClient.user.findUniqueOrThrow({
-      where: {
-        id,
-        username,
-        deletedAt: null,
-      },
-      select: {
-        ...userWithProfileSelect,
-        bannedAt: true,
-        meta: true,
-        publicSettings: true,
-        settings: true,
-      },
-    });
+    const user = viaKysely
+      ? await readUserWithProfileViaKysely(kyselyWrite, { id, username })
+      : await readUserWithProfileViaPrisma(dbClient, { id, username });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
     // Ideally, using dbRead.
