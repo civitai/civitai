@@ -5,12 +5,14 @@ import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
-const state = vi.hoisted(() => ({
-  flags: {} as Record<string, boolean>,
-  items: [] as unknown[],
-  useQuery: undefined as unknown as ReturnType<typeof vi.fn>,
-}));
-state.useQuery = vi.fn(() => ({ data: { items: state.items }, isLoading: false }));
+const state = vi.hoisted(() => {
+  const s = {
+    flags: {} as Record<string, boolean>,
+    items: [] as unknown[],
+    useQuery: vi.fn((..._args: unknown[]) => ({ data: { items: s.items }, isLoading: false })),
+  };
+  return s;
+});
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
