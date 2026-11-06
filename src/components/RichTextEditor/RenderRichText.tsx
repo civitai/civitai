@@ -25,6 +25,10 @@ import { EmbedNode, embedIframeAttrs } from '~/shared/tiptap/embed.node';
 import { isAllowedPlayerUrl } from '~/shared/utils/embed-providers';
 import { useMaybeAppContext } from '~/providers/AppProvider';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
+import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
+import { collectCivitaiEmbedIds } from '~/shared/tiptap/civitai-embed.utils';
+import { CivitaiEmbedBlock } from '~/components/CivitaiEmbed/CivitaiEmbedBlock';
+import { CivitaiEmbedProvider } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
@@ -42,6 +46,7 @@ const extensions = [
   BlurbNode,
   EmbedNode,
   TextAlignExtension,
+  CivitaiEmbedNode,
 ];
 
 type JsonNode = {
@@ -76,6 +81,7 @@ export function RenderRichText({
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const toCurrentDomain = useCurrentDomainHref();
+  const embedIds = useMemo(() => collectCivitaiEmbedIds(content), [content]);
   const host = useMaybeAppContext()?.host;
   const memoized = useMemo(() => {
     try {
@@ -103,6 +109,7 @@ export function RenderRichText({
                 }}
               />
             ),
+            civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
             embed: ({ node }) => {
               const src = node.attrs.src as string | null;
               const provider = isAllowedPlayerUrl(src);
@@ -137,13 +144,26 @@ export function RenderRichText({
     }
   }, [content, allowed, toCurrentDomain, host]);
 
-  if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
+  if (!memoized.ok)
+    return fallbackHtml ? <RenderHtml html={fallbackHtml} className={className} /> : null;
 
-  return (
+  const body = (
     <TypographyStylesWrapper className={clsx(classes.htmlRenderer, className)}>
       <div ref={contentRef}>{memoized.el}</div>
       <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>
+  );
+  if (!embedIds.modelIds.length && !embedIds.imageIds.length) return body;
+
+  return (
+    <CivitaiEmbedProvider
+      // A new article must not inherit the last one's results as "loaded".
+      key={`${embedIds.modelIds}|${embedIds.imageIds}`}
+      modelIds={embedIds.modelIds}
+      imageIds={embedIds.imageIds}
+    >
+      {body}
+    </CivitaiEmbedProvider>
   );
 }
 

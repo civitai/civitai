@@ -69,7 +69,7 @@ const TEXT_ALIGN_STYLES = Object.fromEntries(
 );
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
-  a: ['rel', 'href', 'target'],
+  a: ['rel', 'href', 'target', 'data-entity', 'data-id', 'data-version-id'],
   img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE],
   iframe: [
     'src',
