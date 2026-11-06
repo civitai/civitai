@@ -38,6 +38,8 @@ export const actions: Actions = {
     });
     if (result.status === 'already-queued') return fail(409, { error: ALREADY_QUEUED });
     if (result.status === 'no-user') return fail(404, { error: `No user ${input.userId}.` });
+    if (result.status === 'error')
+      return fail(500, { error: 'Could not queue the export; nothing was queued. Try again.' });
     return { success: true as const, id: result.id };
   }),
 

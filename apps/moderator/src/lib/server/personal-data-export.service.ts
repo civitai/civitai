@@ -1,6 +1,5 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from './db';
-import { recordModActivity } from './mod-activity';
 import { callModEndpoint } from './user-actions.service';
 
 /**
@@ -31,7 +30,8 @@ export type ExportSummary = {
 export type QueueResult =
   | { status: 'queued'; id: number }
   | { status: 'already-queued' }
-  | { status: 'no-user' };
+  | { status: 'no-user' }
+  | { status: 'error' };
 
 /**
  * Queues an export. A second queue while one is queued or building is refused by the database's
@@ -47,26 +47,39 @@ export async function queuePersonalDataExport(input: {
     .where('id', '=', input.userId)
     .executeTakeFirst();
   if (!user) return { status: 'no-user' };
-  const row = await dbWrite
-    .insertInto('PersonalDataExport')
-    .values({ userId: input.userId, requestedById: input.requestedById })
-    .onConflict((oc) =>
-      oc
-        .column('userId')
-        .where(sql<boolean>`status IN ('queued', 'building')`)
-        .doNothing()
-    )
-    .returning('id')
-    .executeTakeFirst();
-  if (!row) return { status: 'already-queued' };
-  // Every queue is audited, whichever page it came from: an export is a copy of the account's data.
-  await recordModActivity({
-    userId: input.requestedById,
-    entityType: 'user',
-    entityId: input.userId,
-    activity: 'queuePersonalDataExport',
-  });
-  return { status: 'queued', id: row.id };
+  // The export row and its audit row commit together or not at all: an export is a copy of the
+  // account's data, and every one must be accountable to the moderator who queued it.
+  try {
+    return await dbWrite.transaction().execute(async (tx) => {
+      const row = await tx
+        .insertInto('PersonalDataExport')
+        .values({ userId: input.userId, requestedById: input.requestedById })
+        .onConflict((oc) =>
+          oc
+            .column('userId')
+            .where(sql<boolean>`status IN ('queued', 'building')`)
+            .doNothing()
+        )
+        .returning('id')
+        .executeTakeFirst();
+      if (!row) return { status: 'already-queued' as const };
+      // Targetless ON CONFLICT, as recordModActivity has it (see its comment).
+      await tx
+        .insertInto('ModActivity')
+        .values({
+          userId: input.requestedById,
+          entityType: 'user',
+          entityId: input.userId,
+          activity: 'queuePersonalDataExport',
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute();
+      return { status: 'queued' as const, id: row.id };
+    });
+  } catch (e) {
+    console.error('[personal-data-export] queue failed; nothing was queued', e);
+    return { status: 'error' };
+  }
 }
 
 /** The user's most recent export, for the ticket account panel. */

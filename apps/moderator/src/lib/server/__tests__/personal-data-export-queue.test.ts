@@ -15,15 +15,20 @@ import {
  * queue fails. The SQL the app sends is captured here and compared against the index predicate.
  */
 
-const sent = vi.hoisted(() => ({ queries: [] as CompiledQuery[], insertRows: [] as unknown[] }));
-const audit = vi.hoisted(() => vi.fn());
+const sent = vi.hoisted(() => ({
+  queries: [] as CompiledQuery[],
+  insertRows: [] as unknown[],
+  failAudit: false,
+  tx: [] as string[],
+}));
 
-vi.mock('../mod-activity', () => ({ recordModActivity: audit }));
 vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 vi.mock('../db', () => {
   const connection: DatabaseConnection = {
     async executeQuery(q) {
       sent.queries.push(q);
+      if (sent.failAudit && /^insert into "ModActivity"/i.test(q.sql))
+        throw new Error('audit down');
       if (/^select/i.test(q.sql)) return { rows: [{ id: 7 }] } as never;
       return { rows: sent.insertRows } as never;
     },
@@ -34,9 +39,9 @@ vi.mock('../db', () => {
   const driver: Driver = {
     init: async () => undefined,
     acquireConnection: async () => connection,
-    beginTransaction: async () => undefined,
-    commitTransaction: async () => undefined,
-    rollbackTransaction: async () => undefined,
+    beginTransaction: async () => void sent.tx.push('begin'),
+    commitTransaction: async () => void sent.tx.push('commit'),
+    rollbackTransaction: async () => void sent.tx.push('rollback'),
     releaseConnection: async () => undefined,
     destroy: async () => undefined,
   };
@@ -55,7 +60,8 @@ const { queuePersonalDataExport } = await import('../personal-data-export.servic
 
 beforeEach(() => {
   sent.queries = [];
-  audit.mockReset();
+  sent.tx = [];
+  sent.failAudit = false;
 });
 
 describe('queuePersonalDataExport', () => {
@@ -65,16 +71,26 @@ describe('queuePersonalDataExport', () => {
       status: 'queued',
       id: 31,
     });
-    const insert = sent.queries.find((q) => /^insert/i.test(q.sql))!;
+    const insert = sent.queries.find((q) => /^insert into "PersonalDataExport"/i.test(q.sql))!;
     expect(insert.sql.replace(/\s+/g, ' ')).toContain(
       `on conflict ("userId") where status IN ('queued', 'building') do nothing`
     );
-    expect(audit).toHaveBeenCalledWith({
-      userId: 4,
-      entityType: 'user',
-      entityId: 7,
-      activity: 'queuePersonalDataExport',
+    const auditRow = sent.queries.find((q) => /^insert into "ModActivity"/i.test(q.sql))!;
+    expect(auditRow.parameters).toEqual(
+      expect.arrayContaining([4, 'user', 7, 'queuePersonalDataExport'])
+    );
+    expect(sent.tx).toEqual(['begin', 'commit']);
+  });
+
+  it('queues nothing when the audit row cannot be written: both roll back together', async () => {
+    sent.insertRows = [{ id: 33 }];
+    sent.failAudit = true;
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await queuePersonalDataExport({ userId: 7, requestedById: 4 })).toEqual({
+      status: 'error',
     });
+    expect(sent.tx).toEqual(['begin', 'rollback']);
+    spy.mockRestore();
   });
 
   it('answers already-queued when the insert hit the index, and audits nothing', async () => {
@@ -82,6 +98,6 @@ describe('queuePersonalDataExport', () => {
     expect(await queuePersonalDataExport({ userId: 7, requestedById: 4 })).toEqual({
       status: 'already-queued',
     });
-    expect(audit).not.toHaveBeenCalled();
+    expect(sent.queries.some((q) => /^insert into "ModActivity"/i.test(q.sql))).toBe(false);
   });
 });
