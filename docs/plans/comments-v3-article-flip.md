@@ -48,8 +48,9 @@ Comments on this plan: `@dev:` inline; mine are `@ai:`.
   reaction tracking, `goodContentReward` and the comment owner lookup a `CommentV3` fallback.
 - **One write path for every surface** (2026-10-30, Briant; built with their write flips, not in
   stage B). Comic chapters and model comments write through the `commentv3` mutations like every other surface: `comics.createChapterComment`
-  and the v1 model-comment writes are removed, not ported (`createChapterComment` stays the
-  top-level comic write until that write flip; see "Read flip as built"). The model's lock toggles
+  and the v1 model-comment writes are removed, not ported (`createChapterComment` was the
+  top-level comic write until release 2 of the write flip removed it; see "Read flip as built" and
+  `comments-v3-write-flip.md`). The model's lock toggles
   (`Model.locked`, `Model.meta.commentsLocked`) also set `CommentTopic.locked`, so the one lock
   check covers models.
 
@@ -126,9 +127,9 @@ sizes come from one grouped count on `rootId`, reply counts from one grouped cou
 - **Reused, not rebuilt:** the rich-text form and sticker picker, `RenderHtml`, `UserAvatar`,
   the `Reactions` bar (it already takes counts plus the viewer's reactions), `SortFilter`,
   `LoadMoreButton`, and the report, hide-user and block-user menu items.
-- **Mutations behind one adapter** (`useCommentMutations`): until a surface's writes flip it
-  calls today's `commentv2` procedures and updates the v3 cache; at that surface's stage B it
-  calls `commentv3` mutations. The switch for a surface is one line.
+- **Mutations behind one adapter** (`useCommentMutations`): it called the `commentv2` procedures
+  until a surface's stage B, and since release 2 of the write flip (built 2026-11-05, not deployed)
+  calls only `commentv3` mutations.
 
 ### Comment links
 
@@ -188,7 +189,7 @@ review of every `CommentsV2` mount (2026-10-27); "Read flip as built" below reco
 | Crucible, storyline    | `title="Discussion" hideWhenLocked`                                        | none                                                                                      |
 | 3D model               | `hideWhenLocked`                                                           | `getThreadEntityOwnerId` has no `model3d` case (owner exemption)                          |
 | App listing            | Divider and "Discussion" title, `hideWhenLocked`                           | no `appListing` owner case; its browser test mocks the v2 provider                        |
-| Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments still written by `comics.createChapterComment`; links open the chapter |
+| Comic chapter          | inline on the comics page, `ownerId` only                                  | top-level comments write through `commentv3.create` since write flip release 2; links open the chapter |
 | Model discussion       | needs design                                                               | still the v1 masonry and dialog; `model` rows mix v1 and v2 ids                           |
 
 Questions and answers have no surface to flip: their code was removed in #7543, and their threads stay as data until Phase 6 archives them to `qa_archive`.
@@ -196,7 +197,8 @@ Questions and answers have no surface to flip: their code was removed in #7543, 
 ### Read flip as built (2026-11-02; comic chapters 2026-11-03; not yet deployed)
 
 Every surface in the table above except model discussion reads CommentV3
-(`v3ReadSurfaces`); their writes still go through `commentv2` and reach CommentV3 by the mirror.
+(`v3ReadSurfaces`); their writes went through `commentv2` and reached CommentV3 by the mirror until
+release 2 of the write flip (built 2026-11-05, not deployed), which writes CommentV3 directly and deletes the `commentv2` router.
 
 - **Mounts.** Each keeps its component and props, now a `CommentSection`. The owner may hide and
   pin where the v2 mount passed `resourceOwnerId` (post, image, 3D model, app listing) and nowhere
@@ -215,17 +217,19 @@ Every surface in the table above except model discussion reads CommentV3
   `deepLinks={false}` unneeded on the image modal: a link meant for the section under it opens
   the whole image section instead.
 - **Timing.** Replica, most-commented image and post: section read under 2 ms.
-- **Comic chapters.** Keyed by `ComicChapter.id`. A top-level comment is still written by
-  `comics.createChapterComment`, now addressed by chapter id: `commentv2.upsert` cannot address a
-  `Thread` keyed by project and position. `getChapterThread` is removed. The reads are not behind the
+- **Comic chapters.** Keyed by `ComicChapter.id`. A top-level comment was written by
+  `comics.createChapterComment`, addressed by chapter id (`commentv2.upsert` cannot address a
+  `Thread` keyed by project and position), until release 2 of the write flip (built 2026-11-05, not
+  deployed) moved it to `commentv3.create`. `getChapterThread` is removed. The reads are not behind the
   `comicCreator` flag that gated it (Briant, 2026-11-03: anyone with a link to a chapter comment
-  can already open comics), and add no early-access or publish gate, which it never had. Keying by id also stops a chapter delete from moving the later
+  can already open comics), and add no early-access gate. Since write flip release 2 they follow the
+  reader's publish and moderation rules (`assertComicChapterVisible` in `commentv3/surfaces.ts`). Keying by id also stops a chapter delete from moving the later
   chapters' comments, as the position-keyed thread did.
 - **The v2 client suite is removed.** `components/CommentsV2/` is gone: what the v3 suite borrowed
   (`HiddenComment`, `CommentBadge`, `useScrollToHighlightedComment`, `useSectionMute`,
   `ToggleLockComments`, the two stylesheets) moved into `CommentsV3/`, and `HiddenCommentsModal`
-  (v1 model discussion) into `Model/ModelDiscussion/`. The `commentv2` read procedures stay for
-  clients on the previous build.
+  (v1 model discussion) into `Model/ModelDiscussion/`. The `commentv2` read procedures stayed for
+  clients on the previous build, until release 2 of the write flip (built 2026-11-05, not deployed) deleted the router.
 - **Not flipped.** Model discussion, which reads v1 `Comment`, not CommentV2.
 
 ## Stage B: writes
@@ -245,6 +249,8 @@ comment's surface. What it covers, beyond the SQL itself:
 - **Moderation.** Hide (owner and moderator), pin, ToS set and restore with the full chain
   (reports actioned, reporters rewarded, author notified) against `CommentV3Report`, block-hide,
   scam cleanup and restore, CSAM hold removal. Lock and mutes stay on the `commentv2` procedures.
+  (Superseded: lock and mutes are on `commentv3` since release 2 of the write flip, built
+  2026-11-05, not deployed.)
 - **Reactions.** Toggle, block check, ClickHouse tracking, rewards (`goodContentReward` read only
   the v2 table, so a v3-only comment would have earned nothing), notifications.
 - **Reports.** `ReportEntity.CommentV3` in both enums, `report-entities.ts` and the relabel
@@ -262,7 +268,8 @@ comment's surface. What it covers, beyond the SQL itself:
 
 ### Stage B as built (2026-10-29, not yet deployed)
 
-- `constants.comments.v3WriteSurfaces` (`['article']`) is the switch; `isV3WriteSurface` reads it.
+- `constants.comments.v3WriteSurfaces` (`['article']`; write flip release 2, built 2026-11-05, copies
+  `v3ReadSurfaces` into it) is the switch; `isV3WriteSurface` reads it.
   The SQL is in `services/commentv3/write.service.ts` over a `SqlRunner`, so callers share a
   Prisma transaction with their sticker spend or old-table arm; moderator actions are in
   `services/commentv3/moderation.service.ts`. Delete runs D6 itself, set-based and waiting on
@@ -276,7 +283,8 @@ comment's surface. What it covers, beyond the SQL itself:
   adapter calls them on a write surface. Lock, comment mute and section mute keep their
   `commentv2` procedures, whose services branch on the surface. The other `commentv2` writes
   (upsert, delete, hide, pin) refuse a write-surface comment, so a stale page cannot skip the new
-  lock and parent checks.
+  lock and parent checks. Superseded by release 2 of the write flip (built 2026-11-05, not deployed): lock and mutes moved to `commentv3` and
+  the `commentv2` procedures are deleted.
 - A comment that started in CommentV2 keeps its CommentV2 row, and every CommentV3 write keeps it
   in step: edits and flags are copied to it and a delete removes it. Left stale, the old reads
   would serve deleted or removed content, and an update to the row would make the mirror trigger

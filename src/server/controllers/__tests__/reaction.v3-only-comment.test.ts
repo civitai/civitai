@@ -82,7 +82,7 @@ describe('reaction.toggle on a comment that exists only in CommentV3', () => {
   it.each([
     ['deleted', v3Row({ deletedAt: new Date() })],
     ['hidden for ToS', v3Row({ tosViolation: true })],
-    ['on a surface that still writes CommentV2', v3Row({ entityType: 'post' })],
+    ['on a surface that does not write CommentV3', v3Row({ entityType: 'model' })],
     ['missing from both tables', undefined],
   ])('answers not found when the comment is %s', async (_, row) => {
     storeV3(row);

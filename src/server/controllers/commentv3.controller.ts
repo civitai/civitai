@@ -6,6 +6,9 @@ import { dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
 import { onCommentCreated } from '~/server/events/points/hooks';
 import type {
+  CommentMuteInput,
+  CommentSectionInput,
+  CommentTargetType,
   CommentV3IdInput,
   GetCommentRepliesInput,
   GetCommentSectionInput,
@@ -13,13 +16,13 @@ import type {
   CreateCommentV3Input,
   UpdateCommentV3Input,
 } from '~/server/schema/commentv3.schema';
-import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
 import {
   getBlockCheckOwnerIds,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import { getCommentExcludedUserIds } from '~/server/services/comment-exclusions.service';
+import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import {
   afterCommentsV3Deleted,
   bulkSetCommentV3TosViolation,
@@ -38,6 +41,13 @@ import {
   writeCommentEdit,
   writeNewComment,
 } from '~/server/services/commentv3/comment-write.service';
+import {
+  getSectionMuted,
+  getThreadMuted,
+  toggleSectionLock,
+  toggleSectionMute,
+  toggleThreadMute,
+} from '~/server/services/commentv3/section.service';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import {
   type CommentV3Item,
@@ -77,7 +87,7 @@ async function viewerFor(ctx: Context, entity: Entity): Promise<CommentV3Viewer>
     userId: ctx.user?.id,
     isModerator: !!ctx.user?.isModerator,
     excludedUserIds: await getCommentExcludedUserIds({
-      entityType: entity.entityType as CommentConnectorInput['entityType'],
+      entityType: entity.entityType as CommentTargetType,
       entityId: entity.entityId,
       userId: ctx.user?.id,
     }),
@@ -226,6 +236,27 @@ async function assertSectionOwnerOrModerator(ctx: ProtectedContext, comment: Sto
   await commentSurface(comment.entityType).assertWritable?.(comment.entityId, ctx);
 }
 
+/**
+ * For a member's action on one comment (react, report, mute): a comment they cannot see answers as
+ * missing; a storyline taken down for ToS refuses the action. Returns the stored comment it read,
+ * so a caller need not read it again.
+ */
+export async function assertCommentActionable(commentId: number, ctx: ProtectedContext) {
+  const comment = await getV3WriteComment(prismaRunner(dbWrite), commentId);
+  if (ctx.user.isModerator) return comment;
+  if (!comment) {
+    // A comment on a surface that does not write CommentV3 has no section gate.
+    if (await isCommentGoneForMembers(commentId))
+      throw throwNotFoundError(`No comment with id ${commentId}`);
+    return undefined;
+  }
+  if (comment.tosViolation) throw throwNotFoundError(`No comment with id ${commentId}`);
+  await assertSectionVisible(comment, ctx);
+  if (comment.entityType === 'storyline')
+    await commentSurface('storyline').assertWritable?.(comment.entityId, ctx);
+  return comment;
+}
+
 async function assertCanWrite(
   ctx: ProtectedContext,
   section: Entity,
@@ -333,6 +364,7 @@ export async function toggleHideCommentV3Handler({
   input: CommentV3IdInput;
 }) {
   const comment = await writableComment(ctx, input.id);
+  assertNotRemovedForMember(ctx, comment);
   await assertSectionOwnerOrModerator(ctx, comment);
   await dbWrite.$transaction((tx) =>
     setCommentFlags(prismaRunner(tx), [comment.id], { hidden: !comment.hidden })
@@ -348,6 +380,7 @@ export async function togglePinCommentV3Handler({
   input: CommentV3IdInput;
 }) {
   const comment = await writableComment(ctx, input.id);
+  assertNotRemovedForMember(ctx, comment);
   await assertSectionOwnerOrModerator(ctx, comment);
   await dbWrite.$transaction((tx) =>
     setCommentFlags(prismaRunner(tx), [comment.id], { pinned: !comment.pinnedAt })
@@ -367,4 +400,70 @@ export async function setTosViolationV3Handler({
   await writableComment(ctx, input.id);
   // An already-flagged comment counts 0 and is not an error: the action already holds.
   return bulkSetCommentV3TosViolation({ ids: [input.id], actor: { id: ctx.user.id, ip: ctx.ip } });
+}
+
+export async function getSectionLockHandler({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: CommentSectionInput;
+}) {
+  await assertSectionVisible(input, ctx);
+  return { locked: (await getCommentLock(kyselyV3Read, input)).locked };
+}
+
+export async function toggleSectionLockHandler({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentSectionInput;
+}) {
+  if (!ctx.user.isModerator) throw throwAuthorizationError();
+  return toggleSectionLock(input);
+}
+
+export async function getSectionMutedHandler({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentSectionInput;
+}) {
+  await assertSectionVisible(input, ctx);
+  return getSectionMuted({ ...input, userId: ctx.user.id });
+}
+
+export async function toggleSectionMuteHandler({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentSectionInput;
+}) {
+  await assertSectionVisible(input, ctx);
+  return toggleSectionMute({ ...input, userId: ctx.user.id });
+}
+
+export async function getThreadMutedHandler({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentMuteInput;
+}) {
+  const comment = await assertCommentActionable(input.commentId, ctx);
+  return getThreadMuted({ ...input, userId: ctx.user.id }, { comment });
+}
+
+export async function toggleThreadMuteHandler({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentMuteInput;
+}) {
+  const comment = await assertCommentActionable(input.commentId, ctx);
+  return toggleThreadMute({ ...input, userId: ctx.user.id }, { comment });
 }
