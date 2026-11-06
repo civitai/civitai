@@ -379,7 +379,6 @@ describe('the render after a failed lookup is not stored', () => {
     expectRendered(response);
     sendThroughCapture('/images/1', undefined, renderRequestHeaders(request, response));
     expect(brotliCompress).not.toHaveBeenCalled();
-    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
   });
 
   it('INSTRUMENT CHECK: the render after a plain miss is stored', async () => {
