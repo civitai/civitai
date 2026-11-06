@@ -202,6 +202,8 @@ export function getHatLayout(
       right: pivotX + maxX,
       bottom: pivotY + maxY,
     },
+    /** `reach.right` with the hover growth applied: it scales about the brim's middle. */
+    grownRight: pivotX + maxX * Math.max(1, grow),
   };
 }
 
@@ -228,9 +230,9 @@ export function getEventDecorationClearLeft(
   cardWidth?: number
 ) {
   if (decoration.type !== 'hat') return 0;
-  return (
-    Math.ceil(getHatLayout(placement, decoration.fit, allowance, nudge, cardWidth).reach.right) + 4
-  );
+  // The hat grows on hover (a corner hat only), so chips clear the grown hat, not the resting one.
+  const layout = getHatLayout(placement, decoration.fit, allowance, nudge, cardWidth);
+  return Math.ceil(placement === 'corner' ? layout.grownRight : layout.reach.right) + 4;
 }
 
 /** `--event-decoration-clear-left` for a card: follows a corner hat its container moves in. */
@@ -242,8 +244,8 @@ export function getEventDecorationClearLeftCss(
 ) {
   if (decoration.type !== 'hat' || placement !== 'corner')
     return `${getEventDecorationClearLeft(decoration, placement, undefined, 0, cardWidth)}px`;
-  const { reach } = getHatLayout('corner', decoration.fit, Infinity, nudge, cardWidth);
-  return `calc(${Math.ceil(reach.right) + 4}px + ${hatShiftCss(reach.left)})`;
+  const { reach, grownRight } = getHatLayout('corner', decoration.fit, Infinity, nudge, cardWidth);
+  return `calc(${Math.ceil(grownRight) + 4}px + ${hatShiftCss(reach.left)})`;
 }
 
 /** A moderator's unsaved edit to a hat's fit; `null` puts a field back to the default look. */

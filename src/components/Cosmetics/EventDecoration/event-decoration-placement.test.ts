@@ -471,6 +471,15 @@ describe('getEventDecorationClearLeft', () => {
   it('is zero for decorations that are not hats', () => {
     expect(getEventDecorationClearLeft({ type: 'scarf' }, 'corner')).toBe(0);
   });
+
+  it('clears a corner hat at its hover size, not only at rest', () => {
+    const layout = getHatLayout('corner', ART.basic);
+    expect(layout.grow).toBeGreaterThan(1);
+    expect(layout.grownRight).toBeGreaterThan(layout.reach.right);
+    expect(getEventDecorationClearLeft({ type: 'hat', fit: ART.basic }, 'corner')).toBeGreaterThan(
+      Math.ceil(layout.reach.right) + 4
+    );
+  });
 });
 
 describe('fit data that does not describe real art', () => {
@@ -589,7 +598,7 @@ describe('a card narrower than a feed card', () => {
     ).toBe(Math.ceil(getHatLayout('inside', ART.basic, undefined, 0, half).reach.right) + 4);
     expect(getEventDecorationClearLeftCss({ type: 'hat', fit: ART.basic }, 'corner', 0, half)).toBe(
       `calc(${
-        Math.ceil(getHatLayout('corner', ART.basic, Infinity, 0, half).reach.right) + 4
+        Math.ceil(getHatLayout('corner', ART.basic, Infinity, 0, half).grownRight) + 4
       }px + ${hatShiftCss(getHatLayout('corner', ART.basic, Infinity, 0, half).reach.left)})`
     );
   });
