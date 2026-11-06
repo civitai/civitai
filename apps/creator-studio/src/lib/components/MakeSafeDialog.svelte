@@ -74,7 +74,7 @@
         return false;
       }
       const err = e as Error & { status?: number };
-      // 409 is the endpoint's skip (a model that can't get a face): retrying would only repeat it.
+      // Every 409 from com-face is a skip, not a failure.
       if (err.status === 409) {
         cards[model.id] = { state: 'skipped', reason: err.message };
         return true;

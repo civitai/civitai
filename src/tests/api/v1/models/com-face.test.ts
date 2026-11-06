@@ -91,9 +91,17 @@ describe('POST /api/v1/models/com-face', () => {
     callerContexts.length = 0;
     row = stored;
     levelAfterSave = 2 | 8;
+    // Only the selected columns come back, as from Prisma: a field the endpoint forgets to select reads undefined.
     dbMock.dbWrite.model.findUnique.mockImplementation((async (args: {
       select: Record<string, unknown>;
-    }) => (args.select.userId ? row : { nsfwLevel: levelAfterSave })) as never);
+    }) => {
+      const source: Record<string, unknown> | null = args.select.userId
+        ? row
+        : { nsfwLevel: levelAfterSave };
+      return (
+        source && Object.fromEntries(Object.entries(source).filter(([key]) => args.select[key]))
+      );
+    }) as never);
   });
 
   it("refuses another creator's model", async () => {
