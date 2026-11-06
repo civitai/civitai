@@ -330,7 +330,7 @@ function ImageDetail2Content() {
         <HatTurfDetailBadge imageId={image.id} />
       )}
       {!withStoryline && narrowStage && takesHats(image) && (
-        <HatTurfDetailControls imageId={image.id} />
+        <HatTurfDetailControls imageId={image.id} large />
       )}
     </>
   );
@@ -607,7 +607,11 @@ function ImageDetail2Content() {
                   }`}
                 >
                   <div className="flex gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                  <LegacyActionIcon
+                    {...sharedActionIconProps}
+                    onClick={toggleInfo}
+                    data-testid="image-detail-chevron"
+                  >
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>
                 </div>
