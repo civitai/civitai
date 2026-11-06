@@ -22,6 +22,7 @@ const {
       muted: true,
       userRestrictionId: 1,
       deduped: false,
+      wasMuted: false,
     })
   ),
   mockAuditPromptEnriched: vi.fn(),
@@ -327,6 +328,7 @@ describe('auditPromptServer — the auto-mute outcome', () => {
       muted: true,
       userRestrictionId: 1,
       deduped: true,
+      wasMuted: true,
     });
     const { userActivity, track } = tracked();
 
@@ -334,6 +336,23 @@ describe('auditPromptServer — the auto-mute outcome', () => {
 
     expect(mockSysRedis.del).not.toHaveBeenCalled();
     expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records the mute but keeps the stored prompts when an open case is found on an unmuted account', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockResolvedValueOnce({
+      muted: true,
+      userRestrictionId: 1,
+      deduped: true,
+      wasMuted: false,
+    });
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'Muted' }));
   });
 
   it('records no mute and keeps the stored prompts when the mute is skipped', async () => {
