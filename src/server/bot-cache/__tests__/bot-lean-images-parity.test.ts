@@ -33,8 +33,6 @@ import type * as SearchApiKeyModule from '~/components/Search/search-api-key';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ShellResponse from '~/server/shell/shell-response';
-import type * as RoutersModule from '~/server/routers';
-import type * as LoggingClient from '~/server/logging/client';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type { Fixture } from './bot-lean-images.fixtures';
 
@@ -47,15 +45,8 @@ const h = vi.hoisted(() => {
     leanOn: false,
     fixture: undefined as unknown as Fixture,
     bootstrap: vi.fn(),
-    logged: [] as Record<string, unknown>[],
   };
 });
-
-// The lean path swallows its errors (and falls back); keep what it logs, so a test can say why.
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: vi.fn(async (data: Record<string, unknown>) => void h.logged.push(data)),
-}));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -89,34 +80,6 @@ vi.mock('~/components/Search/search-api-key', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchApiKeyModule>()),
   createInstantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
 }));
-
-// The page's four prefetches, answered from the fixture; everything else about the SSG helpers
-// (`createServerSideHelpers`, its query cache, `dehydrate`) is real.
-vi.mock('~/server/routers', async (importOriginal) => {
-  const { initTRPC, TRPCError } = await import('@trpc/server');
-  const t = initTRPC.create();
-  const answer = (value: unknown) => {
-    if (value === undefined) throw new TRPCError({ code: 'NOT_FOUND' });
-    return value;
-  };
-  const appRouter = t.router({
-    image: t.router({
-      get: t.procedure
-        .input((v) => v as { id: number })
-        .query(() => answer(h.fixture.image ?? undefined)),
-      getGenerationData: t.procedure
-        .input((v) => v as { id: number })
-        .query(() => answer(h.fixture.generationData)),
-      getContestCollectionDetails: t.procedure
-        .input((v) => v as { id: number })
-        .query(() => answer(undefined)),
-    }),
-    hiddenPreferences: t.router({
-      getHidden: t.procedure.query(() => answer(h.fixture.hidden)),
-    }),
-  });
-  return { ...(await importOriginal<typeof RoutersModule>()), appRouter };
-});
 
 // The React tree's tRPC client: every `useQuery`/`useInfiniteQuery` is React Query's own, on a
 // client hydrated from the page's `trpcState` (what the patched `withTRPC` does), keyed exactly as
@@ -191,7 +154,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return { ...(await importOriginal<typeof TrpcModule>()), trpc };
 });
 
+import { initTRPC, TRPCError } from '@trpc/server';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import * as ImagePage from '~/pages/images/[imageId]';
+import { appRouter } from '~/server/routers';
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
 import { BOT_LEAN_RENDER_METRIC, resetBotLeanFlagGateForTests } from '~/server/bot-cache/bot-lean';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
@@ -199,6 +165,38 @@ import type { RoutePage } from './bot-cache-render.harness';
 import { makeReq, NOW, renderPage, SECRET } from './bot-cache-render.harness';
 import { extractSeo, seoOf } from './bot-lean-seo';
 import { FIXTURES } from './bot-lean-images.fixtures';
+
+/**
+ * The page's four prefetches, answered from the fixture: their entries in the REAL router's
+ * procedure table are swapped for stand-ins for this file and put back after it (not a `vi.mock`
+ * of `~/server/routers`, which under `isolate: false` would outlive the file). Everything else
+ * about the SSG helpers (`createServerSideHelpers`, its query cache, `dehydrate`) is real.
+ */
+const t = initTRPC.create();
+const answer = (value: unknown) => {
+  if (value === undefined) throw new TRPCError({ code: 'NOT_FOUND' });
+  return value;
+};
+const byId = (v: unknown) => v as { id: number };
+const standIns = t.router({
+  image: t.router({
+    get: t.procedure.input(byId).query(() => answer(h.fixture.image)),
+    getGenerationData: t.procedure.input(byId).query(() => answer(h.fixture.generationData)),
+    getContestCollectionDetails: t.procedure.input(byId).query(() => answer(undefined)),
+  }),
+  hiddenPreferences: t.router({
+    getHidden: t.procedure.query(() => answer(h.fixture.hidden)),
+  }),
+});
+const STAND_IN_PATHS = [
+  'image.get',
+  'image.getGenerationData',
+  'image.getContestCollectionDetails',
+  'hiddenPreferences.getHidden',
+] as const;
+type Procedures = { _def: { procedures: Record<string, unknown> } };
+const tableOf = (router: unknown) => (router as Procedures)._def.procedures;
+const realProcedures = new Map<string, unknown>();
 
 const IMAGE_PAGE: RoutePage = {
   route: '/images/[imageId]',
@@ -256,6 +254,12 @@ async function renderImage(fixture: Fixture, lean: boolean) {
 }
 
 beforeAll(() => {
+  const table = tableOf(appRouter);
+  const fakes = tableOf(standIns);
+  for (const path of STAND_IN_PATHS) {
+    realProcedures.set(path, table[path]);
+    table[path] = fakes[path];
+  }
   setEnv({ CF_VERIFIED_BOT_HEADER_SECRET: SECRET });
   vi.spyOn(Date, 'now').mockReturnValue(NOW);
   // The hub's OAuth provider list fails open.
@@ -265,12 +269,17 @@ beforeAll(() => {
   );
 });
 afterAll(() => {
+  const table = tableOf(appRouter);
+  for (const [path, procedure] of realProcedures) {
+    if (procedure === undefined) delete table[path];
+    else table[path] = procedure;
+  }
   vi.mocked(Date.now).mockRestore();
   vi.unstubAllGlobals();
 });
 
 beforeEach(() => {
-  h.logged.length = 0;
+  loggingMock.logToAxiom.mockClear();
   resetBotCacheFlagGateForTests();
   h.bootstrap.mockReset();
   h.bootstrap.mockImplementation(async () => ({ session: null, liveNow: false }));
@@ -288,7 +297,10 @@ describe('bot lean render of /images/[imageId]: what a crawler reads is the full
     const after = await leanCount(event, reason);
 
     // Positive control: the flag-on render took the path the fixture says it does.
-    const failures = h.logged.filter((entry) => entry.name === 'bot-lean-render');
+    await vi.dynamicImportSettled();
+    const failures = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry?.name === 'bot-lean-render');
     expect.soft(failures, 'the lean path logged no failure').toEqual([]);
     expect.soft(after - before, `counter for ${fixture.expect}`).toBe(1);
     expect(extractSeo(lean.html).hasNextData, 'the flag-on render is lean').toBe(

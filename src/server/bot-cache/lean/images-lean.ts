@@ -86,7 +86,10 @@ function count(value: number, abbreviate: boolean) {
   return `<span><span>${esc(formatted)}</span>${columns}</span>`;
 }
 
-/** `ImageDetailReactions` → `Reactions` for a signed-out (read-only) viewer. */
+/**
+ * `ImageDetailReactions` → `Reactions` for a signed-out viewer: the reactions with a count (the
+ * "Add reaction" button is icons only), then the Buzz tip count, shown even at zero.
+ */
 function reactions(image: ImageRow) {
   const stats = image.stats;
   const metrics: Record<string, number> = {
@@ -95,8 +98,6 @@ function reactions(image: ImageRow) {
     Laugh: stats?.laughCountAllTime ?? 0,
     Cry: stats?.cryCountAllTime ?? 0,
   };
-  const hasReactions = Object.values(metrics).some((value) => value > 0);
-  if (!hasReactions) return '';
   // `Reactions`' `keys` order, filtered to the image's available reactions, zeros hidden.
   const order = (Object.keys(constants.availableReactions) as string[]).filter(
     (key) => key in metrics
@@ -115,8 +116,9 @@ function reactions(image: ImageRow) {
 }
 
 /** `ImageDetail2`'s `renderLeftImageControls`: the buttons do nothing without scripts. */
-function imageControls(image: ImageRow & { url: string }, features: FeatureAccess) {
-  const remix = getRemixKinds(image).length > 0 ? '<button type="button">Remix</button>' : '';
+function imageControls(image: ImageRow, url: string, features: FeatureAccess) {
+  const source = { id: image.id, url, type: image.type, nsfwLevel: image.nsfwLevel };
+  const remix = getRemixKinds(source).length > 0 ? '<button type="button">Remix</button>' : '';
   const post = image.postId ? `<a href="/posts/${esc(image.postId)}">View Post</a>` : '';
   const tip = !image.poi && features.buzz ? '<button type="button">Tip</button>' : '';
   return `${remix}<button type="button">Save</button>${post}${tip}`;
@@ -258,12 +260,23 @@ function discussionCard(imageId: number) {
   );
 }
 
-/** Why the full render must answer instead, or `null` when this file draws the page. */
-function unsupported(image: ImageRow, data: GenerationData | undefined) {
+/** Whether the image is one this file does not draw, so the full render must answer. */
+function unsupported(row: ImageRow, data: GenerationData | undefined) {
+  // Loosely typed on purpose: `image.get` answers a union (with and without media), and these
+  // are presence checks on fields either side may lack.
+  const image = row as unknown as {
+    type: string;
+    url: string | null;
+    cosmetic?: unknown;
+    eventDecoration?: unknown;
+    user: { profilePicture?: unknown; cosmetics?: unknown[] };
+    stats?: { statsUnknown?: boolean };
+    blockedFor?: unknown;
+    needsReview?: unknown;
+  };
   if (image.type !== 'image' || !image.url) return true;
   if (image.cosmetic || image.eventDecoration) return true;
-  const user = image.user as typeof image.user & { cosmetics?: unknown[] };
-  if (user.profilePicture || user.cosmetics?.length) return true;
+  if (image.user.profilePicture || image.user.cosmetics?.length) return true;
   if (image.stats?.statsUnknown) return true;
   if (image.blockedFor || image.needsReview) return true;
   if (data) {
@@ -360,7 +373,7 @@ export async function renderImageDetailLean({
     jsonLd(mediaSchema) +
     jsonLd(breadcrumb);
 
-  const controls = imageControls({ ...image, url: image.url as string }, features);
+  const controls = imageControls(image, image.url as string, features);
   const mainImage = `<img${attr('src', imageDetailMainImageUrl(image))}${attr('alt', image.name)}>`;
 
   const sidebar =

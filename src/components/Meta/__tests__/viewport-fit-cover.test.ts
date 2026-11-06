@@ -260,6 +260,9 @@ describe('the viewport meta opts into the full display area', () => {
       // Same shape: the email-unsubscribe confirm page is a standalone document an API route
       // serves directly, a single centred column with no edge-anchored chrome.
       if (repoPath(file) === 'src/pages/api/notifications/email-unsubscribe.ts') continue;
+      // The bot lean page is its own document too, written in place of the React render for a
+      // verified crawler, never mounted inside `_app`. It carries the same VIEWPORT_META_CONTENT.
+      if (repoPath(file) === 'src/server/bot-cache/lean/images-lean.ts') continue;
       // Comments only — strings are the subject here, so stripping them would
       // remove the very thing being looked for.
       const src = stripComments(fs.readFileSync(file, 'utf8'));
