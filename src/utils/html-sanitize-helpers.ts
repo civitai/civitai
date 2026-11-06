@@ -3,6 +3,7 @@ import type { Transformer } from 'sanitize-html';
 import sanitize from 'sanitize-html';
 import { removeTags } from '~/utils/string-helpers';
 import { isValidURL } from '~/utils/type-guards';
+import { IMAGE_WIDTHS } from '~/shared/tiptap/image-width';
 
 const DEFAULT_ALLOWED_TAGS = [
   'p',
@@ -52,6 +53,9 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.strawpoll.com',
 ];
 
+// The article editor's per-image size. sanitize-html blanks any value off this list, so a
+// stored `data-width` can't carry CSS.
+const IMAGE_WIDTH_ATTRIBUTE = { name: 'data-width', multiple: false, values: [...IMAGE_WIDTHS] };
 // `style` is allowed on these tags only because `allowedStyles` limits it to text-align left|center|right.
 const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
 const TEXT_ALIGN_STYLES = Object.fromEntries(
@@ -60,7 +64,7 @@ const TEXT_ALIGN_STYLES = Object.fromEntries(
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
   a: ['rel', 'href', 'target'],
-  img: ['src', 'alt', 'width', 'height'],
+  img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE],
   iframe: [
     'src',
     'width',
@@ -85,7 +89,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
-  'edge-media': ['url', 'type', 'filename', 'className'],
+  'edge-media': ['url', 'type', 'filename', 'className', IMAGE_WIDTH_ATTRIBUTE],
 };
 
 // What may appear INSIDE a blurb.
