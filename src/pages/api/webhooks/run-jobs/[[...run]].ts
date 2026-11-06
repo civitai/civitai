@@ -168,6 +168,7 @@ import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
@@ -211,6 +212,7 @@ export const jobs: Job[] = [
   cdnAccessReconcile,
   removeReplacedImages,
   retryImageStorageDeletes,
+  retryUploadPromptScansJob,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,
