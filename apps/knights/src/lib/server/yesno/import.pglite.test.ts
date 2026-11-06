@@ -110,6 +110,7 @@ describe('importYesNo', () => {
       refused: 0,
       moderated: 0,
       retired: 0,
+      revived: 0,
       axes: 2,
     });
 
@@ -236,6 +237,7 @@ describe('importYesNo', () => {
       refused: 0,
       moderated: 0,
       retired: 0,
+      revived: 0,
       axes: 2,
     });
     expect(await importYesNo(db, many)).toMatchObject({ inserted: 0, updated: 0, unchanged: 2500 });
@@ -393,6 +395,79 @@ describe('importYesNo', () => {
         ['b', 'Open', null],
         ['b:r1', 'Open', null],
       ]);
+    });
+
+    describe('relisting a moderator-retired question', () => {
+      const retireByModerator = (id: string) =>
+        pg.exec(
+          `UPDATE "KnightsQueueItem" SET "status"='Closed', "reason"='moderator-retired' WHERE "externalId" = '${id}'`
+        );
+      const copy = (id: string, of: string, status: string, reason: string | null, votes = 0) =>
+        pg.exec(
+          `INSERT INTO "KnightsQueueItem" ("externalId","questionKey","imageId","source","minRank","votesNeeded","audience","prompt","status","reason","voteCount","meta","updatedAt")
+         SELECT '${id}',"questionKey","imageId","source","minRank","votesNeeded","audience",'Reworded?','${status}',${
+            reason ? `'${reason}'` : 'NULL'
+          },${votes},'{"rewordOf":"${of}"}'::jsonb, now()
+         FROM "KnightsQueueItem" WHERE "externalId" = '${of}'`
+        );
+      const states = async () =>
+        (await items()).map((i) => [i.externalId, i.status, i.reason] as const);
+
+      it('brings back the copy the withdrawal closed, leaving the original retired', async () => {
+        await importYesNo(db, load(line({ id: 'a' })));
+        await retireByModerator('a');
+        await copy('a:r1', 'a', 'Open', null);
+        await importYesNo(db, [], { retire: ['a'] });
+        expect(await states()).toEqual([
+          ['a', 'Closed', 'moderator-retired'],
+          ['a:r1', 'Closed', 'retired'],
+        ]);
+
+        const again = await importYesNo(db, load(line({ id: 'a' })));
+
+        expect(again).toMatchObject({ revived: 1, moderated: 1 });
+        expect(await states()).toEqual([
+          ['a', 'Closed', 'moderator-retired'],
+          ['a:r1', 'Open', null],
+        ]);
+        expect((await items())[1].resolvedAt).toBeNull();
+        expect(await importYesNo(db, load(line({ id: 'a' })))).toMatchObject({ revived: 0 });
+      });
+
+      it('reopens the latest import-closed copy by number, not one a moderator retired', async () => {
+        await importYesNo(db, load(line({ id: 'a' })));
+        await retireByModerator('a');
+        await copy('a:r1', 'a', 'Closed', 'moderator-retired');
+        await copy('a:r2', 'a', 'Closed', 'retired');
+        await copy('a:r10', 'a', 'Closed', 'retired');
+        await copy('a:r11', 'a', 'Closed', 'moderator-retired');
+
+        await importYesNo(db, load(line({ id: 'a' })));
+
+        expect((await states()).filter(([, status]) => status === 'Open')).toEqual([
+          ['a:r10', 'Open', null],
+        ]);
+      });
+
+      it('leaves a copy with answers closed, and does not add a second open version', async () => {
+        await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
+        await retireByModerator('a');
+        await retireByModerator('b');
+        await copy('a:r1', 'a', 'Closed', 'retired', 2);
+        await copy('b:r1', 'b', 'Closed', 'retired');
+        await copy('b:r2', 'b', 'Open', null);
+
+        const again = await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
+
+        expect(again).toMatchObject({ revived: 0 });
+        expect(await states()).toEqual([
+          ['a', 'Closed', 'moderator-retired'],
+          ['a:r1', 'Closed', 'retired'],
+          ['b', 'Closed', 'moderator-retired'],
+          ['b:r1', 'Closed', 'retired'],
+          ['b:r2', 'Open', null],
+        ]);
+      });
     });
   });
 });

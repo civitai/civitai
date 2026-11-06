@@ -41,7 +41,7 @@ async function main() {
   try {
     const result = await importYesNo(db, rows, { retire });
     console.log(
-      `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged, ${result.refused} refused (changed but already answered), ${result.moderated} skipped (moderated), ${result.retired} retired.`
+      `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged, ${result.refused} refused (changed but already answered), ${result.moderated} skipped (moderated),  retired,  reworded copies reopened.`
     );
   } finally {
     await db.destroy();

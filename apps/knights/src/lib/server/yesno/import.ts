@@ -58,7 +58,7 @@ const utcNow = sql<Date>`(now() AT TIME ZONE 'utc')`;
 /** An item the import closed as withdrawn. */
 const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "KnightsQueueItem"."reason" = 'retired')`;
 
-/** An item a moderator retired, restored or replaced. The upsert never rewrites one; only `moderator-retired` also blocks reopening it. */
+/** Closed by a moderator. Unlike other moderated items, the import never reopens it. */
 const moderatorRetired = sql<SqlBool>`("KnightsQueueItem"."reason" IS NOT DISTINCT FROM ${MODERATOR_RETIRED})`;
 
 const clip = (value: string | undefined, max: number) => (value ?? '').trim().slice(0, max);
@@ -138,10 +138,12 @@ export type ImportResult = {
   unchanged: number;
   /** Differ from what is stored but already have answers, so were left as they are. */
   refused: number;
-  /** Skipped because a moderator acted on them (see `isModeratedSql`), whatever the file says. */
+  /** Unanswered rows skipped because a moderator acted on them. */
   moderated: number;
   /** Open questions the producer withdrew, closed with no outcome. */
   retired: number;
+  /** Reworded copies reopened because the file lists their moderator-retired original again. */
+  revived: number;
   axes: number;
 };
 
@@ -183,6 +185,7 @@ export async function importYesNo(
     refused: 0,
     moderated: 0,
     retired: 0,
+    revived: 0,
     axes: axes.length,
   };
   for (let at = 0; at < rows.length; at += batchSize) {
@@ -252,6 +255,7 @@ export async function importYesNo(
       result.moderated += moderated;
       result.refused += refused;
       result.unchanged += skipped - moderated - refused;
+      result.revived += await reviveReworded(db, left);
     }
   }
   await retireWithdrawn(db, retire, result, now, batchSize);
@@ -262,7 +266,6 @@ const sameMeta = (a: unknown, b: Record<string, string>) =>
   JSON.stringify(Object.entries((a ?? {}) as Record<string, string>).sort()) ===
   JSON.stringify(Object.entries(b).sort());
 
-/** Unanswered rows the upsert skipped because a moderator acted on them. */
 async function countModerated(db: Kysely<DB>, skipped: YesNoRow[]): Promise<number> {
   const found = await db
     .selectFrom('KnightsQueueItem')
@@ -276,6 +279,51 @@ async function countModerated(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
     )
     .execute();
   return found.length;
+}
+
+/**
+ * A relisted question a moderator retired stays closed, but its latest reworded copy, if the import closed it when the
+ * producer withdrew the question, comes back. A copy a moderator retired, one with answers, or any copy while another is open stays as it is.
+ */
+async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<number> {
+  const originRow = sql<string | null>`"meta" ->> ${sql.lit(REWORD_OF_META_KEY)}`;
+  const origins = await db
+    .selectFrom('KnightsQueueItem')
+    .select('externalId')
+    .where('reason', '=', MODERATOR_RETIRED)
+    .where(
+      'externalId',
+      'in',
+      skipped.map((r) => r.externalId)
+    )
+    .execute();
+  if (origins.length === 0) return 0;
+  const copies = await db
+    .selectFrom('KnightsQueueItem')
+    .select(['id', 'externalId', 'status', 'reason', 'voteCount', originRow.as('origin')])
+    .where(originRow, 'in', origins.map((o) => o.externalId) as string[])
+    .execute();
+  let revived = 0;
+  for (const { externalId: origin } of origins) {
+    const mine = copies.filter((c) => c.origin === origin);
+    if (mine.some((c) => c.status === 'Open')) continue;
+    const number = (c: { externalId: string | null }) =>
+      Number(/:r(\d+)$/.exec(c.externalId ?? '')?.[1] ?? -1);
+    const latest = mine
+      .filter((c) => c.reason === 'retired' && c.voteCount === 0)
+      .sort((a, b) => number(b) - number(a))[0];
+    if (!latest) continue;
+    const reopened = await db
+      .updateTable('KnightsQueueItem')
+      .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
+      .where('id', '=', latest.id)
+      .where('status', '=', 'Closed')
+      .where('reason', '=', 'retired')
+      .where('voteCount', '=', 0)
+      .executeTakeFirst();
+    revived += Number(reopened.numUpdatedRows);
+  }
+  return revived;
 }
 
 /** Rows the upsert left alone because they have answers: those that still differ from the file are refused, the rest unchanged. */
