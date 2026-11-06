@@ -296,6 +296,20 @@ function fieldSchema(schema: Node, segments: string[]): Node | 'disallowed' {
   return node;
 }
 
+/**
+ * Whether `schema` refuses the field `pointer` names outright, whatever its value (it, or an
+ * object on its path, is not allowed under `additionalProperties: false`). A `remove` there drops
+ * every value, so it equals an unconditional remove; the registry adapter's `x-migrateFrom`
+ * relies on that.
+ */
+export function isFieldDisallowed(
+  schema: AppStorageCollectionSchema | undefined,
+  pointer: string
+): boolean {
+  if (!schema) return false;
+  return fieldSchema(schema as Node, jsonPointerSegments(pointer)) === 'disallowed';
+}
+
 /** Whether the new schema requires the field `path` names in its parent object. */
 function requiredIn(schema: Node | undefined, path: string): boolean {
   if (!schema) return false;

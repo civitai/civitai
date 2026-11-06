@@ -5,7 +5,7 @@ import { ProtocolError } from '~/server/registry-adapter/protocol';
 
 /**
  * A JSON Schema 2020-12 validator. `format` is an annotation here, as 2020-12 makes it by
- * default; unknown keywords (such as `x-successor`) are ignored rather than refused.
+ * default; unknown keywords (such as `x-migrateFrom`) are ignored rather than refused.
  */
 export function newValidator() {
   return new Ajv2020({ strict: false, validateFormats: false, allErrors: false });

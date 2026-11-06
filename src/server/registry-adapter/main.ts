@@ -1,11 +1,14 @@
 /**
  * Entrypoint of the registry adapter for Civitai apps: a process of its own, separate from the
- * web tier, serving the registry source protocol over HTTP/SSE. Built with
- * `pnpm run build:registry-adapter` and run as `node dist/registry-adapter.js`.
+ * web tier, serving the registry source protocol over both of its bindings, HTTP/SSE and gRPC,
+ * from one adapter. Built with `pnpm run build:registry-adapter` and run as
+ * `node dist/registry-adapter.js`.
  *
  * Environment: the app's server env (database read client, Redis, and the App Blocks datastore
  * connection for the shared-document feed), plus
- *   REGISTRY_ADAPTER_PORT          listen port
+ *   REGISTRY_ADAPTER_PORT          HTTP/SSE listen port (default 7130)
+ *   REGISTRY_ADAPTER_GRPC_PORT     gRPC listen port (default 7131; see `grpc.ts` for why it is
+ *                                  a port of its own)
  *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
  */
@@ -13,6 +16,7 @@ import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
 import { abortableSleep, createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
@@ -30,6 +34,7 @@ function positiveNumber(name: string, fallback: number): number {
 
 function main() {
   const port = positiveNumber('REGISTRY_ADAPTER_PORT', 7130);
+  const grpcPort = positiveNumber('REGISTRY_ADAPTER_GRPC_PORT', 7131);
   const pollMs = positiveNumber('REGISTRY_ADAPTER_POLL_SECONDS', 60) * 1000;
   const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || 'https://civitai.com').replace(/\/$/, '');
   const onError = (err: unknown) => console.error('registry-adapter:', err);
@@ -67,7 +72,18 @@ function main() {
       `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`
     )
   );
-  const stop = () => server.close(() => process.exit(0));
+  const grpcServer = createGrpcServer(adapter, { onError });
+  listenGrpc(grpcServer, grpcPort).then(
+    (bound) => console.log(`registry-adapter: gRPC on :${bound}`),
+    (err: unknown) => {
+      console.error('registry-adapter: gRPC could not listen:', err);
+      process.exit(1);
+    }
+  );
+  const stop = () => {
+    grpcServer.forceShutdown();
+    server.close(() => process.exit(0));
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
 }

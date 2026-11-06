@@ -15,6 +15,15 @@
  * different app (re-created), the namespace's seq is behind the cursor's (reset), or the witness
  * — the newest document the cursor served — has neither a document nor a tombstone at or past the
  * seq it was served at (purged and written again).
+ *
+ * A collection major that does not resolve (unknown app or collection, not exported, not minted,
+ * the switch off) is not served: the core answers `end` first and this feed is never asked for a
+ * snapshot or a cursor, so it writes nothing. When a major mints later, the catalog's schema
+ * stream upserts its schema entity, and a registry following that stream subscribes to it then.
+ *
+ * After `live`, a poll that finds the namespace's seq moved with no change for this stream (a
+ * private write, another collection) yields `progress` with the new cursor (spec rule 9), so a
+ * consumer's cursor follows the position instead of naming an ever older one.
  */
 import type { ValidateFunction } from 'ajv';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
@@ -72,7 +81,11 @@ export type ResolveStream = (schema: string) => Promise<CollectionStream | null>
 
 export const FEED_PAGE = 500;
 const STATE_FORMAT = 'f1';
-/** The cursor of a stream that holds nothing for no app; it names no stored state. */
+/**
+ * The cursor of a stream that holds nothing for no app; it names no stored state. Only a stream
+ * that stops resolving while open reaches it (its documents leave as deletes); a stream that does
+ * not resolve when subscribed is answered `end` instead.
+ */
 export const EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^f1\.([0-9a-f]{32})$/;
 
@@ -343,22 +356,31 @@ export function createDocFeed(opts: DocFeedOptions) {
         ...deletes.map((urn) => ({ delete: urn })),
         ...upserts.map((upsert) => ({ upsert })),
       ];
+      const nextCursor = await save(next);
       if (diff.length > 0) {
-        const nextCursor = await save(next);
         for (let i = 0; i < diff.length; i++) {
           if (signal.aborted) return;
           const at = i === diff.length - 1 ? nextCursor : position;
           const c = diff[i];
           yield 'upsert' in c ? { upsert: c.upsert, cursor: at } : { delete: c.delete, cursor: at };
         }
-        position = nextCursor;
+      } else if (nextCursor !== position) {
+        // The seq moved and nothing of this stream changed: the new state is saved, so its
+        // cursor resumes from here.
+        yield { progress: nextCursor };
       }
+      position = nextCursor;
       state = next;
       await opts.sleep(opts.pollMs, signal);
     }
   }
 
   return {
+    /** Whether `schema` names a collection major that is published now. */
+    async serves(schema: string): Promise<boolean> {
+      return (await guarded(() => opts.resolve(schema))) !== null;
+    },
+
     async snapshot(schema: string) {
       const { next, entities } = await guarded(() => advance(schema, null));
       return { cursor: await save(next), entities: [...entities.values()] };

@@ -20,8 +20,11 @@ const ONE_MAJOR: CollectionStream['family'] = [
   { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1 } },
 ];
 const TWO_MAJORS: CollectionStream['family'] = [
-  { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1, 'x-successor': V2 } },
-  { urn: V2, body: { ...title(100), $schema: DIALECT, $id: V2 } },
+  { urn: V1, body: { ...title(10), $schema: DIALECT, $id: V1 } },
+  {
+    urn: V2,
+    body: { ...title(100), $schema: DIALECT, $id: V2, 'x-migrateFrom': { schema: V1, steps: [] } },
+  },
 ];
 
 const urn = (key: string) => `urn:app-blocks:orbit-notes/notes/${key}`;
@@ -77,7 +80,8 @@ function setup(store = createMemorySnapshotStore()) {
   return { world, store, make };
 }
 
-const shape = (c: Change) => ('upsert' in c ? ['upsert', c.upsert.urn] : ['delete', c.delete]);
+const shape = (c: Change) =>
+  'upsert' in c ? ['upsert', c.upsert.urn] : 'delete' in c ? ['delete', c.delete] : ['progress'];
 async function codeOf(p: Promise<unknown>) {
   try {
     await p;
@@ -265,7 +269,7 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
       ['delete', urn('n1')],
       ['delete', urn('n2')],
     ]);
-    expect(changes[1].cursor).toBe(EMPTY_CURSOR);
+    expect((changes[1] as { cursor: string }).cursor).toBe(EMPTY_CURSOR);
     // The resume only refreshes the state it read (a touch); nothing is written.
     expect([store.puts() - before, store.touches()]).toEqual([0, 1]);
   });
@@ -394,5 +398,40 @@ describe('🔴 a mint re-sends documents whose claims grew, on the old major too
     expect(resent.schemas).toEqual([V1, V2]);
     const onV2 = (await make().feed.snapshot(V2)).entities.find((e) => e.urn === urn('n1'))!;
     expect([onV2.rev, onV2.schemas]).toEqual([resent.rev, resent.schemas]);
+  });
+});
+
+describe('🔴 progress: the namespace seq moves with no change for this stream', () => {
+  // A write this stream does not carry: a private document (another key space) bumps the
+  // namespace's seq, and the shared feed sees nothing of it but the head.
+  const privateWrite = (world: { cat: FixtureCatalog }, seq: number) => {
+    world.cat.documents!.push(doc(`p${seq}`, 'private', seq, { scopeUid: 42 }));
+    world.cat.lastSeq = { ab_orbit_7: seq };
+  };
+
+  it('yields progress with a new cursor, once per move, and none while the seq stands', async () => {
+    const { world, store, make } = setup();
+    const h = make([() => privateWrite(world, 6), () => undefined, () => privateWrite(world, 7)]);
+    const { cursor } = await h.feed.snapshot(V2);
+    const changes = await h.drain(V2, cursor);
+    expect(changes.map(shape)).toEqual([['progress'], ['progress']]);
+    const [first, second] = changes as Array<{ progress: string }>;
+    expect(new Set([cursor, first.progress, second.progress]).size).toBe(3);
+    // Each is a saved state: a new process resumes from it.
+    expect(await store.get(first.progress.slice(3))).not.toBeNull();
+  });
+
+  it('a progress cursor resumes with only what changed after it', async () => {
+    const { world, store, make } = setup();
+    const h = make([() => privateWrite(world, 6)]);
+    const { cursor } = await h.feed.snapshot(V2);
+    const [moved] = (await h.drain(V2, cursor)) as Array<{ progress: string }>;
+    world.cat.documents![0] = doc('n1', 'short, edited', 8, { version: 2 });
+    world.cat.lastSeq = { ab_orbit_7: 8 };
+    const resumed = setup(store);
+    resumed.world.cat = world.cat;
+    expect((await resumed.make().drain(V2, moved.progress)).map(shape)).toEqual([
+      ['upsert', urn('n1')],
+    ]);
   });
 });

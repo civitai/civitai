@@ -137,27 +137,44 @@ describe('composeAdapter', () => {
   const APPS = 'urn:schema:app-blocks:app@v1';
   const entities: Adapter = {
     namespace: 'app-blocks',
-    serves: (s) => s === APPS,
+    serves: async (s) => s === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'entity-cursor', entities: [] }),
     // eslint-disable-next-line require-yield
-    changes: async () => (async function* () {})(),
+    changes: async () =>
+      (async function* () {
+        // no changes
+      })(),
   };
   const docs = {
+    // The feed's resolve: only @v1 of notes is published.
+    serves: async (s: string) => s === V('notes', 1),
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'doc-cursor', entities: [] }),
     // eslint-disable-next-line require-yield
-    changes: async () => (async function* () {})(),
+    changes: async () =>
+      (async function* () {
+        // no changes
+      })(),
   };
   const adapter = composeAdapter(entities, docs as never);
   const ctx = { signal: new AbortController().signal };
 
-  it('serves the entity schemas and every collection-schema URN, nothing else', () => {
-    expect(
-      [APPS, V('notes', 1), 'urn:schema:civitai-schemas:model@v1', 'urn:schema:x:y@v1'].map(
-        adapter.serves
-      )
-    ).toEqual([true, true, false, false]);
+  it('🔴 serves the entity schemas and the collection majors the feed resolves, nothing else', async () => {
+    const schemas = [
+      APPS,
+      V('notes', 1),
+      V('notes', 2),
+      'urn:schema:civitai-schemas:model@v1',
+      'urn:schema:x:y@v1',
+    ];
+    expect(await Promise.all(schemas.map((s) => adapter.serves(s, ctx)))).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
   });
 
   it('routes each stream to its own source', async () => {

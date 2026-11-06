@@ -3,11 +3,21 @@
  * (app, collection, major), and the majors themselves, recomputed from the approved manifest
  * history on every read so the adapter keeps no state for them.
  *
- * The rule for a major is the registry's (`@vN` changes only additively: annotations and new
- * optional properties). It is wider than the store's own "breaking" (narrowings only), so it
- * mints on every store-breaking change and on widenings the store accepts in place.
+ * The rule for a major is the registry's (spec/registry.md @ 656ba0a, "Schemas": a major changes
+ * only additively, by annotations and new optional properties). It is wider than the store's own
+ * "breaking" (narrowings only), so it mints on every store-breaking change and on widenings the
+ * store accepts in place.
+ *
+ * A schema, once published, changes only by what its own major allows. A mint adds the new major
+ * and leaves every older one as it was, so a registry never sees an old major change because a
+ * new one exists.
  */
 import { jsonEqual } from '~/server/services/apps/doc-store-schema';
+import type { MigrationMutationOp } from '~/server/services/apps/storage-schema-migrations';
+import {
+  checkStorageMigrations,
+  isFieldDisallowed,
+} from '~/server/services/apps/storage-schema-migrations';
 import type {
   AppStorageCollectionSchema,
   AppStorageFeature,
@@ -23,11 +33,20 @@ import { registryUrn } from '~/server/registry-adapter/urn';
 export const JSON_SCHEMA_DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 
 /**
- * Annotation on an old major naming the URN of the major that replaced it. Name pending agreement
- * with the registry's owners (whether it belongs in the spec); settle it before a registry
- * consumes it.
+ * Annotation on a major `@v{n+1}` naming `@v{n}` and the steps that turn a `@v{n}` body into one
+ * of its own. PROVISIONAL: it is `civitai/civitai-registry` proposals/migrations.md (issue #2),
+ * not yet accepted into the spec, so its name or shape may still change; settle it before a
+ * registry acts on it. Validators ignore it (an unknown keyword is an annotation in 2020-12).
  */
-export const SUCCESSOR_ANNOTATION = 'x-successor';
+export const MIGRATE_FROM_ANNOTATION = 'x-migrateFrom';
+
+/** One step of {@link MIGRATE_FROM_ANNOTATION}, paths as JSON Pointers into the body. */
+export type MigrateStep =
+  | { op: 'default'; path: string; value: unknown }
+  | { op: 'rename'; from: string; to: string }
+  | { op: 'remove'; path: string };
+
+export type MigrateFrom = { schema: string; steps: MigrateStep[] };
 
 type Node = Record<string, unknown>;
 const isObj = (v: unknown): v is Node => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -103,7 +122,7 @@ function nodeAdditive(beforeRaw: unknown, afterRaw: unknown): boolean {
 
 /**
  * Whether `after` keeps the promise of `before`'s major: it differs only by annotations and new
- * optional properties (registry design, "Versions"). `undefined` is a collection with no
+ * optional properties (spec/registry.md, "Schemas"). `undefined` is a collection with no
  * schema, which accepts anything; giving it any constraint is not additive.
  */
 export function isAdditive(
@@ -117,18 +136,50 @@ export function isAdditive(
   return nodeAdditive(before, after);
 }
 
-/** The registry schema document for one major of a collection. */
+/**
+ * The registry schema document for one major of a collection. A declared schema never holds an
+ * `x-` key (the store accepts only its own keyword list), so the lineage is only ever this
+ * adapter's.
+ */
 export function synthesizeCollectionSchema(args: {
   urn: string;
   declared: AppStorageCollectionSchema | undefined;
-  successorUrn?: string;
+  migrateFrom?: MigrateFrom;
 }): Record<string, unknown> {
   return {
     ...(args.declared ?? {}),
     $schema: JSON_SCHEMA_DIALECT,
     $id: args.urn,
-    ...(args.successorUrn ? { [SUCCESSOR_ANNOTATION]: args.successorUrn } : {}),
+    ...(args.migrateFrom ? { [MIGRATE_FROM_ANNOTATION]: args.migrateFrom } : {}),
   };
+}
+
+/**
+ * The store's ops for the transition that minted a major, as `x-migrateFrom` steps. The store
+ * runs only the ops that cover a breaking change of that transition (`checkStorageMigrations`'s
+ * plan), so only those are translated, in their declared order:
+ *   - `default` and `rename` mean the same in both: fill a missing field; move a present field to
+ *     an absent one.
+ *   - `remove`: the store removes only a value the new schema refuses, the proposal's step
+ *     unconditionally. They agree where the new schema refuses the field outright (a removed
+ *     property), and only there is it translated. A `remove` covering a narrowing of a field the
+ *     schema still allows is left out: a body whose value fits is then kept whole, and one whose
+ *     value does not fails `@v{n+1}` and is not migrated, which never drops a valid value.
+ *   - `acknowledge` changes nothing (the store refuses a violating document on its next write),
+ *     so it has no step: a body that still violates the narrowing fails `@v{n+1}` after the
+ *     steps, and the proposal says such a body is not migrated.
+ */
+export function migrateSteps(
+  ops: readonly MigrationMutationOp[],
+  newSchema: AppStorageCollectionSchema | undefined
+): MigrateStep[] {
+  const steps: MigrateStep[] = [];
+  for (const op of ops) {
+    if (op.op === 'default') steps.push({ op: 'default', path: op.path, value: op.value });
+    else if (op.op === 'rename') steps.push({ op: 'rename', from: op.from, to: op.to });
+    else if (isFieldDisallowed(newSchema, op.path)) steps.push({ op: 'remove', path: op.path });
+  }
+  return steps;
 }
 
 export type ManifestStep = {
@@ -145,6 +196,12 @@ export type CollectionMajors = {
   declared: boolean;
   /** The newest declaration within each major, index 0 = `@v1`. `undefined` = no schema. */
   majors: Array<AppStorageCollectionSchema | undefined>;
+  /**
+   * Per major, the steps from the one before it, translated from the transition that minted it
+   * ({@link migrateSteps}); `null` for `@v1`. Fixed at the mint: later additive steps of the same
+   * major never change them.
+   */
+  migrations: Array<MigrateStep[] | null>;
 };
 
 export type MajorDerivation = {
@@ -166,6 +223,9 @@ export type MajorDerivation = {
 export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDerivation {
   const collections = new Map<string, CollectionMajors & { last: DeclaredStorageCollection }>();
   const stepMajors = new Map<string, Map<string, number>>();
+  // The manifests that parsed, oldest first: a mint's transition is from the last of them, and
+  // the store finds a re-declared collection's last schema in the ones before (newest first).
+  const parsedManifests: unknown[] = [];
 
   for (const step of steps) {
     // Every feature on: this replays APPROVED manifests for their shape, and a step must parse
@@ -176,11 +236,27 @@ export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDer
     stepMajors.set(step.id, declaredHere);
     if (parsed.errors.length > 0) continue;
 
+    // The store's plan for this transition, computed only when a collection mints here.
+    let plans: ReturnType<typeof checkStorageMigrations>['plans'] | null = null;
+    const planFor = (name: string) => {
+      plans ??= checkStorageMigrations(
+        parsedManifests[parsedManifests.length - 1] ?? null,
+        step.manifest,
+        parsedManifests.slice(0, -1).reverse()
+      ).plans;
+      return plans.get(name) ?? [];
+    };
+
     for (const state of collections.values()) state.declared = false;
     for (const [name, now] of parsed.collections) {
       const state = collections.get(name);
       if (!state) {
-        collections.set(name, { declared: true, majors: [now.schema], last: now });
+        collections.set(name, {
+          declared: true,
+          majors: [now.schema],
+          migrations: [null],
+          last: now,
+        });
         declaredHere.set(name, 1);
         continue;
       }
@@ -188,16 +264,21 @@ export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDer
         state.majors[state.majors.length - 1] = now.schema;
       } else {
         state.majors.push(now.schema);
+        state.migrations.push(migrateSteps(planFor(name), now.schema));
       }
       state.declared = true;
       state.last = now;
       declaredHere.set(name, state.majors.length);
     }
+    parsedManifests.push(step.manifest);
   }
 
   return {
     collections: new Map(
-      [...collections].map(([name, { declared, majors }]) => [name, { declared, majors }])
+      [...collections].map(([name, { declared, majors, migrations }]) => [
+        name,
+        { declared, majors, migrations },
+      ])
     ),
     stepMajors,
   };
@@ -238,11 +319,20 @@ export function collectionSchemaDocuments(
     state.majors.forEach((declared, i) => {
       const major = i + 1;
       const urn = registryUrn({ kind: 'collection-schema', slug, collection, major });
-      const successorUrn =
-        major < state.majors.length
-          ? registryUrn({ kind: 'collection-schema', slug, collection, major: major + 1 })
+      const steps = state.migrations[i];
+      const migrateFrom =
+        major > 1 && steps
+          ? {
+              schema: registryUrn({
+                kind: 'collection-schema',
+                slug,
+                collection,
+                major: major - 1,
+              }),
+              steps,
+            }
           : undefined;
-      out.push({ urn, body: synthesizeCollectionSchema({ urn, declared, successorUrn }) });
+      out.push({ urn, body: synthesizeCollectionSchema({ urn, declared, migrateFrom }) });
     });
   }
   return out;

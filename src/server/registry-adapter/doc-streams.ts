@@ -64,13 +64,17 @@ export function resolveFromCatalog(
   };
 }
 
-/** One source: the entity streams, and a document stream for every collection-schema URN. */
+/**
+ * One source: the entity streams, and a document stream for every collection major that is
+ * published now. A collection-schema URN is routed by its shape alone (no entity schema has one,
+ * `urn.ts`); whether it is served is the feed's resolve, so an unpublished one is `end` first.
+ */
 export function composeAdapter(entities: Adapter, docs: ReturnType<typeof createDocFeed>): Adapter {
-  const isDocStream = (schema: string) =>
-    !entities.serves(schema) && parseCollectionSchemaUrn(schema) !== null;
+  const isDocStream = (schema: string) => parseCollectionSchemaUrn(schema) !== null;
   return {
     namespace: entities.namespace,
-    serves: (schema) => entities.serves(schema) || isDocStream(schema),
+    serves: (schema, ctx) =>
+      isDocStream(schema) ? docs.serves(schema) : entities.serves(schema, ctx),
     snapshot: (schema, ctx) =>
       isDocStream(schema) ? docs.snapshot(schema) : entities.snapshot(schema, ctx),
     changes: (schema, cursor, ctx) =>

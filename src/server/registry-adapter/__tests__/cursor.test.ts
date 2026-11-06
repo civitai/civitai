@@ -40,15 +40,20 @@ function harness(store: SnapshotStore, states: Entity[][], maxPolls = 3) {
     },
   });
   const drain = async (schema: string, cursor: string) => {
-    const out: Change[] = [];
-    for await (const c of await adapter.changes(schema, cursor, { signal: abort.signal }))
+    const out: Edit[] = [];
+    for await (const c of await adapter.changes(schema, cursor, { signal: abort.signal })) {
+      // Its served set is the whole schema's, so its cursor moves only with a change.
+      if ('progress' in c) throw new Error('the catalog adapter yielded progress');
       out.push(c);
+    }
     return out;
   };
   return { adapter, drain, signal: abort.signal, polls: () => polls };
 }
 
-const shape = (c: Change) =>
+type Edit = Exclude<Change, { progress: string }>;
+
+const shape = (c: Edit) =>
   'upsert' in c ? ['upsert', c.upsert.urn, c.upsert.rev] : ['delete', c.delete];
 
 async function codeOf(p: Promise<unknown>): Promise<string> {
