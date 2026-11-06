@@ -129,7 +129,7 @@ function count(text: string, patterns: RegExp[]) {
 function scan(root = ROOT) {
   const files = globSync('{src,apps,packages,scripts}/**/*.{ts,tsx,js,mjs,cjs,svelte}', {
     cwd: root,
-    exclude: (f) =>
+    exclude: (f: string | { name: string }) =>
       /node_modules|\.svelte-kit|(^|[\\/])dist([\\/]|$)/.test(typeof f === 'string' ? f : f.name),
   })
     .map((f) => f.split(path.sep).join('/'))
