@@ -51,6 +51,14 @@ describe('sanitizeHtml', () => {
       expect(sanitizeHtml('<p style="position:fixed">x</p>')).toBe('<p>x</p>');
     });
 
+    // `!important` rides along on an allowed value; it cannot carry another property or value.
+    it('keeps only an allowed value when `!important` is attached', () => {
+      expect(sanitizeHtml('<p style="text-align:center !important">x</p>')).toBe(
+        '<p style="text-align:center !important">x</p>'
+      );
+      expect(sanitizeHtml('<p style="text-align:justify !important">x</p>')).toBe('<p>x</p>');
+    });
+
     it('does not allow text-align on tags outside p and h1-h3', () => {
       expect(sanitizeHtml('<li style="text-align:center">x</li>')).toBe('<li>x</li>');
       expect(sanitizeHtml('<blockquote style="text-align:center">x</blockquote>')).toBe(
