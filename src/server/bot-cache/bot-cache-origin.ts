@@ -12,6 +12,11 @@ import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { withCommandDeadline } from '~/server/redis/command-deadline';
 import { shellBuildId, UNKNOWN_BUILD_ID } from '~/server/shell/shell-response';
+import { createLogThrottle } from '~/server/utils/log-throttle';
+import {
+  BOT_CACHE_LOOKUP_FAILED,
+  BOT_CACHE_STATUS_HEADER,
+} from '~/shared/constants/bot-cache.constants';
 
 /**
  * Bot HTML origin cache: a cacheable crawler render (`~/server/bot-cache/bot-cache`) is kept in
@@ -48,6 +53,8 @@ export type BotCacheEntry = {
   body: Uint8Array;
 };
 
+// Not `redis.packed`'s `compress`: the stored-size cap is checked on the compressed length, which
+// that codec compresses inside `set` and never returns.
 const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
@@ -107,14 +114,11 @@ export function recordBotCacheOrigin(event: OriginCacheEvent, phase: OriginCache
   }
 }
 
-const LOG_INTERVAL_MS = 60_000;
-let lastLoggedAt = 0;
+const shouldLogFailure = createLogThrottle(60_000);
 
 /** At most one log line a minute: when redis is down every crawler request fails the same way. */
 export function logBotCacheOriginFailure(phase: OriginCachePhase, error: unknown) {
-  const now = Date.now();
-  if (now - lastLoggedAt < LOG_INTERVAL_MS) return;
-  lastLoggedAt = now;
+  if (!shouldLogFailure('bot-html-origin-cache')) return;
   void import('~/server/logging/client')
     .then(({ logToAxiom, safeError }) =>
       logToAxiom({
@@ -183,12 +187,16 @@ type Chunk = string | Uint8Array | null | undefined | (() => void);
  * ended, if it is still a 200 without a cookie. Call only for a response `botCacheResponseRefusal`
  * allows (`_document`). Next writes the page with `res.end(html)` (`send-payload.js`), or streams
  * it through `res.write`; `compress: false`, so these are the uncompressed bytes.
+ *
+ * Not after a lookup that failed or timed out (the proxy's status header, which Next copies onto
+ * the page request): redis is degraded, and a store would only add to its load.
  */
 export function captureBotCacheRender(
   req: IncomingMessage,
   res: ServerResponse,
   pattern: BotCacheRoutePattern
 ) {
+  if (req.headers[BOT_CACHE_STATUS_HEADER] === BOT_CACHE_LOOKUP_FAILED) return;
   const { pathname, search } = new URL(req.url ?? '/', 'http://localhost');
   const key = botCacheKey(req.headers.host ?? '', pathname, search);
   if (!key) return;

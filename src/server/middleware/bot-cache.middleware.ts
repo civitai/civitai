@@ -3,7 +3,10 @@ import { NextResponse } from 'next/server';
 import type * as BotCacheOrigin from '~/server/bot-cache/bot-cache-origin';
 import { botCacheCandidatePattern } from '~/server/bot-cache/bot-cache-routes';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
-import { BOT_CACHE_STATUS_HEADER } from '~/shared/constants/bot-cache.constants';
+import {
+  BOT_CACHE_LOOKUP_FAILED,
+  BOT_CACHE_STATUS_HEADER,
+} from '~/shared/constants/bot-cache.constants';
 
 /** The request in the shape `botCacheRefusal` reads at render (`IncomingMessage`). */
 function asRenderRequest(request: NextRequest) {
@@ -16,9 +19,10 @@ function asRenderRequest(request: NextRequest) {
   return { method: request.method, url: `${pathname}${search}`, headers };
 }
 
-function renderAsMiss() {
+/** After `BOT_CACHE_LOOKUP_FAILED` the render does not store (`captureBotCacheRender`). */
+function renderAs(status: 'miss' | typeof BOT_CACHE_LOOKUP_FAILED) {
   const response = NextResponse.next();
-  response.headers.set(BOT_CACHE_STATUS_HEADER, 'miss');
+  response.headers.set(BOT_CACHE_STATUS_HEADER, status);
   return response;
 }
 
@@ -50,10 +54,17 @@ export const botCacheMiddleware = createMiddleware({
       const { pathname, search } = request.nextUrl;
       const key = origin.botCacheKey(req.headers.host ?? '', pathname, search);
       if (!key) return;
-      const entry = await origin.readBotCacheEntry(key);
+      let entry: BotCacheOrigin.BotCacheEntry | null;
+      try {
+        entry = await origin.readBotCacheEntry(key);
+      } catch (error) {
+        origin.recordBotCacheOrigin('error', 'lookup');
+        origin.logBotCacheOriginFailure('lookup', error);
+        return renderAs(BOT_CACHE_LOOKUP_FAILED);
+      }
       if (!entry || botCacheRefusal(req as never, entry.pattern, { degraded: false }) !== null) {
         origin.recordBotCacheOrigin('miss', 'lookup');
-        return renderAsMiss();
+        return renderAs('miss');
       }
       const html = await origin.decodeBotCacheBody(entry);
       const headers = new Headers(entry.headers);
@@ -65,7 +76,8 @@ export const botCacheMiddleware = createMiddleware({
       if (!origin) return;
       origin.recordBotCacheOrigin('error', 'lookup');
       origin.logBotCacheOriginFailure('lookup', error);
-      return renderAsMiss();
+      // A stored entry that does not decode: the render's store replaces it.
+      return renderAs('miss');
     }
   },
 });

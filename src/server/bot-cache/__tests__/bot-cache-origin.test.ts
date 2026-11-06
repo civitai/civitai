@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BotCache from '~/server/bot-cache/bot-cache';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ShellResponse from '~/server/shell/shell-response';
+import type * as Zlib from 'zlib';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -44,6 +45,15 @@ vi.mock('~/server/shell/shell-response', async (importOriginal) => ({
   shellBuildId: () => h.buildId,
 }));
 
+// The real codec, counted: a store calls it synchronously inside `res.end`, so a store not started
+// by the time `res.end` returns never will be, and a test can say "not stored" without a wait.
+vi.mock('zlib', async (importOriginal) => {
+  const actual = await importOriginal<typeof Zlib & { default?: typeof Zlib }>();
+  const real = actual.default ?? actual;
+  const brotliCompress = vi.fn(real.brotliCompress);
+  return { ...actual, brotliCompress, default: { ...real, brotliCompress } };
+});
+
 import { resetBotCacheFlagGateForTests } from '~/server/bot-cache/bot-cache';
 import type { BotCacheEntry } from '~/server/bot-cache/bot-cache-origin';
 import {
@@ -54,6 +64,10 @@ import {
 import { botCacheCandidatePattern } from '~/server/bot-cache/bot-cache-routes';
 import { botCacheMiddleware } from '~/server/middleware/bot-cache.middleware';
 import { runMiddlewares } from '~/server/middleware/index';
+import { BOT_CACHE_LOOKUP_FAILED } from '~/shared/constants/bot-cache.constants';
+import zlib from 'zlib';
+
+const brotliCompress = vi.mocked(zlib.brotliCompress);
 
 const SECRET = 'bot-cache-origin-secret-5d1e';
 const IMAGE_ROUTE = '/images/[imageId]';
@@ -117,6 +131,7 @@ beforeEach(() => {
   h.predicateThrows = false;
   resetBotCacheFlagGateForTests();
   store.clear();
+  brotliCompress.mockClear();
   redisMock.redis.packed.set.mockReset();
   redisMock.redis.packed.get.mockReset();
   redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
@@ -237,7 +252,7 @@ describe('a failed lookup renders', () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('connection reset'));
     const response = await serve(crawler());
     expectRendered(response);
-    expect(response.headers.get('x-civ-bot-cache')).toBe('miss');
+    expect(response.headers.get('x-civ-bot-cache')).toBe(BOT_CACHE_LOOKUP_FAILED);
   });
 
   it('a lookup that never answers is abandoned after the 25 ms cap', async () => {
@@ -247,7 +262,7 @@ describe('a failed lookup renders', () => {
     const response = await serve(crawler());
     expect(performance.now() - startedAt).toBeLessThan(1_000);
     expectRendered(response);
-    expect(response.headers.get('x-civ-bot-cache')).toBe('miss');
+    expect(response.headers.get('x-civ-bot-cache')).toBe(BOT_CACHE_LOOKUP_FAILED);
   });
 
   it('an entry that does not decode', async () => {
@@ -289,7 +304,11 @@ describe('storing', () => {
 });
 
 /** A response `_document` allowed, captured as there, then ended the way Next ends it. */
-function sendThroughCapture(url: string, change: (res: FakeResponse) => void = () => undefined) {
+function sendThroughCapture(
+  url: string,
+  change: (res: FakeResponse) => void = () => undefined,
+  requestHeaders: Record<string, string> = {}
+) {
   const headers = new Map<string, unknown>();
   const res = {
     statusCode: 200,
@@ -299,7 +318,7 @@ function sendThroughCapture(url: string, change: (res: FakeResponse) => void = (
     end: () => undefined,
   };
   captureBotCacheRender(
-    { url, headers: { host: 'civitai.com' } } as never,
+    { url, headers: { host: 'civitai.com', ...requestHeaders } } as never,
     res as never,
     IMAGE_ROUTE as never
   );
@@ -321,11 +340,56 @@ describe('capture stores only a response that ends as a 200 without a cookie', (
     ['a Set-Cookie added before the end', (res) => res.setHeader('Set-Cookie', ['a=1; Path=/'])],
   ])('%s is not stored', async (_, change) => {
     sendThroughCapture('/images/1', change);
+    expect(brotliCompress).not.toHaveBeenCalled();
     // INSTRUMENT CHECK: a response ended after it, through the same capture, is stored.
     sendThroughCapture('/images/2');
+    expect(brotliCompress).toHaveBeenCalledTimes(1);
     const control = keyFor('civitai.com', '/images/2');
+    await vi.waitFor(() => expect([...store.keys()]).toEqual([control]));
+  });
+});
+
+/** The page request Next makes after the proxy: it copies the proxy's response headers onto it. */
+function renderRequestHeaders(request: NextRequest, response: Response) {
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value, name) => {
+    headers[name] = value;
+  });
+  response.headers.forEach((value, name) => {
+    if (!name.startsWith('x-middleware-')) headers[name] = value;
+  });
+  return headers;
+}
+
+describe('the render after a failed lookup is not stored', () => {
+  it.each<[string, () => void]>([
+    [
+      'a redis error',
+      () => redisMock.redis.packed.get.mockRejectedValue(new Error('connection reset')),
+    ],
+    [
+      'a lookup that never answers',
+      () =>
+        redisMock.redis.packed.get.mockImplementation(() => new Promise<never>(() => undefined)),
+    ],
+  ])('%s', async (_, fail) => {
+    fail();
+    const request = crawler();
+    const response = await serve(request);
+    expectRendered(response);
+    sendThroughCapture('/images/1', undefined, renderRequestHeaders(request, response));
+    expect(brotliCompress).not.toHaveBeenCalled();
+  });
+
+  it('INSTRUMENT CHECK: the render after a plain miss is stored', async () => {
+    // Its own URL, and its own key awaited: a store an earlier case wrongly started can land here.
+    const request = crawler('https://civitai.com/images/3');
+    const response = await serve(request);
+    expect(response.headers.get('x-civ-bot-cache')).toBe('miss');
+    sendThroughCapture('/images/3', undefined, renderRequestHeaders(request, response));
+    expect(brotliCompress).toHaveBeenCalledTimes(1);
+    const control = keyFor('civitai.com', '/images/3');
     await vi.waitFor(() => expect([...store.keys()]).toContain(control));
-    expect([...store.keys()]).toEqual([control]);
   });
 });
 
@@ -360,11 +424,12 @@ describe('without a real build id (the `unknown` fallback)', () => {
   it('nothing is stored', async () => {
     h.buildId = 'unknown';
     sendThroughCapture('/images/1');
+    expect(brotliCompress).not.toHaveBeenCalled();
     // INSTRUMENT CHECK: with a build id, the same capture stores.
     h.buildId = 'build-a';
     sendThroughCapture('/images/2');
+    expect(brotliCompress).toHaveBeenCalledTimes(1);
     const control = keyFor('civitai.com', '/images/2');
-    await vi.waitFor(() => expect([...store.keys()]).toContain(control));
-    expect([...store.keys()]).toEqual([control]);
+    await vi.waitFor(() => expect([...store.keys()]).toEqual([control]));
   });
 });
