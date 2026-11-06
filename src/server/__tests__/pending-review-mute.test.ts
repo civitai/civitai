@@ -19,6 +19,7 @@ type UserRow = {
   deletedAt: Date | null;
   email: string | null;
   username: string;
+  meta?: unknown;
 };
 type RestrictionRow = {
   id: number;
@@ -244,6 +245,7 @@ import overturnHandler from '~/pages/api/mod/overturn-user-mute';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/server';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { moderationActionEmail } from '~/server/email/templates';
 import { setUserMuted } from '~/server/services/user.service';
 import {
@@ -461,6 +463,49 @@ describe('pending-review mute', () => {
     expect(result).toEqual({ muted: false, skipped });
     expect(store.restrictions).toHaveLength(0);
     expect(store.users.get(userId)?.muted ?? false).toBe(false);
+  });
+
+  describe('system accounts', () => {
+    afterEach(() => resetEnv());
+
+    it.each([
+      ['its configured id', 105, { username: 'Renamed' }],
+      ['the reserved name, with no id configured', undefined, { username: 'civitaimoderation' }],
+      [
+        'the system-account marker',
+        undefined,
+        { username: 'svc-bot', meta: { systemAccount: true } },
+      ],
+    ])('refuses to mute one recognized by %s', async (_label, configuredId, over) => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: configuredId });
+      store.users.set(105, makeUser(105, over));
+
+      for (const type of ['generation', 'scam'] as const) {
+        const result = await applyPendingReviewMute({
+          userId: 105,
+          triggers,
+          updateSource: 'test',
+          type,
+        });
+        expect(result).toEqual({ muted: false, skipped: 'system-account' });
+      }
+      // The fake returns the whole row whatever is selected; the real read only returns these.
+      expect(dbWrite.user.findUnique.mock.calls[0][0]).toMatchObject({
+        select: { id: true, username: true, meta: true },
+      });
+      expect(store.restrictions).toHaveLength(0);
+      expect(store.users.get(105)?.muted).toBe(false);
+    });
+
+    it('still mutes another account holding the reserved name once an id is configured', async () => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: 999 });
+      store.users.set(105, makeUser(105, { username: 'CivitaiModeration' }));
+
+      const result = await applyPendingReviewMute({ userId: 105, triggers, updateSource: 'test' });
+
+      expect(result).toMatchObject({ muted: true });
+      expect(store.users.get(105)?.muted).toBe(true);
+    });
   });
 
   it('still reports success when the session refresh fails', async () => {

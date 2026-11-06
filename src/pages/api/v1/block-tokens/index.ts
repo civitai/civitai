@@ -16,7 +16,7 @@ export const config = {
   },
 };
 import { isSystemAccountMeta } from '@civitai/auth';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -1171,7 +1171,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  if (session === false) return;
   if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
