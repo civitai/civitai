@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -144,6 +145,22 @@ export type SharedArticle = ReturnType<typeof toSharedArticle>;
 
 const UNAVAILABLE = { status: 'unavailable' } as const;
 
+const RECHECK_WINDOW_SECONDS = 5 * 60;
+
+/** Runs the share check again, at most once per window per article, whatever reads it. */
+async function recheckSharedArticle(articleId: number) {
+  try {
+    const claimed = await sysRedis.set(`article-share:recheck:${articleId}` as never, '1', {
+      NX: true,
+      EX: RECHECK_WINDOW_SECONDS,
+    });
+    if (claimed === null) return;
+    if (await submitSharedArticleText(articleId)) await updateArticleImageScanStatus([articleId]);
+  } catch (e) {
+    handleLogError(e as Error, 'article-share-recheck', { articleId });
+  }
+}
+
 /**
  * The only read path a share token opens. It grants this one article, read-only, and nothing
  * else: the token never reaches `getById` or the session.
@@ -179,6 +196,7 @@ export async function getArticleByShareToken({
     const settling =
       article.ingestion === ArticleIngestionStatus.Pending ||
       article.ingestion === ArticleIngestionStatus.Rescan;
+    if (article.ingestion === ArticleIngestionStatus.Error) await recheckSharedArticle(article.id);
     return settling ? { status: 'checking' } : UNAVAILABLE;
   }
 
@@ -196,13 +214,17 @@ export async function getArticleByShareToken({
       }),
     ]);
     if (check?.blocked) return UNAVAILABLE;
-    if (check?.status === EntityModerationStatus.Failed) return UNAVAILABLE;
     const current =
       !!required &&
       required.textHash === sharedArticleTextHash(article) &&
       check?.workflowId === required.workflowId &&
       check.status === EntityModerationStatus.Succeeded;
-    if (!current) return { status: 'checking' };
+    if (!current) {
+      // Another path's check (a retry, a rescan, a publish) replaced the one recorded here, or
+      // none finished: once nothing is in flight, run the share check again.
+      if (check?.status !== EntityModerationStatus.Pending) await recheckSharedArticle(article.id);
+      return { status: 'checking' };
+    }
   }
 
   return { status: 'ok', article: toSharedArticle(article) };

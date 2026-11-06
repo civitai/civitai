@@ -25,6 +25,7 @@ import {
   revokeArticleShareLink,
 } from '~/server/services/article-share.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import { sysRedis } from '~/server/redis/client';
 import { updateArticleImageScanStatus } from '~/server/services/article.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
@@ -190,7 +191,7 @@ describe('getArticleByShareToken: the text check', () => {
   it.each([
     ['still pending', { status: EntityModerationStatus.Pending }, 'checking'],
     ['missing', null, 'checking'],
-    ['failed', { status: EntityModerationStatus.Failed }, 'unavailable'],
+    ['failed', { status: EntityModerationStatus.Failed }, 'checking'],
     ['blocked', { blocked: true }, 'unavailable'],
   ])(
     'does not show text whose check is %s, even when ingestion reads Scanned',
@@ -209,6 +210,31 @@ describe('getArticleByShareToken: the text check', () => {
     if (over === null) dbMock.dbWrite.articleShareCheck.findUnique.mockResolvedValue(null);
     else shareCheck(over);
     expect(await read()).toEqual({ status: 'checking' });
+  });
+
+  it('runs the share check again when another check replaced the recorded one', async () => {
+    shareCheck({ workflowId: 'older' });
+    expect(await read()).toEqual({ status: 'checking' });
+    expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: ARTICLE, force: true })
+    );
+  });
+
+  it('does not run it again while a check is in flight', async () => {
+    shareCheck({ workflowId: 'older' });
+    textCheck({ status: EntityModerationStatus.Pending });
+    await read();
+    expect(submitTextModerationOrScan).not.toHaveBeenCalled();
+  });
+
+  it('runs it at most once per window, however many reads arrive', async () => {
+    shareCheck({ workflowId: 'older' });
+    vi.mocked(sysRedis.set)
+      .mockResolvedValueOnce('OK' as never)
+      .mockResolvedValue(null as never);
+    await read();
+    await read();
+    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(1);
   });
 
   it('needs no text check for an article with no text', async () => {
