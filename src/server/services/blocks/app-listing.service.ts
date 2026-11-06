@@ -1624,9 +1624,10 @@ export async function listAvailableListings(
   // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
   // a card's mutable projection fields are never served from two different ages.
   //
-  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable` and the sub-listing
-  // state are literal segments of the redis key, deliberately outside the 32-bit
-  // `hashifyObject` of the statement. See {@link catalogPageCache}.
+  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable`, the sub-listing
+  // state and the mature state (`mature`) are literal segments of the redis key,
+  // deliberately outside the 32-bit `hashifyObject` of the statement. See
+  // {@link catalogPageCache}.
   //
   // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
   // actions, and every one of those paths calls `bustAppListingCatalogCache()`.
@@ -2136,7 +2137,8 @@ export async function getListingHiddenByBrowsingLevel(
     floor: opts.floor ?? 'public',
     browsingLevel: allBrowsingLevelsFlag,
   });
-  // Never report hidden-by-level for a site-gated app.
+  // Invariant guard, unreachable today (the loader already drops site-gated rows): never
+  // report hidden-by-level for a site-gated app.
   if (!gated || !opts.redCapable) return null;
   const hidden = ratingHiddenByBrowsingLevel(gated.row.contentRating, opts.viewerBrowsingLevel);
   return hidden ? { contentRating: hidden } : null;
