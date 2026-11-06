@@ -219,6 +219,33 @@ export async function readListingForkProvenance(
 }
 
 /**
+ * The listing each of `listingIds` was forked from, in one query: fork listing id → parent
+ * listing id, for the forks among them only. Degrades to an empty map on a missing column, like
+ * {@link readListingForkProvenance}; everything else propagates. It returns ids, never a parent's
+ * name or slug: a caller decides whether a parent may be named.
+ */
+export async function readListingForkParents(
+  listingIds: readonly string[],
+  db: ForkReadClient
+): Promise<Map<string, string>> {
+  if (listingIds.length === 0) return new Map();
+  try {
+    const rows =
+      (await db.$queryRaw`SELECT al."id" AS "id", al."fork_of_listing_id" AS "forkOfListingId"
+        FROM "app_listings" al
+        WHERE al."id" = ANY(${[...listingIds]}::text[])
+          AND al."fork_of_listing_id" IS NOT NULL`) as Array<{
+        id: string;
+        forkOfListingId: string;
+      }>;
+    return new Map(rows.map((r) => [r.id, r.forkOfListingId]));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
+  }
+}
+
+/**
  * {@link readListingForkProvenance} for a RENDERING path — degrades on ANY error. A provenance
  * line is cosmetic; a statement timeout on it must not 500 a public store page.
  */

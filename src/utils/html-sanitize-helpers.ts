@@ -3,6 +3,11 @@ import type { Transformer } from 'sanitize-html';
 import sanitize from 'sanitize-html';
 import { removeTags } from '~/utils/string-helpers';
 import { isValidURL } from '~/utils/type-guards';
+import {
+  EMBED_PLAYER_HOSTS,
+  isAllowedPlayerUrl,
+  isEmbedPlayerHost,
+} from '~/shared/utils/embed-providers';
 import { IMAGE_WIDTHS } from '~/shared/tiptap/image-width';
 
 const DEFAULT_ALLOWED_TAGS = [
@@ -51,6 +56,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.youtube.com',
   'www.instagram.com',
   'www.strawpoll.com',
+  ...EMBED_PLAYER_HOSTS,
 ];
 
 // The article editor's per-image size. sanitize-html blanks any value off this list, so a
@@ -63,7 +69,7 @@ const TEXT_ALIGN_STYLES = Object.fromEntries(
 );
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
-  a: ['rel', 'href', 'target'],
+  a: ['rel', 'href', 'target', 'data-entity', 'data-id', 'data-version-id'],
   img: ['src', 'alt', 'width', 'height', IMAGE_WIDTH_ATTRIBUTE],
   iframe: [
     'src',
@@ -84,7 +90,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   // `data-id` is load-bearing for blurbs: it is the only thing tying a stored blurb back to its
   // row, and every host body passes through here on save. Drop it and the fan-out has nothing
   // left to find — the words stay and silently stop updating.
-  div: ['data-youtube-video', 'data-type', 'data-id'],
+  div: ['data-youtube-video', 'data-type', 'data-id', 'data-provider'],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
   ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
@@ -234,6 +240,14 @@ export type santizeHtmlOptions = sanitize.IOptions & {
   /** Opt-in for surfaces registered with the blurb fan-out. */
   allowBlurbs?: boolean;
 };
+// The hostname allowlist admits any path on a player host. A new-provider iframe must also
+// match its provider's player URL shape (isAllowedPlayerUrl), or it is dropped whole.
+function isRefusedEmbedIframe(frame: sanitize.IFrame) {
+  if (frame.tag !== 'iframe') return false;
+  const src = frame.attribs.src;
+  return isEmbedPlayerHost(src) && !isAllowedPlayerUrl(src);
+}
+
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   const {
     stripEmpty = false,
@@ -284,8 +298,8 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     exclusiveFilter: (frame) =>
       (!allowStickers && isStickerSpan(frame)) ||
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
+      isRefusedEmbedIframe(frame) ||
       (exclusiveFilter?.(frame) ?? false),
-    allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
     transformTags: {
       a: function (tagName, { href, ...attr }) {
         if (!href) return { tagName: 'span', attribs: {} };
@@ -310,6 +324,10 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     },
     ...options,
     allowedAttributes,
+    // After the spread so no caller option can widen which iframes load.
+    allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
+    allowedIframeDomains: [],
+    allowIframeRelativeUrls: false,
     // Per-tag replace, not merge: a caller's entry for a tag replaces its default (span, p, h1-h3). `*` is
     // fixed empty, after the spread, because sanitize-html merges it into every tag's rule; it
     // drops style on any tag without its own entry.

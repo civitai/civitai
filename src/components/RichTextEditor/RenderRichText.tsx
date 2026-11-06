@@ -2,6 +2,7 @@
 import StarterKit from '@tiptap/starter-kit';
 import { renderToReactElement } from '@tiptap/static-renderer';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import React, { useMemo, useRef } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
@@ -21,9 +22,20 @@ import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { EmbedNode, embedIframeAttrs } from '~/shared/tiptap/embed.node';
+import { isAllowedPlayerUrl } from '~/shared/utils/embed-providers';
+import { useMaybeAppContext } from '~/providers/AppProvider';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
+import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
+import { collectCivitaiEmbedIds } from '~/shared/tiptap/civitai-embed.utils';
+import { CivitaiEmbedProvider } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
+
+// The feed cards are heavy and most articles hold none.
+const CivitaiEmbedBlock = dynamic(() =>
+  import('~/components/CivitaiEmbed/CivitaiEmbedBlock').then((m) => m.CivitaiEmbedBlock)
+);
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -37,7 +49,9 @@ const extensions = [
   StrawPollNode,
   TimestampNode,
   BlurbNode,
+  EmbedNode,
   TextAlignExtension,
+  CivitaiEmbedNode,
 ];
 
 type JsonNode = {
@@ -72,6 +86,8 @@ export function RenderRichText({
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const toCurrentDomain = useCurrentDomainHref();
+  const embedIds = useMemo(() => collectCivitaiEmbedIds(content), [content]);
+  const host = useMaybeAppContext()?.host;
   const memoized = useMemo(() => {
     try {
       const el = renderToReactElement({
@@ -98,6 +114,19 @@ export function RenderRichText({
                 }}
               />
             ),
+            civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
+            embed: ({ node }) => {
+              const src = node.attrs.src as string | null;
+              const provider = isAllowedPlayerUrl(src);
+              if (!src || !provider) return null;
+              if (!allowed) return <ConsentBlockedEmbed kind={provider} />;
+              const { allowfullscreen, ...attrs } = embedIframeAttrs(provider, src, host);
+              return (
+                <div data-type="embed" data-provider={provider}>
+                  <iframe {...attrs} allowFullScreen={!!allowfullscreen} />
+                </div>
+              );
+            },
             // For unconsented CA visitors, replace third-party embed nodes with a
             // placeholder so the iframe is never inserted in the DOM.
             ...(!allowed && {
@@ -118,15 +147,28 @@ export function RenderRichText({
       // sync with `tiptapExtensions` by hand, so treat drift as reachable.
       return { ok: false as const };
     }
-  }, [content, allowed, toCurrentDomain]);
+  }, [content, allowed, toCurrentDomain, host]);
 
-  if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
+  if (!memoized.ok)
+    return fallbackHtml ? <RenderHtml html={fallbackHtml} className={className} /> : null;
 
-  return (
+  const body = (
     <TypographyStylesWrapper className={clsx(classes.htmlRenderer, className)}>
       <div ref={contentRef}>{memoized.el}</div>
       <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>
+  );
+  if (!embedIds.modelIds.length && !embedIds.imageIds.length) return body;
+
+  return (
+    <CivitaiEmbedProvider
+      // A new article must not inherit the last one's results as "loaded".
+      key={`${embedIds.modelIds}|${embedIds.imageIds}`}
+      modelIds={embedIds.modelIds}
+      imageIds={embedIds.imageIds}
+    >
+      {body}
+    </CivitaiEmbedProvider>
   );
 }
 

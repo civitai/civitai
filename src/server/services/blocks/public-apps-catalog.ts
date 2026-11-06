@@ -13,8 +13,8 @@ import {
 
 /**
  * The PUBLIC App-catalog read grant — the deliberate decision that the REST
- * catalog endpoints (`GET /api/v1/apps`, `GET /api/v1/apps/{slug}`) are readable
- * by anyone, including an unauthenticated caller.
+ * catalog endpoints (`GET /api/v1/apps`, `GET /api/v1/apps/{slug}`) and the registry
+ * adapter's catalog are readable by anyone, including an unauthenticated caller.
  *
  * ## Why this is its own module, and not another term in `resolveStoreVisibilityScope`
  *
@@ -76,7 +76,9 @@ import {
  * that buys a caller more than a correctly-resolved `none` does. Every other
  * consumer of the scope — both listing-service entry points, the three store tRPC
  * procs — keeps failing closed exactly as #4041 left them; this module is scoped to
- * the two public REST handlers and nothing else imports it.
+ * the public catalog readers: the two REST handlers and the registry adapter
+ * (`src/server/registry-adapter/catalog-source.live.ts`), which must stop publishing when the
+ * kill switch is thrown.
  *
  * ⚠️ Honest consequence, stated rather than discovered later: while the grant is
  * active and the floor is `full`, a caller in the external-only cohort and an

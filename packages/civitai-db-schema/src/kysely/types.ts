@@ -4495,6 +4495,11 @@ export type Placement = {
   ownerId: number;
   placerId: number;
   data: Generated<unknown>;
+  /**
+   * A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+   * `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+   */
+  track: unknown | null;
   status: string;
   /**
    * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
@@ -6214,6 +6219,7 @@ export type UserProfile = {
   privacySettings: Generated<unknown>;
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
+  showcaseSections: Generated<unknown>;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;

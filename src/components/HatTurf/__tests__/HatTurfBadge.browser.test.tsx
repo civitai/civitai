@@ -30,9 +30,15 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => features,
 }));
+const stock = vi.hoisted(() => ({
+  data: undefined as { creditedPlayers: number; optedIn: boolean } | undefined,
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
-  return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy() };
+  return {
+    ...(await importOriginal<typeof Trpc>()),
+    trpc: makeTrpcProxy({ 'hatTurf.getStock': { useQuery: () => ({ data: stock.data }) } }),
+  };
 });
 const trackAction = vi.hoisted(() =>
   vi.fn<(data: unknown) => Promise<void>>(async () => undefined)
@@ -181,6 +187,7 @@ const feedWith = (
 });
 
 afterEach(() => {
+  stock.data = undefined;
   cleanup();
   trackAction.mockClear();
   onCardClick.mockClear();
@@ -202,7 +209,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     const fill = getComputedStyle(el.querySelector('[data-testid="hat-turf-disc-fill"]')!).fill;
     expect(fill).not.toBe('rgb(255, 255, 255)');
     expect(fill).not.toBe('none');
-    expect(el.getAttribute('aria-label')).toContain('blue leads with 6');
+    expect(el.getAttribute('aria-label')).toContain('This image earns 6 points for blue');
     // The badge sits inside the card, top left, and stays inside it.
     const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
     const box = el.getBoundingClientRect();
@@ -220,6 +227,17 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     const discFill = () =>
       getComputedStyle(el.querySelector('[data-testid="hat-turf-disc-fill"]') as SVGElement).fill;
     return { el, count, disc, arc, discFill };
+  };
+  /** How many corners of the digits' box fall outside the disc's circle. */
+  const cornersOutside = (box: DOMRect, disc: DOMRect) => {
+    const [cx, cy] = [disc.left + disc.width / 2, disc.top + disc.height / 2];
+    const radius = disc.width / 2;
+    return [
+      [box.left, box.top],
+      [box.right, box.top],
+      [box.left, box.bottom],
+      [box.right, box.bottom],
+    ].filter(([x, y]) => Math.hypot(x - cx, y - cy) > radius).length;
   };
   const centre = (r: DOMRect) => [r.left + r.width / 2, r.top + r.height / 2];
 
@@ -240,7 +258,9 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     expect(badge()!.querySelector('circle[data-team="pink"]')).not.toBeNull();
     expect(badge()!.querySelector('[data-testid="hat-turf-mine"]')).toBeNull();
-    expect(badge()!.textContent).toBe('6');
+    // The dial holds the points; pink trails blue 4 to 6, so the margin beside it is −2.
+    expect(badge()!.querySelector('[data-testid="hat-turf-count"]')!.textContent).toBe('6');
+    expect(badge()!.querySelector('[data-testid="hat-turf-margin"]')!.textContent).toBe('\u22122');
   });
 
   const blockedParts = () => {
@@ -337,11 +357,18 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { disc } = parts();
     expect(disc.querySelector('svg')).toBeNull();
-    expect(disc.textContent).toMatch(/^(\d|9\+)$/);
+    expect(disc.textContent).toMatch(/^\d+$/);
   });
 
-  test('an unprotected image fills the disc with the leader', async () => {
+  test("a trailing viewer's disc is still the leader's colour: it is the team earning", async () => {
     renderCard({ feed: feedWith({ 1: standing() }, 'pink') });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const { arc, discFill } = parts();
+    expect(discFill()).toBe(arc('blue'));
+  });
+
+  test("a leading viewer's disc is the leader's colour", async () => {
+    renderCard({ feed: feedWith({ 1: standing() }, 'blue') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { arc, discFill } = parts();
     expect(discFill()).toBe(arc('blue'));
@@ -483,28 +510,44 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(disc.contains(count)).toBe(true);
   });
 
-  test.each([
-    [10, '10'],
-    [42, '42'],
-    [1240, '1.2k'],
-  ])('%s: the full count moves beside the dial and the disc reads 9+', async (lead, shown) => {
-    renderCard({
-      feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
-    });
-    await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const { el, count, disc } = parts();
-    expect(count!.textContent).toBe(shown);
-    expect(disc.contains(count)).toBe(false);
-    expect(count!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-      disc.getBoundingClientRect().right
-    );
-    expect(disc.textContent).toBe('9+');
-    expect(disc.querySelector('svg')).toBeNull();
-    expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
-    // Still inside a phone card.
-    const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
-    expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
-  });
+  test.each([[10], [12], [42], [99]])(
+    '%s hats: both digits sit inside the disc, on the card',
+    async (lead) => {
+      renderCard({
+        feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
+      });
+      await vi.waitFor(() => expect(badge()).not.toBeNull());
+      const { el, count, disc } = parts();
+      expect(count!.textContent).toBe(String(lead));
+      expect(disc.contains(count)).toBe(true);
+      const c = count!.getBoundingClientRect();
+      const d = disc.getBoundingClientRect();
+      expect(cornersOutside(c, d)).toBe(0);
+      // Still inside a phone card.
+      const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+      expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
+    }
+  );
+
+  test.each([[10], [99]])(
+    '%s hats: both digits sit inside the disc in the detail row',
+    async (lead) => {
+      document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+      renderWithProviders(
+        <TurfSummaryContext.Provider
+          value={feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) })}
+        >
+          <HatTurfBadge imageId={1} className={detailClasses.rowBadge} />
+        </TurfSummaryContext.Provider>
+      );
+      await vi.waitFor(() => expect(badge()).not.toBeNull());
+      const { count, disc } = parts();
+      const c = count!.getBoundingClientRect();
+      const d = disc.getBoundingClientRect();
+      expect(c.left).toBeGreaterThanOrEqual(d.left - 0.5);
+      expect(c.right).toBeLessThanOrEqual(d.right + 0.5);
+    }
+  );
 
   test('the detail action row draws the dial at its 36px', async () => {
     document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
@@ -607,5 +650,95 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     await view.rerender(tree({ blue: 7 }));
     await vi.waitFor(() => expect(count().textContent).toBe('7'));
     expect(count().className).toContain('bump');
+  });
+});
+
+describe('the badge: points in the dial, the viewer margin beside it', () => {
+  const count = () => document.body.querySelector('[data-testid="hat-turf-count"]')!.textContent;
+  const margin = () =>
+    document.body.querySelector('[data-testid="hat-turf-margin"]')?.textContent ?? null;
+  const show = async (summary: ReturnType<typeof standing>, team: string | null) => {
+    renderCard({ feed: feedWith({ 1: summary }, team) });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+  };
+
+  test('behind by 3: the leader\u2019s 6 in the dial, \u22123 beside it', async () => {
+    await show(standing({ counted: { blue: 6, pink: 3 } }), 'pink');
+    expect(count()).toBe('6');
+    expect(margin()).toBe('\u22123');
+    expect(badge()!.getAttribute('aria-label')).toBe(
+      'Hat Turf: This image earns 6 points for blue. Your team is behind by 3 hats.'
+    );
+  });
+
+  test('ahead by 3 over the next closest team: +3 (not +1 over the leader)', async () => {
+    await show(standing({ counted: { blue: 6, pink: 3, green: 1 } }), 'blue');
+    expect(count()).toBe('6');
+    expect(margin()).toBe('+3');
+    expect(badge()!.getAttribute('aria-label')).toContain('Your team is up by 3 hats.');
+  });
+
+  test('tied for the lead, but trailing on who got there first: 0, and the label says level', async () => {
+    await show(standing({ counted: { blue: 4, pink: 4 } }), 'pink');
+    expect(margin()).toBe('0');
+    expect(badge()!.getAttribute('aria-label')).toContain('Your team is level with the lead.');
+  });
+
+  test('tied for the lead, and holding it: 0', async () => {
+    await show(standing({ counted: { blue: 4, pink: 4 } }), 'blue');
+    expect(margin()).toBe('0');
+  });
+
+  test('a team with no hats on the image is behind by the leader count', async () => {
+    await show(standing({ counted: { blue: 2 }, shown: { blue: 2 } }), 'green');
+    expect(margin()).toBe('\u22122');
+  });
+
+  test('the dial is capped at the credited players, whoever looks', async () => {
+    stock.data = { creditedPlayers: 6, optedIn: true };
+    await show(standing({ counted: { blue: 12, pink: 3 } }), 'pink');
+    expect(badge()!.querySelector('[data-testid="hat-turf-count-cap"]')).toBeNull();
+    expect(count()).toBe('6');
+    expect(badge()!.getAttribute('aria-label')).toContain('earns 6 points for blue');
+  });
+
+  test('credit unread: the dial is the leader count', async () => {
+    await show(standing({ counted: { blue: 6, pink: 3 } }), 'blue');
+    expect(count()).toBe('6');
+  });
+
+  test('on no team: points only, no margin', async () => {
+    stock.data = { creditedPlayers: 25, optedIn: true };
+    await show(standing({ counted: { blue: 6, pink: 3 } }), null);
+    expect(count()).toBe('6');
+    expect(margin()).toBeNull();
+    expect(badge()!.getAttribute('aria-label')).not.toContain('Your team');
+  });
+
+  test('protected: one point and the lock, with the viewer\u2019s margin beside them', async () => {
+    await show(
+      standing({ hatted: true, hattedTeam: 'blue', counted: { blue: 6, pink: 3 } }),
+      'pink'
+    );
+    expect(count()).toBe('1');
+    expect(margin()).toBe('\u22123');
+    expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).not.toBeNull();
+  });
+
+  test('ten or more points: both digits in the dial, the margin beside it', async () => {
+    stock.data = { creditedPlayers: 10, optedIn: true };
+    await show(standing({ counted: { blue: 12, pink: 1 } }), 'pink');
+    expect(count()).toBe('10');
+    expect(margin()).toBe('\u221211');
+  });
+
+  test('the chip with a margin and a lock stays inside a 171px phone card', async () => {
+    await show(
+      standing({ hatted: true, hattedTeam: 'blue', counted: { blue: 12, pink: 1 } }),
+      'pink'
+    );
+    const card = document.body.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+    const b = badge()!.getBoundingClientRect();
+    expect(b.right).toBeLessThanOrEqual(card.right);
   });
 });

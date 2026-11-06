@@ -130,6 +130,12 @@ const EXPECTED_PROJECTORS: Record<
   'server/services/blocks/app-sub-listing-store.service.ts': 'gated',
   // Post "Published with" chip icon.
   'server/services/blocks/post-app-chip.logic.ts': 'gated',
+  // The registry adapter's app entities: the listing's own icon, gated at the listing's own
+  // rating so no published icon is rated above the entity's rating tag.
+  'server/registry-adapter/catalog-media.ts': 'gated',
+  // Reads each listing's own icon WITH the gate's columns, builds no url; `catalog-media.ts`
+  // gates it.
+  'server/registry-adapter/catalog-source.live.ts': 'hydrates for the gate',
   // The owner's own "My builds" row: shows exactly what is attached.
   'server/services/blocks/app-access.service.ts': 'raw: author',
   // Author/moderator audience labels: reads the civitai.com ceiling, builds no url.
@@ -238,6 +244,7 @@ describe('listing-media call-site ledger', () => {
       .map(([rel]) => rel);
     // Named rather than counted, so re-labelling an entry cannot empty this loop silently.
     expect(gated.sort()).toEqual([
+      'server/registry-adapter/catalog-media.ts',
       'server/services/blocks/app-listing.service.ts',
       'server/services/blocks/app-sub-listing-store.service.ts',
       'server/services/blocks/post-app-chip.logic.ts',

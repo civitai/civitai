@@ -8,11 +8,6 @@ div.articleBody {
     font-size: 18px;
   }
 
-  > div > :is(p, h1, h2, h3, h4, ul, ol, blockquote) {
-    max-width: 40rem;
-    margin-inline: auto;
-  }
-
   p {
     margin: 0 0 1.2em;
   }

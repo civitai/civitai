@@ -26,6 +26,11 @@ export type ModelPayload = {
   /** Tag names and published versions' trigger words, for the search service's dictionaries. */
   tags: string[];
   triggerWords: string[];
+  /**
+   * The versions this document was built from. A version delete event carries only the version's
+   * id, so the live sync finds the model by this field.
+   */
+  versionIds: number[];
   /** The set bits of Model.nsfwLevel; empty while unrated. */
   nsfwLevel: number[];
   publishedAt: string;
@@ -54,7 +59,7 @@ export async function getModelDocs(
        COALESCE((SELECT array_agg(t.name::text ORDER BY t.name) FROM "TagsOnModels" tm
          JOIN "Tag" t ON t.id = tm."tagId" WHERE tm."modelId" = m.id), '{}') AS tags,
        COALESCE((SELECT json_agg(v) FROM (
-         SELECT mv.name, left(mv.description, 2500) AS description, mv."baseModel",
+         SELECT mv.id, mv.name, left(mv.description, 2500) AS description, mv."baseModel",
            mv."trainedWords"
          FROM "ModelVersion" mv WHERE mv."modelId" = m.id AND ${VERSION_ELIGIBLE_SQL}
          ORDER BY mv.index ASC NULLS LAST, mv.id DESC LIMIT ${MAX_VERSIONS}) v), '[]') AS versions
@@ -75,6 +80,7 @@ export async function getModelDocs(
       baseModels,
       tags,
       triggerWords,
+      versionIds: row.versions.map((v) => v.id),
       nsfwLevel: nsfwLevels(row.nsfwLevel),
       publishedAt: new Date(row.publishedAt).toISOString(),
       userId: row.userId,

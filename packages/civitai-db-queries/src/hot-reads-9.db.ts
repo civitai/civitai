@@ -138,6 +138,7 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
         'UserProfile.profileSectionsSettings as profileSectionsSettings',
         'UserProfile.privacySettings as profilePrivacySettings',
         'UserProfile.showcaseItems as profileShowcaseItems',
+        'UserProfile.showcaseSections as profileShowcaseSections',
         'UserProfile.location as profileLocation',
         'UserProfile.nsfw as profileNsfw',
         'CoverImage.id as coverId',

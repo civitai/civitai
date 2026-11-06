@@ -40,3 +40,17 @@ export async function getApiAuthSession(
   res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
   return false;
 }
+
+type SessionUser = NonNullable<Session['user']>;
+
+/**
+ * The viewer for a tRPC context. A banned user gets no `user`, so public procedures answer as for a
+ * signed-out visitor; it stays on `bannedUser` for the auth middleware alone, which refuses it with
+ * the banned message (and lets it reach the site appeal form).
+ */
+export function trpcViewer(user: SessionUser | undefined): {
+  user: SessionUser | undefined;
+  bannedUser?: SessionUser;
+} {
+  return user?.bannedAt ? { user: undefined, bannedUser: user } : { user };
+}

@@ -7,6 +7,7 @@
 import { createHash } from 'crypto';
 
 export type ModelVersionSource = {
+  id: number;
   name: string;
   description: string | null;
   baseModel: string | null;
