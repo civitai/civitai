@@ -61,7 +61,7 @@ async function seedItem(
     price: number;
     buzz: number | null;
     tier: string | null;
-    months: number | null;
+    days: number | null;
     cosmeticId: number | null;
     active: boolean;
     rotating: boolean;
@@ -70,7 +70,7 @@ async function seedItem(
 ) {
   const kind = o.kind ?? 'buzz_pack';
   const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO "KnightsShopItem" ("kind","name","price","buzz","tier","months","cosmeticId","active","rotating","sortOrder")
+    `INSERT INTO "KnightsShopItem" ("kind","name","price","buzz","tier","days","cosmeticId","active","rotating","sortOrder")
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING "id"`,
     [
       kind,
@@ -78,7 +78,7 @@ async function seedItem(
       o.price ?? 1000,
       o.buzz === undefined ? (kind === 'buzz_pack' ? 50 : null) : o.buzz,
       o.tier ?? null,
-      o.months ?? null,
+      o.days ?? null,
       o.cosmeticId ?? null,
       o.active ?? true,
       o.rotating ?? false,
@@ -124,9 +124,9 @@ describe('newShopItemSchema', () => {
     ['a Buzz pack without Buzz', { kind: 'buzz_pack' }],
     ['a Buzz pack of zero Buzz', { kind: 'buzz_pack', buzz: '0' }],
     ['a cosmetic without a cosmetic', { kind: 'cosmetic' }],
-    ['a membership with an unknown tier', { kind: 'membership', tier: 'platinum', months: '1' }],
-    ['a membership of zero months', { kind: 'membership', tier: 'gold', months: '0' }],
-    ['a membership the shop never sells', { kind: 'membership', tier: 'gold', months: '3' }],
+    ['a membership with an unknown tier', { kind: 'membership', tier: 'platinum', days: '7' }],
+    ['a membership of zero days', { kind: 'membership', tier: 'gold', days: '0' }],
+    ['a membership the shop never sells', { kind: 'membership', tier: 'gold', days: '30' }],
     ['a free item', { kind: 'buzz_pack', buzz: '50', price: '0' }],
     ['an unknown kind', { kind: 'trinket' }],
     ['a rank that does not exist', { kind: 'buzz_pack', buzz: '50', minRank: 'King' }],
@@ -172,7 +172,7 @@ describe('createShopItem', () => {
       ...valid,
       kind: 'membership',
       tier: 'gold',
-      months: '1',
+      days: '7',
     });
     const created = await createShopItem(input, MOD);
     expect(created).toEqual({ ok: true, id: expect.any(Number) });
@@ -180,7 +180,7 @@ describe('createShopItem', () => {
 
     const rows = (
       await db.query(
-        `SELECT "id","kind","price","tier","months","buzz","active" FROM "KnightsShopItem"`
+        `SELECT "id","kind","price","tier","days","buzz","active" FROM "KnightsShopItem"`
       )
     ).rows;
     expect(rows).toEqual([
@@ -189,7 +189,7 @@ describe('createShopItem', () => {
         kind: 'membership',
         price: 500,
         tier: 'gold',
-        months: 1,
+        days: 7,
         buzz: null,
         active: true,
       },
@@ -298,11 +298,11 @@ describe('stockView rotation', () => {
     for (let i = 0; i < 8; i++) await seedItem(`rot-${i}`, { rotating: true, sortOrder: i });
     const fixed = await seedItem('fixed', { sortOrder: 20 });
     const retired = await seedItem('retired', { active: false });
-    const threeMonths = await seedItem('three-months', {
+    const thirtyDays = await seedItem('thirty-days', {
       kind: 'membership',
       buzz: null,
       tier: 'gold',
-      months: 3,
+      days: 30,
     });
 
     const preview = stockView(await listShopItems(), '2026-12-20');
@@ -317,7 +317,7 @@ describe('stockView rotation', () => {
     );
     expect(preview.stock.map((s) => s.item.id)).toContain(fixed);
     expect(preview.stock.map((s) => s.item.id)).not.toContain(retired);
-    expect(preview.excluded.map((i) => i.id)).toEqual([threeMonths]);
+    expect(preview.excluded.map((i) => i.id)).toEqual([thirtyDays]);
   });
 });
 

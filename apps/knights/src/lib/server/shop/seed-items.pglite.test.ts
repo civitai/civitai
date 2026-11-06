@@ -57,7 +57,7 @@ describe('the dev shop seed', () => {
     ).toBe(777);
   });
 
-  it("sells the design's four Buzz packs and a month of each tier", () => {
+  it("sells the design's four Buzz packs and a week of each tier", () => {
     expect(FIXED_ITEMS.filter((i) => i.kind === 'buzz_pack').map((i) => [i.buzz, i.price])).toEqual(
       [
         [50, 1000],
@@ -67,11 +67,11 @@ describe('the dev shop seed', () => {
       ]
     );
     expect(
-      FIXED_ITEMS.filter((i) => i.kind === 'membership').map((i) => [i.tier, i.months])
+      FIXED_ITEMS.filter((i) => i.kind === 'membership').map((i) => [i.tier, i.days, i.price])
     ).toEqual([
-      ['bronze', 1],
-      ['silver', 1],
-      ['gold', 1],
+      ['bronze', 7, 60_000],
+      ['silver', 7, 150_000],
+      ['gold', 7, 300_000],
     ]);
   });
 
@@ -103,8 +103,30 @@ describe('the dev shop seed', () => {
     ).toEqual([{ cosmeticId: 501 }, { cosmeticId: 502 }]);
   });
 
-  it('gates the decorations to ranks', () => {
-    const items = cosmeticItems(rows).filter((i) => i.cosmeticId === 5 || i.cosmeticId === 6);
-    expect(items.map((i) => i.minRank)).toEqual(['Templar', 'Paladin']);
+  it('prices decorations in three steps, gated to ranks from the second', () => {
+    const decorations = ['One', 'Two', 'Three'].map((name, i) => ({
+      id: 20 + i,
+      name,
+      type: 'ProfileDecoration',
+    }));
+    const items = cosmeticItems(decorations);
+    expect(items.map((i) => [i.price, i.minRank])).toEqual([
+      [25_000, undefined],
+      [50_000, 'Templar'],
+      [80_000, 'Paladin'],
+    ]);
+  });
+
+  it('prices a sticker at 100 gold per use and the other cosmetics at the sheet', () => {
+    const items = cosmeticItems([
+      { id: 30, name: 'Ten uses', type: 'Sticker', data: { uses: 10 } },
+      { id: 31, name: 'Badge', type: 'Badge' },
+      { id: 32, name: 'Plate', type: 'NamePlate' },
+    ]);
+    expect(items.map((i) => [i.cosmeticType, i.price])).toEqual([
+      ['Badge', 15_000],
+      ['NamePlate', 30_000],
+      ['Sticker', 1_000],
+    ]);
   });
 });

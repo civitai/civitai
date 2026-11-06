@@ -33,7 +33,7 @@ describe('Knights shop catalog actions', () => {
       formEvent({
         kind: 'membership',
         tier: 'gold',
-        months: '3',
+        days: '30',
         name: 'Gold quarter',
         price: '900',
         sortOrder: '0',

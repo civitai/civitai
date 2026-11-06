@@ -94,8 +94,8 @@
     </p>
     {#if preview.excluded.length}
       <p class="pl-5">
-        Active but never sold, because the main app sells memberships one month at a time:
-        {preview.excluded.map((item) => `${item.name} (${item.months} months)`).join(', ')}.
+        Active but never sold, because the main app sells memberships one week at a time:
+        {preview.excluded.map((item) => `${item.name} (${item.days} days)`).join(', ')}.
       </p>
     {/if}
   </div>

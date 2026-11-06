@@ -29,7 +29,7 @@ export function refusalText(
     case 'insufficient':
       return `${count(shortfall ?? 0)} gold short.`;
     case 'has-membership':
-      return 'You already have a membership. You can buy a month once it has ended.';
+      return 'You already have a membership. You can buy a week once it has ended.';
     case 'bad-key':
       return 'That purchase could not be started. Try again.';
   }
@@ -59,8 +59,8 @@ const TIER = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' } as const;
 export const tierName = (tier: string | null) =>
   tier && tier in TIER ? TIER[tier as keyof typeof TIER] : tier ?? '';
 
-export const monthsLabel = (months: number | null) =>
-  months === null ? '' : months === 1 ? '1 month' : `${months} months`;
+export const durationLabel = (days: number | null) =>
+  days === null ? '' : days === 7 ? '1 week' : days === 1 ? '1 day' : `${days} days`;
 
 const COSMETIC_TYPE = {
   Badge: 'Badge',
@@ -80,7 +80,7 @@ type CardLike = {
   description: string;
   buzz: number | null;
   tier: string | null;
-  months: number | null;
+  days: number | null;
   cosmeticType: string | null;
   uses: number | null;
 };
@@ -89,7 +89,7 @@ export const cardTitle = (card: CardLike) =>
   card.kind === 'buzz_pack'
     ? `Buzz pack · ${count(card.buzz ?? 0)}`
     : card.kind === 'membership'
-    ? [`${tierName(card.tier)} membership`, monthsLabel(card.months)].filter(Boolean).join(' · ')
+    ? [`${tierName(card.tier)} membership`, durationLabel(card.days)].filter(Boolean).join(' · ')
     : card.name;
 
 export const cardBlurb = (card: CardLike) =>
@@ -98,7 +98,7 @@ export const cardBlurb = (card: CardLike) =>
     ? `${count(card.buzz ?? 0)} Yellow Buzz, sent to your Civitai wallet.`
     : card.kind === 'membership'
     ? `${tierName(card.tier)} perks on Civitai${
-        card.months === null ? '' : ` for ${monthsLabel(card.months)}`
+        card.days === null ? '' : ` for ${durationLabel(card.days)}`
       }. Perks only, no monthly Buzz. Only if you have no active membership.`
     : card.cosmeticType === 'Sticker'
     ? `Sticker${card.uses ? ` · ${card.uses} uses` : ''}`

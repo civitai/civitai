@@ -22,9 +22,9 @@ beforeEach(async () => {
     `TRUNCATE "KnightsShopPurchase","KnightsShopItem","NewOrderPlayer","CustomerSubscription","Product" RESTART IDENTITY CASCADE`
   );
   await pg.exec(`
-    INSERT INTO "KnightsShopItem" ("id","kind","name","price","tier","months") VALUES
-      (1,'membership','Silver',12000,'silver',1),
-      (2,'membership','Gold x3',90000,'gold',3);
+    INSERT INTO "KnightsShopItem" ("id","kind","name","price","tier","days") VALUES
+      (1,'membership','Silver',12000,'silver',7),
+      (2,'membership','Gold x30',90000,'gold',30);
     INSERT INTO "Product" ("id","metadata") VALUES ('p-bronze', '{"tier":"bronze"}');`);
   await seedPlayer(pg, 1);
 });
@@ -33,7 +33,7 @@ const cards = async () =>
   (await loadShop(db, { playerId: 1, rank: 'Knight', now: NOW, buzzPacksOpen: true })).cards;
 
 describe('the shop view of a membership', () => {
-  it('offers a month to a player with no membership, and does not list one that is not a single month', async () => {
+  it('offers a week to a player with no membership, and does not list one that is not a single week', async () => {
     expect((await cards()).map((card) => [card.id, card.state])).toEqual([[1, 'available']]);
   });
 
@@ -43,7 +43,7 @@ describe('the shop view of a membership', () => {
     expect((await cards())[0].state).toBe('member');
   });
 
-  it('offers a month again once the membership has run out', async () => {
+  it('offers a week again once the membership has run out', async () => {
     await pg.exec(`INSERT INTO "CustomerSubscription" ("id","userId","productId","status","currentPeriodEnd")
       VALUES ('s1', 1, 'p-bronze', 'active', '2026-12-01')`);
     expect((await cards())[0].state).toBe('available');

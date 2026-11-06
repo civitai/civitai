@@ -25,7 +25,7 @@ const row = (id: number, o: Partial<ShopItemRow> = {}): ShopItemRow =>
     buzz: 50,
     cosmeticId: null,
     tier: null,
-    months: null,
+    days: null,
     minRank: null,
     active: true,
     rotating: false,
@@ -45,15 +45,15 @@ describe('availability', () => {
   ]);
 
   it('puts retired before every other state', () => {
-    expect(availability(row(1, { active: false, kind: 'membership', months: 3 }), today).kind).toBe(
+    expect(availability(row(1, { active: false, kind: 'membership', days: 30 }), today).kind).toBe(
       'retired'
     );
   });
 
-  it('flags a membership that is not one month as not sold, with the reason', () => {
-    const result = availability(row(1, { kind: 'membership', tier: 'gold', months: 3 }), today);
+  it('flags a membership that is not one week as not sold, with the reason', () => {
+    const result = availability(row(1, { kind: 'membership', tier: 'gold', days: 30 }), today);
     expect(result).toMatchObject({ kind: 'not-sold', label: 'Not sold' });
-    expect(result.tip).toMatch(/one month/);
+    expect(result.tip).toMatch(/one week/);
   });
 
   it('flags a cosmetic whose row is gone', () => {
@@ -78,7 +78,7 @@ describe('availability', () => {
 describe('filterItems', () => {
   const items = [
     row(1, { name: 'Buzz 50' }),
-    row(2, { name: 'Gold month', kind: 'membership', tier: 'gold', months: 1 }),
+    row(2, { name: 'Gold week', kind: 'membership', tier: 'gold', days: 7 }),
     row(3, { name: 'Pride', kind: 'cosmetic', cosmeticName: 'Gay Pride', active: false }),
   ];
 
@@ -198,8 +198,8 @@ describe('secondaryLine', () => {
   });
 
   it("keeps a membership's tier and length and a cosmetic's type", () => {
-    expect(secondaryLine(row(2, { kind: 'membership', tier: 'bronze', months: 1 }))).toBe(
-      'Bronze · 1 month'
+    expect(secondaryLine(row(2, { kind: 'membership', tier: 'bronze', days: 7 }))).toBe(
+      'Bronze · 1 week'
     );
     expect(secondaryLine(row(3, { kind: 'cosmetic', cosmeticType: 'Sticker' }))).toBe('Sticker');
   });
@@ -207,7 +207,7 @@ describe('secondaryLine', () => {
 
 describe('restoreNote', () => {
   it('says why a restored item still would not sell, and is silent when it will', () => {
-    expect(restoreNote(row(1, { kind: 'membership', months: 3 }))).toMatch(/stays off sale/);
+    expect(restoreNote(row(1, { kind: 'membership', days: 30 }))).toMatch(/stays off sale/);
     expect(restoreNote(row(2, { kind: 'cosmetic', cosmeticId: 9 }))).toMatch(/stays hidden/);
     expect(restoreNote(row(3))).toBeNull();
     expect(restoreNote(row(4, { kind: 'cosmetic', cosmeticType: 'Badge' }))).toBeNull();

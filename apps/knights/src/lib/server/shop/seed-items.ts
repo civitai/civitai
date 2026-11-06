@@ -1,3 +1,6 @@
+import { MEMBERSHIP_DAYS } from '@civitai/shared/knights-shop';
+import { stickerUses } from './cosmetics';
+
 /** Dev catalog. Prices live in `KnightsShopItem`, so changing one is an UPDATE, not a deploy; the seed never overwrites an existing row. */
 export type SeedItem = {
   kind: 'buzz_pack' | 'cosmetic' | 'membership';
@@ -9,7 +12,7 @@ export type SeedItem = {
   /** With `name`, how `seedSql` finds the cosmetic in whichever database it runs against: ids differ between environments. */
   cosmeticType?: string;
   tier?: 'bronze' | 'silver' | 'gold';
-  months?: number;
+  days?: number;
   minRank?: string;
   rotating?: boolean;
   sortOrder: number;
@@ -23,10 +26,18 @@ const BUZZ_PACKS: [number, number][] = [
 ];
 
 const MEMBERSHIPS: ['bronze' | 'silver' | 'gold', number][] = [
-  ['bronze', 24_000],
-  ['silver', 48_000],
-  ['gold', 96_000],
+  ['bronze', 60_000],
+  ['silver', 150_000],
+  ['gold', 300_000],
 ];
+
+const DECORATION_TIERS: [number, string | undefined][] = [
+  [25_000, undefined],
+  [50_000, 'Templar'],
+  [80_000, 'Paladin'],
+];
+
+const STICKER_GOLD_PER_USE = 100;
 
 export const FIXED_ITEMS: SeedItem[] = [
   ...BUZZ_PACKS.map(
@@ -44,13 +55,13 @@ export const FIXED_ITEMS: SeedItem[] = [
       name: `${tier[0].toUpperCase()}${tier.slice(1)} membership`,
       price,
       tier,
-      months: 1,
+      days: MEMBERSHIP_DAYS,
       sortOrder: 20 + i,
     })
   ),
 ];
 
-export type CosmeticRow = { id: number; name: string; type: string };
+export type CosmeticRow = { id: number; name: string; type: string; data?: unknown };
 
 export function cosmeticItems(rows: CosmeticRow[]): SeedItem[] {
   const of = (type: string) => rows.filter((row) => row.type === type);
@@ -70,12 +81,15 @@ export function cosmeticItems(rows: CosmeticRow[]): SeedItem[] {
     sortOrder,
   });
   return [
-    ...of('Badge').map((row, i) => make(row, 1_000 + i * 1_000, 30 + i)),
-    ...of('NamePlate').map((row, i) => make(row, 5_000, 40 + i)),
-    ...of('ProfileDecoration').map((row, i) =>
-      make(row, i === 0 ? 10_000 : 20_000, 50 + i, i === 0 ? 'Templar' : 'Paladin')
+    ...of('Badge').map((row, i) => make(row, 15_000, 30 + i)),
+    ...of('NamePlate').map((row, i) => make(row, 30_000, 40 + i)),
+    ...of('ProfileDecoration').map((row, i) => {
+      const [price, minRank] = DECORATION_TIERS[Math.min(i, DECORATION_TIERS.length - 1)];
+      return make(row, price, 50 + i, minRank);
+    }),
+    ...of('Sticker').map((row, i) =>
+      make(row, STICKER_GOLD_PER_USE * (stickerUses(row.data) ?? 1), 60 + i)
     ),
-    ...of('Sticker').map((row, i) => make(row, 400, 60 + i)),
   ];
 }
 
@@ -87,14 +101,14 @@ const lit = (value: string | number | undefined) =>
     ? String(Math.trunc(value))
     : quote(value);
 
-const COLUMNS = `"kind","name","description","price","buzz","cosmeticId","tier","months","minRank","rotating","sortOrder"`;
+const COLUMNS = `"kind","name","description","price","buzz","cosmeticId","tier","days","minRank","rotating","sortOrder"`;
 
 /** The table has no unique key within a kind, so the seed checks identity itself to stay idempotent. */
 function identity(item: SeedItem, cosmeticRef: string | null): string {
   const kind = `"kind" = ${quote(item.kind)}`;
   if (item.kind === 'buzz_pack') return `${kind} AND "buzz" = ${lit(item.buzz)}`;
   if (item.kind === 'membership')
-    return `${kind} AND "tier" = ${lit(item.tier)} AND "months" = ${lit(item.months)}`;
+    return `${kind} AND "tier" = ${lit(item.tier)} AND "days" = ${lit(item.days)}`;
   return `${kind} AND "cosmeticId" = ${cosmeticRef ?? lit(item.cosmeticId)}`;
 }
 
@@ -109,7 +123,7 @@ export function seedSql(items: SeedItem[]): string {
       lit(item.buzz),
       cosmeticRef ?? lit(item.cosmeticId),
       lit(item.tier),
-      lit(item.months),
+      lit(item.days),
       lit(item.minRank),
       item.rotating ? 'true' : 'false',
       lit(item.sortOrder),
@@ -136,7 +150,7 @@ export function pickCosmetics(rows: CosmeticRow[]): CosmeticRow[] {
   return [
     ...take('Badge', 2),
     ...take('NamePlate', 1),
-    ...take('ProfileDecoration', 2),
+    ...take('ProfileDecoration', 3),
     ...take('Sticker', 2),
   ];
 }

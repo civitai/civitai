@@ -50,7 +50,7 @@ function createChips(
   const set = (field: string, to: unknown) =>
     chips.push({ field: label(field), from: null, to: show(field, to) });
   for (const [field, { to }] of Object.entries(changes)) {
-    if (['kind', 'name', 'active', 'months'].includes(field)) continue;
+    if (['kind', 'name', 'active', 'days'].includes(field)) continue;
     if (to === null || to === undefined || to === '' || to === false) continue;
     if (field === 'sortOrder' && to === 0) continue;
     if (field === 'rotating') chips.push({ field: 'rotating', from: null, to: 'on' });

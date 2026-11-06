@@ -33,7 +33,7 @@ async function main() {
         ['Badge', 'NamePlate', 'ProfileDecoration', 'Sticker'].map((type) =>
           db
             .selectFrom('Cosmetic')
-            .select(['id', 'name', 'type'])
+            .select(['id', 'name', 'type', 'data'])
             .where('source', '=', 'Purchase')
             .where('type', '=', type as 'Badge')
             .orderBy('id', 'desc')

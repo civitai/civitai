@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { NewOrderRankType } from '@civitai/db-schema/enums';
-import { SHOP_TIERS } from '@civitai/shared/knights-shop';
+import { MEMBERSHIP_DAYS, SHOP_TIERS } from '@civitai/shared/knights-shop';
 import { checkboxField, int4Id } from '../query';
 import { MAX_INT4 } from '../users.service';
 
@@ -45,9 +45,9 @@ export const newShopItemSchema = z.discriminatedUnion(
       kind: z.literal('membership'),
       ...settings,
       tier: z.enum(SHOP_TIERS, { error: 'Pick bronze, silver or gold.' }),
-      months: positiveInt('Months must be a whole number above zero.').refine(
-        (months) => months === 1,
-        'Memberships are sold one month at a time.'
+      days: positiveInt('Days must be a whole number above zero.').refine(
+        (days) => days === MEMBERSHIP_DAYS,
+        'Memberships are sold one week at a time.'
       ),
     }),
   ],

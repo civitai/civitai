@@ -170,7 +170,7 @@ export async function buyItem(
         ? { buzz: item.buzz }
         : item.kind === 'cosmetic'
         ? { cosmeticId: item.cosmeticId }
-        : { tier: item.tier, months: item.months };
+        : { tier: item.tier, days: item.days };
 
     let conversionId: number | null = null;
     if (item.kind === 'buzz_pack') {
@@ -295,7 +295,7 @@ async function settleMembership(
     kind: purchase.kind,
     gold: purchase.gold,
   };
-  const { tier } = purchase.grant as { tier: string };
+  const { tier, days } = purchase.grant as { tier: string; days?: number };
   const { attempts } = await db
     .updateTable('KnightsShopPurchase')
     .set({ lastAttemptAt: utc(now), attempts: sql<number>`"attempts" + 1` })
@@ -306,6 +306,7 @@ async function settleMembership(
     await mainApp.grantMembership({
       userId: purchase.playerId,
       tier,
+      days,
       key: purchase.externalKey,
     });
   } catch (error) {

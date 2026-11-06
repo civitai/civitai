@@ -75,10 +75,10 @@ type ItemName = keyof typeof ITEM;
 const NO_SUCH_ITEM = 9999;
 
 const ITEMS = `
-INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","cosmeticId","tier","months","minRank","rotating") VALUES
+INSERT INTO "KnightsShopItem" ("id","kind","name","price","buzz","cosmeticId","tier","days","minRank","rotating") VALUES
  (1,'buzz_pack','50 Buzz',1000,50,NULL,NULL,NULL,NULL,false),
  (2,'buzz_pack','130 Buzz',2500,130,NULL,NULL,NULL,NULL,false),
- (3,'membership','Silver',12000,NULL,NULL,'silver',1,NULL,false),
+ (3,'membership','Silver',12000,NULL,NULL,'silver',7,NULL,false),
  (4,'cosmetic','Seal badge',400,NULL,101,NULL,NULL,NULL,false),
  (5,'cosmetic','Wave stickers',300,NULL,102,NULL,NULL,NULL,false),
  (6,'cosmetic','Free stickers',300,NULL,103,NULL,NULL,NULL,false),
@@ -555,7 +555,7 @@ describe('cosmetics', () => {
   });
 });
 
-describe('a membership month', () => {
+describe('a membership week', () => {
   it('is granted once through the main app under the purchase key', async () => {
     const mainApp = fakeMainApp();
     const result = await buy('member-silver', { deps: defaultDeps({ mainApp: mainApp.port }) });
@@ -566,6 +566,7 @@ describe('a membership month', () => {
     expect(mainApp.grantMembership).toHaveBeenCalledWith({
       userId: 1,
       tier: 'silver',
+      days: 7,
       key: purchase.externalKey,
     });
     expect(await player()).toMatchObject({ goldConverted: 12_000 });
@@ -655,9 +656,9 @@ describe('a membership month', () => {
     expect(again).toMatchObject({ status: 'pending', replayed: true });
   });
 
-  it('is sold one month at a time: an item that says otherwise is not on sale', async () => {
+  it('is sold one week at a time: an item that says otherwise is not on sale', async () => {
     await pg.query(
-      `UPDATE "KnightsShopItem" SET "months" = 3 WHERE "id" = ${ITEM['member-silver']}`
+      `UPDATE "KnightsShopItem" SET "days" = 30 WHERE "id" = ${ITEM['member-silver']}`
     );
     expect(await buy('member-silver')).toEqual({ status: 'refused', reason: 'unknown-item' });
   });

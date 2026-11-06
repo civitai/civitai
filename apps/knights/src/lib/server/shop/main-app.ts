@@ -12,7 +12,9 @@ export class MainAppRejectedError extends Error {
 export type MembershipGrant = {
   userId: number;
   tier: string;
-  /** Idempotency key: the main app grants one membership month per key. */
+  /** Length of the membership; the main app grants one month when it is absent. */
+  days?: number;
+  /** Idempotency key: the main app grants one membership per key. */
   key: string;
 };
 
@@ -29,7 +31,7 @@ const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) :
 /**
  * Only answers the endpoint itself gives are final: a 409 comes after its replay check, and a 400 or 422 refuses the
  * same body every time. A 401, 403 or 404 is answered before the endpoint runs (token, edge, route), so it says
- * nothing about an earlier try that may have granted the month, and stays retryable.
+ * nothing about an earlier try that may have granted the membership, and stays retryable.
  */
 const FINAL_STATUSES = new Set([400, 409, 422]);
 

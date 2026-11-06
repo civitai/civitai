@@ -13,16 +13,19 @@ export type ShopItem = {
   buzz: number | null;
   cosmeticId: number | null;
   tier: string | null;
-  months: number | null;
+  days: number | null;
   minRank: string | null;
   active: boolean;
   rotating: boolean;
   sortOrder: number;
 };
 
-/** The main app sells a membership one month at a time, so an item that says otherwise is not on sale. */
-export const isSellable = (item: Pick<ShopItem, 'kind' | 'months'>) =>
-  item.kind !== 'membership' || item.months === 1;
+/** The length of a shop membership; the main app is asked for this many days. */
+export const MEMBERSHIP_DAYS = 7;
+
+/** The shop sells a membership one week at a time, so an item that says otherwise is not on sale. */
+export const isSellable = (item: Pick<ShopItem, 'kind' | 'days'>) =>
+  item.kind !== 'membership' || item.days === MEMBERSHIP_DAYS;
 
 export type StockEntry = { item: ShopItem; price: number; deal: boolean };
 
