@@ -1,8 +1,9 @@
 /**
  * A sticker that moves over a video: its pose over time.
  *
- * `Placement.data` keeps the pose at time zero, so every reader that ignores
- * the track still draws the sticker where it starts. The track lives in its own
+ * `Placement.data` keeps the position, scale and rotation at time zero, so every
+ * reader that ignores the track still draws the sticker where it starts. `data`
+ * has no visibility: such a reader draws it even where `show` hides it. The track lives in its own
  * column because the feed reads `data` for every card.
  *
  * **Shape.** One channel per value, each a list of `[tick, value]` pairs. A tick
@@ -10,7 +11,8 @@
  * the header so it can change later without breaking stored tracks.
  *
  * **Collapse.** A channel records a pair only where its value changes, plus the
- * last tick of each held run. Between two pairs a continuous channel is linear,
+ * last tick of each held run that a change follows (sampling holds the last
+ * value, so a trailing hold needs no closing pair). Between two pairs a continuous channel is linear,
  * so the end of a hold has to be kept or the value would drift across the whole
  * hold instead of moving when the sticker moved. `show` is a step channel and
  * keeps only its change points.
@@ -55,17 +57,21 @@ export const STICKER_TRACK_VERSION = 1;
 export const STICKER_TRACK_DEFAULT_MS = 100;
 export const STICKER_TRACK_MIN_MS = 10;
 export const STICKER_TRACK_MAX_TICK_MS = 1000;
-/** The longest video is 245 s; the slack keeps a rounding at the end from being refused. */
+/** Above the longest accepted video (`maxVideoDurationSeconds`), so a rounding at the end is not refused. */
 export const STICKER_TRACK_MAX_DURATION_MS = 300_000;
 /** Of the JSON text: several times a 30 s track that never holds still. */
 export const STICKER_TRACK_MAX_BYTES = 128 * 1024;
-/** The most pairs one channel can hold inside the byte limit (`[0,0],` is the shortest pair), so a schema can refuse a huge array before walking it. */
+/**
+ * Most pairs one channel can hold inside the byte limit (`[0,0],` is the shortest pair),
+ * so a schema refuses a longer array by its length alone. Zod still parses every
+ * element first, so this does not bound that work.
+ */
 export const STICKER_TRACK_MAX_PAIRS = Math.floor(STICKER_TRACK_MAX_BYTES / 6);
 
 const CONTINUOUS_CHANNELS = ['x', 'y', 's', 'r'] as const;
 type ContinuousChannel = (typeof CONTINUOUS_CHANNELS)[number];
 
-/** Decimal places kept per channel: 0.0001 of the width is under half a pixel at 4K. */
+/** Decimal places per channel; 4 on a 0..1 fraction is sub-pixel at the largest accepted video width. */
 const PRECISION: Record<ContinuousChannel, number> = { x: 4, y: 4, s: 4, r: 1 };
 
 const round = (value: number, places: number) => {

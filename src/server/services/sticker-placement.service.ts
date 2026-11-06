@@ -301,16 +301,16 @@ export async function createStickerPlacement({
       )}% of the image width`
     );
 
+  // Only the resolved space knows the image's type, so this cannot sit in the schema.
+  if (track && space.mediaType !== 'video')
+    throw throwBadRequestError('placement: movement can only be recorded on a video');
+
   // Everything below is the paid path: the escrow, the price, and the two
   // refusals `createFreePlacement` makes for itself under its lock. Branching
   // here rather than threading `free` through them keeps one creation route per
   // offer — the alternative is a paid path with free-shaped holes in it, which
   // is the guard-versus-filter shape this feature has already shipped five
   // times.
-  // Checked here because only the resolved space knows the image's type.
-  if (track && space.mediaType !== 'video')
-    throw throwBadRequestError('placement: movement can only be recorded on a video');
-
   if (free) return placeFreeSticker({ placerId, imageId, data, track, space });
 
   // Below the branch rather than above it, and not a `!free` condition: a
