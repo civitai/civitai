@@ -13,7 +13,7 @@ import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { Embedder } from '../embedder';
 import type { VectorStore } from '../qdrant';
 import { modelVectorStore } from './collection';
-import type { ModelPayload } from './source';
+import { getModelDocs, type ModelPayload } from './source';
 import { syncModelIds, emptyModelStats, type ModelStore, type ModelSyncStats } from './sync';
 
 export type ModelBackfillOptions = {
@@ -125,6 +125,23 @@ async function main() {
       embedder: args.dryRun ? null : Embedder.fromConfig('low'),
     });
     logger.info(result, 'model-backfill: done');
+    if (args.dryRun) {
+      // One real document, to check its length against the embedder's limit before paying.
+      const { rows } = await pg.query<{ id: number }>(
+        `SELECT id FROM "Model" WHERE id < $1 ORDER BY id DESC LIMIT 50`,
+        [args.to]
+      );
+      const [sample] = (
+        await getModelDocs(
+          pg,
+          rows.map((r) => r.id)
+        )
+      ).entries();
+      if (sample) {
+        const [id, { search_text }] = sample;
+        logger.info({ id, chars: search_text.length, search_text }, 'model-backfill: sample');
+      }
+    }
     if (args.stampCatalog && result.complete && !args.dryRun) {
       await store.setMetadata({
         catalogBuiltAt: new Date().toISOString(),
