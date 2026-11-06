@@ -32,7 +32,8 @@ import {
 } from '~/shared/constants/remix-apps.constants';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
-import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { firstAnswer } from '~/shared/remix-apps/mock-host';
+import { type RemixLogEntry, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
 import { REMIX_MENU_APPS, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
 import {
@@ -171,15 +172,21 @@ export function buildRuntimeRequest({
   };
 }
 
-/** The workflow a runtime app runs first, or `null` when it asks something before any spend. */
+/** The first workflow the app runs, through any asks before it on their first answers; `null` if none is reached. */
 export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
-  const outcome = await replayRemixApp(app, runtimeSourceOf(image), []).catch((error) => {
-    if (error instanceof RemixReplayError) return null;
-    throw error;
-  });
-  return outcome?.status === 'effect' && outcome.effect.type === 'workflow'
-    ? outcome.effect.request
-    : null;
+  const log: RemixLogEntry[] = [];
+  // Bounded: an app that only ever asks has no first workflow to price.
+  for (let asked = 0; asked <= 8; asked++) {
+    const outcome = await replayRemixApp(app, runtimeSourceOf(image), log).catch((error) => {
+      if (error instanceof RemixReplayError) return null;
+      throw error;
+    });
+    if (outcome?.status !== 'effect') return null;
+    const { effect } = outcome;
+    if (effect.type === 'workflow') return effect.request;
+    log.push({ type: 'ask', answer: firstAnswer(effect.spec) });
+  }
+  return null;
 }
 
 export function runtimeSourceOf(image: RemixSourceImage) {
@@ -494,15 +501,27 @@ export async function quoteTeamRemix({
   return { team: offer.team, price };
 }
 
+/** Refuses a step that now costs more than the price the viewer tapped. */
+export function assertWithinQuote(cost: number, quote: number) {
+  if (cost > quote)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `The price changed to ${cost.toLocaleString()} Buzz. Check it and run again.`,
+    });
+}
+
+/** `quote`: the price the viewer tapped; a run that now costs more is refused before it submits. */
 export async function runRemixApp({
   slug,
   imageId,
   nonce,
+  quote,
   caller,
 }: {
   slug: string;
   imageId: number;
   nonce: string;
+  quote: number;
   caller: RemixAppCaller;
 }) {
   let app: RemixAppDefinition | undefined;
@@ -519,13 +538,22 @@ export async function runRemixApp({
   }
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertInputsUsable([run.sourceUrl], caller, 'remixAppRun');
+  const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  const priced = await whatIfPresetImageGen({
+    ...run.submit,
+    user: caller.user,
+    token: caller.token,
+    currencies,
+    flags: caller.features,
+  });
+  assertWithinQuote(priced.cost, quote);
 
   // A one-segment run, so the tray lists it beside the runtime apps' runs.
   const runId = remixRunId({ userId: caller.user.id, slug, imageId: image.id, nonce });
   const tags = remixRunTags({ slug: app.slug, runId, segment: 0 });
   const result = await submitPresetImageGen({
     ...run.submit,
-    ...remixSubmitArgs(caller, tags, getAllowedAccountTypes(caller.features, ['blue'])),
+    ...remixSubmitArgs(caller, tags, currencies),
     remixOfId: image.id,
     externalId: remixAppExternalId({ userId: caller.user.id, slug, imageId: image.id, nonce }),
   });

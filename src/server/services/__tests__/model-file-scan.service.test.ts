@@ -580,12 +580,12 @@ describe('model-file-scan.service', () => {
         expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
       });
 
-      it('busts coverage when a clean rescan recovers an errored file of a type that is never loaded', async () => {
+      it('busts coverage when a clean rescan recovers a failed file of a type that is never loaded', async () => {
         setupScanWrite({ pickleScanResult: ScanResultCode.Success }, { status: 'Draft' });
         mockDbWrite.modelFile.findUnique.mockResolvedValue({
           ...baseFile,
           type: 'Training Data',
-          pickleScanResult: ScanResultCode.Error,
+          pickleScanResult: ScanResultCode.Danger,
           virusScanResult: ScanResultCode.Success,
         });
         mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }]);
@@ -611,32 +611,48 @@ describe('model-file-scan.service', () => {
         expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
       });
 
-      it.each([
-        ['failed', danger],
-        ['errored', { pickleScanResult: ScanResultCode.Error }],
-      ])(
-        'busts coverage, file-pinned AIRs included, for a %s file of a type that is never loaded',
-        async (_, written) => {
-          setupScanWrite(written, { status: 'Draft' });
-          mockDbWrite.modelFile.findUnique.mockResolvedValue({
-            ...baseFile,
-            type: 'Training Data',
-          });
-          mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+      it('busts every file-pinned AIR of the version for an errored weight file', async () => {
+        setupScanWrite({ pickleScanResult: ScanResultCode.Error }, { status: 'Draft' });
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({ ...baseFile, type: 'Model' });
+        mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
 
-          await applyScanOutcome({ fileId: 1, pickleScan: pickle(written.pickleScanResult) });
+        await applyScanOutcome({ fileId: 1, pickleScan: pickle(ScanResultCode.Error) });
 
-          expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
-          expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
-          // Version busts do not reach the file-pinned AIRs, of this file or its siblings.
-          expect(
-            mockBustOrchestratorScannedFileCache.mock.calls.map(([f]) => f.fileId).sort()
-          ).toEqual([1, 2]);
-          // A draft has nothing public to take down.
-          expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
-          expect(mockUnpublishModelById).not.toHaveBeenCalled();
-        }
-      );
+        expect(
+          mockBustOrchestratorScannedFileCache.mock.calls.map(([f]) => f.fileId).sort()
+        ).toEqual([1, 2]);
+      });
+
+      it('leaves coverage alone for an errored file of a type that is never loaded', async () => {
+        setupScanWrite({ pickleScanResult: ScanResultCode.Error }, { status: 'Draft' });
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({ ...baseFile, type: 'Config' });
+
+        await applyScanOutcome({ fileId: 1, pickleScan: pickle(ScanResultCode.Error) });
+
+        expect(mockResourceDataBust).not.toHaveBeenCalled();
+        expect(mockBustOrchestratorScannedFileCache).not.toHaveBeenCalled();
+      });
+
+      it('busts coverage, file-pinned AIRs included, for a failed file of a type that is never loaded', async () => {
+        setupScanWrite(danger, { status: 'Draft' });
+        mockDbWrite.modelFile.findUnique.mockResolvedValue({
+          ...baseFile,
+          type: 'Training Data',
+        });
+        mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+
+        await applyScanOutcome({ fileId: 1, pickleScan: pickle(ScanResultCode.Danger) });
+
+        expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+        expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+        // Version busts do not reach the file-pinned AIRs, of this file or its siblings.
+        expect(
+          mockBustOrchestratorScannedFileCache.mock.calls.map(([f]) => f.fileId).sort()
+        ).toEqual([1, 2]);
+        // A draft has nothing public to take down.
+        expect(mockUnpublishModelVersionById).not.toHaveBeenCalled();
+        expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      });
     });
 
     it('does NOT invalidate the orchestrator for a hash-only rescan', async () => {

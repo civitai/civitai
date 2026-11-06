@@ -528,6 +528,32 @@ describe('upsertModel — profanity lock against a lock that landed after the re
   });
 });
 
+describe('upsertModel — the returned row', () => {
+  it('writes the profanity detection but does not return it to the owner', async () => {
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    const result = await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(updateData().meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(result?.meta).not.toHaveProperty('profanityMatches');
+    expect(result?.meta).not.toHaveProperty('profanityEvaluation');
+  });
+
+  it('does not return the detection from a create either', async () => {
+    mockDbWrite.model.create.mockResolvedValueOnce({
+      id: MODEL_ID,
+      nsfwLevel: 1,
+      meta: { profanityMatches: ['badword'], profanityEvaluation: { reason: 'test reason' } },
+      availability: 'Public',
+    });
+
+    const result = await upsert({ userId: OWNER_ID });
+
+    expect(result?.meta).not.toHaveProperty('profanityMatches');
+    expect(result?.meta).not.toHaveProperty('profanityEvaluation');
+  });
+});
+
 // A Private model stays SFW until it leaves Private: the profanity detection waits as a lead.
 describe('upsertModel — profanity on a Private model', () => {
   // Its own object, so a hold written outside the save's transaction does not pass for one inside it.

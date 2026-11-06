@@ -166,10 +166,16 @@ function AskStep({
         >
           <TextInput
             className="flex-1"
+            aria-label={ask.prompt}
             value={text}
             maxLength={ask.maxLength}
             onChange={(e) => setText(e.currentTarget.value)}
           />
+          {ask.optional && (
+            <Button variant="default" disabled={pending} onClick={() => onAnswer('')}>
+              Skip
+            </Button>
+          )}
           <Button type="submit" disabled={pending || !text.trim()}>
             Continue
           </Button>
@@ -271,6 +277,11 @@ export function RemixAppModalContent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase.kind, trackedFinished, retryTick]);
 
+  /** A tap that submitted a step collapses into the tray, which holds the run until it needs you. */
+  function toTray(state: RemixRunState) {
+    if (state.status === 'running') onClose();
+  }
+
   function runOffer(cost: number) {
     if (imageId == null) return;
     const input = { slug: app.slug, imageId, nonce };
@@ -282,18 +293,33 @@ export function RemixAppModalContent({
           onSuccess: (state) => {
             started();
             apply(state);
+            toTray(state);
           },
           onError,
         }
       );
     else
-      runOnce.mutate(input, {
-        onSuccess: ({ workflowId }) => {
-          started();
-          setPhase({ kind: 'running', workflowId: workflowId as string });
-        },
-        onError,
-      });
+      runOnce.mutate(
+        { ...input, quote: cost },
+        {
+          onSuccess: ({ workflowId }) => {
+            started();
+            setPhase({ kind: 'running', workflowId: workflowId as string });
+            onClose();
+          },
+          onError,
+        }
+      );
+  }
+
+  /** Advances the run; one with no workflow yet has nothing to advance, so it starts again with its answers. */
+  function step(
+    current: { runId: string; workflowId?: string },
+    input: { answers: RemixAnswer[]; quote?: number },
+    callbacks: { onSuccess: (state: RemixRunState) => void; onError: typeof onError }
+  ) {
+    if (current.workflowId) advance.mutate({ runId: current.runId, ...input }, callbacks);
+    else if (imageId != null) start.mutate({ slug: app.slug, imageId, nonce, ...input }, callbacks);
   }
 
   function answer(value: RemixAnswer) {
@@ -301,12 +327,16 @@ export function RemixAppModalContent({
     const answers = [...phase.answers, value];
     // A priced option's button showed its price: the tap agrees to it and submits.
     const quote = phase.prices?.[String(value)] || undefined;
-    advance.mutate(
-      { runId: phase.runId, answers, quote },
+    step(
+      phase,
+      { answers, quote },
       {
         onSuccess: (state) => {
-          if (quote) refetchQueue();
           apply(state, answers);
+          if (quote) {
+            refetchQueue();
+            toTray(state);
+          }
         },
         onError,
       }
@@ -315,13 +345,15 @@ export function RemixAppModalContent({
 
   function continuePriced() {
     if (phase.kind !== 'priced') return;
-    const { runId, answers, cost } = phase;
-    advance.mutate(
-      { runId, answers, quote: cost },
+    const { answers, cost } = phase;
+    step(
+      phase,
+      { answers, quote: cost },
       {
         onSuccess: (state) => {
           refetchQueue();
           apply(state, answers);
+          toTray(state);
         },
         onError,
       }
@@ -391,8 +423,8 @@ export function RemixAppModalContent({
       {phase.kind === 'offer' && (
         <div className="flex flex-col gap-3">
           <Text size="sm">
-            Runs {app.name} on this image and adds the result to your queue. You can close this
-            while it runs.
+            Runs {app.name} on this image and adds the result to your queue. It runs in the tray, so
+            you can keep browsing.
           </Text>
           {offer.refusal && (
             <Text size="sm" c="dimmed">

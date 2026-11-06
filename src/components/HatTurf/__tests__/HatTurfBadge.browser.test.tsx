@@ -298,13 +298,13 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { count, arc, discFill } = parts();
     const { blocked, lock } = blockedParts();
-    expect(count!.textContent).toBe('6');
+    expect(count!.textContent).toBe('1');
     expect(discFill()).toBe(arc('blue'));
     expect(blocked).toBeNull();
     expect(lock).not.toBeNull();
   });
 
-  test('a guard with no counted hats of its own puts the hat in its disc', async () => {
+  test('a guard with no counted hats of its own still shows 1 in its disc', async () => {
     renderCard({
       feed: feedWith({
         1: standing({
@@ -316,10 +316,28 @@ describe('Hat Turf badge on a feed ImageCard', () => {
       }),
     });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const { count, disc } = parts();
-    expect(count).toBeNull();
-    expect(disc.querySelector('svg')).not.toBeNull();
+    const { count, disc, arc, discFill } = parts();
+    expect(disc.contains(count)).toBe(true);
+    expect(count!.textContent).toBe('1');
+    expect(disc.querySelector('svg')).toBeNull();
+    // The disc takes the protecting hat's colour, not the blocked leader's.
+    expect(discFill()).not.toBe(arc('blue'));
     expect(blockedParts().blocked!.textContent).toBe('2');
+  });
+
+  test.each([
+    ['unprotected', standing()],
+    ['no counted hats', standing({ counted: { blue: 0 }, shown: { blue: 2 }, leader: null })],
+    ['ten or more', standing({ counted: { blue: 12, pink: 3 } })],
+    ['protected by the leader', standing({ hatted: true, hattedTeam: 'blue' })],
+    ['protected by another team', standing({ hatted: true, hattedTeam: 'pink' })],
+    ['protected, team unknown', standing({ hatted: true, hattedTeam: null })],
+  ])('%s: the disc holds a number and never a hat glyph', async (_name, summary) => {
+    renderCard({ feed: feedWith({ 1: summary }, 'pink') });
+    await vi.waitFor(() => expect(badge()).not.toBeNull());
+    const { disc } = parts();
+    expect(disc.querySelector('svg')).toBeNull();
+    expect(disc.textContent).toMatch(/^(\d|9\+)$/);
   });
 
   test('an unprotected image fills the disc with the leader', async () => {
@@ -406,8 +424,8 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     renderCard({ feed: feedWith({ 1: standing({ hatted: true }) }, 'pink', 'badge-popover') });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).not.toBeNull();
-    // No team known for the hat: the leader keeps the disc and nothing is struck.
-    expect(badge()!.querySelector('[data-testid="hat-turf-count"]')!.textContent).toBe('6');
+    // No team known for the hat: the leader keeps the disc colour, the count reads 1, nothing is struck.
+    expect(badge()!.querySelector('[data-testid="hat-turf-count"]')!.textContent).toBe('1');
     expect(badge()!.querySelector('[data-testid="hat-turf-blocked"]')).toBeNull();
     expect(badge()!.getAttribute('aria-label')).toContain('A hat protects this image');
     badge()!.click();
@@ -451,7 +469,8 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     });
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     expect(badge()!.dataset.leader).toBe('');
-    expect(badge()!.querySelector('[data-testid="hat-turf-count"]')).toBeNull();
+    expect(badge()!.querySelector('[data-testid="hat-turf-count"]')!.textContent).toBe('0');
+    expect(parts().disc.querySelector('svg')).toBeNull();
   });
 
   test('9, the largest count that stays inside the disc', async () => {
@@ -468,7 +487,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     [10, '10'],
     [42, '42'],
     [1240, '1.2k'],
-  ])('%s: the count moves beside the dial and the hat takes the disc', async (lead, shown) => {
+  ])('%s: the full count moves beside the dial and the disc reads 9+', async (lead, shown) => {
     renderCard({
       feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
     });
@@ -479,7 +498,8 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(count!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
       disc.getBoundingClientRect().right
     );
-    expect(disc.querySelector('svg')).not.toBeNull();
+    expect(disc.textContent).toBe('9+');
+    expect(disc.querySelector('svg')).toBeNull();
     expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     // Still inside a phone card.
     const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();

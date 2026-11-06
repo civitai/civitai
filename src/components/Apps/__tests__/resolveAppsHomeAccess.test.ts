@@ -65,6 +65,27 @@ describe('resolveAppsHomeAccess', () => {
     });
   });
 
+  it('a repeated key, an empty value and a null: kept, kept as `k=`, dropped', () => {
+    expect(
+      resolveAppsHomeAccess({
+        features: STORE,
+        user: SIGNED_IN,
+        query: {
+          category: 'generation',
+          tag: ['b', 'a', 'b'],
+          q: '',
+          // Next never sends a null, but a hand-built query can: it must not become "null".
+          ref: null as unknown as undefined,
+        },
+      })
+    ).toEqual({
+      redirect: {
+        destination: '/apps/store?category=generation&tag=b&tag=a&tag=b&q=',
+        permanent: false,
+      },
+    });
+  });
+
   it('a non-store param alone does NOT redirect a signed-in viewer', () => {
     expect(
       resolveAppsHomeAccess({ features: STORE, user: SIGNED_IN, query: { utm_source: 'mail' } })

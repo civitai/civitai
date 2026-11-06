@@ -1,6 +1,7 @@
 // import { generateJSON } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { renderToReactElement } from '@tiptap/static-renderer';
+import clsx from 'clsx';
 import React, { useMemo, useRef } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
@@ -23,6 +24,7 @@ import { BlurbNode } from '~/shared/tiptap/blurb.node';
 import { EmbedNode, embedIframeAttrs } from '~/shared/tiptap/embed.node';
 import { isAllowedPlayerUrl } from '~/shared/utils/embed-providers';
 import { useMaybeAppContext } from '~/providers/AppProvider';
+import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
@@ -39,6 +41,7 @@ const extensions = [
   TimestampNode,
   BlurbNode,
   EmbedNode,
+  TextAlignExtension,
 ];
 
 type JsonNode = {
@@ -64,9 +67,11 @@ function rewriteLinkMarks(node: JsonNode, rewrite: (href: string) => string): Js
 export function RenderRichText({
   content,
   fallbackHtml,
+  className,
 }: {
   content: Record<string, any>;
   fallbackHtml?: string;
+  className?: string;
 }) {
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
@@ -135,7 +140,7 @@ export function RenderRichText({
   if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
 
   return (
-    <TypographyStylesWrapper className={classes.htmlRenderer}>
+    <TypographyStylesWrapper className={clsx(classes.htmlRenderer, className)}>
       <div ref={contentRef}>{memoized.el}</div>
       <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>

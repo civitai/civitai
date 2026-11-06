@@ -156,7 +156,7 @@ export function legacyListingSlugForViewer(
  *   2. DEPLOY — `row.kind === 'onsite' && appBlock.currentVersionDeployedAt == null`.
  *   3. MATURITY — applied in the page's injected lookup (`legacyListingSlugForViewer`).
  *
- * ## (1) and (3) are applied here; (2) is still owed.
+ * ## (1) is applied here and (3) in the page's lookup; (2) is still owed.
  *
  * 🔴 THE ALIGNMENT ARGUMENT THIS COMMENT USED TO REST ON IS GONE — DO NOT RESTORE
  * IT. It said gate (1) was unreachable "by an accident of flag alignment": the page

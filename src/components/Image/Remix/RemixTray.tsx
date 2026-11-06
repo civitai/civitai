@@ -1,11 +1,17 @@
-import { ActionIcon, Loader, Paper, Text, UnstyledButton } from '@mantine/core';
+import { ActionIcon, getDefaultZIndex, Loader, Paper, Text, UnstyledButton } from '@mantine/core';
 import { IconCheck, IconLoader2, IconPhoto, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { RemixRun } from '~/components/Image/Remix/useRemixRuns';
 import { useRemixRuns } from '~/components/Image/Remix/useRemixRuns';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { openRemixAppModal } from '~/components/Dialog/triggers/remix-app';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
+/** Above Mantine's toasts (`overlay`), which otherwise sit over the tray's corner on a phone. */
+const TRAY_Z = getDefaultZIndex('overlay') + 1;
+/** Under a modal (dialogs start at 300), so the one a row opens is not covered by the tray. */
+const UNDER_DIALOG_Z = 100;
 
 const statusLabel: Record<RemixRun['status'], string> = {
   running: 'Generating…',
@@ -27,11 +33,19 @@ export function RemixTrayView({
   onDismiss: (run: RemixRun) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // A routed dialog (the image page as a modal) is a page the tray floats over, as on any other.
+  const underDialog = useDialogStore((state) =>
+    state.dialogs.some((d) => d.type !== 'routed-dialog')
+  );
   if (!inProgress && !ready) return null;
 
   return (
     // Above the footer and the Assistant button that floats over its right end.
-    <div className="fixed bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid)+4.5rem)] right-[calc(1rem+var(--safe-area-inset-right))] z-[100] flex flex-col items-end gap-2">
+    <div
+      className="fixed bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid)+4.5rem)] right-[calc(1rem+var(--safe-area-inset-right))] flex flex-col items-end gap-2"
+      style={{ zIndex: underDialog ? UNDER_DIALOG_Z : TRAY_Z }}
+      data-testid="remix-tray"
+    >
       {expanded && (
         <Paper
           withBorder

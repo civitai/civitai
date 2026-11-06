@@ -90,14 +90,22 @@ export const remixAppRouter = router({
   run: guardedProcedure
     .use(isFlagProtected('remixApps'))
     .meta({ requiredScope: TokenScope.AIServicesWrite })
-    .input(z.object({ slug: z.string().max(64), imageId, nonce }))
+    .input(z.object({ slug: z.string().max(64), imageId, nonce, quote }))
     .mutation(async ({ ctx, input }) => runRemixApp({ ...input, caller: await getCaller(ctx) })),
   /** Without `quote`, a run whose next step is a workflow returns its price instead of submitting. */
   start: guardedProcedure
     .use(isFlagProtected('remixApps'))
     .use(runStepRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesWrite })
-    .input(z.object({ slug: z.string().max(64), imageId, nonce, quote: quote.optional() }))
+    .input(
+      z.object({
+        slug: z.string().max(64),
+        imageId,
+        nonce,
+        answers: answer.array().max(8).optional(),
+        quote: quote.optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => startRemixRun({ ...input, caller: await getCaller(ctx) })),
   advance: guardedProcedure
     .use(isFlagProtected('remixApps'))

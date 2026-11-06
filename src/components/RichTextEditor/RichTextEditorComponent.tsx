@@ -37,6 +37,8 @@ import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
+import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
@@ -150,6 +152,7 @@ export function RichTextEditor({
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
   const addBlurbs = includeControls.includes('blurb');
+  const addAlign = includeControls.includes('align');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
@@ -268,11 +271,13 @@ export function RichTextEditor({
     // rendering it and having it vanish on save.
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
+    if (addAlign) arr.push(TextAlignExtension);
 
     return arr;
   }, [
     addStickers,
     addBlurbs,
+    addAlign,
     addList,
     addFormatting,
     withoutBlockContainers,
@@ -474,6 +479,12 @@ export function RichTextEditor({
                 </RTE.ControlsGroup>
               )}
 
+              {addAlign && (
+                <RTE.ControlsGroup>
+                  <TextAlignControl />
+                </RTE.ControlsGroup>
+              )}
+
               {addLink && (
                 <RTE.ControlsGroup>
                   <RTE.Link />
@@ -584,7 +595,8 @@ type ControlType =
   | 'colors'
   | 'timestamp'
   | 'sticker'
-  | 'blurb';
+  | 'blurb'
+  | 'align';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

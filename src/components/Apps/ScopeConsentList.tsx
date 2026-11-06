@@ -171,6 +171,8 @@ export function ScopeConsentList({
           // surface must never do.
           permissions={blockScopePermissions(rows.map((r) => r.scope))}
           revokedIds={rows.filter((r) => r.state === 'revoked').map((r) => r.scope)}
+          // A green check reads as "allowed", which a permission the viewer never gave is not.
+          notGrantedIds={rows.filter((r) => r.state === 'not-granted').map((r) => r.scope)}
           renderDetail={(scope) => (
             <ScopeConsentAction
               scope={scope}

@@ -88,16 +88,8 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * is `<p><div/></p>` — a HYDRATION MISMATCH on every `/apps` load, once per rendered
  * `MetaLineSkeleton`.
  *
- * ⚠️ THE COUNT IN THIS PARAGRAPH IS RE-DERIVED, NOT RE-MEASURED, AND IS FLAGGED
- * RATHER THAN QUIETLY EDITED. It read "EXACTLY 16 times: 8 cells
- * (`APP_LISTING_SKELETON_SSR_COLUMNS` x `APP_LISTING_SKELETON_ROWS`) x the two meta
- * lines each", against a measurement of `expected 16 to be +0`. There is ONE
- * `MetaLineSkeleton` per cell after the creator line was deleted with the card's
- * author chip (8 x 1 = 8), and two again since the meta line was added (8 x 2 = 16).
- * Nobody has re-run the mutation to observe the current count — the browser tiers do
- * not run on the machine these changes were made on — so treat it as arithmetic.
- * What is NOT derived and does not need re-measuring is the guard itself: the
- * assertion is `toBe(0)`, which is independent of how many instances there are.
+ * Each cell renders two (the meta line and the footer's rollup line); the guard asserts
+ * `toBe(0)`, so it does not depend on that count.
  *
  * It shipped in the first round of that PR and was invisible to the parity suite,
  * because the bar is `position: absolute` and therefore contributes no geometry for

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as NotificationsMod from '~/utils/notifications';
+import type { ScopeConsentGrant } from './ScopeConsentList';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -71,10 +72,10 @@ const EXPECTED: [scope: string, title: string][] = [
 ];
 const titleOf = (scope: string) => EXPECTED.find(([s]) => s === scope)?.[1] ?? '\u0000';
 
-const render = async () => {
+const render = async (grant: ScopeConsentGrant = GRANT) => {
   renderWithProviders(
     <ModalsProvider>
-      <ScopeConsentList grant={GRANT} emptyLabel="Nothing granted." />
+      <ScopeConsentList grant={grant} emptyLabel="Nothing granted." />
     </ModalsProvider>
   );
   await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
@@ -159,5 +160,44 @@ describe('ScopeConsentList — plain-language rows', () => {
     await vi.waitFor(() => expect(m.success).toHaveBeenCalledTimes(1));
     const message = String(m.success.mock.calls[0][0].message);
     expect(message).toBe('Lighthouse no longer has “Run AI work with your Buzz”.');
+  });
+});
+
+describe('ScopeConsentList — row markers', () => {
+  // Non-sensitive scopes only: a sensitive row shows its warning icon whatever its state.
+  // `user:read:self` is consent-gated; `models:read:self` is consent-exempt, so the app holds it.
+  const markerGrant = (grantedScopes: string[]) => ({
+    ...GRANT,
+    scopes: ['user:read:self', 'models:read:self'],
+    revokableScopes: ['user:read:self'],
+    grantedScopes,
+    revokedScopes: [],
+    scopesRevokedAt: null,
+  });
+  /** The row's leading icon, read from the icon library's own class (present before this change). */
+  const markerOf = (scope: string) => {
+    const icon = rowFor(scope)?.querySelector(':scope > .mantine-ThemeIcon-root > svg');
+    if (icon?.classList.contains('tabler-icon-check')) return 'check';
+    if (icon?.classList.contains('tabler-icon-point-filled')) return 'neutral';
+    return `unrecognised: ${icon?.getAttribute('class') ?? 'no icon'}`;
+  };
+
+  test('a permission the viewer has not granted gets the neutral marker, not the check', async () => {
+    await render(markerGrant([]));
+    // The fixture really reached the not-granted state, not a neighbouring one.
+    expect(
+      rowFor('user:read:self')?.querySelector('[data-testid="scope-not-granted-note"]')
+    ).not.toBeNull();
+    expect(markerOf('user:read:self')).toBe('neutral');
+    // A permission the app holds keeps the check in the same list.
+    expect(markerOf('models:read:self')).toBe('check');
+  });
+
+  test('the same permission, once granted, gets the check', async () => {
+    await render(markerGrant(['user:read:self']));
+    expect(
+      rowFor('user:read:self')?.querySelector('[data-testid="scope-revoke-button"]')
+    ).not.toBeNull();
+    expect(markerOf('user:read:self')).toBe('check');
   });
 });

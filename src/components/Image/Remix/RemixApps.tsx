@@ -6,6 +6,7 @@ import {
   IconLayoutGrid,
   IconGridDots,
   IconHorseToy,
+  IconPalette,
   IconPencil,
   IconSparkles,
 } from '@tabler/icons-react';
@@ -29,6 +30,7 @@ const icons: Record<string, typeof IconSparkles> = {
   pencil: IconPencil,
   clay: IconCube,
   pick: IconLayoutGrid,
+  palette: IconPalette,
 };
 
 /** The remix apps this viewer can run on this image: the same rule the server applies. */

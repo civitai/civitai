@@ -10,6 +10,7 @@ import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { BlurbNode } from '~/shared/tiptap/blurb.node';
 import { EmbedNode } from '~/shared/tiptap/embed.node';
+import { TextAlignExtension } from '~/shared/tiptap/text-align';
 
 export const tiptapExtensions = [
   StarterKit.configure({ heading: false }),
@@ -24,4 +25,5 @@ export const tiptapExtensions = [
   TimestampNode,
   BlurbNode,
   EmbedNode,
+  TextAlignExtension,
 ];
