@@ -7,6 +7,8 @@ import type * as TrpcModule from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { renderWithProviders } from '../../../../test/component-setup';
 
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { requireLogin } from '~/components/Login/requireLogin';
 import { CollectionsHome } from '~/components/Collections/CollectionsHome';
 
 /**
@@ -31,8 +33,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('~/components/ContainerProvider/useContainerSmallerThan', () => ({
   useContainerSmallerThan: () => state.isMobile,
 }));
-vi.mock('~/components/Collections/CollectionsLanding', () => ({
-  CollectionsLanding: () => <div>landing</div>,
+vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: vi.fn() } }));
+vi.mock('~/components/Login/requireLogin', () => ({ requireLogin: vi.fn() }));
+vi.mock('~/components/Collections/CollectionEditModal', () => ({
+  default: function CollectionEditModal() {
+    return null;
+  },
 }));
 vi.mock('~/components/Collections/CollectionCollaborators/CollectionInvitesButton', () => ({
   CollectionInvitesButton: () => null,
@@ -60,6 +66,7 @@ const listVisible = () => document.body.textContent?.includes('drawer-list') ?? 
 
 describe('/collections', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     state.user = { id: 1 };
     state.collections = [{ id: 42, isOwner: true }];
     state.isMobile = true;
@@ -67,7 +74,7 @@ describe('/collections', () => {
 
   test('does not redirect an owner into their first collection', async () => {
     renderWithProviders(<CollectionsHome />);
-    await expect.element(page.getByText('landing')).toBeVisible();
+    await expect.element(page.getByText('Pick a collection')).toBeVisible();
     expect(useRouter().push).not.toHaveBeenCalled();
   });
 
@@ -91,7 +98,7 @@ describe('/collections', () => {
   test('phone: no owned collection leaves the drawer closed', async () => {
     state.collections = [{ id: 9, isOwner: false }];
     renderWithProviders(<CollectionsHome />);
-    await expect.element(page.getByText('landing')).toBeVisible();
+    await expect.element(page.getByText('Pick a collection')).toBeVisible();
     await new Promise((r) => setTimeout(r, 300));
     expect(listVisible()).toBe(false);
   });
@@ -99,7 +106,7 @@ describe('/collections', () => {
   test('phone: signed out leaves the drawer closed', async () => {
     state.user = null;
     renderWithProviders(<CollectionsHome />);
-    await expect.element(page.getByText('landing')).toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
     await new Promise((r) => setTimeout(r, 300));
     expect(listVisible()).toBe(false);
   });
@@ -107,9 +114,49 @@ describe('/collections', () => {
   test('desktop: no drawer; the sidebar list stays beside the landing', async () => {
     state.isMobile = false;
     renderWithProviders(<CollectionsHome />);
-    await expect.element(page.getByText('landing')).toBeVisible();
+    await expect.element(page.getByText('Pick a collection')).toBeVisible();
     await expect.element(page.getByText('sidebar-list')).toBeVisible();
     await new Promise((r) => setTimeout(r, 300));
     expect(listVisible()).toBe(false);
+  });
+
+  describe('landing states', () => {
+    test('signed in with collections: points at the Collections button on a phone, the list on desktop', async () => {
+      const view = await renderWithProviders(<CollectionsHome />);
+      await expect.element(page.getByText('Tap the Collections button above')).toBeVisible();
+
+      state.isMobile = false;
+      await view.rerender(<CollectionsHome />);
+      await expect.element(page.getByText('Choose one from the list on the left')).toBeVisible();
+    });
+
+    test('Create collection opens the collection editor', async () => {
+      renderWithProviders(<CollectionsHome />);
+      await userEvent.click(page.getByRole('button', { name: 'Create collection' }));
+      expect(dialogStore.trigger).toHaveBeenCalledWith(
+        expect.objectContaining({ component: expect.anything() })
+      );
+    });
+
+    test('signed in with no collections: explains collections and offers Create', async () => {
+      state.collections = [];
+      renderWithProviders(<CollectionsHome />);
+      await expect.element(page.getByText('No collections yet')).toBeVisible();
+      await expect.element(page.getByText('Collections let you save')).toBeVisible();
+      await expect.element(page.getByRole('button', { name: 'Create collection' })).toBeVisible();
+    });
+
+    test('signed out: explains collections and the button goes through login, not Create', async () => {
+      state.user = null;
+      renderWithProviders(<CollectionsHome />);
+      await expect.element(page.getByText('Collections let you save')).toBeVisible();
+      expect(page.getByRole('button', { name: 'Create collection' }).elements()).toHaveLength(0);
+
+      await userEvent.click(page.getByRole('button', { name: 'Sign in' }));
+      expect(requireLogin).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'perform-action', returnUrl: '/collections' })
+      );
+      expect(dialogStore.trigger).not.toHaveBeenCalled();
+    });
   });
 });
