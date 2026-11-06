@@ -347,6 +347,11 @@ describe('the delete triggers’ per-owner memo', () => {
     expect(await seededThenRead(PENDING, stale)).toBe(true);
   });
 
+  it('checks live on an answer stamped in the future', async () => {
+    const ahead = `statement_timestamp()::text || '|' || (extract(epoch FROM clock_timestamp()) + 3600)::text || '|f'`;
+    expect(await seededThenRead(PENDING, ahead)).toBe(true);
+  });
+
   it('checks live on a memo it cannot read', async () => {
     const now = `statement_timestamp()::text || '|' || extract(epoch FROM clock_timestamp())::text`;
     for (const garbage of [

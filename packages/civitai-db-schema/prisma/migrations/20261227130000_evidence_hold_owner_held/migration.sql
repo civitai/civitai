@@ -66,6 +66,7 @@ BEGIN
     AND memo[1] = statement_timestamp()::text
     AND memo[2] ~ '^[0-9]{1,12}(\.[0-9]{1,9})?$'
     AND memo[2]::numeric > extract(epoch FROM clock_timestamp()) - 5
+    AND memo[2]::numeric <= extract(epoch FROM clock_timestamp())
     AND memo[3] IN ('t', 'f') THEN
     RETURN memo[3] = 't';
   END IF;
