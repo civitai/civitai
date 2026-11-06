@@ -33,7 +33,8 @@ export const navHref = (link: NavLink): string | undefined =>
   link.tabs ? link.children?.[0]?.path ?? link.path : link.path;
 
 /**
- * The badge for a link: its own count, or for a group the sum of its non-informational children. Null
+ * The badge for a link: its own count, or for a group the sum of its children, less informational ones
+ * and shortcuts (counted where the page lives). Null
  * while nothing it sums has loaded.
  */
 export function navCount(
@@ -43,7 +44,7 @@ export function navCount(
   if (!link.children) return countFor(link.countKey);
   let total: number | null = null;
   for (const child of link.children) {
-    if (child.informational) continue;
+    if (child.informational || child.shortcut) continue;
     const count = navCount(child, countFor);
     if (count !== null) total = (total ?? 0) + count;
   }
@@ -53,7 +54,9 @@ export function navCount(
 /** Whether a link's badge leaves out a count that could not be read: it, or a child it sums. */
 export function navPartial(link: NavLink, isUnavailable: (key: string) => boolean): boolean {
   if (!link.children) return !!link.countKey && isUnavailable(link.countKey);
-  return link.children.some((child) => !child.informational && navPartial(child, isUnavailable));
+  return link.children.some(
+    (child) => !child.informational && !child.shortcut && navPartial(child, isUnavailable)
+  );
 }
 
 /** A badge's text: the count, with "+" when it leaves out a count that could not be read ("?+" when
@@ -79,7 +82,7 @@ export function navWorstRank(
     return link.countKey ? queueSeverityRank(link.countKey, countFor(link.countKey)) : null;
   let worst: number | null = null;
   for (const child of link.children) {
-    if (child.informational) continue;
+    if (child.informational || child.shortcut) continue;
     const rank = navWorstRank(child, countFor);
     if (rank !== null && (worst === null || rank < worst)) worst = rank;
   }

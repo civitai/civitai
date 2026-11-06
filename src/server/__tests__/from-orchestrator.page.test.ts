@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Workflows from '~/server/services/orchestrator/workflows';
@@ -23,6 +24,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 }));
 
 import type { Workflow } from '@civitai/orchestration-client';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getServerSideProps } from '~/pages/models/train/from-orchestrator';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -98,5 +100,21 @@ describe('from-orchestrator SSR — refusals render a reason', () => {
     await expect(resolve({ user: { ...session.user, onboarding: 0 } })).resolves.toEqual({
       redirect: { destination: '/models', permanent: false },
     });
+  });
+
+  it('redirects a banned user before fetching an orchestrator token', async () => {
+    mockGetWorkflow.mockResolvedValue(run('approved'));
+    await expect(resolve({ user: { ...session.user, bannedAt: new Date() } })).resolves.toEqual({
+      redirect: { destination: '/models', permanent: false },
+    });
+    expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it('redirects when the orchestrator token is refused', async () => {
+    vi.mocked(getOrchestratorToken).mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN' }));
+    await expect(resolve()).resolves.toEqual({
+      redirect: { destination: '/models', permanent: false },
+    });
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,7 @@ import {
   withRuling,
 } from '$lib/minor-flags/flagged-decision';
 import {
+  bustMinorQueueCounts,
   getHeldDetectionModelCount,
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
@@ -49,7 +50,6 @@ import {
 import { denied, type PermissionSet } from '$lib/permissions';
 import { canAccess } from '$lib/server/access';
 import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
-import { appealVerdict } from '$lib/minor-flags/appeal-split';
 import type { FlaggedLabel, FlaggedSource } from '$lib/minor-flags/flagged-decision';
 import {
   APPEAL_FLAGS,
@@ -66,18 +66,26 @@ import {
   FLAGGED_SOURCES,
   type FlaggedFilters,
 } from '$lib/minor-flags/flagged-filters';
+import { ruleFlagAppeal, type FlagAppealDecision } from '$lib/server/minor-flag-appeal-ruling';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { bounded } from '$lib/server/bounded';
+import {
+  getRestrictedVerdictCount,
+  getRestrictedVerdicts,
+} from '$lib/server/restricted-nsfw-verdicts';
+import { RESTRICTED_VERDICT_RULINGS } from '$lib/minor-flags/restricted-verdicts';
 import {
   confirmMinorFlag,
   confirmPoiFlag,
   dismissMinorHashMatch,
   dismissPoiHashMatch,
   resolveMinorFlagAppeal,
+  resolveLockReview,
   resolveMinorFlagAppealPerLabel,
   resolveRedetection,
   revertMinorFlag,
   revertPoiFlag,
+  ruleRestrictedVerdict,
   ruleTextScanFlag,
   setModelMinorFlag,
   setModelPoiFlag,
@@ -174,10 +182,14 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
   const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
   const sources = needsReviewSources(grants);
   const use = needsReviewBranches(sources, needsReviewFilters);
-  const [queue, { total, chipCounts }] = await Promise.all([
-    getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
-    needsReviewCounts(sources, use, search, needsReviewFilters),
-  ]);
+  const [queue, { total, chipCounts }, restrictedVerdicts, restrictedVerdictTotal] =
+    await Promise.all([
+      getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
+      needsReviewCounts(sources, use, search, needsReviewFilters),
+      // Ruled under the detections permission; listed apart from the merged leads, minor first.
+      sources.detections ? getRestrictedVerdicts() : [],
+      sources.detections ? getRestrictedVerdictCount() : 0,
+    ]);
   return {
     limit,
     page,
@@ -187,6 +199,8 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
     sources,
     total,
     chipCounts,
+    restrictedVerdicts,
+    restrictedVerdictTotal,
     ...queue,
     fullBleed: true,
   };
@@ -300,7 +314,7 @@ async function ruleFlag(
   if (flag.source === 'hash' || flag.source === 'file-match') {
     const result = await hashRuling(flag.source, flag.label, keep)(modelId);
     return result.ok
-      ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
+      ? { ok: true, resolved: keep ? 'kept' : result.keptMinor ? 'keptMinor' : 'dismissed' }
       : { ok: false, error: result.error ?? 'Action failed.' };
   }
   const textHash = flag.textHash!;
@@ -573,7 +587,7 @@ async function flagFileMatch(
   earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
 ): Promise<RuleResult> {
   const state = await getModelFlagState(modelId);
-  // set-poi applies the flag whatever the queue says, so the lead must still be there.
+  // flag-match re-checks this under the row lock; refusing here keeps the message specific.
   if (label === 'poi' && !state.poi && !state.poiMatchQueued)
     return {
       ok: false,
@@ -612,7 +626,44 @@ export const needsReviewActions: Actions = {
     const id = NEEDS_REVIEW_PERMISSION_OF[flag.source as keyof typeof NEEDS_REVIEW_PERMISSION_OF];
     return event.locals.grants[id] ? null : denied(id);
   }),
+  ruleRestrictedVerdict: async (event) => {
+    const id = NEEDS_REVIEW_PERMISSIONS.detections;
+    if (!event.locals.grants[id]) return fail(403, { error: denied(id) });
+    const form = await event.request.formData();
+    const parsed = restrictedVerdictForm.safeParse({
+      modelId: form.get('modelId'),
+      ruling: form.get('ruling'),
+      reason: form.get('reason') ?? undefined,
+    });
+    if (!parsed.success) return fail(400, { error: 'Missing model or ruling.' });
+    const { modelId, ruling, reason } = parsed.data;
+    const result = await ruleRestrictedVerdict(modelId, ruling, reason || undefined);
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
+    await bustMinorQueueCounts();
+    return { success: true, modelId, restrictedRuling: ruling };
+  },
 };
+
+const restrictedVerdictForm = z.object({
+  modelId: z.coerce.number().int().positive().max(MAX_INT4),
+  ruling: z.enum(RESTRICTED_VERDICT_RULINGS),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+const reasonFields = z.object(resolutionReasonFields);
+
+/** Rules the appeal for the posted model and answers as the Appeals queue does. */
+async function ruleAppealFrom(form: FormData, modelId: number, decision: FlagAppealDecision) {
+  const fields = parseForm(reasonFields, form);
+  const ruling =
+    typeof fields === 'string'
+      ? ({ ok: false, error: fields } as const)
+      : await ruleFlagAppeal({ modelId, decision, reason: fields });
+  if (!ruling.ok)
+    return fail(400, { error: ruling.error, modelId, subject: modelSubject(modelId) });
+  return { success: true, modelId, rescanQueued: ruling.rescanQueued };
+}
 
 const wholeAppealAction =
   (uphold: boolean): Actions[string] =>
@@ -620,19 +671,32 @@ const wholeAppealAction =
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
     if (!(modelId > 0)) return fail(400, { error: 'Missing model id.' });
-    const reason = rulingReasonFromForm('flagAppeal', uphold ? 'Rejected' : 'Approved', form);
+    return ruleAppealFrom(form, modelId, uphold ? 'uphold' : 'overturn');
+  };
+
+const lockReviewAction =
+  (approve: boolean): Actions[string] =>
+  async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    const appealId = Number(form.get('appealId'));
+    if (!(modelId > 0) || !(appealId > 0))
+      return fail(400, { error: 'Missing model or appeal id.' });
+    const reason = rulingReasonFromForm('lockReview', approve ? 'Approved' : 'Rejected', form);
     if (typeof reason === 'string')
       return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
 
-    const result = await resolveMinorFlagAppeal(modelId, uphold, reason);
+    const result = await resolveLockReview(appealId, modelId, approve, reason);
     if (!result.ok)
       return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
-    return { success: true, modelId, rescanQueued: result.rescanQueued === true };
+    return { success: true, modelId, unlocked: result.unlocked };
   };
 
 export const appealActions: Actions = {
   upholdAppeal: wholeAppealAction(true),
   overturnAppeal: wholeAppealAction(false),
+  approveLockReview: lockReviewAction(true),
+  rejectLockReview: lockReviewAction(false),
   splitAppeal: async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
@@ -641,23 +705,6 @@ export const appealActions: Actions = {
     const poi = decision.safeParse(form.get('poi'));
     if (!(modelId > 0) || !minor.success || !poi.success)
       return fail(400, { error: 'Missing model id or decision.' });
-    const { verdict, lifted } = appealVerdict({ minor: minor.data, poi: poi.data });
-    const reason = rulingReasonFromForm(
-      'flagAppeal',
-      verdict,
-      form,
-      lifted.length ? lifted : undefined
-    );
-    if (typeof reason === 'string')
-      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
-
-    const result = await resolveMinorFlagAppealPerLabel(
-      modelId,
-      { minor: minor.data, poi: poi.data },
-      reason
-    );
-    if (!result.ok)
-      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
-    return { success: true, modelId, rescanQueued: result.rescanQueued };
+    return ruleAppealFrom(form, modelId, { minor: minor.data, poi: poi.data });
   },
 };

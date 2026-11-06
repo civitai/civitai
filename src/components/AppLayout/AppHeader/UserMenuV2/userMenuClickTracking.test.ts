@@ -19,7 +19,7 @@ import type * as IsMobile from '~/hooks/useIsMobile';
  */
 const mocks = vi.hoisted(() => ({
   actions: [] as TrackActionInput[],
-  user: { id: 1, username: 'tester' } as { id: number; username: string } | null,
+  user: { id: 1, username: 'tester' } as { id: number; username: string; tier?: string } | null,
   flags: { buzz: true } as Record<string, boolean>,
 }));
 
@@ -45,9 +45,15 @@ vi.mock('~/components/NextLink/NextLink', () => ({
 // The header rows' balances, avatar and Buy Buzz modal are not what is under test.
 const buyBuzz = vi.hoisted(() => vi.fn());
 vi.mock('~/components/User/UserBuzz', () => ({ UserBuzz: () => null }));
-vi.mock('~/components/UserAvatar/UserAvatar', () => ({
-  UserAvatar: () => createElement('span', null, 'Avatar'),
+vi.mock('~/components/Buzz/useBuzz', () => ({
+  useQueryBuzz: () => ({ data: { accounts: [], total: 0 }, isLoading: false }),
 }));
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: ({ subText }: { subText?: ReactNode }) =>
+    createElement('span', null, 'Avatar', subText),
+}));
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('next/router', () => ({ useRouter: () => ({ push: routerPush }) }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobile>()),
   useIsMobile: () => true,
@@ -172,6 +178,18 @@ describe('UserMenu_Click', () => {
     expect(civitaiLink.onClick).toHaveBeenCalledTimes(1);
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
       { item: 'civitai-link', group: 'creator-tools', pinned: false, surface: 'mobile' },
+    ]);
+  });
+
+  it('records a phone Create row under the create group', async () => {
+    await mount(
+      createElement(MobileItem, {
+        item: { id: 'create-generate', label: 'Generate', icon: IconBox, href: '/generate' },
+      })
+    );
+    await click(row('Generate'));
+    expect(details()).toEqual([
+      { item: 'create-generate', group: 'create', pinned: false, surface: 'mobile' },
     ]);
   });
 
@@ -337,7 +355,8 @@ describe('UserMenu_Click', () => {
   it.each([
     // Desktop rows are Mantine Menu.Items, which close the menu themselves.
     ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0, 'Buy Buzz'],
-    ['mobile', () => createElement(MobileHeaderRows), 2, 'Buy'],
+    // The phone sheet closes before the purchase opens.
+    ['mobile', () => createElement(MobileHeaderRows), 3, 'Buy Buzz'],
   ] as const)(
     'records the %s header rows as header opens, and not Buy Buzz',
     async (surface, node, closes, buyLabel) => {
@@ -345,8 +364,8 @@ describe('UserMenu_Click', () => {
       await click(row('Avatar'));
       await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
       await click(
-        [...document.querySelectorAll('.mantine-Button-root')].find(
-          (el) => el.textContent === buyLabel
+        [...document.querySelectorAll('.mantine-Button-root, .mantine-ActionIcon-root')].find(
+          (el) => el.textContent === buyLabel || el.getAttribute('aria-label') === buyLabel
         )
       );
 
@@ -392,12 +411,21 @@ describe('UserMenu_Click', () => {
     }
   );
 
-  it('keeps the Pro chip out of the mobile header rows, whatever the flags', async () => {
+  it('offers membership on the mobile card to a viewer with no tier, and closes the menu', async () => {
     mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
     await mount(createElement(MobileHeaderRows));
 
-    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
+    await click(document.querySelector('[role="link"]'));
+    expect(handleClose).toHaveBeenCalledTimes(1);
+    expect(routerPush).toHaveBeenCalledExactlyOnceWith('/purchase/buzz');
+  });
+
+  it('shows a member their tier on the mobile card, not the membership offer', async () => {
+    mocks.user = { id: 1, username: 'tester', tier: 'gold' };
+    await mount(createElement(MobileHeaderRows));
+
     expect(document.querySelector('a[href="/user/buzz-dashboard"]')).not.toBeNull();
+    expect(document.querySelector('[role="link"]')).toBeNull();
   });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.

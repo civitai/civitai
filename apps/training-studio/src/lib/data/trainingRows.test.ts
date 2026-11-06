@@ -269,3 +269,41 @@ describe('workflowToDetail sample input images', () => {
     expect(workflowToDetail(workflow())!.sourceImages).toBeUndefined();
   });
 });
+
+describe('workflowToDetail dataset', () => {
+  const editWorkflow = () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.isEditTraining = true;
+    input.trainingData = {
+      type: 'blobs',
+      items: [
+        { air: 'start-a', caption: '', path: 'control_1/pair_0001.png' },
+        { air: 'res-a', caption: 'add a smiley', path: 'main/pair_0001.png' },
+      ],
+    };
+    return w;
+  };
+
+  it("keeps an edit run's pair paths and counts its pairs", () => {
+    const detail = workflowToDetail(editWorkflow())!;
+    expect(detail.dataset).toEqual([
+      { air: 'start-a', caption: '', path: 'control_1/pair_0001.png' },
+      { air: 'res-a', caption: 'add a smiley', path: 'main/pair_0001.png' },
+    ]);
+    expect(detail.settings.imageCount).toBe(1);
+  });
+
+  it('offers no dataset for an edit run whose items lost their paths', () => {
+    const w = editWorkflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.trainingData = { type: 'blobs', items: [{ air: 'start-a', caption: '' }] };
+    expect(workflowToDetail(w)!.dataset).toEqual([]);
+  });
+
+  it('gives a plain run no paths', () => {
+    expect(workflowToDetail(workflow())!.dataset).toEqual([
+      { air: 'https://x/blobs/A.png?sig=1', caption: 'ohwx, 1girl' },
+    ]);
+  });
+});

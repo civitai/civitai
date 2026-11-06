@@ -3,13 +3,16 @@ import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandl
 import {
   getUserContentOverview,
   getUserWithProfile,
+  setShowcaseSections,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
+  ShowcaseSectionSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -18,6 +21,7 @@ import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { getShowcaseHatForUser } from '~/server/events/showcase-hat';
 
 export const getUserContentOverviewHandler = async ({
   input,
@@ -70,6 +74,7 @@ export const getUserProfileHandler = async ({
           muted: false,
           links: [],
           cosmetics: [],
+          showcaseHat: null,
           rank: null,
           leaderboardShowcase: null,
           stats: null,
@@ -92,6 +97,7 @@ export const getUserProfileHandler = async ({
             location: null,
             nsfw: false,
             showcaseItems: [] as ShowcaseItemSchema[],
+            showcaseSections: [] as ShowcaseSectionSchema[],
             profileSectionsSettings: [] as ProfileSectionSchema[],
             privacySettings: {} as PrivacySettingsSchema,
           },
@@ -99,7 +105,7 @@ export const getUserProfileHandler = async ({
       }
     }
 
-    return user;
+    return { ...user, showcaseHat: await getShowcaseHatForUser(user.id) };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -136,6 +142,22 @@ export const updateUserProfileHandler = async ({
     throw throwDbError(error);
   }
 };
+export const setShowcaseSectionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetShowcaseSectionsSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (ctx.user.muted) throw throwAuthorizationError();
+  try {
+    return await setShowcaseSections({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
 export const addEntityToShowcaseHandler = async ({
   input,
   ctx,

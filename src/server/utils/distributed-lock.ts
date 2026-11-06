@@ -1,4 +1,5 @@
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { delIfValue } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { env } from '~/env/server';
 import { handleLogError } from '~/server/utils/errorHandling';
@@ -104,18 +105,7 @@ export class DistributedLock {
     if (!redis || !this.lockValue) return;
 
     try {
-      const script = `
-        if redis.call("get", KEYS[1]) == ARGV[1] then
-          return redis.call("del", KEYS[1])
-        else
-          return 0
-        end
-      `;
-
-      await redis.eval(script, {
-        keys: [this.lockKey],
-        arguments: [this.lockValue],
-      });
+      await delIfValue(redis, this.lockKey, this.lockValue);
     } catch (error) {
       handleLogError(error as Error, `Failed to release lock: ${this.lockKey}`);
     } finally {

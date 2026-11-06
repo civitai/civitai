@@ -19,6 +19,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const queries = vi.hoisted(() => [] as string[]);
 const rowCount = vi.hoisted(() => ({ n: 0 }));
 const typeList = vi.hoisted(() => ({ types: [] as string[] }));
+const refs = vi.hoisted(() => ({ list: [] as string[] }));
+const counterparty = vi.hoisted(() => ({ id: '0' }));
 
 /** The row fetch and the type aggregate hit the same table on the same side; only one is capped. */
 const isTypeQuery = (q: string) => /SELECT DISTINCT type/.test(q);
@@ -31,8 +33,8 @@ const row = (i: number) => ({
   counterpartyType: 'yellow',
   type: 'purchase',
   description: '',
-  externalTransactionId: '',
-  counterpartyId: '0',
+  externalTransactionId: refs.list[i] ?? '',
+  counterpartyId: counterparty.id,
 });
 
 vi.mock('../clickhouse', () => ({
@@ -45,8 +47,25 @@ vi.mock('../clickhouse', () => ({
   }),
 }));
 
-vi.mock('../users.service', () => ({ usersByIds: () => Promise.resolve(new Map()) }));
-vi.mock('../db', () => ({ dbRead: {} }));
+vi.mock('../users.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../users.service')>()),
+  usersByIds: (ids: number[]) =>
+    Promise.resolve(new Map(ids.map((id) => [id, { username: `u${id}` }]))),
+}));
+const placementRows = vi.hoisted(() => ({
+  rows: [] as unknown[],
+  sql: [] as string[],
+  fail: false,
+}));
+vi.mock('../db', async () => {
+  const { capturingDb } = await import('../../../test/capture-sql');
+  return {
+    dbRead: capturingDb(placementRows.sql, () => {
+      if (placementRows.fail) throw new Error('db down');
+      return placementRows.rows;
+    }),
+  };
+});
 vi.mock('../buzz', () => ({ getBuzz: () => ({}) }));
 vi.mock('../notifications', () => ({ getNotifications: () => Promise.resolve([]) }));
 vi.mock('../moderator-db', () => ({ getModeratorDb: () => ({}) }));
@@ -56,6 +75,11 @@ const { getBuzzLedgerSide, getBuzzLedgerTypes } = await import('../user-account.
 const rowQuery = () => queries.find((q) => !isTypeQuery(q))!;
 
 beforeEach(() => {
+  refs.list = [];
+  counterparty.id = '0';
+  placementRows.rows = [];
+  placementRows.fail = false;
+  placementRows.sql.length = 0;
   queries.length = 0;
   rowCount.n = 0;
   typeList.types = [];
@@ -192,5 +216,50 @@ describe('the filter options', () => {
     // Offering `bank` would be a filter that always returns nothing, which reads as "no such
     // transactions" rather than as a permission.
     expect(types).toEqual({ payments: ['tip'], receipts: ['tip'] });
+  });
+});
+
+describe('placement legs', () => {
+  // A placement pays through the escrow account, so the row's own counterparty is account 0.
+  it('names who placed and whose content it was, from one read for the whole page', async () => {
+    refs.list = ['placement-31-holdFee-Green', 'placement-31-holdPrincipal-Green', 'tip-31-x'];
+    rowCount.n = 3;
+    placementRows.rows = [{ id: 31, surface: 'sticker', placerId: 5, ownerId: 9, sellerId: null }];
+    const { rows } = await getBuzzLedgerSide(7, 'payments', 90, { limit: 200 });
+    expect(placementRows.sql).toHaveLength(1);
+    expect(rows.map((r) => r.placement)).toEqual([
+      { id: 31, surface: 'sticker', placerId: 5, placerName: 'u5', ownerId: 9, ownerName: 'u9' },
+      { id: 31, surface: 'sticker', placerId: 5, placerName: 'u5', ownerId: 9, ownerName: 'u9' },
+      null,
+    ]);
+  });
+
+  // Only an escrow row is a placement leg; any other row's reference must not borrow its parties.
+  it('reads a placement only for rows whose counterparty is the escrow account', async () => {
+    refs.list = ['placement-31-toOwner'];
+    counterparty.id = '77';
+    rowCount.n = 1;
+    placementRows.rows = [{ id: 31, surface: 'sticker', placerId: 5, ownerId: 9, sellerId: null }];
+    const { rows } = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
+    expect(placementRows.sql).toHaveLength(0);
+    expect(rows[0].placement).toBeNull();
+  });
+
+  it('still shows the page, without placements, when the placement read fails', async () => {
+    refs.list = ['placement-31-toOwner'];
+    rowCount.n = 1;
+    placementRows.fail = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { rows } = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].placement).toBeNull();
+  });
+
+  it('reads nothing when no row on the page is a placement leg', async () => {
+    refs.list = ['', 'placement-x-holdFee', 'placement-99999999999-toOwner'];
+    rowCount.n = 3;
+    const { rows } = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
+    expect(placementRows.sql).toHaveLength(0);
+    expect(rows.every((r) => r.placement === null)).toBe(true);
   });
 });

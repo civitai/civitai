@@ -28,6 +28,9 @@ export interface TrustedDomainRegistry {
   /** True when `hostname` is trusted: an always-trust host, an exact registry match, or a subdomain of an
    * `includeSubdomains` entry. This is the OAuth-trust check (NO owned-domain backstop). */
   matchesHost(hostname: string): Promise<boolean>;
+  /** `matchesHost` for a full origin, which must also be https unless its host is an always-trust host. The
+   * first-party OAuth client check. */
+  matchesOrigin(origin: string): Promise<boolean>;
   /**
    * Resolve the registry ONCE, then return a SYNCHRONOUS origin predicate for `buildPostLoginRedirect`'s
    * `isAllowedOrigin`. Allows: always-trust ∪ registry ∪ the owned-eTLD+1 backstop (`CIVITAI_OWNED_DOMAINS`).
@@ -90,6 +93,13 @@ export function createTrustedDomainRegistry(
     return always.includes(h) || matchesEntries(h, await list());
   }
 
+  async function matchesOrigin(origin: string): Promise<boolean> {
+    const host = hostOf(origin);
+    if (!host) return false;
+    if (always.includes(host)) return true;
+    return isSecureOrLoopbackOrigin(origin) && matchesEntries(host, await list());
+  }
+
   async function ownedOriginCheck(): Promise<(origin: string) => boolean> {
     const entries = await list();
     return (origin: string): boolean => {
@@ -107,5 +117,5 @@ export function createTrustedDomainRegistry(
     fetchedAt = 0; // next list() sees the entry as stale and re-queries
   }
 
-  return { list, matchesHost, ownedOriginCheck, invalidate };
+  return { list, matchesHost, matchesOrigin, ownedOriginCheck, invalidate };
 }

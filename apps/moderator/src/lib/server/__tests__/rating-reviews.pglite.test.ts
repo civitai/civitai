@@ -23,6 +23,11 @@ vi.mock('../db', () => ({
   },
 }));
 
+// Distinct bases, so the .com face link is seen to take the .com one.
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://com.test', CIVITAI_LINK_URL: 'https://red.test' },
+}));
+
 const service = await import('../rating-reviews.service');
 
 let db: PGlite;
@@ -90,6 +95,8 @@ const jobs = () =>
 
 const scanned = (textHash: string) => ({ version: 1, labels: {}, textHash });
 
+const KEPT = 'The current rating is right';
+
 describe('resolveRatingReview', () => {
   it('writes the override pair on a post, stamps the scanned text hash, queues the cascade, leaves updatedAt alone', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 8 });
@@ -145,10 +152,89 @@ describe('resolveRatingReview', () => {
       await seedEntity(db, 'Bounty', { userId: owner, nsfwLevel: 4 })
     );
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({
       status: 'Unactioned',
     });
+  });
+
+  it('refuses to keep a rating as it is without a reason, and writes nothing', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
+    const id = await fileReview('Post', postId, 4, 2);
+
+    for (const modComment of [undefined, '', '   '])
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment, moderatorId: mod })
+      ).rejects.toThrow('Add a reason when keeping the rating as it is');
+    expect((await review(id)).status).toBe('Pending');
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+
+    await expect(
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: 'Several images are R',
+        moderatorId: mod,
+      })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+  });
+
+  it('judges "kept" by what the owner sees: two NSFW levels on a model, or a crucible already at that level', async () => {
+    const modelId = await seedEntity(db, 'Model', { userId: owner, nsfw: true, nsfwLevel: 28 });
+    const model = await fileReview('Model', modelId, 8, 1);
+    await expect(
+      service.resolveRatingReview({ reviewId: model, appliedLevel: 4, moderatorId: mod })
+    ).rejects.toThrow(/Add a reason/);
+
+    // Filed at R, widened to XXX since: applying XXX changes nothing the owner sees.
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 2 | 4 | 8 | 16,
+    });
+    const crucible = await fileReview('Crucible', crucibleId, 4, 1);
+    await expect(
+      service.resolveRatingReview({ reviewId: crucible, appliedLevel: 16, moderatorId: mod })
+    ).rejects.toThrow(/Add a reason/);
+  });
+
+  it('needs no reason to change the rating, or to close a dispute whose content is gone', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
+    const raised = await fileReview('Post', postId, 4, 2);
+    await expect(
+      service.resolveRatingReview({ reviewId: raised, appliedLevel: 8, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+
+    const gone = await fileReview('Post', 999, 4, 2);
+    await expect(
+      service.resolveRatingReview({ reviewId: gone, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ entityMissing: true });
+  });
+
+  it('writes resolvedAt as a database-side now(), not a JS Date serialised in the host zone', async () => {
+    const id = await fileReview(
+      'Bounty',
+      await seedEntity(db, 'Bounty', { userId: owner, nsfwLevel: 4 })
+    );
+    // pglite serialises a Date as UTC; the production driver uses the host zone into a zoneless column.
+    // So the bound parameters are what has to be pinned.
+    const bound: unknown[] = [];
+    dbHandle.current = ratingReviewKysely(db, (e) => {
+      if (e.level === 'query' && /update "RatingReview"/i.test(e.query.sql))
+        bound.push(...e.query.parameters);
+    });
+    await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 4,
+      modComment: KEPT,
+      moderatorId: mod,
+    });
+    expect(bound.length).toBeGreaterThan(0);
+    expect(bound.some((p) => p instanceof Date)).toBe(false);
   });
 
   it('lets only the first of two resolutions write', async () => {
@@ -226,6 +312,50 @@ describe('resolveRatingReview', () => {
     expect(m).toEqual({ nsfw: false, lockedProperties: ['nsfw'] });
     expect(await jobs()).toEqual([{ entityType: 'Model', entityId: modelId }]);
     expect(res.modelVersionIds).toHaveLength(2);
+  });
+
+  it("makes the nsfw lock the moderator's: the system lock marker is cleared, other meta kept", async () => {
+    const modelId = await seedEntity(db, 'Model', {
+      userId: owner,
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: JSON.stringify({
+        systemNsfwLock: { source: 'text-scan', at: '2026-09-01T00:00:00Z' },
+        cannotPromote: true,
+      }),
+    });
+    const id = await fileReview('Model', modelId, 4, 1);
+
+    await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 4,
+      modComment: KEPT,
+      moderatorId: mod,
+    });
+
+    const [m] = await rows<{ meta: Record<string, unknown>; lockedProperties: string[] }>(
+      db,
+      `SELECT "meta", "lockedProperties" FROM "Model" WHERE "id" = $1`,
+      [modelId]
+    );
+    expect(m).toEqual({ meta: { cannotPromote: true }, lockedProperties: ['nsfw'] });
+  });
+
+  it('resolves a model whose meta is null or not an object without touching it', async () => {
+    for (const meta of [null, JSON.stringify(null)]) {
+      const modelId = await seedEntity(db, 'Model', {
+        userId: owner,
+        nsfw: true,
+        lockedProperties: ['nsfw'],
+        meta,
+      });
+      const id = await fileReview('Model', modelId, 4, 1);
+      await service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod });
+      const [m] = await rows<{ nsfw: boolean }>(db, `SELECT "nsfw" FROM "Model" WHERE "id" = $1`, [
+        modelId,
+      ]);
+      expect(m.nsfw).toBe(false);
+    }
   });
 
   it('refuses to mark a poi, minor or sfwOnly model NSFW and leaves the review Pending', async () => {
@@ -475,7 +605,12 @@ describe('resolveRatingReview', () => {
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4);
   });
@@ -494,7 +629,12 @@ describe('resolveRatingReview', () => {
     const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 16, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 16,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(all);
   });
@@ -517,7 +657,12 @@ describe('resolveRatingReview', () => {
       service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
     ).rejects.toThrow(/has started/);
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: KEPT,
+        moderatorId: mod,
+      })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4 | 32);
   });
@@ -672,6 +817,53 @@ describe('hydrateRatingReviews', () => {
     });
   });
 
+  it('gives a model its civitai.com face, or null when it has none, and nothing to other types', async () => {
+    const [cover] = await rows<{ id: number }>(
+      db,
+      `INSERT INTO "Image" ("url", "type", "nsfwLevel") VALUES ('com-cover', 'image', 2) RETURNING "id"`
+    );
+    const withFace = await seedEntity(db, 'Model', {
+      userId: owner,
+      name: 'red name',
+      sfwName: 'com name',
+      sfwCoverImageId: cover.id,
+    });
+    const noCover = await seedEntity(db, 'Model', { userId: owner, sfwName: 'only a name' });
+    const noFace = await seedEntity(db, 'Model', { userId: owner, sfwCoverImageId: cover.id });
+    const goneCover = await seedEntity(db, 'Model', {
+      userId: owner,
+      sfwName: 'cover gone',
+      sfwCoverImageId: 9999,
+    });
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'p' });
+    for (const id of [withFace, noCover, noFace, goneCover]) await fileReview('Model', id);
+    await fileReview('Post', postId);
+
+    const all = await listPending();
+    const model = (id: number) => all.find((i) => i.entityType === 'Model' && i.entityId === id);
+
+    expect(model(withFace)?.entity?.comFace).toEqual({
+      name: 'com name',
+      url: `https://com.test/models/${withFace}`,
+      cover: { id: cover.id, url: 'com-cover', type: 'image', nsfwLevel: 2 },
+      coverPicked: true,
+    });
+    expect(model(noCover)?.entity?.comFace).toEqual({
+      name: 'only a name',
+      url: `https://com.test/models/${noCover}`,
+      cover: null,
+      coverPicked: false,
+    });
+    expect(model(goneCover)?.entity?.comFace).toEqual({
+      name: 'cover gone',
+      url: `https://com.test/models/${goneCover}`,
+      cover: null,
+      coverPicked: true,
+    });
+    expect(model(noFace)?.entity?.comFace).toBeNull();
+    expect(all.find((i) => i.entityType === 'Post')?.entity).not.toHaveProperty('comFace');
+  });
+
   it('joins each entity and shows only a text-scan raise', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'hello' });
     const entryId = await seedEntity(db, 'BountyEntry', {
@@ -823,26 +1015,27 @@ describe('rating review images', () => {
       await fileReview(type, id);
 
     const items = await listPending();
-    const cover = (type: string, id: number) =>
-      items.find((i) => i.entityType === type && i.entityId === id)?.entity?.coverUrl;
+    // Only an article's cover is computed here; the others are the first image of their preview.
+    const cover = async (type: Parameters<typeof service.getRatingReviewImages>[0], id: number) =>
+      type === 'Article'
+        ? items.find((i) => i.entityType === type && i.entityId === id)?.entity?.coverUrl
+        : (await service.getRatingReviewImages(type, id)).images[0]?.url;
 
-    expect(cover('Post', postId)).toBe('post-first');
-    expect(cover('Model', modelId)).toBe('model-cover');
-    expect(cover('Article', articleId)).toBe('article-cover');
-    expect(cover('Bounty', bountyId)).toBe('bounty-b');
-    expect(cover('BountyEntry', entryId)).toBe('entry-a');
-    expect(cover('Challenge', challengeId)).toBe('challenge-cover');
-    expect(cover('Crucible', crucibleId)).toBe('crucible-cover');
-    expect(cover('Crucible', heroOnlyId)).toBe('crucible-hero');
-    expect(cover('Collection', collectionId)).toBe('collection-cover');
+    expect(await cover('Post', postId)).toBe('post-first');
+    expect(await cover('Model', modelId)).toBe('model-cover');
+    expect(await cover('Article', articleId)).toBe('article-cover');
+    expect(await cover('Bounty', bountyId)).toBe('bounty-b');
+    expect(await cover('BountyEntry', entryId)).toBe('entry-a');
+    expect(await cover('Challenge', challengeId)).toBe('challenge-cover');
+    expect(await cover('Crucible', crucibleId)).toBe('crucible-cover');
+    expect(await cover('Crucible', heroOnlyId)).toBe('crucible-hero');
+    expect(await cover('Collection', collectionId)).toBe('collection-cover');
     expect(items.find((i) => i.entityType === 'Article')?.entity?.coverType).toBe('video');
   });
 
-  it('leaves the cover empty for an entity with no image', async () => {
+  it('previews nothing for an entity with no image', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner });
-    await fileReview('Post', postId);
-    const items = await listPending();
-    expect(items[0].entity?.coverUrl).toBeNull();
+    expect(await service.getRatingReviewImages('Post', postId)).toEqual({ total: 0, images: [] });
   });
 
   it('shows a model its owner’s images in the CSAM-queue order: published first, then version, post, image index', async () => {
@@ -858,9 +1051,6 @@ describe('rating review images', () => {
     // Another account's post never feeds the model's gallery.
     await seedImage({ url: 'foreign', postId: await post(first, { userId: mod }), index: 0 });
     await fileReview('Model', modelId);
-
-    const items = await listPending();
-    expect(items[0].entity?.coverUrl).toBe('first-a');
 
     const preview = await service.getRatingReviewImages('Model', modelId, 10);
     expect(preview.images.map((i) => i.url)).toEqual([
@@ -883,7 +1073,6 @@ describe('rating review images', () => {
     });
     await fileReview('Model', modelId);
 
-    expect((await listPending())[0].entity?.coverUrl).toBe('only-unpublished');
     const preview = await service.getRatingReviewImages('Model', modelId);
     expect(preview.images.map((i) => i.url)).toEqual(['only-unpublished']);
     expect(preview.total).toBe(1);
@@ -915,6 +1104,23 @@ describe('rating review images', () => {
 
     expect(preview.images.map((i) => i.url)).toEqual(['cover', 'body']);
     expect(preview.total).toBe(2);
+  });
+
+  it('previews an article banner after its cover, since the banner rates the article too', async () => {
+    const cover = await seedImage({ url: 'cover' });
+    const banner = await seedImage({ url: 'banner' });
+    const body = await seedImage({ url: 'body' });
+    const articleId = await seedEntity(db, 'Article', {
+      userId: owner,
+      coverId: cover,
+      bannerId: banner,
+    });
+    await connect(body, 'Article', articleId);
+
+    const preview = await service.getRatingReviewImages('Article', articleId);
+
+    expect(preview.images.map((i) => i.url)).toEqual(['cover', 'banner', 'body']);
+    expect(preview.total).toBe(3);
   });
 
   it('previews a bounty entry from its connections and a challenge by its cover alone', async () => {

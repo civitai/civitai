@@ -25,3 +25,18 @@ export const pickShopRowItems = <T extends { id: number }>({
   }
   return row.slice(0, Math.max(1, columns));
 };
+
+// The profile Shop section shows for a published shop with anything a visitor can buy: a
+// cosmetic, or an Active service where the storefront shows its Services section (the link
+// lands on that section). Services here are already Active-only, so a Draft never counts.
+export const shopSectionHasItems = ({
+  enabled,
+  cosmeticCount,
+  activeServiceCount,
+  servicesShown,
+}: {
+  enabled: boolean;
+  cosmeticCount: number;
+  activeServiceCount: number;
+  servicesShown: boolean;
+}) => enabled && (cosmeticCount > 0 || (servicesShown && activeServiceCount > 0));

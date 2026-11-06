@@ -66,14 +66,15 @@ function upstream(status: number, headers: Record<string, string> = {}, body = '
 async function call(
   path = '/api/held-media/7',
   headers: Record<string, string> = {},
-  imageId = '7'
+  imageId = '7',
+  method = 'GET'
 ): Promise<{ status: number; res?: Response }> {
   const url = new URL(`http://mod.test${path}`);
   try {
     const res = await GET({
       params: { imageId },
       url,
-      request: new Request(url, { headers }),
+      request: new Request(url, { headers, method }),
       locals: { user: { id: 42, roles: ['moderator:staff'] }, grants: {} },
     } as never);
     return { status: res.status, res };
@@ -334,6 +335,24 @@ describe('audit', () => {
     await call('/api/held-media/7', { range: 'bytes=5000-' });
     expect(recordModActivity).not.toHaveBeenCalled();
     expect(serves()).toHaveLength(1);
+  });
+
+  it('records no view for a HEAD, which carries no bytes', async () => {
+    await call('/api/held-media/7', {}, '7', 'HEAD');
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('answers only once the view row is written', async () => {
+    let land!: () => void;
+    recordModActivity.mockImplementationOnce(() => new Promise<void>((r) => (land = r)));
+    let answered = false;
+    const answering = call().then(() => (answered = true));
+
+    await vi.waitFor(() => expect(recordModActivity).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    land();
+    await answering;
   });
 
   it('records no view of an image it refused', async () => {

@@ -155,6 +155,8 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
           input: removeEmpty({
             ...baseInput,
             provider: 'civitai' as const,
+            // Unnamed, the orchestrator runs its own default build, which may not be enabled.
+            diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
             width: dims?.width,
             height: dims?.height,
             images: hasImages ? data.images?.map((x) => x.url) : undefined,

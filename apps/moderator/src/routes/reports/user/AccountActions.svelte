@@ -15,6 +15,8 @@
   import { dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import { denied } from '$lib/permissions';
+  import { page } from '$app/state';
+  import MessageAsCivitai from '$lib/components/MessageAsCivitai.svelte';
 
   /**
    * The account's actions, under its reports in the right column: one row each, saying what it does
@@ -298,6 +300,11 @@
       </div>
     {/if}
   </div>
+  <MessageAsCivitai
+    userId={suspectId}
+    canAct={!!page.data.grants?.['user.message.asCivitai']}
+    action="?/messageAsCivitai"
+  />
   <p class="m-0 text-xs text-muted-foreground">
     Purging content, deleting the account and the rest are in
     <a href={userLookupUrl(suspectId)} class="link">User Lookup</a>.

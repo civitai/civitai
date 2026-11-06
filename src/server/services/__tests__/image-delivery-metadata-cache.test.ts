@@ -20,10 +20,11 @@ import { CacheTTL } from '~/server/common/constants';
 // matter what was asked for, and every assertion about a NEWLY-selected column passes on code
 // that never selects it — measured: 5 of the media-type assertions below went green against
 // the pre-change service until this was introduced.
-import { respondWithRows } from '~/test-utils/queryRawProjection';
+import { respondWithRows, statementOf } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 const redisDel = redisMock.redis.del;
 const redisPackedGet = redisMock.redis.packed.get;
 const redisPackedSet = redisMock.redis.packed.set;
@@ -148,7 +149,7 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
   it('passes the exact url to the DB query as the WHERE value', async () => {
     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
     await getCachedImageDeliveryMetadata(URL);
-    const values = dbReadQueryRaw.mock.calls[0].slice(1);
+    const { values } = statementOf(dbReadQueryRaw.mock.calls[0]);
     expect(values).toContain(URL);
   });
 
@@ -215,6 +216,25 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     const result = await getCachedImageDeliveryMetadata(URL);
     expect(result).toEqual(IMAGE_ROW); // primary fallback resolved
     expect(dbWriteQueryRaw).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
+      [{ entity: 'image', caller: 'imageDelivery' }],
+    ]);
+  });
+
+  it('treats an empty replica answer as a not-found: the primary is NOT asked', async () => {
+    dbReadQueryRaw.mockImplementation(respondWithRows([]));
+
+    expect(await getCachedImageDeliveryMetadata(URL)).toBeNull();
+    expect(dbWriteQueryRaw).not.toHaveBeenCalled();
+    expect(dbReadFallbackCounter.inc).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the primary error when replica and primary both fail, caching nothing', async () => {
+    dbReadQueryRaw.mockRejectedValueOnce(new Error('replica down'));
+    dbWriteQueryRaw.mockRejectedValueOnce(new Error('primary down'));
+
+    await expect(getCachedImageDeliveryMetadata(URL)).rejects.toThrow('primary down');
+    expect(redisPackedSet).not.toHaveBeenCalled();
   });
 });
 
@@ -349,7 +369,7 @@ describe('getCachedImageDeliveryMetadata — media type', () => {
     expect(dbReadQueryRaw).toHaveBeenCalledTimes(1); // one query total, not two
     expect(dbWriteQueryRaw).not.toHaveBeenCalled();
     // The columns come from that one statement's SELECT list.
-    const sql = (dbReadQueryRaw.mock.calls[0][0] as string[]).join('?');
+    const sql = statementOf(dbReadQueryRaw.mock.calls[0]).strings.join('?');
     expect(sql).toContain('"mimeType"');
     expect(sql).toMatch(/\btype\b/);
     expect(sql).toContain('"hideMeta"');

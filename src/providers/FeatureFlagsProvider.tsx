@@ -2,6 +2,9 @@ import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
+import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
+import { OverlayFastPathContext } from '~/components/MantineOverlays/overlayFastPathContext';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
 // Whether the per-user `getFeatureFlags` overlay has resolved. SSR seeds
@@ -98,6 +101,11 @@ export const FeatureFlagsProvider = ({
     [flags, userFeatures]
   );
 
+  // Bridge `siteSearchProxy` to the module-scope search clients. Written while rendering, so the
+  // searches InstantSearch starts from the first commit's effects already go the right way. Browser
+  // only: on the server this module flag would be shared across concurrent requests.
+  if (typeof window !== 'undefined') setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
+
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in
   // `~/utils/trpc`).
   //
@@ -108,6 +116,7 @@ export const FeatureFlagsProvider = ({
   // across concurrent requests.
   if (typeof window !== 'undefined' && featureFlags.trpcBatchingFirstCommit) {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
+    setTrpcUnifiedBatchWindowEnabled(!!featureFlags.trpcUnifiedBatchWindow);
   }
   // With `trpcBatchingFirstCommit` off, this effect is the only writer, so
   // batching applies only to queries sent after the provider has mounted. With
@@ -115,10 +124,18 @@ export const FeatureFlagsProvider = ({
   useEffect(() => {
     setTrpcBatchingEnabled(!!featureFlags.trpcBatching);
   }, [featureFlags.trpcBatching]);
+  // Same two writers for the shared batch window (see `~/utils/trpc-batch-window`).
+  useEffect(() => {
+    setTrpcUnifiedBatchWindowEnabled(!!featureFlags.trpcUnifiedBatchWindow);
+  }, [featureFlags.trpcUnifiedBatchWindow]);
 
   return (
     <FeatureFlagsCtx.Provider value={featureFlags}>
-      <FeatureFlagsReadyCtx.Provider value={ready}>{children}</FeatureFlagsReadyCtx.Provider>
+      <FeatureFlagsReadyCtx.Provider value={ready}>
+        <OverlayFastPathContext.Provider value={featureFlags.ssrClosedOverlayFastPath === true}>
+          {children}
+        </OverlayFastPathContext.Provider>
+      </FeatureFlagsReadyCtx.Provider>
     </FeatureFlagsCtx.Provider>
   );
 };

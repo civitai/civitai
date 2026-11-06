@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -7,6 +8,7 @@ import {
   type MediaProbeAnswer,
   summarizeProbeError,
 } from '@civitai/shared';
+import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -21,9 +23,12 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
+import {
+  isTrustedOrchestratorUrl,
+  logHostOf,
+} from '~/server/services/orchestrator/trusted-blob-url';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
@@ -35,11 +40,13 @@ import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
   countFeedPrimary,
+  countMeiliOff,
   feedFliptContext,
   feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
   hydrateWithReadRescue,
+  isMeiliOff,
   serveFromFeed,
   type FeedPrimaryRoute,
 } from '~/server/services/feed-primary.service';
@@ -51,9 +58,15 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  imageReviewedSql,
+  pendingOthersImageConditions,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+} from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
+  imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
 import {
@@ -177,11 +190,15 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
+import { refuseRetiredIndexRead } from '~/server/search-index/retired-index-read';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   imageSelect,
   publishedImageWhere,
@@ -271,12 +288,12 @@ import type {
   ReportReason,
   ReviewReactions,
   TagType,
+  CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
   CosmeticEntity,
-  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -291,7 +308,6 @@ import {
   ImageScanFailureClass,
 } from '~/server/services/image-scan-failure';
 import { withRetries } from '~/utils/errorHandling';
-import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
@@ -309,6 +325,7 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
+import { readUserIdByUsernameViaKysely } from '~/server/services/hot-reads-6.reads';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -337,6 +354,11 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  shopArtworkUrls,
+} from '~/server/services/image-url-ownership';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
@@ -573,10 +595,60 @@ export async function purgeResizeCache({
 type DeleteImageFromS3Args = {
   id: number;
   url: string;
+  /** Set only by {@link isPlainOwnerDelete}: keep an object that shop artwork still uses. */
+  keepShopArtwork?: boolean;
   purgeOnFailure?: boolean;
   abortSignal?: AbortSignal;
   retractionGate?: RetractionGate;
 } & PurgeResizeCacheRetraction;
+
+/**
+ * An owner deleting their own scanned image that carries no block, is not held for review and has no
+ * open report. Only then may a delete leave behind an object that shop artwork still uses: a block,
+ * takedown or moderator delete always removes it, since a non-persisted CDN deny lapses and the
+ * bytes would be served again. Scanned and unreported, so a delete cannot outrun a verdict.
+ */
+export function isPlainOwnerDelete(
+  image: {
+    userId: number;
+    ingestion: string;
+    needsReview: string | null;
+    nsfwLevel: number;
+    blockedFor: string | null;
+    openReport: boolean;
+  },
+  deletedById: number | undefined
+) {
+  return (
+    image.userId === deletedById &&
+    image.ingestion === ImageIngestionStatus.Scanned &&
+    !image.needsReview &&
+    !image.openReport &&
+    !hasBlockMarker(image)
+  );
+}
+
+/**
+ * The images among `ids` with a report still Pending or Processing, on the image or on its post.
+ * Read before the delete: `ImageReport` and `PostReport` cascade with what they report.
+ */
+export async function imagesWithOpenReports(
+  ids: number[],
+  db: Pick<Prisma.TransactionClient, '$queryRaw'> = dbWrite
+): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const rows = await db.$queryRaw<{ imageId: number }[]>`
+    SELECT ir."imageId" FROM "ImageReport" ir
+    JOIN "Report" r ON r.id = ir."reportId"
+    WHERE ir."imageId" = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+    UNION
+    SELECT i.id FROM "Image" i
+    JOIN "PostReport" pr ON pr."postId" = i."postId"
+    JOIN "Report" r ON r.id = pr."reportId"
+    WHERE i.id = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+  `;
+  return new Set(rows.map((row) => row.imageId));
+}
 
 export async function deleteImageFromS3(
   args: DeleteImageFromS3Args
@@ -598,6 +670,7 @@ async function deleteImageFromStorage({
   // needs a bound supplies its own.
   abortSignal,
   retractionGate,
+  keepShopArtwork = false,
 }: DeleteImageFromS3Args): Promise<{
   storage: StorageDeleteOutcome;
   purge?: ImageCacherOutcome;
@@ -631,6 +704,7 @@ async function deleteImageFromStorage({
     });
 
     if (!!imageWithSameUrl) return { storage: 'skipped' };
+    if (keepShopArtwork && (await shopArtworkUrls([url])).size) return { storage: 'skipped' };
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -641,11 +715,8 @@ async function deleteImageFromStorage({
     // of the lookup may stop the delete, and inlining the guard keeps that true even if the
     // resolver later grows a throwing path again.
     //
-    // The reason is sanitised INSIDE that `.catch`, under its own try, which is what keeps it total.
-    // `safeError` ends in `String(e)` for a non-Error, and that throws on a value with no primitive
-    // conversion — `Object.create(null)`, or anything with a throwing `toString`. Calling it in the
-    // log payload below instead would put that throw inside the OUTER try, skipping the B2 delete:
-    // the exact failure this `.catch` exists to prevent, reintroduced by the code reporting it.
+    // The reason is sanitised INSIDE that `.catch`, under its own try, so no rejection value can
+    // throw from the log payload below inside the OUTER try and skip the B2 delete.
     let resolverError: MixedObject | undefined;
     const location = await resolveMediaLocation(url).catch((error: unknown) => {
       try {
@@ -848,7 +919,8 @@ async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
 export const deleteImageById = async ({
   id,
   updatePost,
-}: GetByIdInput & { updatePost?: boolean }) => {
+  deletedById,
+}: GetByIdInput & { updatePost?: boolean; deletedById?: number }) => {
   updatePost ??= true;
   try {
     // Resolved BEFORE the delete: `CollectionItem.imageId` is `onDelete: Cascade`, so
@@ -865,17 +937,27 @@ export const deleteImageById = async ({
     // Also before the delete: `User.profilePictureId` is `onDelete: SetNull`, so afterwards nothing
     // says whose avatar this was. Non-throwing for the same reason as the resolver above.
     const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
+    // Only an owner delete can keep an object; every other delete purges without asking.
+    // A failed read counts as reported, so the delete still goes ahead and purges.
+    const openReport =
+      deletedById !== undefined &&
+      (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
-    const image = await dbWrite.image
-      .delete({
-        where: { id },
-        select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
-      })
-      .catch((error) => {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
-          return null;
-        throw error;
-      });
+    const [image = null] = await dbWrite.$queryRaw<
+      {
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        metadata: unknown;
+        ingestion: string;
+        needsReview: string | null;
+        blockedFor: string | null;
+      }[]
+    >`
+      DELETE FROM "Image" WHERE id = ${id}
+      RETURNING url, "postId", "nsfwLevel", "userId", metadata, ingestion::text, "needsReview", "blockedFor"
+    `;
     // No row came back: it was already gone, or a hold marker kept it (the delete trigger takes it
     // off the site instead). Either way it leaves search like any deleted image.
     if (!image) {
@@ -894,7 +976,11 @@ export const deleteImageById = async ({
     const invalidateExistence = invalidateManyImageExistence([id]);
 
     await Promise.all([
-      deleteImageFromS3({ id, url: image.url }),
+      deleteImageFromS3({
+        id,
+        url: image.url,
+        keepShopArtwork: isPlainOwnerDelete({ ...image, openReport }, deletedById),
+      }),
       queueImageSearchIndexUpdate({
         ids: [id],
         action: SearchIndexUpdateQueueAction.Delete,
@@ -1031,8 +1117,18 @@ export async function deleteImages(
         parentId: number | null;
       }[]
     >`
+      WITH doomed AS (
+        SELECT id FROM "Image"
+        WHERE id IN (${Prisma.join(ids)})
+          ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+        -- Locked, so a change to the row's own columns made meanwhile is re-checked against the
+        -- guard here. Holds kept in other tables are still read from the statement's snapshot.
+        ${onlyWhere ? Prisma.sql`FOR UPDATE` : Prisma.empty}
+      )
       DELETE FROM "Image"
-      WHERE id IN (${Prisma.join(ids)})
+      WHERE id IN (SELECT id FROM doomed)
+        -- Again here: a row changed while this statement waits for it is re-checked only against
+        -- the DELETE's own WHERE, never the CTE's, and only on its own columns.
         ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
@@ -1342,7 +1438,7 @@ export async function handleBlockImages({
             userId: img.userId,
             type: 'tos-violation',
             category: NotificationCategory.System,
-            key: `tos-violation:image:${uuid()}`,
+            key: `tos-violation:image:${crypto.randomUUID()}`,
             details: {
               modelName: img.postId ? `post #${img.postId}` : 'a post',
               entity: 'image',
@@ -1693,6 +1789,7 @@ export const ingestImage = async ({
       failureType: 'send-fail',
       failureClass,
       responseStatus: submitStatus,
+      error: safeError(submitError),
       imageId: id,
       mediaType: type,
     }).catch(() => null);
@@ -1858,6 +1955,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   // Server-only: the caller takes a post's images in the requested sort (the gallery's post
   // completion), so the feed service may serve `postIds` for the website too.
   postIdsInRequestedSort?: boolean;
+  // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
+  holdExempt?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -2006,6 +2105,12 @@ const getAllImagesUncaptured = async (
     throwOnStatementTimeout?: boolean;
     /** `false`: the per-image caches serve hits but don't write misses back. */
     cacheWriteBack?: boolean;
+    /**
+     * With `pending`: a collection whose REVIEW and REJECTED submissions the viewer reviews, so its
+     * images not yet rated are shown to them too. Server-set only; checked against the viewer's
+     * ownership or MANAGE permission in the query.
+     */
+    reviewCollectionId?: number;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2083,6 +2188,7 @@ const getAllImagesUncaptured = async (
     minorOnly,
     pendingReviewOnly,
     cacheWriteBack,
+    reviewCollectionId,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -2281,11 +2387,7 @@ const getAllImagesUncaptured = async (
       Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
     );
     // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
-    AND.push(
-      userId
-        ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-        : Prisma.sql`(i."blockedFor" IS NULL)`
-    );
+    AND.push(...imageBlockedForConditions({ userId }));
   }
 
   if (disablePoi) {
@@ -2688,10 +2790,7 @@ const getAllImagesUncaptured = async (
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId})))`
-      );
+      AND.push(pendingViewerImageSql({ userId, browsingLevel, reviewCollectionId }));
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
@@ -3149,7 +3248,7 @@ type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
 };
 export async function findUserIdByUsername(username: string) {
   const user =
-    (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+    (await readUserIdByUsernameViaKysely(kyselyRead, username)) ??
     (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
   return user?.id;
 }
@@ -3208,7 +3307,8 @@ export async function getPostImageCounts({
 async function serveImagesFromFeedService(
   searchInput: CapturableSearchInput & { domain?: DomainColor; newCreatorsMaxFollowers?: number },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
-  route: FeedPrimaryRoute
+  route: FeedPrimaryRoute,
+  meiliOff = false
 ) {
   const started = Date.now();
   const { currentUserId } = searchInput;
@@ -3221,7 +3321,7 @@ async function serveImagesFromFeedService(
           maxFollowers: searchInput.newCreatorsMaxFollowers,
         })
       : undefined,
-    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId) : undefined,
+    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId, meiliOff) : undefined,
   ]);
   const served = await withSpan('image:feedPrimary', () =>
     serveFromFeed(
@@ -3254,6 +3354,54 @@ const isTransientFeedReason = (reason: string) =>
   ['timeout', 'error', 'hydrate:error'].includes(reason) || /^status:5\d\d$/.test(reason);
 
 /**
+ * Filters the feed has no dimension for, dropped when Meilisearch is off rather than sent there.
+ * The remix filters were decided against. The resource flags narrow a version's gallery to the
+ * images posted to it or attributed by hand; the feed's mirror does not split those, so it serves
+ * the version's whole gallery.
+ */
+const withoutMeiliOnlyFilters = <T extends object>(input: T): T => ({
+  ...input,
+  remixesOnly: undefined,
+  nonRemixesOnly: undefined,
+  hideAutoResources: undefined,
+  hideManualResources: undefined,
+});
+
+/**
+ * The answer to a request the feed service did not serve, when Meilisearch is off: a transient
+ * failure is a retryable 503, a sort the feed does not have and a cursor it cannot continue are a
+ * 400, and every other shape it cannot express is an empty page.
+ */
+function answerWithoutMeili(
+  served: { reason: string; nextCursor?: string },
+  route: FeedPrimaryRoute
+): GetAllImagesIndexResult {
+  const { reason } = served;
+  if (reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
+  if (isTransientFeedReason(reason)) {
+    countMeiliOff('unavailable', reason, route);
+    throw new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Image search is temporarily overloaded — please retry.',
+    });
+  }
+  if (reason.startsWith('sort:')) {
+    countMeiliOff('refused', reason, route);
+    throw throwBadRequestError(`Sort "${reason.slice('sort:'.length)}" is not supported`);
+  }
+  if (reason === DEEP_OFFSET) {
+    countMeiliOff('refused', reason, route);
+    throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
+  }
+  if (reason === CURSOR_UNPARSED) {
+    countMeiliOff('refused', reason, route);
+    throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
+  }
+  countMeiliOff('empty', reason, route);
+  return { items: [], nextCursor: undefined };
+}
+
+/**
  * The public REST images endpoint's feed-service branch. `undefined` means the feed service did
  * not serve the request and the caller answers it from the search path, unchanged.
  *
@@ -3262,7 +3410,8 @@ const isTransientFeedReason = (reason: string) =>
  */
 export async function getImagesFromFeedServiceForRest(
   searchInput: ImageSearchInput & { headers?: Record<string, string> },
-  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0]
+  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
+  opts: { meiliOff?: boolean } = {}
 ): Promise<GetAllImagesIndexResult | undefined> {
   const fallBack = (reason: string) => {
     countFeedPrimary('unmapped', reason, 'rest');
@@ -3275,7 +3424,11 @@ export async function getImagesFromFeedServiceForRest(
       throw throwBadRequestError('This cursor can no longer be continued; start again without it');
     return undefined;
   }
-  if (!feedCursor) {
+  // Under FEED_SERVICE_MEILI_OFF this never returns undefined, which would send the caller to the
+  // search index.
+  const meiliOff = opts.meiliOff ?? (await isMeiliOff(searchInput));
+  if (meiliOff && searchInput.limit < 1) return { items: [], nextCursor: undefined };
+  if (!feedCursor && !meiliOff) {
     const enabled = await withSpan('image:flipt:feedRestImages', () =>
       getFliptBoolean(
         FLIPT_FEATURE_FLAGS.FEED_SERVICE_REST_IMAGES,
@@ -3293,7 +3446,7 @@ export async function getImagesFromFeedServiceForRest(
     if (searchInput.limit < 1) return fallBack('limit:0');
   }
 
-  const input = { ...searchInput };
+  const input = meiliOff ? withoutMeiliOnlyFilters(searchInput) : { ...searchInput };
   const prepared = await prepareImageFeedRequest(input, {
     id: input.currentUserId,
     isModerator: input.isModerator,
@@ -3312,7 +3465,8 @@ export async function getImagesFromFeedServiceForRest(
       tags: input.tags,
       excludedTagIds: input.excludedTagIds,
     },
-    'rest'
+    'rest',
+    meiliOff
   );
   if (served.ok)
     return {
@@ -3321,9 +3475,10 @@ export async function getImagesFromFeedServiceForRest(
       items: served.page.data.map((image) => ({ ...image, createdAt: image.sortAt })),
       nextCursor: served.page.nextCursor,
     };
+  // The hydrate filtered out every row of that page; the scroll steps past it, or ends. The search
+  // index cannot return those rows either.
+  if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
   if (feedCursor) {
-    // The hydrate filtered out every row of that page; the scroll steps past it, or ends.
-    if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
     if (isTransientFeedReason(served.reason))
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
@@ -3331,6 +3486,7 @@ export async function getImagesFromFeedServiceForRest(
       });
     throw throwBadRequestError('This cursor cannot be continued with these filters');
   }
+  if (meiliOff) return answerWithoutMeili(served, 'rest');
   return undefined;
 }
 
@@ -3410,22 +3566,36 @@ export const getAllImagesIndex = async (
   };
   // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
   // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
+  // Under FEED_SERVICE_MEILI_OFF nothing goes to Meilisearch; see answerWithoutMeili.
   if (feedPrimaryAvailable()) {
-    const feedPrimary = await withSpan('image:flipt:feedPrimary', () =>
-      getFliptBoolean(
-        FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
-        currentUserId?.toString() || 'anonymous',
-        feedFliptContext(searchInput)
-      )
-    );
+    const meiliOff = await isMeiliOff(searchInput);
+    const feedPrimary =
+      meiliOff ||
+      (await withSpan('image:flipt:feedPrimary', () =>
+        getFliptBoolean(
+          FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
+          currentUserId?.toString() || 'anonymous',
+          feedFliptContext(searchInput)
+        )
+      ));
     if (feedPrimary) {
-      const served = await serveImagesFromFeedService(searchInput, input, 'website');
+      const served = await serveImagesFromFeedService(
+        meiliOff ? withoutMeiliOnlyFilters(searchInput) : searchInput,
+        input,
+        'website',
+        meiliOff
+      );
       if (served.ok)
         return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
       if (served.reason === DEEP_OFFSET)
         throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
       if (served.reason === CURSOR_UNPARSED)
         throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
+      // Every row of the page was filtered out at hydrate. The search index cannot return those
+      // rows either, so the scroll steps past the page on the feed's cursor.
+      if (served.reason === 'hydrate:empty')
+        return { items: [], nextCursor: served.nextCursor, source: 'feed' };
+      if (meiliOff) return { ...answerWithoutMeili(served, 'website'), source: 'feed' };
     }
   }
 
@@ -3475,9 +3645,12 @@ export const getAllImagesIndex = async (
   }
 
   if (!searchResults.length) {
+    // Named like the non-empty return below, so a caller can tell a retired-index refusal
+    // (`retired`) from an index that answered nothing (`meili`).
     return {
       nextCursor: undefined,
       items: [],
+      ...(searchSource && { source: searchSource }),
     };
   }
 
@@ -3724,6 +3897,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
+  holdExempt?: boolean;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -3801,6 +3975,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 async function searchImages(input: ImageSearchInput) {
+  // `retired` names the refusal on the wire, so a caller can tell this empty page from an index
+  // that answered nothing (tests/preview-image-feed.spec.ts relies on it).
+  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'searchImages'))
+    return {
+      data: [],
+      nextCursor: undefined,
+      source: 'retired' as const,
+      filterMode: 'none' as const,
+    };
   if (!metricsSearchClient)
     return {
       data: [],
@@ -3851,6 +4034,10 @@ export async function getImagesFromFeedSearch(
     throw throwInternalServerError(
       new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
     );
+
+  // ImagesFeed reads the feeds index (`metrics_images_v1`) through FEED_IMAGE_HOST.
+  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'feedSearch'))
+    return { nextCursor: undefined, items: [] };
 
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
@@ -4087,6 +4274,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     hubId: input.hubId,
     userId: input.currentUserId,
     isModerator: input.isModerator,
+    holdExempt: input.holdExempt,
     excludedSources: input.hubExcludedSources,
   });
 }
@@ -4095,15 +4283,21 @@ async function resolvedHubSources(input: ImageSearchInput) {
  * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
  * own cap. `hubSources: null` wherever the index path would return an empty page (no such hub
  * for this viewer, no source left, a cap that leaves the viewer nothing), so the same requests
- * are empty on both paths. Undefined while hubs are not switched over: the hub is then not
- * servable by the feed and the request takes the index path.
+ * are empty on both paths. Undefined while hubs are not switched over (and Meilisearch is on): the
+ * hub is then not servable by the feed and the request takes the index path.
  */
-async function resolveHubForFeed(searchInput: CapturableSearchInput, viewerId: number | undefined) {
-  const enabled = await getFliptBoolean(
-    FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
-    viewerId?.toString() || 'anonymous',
-    feedFliptContext(searchInput)
-  );
+async function resolveHubForFeed(
+  searchInput: CapturableSearchInput,
+  viewerId: number | undefined,
+  meiliOff = false
+) {
+  const enabled =
+    meiliOff ||
+    (await getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
+      viewerId?.toString() || 'anonymous',
+      feedFliptContext(searchInput)
+    ));
   if (!enabled) return undefined;
   const input = searchInput as ImageSearchInput;
   const sources = await resolvedHubSources(input);
@@ -4232,7 +4426,8 @@ function buildHubFilter(
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'preFilter'))
+    return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
   const {
@@ -4671,7 +4866,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         actor,
       })
     );
-    let results = mainResult.results;
+    const results = mainResult.results;
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -4871,7 +5066,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'postFilter'))
+    return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
   const {
@@ -6080,7 +6276,9 @@ export const getImage = async ({
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
-  const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
+  const resources = await dbRead.$queryRaw<
+    (ImageResourceHelperModel & { sfwName: string | null })[]
+  >`
     SELECT
       irh."imageId",
       irh."reviewId",
@@ -6099,7 +6297,8 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelCommentCount",
       irh."modelType",
       irh."modelVersionBaseModel",
-      irh."detected"
+      irh."detected",
+      m."sfwName"
     FROM
       "ImageResourceHelper" irh
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
@@ -6190,13 +6389,15 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
+  // With no user (the shared imagesForModelVersionsCache), this drops every blocked image.
+  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
@@ -6339,6 +6540,7 @@ type CachedImagesForModelVersions = {
   modelVersionId: number;
   images: ImagesForModelVersions[];
 };
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
@@ -6447,13 +6649,14 @@ export const getImagesForPosts = async ({
         : Prisma.sql`i."ingestion" != 'Blocked'`
     );
   }
+  imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
   if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
@@ -6726,6 +6929,7 @@ export const getImagesByEntity = async ({
       AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
     }
   }
+  AND.push(...imageBlockedForConditions({ userId, isModerator }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -6825,6 +7029,7 @@ export async function createImage({
   verifiedSourceImageIds,
   blockProvenance,
   assertPostOwnedBy = createPostOwnerCheck(),
+  clientUrl,
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6845,6 +7050,11 @@ export async function createImage({
    * images to one post passes one so the post is looked up once; without it, each call checks.
    */
   assertPostOwnedBy?: AssertPostOwnedBy;
+  /**
+   * `url` came from the client: each upload key in it must have been issued to `userId`, or to
+   * `alsoIssuedTo` when the client is acting on another user's behalf.
+   */
+  clientUrl?: true | { alsoIssuedTo: number };
 }) {
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
@@ -6937,6 +7147,14 @@ export async function createImage({
    * making these two routers probe concurrently — not removing the bound.
    */
   const mediaVerdict = await probeCreatedImageMedia(image.url);
+  await assertClientImageUrlsUsable({ urls: [image.url], userId: image.userId });
+  if (clientUrl) {
+    await assertClientKeysIssuedToCaller({
+      urls: [image.url],
+      userId: image.userId,
+      alsoIssuedTo: clientUrl === true ? undefined : clientUrl.alsoIssuedTo,
+    });
+  }
 
   /**
    * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
@@ -7112,18 +7330,41 @@ export async function fillVideoDimensions({ id, url }: { id: number; url: string
   return dimensions;
 }
 
+const uncheckedUrls = (images: { url: string }[], checked: string[] = []) =>
+  images.map((i) => i.url).filter((url) => !checked.includes(url));
+
+/**
+ * Checks the upload keys of the images an entity write will create, so the lookups run before
+ * the caller opens its transaction. Pass the result to `createEntityImages` or
+ * `updateEntityImages` as `keysCheckedFor`.
+ */
+export async function checkEntityImageKeys({
+  images,
+  userId,
+}: {
+  images?: ImageReferenceInput[] | null;
+  userId: number;
+}) {
+  const urls = (images ?? []).filter((i) => !i.id).map((i) => i.url);
+  await assertClientKeysIssuedToCaller({ urls, userId });
+  return urls;
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
   entityType,
   images,
   userId,
+  keysCheckedFor,
 }: {
   tx?: Prisma.TransactionClient;
   entityId?: number;
   entityType?: string;
   images: ImageReferenceInput[];
   userId: number;
+  /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
+  keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
 
@@ -7131,6 +7372,12 @@ export const createEntityImages = async ({
     return [];
   }
 
+  await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
+  await assertClientKeysIssuedToCaller({
+    urls: uncheckedUrls(images, keysCheckedFor),
+    userId,
+    db: dbClient,
+  });
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...pickClientImageColumns(image),
@@ -7564,12 +7811,15 @@ export const updateEntityImages = async ({
   entityType,
   images,
   userId,
+  keysCheckedFor,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
   images: ImageReferenceInput[];
   userId: number;
+  /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
+  keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
@@ -7610,6 +7860,12 @@ export const updateEntityImages = async ({
   }[] = [];
 
   if (newImages.length > 0) {
+    await assertClientImageUrlsUsable({ urls: newImages.map((i) => i.url), userId, db: dbClient });
+    await assertClientKeysIssuedToCaller({
+      urls: uncheckedUrls(newImages, keysCheckedFor),
+      userId,
+      db: dbClient,
+    });
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...pickClientImageColumns(image),
@@ -7768,6 +8024,23 @@ export async function reportCsamImages({
       where: { id: { in: imageIds } },
       data: { needsReview: 'csam' },
     });
+    // Reporting an image already flagged leaves its flag unchanged, so the set-aside trigger does not
+    // fire and this delete is what puts the image back in the queue. It must follow the flag write:
+    // that write's row lock is what a concurrent dismiss waits on, and its new row version is what
+    // makes that dismiss refuse. The table and its grants are applied by hand; a role that may not
+    // delete skips it rather than fail the report.
+    const [setAside] = await tx.$queryRaw<{ deletable: boolean | null }[]>`
+      SELECT has_table_privilege(to_regclass('"CsamQueueSetAside"'), 'DELETE') AS deletable`;
+    if (setAside?.deletable)
+      await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
+    else if (setAside?.deletable === false)
+      logToAxiom({
+        type: 'warning',
+        name: 'csam-queue-set-aside-not-deletable',
+        message: 'the table exists but this role may not delete from it; grant DELETE',
+      }).catch(() => {
+        // swallow — best effort logging
+      });
     // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
     // the uploader is not told.
     await tx.appeal.updateMany({
@@ -8027,9 +8300,19 @@ export async function resolveIngestionError({
       userId: true,
       metadata: true,
       url: true,
+      blockedFor: true,
+      needsReview: true,
+      user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
   if (!image) throw new Error('Image not found');
+  const refusal = ingestionResolveRefusal({
+    blockedFor: image.blockedFor,
+    needsReview: image.needsReview,
+    ownerBannedAt: image.user.bannedAt,
+    ownerDeletedAt: image.user.deletedAt,
+  });
+  if (refusal) throw throwBadRequestError(refusal);
 
   /**
    * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
@@ -8092,16 +8375,25 @@ export async function resolveIngestionError({
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 
-  await dbWrite.image.update({
-    where: { id },
+  // Matched on what was read, so a block or ban landing after the replica read is not lifted.
+  const { count } = await dbWrite.image.updateMany({
+    where: {
+      id,
+      blockedFor: image.blockedFor,
+      needsReview: image.needsReview,
+      user: { bannedAt: null, deletedAt: null },
+    },
     data: {
       nsfwLevel,
       nsfwLevelLocked: true,
       ingestion: ImageIngestionStatus.Scanned,
+      blockedFor: null,
       scannedAt: new Date(),
       metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
+  if (count === 0) throw throwBadRequestError('This image changed; reload and try again.');
+  if (image.blockedFor != null) await dropBlockedImageDeleteQueue([id]);
   await imageMetadataCache.refresh(id);
 
   await tagIdsForImagesCache.refresh(id);
@@ -8350,8 +8642,13 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const cachedResources = await imageResourcesCache.fetch([id]);
-  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
+  const cachedResources = (await imageResourcesCache.fetch([id]))[id]?.resources ?? [];
+  // The cache is per image, so a model's .com face is looked up here rather than stored in it.
+  const sfwModelNames = await getSfwModelNames(
+    cachedResources.map((r) => r.modelId),
+    showsSfwFace(getRequestBrowsingLevel(viewer))
+  );
+  const resources = withSfwModelNames(cachedResources, sfwModelNames).map((r) => ({
     imageId: r.imageId,
     modelVersionId: r.modelVersionId,
     strength: r.strength,
@@ -8709,6 +9006,7 @@ export async function setVideoThumbnail({
       ...pickClientImageColumns(customThumbnail),
       userId: image.userId,
       metadata: { parentId: image.id },
+      clientUrl: { alsoIssuedTo: userId },
     });
     thumbnailId = thumbnail.id;
   }
@@ -8959,8 +9257,56 @@ export const getMyImages = async ({
   }
 };
 
+const trainingSampleFetchCounter = registerCounterWithLabels({
+  name: 'training_sample_fetch_total',
+  help: 'Training sample image urls refused before or while fetching',
+  labelNames: ['outcome'] as const,
+});
+
+/** Whether a training sample url may be copied; a refused one is counted and its host logged. */
+export function isTrainingSampleUrlUsable(url: string) {
+  if (isTrustedOrchestratorUrl(url)) return true;
+  trainingSampleFetchCounter.inc({ outcome: 'skipped' });
+  logToAxiom({ type: 'info', name: 'training-sample-skipped', host: logHostOf(url) }).catch(
+    () => null
+  );
+  return false;
+}
+
+const MAX_TRAINING_SAMPLE_REDIRECTS = 3;
+
+/** A training sample url, or a redirect from it, that is not fetched. */
+export class TrainingSampleRefusedError extends Error {
+  constructor() {
+    super('Unsupported image url');
+  }
+}
+
+/** Fetches a training sample, following redirects only between orchestrator urls. */
+async function fetchTrainingSample(url: string) {
+  let current = url;
+  const signal = AbortSignal.timeout(120_000);
+  for (let hop = 0; hop <= MAX_TRAINING_SAMPLE_REDIRECTS; hop++) {
+    if (!isTrustedOrchestratorUrl(current)) {
+      trainingSampleFetchCounter.inc({ outcome: hop ? 'redirect_refused' : 'url_refused' });
+      throw new TrainingSampleRefusedError();
+    }
+    const response = await fetch(current, { redirect: 'manual', credentials: 'omit', signal });
+    const location = response.headers.get('location');
+    if (response.status >= 300 && response.status < 400 && location) {
+      await response.body?.cancel().catch(() => null);
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return response.blob().catch(() => null);
+  }
+  trainingSampleFetchCounter.inc({ outcome: 'too_many_redirects' });
+  throw new TrainingSampleRefusedError();
+}
+
+/** Copies a training sample image into image storage. Only orchestrator urls are fetched. */
 export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
-  const blob = await fetchBlob(imageUrl);
+  const blob = await fetchTrainingSample(imageUrl);
 
   if (!blob) {
     throw new Error('Failed to fetch image');
@@ -8975,7 +9321,7 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
   });
 
   const data = await upload.done();
-  const meta = await getMetadata(imageUrl);
+  const meta = await getMetadata(blob);
   // Attempt to guess if this is a video or image based off of the sample image url.
   // This is no accurate science for all scenarios, but should give out a decent result at least.
   const isVideo = imageUrl.includes('.mp4') || imageUrl.includes('.mov');

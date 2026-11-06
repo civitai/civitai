@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
@@ -33,6 +32,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isAir } from '~/utils/string-helpers';
 import {
+  aiToolkitLrSchedulerTypes,
+  aiToolkitOptimizerTypes,
   engineTypes,
   loraTypes,
   lrSchedulerTypes,
@@ -49,7 +50,7 @@ export const recipeModelSchema = z.object({
 
 export type RecipeInput = z.infer<typeof recipeSchema>;
 export const recipeSchema = z.object({
-  id: z.string().default(uuidv4()),
+  id: z.string().default(() => crypto.randomUUID()),
   type: z.enum(['sum', 'diff']),
   modelA: recipeModelSchema,
   modelB: recipeModelSchema,
@@ -194,7 +195,7 @@ export const trainingDetailsParams = z.object({
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
 // AI Toolkit training parameters (alternate format for database storage)
-const aiToolkitTrainingDetailsParams = z.object({
+export const aiToolkitTrainingDetailsParams = z.object({
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
@@ -212,19 +213,8 @@ const aiToolkitTrainingDetailsParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),
@@ -546,10 +536,9 @@ export const modelVersionUpsertSchema2 = z.object({
     // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
     // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
     // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
-    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
-    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
-    // stripped here and nowhere else, which is the silent per-surface divergence this whole
-    // paragraph exists to prevent.
+    // `color` property alone, narrower than the app-wide SPAN_ALLOWED_STYLES. Without it a blurb's
+    // color is stripped here and nowhere else, which is the silent per-surface divergence this
+    // whole paragraph exists to prevent.
     allowedAttributes: {
       ...DEFAULT_ALLOWED_ATTRIBUTES,
       span: ['data-type', 'data-id', 'style'],

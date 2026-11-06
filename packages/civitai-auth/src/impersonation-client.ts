@@ -1,8 +1,8 @@
-import { hubFetch } from './hub';
+import { readCookie, sessionCookieName } from './cookies';
+import { hubFetch, sessionCall } from './hub';
 
-// IMPERSONATION CLIENT — the hub's moderator-impersonation endpoints (section F). Authorized purely by the
-// BROWSER's forwarded session cookie: the hub gates `impersonate` on the requester being a MODERATOR (no
-// internal token, no extra credential), and `exit` on the session carrying an `impersonatedBy` claim.
+// IMPERSONATION CLIENT — the hub's moderator-impersonation endpoints (section F). The hub gates `impersonate`
+// on the forwarded session being a MODERATOR's, and `exit` on it carrying an `impersonatedBy` claim.
 
 /**
  * The hub's response, surfaced to the caller. On failure it carries the hub's real HTTP `status` + `error`
@@ -33,15 +33,16 @@ export function createImpersonationClient(): ImpersonationClient {
   const post = async (
     path: string,
     cookie: string,
-    body?: unknown
+    fields?: Record<string, unknown>
   ): Promise<ImpersonationResult> => {
     let res: Response;
     try {
-      res = await hubFetch(path, {
-        method: 'POST',
-        headers: { cookie, 'content-type': 'application/json' },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
+      const { headers, body } = sessionCall(
+        { token: readCookie(cookie, sessionCookieName()) },
+        { cookie },
+        fields
+      );
+      res = await hubFetch(path, { method: 'POST', headers, body });
     } catch {
       // hub unreachable or unconfigured (AUTH_JWT_ISSUER unset) — status 0 signals "no hub response".
       return { ok: false, status: 0, error: 'hub unreachable' };

@@ -1,20 +1,13 @@
 import { Alert, Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import {
-  IconArrowRight,
-  IconBrandDiscord,
-  IconChevronDown,
-  IconPlus,
-  IconTerminal2,
-} from '@tabler/icons-react';
+import { IconArrowRight, IconChevronDown, IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useId, useRef } from 'react';
-import { APPS_REQUEST_ACCESS_HREF } from '~/components/Apps/cliCommands';
+import { AppAccessRequestPanel } from '~/components/Apps/AppAccessRequest/AppAccessRequestPanel';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
-import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
 import { AppDocStoreUsageCard } from '~/components/Apps/AppDocStoreUsageCard';
 import {
@@ -40,10 +33,9 @@ import { trpc } from '~/utils/trpc';
  * it rejects is dropped with a 200, so a local union that is WIDER than the schema fails
  * silently in production and nowhere in CI.
  *
- * `agent_prompt_copy` is deliberately its own step and not folded into `cli_copy`: the page
- * offers two routes into building an app, and which one developers take is the comparison
- * the split exists to keep answerable. `state` does not separate them — both fire in all
- * three states.
+ * `agent_prompt_copy` fires in `first-app` and `workbench`, never from the pitch, which
+ * offers no build route to a viewer without access. The page no longer offers manual CLI
+ * steps anywhere, so there is no `cli_copy` step any more.
  */
 type AppsBuildAction = Extract<TrackActionInput, { type: 'AppsBuild_Action' }>['details']['action'];
 
@@ -203,12 +195,10 @@ export function AppsBuildBody() {
     track('view', state);
   }, [settled, state, track]);
 
-  const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
   // 🔴 FIRED FROM HERE, NOT FROM THE CARD. `AgentOnboardingCard` is props-only by
-  // construction (it is mounted inside `GetStartedBody`, whose suite renders it with no
-  // providers), so the tracker cannot live in it — the same reason `onCopyCommand` is a
-  // callback. And it cannot fire under the skeleton: every mount of the card is inside a
-  // branch below the `!settled` early return.
+  // construction (its own suite renders it with no providers), so the tracker cannot live in
+  // it and arrives as a callback. And it cannot fire under the skeleton: every mount of the
+  // card is inside a branch below the `!settled` early return.
   const onCopyAgentPrompt = useCallback(() => track('agent_prompt_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
 
@@ -270,7 +260,7 @@ export function AppsBuildBody() {
         </Group>
         <MyAppsBody />
         <AppDocStoreUsageCard />
-        <BuildResourcesStrip onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
+        <BuildResourcesStrip onCopyAgentPrompt={onCopyAgentPrompt} />
       </Stack>
     );
   }
@@ -287,7 +277,6 @@ export function AppsBuildBody() {
           </Text>
         </Stack>
         <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
-        <ManualSetupCollapse onCopyCommand={onCopyCommand} />
         <Group>
           <Button
             component={Link}
@@ -305,33 +294,25 @@ export function AppsBuildBody() {
   }
 
   // State A — the pitch. The ONLY public-facing state, and the default: it needs no
-  // session and no query, so it is what a logged-out admitted viewer sees.
+  // session and no query, so it is what a logged-out admitted viewer sees. It carries no
+  // build route (no agent card, no CLI steps): this viewer has no builder access yet, so the
+  // one action offered is Request access.
   return (
     <Stack gap="xl" data-testid="apps-build-pitch">
-      <GetStartedBody onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
+      <GetStartedBody />
       <Alert
         color="blue"
         variant="light"
-        title="Publishing is invite-only right now"
+        title="You don't need to be a developer"
         data-testid="apps-build-request-access"
       >
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
-            Anyone can build and run an app locally today, with a coding agent or by hand with the
-            CLI. Publishing one to the Civitai store is still limited to a curated group while the
-            platform is in beta.
+            You don&apos;t need to be a developer to build an app: describe what you want and the
+            App Assistant builds it with you. It is open to a small group while the platform is in
+            beta — request access and tell us what you&apos;d like to make.
           </Text>
-          <Button
-            component="a"
-            href={APPS_REQUEST_ACCESS_HREF}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => track('request_access', 'pitch')}
-            variant="light"
-            leftSection={<IconBrandDiscord size={16} />}
-          >
-            Ask about access
-          </Button>
+          <AppAccessRequestPanel onRequest={() => track('request_access', 'pitch')} />
         </Stack>
       </Alert>
     </Stack>
@@ -340,14 +321,11 @@ export function AppsBuildBody() {
 
 /**
  * The pitch, DEMOTED for the workbench. An author who already has apps does not need the
- * "what you get" marketing above their app table every visit, but the agent prompt and the
- * CLI commands are the things they come back for — so the resources live on, collapsed, below
- * the list. Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, so
- * the workbench does not pay for the hero image.
- *
- * The strip keeps its own toggle rather than reusing `ManualSetupCollapse`: it holds the agent
- * card as well as the manual steps, and nesting one collapse inside another would hide the
- * commands behind two clicks.
+ * "what you get" marketing above their app table every visit, but the agent prompt is the
+ * thing they come back for — so it lives on, collapsed, below the list. Collapsed by default
+ * and cheap: `GetStartedBody` is not mounted here at all, so the workbench does not pay for
+ * the hero image. (The manual CLI steps that used to sit beside the card here were removed
+ * from `/apps/build` entirely.)
  *
  * 🔴 THE AGENT CARD IS MOUNTED HERE WITH `animated={false}`, AND "CHEAP" IS WHY. Mantine's
  * `Collapse` keeps its children MOUNTED at zero height, so an animated card in here would
@@ -356,13 +334,7 @@ export function AppsBuildBody() {
  * be seen even once. Static also means no `LazyMotion`, so the workbench does not pull the
  * animation chunk at all. See `AgentOnboardingCard`'s `animated` prop.
  */
-function BuildResourcesStrip({
-  onCopyCommand,
-  onCopyAgentPrompt,
-}: {
-  onCopyCommand: () => void;
-  onCopyAgentPrompt: () => void;
-}) {
+function BuildResourcesStrip({ onCopyAgentPrompt }: { onCopyAgentPrompt: () => void }) {
   const [opened, { toggle }] = useDisclosure(false);
   const regionId = useId();
   return (
@@ -390,10 +362,7 @@ function BuildResourcesStrip({
         {opened ? 'Hide developer resources' : 'Developer resources'}
       </Button>
       <Collapse in={opened} id={regionId} data-testid="apps-build-resources">
-        <Stack gap="sm">
-          <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
-          <ManualSetupSteps onCopyCommand={onCopyCommand} />
-        </Stack>
+        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
       </Collapse>
     </Stack>
   );

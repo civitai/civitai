@@ -3,10 +3,10 @@ import type { PageServerLoad } from './$types';
 import { getModel3dViewDetail } from '$lib/server/analytics-detail';
 import { readAnalyticsPeriod } from '$lib/server/analytics-period';
 
-export const load: PageServerLoad = async ({ locals, params, cookies }) => {
+export const load: PageServerLoad = async ({ locals, params, cookies, url }) => {
   const model3dId = Number(params.model3dId);
   if (!Number.isInteger(model3dId) || model3dId <= 0) throw error(400, 'Invalid id');
-  const { range, compare: baseline } = readAnalyticsPeriod(cookies);
+  const { range, compare: baseline } = readAnalyticsPeriod(cookies, url.searchParams.get('month'));
   const compare = baseline.range;
 
   // Ownership is enforced inside the read; a miss is indistinguishable from a deleted entity by design.

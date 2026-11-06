@@ -1,4 +1,5 @@
-import { Box, Button, Container, Drawer, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Box, Button, Container, Drawer, Group, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
@@ -68,6 +69,8 @@ export function AppsPageLayout({
   subtitle,
   actions,
   measure,
+  align = 'start',
+  railFooter,
   children,
 }: {
   /** Page heading (omit for a header with just the chrome, e.g. the marketplace). */
@@ -94,22 +97,38 @@ export function AppsPageLayout({
    * ⚠️ A BAND'S RAMP NOW RESOLVES AGAINST THE BODY COLUMN, NOT THE CONTAINER, AND THAT
    * NARROWS THE MEASURED ROUTES ON A WIDE SCREEN. The middle term of
    * `appsMeasureCss`'s `clamp()` is a PERCENTAGE, and a percentage `max-width` resolves
-   * against the containing block — which the rail has just made 276px narrower. So
+   * against the containing block — which the rail has just made 292px narrower. So
    * `/apps/submit` at a 2560 viewport lands at ~1238px instead of its 1368 ceiling.
    * Nothing moves at 1440 or 1920, where both bands are pinned to their `min` floor
    * anyway. This is the correct direction (the page really does have less room) and it
    * is stated here rather than discovered: it is the one geometry change on the measured
    * routes that is NOT the rail's own width.
    *
-   * 🔴 LEFT-ALIGNED, NOT CENTRED, and that is load-bearing rather than taste: a
+   * 🔴 LEFT-ALIGNED BY DEFAULT, NOT CENTRED, and that is load-bearing rather than taste: a
    * centred body would put its left edge at a different x on every route, which is
    * the same defect as the per-page container one level out — the page content
    * would stop lining up with the rail beside it. The body column's `Stack` is a
    * column flexbox with the default `align="stretch"`, so a `maw` alone resolves to a
    * left-aligned capped box; no auto margins, and nothing here may introduce
-   * `margin-inline: auto`.
+   * `margin-inline: auto` — except through {@link align} below, which is the one
+   * declared, per-page opt-out.
    */
   measure?: AppsMeasure;
+  /**
+   * Where a MEASURED body sits in the column: `'start'` (the default — every route above)
+   * or `'center'`. Ignored without a `measure`, since an unbounded body fills the column.
+   *
+   * ⚠️ `'center'` GIVES UP THE CROSS-ROUTE LEFT EDGE FOR THAT PAGE, deliberately. The
+   * listing DETAIL page (`/apps/store-preview/[slug]`) uses it: a product decision to
+   * centre the detail page the way the site's other detail pages are centred, taken
+   * knowing its content will no longer start at the same x as the store grid's. The rail
+   * is in a different column and does not move. A NAMED prop rather than a wrapper the
+   * page adds itself, so the exception is visible at the call site and in one place here
+   * — not a second centring mechanism the alignment guards cannot see.
+   */
+  align?: 'start' | 'center';
+  /** Rendered at the foot of the rail (and of the mobile drawer); told whether the rail is collapsed. */
+  railFooter?: (state: { collapsed: boolean }) => ReactNode;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -175,7 +194,7 @@ export function AppsPageLayout({
    * RESTATED FOR A RAIL: no rail, and the body takes the FULL container.
    *
    * A single-entry "navigation" can only link to the page you are already on. As a tab
-   * strip that cost a row's height; as a rail it would cost 276px of every apps page's
+   * strip that cost a row's height; as a rail it would cost 292px of every apps page's
    * width, which is strictly worse. It still fires for the same live cohort: a
    * store-visible non-author with no installs and no `appBlocksGetStarted` qualifies for
    * Marketplace alone.
@@ -185,7 +204,7 @@ export function AppsPageLayout({
    * for the incident that requires it), so a store-visible NON-AUTHOR WITH INSTALLS —
    * anyone who has ever installed an app — renders `[Marketplace]` alone on the server and
    * the first client paint, falls BELOW this floor, and gets no rail. After mount
-   * `Activity` appears, the count reaches two, and the rail mounts: the body moves 276px
+   * `Activity` appears, the count reaches two, and the rail mounts: the body moves 292px
    * right and the container-queried store grid beneath it re-ladders.
    *
    * Server and first paint still agree exactly — this is not a hydration mismatch, and the
@@ -196,7 +215,7 @@ export function AppsPageLayout({
    * 🔴 THE ALTERNATIVE IS NOT FREE, WHICH IS WHY THIS IS LEFT AS IT IS AND FLAGGED RATHER
    * THAN QUIETLY CHANGED. Reserving the rail from the first paint for any logged-in store
    * viewer whose summary query will run uses only SSR-safe inputs and would remove the
-   * shift — but it hands the genuinely-one-section cohort 276px of permanent chrome around
+   * shift — but it hands the genuinely-one-section cohort 292px of permanent chrome around
    * a single link, which is the exact waste this floor exists to prevent. Deferring, as
    * now, charges that cohort nothing and charges the common one a one-time shift.
    * A product call, not an engineering one; raised on the PR. The current behaviour is
@@ -213,14 +232,28 @@ export function AppsPageLayout({
    * left and right edges. It never wraps the rail: the chrome is in a different column
    * entirely, which is the strongest form the original fix can take.
    *
-   * No auto margins, deliberately. The body column's `Stack` is a column flexbox with
-   * the default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED; anything that
-   * re-centres it puts each route's content at a different x and re-creates the defect
-   * one level down. Pinned structurally in `__tests__/appsPageLayoutRender.test.ts` and
-   * on resolved geometry in `AppsPageLayout.chromeAlignment.browser.test.tsx`.
+   * No auto margins by default, deliberately. The body column's `Stack` is a column
+   * flexbox with the default `align="stretch"`, so a bare `maw` resolves LEFT-ALIGNED;
+   * anything that re-centres it puts each route's content at a different x and re-creates
+   * the defect one level down. Pinned structurally in
+   * `__tests__/appsPageLayoutRender.test.ts` and on resolved geometry in
+   * `AppsPageLayout.chromeAlignment.browser.test.tsx`. The only centring is the explicit
+   * `align="center"` opt-out (see the prop), which adds `mx="auto"` here and nowhere else.
    */
   const bounded = (node: ReactNode) =>
-    measure != null ? <Box maw={appsMeasureCss(measure)}>{node}</Box> : node;
+    measure != null ? (
+      // Auto margins make a flex item shrink-wrap to its content, which on a phone is wider than
+      // the column and pushes the page past the screen; `w="100%"` keeps it to the column.
+      <Box
+        maw={appsMeasureCss(measure)}
+        mx={align === 'center' ? 'auto' : undefined}
+        w={align === 'center' ? '100%' : undefined}
+      >
+        {node}
+      </Box>
+    ) : (
+      node
+    );
 
   // `pb` only — NO `py`. The top pad is deliberately gone so `/apps/*` starts
   // directly under the global header instead of 16px below it; the BOTTOM pad
@@ -285,11 +318,10 @@ export function AppsPageLayout({
               {/* ⚠️ THE TOGGLE SITS INSIDE THE RAIL, NOT IN THE GUTTER — a deliberate
                   deviation from `CollectionsLayout`, which absolutely-positions its
                   toggle at `right: -32px`. That works there because the gutter it
-                  overhangs is 8px of a card's margin; here the gap is 16px and the
-                  button is 28px, so a gutter toggle would overlap the page body on every
-                  route and would need `overflow: visible` maintained up the whole
-                  ancestor chain (a hazard that file documents at length). An in-rail
-                  toggle cannot be clipped out of existence.
+                  overhangs is 8px of a card's margin; a gutter toggle here
+                  would need `overflow: visible` maintained up the whole ancestor chain (a
+                  hazard that file documents at length). An in-rail toggle cannot be
+                  clipped out of existence.
 
                   🔴 AND IT COSTS NO ROW OF ITS OWN ANY MORE. It used to render in a
                   `<Group mb={4}>` here, ABOVE the nav, while `AppsRailNavView` drew the
@@ -330,6 +362,7 @@ export function AppsPageLayout({
                   </Tooltip>
                 }
               />
+              {railFooter?.({ collapsed })}
             </div>
           </aside>
         )}
@@ -369,34 +402,36 @@ export function AppsPageLayout({
               floating; the vertical padding around the band is free to move, these two
               are not.
             */}
-            <Stack gap="md" data-apps-chrome="band">
-              {hasRail && (
-                <div className={classes.railDrawerTrigger} data-apps-chrome="drawer-trigger">
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    leftSection={<IconMenu2 size={16} />}
-                    onClick={drawer.open}
-                  >
-                    App sections
-                  </Button>
-                </div>
-              )}
-              {hasHeader &&
-                bounded(
-                  <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
-                    <Stack gap={4} style={{ minWidth: 0 }}>
-                      {title && <Title order={2}>{title}</Title>}
-                      {subtitle && (
-                        <Text c="dimmed" size="sm">
-                          {subtitle}
-                        </Text>
-                      )}
-                    </Stack>
-                    {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
-                  </Group>
+            <div className={hasHeader ? undefined : classes.bandBare}>
+              <Stack gap="md" data-apps-chrome="band">
+                {hasRail && (
+                  <div className={classes.railDrawerTrigger} data-apps-chrome="drawer-trigger">
+                    <Button
+                      variant="default"
+                      size="compact-sm"
+                      leftSection={<IconMenu2 size={16} />}
+                      onClick={drawer.open}
+                    >
+                      App sections
+                    </Button>
+                  </div>
                 )}
-            </Stack>
+                {hasHeader &&
+                  bounded(
+                    <Group justify="space-between" align="flex-end" wrap="nowrap" gap="md">
+                      <Stack gap={4} style={{ minWidth: 0 }}>
+                        {title && <Title order={2}>{title}</Title>}
+                        {subtitle && (
+                          <Text c="dimmed" size="sm">
+                            {subtitle}
+                          </Text>
+                        )}
+                      </Stack>
+                      {actions && <div style={{ flexShrink: 0 }}>{actions}</div>}
+                    </Group>
+                  )}
+              </Stack>
+            </div>
 
             {/*
               The BODY, optionally capped. 🔴 THE CAP IS HERE, INSIDE THE `Stack gap="xl"`,
@@ -438,6 +473,7 @@ export function AppsPageLayout({
             currentPath={router.pathname}
             onNavigate={drawer.close}
           />
+          {railFooter?.({ collapsed: false })}
         </Drawer>
       )}
     </Container>

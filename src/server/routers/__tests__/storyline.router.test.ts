@@ -16,6 +16,10 @@ const { getBlockedPairIds, hiddenUsersCached } = vi.hoisted(() => ({
   getBlockedPairIds: vi.fn(),
   hiddenUsersCached: vi.fn(),
 }));
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   // Straight through to the origin.
@@ -44,7 +48,8 @@ const r = dbMock.dbRead;
 function callerFor(
   userId: number,
   permissions: string[] = ['storylines'],
-  user: Record<string, unknown> = {}
+  user: Record<string, unknown> = {},
+  features: Record<string, boolean> = {}
 ) {
   return storylineRouter.createCaller({
     user: {
@@ -62,7 +67,7 @@ function callerFor(
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
-    features: { canViewNsfw: true, isGreen: false },
+    features: { canViewNsfw: true, isGreen: false, ...features },
     track: { action: vi.fn(() => Promise.resolve(true)) },
   } as never);
 }
@@ -80,7 +85,19 @@ const xStory = {
   moderatorNsfwLevel: null,
   createdAt: new Date('2026-10-01'),
   user: { id: OWNER, username: 'owner', ...notBanned },
-  chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.X } }],
+  chapters: [
+    {
+      id: 1,
+      postId: 101,
+      removedAt: null,
+      post: {
+        nsfwLevel: NsfwLevel.X,
+        publishedAt: new Date(0),
+        tosViolation: false,
+        user: { bannedAt: null, deletedAt: null },
+      },
+    },
+  ],
   collaborators: [],
 };
 
@@ -117,7 +134,7 @@ describe('storyline router: a story outside the reader’s level serves nothing 
         postId: 102,
         depth: 1,
         // A PG chapter deep inside the X story.
-        post: { nsfwLevel: NsfwLevel.PG },
+        post: { nsfwLevel: NsfwLevel.PG, tosViolation: false, user: notBanned },
         storyline: { ...xStory, user: notBanned },
       },
     ] as never);
@@ -156,7 +173,19 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
       maxNsfwLevel: NsfwLevel.R,
-      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     } as never);
     r.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10, depth: 1 } as never);
     r.$queryRaw.mockResolvedValue([
@@ -185,6 +214,26 @@ describe('storyline router: chapters by people the reader blocked or hid', () =>
     getBlockedPairIds.mockResolvedValue([AUTHOR]);
     expect(await pathTombstones()).toEqual([null, 'unavailable']);
     expect(getBlockedPairIds).toHaveBeenCalledWith(READER);
+  });
+});
+
+// A profile's Storylines tab is this feed narrowed to one owner, under the feed's own gates.
+describe("storyline router: the feed narrowed to one owner's storylines", () => {
+  const ownerClauses = async (input: { userId?: number }) => {
+    r.$queryRaw.mockReset();
+    r.$queryRaw.mockResolvedValue([] as never);
+    await callerFor(READER).getInfinite({ filter: 'all', sort: 'newest', ...input });
+    const [strings, ...values] = r.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    const composed = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    return (composed.sql.match(/st\."userId" = \?/g) ?? []).length;
+  };
+
+  it('adds the owner to the feed query, and only when asked', async () => {
+    const without = await ownerClauses({});
+    expect(await ownerClauses({ userId: OWNER })).toBe(without + 1);
   });
 });
 
@@ -236,7 +285,19 @@ describe('storyline router: who may call the engagement procedures', () => {
     dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({ storylineId: 10 } as never);
     r.storyline.findUnique.mockResolvedValue({
       ...xStory,
-      chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: NsfwLevel.PG,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     } as never);
     dbMock.dbWrite.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 2 } as never);
     await callerFor(READER).trackBranchChoice({
@@ -315,6 +376,8 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
 
   beforeEach(() => {
     w.storyline.findUnique.mockResolvedValue(xStory as never);
+    // The spark read: this storyline was not started from an image.
+    r.storyline.findUnique.mockResolvedValue({ sparkImage: null } as never);
     r.$queryRaw.mockResolvedValue([
       { depth: 0, userId: OWNER, nsfwLevel: NsfwLevel.X, ...shownChapter },
       { depth: 1, userId: AUTHOR, nsfwLevel: NsfwLevel.PG, ...shownChapter },
@@ -324,6 +387,7 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
   it('gives the owner the chapter levels', async () => {
     await expect(callerFor(OWNER).getChapterLevels({ id: 10 })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.X,
+      sparkNsfwLevel: null,
       chapterLevels: [NsfwLevel.PG],
     });
   });
@@ -394,5 +458,27 @@ describe('storyline router: moderating a title', () => {
       code: 'BAD_REQUEST',
     });
     expect(dbMock.dbWrite.storyline.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('storyline router: starting a story from an image', () => {
+  const start = (features: Record<string, boolean>) =>
+    callerFor(OWNER, ['storylines'], {}, features).create({
+      title: 'A story',
+      maxNsfwLevel: NsfwLevel.R,
+      sparkImageId: 77,
+    });
+
+  it('refuses a spark without the remixGallery flag, before reading the image', async () => {
+    await expect(start({ remixGallery: false })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.image.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.storyline.create).not.toHaveBeenCalled();
+  });
+
+  it('passes a spark to the service with the flag', async () => {
+    // No such image, so the service's own check refuses it: the router let it through.
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(null as never);
+    await expect(start({ remixGallery: true })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
   });
 });

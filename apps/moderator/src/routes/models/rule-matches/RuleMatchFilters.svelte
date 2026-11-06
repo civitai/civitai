@@ -66,8 +66,8 @@
 <div class="flex flex-col gap-1.5">
   <TriageFilterChips groups={[modeGroup]} selectionParam={SELECTION} />
   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-    <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
-    <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+    <TriageFilterChips status={statusGroup} selectionParam={SELECTION} />
+    <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
     {#if rules.length || filters.rule !== null}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger>

@@ -61,6 +61,21 @@ describe('createTrustedDomainRegistry', () => {
     });
   });
 
+  describe('matchesOrigin (first-party OAuth origin)', () => {
+    it('requires https on a registry host; always-trust hosts keep any scheme', async () => {
+      const reg = createTrustedDomainRegistry({
+        load: async () => rows(['moderator.civitai.com', false], ['civitaic.com', true]),
+        alwaysTrustHosts: ['localhost'],
+      });
+      expect(await reg.matchesOrigin('https://moderator.civitai.com')).toBe(true);
+      expect(await reg.matchesOrigin('http://moderator.civitai.com')).toBe(false);
+      expect(await reg.matchesOrigin('http://pr-1.civitaic.com')).toBe(false);
+      expect(await reg.matchesOrigin('http://localhost:5173')).toBe(true);
+      expect(await reg.matchesOrigin('https://evil.com')).toBe(false);
+      expect(await reg.matchesOrigin('not a url')).toBe(false);
+    });
+  });
+
   describe('ownedOriginCheck (redirect guard — registry ∪ owned-eTLD+1 backstop)', () => {
     it('allows registered hosts, owned-domain subdomains via the backstop, and dev loopback', async () => {
       const reg = createTrustedDomainRegistry({

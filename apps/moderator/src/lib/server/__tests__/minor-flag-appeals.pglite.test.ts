@@ -24,6 +24,10 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../cache', () => ({ createCache: () => ({ get: vi.fn(), bust: vi.fn() }) }));
+// Distinct bases, so the .com face link is seen to take the .com one.
+vi.mock('$env/dynamic/private', () => ({
+  env: { CIVITAI_APP_URL: 'https://com.test', CIVITAI_LINK_URL: 'https://red.test' },
+}));
 
 const { getMinorFlagAppealsForReview, getMinorFlagAppealGroups } = await import(
   '../minor-hash.service'
@@ -36,13 +40,13 @@ CREATE TABLE "Model" (
   "status" TEXT NOT NULL DEFAULT 'Published', "type" TEXT NOT NULL DEFAULT 'LORA',
   "minor" BOOLEAN NOT NULL DEFAULT FALSE, "poi" BOOLEAN NOT NULL DEFAULT FALSE,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT '2026-01-01', "meta" JSONB,
-  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
+  "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "sfwName" TEXT, "sfwCoverImageId" INTEGER
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
   "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Pending',
   "appealMessage" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMPTZ NOT NULL,
-  "category" TEXT
+  "category" TEXT, "context" JSONB
 );
 CREATE TABLE "ModelVersion" (
   "id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER, "baseModel" TEXT NOT NULL,
@@ -193,6 +197,48 @@ const ids = async (
   });
   return items.map((i) => i.modelId);
 };
+
+describe('civitai.com face', () => {
+  it("gives each row its model's .com face, or null when the model has none", async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id","url","nsfwLevel") VALUES (900, 'com-cover', 4), (901, 'other-cover', 1)`
+    );
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com one', "sfwCoverImageId" = 900 WHERE id = 1`
+    );
+    await db.query(`UPDATE "Model" SET "sfwName" = 'com two' WHERE id = 2`);
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com five', "sfwCoverImageId" = 901 WHERE id = 5`
+    );
+    await db.query(
+      `UPDATE "Model" SET "sfwName" = 'com six', "sfwCoverImageId" = 999 WHERE id = 6`
+    );
+    // A cover id with the face off shows no face.
+    await db.query(`UPDATE "Model" SET "sfwCoverImageId" = 900 WHERE id = 3`);
+
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    const face = (id: number) => items.find((i) => i.modelId === id)?.comFace;
+
+    expect(face(1)).toEqual({
+      name: 'com one',
+      url: 'https://com.test/models/1',
+      cover: { id: 900, url: 'com-cover', type: 'image', nsfwLevel: 4 },
+      coverPicked: true,
+    });
+    expect(face(2)).toEqual({
+      name: 'com two',
+      url: 'https://com.test/models/2',
+      cover: null,
+      coverPicked: false,
+    });
+    // Two covers in one page: each model gets its own.
+    expect(face(5)?.cover).toEqual({ id: 901, url: 'other-cover', type: 'image', nsfwLevel: 1 });
+    // A picked cover whose image is gone.
+    expect(face(6)).toMatchObject({ name: 'com six', cover: null, coverPicked: true });
+    expect(face(3)).toBeNull();
+    expect(items.find((i) => i.modelId === 1)).not.toHaveProperty('sfwName');
+  });
+});
 
 describe('source filter', () => {
   it.each([
@@ -347,7 +393,7 @@ describe('facet groups', () => {
     const groups = await getMinorFlagAppealGroups({});
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
     expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2 });
-    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3 });
+    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3, lock: 0 });
   });
 
   it('honours the search', async () => {
@@ -797,6 +843,52 @@ describe('latest scan', () => {
     ]);
     expect(await scanFor(3)).toBeNull();
     expect(await scanFor(1)).toBeNull();
+  });
+});
+
+// An owner's request to review a locked setting, on a model with no flag.
+describe('lock review rows', () => {
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" ("id","name","userId","minor","poi","lockedProperties") VALUES
+        (9, 'model 9', 10, false, false, '{nsfw,tags}');
+      INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","context") VALUES
+        (70, 10, 'Model', 9, 'Pending', '2026-10-08',
+         '{"kind":"lock-review","locks":["nsfw"]}'::jsonb);
+    `);
+  });
+
+  it('list under Locked setting and All, never under a flag', async () => {
+    expect(await ids({ flag: 'lock' })).toEqual([9]);
+    expect(await ids({ flag: 'all' })).toContain(9);
+    expect(await ids({ flag: 'minor' })).not.toContain(9);
+    expect(await ids({ flag: 'poi' })).not.toContain(9);
+  });
+
+  it('carry the settings asked about, and only on the lock review', async () => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 9)).toMatchObject({
+      lockReview: ['nsfw'],
+      lockedProperties: ['nsfw', 'tags'],
+    });
+    expect(items.find((i) => i.modelId === 1)!.lockReview).toBeNull();
+  });
+
+  it("are not counted as the owner's past flag appeals", async () => {
+    await db.exec(`INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","context") VALUES
+      (71, 10, 'Model', 9, 'Rejected', '2026-09-01', '{"kind":"lock-review","locks":["nsfw"]}'::jsonb)`);
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 1)!.pastAppeals).toEqual({
+      approved: 0,
+      rejected: 0,
+      void: 0,
+      pending: 1,
+    });
+  });
+
+  it('are counted under Locked setting in the facets', async () => {
+    const f = appealFacets(await getMinorFlagAppealGroups({}), DEFAULT_APPEAL_FILTERS);
+    expect(f.flag).toMatchObject({ all: 8, lock: 1, minor: 3, poi: 3 });
   });
 });
 

@@ -82,7 +82,7 @@ export type CrucibleEntryGridProps = {
    * viewer instead of the image detail.
    */
   status: CrucibleStatus;
-  /** Moderators only, while the crucible runs. */
+  /** Moderators and the crucible's owner, while it runs. */
   onRemoveEntry?: (entry: CrucibleEntryData) => void;
   /** The viewer taking back one of their own entries, while the crucible runs. */
   onWithdrawEntry?: (entry: CrucibleEntryData) => void;
@@ -142,8 +142,9 @@ export function CrucibleEntryGrid({
   const gridOrder = [...userEntries, ...displayEntries];
   const openableImageIds = gridOrder.filter(canSeeDetails).map((entry) => entry.imageId);
   const hiddenEntries = gridOrder.filter((entry) => !canSeeDetails(entry));
-  const hiddenMedia: CrucibleEntryMedia[] = hiddenEntries.map(({ id, image }) => ({
+  const hiddenMedia: CrucibleEntryMedia[] = hiddenEntries.map(({ id, imageId, image }) => ({
     entryId: id,
+    imageId,
     url: image.url,
     name: image.name,
     type: image.type,

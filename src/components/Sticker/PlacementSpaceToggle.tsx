@@ -1,4 +1,4 @@
-import { Anchor, Group, Loader, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Anchor, Group, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
@@ -19,6 +19,11 @@ const COPY: Record<Level, { label: string; inherit: string }> = {
   },
 };
 
+/** The query inputs, shared with callers that prefetch them so the cache keys cannot drift. */
+export const spaceRowInput = (level: Level, entityId: number) =>
+  ({ surface: 'sticker', entityType: level, entityId } as const);
+export const STICKER_PRICE_RANGE_INPUT = { surface: 'sticker' } as const;
+
 /**
  * Per-post and per-image override of who may place stickers here.
  *
@@ -38,14 +43,12 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
     data: row,
     isPending: rowPending,
     isError: rowFailed,
-  } = trpc.placement.getSpaceRow.useQuery(
-    { surface: 'sticker', entityType: level, entityId },
-    { enabled: !!features.stickerPlacement }
-  );
-  const { data: range } = trpc.placement.getPriceRange.useQuery(
-    { surface: 'sticker' },
-    { enabled: !!features.stickerPlacement }
-  );
+  } = trpc.placement.getSpaceRow.useQuery(spaceRowInput(level, entityId), {
+    enabled: !!features.stickerPlacement,
+  });
+  const { data: range } = trpc.placement.getPriceRange.useQuery(STICKER_PRICE_RANGE_INPUT, {
+    enabled: !!features.stickerPlacement,
+  });
 
   const [mode, setMode] = useState<string>('inherit');
   const [price, setPrice] = useState<number | ''>('');
@@ -74,7 +77,6 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
   });
 
   if (!features.stickerPlacement) return null;
-  if (rowPending) return <Loader size="xs" />;
   // `row` is undefined after a failed read exactly as it is for a level with no
   // row of its own, and the control cannot tell them apart. Showing `inherit`
   // means one click clears or overwrites a setting the creator never saw.
@@ -114,6 +116,10 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
       </Text>
       <SegmentedControl
         size="xs"
+        // While the row loads this renders the same layout as the settled default, disabled and
+        // with its caption hidden but still taking space, so a menu opened on a cold cache does
+        // not change size when the row arrives.
+        disabled={rowPending}
         value={mode}
         onChange={(value) => {
           setMode(value);
@@ -128,7 +134,7 @@ export function PlacementSpaceToggle({ level, entityId }: { level: Level; entity
       />
 
       {mode === 'inherit' ? (
-        <Text size="xs" c="dimmed">
+        <Text size="xs" c="dimmed" style={rowPending ? { visibility: 'hidden' } : undefined}>
           {COPY[level].inherit}
         </Text>
       ) : (

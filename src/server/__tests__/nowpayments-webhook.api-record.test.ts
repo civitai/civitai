@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 /**
  * The NOWPayments webhook runs into the real processDeposit and the real retry sweep. What they
@@ -9,14 +10,22 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
  * again must credit and notify once.
  */
 
-const { caller, grantBuzzPurchase, getTransactionByExternalId, signalSend, createNotification } =
-  vi.hoisted(() => ({
-    caller: { validateWebhookEvent: vi.fn(), getPaymentStatus: vi.fn(), lookupPayment: vi.fn() },
-    grantBuzzPurchase: vi.fn(),
-    getTransactionByExternalId: vi.fn(),
-    signalSend: vi.fn(),
-    createNotification: vi.fn(),
-  }));
+const {
+  caller,
+  grantBuzzPurchase,
+  getTransactionByExternalId,
+  signalSend,
+  createNotification,
+  handGrants,
+} = vi.hoisted(() => ({
+  caller: { validateWebhookEvent: vi.fn(), getPaymentStatus: vi.fn(), lookupPayment: vi.fn() },
+  grantBuzzPurchase: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  signalSend: vi.fn(),
+  createNotification: vi.fn(),
+  // Tips into the user's yellow account; the only hand grants these tests need.
+  handGrants: [] as { description: string; fromAccountId: number }[],
+}));
 
 vi.mock('~/env/server', () => ({
   env: {
@@ -35,6 +44,28 @@ vi.mock('~/server/services/buzz.service', () => ({
   grantBuzzPurchase,
   getTransactionByExternalId,
   getMultipliersForUser: vi.fn(async () => ({ purchasesMultiplier: 1 })),
+  buzzService: {
+    getAccountTransactions: vi.fn(
+      async (
+        userId: number,
+        { accountType, query }: { accountType: string; query: { type: number } }
+      ) => ({
+        cursor: null,
+        transactions:
+          accountType === 'yellow' && query.type === TransactionType.Tip
+            ? handGrants.map((g) => ({
+                ...g,
+                type: 'Tip',
+                toAccountId: userId,
+                toAccountType: 'User',
+                fromAccountType: 'User',
+                amount: 9500,
+                date: new Date().toISOString(),
+              }))
+            : [],
+      })
+    ),
+  },
 }));
 vi.mock('~/server/services/referral.service', () => ({
   recordBuzzPurchaseKickback: vi.fn(async () => undefined),
@@ -156,6 +187,7 @@ beforeEach(() => {
   dbMock.dbRead.cryptoDeposit.findUnique.mockImplementation(findUnique);
   dbMock.dbWrite.cryptoDeposit.findUnique.mockImplementation(findUnique);
   getTransactionByExternalId.mockReset().mockResolvedValue(null);
+  handGrants.length = 0;
   dbMock.dbRead.cryptoDeposit.findMany.mockImplementation(
     async ({ where, take }: { where: Row; take?: number }) =>
       [...deposits.values()]
@@ -636,5 +668,60 @@ describe('nowpayments webhook: telling the user', () => {
     expect(grantedIds).toEqual(new Set([`np-deposit-${PAYMENT_ID}`]));
     expect(signalSend).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('nowpayments webhook: a payment support already paid by hand', () => {
+  beforeEach(() => {
+    handGrants.push({ description: `Crypto deposit ${PAYMENT_ID} not credited`, fromAccountId: 0 });
+  });
+
+  it('holds the deposit instead of crediting it, and tells the user nothing was credited', async () => {
+    const res = await deliver(ipn());
+
+    expect(res._status()).toBe(200);
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'held', buzzCredited: null });
+    expect(signalSend.mock.calls.map(([call]) => call.data.status)).toEqual(['held']);
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        message: 'Deposit held: a hand grant cites this payment',
+        paymentId: PAYMENT_ID,
+      })
+    );
+  });
+
+  it('keeps it held through redelivery, the retry sweep and the stuck-deposit job', async () => {
+    await deliver(ipn());
+    await deliver(ipn());
+    await retryFailedDeposits();
+    caller.getPaymentStatus.mockClear();
+    await notifyStuckCryptoDepositsJob.run({}).result;
+
+    expect(grantBuzzPurchase).not.toHaveBeenCalled();
+    expect(deposits.get(ROW)).toMatchObject({ status: 'held' });
+    expect(signalSend).toHaveBeenCalledTimes(1);
+    expect(caller.getPaymentStatus).not.toHaveBeenCalled();
+  });
+
+  it('spends no lookup on a held deposit delivered again', async () => {
+    await deliver(ipn());
+    caller.lookupPayment.mockClear();
+
+    const res = await deliver(ipn());
+
+    expect(res._status()).toBe(200);
+    expect(caller.lookupPayment).not.toHaveBeenCalled();
+  });
+
+  it('credits as usual when the citing grant came from another user', async () => {
+    handGrants[0].fromAccountId = 77;
+
+    await deliver(ipn());
+
+    expect(grantedIds).toEqual(new Set([`np-deposit-${PAYMENT_ID}`]));
+    expect(deposits.get(ROW)).toMatchObject({ status: 'finished' });
   });
 });

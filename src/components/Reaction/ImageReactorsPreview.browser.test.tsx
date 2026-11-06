@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcUtils from '~/utils/trpc';
 import type * as UserHoverCardModule from '~/components/UserAvatar/UserHoverCard';
@@ -59,6 +59,13 @@ const renderBar = () =>
 
 beforeEach(() => {
   mocks.useQuery.mockClear();
+  // Only Date is faked so the link's month is pinned; timers the UI waits on keep running.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-26T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 async function expectOpenList() {
@@ -71,7 +78,7 @@ async function expectOpenList() {
   expect(page.getByText('[deleted]').element().getAttribute('data-links')).toBe('false');
   expect(
     page.getByRole('link', { name: 'View all in Creator Studio' }).element().getAttribute('href')
-  ).toBe(`${CREATOR_STUDIO_URL}/analytics/content/image/${IMAGE_ID}`);
+  ).toBe(`${CREATOR_STUDIO_URL}/analytics/content/image/${IMAGE_ID}?month=2026-10`);
 }
 
 describe('owner on a hover-capable pointer', () => {

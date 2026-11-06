@@ -237,11 +237,16 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
         dbRow({ manifest: { name: 'my-app', contentRating: 'pg13' }, ...request })
       );
+      // Both go-live lookups answer only the columns they SELECT, so a dropped column
+      // (iconId / coverId: the Approve-disabled floor) is seen.
       mockDbRead.appListing.findMany.mockImplementation(async (...a: unknown[]) => {
-        const w = ((a[0] ?? {}) as { where?: Where }).where ?? {};
-        if (isDraftQuery(w)) return found.drafts ?? [];
-        if (isResetQuery(w)) return found.resets ?? [];
-        return [];
+        const args = (a[0] ?? {}) as { where?: Where; select?: Record<string, unknown> };
+        const w = args.where ?? {};
+        const rows = isDraftQuery(w) ? found.drafts : isResetQuery(w) ? found.resets : undefined;
+        const select = args.select;
+        return (rows ?? []).map((r) =>
+          select ? Object.fromEntries(Object.entries(r as object).filter(([k]) => select[k])) : r
+        );
       });
       const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
       return (res!.request as unknown as { approveRating: unknown }).approveRating;
@@ -299,6 +304,57 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
 
     it('nothing the writer would re-rate: null', async () => {
       expect(await approveRatingFor({})).toBeNull();
+    });
+
+    /**
+     * 🔴 `approveFloorMissing` — what the review UI disables Approve on. It must name the SAME
+     * listing `approveRequest` refuses on (the draft, else the reset listing) and the same
+     * predicate's missing set, so Approve is never offered and then refused.
+     */
+    const floorMissingFor = async (found: { drafts?: unknown[]; resets?: unknown[] }) => {
+      await approveRatingFor(found);
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      return (res!.request as unknown as { approveFloorMissing: unknown }).approveFloorMissing;
+    };
+
+    it('🔴 a first-version draft with neither icon nor cover: Approve waits on both', async () => {
+      expect(
+        await floorMissingFor({
+          drafts: [
+            { id: 'apl_draft', slug: 'my-app', userId: SUBMITTER, iconId: null, coverId: null },
+          ],
+        })
+      ).toEqual(['icon', 'cover']);
+    });
+
+    it('🔴 a moderator-RESET listing with no cover is exempt: Approve is NOT disabled', async () => {
+      // Only a first version's draft (never live) is gated; a reset restores a listing that
+      // already went live (operator decision 2026-10-31).
+      expect(
+        await floorMissingFor({
+          resets: [
+            {
+              id: 'apl_reset',
+              appBlockId: 'appblk_1',
+              contentRating: 'r',
+              iconId: 61,
+              coverId: null,
+            },
+          ],
+        })
+      ).toEqual([]);
+    });
+
+    it('a draft with both: nothing missing', async () => {
+      expect(
+        await floorMissingFor({
+          drafts: [{ id: 'apl_draft', slug: 'my-app', userId: SUBMITTER, iconId: 61, coverId: 67 }],
+        })
+      ).toEqual([]);
+    });
+
+    it('an approve that publishes no listing (an update to a live one) is not gated', async () => {
+      expect(await floorMissingFor({})).toEqual([]);
     });
   });
 

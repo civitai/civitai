@@ -769,12 +769,14 @@ export async function setWorkflowDownloadPriority({
 }
 
 function orchestratorErrorMessage(error: unknown) {
-  const { messages } = (
+  const errors =
     typeof error !== 'string' && error
-      ? (error as { errors?: { messages?: string[] } }).errors ?? {}
-      : {}
-  ) as { messages?: string[] };
-  return messages?.length
+      ? (error as { errors?: Record<string, string[]> }).errors
+      : undefined;
+  // The orchestrator keys each error by the request field it concerns; the keys' brackets would fail
+  // `isLikelySafeMessage`, so only the messages are forwarded.
+  const messages = Object.values(errors ?? {}).flat();
+  return messages.length
     ? messages.join(',\n')
     : handleError(error as Parameters<typeof handleError>[0]);
 }

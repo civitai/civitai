@@ -27,6 +27,7 @@
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import { csamReportUrl, entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
+  import { quotedPhrases } from '$lib/quoted-phrases';
     import type { Outcome } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import HoldAuthorCard from './HoldAuthorCard.svelte';
@@ -53,7 +54,6 @@
     holdDecisionEnabled,
     holdEntityHref,
     holdTitle,
-    quotedPhrases,
     type CsamHoldDecision,
   } from './hold-entity';
 

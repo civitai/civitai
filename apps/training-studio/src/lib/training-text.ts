@@ -16,6 +16,12 @@ export function textCheckFailureStatus(err: TrainingTextCheckError): number {
   return err.status === 401 || err.status === 403 ? err.status : 502;
 }
 
-/** Runs the main app's trigger word check over one run. Throws `TrainingTextRefusedError` on a
- *  refusal, and any other error when the check could not run, so nothing is submitted unchecked. */
-export type TrainingTextCheck = (input: { triggerWord: string }) => Promise<void>;
+/** What the main app's check is asked about: a run's trigger word, or the prompt (and starting
+ *  image) of an edit the Studio is about to generate — which gets the generator's own prompt check. */
+export type TrainingTextCheckInput =
+  | { triggerWord: string }
+  | { editPrompt: string; inputImages?: string[] };
+
+/** Runs the main app's check over one input. Throws `TrainingTextRefusedError` on a refusal, and any
+ *  other error when the check could not run, so nothing is submitted unchecked. */
+export type TrainingTextCheck = (input: TrainingTextCheckInput) => Promise<void>;

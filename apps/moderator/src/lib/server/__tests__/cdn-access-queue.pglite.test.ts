@@ -5,6 +5,8 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
+import type * as Axiom from '../axiom';
+import type * as ProfilePictureCache from '../profile-picture-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /** What this app hands the main app's takedown CDN sync, on the committed queue function. */
@@ -35,20 +37,28 @@ vi.mock('../redis', () => ({
   getRedis: () => ({ del: vi.fn(async () => 0) }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
 }));
-vi.mock('../profile-picture-cache', () => ({
-  profilePictureUserIds: vi.fn(async () => []),
+vi.mock('../profile-picture-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ProfilePictureCache>()),
   bustProfilePictures: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
+vi.mock('../clickhouse', () => ({
+  getClickhouse: () => ({ insert: vi.fn(async () => undefined) }),
+}));
+vi.mock('../axiom', async (importOriginal) => ({
+  ...(await importOriginal<typeof Axiom>()),
+  logAxiomError: vi.fn(async () => undefined),
+}));
 vi.mock('../storage', () => ({
   getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
 }));
 
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
-const { deleteImagesByIds } = await import('../image-deletion');
+const { deleteImageRows } = await import('../image-deletion');
+const { moderateArticle } = await import('../article-moderation');
 
 const CDN_ACCESS_MIGRATION = path.resolve(
   __dirname,
@@ -85,8 +95,13 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
+CREATE TABLE "CsamReport" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
+  "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
+);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "profilePictureId" INTEGER);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -101,6 +116,16 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
+CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
+CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
+CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
+CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "CommentV3" ("id" INTEGER, "entityType" TEXT, "entityId" INTEGER, "userId" INTEGER, "deletedAt" TIMESTAMP(3));
+CREATE TABLE "Thread" (
+  "id" INTEGER, "articleId" INTEGER, "parentThreadId" INTEGER, "rootThreadId" INTEGER,
+  "commentId" INTEGER, "metadata" JSONB
+);
+CREATE TABLE "CommentV2" ("id" INTEGER, "userId" INTEGER, "threadId" INTEGER);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
@@ -108,12 +133,25 @@ const OWNER = 7;
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 let db: PGlite;
+let statements: { sql: string; connection: number }[] = [];
 
 beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(readFileSync(CDN_ACCESS_MIGRATION, 'utf8'));
-  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+  statements = [];
+  let active = 0;
+  // Each statement with the connection it ran on: PGlite is one session, so only the connection id
+  // tells a transaction's statements from one run beside it on the pool.
+  const recording = {
+    query: (sql: string, params: unknown[]) => {
+      statements.push({ sql, connection: active });
+      return db.query(sql, params);
+    },
+  } as unknown as PGlite;
+  dbHandle.current = new Kysely({
+    dialect: pgliteDialect(recording, { onQuery: (connection) => (active = connection) }),
+  });
 });
 
 afterEach(async () => {
@@ -142,28 +180,206 @@ const queueRow = async (type: string, id: number) =>
   ).rows[0];
 
 describe('a moderator delete', () => {
-  it('queues the url, its owner and whether it was flagged for CSAM review', async () => {
+  it('queues the url and owner of a deleted image, and nothing for one a CSAM review keeps', async () => {
     await blockedImage(1, 'csam');
     await blockedImage(2);
+    // Another owner's: image 1 puts its own owner's account on hold.
+    await db.query(`UPDATE "Image" SET "userId" = $1 WHERE id = 2`, [OWNER + 1]);
 
-    await deleteImagesByIds([1, 2]);
+    await (dbHandle.current as Kysely<never>)
+      .transaction()
+      .execute((trx) => deleteImageRows(trx as never, [1, 2]));
 
     const payload = async (id: number) => {
       const { seq: _seq, ...rest } = (await queueRow('CdnAccessSync', id))?.data ?? {};
       return rest;
     };
-    expect(await payload(1)).toEqual({
-      url: uuid(1),
-      userId: OWNER,
-      csamReview: true,
-      moderatorDelete: true,
-    });
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
     expect(await payload(2)).toEqual({
       url: uuid(2),
-      userId: OWNER,
+      userId: OWNER + 1,
       csamReview: false,
       moderatorDelete: true,
     });
+  });
+});
+
+const failQueueingFor = (imageId: number) =>
+  db.exec(`
+    CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
+    RETURNS void AS $$
+    BEGIN
+      IF entity_id = ${imageId} THEN RAISE EXCEPTION 'queue unavailable'; END IF;
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+      VALUES (entity_id, entity_type::"EntityType", 'CdnAccessSync'::"JobQueueType", payload)
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
+        SET "data" = COALESCE("JobQueue"."data", '{}'::jsonb) || EXCLUDED."data";
+    END; $$ LANGUAGE plpgsql;
+  `);
+const connect = (imageId: number, entityId: number, entityType = 'Article') =>
+  db.query(
+    `INSERT INTO "ImageConnection" ("imageId", "entityId", "entityType") VALUES ($1, $2, $3)`,
+    [imageId, entityId, entityType]
+  );
+/** The connection `begin` ran on, and the connections of the statements matching `pattern`. */
+const connectionsOf = (pattern: RegExp) => ({
+  transaction: statements.find((s) => s.sql.trim().toLowerCase() === 'begin')?.connection,
+  matching: statements.filter((s) => pattern.test(s.sql)).map((s) => s.connection),
+});
+const failQueueing = () =>
+  db.exec(`
+    CREATE OR REPLACE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
+    RETURNS void AS $$ BEGIN RAISE EXCEPTION 'queue unavailable'; END; $$ LANGUAGE plpgsql;
+  `);
+const imageExists = async (id: number) =>
+  (await db.query(`SELECT 1 FROM "Image" WHERE id = $1`, [id])).rows.length === 1;
+const articleWithCover = async (articleId: number, coverId: number) => {
+  await blockedImage(coverId);
+  await db.query(`INSERT INTO "Article" ("id", "coverId", "userId") VALUES ($1, $2, $3)`, [
+    articleId,
+    coverId,
+    OWNER,
+  ]);
+  await db.query(
+    `INSERT INTO "ImageConnection" ("imageId", "entityId", "entityType") VALUES ($1, $2, 'Article')`,
+    [coverId, articleId]
+  );
+};
+const articleExists = async (id: number) =>
+  (await db.query(`SELECT 1 FROM "Article" WHERE id = $1`, [id])).rows.length === 1;
+
+describe('a delete whose follow-up cannot be queued', () => {
+  it('deletes an article and queues its orphaned cover', async () => {
+    await articleWithCover(10, 1);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await articleExists(10)).toBe(false);
+    expect(await imageExists(1)).toBe(false);
+    expect((await queueRow('CdnAccessSync', 1))?.data).toMatchObject({
+      url: uuid(1),
+      moderatorDelete: true,
+    });
+  });
+
+  it('deletes the banner of a deleted article with it', async () => {
+    await articleWithCover(10, 1);
+    await blockedImage(3);
+    await db.query(`UPDATE "Article" SET "bannerId" = 3 WHERE id = 10`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await imageExists(3)).toBe(false);
+    expect((await queueRow('CdnAccessSync', 3))?.data).toMatchObject({
+      url: uuid(3),
+      moderatorDelete: true,
+    });
+  });
+
+  it("keeps a deleted article's cover that is still another article's banner", async () => {
+    await articleWithCover(10, 1);
+    await db.query(`INSERT INTO "Article" ("id", "userId", "bannerId") VALUES (12, $1, 1)`, [
+      OWNER,
+    ]);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await articleExists(10)).toBe(false);
+    expect(await imageExists(1)).toBe(true);
+  });
+
+  it('fails an article delete and keeps the article, its connection and its cover', async () => {
+    await articleWithCover(10, 1);
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBe(true);
+
+    await articleWithCover(11, 2);
+    await failQueueing();
+
+    expect(await moderateArticle({ action: 'delete', articleId: 11, userId: 2 })).toMatchObject({
+      ok: false,
+    });
+    expect(await articleExists(11)).toBe(true);
+    expect(await imageExists(2)).toBe(true);
+    expect(
+      (await db.query(`SELECT 1 FROM "ImageConnection" WHERE "entityId" = 11`)).rows
+    ).toHaveLength(1);
+    expect((await queueRow('CdnAccessSync', 2))?.data?.moderatorDelete).toBeUndefined();
+  });
+});
+
+describe('an article delete in one transaction', () => {
+  it('rolls back the cover already queued when a later image cannot be queued', async () => {
+    await articleWithCover(10, 1);
+    await blockedImage(2);
+    await connect(2, 10);
+    await failQueueingFor(2);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toMatchObject({
+      ok: false,
+    });
+
+    expect(await articleExists(10)).toBe(true);
+    expect(await imageExists(1)).toBe(true);
+    expect(await imageExists(2)).toBe(true);
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
+    const { transaction, matching } = connectionsOf(/queue_cdn_access_sync/);
+    expect(transaction).toBeDefined();
+    expect(matching.length).toBeGreaterThan(0);
+    expect(new Set(matching)).toEqual(new Set([transaction]));
+  });
+
+  it('reads the avatars on the transaction', async () => {
+    await articleWithCover(10, 1);
+    await db.query(`INSERT INTO "User" ("id", "profilePictureId") VALUES (5, 1)`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    const { transaction, matching } = connectionsOf(/from "User"/);
+    expect(matching.length).toBeGreaterThan(0);
+    expect(new Set(matching)).toEqual(new Set([transaction]));
+  });
+
+  it('fails and changes nothing when the avatar read fails', async () => {
+    await articleWithCover(10, 1);
+    await db.exec(`ALTER TABLE "User" RENAME TO "UserUnavailable"`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toMatchObject({
+      ok: false,
+    });
+
+    expect(await articleExists(10)).toBe(true);
+    expect(await imageExists(1)).toBe(true);
+    expect((await queueRow('CdnAccessSync', 1))?.data?.moderatorDelete).toBeUndefined();
+  });
+
+  it('deletes an orphaned content image and keeps one another entity still uses', async () => {
+    await articleWithCover(10, 1);
+    await blockedImage(2);
+    await connect(2, 10);
+    await blockedImage(3);
+    await connect(3, 10);
+    await connect(3, 99, 'Bounty');
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await imageExists(2)).toBe(false);
+    expect(await imageExists(3)).toBe(true);
+    const { transaction, matching } = connectionsOf(/not exists \(select "ImageConnection"/i);
+    expect(matching).toHaveLength(1);
+    expect(matching[0]).toBe(transaction);
   });
 });
 

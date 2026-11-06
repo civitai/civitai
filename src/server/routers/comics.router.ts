@@ -1,6 +1,9 @@
+import { TRPCError } from '@trpc/server';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
+import { COMIC_ON_RED_ERROR } from '~/utils/comic-helpers';
 import {
   router,
   protectedProcedure,
@@ -11,12 +14,7 @@ import {
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  throwOnBlockedCommentContent,
-  throwOnBlockedUserContent,
-} from '~/server/services/blocklist.service';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import {
@@ -44,6 +42,11 @@ import {
   ImageIngestionStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
+import {
+  isComicProjectHidden,
+  isPanelTainted,
+  readerPanelsWhere,
+} from '~/server/services/comics/chapter-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
@@ -67,13 +70,12 @@ import {
   WorkflowData,
 } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
-import { rateLimit } from '~/server/middleware.trpc';
-import { commentRateLimits } from '~/server/schema/comment.schema';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -89,8 +91,6 @@ import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { commentV2Select } from '~/server/selectors/commentv2.selector';
-import { keepOwnReactorIds } from '~/server/utils/reaction-identity';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -121,11 +121,20 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
+import {
+  assertGenerationInputsUsable,
+  assertGenerationInputUrlsUsable,
+  assertStoredImageUrlsUnblocked,
+} from '~/server/services/generation-input-urls';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Prisma } from '@prisma/client';
-import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 // Feature flag gate — all procedures require the comicCreator flag
 // ALL comic counters come from `ComicProjectMetric` — a Postgres rollup
@@ -172,6 +181,12 @@ const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProx
 // onboarding and MUTE checks every other comment surface has. Without it a muted account could comment
 // on a chapter — the box is hidden client-side, which is presentation, not a gate.
 const comicGuardedProcedure = guardedProcedure.use(comicFlag).use(regionProxyMiddleware);
+// Generation and spend. The restriction is the stored standing rather than the session's, and
+// without `guardedProcedure`'s onboarding and email gates, which comics has never required.
+const comicGenerationProcedure = comicProtectedProcedure.use(async ({ ctx, next }) => {
+  await assertAccountNotRestricted(ctx.user!.id, ctx.user!);
+  return next();
+});
 const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
@@ -459,7 +474,11 @@ const createPanelSchema = z.object({
   prompt: z.string().min(1).max(2000),
   useContext: z.boolean().default(true),
   referencePanelId: z.number().int().optional(),
-  layoutImagePath: z.string().optional(),
+  // Appended to the site origin, so only a bundled layout image may be named.
+  layoutImagePath: z
+    .string()
+    .regex(/^\/images\/comics\/layouts\/[a-z0-9-]+\.png$/)
+    .optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
@@ -717,6 +736,19 @@ async function assertCanGrantEarlyAccess({
   }
 }
 
+/** A reference panel's image goes to the generation, so it must not be blocked. */
+async function assertReferencePanelImageUnblocked(
+  referencePanelId: number | undefined,
+  projectId: number
+) {
+  if (!referencePanelId) return;
+  const panel = await dbRead.comicPanel.findFirst({
+    where: { id: referencePanelId, chapter: { projectId } },
+    select: { imageUrl: true },
+  });
+  if (panel?.imageUrl) await assertStoredImageUrlsUnblocked([panel.imageUrl]);
+}
+
 // Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
@@ -725,21 +757,25 @@ async function getReferenceImages(referenceId: number) {
       name: true,
       images: {
         orderBy: { position: 'asc' },
-        include: { image: { select: { id: true, url: true, width: true, height: true } } },
+        include: {
+          image: { select: { id: true, url: true, width: true, height: true, blockedFor: true } },
+        },
       },
     },
   });
 
   if (!reference) return { referenceName: '', refImages: [] };
-
   return {
     referenceName: reference.name,
-    refImages: reference.images.map((ri) => ({
-      imageId: ri.image.id,
-      url: getEdgeUrl(ri.image.url, { original: true }),
-      width: ri.image.width ?? 512,
-      height: ri.image.height ?? 512,
-    })),
+    // A blocked image is never sent to a generation.
+    refImages: reference.images
+      .filter((ri) => !ri.image.blockedFor)
+      .map((ri) => ({
+        imageId: ri.image.id,
+        url: getEdgeUrl(ri.image.url, { original: true }),
+        width: ri.image.width ?? 512,
+        height: ri.image.height ?? 512,
+      })),
   };
 }
 
@@ -1835,10 +1871,7 @@ export const comicsRouter = router({
               earlyAccessConfig: true,
               earlyAccessEndsAt: true,
               panels: {
-                where: {
-                  status: ComicPanelStatus.Ready,
-                  imageUrl: { not: null },
-                },
+                where: readerPanelsWhere,
                 orderBy: { position: 'asc' },
                 select: {
                   id: true,
@@ -1870,58 +1903,8 @@ export const comicsRouter = router({
         },
       });
 
-      if (!project || project.status === ComicProjectStatus.Deleted) {
+      if (!project || (await isComicProjectHidden(project, ctx.user))) {
         throw throwNotFoundError('Comic not found');
-      }
-
-      // Block NSFW projects on green domain.
-      // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
-      if (
-        ctx.features.isGreen &&
-        project.nsfwLevel !== 0 &&
-        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
-      ) {
-        throw throwNotFoundError('Comic not found');
-      }
-
-      // Block TOS-violated projects for non-owner, non-mod
-      const isOwnerOrModViewer =
-        ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
-      if (project.tosViolation && !isOwnerOrModViewer) {
-        throw throwNotFoundError('Comic not found');
-      }
-
-      // Block projects authored by banned users for non-owner, non-mod.
-      // Banning a user must remove their content from public surfaces;
-      // owners (themselves) and mods can still load it for moderation.
-      if ((project.user as any)?.bannedAt && !isOwnerOrModViewer) {
-        throw throwNotFoundError('Comic not found');
-      }
-
-      // Block projects that have never been published. `publishedAt` is
-      // set the first time *any* chapter publishes — until that happens
-      // the project is unpublished and shouldn't be reachable through the
-      // public reader URL even if SEO/links surface the id. Owners and
-      // mods can still pull it up for review/preview.
-      if (project.publishedAt == null && !isOwnerOrModViewer) {
-        throw throwNotFoundError('Comic not found');
-      }
-
-      // Hide projects authored by hidden/blocked users (or users who blocked
-      // the viewer). Owners and moderators bypass this so a self-blocked or
-      // mod-reviewed project remains reachable.
-      if (!isOwnerOrModViewer) {
-        const [hiddenUserIds, blockedByIds, blockedIds] = await Promise.all([
-          HiddenUsers.getCached({ userId: ctx.user?.id }),
-          BlockedByUsers.getCached({ userId: ctx.user?.id }),
-          BlockedUsers.getCached({ userId: ctx.user?.id }),
-        ]);
-        const excludedUserIds = new Set(
-          [...hiddenUserIds, ...blockedByIds, ...blockedIds].map((u) => u.id)
-        );
-        if (excludedUserIds.has(project.userId)) {
-          throw throwNotFoundError('Comic not found');
-        }
       }
 
       // Check if viewer is the owner or a moderator
@@ -1939,18 +1922,7 @@ export const comicsRouter = router({
       const filteredChapters = project.chapters.filter((ch) => {
         if (ch.panels.length === 0) return false;
         if (ch.status !== ComicChapterStatus.Published && !canViewDrafts) return false;
-        if (!canViewDrafts) {
-          const hasTaintedPanel = ch.panels.some((p) => {
-            const img = p.image;
-            if (!img) return true; // no Image yet — treat as not-yet-clean
-            if (img.tosViolation) return true;
-            if (img.needsReview) return true;
-            if (img.ingestion !== ImageIngestionStatus.Scanned) return true;
-            return false;
-          });
-          if (hasTaintedPanel) return false;
-        }
-        return true;
+        return canViewDrafts || !ch.panels.some(isPanelTainted);
       });
 
       // Public viewers get a 404 if nothing's visible. Owners and mods
@@ -1959,6 +1931,16 @@ export const comicsRouter = router({
       // chapter has been pulled by the moderation gates.
       if (filteredChapters.length === 0 && !canViewDrafts) {
         throw throwNotFoundError('Comic not found');
+      }
+
+      // After every visibility gate, so only a comic red would actually serve gets the red prompt;
+      // anything else still 404s.
+      if (
+        ctx.features.isGreen &&
+        project.nsfwLevel !== 0 &&
+        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
+      ) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: COMIC_ON_RED_ERROR });
       }
 
       // Check early access for chapters that are currently in EA
@@ -2019,6 +2001,7 @@ export const comicsRouter = router({
 
       // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
+      const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
 
       return {
         id: project.id,
@@ -2026,8 +2009,14 @@ export const comicsRouter = router({
         description: project.description,
         nsfwLevel: project.nsfwLevel,
         meta: parseComicProjectMeta(project.meta),
-        coverImage: project.coverImage,
-        heroImage: project.heroImage,
+        coverImage:
+          ctx.features.isGreen && project.coverImage && !passesSfwGate(project.coverImage.nsfwLevel)
+            ? null
+            : project.coverImage,
+        heroImage:
+          ctx.features.isGreen && project.heroImage && !passesSfwGate(project.heroImage.nsfwLevel)
+            ? null
+            : project.heroImage,
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
@@ -2084,6 +2073,12 @@ export const comicsRouter = router({
         .optional()
     )
     .query(async ({ ctx, input }) => {
+      await assertGenerationInputsUsable({
+        urls: [input?.sourceImage?.url, ...(input?.userReferenceImages ?? []).map((r) => r.url)],
+        userId: ctx.user.id,
+        entry: 'comicsCostEstimate',
+        isApiCaller: ctx.apiKeyId != null,
+      });
       try {
         const token = await getOrchestratorToken(ctx.user.id, ctx);
         const modelConfig = getComicModelConfig(input?.baseModel);
@@ -2118,7 +2113,11 @@ export const comicsRouter = router({
             width: number;
             height: number;
           }[] = [];
-          for (const refId of input.referenceIds) {
+          const ownRefs = await dbRead.comicReference.findMany({
+            where: { id: { in: input.referenceIds }, userId: ctx.user.id },
+            select: { id: true },
+          });
+          for (const { id: refId } of ownRefs) {
             const { refImages: imgs } = await getReferenceImages(refId);
             characterRefImages.push(...imgs);
           }
@@ -2187,7 +2186,7 @@ export const comicsRouter = router({
     }),
 
   /** Enhances a prompt via LLM and returns the enhanced text without generating an image. */
-  enhancePromptText: comicProtectedProcedure
+  enhancePromptText: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({
@@ -2312,6 +2311,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: input.coverUrl,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user.id,
         });
         await dbWrite.comicProject.update({
@@ -2325,6 +2325,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: input.heroUrl,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user.id,
         });
         await dbWrite.comicProject.update({
@@ -2401,6 +2402,7 @@ export const comicsRouter = router({
           const image = await createImage({
             url: input.coverUrl,
             type: 'image',
+            clientUrl: true,
             userId: ctx.user.id,
           });
           data.coverImageId = image.id;
@@ -2420,6 +2422,7 @@ export const comicsRouter = router({
           const image = await createImage({
             url: input.heroUrl,
             type: 'image',
+            clientUrl: true,
             userId: ctx.user.id,
           });
           data.heroImageId = image.id;
@@ -2428,10 +2431,15 @@ export const comicsRouter = router({
         }
       }
 
-      const updated = await dbWrite.comicProject.update({
+      let updated = await dbWrite.comicProject.update({
         where: { id: input.id },
         data,
       });
+
+      if ('coverImageId' in data || 'heroImageId' in data) {
+        await updateComicNsfwLevels([input.id]);
+        updated = await dbWrite.comicProject.findUniqueOrThrow({ where: { id: input.id } });
+      }
 
       await comicsSearchIndex.queueUpdate([
         { id: input.id, action: SearchIndexUpdateQueueAction.Update },
@@ -2846,6 +2854,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: img.url,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user!.id,
           width: img.width,
           height: img.height,
@@ -2910,7 +2919,7 @@ export const comicsRouter = router({
     }),
 
   // Panels — generation via the preset image-gen service (model determined by project)
-  createPanel: comicProtectedProcedure
+  createPanel: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(createPanelSchema)
     .use(isChapterOwner)
@@ -2929,6 +2938,7 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertReferencePanelImageUnblocked(input.referencePanelId, input.projectId);
 
       // Get all user's ready references for prompt context and auto-detection
       const allUserRefs = await dbRead.comicReference.findMany({
@@ -3211,6 +3221,10 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      if (input.imageUrl && input.imageUrl !== panel.imageUrl) {
+        await assertClientImageUrlsUsable({ urls: [input.imageUrl], userId: ctx.user.id });
+        await assertClientKeysIssuedToCaller({ urls: [input.imageUrl], userId: ctx.user.id });
+      }
 
       const updated = await dbWrite.comicPanel.update({
         where: { id: input.panelId },
@@ -3240,6 +3254,7 @@ export const comicsRouter = router({
       const image = await createImage({
         url: input.imageUrl,
         type: 'image',
+        clientUrl: true,
         userId: ctx.user.id,
       });
 
@@ -3627,6 +3642,7 @@ export const comicsRouter = router({
                 })
               );
               registerMediaLocation(s3Key, multiBackend, buf.length);
+              await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
               newCandidates.push({
                 key: s3Key,
                 ...(nsfwLevel != null ? { nsfwLevel } : {}),
@@ -3785,6 +3801,7 @@ export const comicsRouter = router({
               })
             );
             registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
+            await recordMintedUploadKey(s3ImageKey, ctx.user!.id, ctx.track);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
@@ -3942,7 +3959,7 @@ export const comicsRouter = router({
   // flow: hand `allowMatureContent: true` to the orchestrator, which charges
   // the difference in yellow Buzz, then reset the panel to `Generating` so
   // the existing poll loop downloads the now-unblocked image.
-  unlockPanelGeneration: comicProtectedProcedure
+  unlockPanelGeneration: comicGenerationProcedure
     .input(z.object({ panelId: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
       const panel = await dbRead.comicPanel.findUnique({
@@ -4053,6 +4070,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, backend, buf.length);
+          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
         } catch (e) {
           console.error(`Failed to download unlocked panel ${panel.id}:`, e);
           throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
@@ -4174,6 +4192,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, multiBackend, buf.length);
+          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
           newCandidates.push({
             key: s3Key,
             ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
@@ -4328,7 +4347,7 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — generate image without creating a panel record
-  iterateGenerate: comicProtectedProcedure
+  iterateGenerate: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(iterateGenerateSchema)
     .use(isProjectOwner)
@@ -4341,6 +4360,10 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertGenerationInputUrlsUsable({
+        urls: [input.sourceImageUrl, ...(input.userReferenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user!.id,
+      });
 
       const modelConfig = getComicModelConfig(input.baseModel ?? project.baseModel);
       const effectiveVersionId =
@@ -4461,7 +4484,7 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — poll workflow status without panel involvement
-  generateComicImage: comicProtectedProcedure
+  generateComicImage: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({
@@ -4475,6 +4498,10 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputUrlsUsable({
+        urls: (input.userReferenceImages ?? []).map((ref) => ref.url),
+        userId: ctx.user!.id,
+      });
       const token = await getOrchestratorToken(ctx.user!.id, ctx).catch((error) => {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       });
@@ -4535,7 +4562,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Plan chapter panels via GPT
-  planChapterPanels: comicProtectedProcedure
+  planChapterPanels: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
@@ -4574,7 +4601,7 @@ export const comicsRouter = router({
     }),
 
   // Smart Create — Create chapter with all panels at once
-  smartCreateChapter: comicProtectedProcedure
+  smartCreateChapter: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(smartCreateChapterSchema)
     .use(isProjectOwner)
@@ -4871,12 +4898,9 @@ export const comicsRouter = router({
         return updated;
       }
 
-      // Set project publishedAt on first ever chapter publish
-      if (!chapter.project.publishedAt) {
-        await dbWrite.comicProject.update({
-          where: { id: chapter.project.id },
-          data: { publishedAt: new Date() },
-        });
+      // Re-publishing a live chapter (e.g. to change early access) must not resurface the comic in Newest.
+      if (chapter.status !== ComicChapterStatus.Published || !chapter.project.publishedAt) {
+        await markComicProjectsChapterPublished([chapter.project.id]);
       }
 
       // Notify followers on first publish
@@ -5463,7 +5487,7 @@ export const comicsRouter = router({
 
   // ──── Enhance Panel: create from existing image, optionally with img2img ────
 
-  enhancePanel: comicProtectedProcedure
+  enhancePanel: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(enhancePanelSchema)
     .use(isChapterOwner)
@@ -5476,6 +5500,14 @@ export const comicsRouter = router({
       });
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
+      }
+      // Without a prompt the image is saved as the panel, and createImage checks it.
+      if (input.prompt?.trim() || input.forceGenerate) {
+        await assertGenerationInputUrlsUsable({
+          urls: [input.sourceImageUrl],
+          userId: ctx.user!.id,
+        });
+        await assertReferencePanelImageUnblocked(input.referencePanelId, input.projectId);
       }
 
       // Get next position
@@ -5504,6 +5536,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: input.sourceImageUrl,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user!.id,
           width: input.sourceImageWidth,
           height: input.sourceImageHeight,
@@ -5737,7 +5770,7 @@ export const comicsRouter = router({
 
   // ──── Bulk Create Panels ────
 
-  bulkCreatePanels: comicProtectedProcedure
+  bulkCreatePanels: comicGenerationProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(bulkCreatePanelsSchema)
     .use(isChapterOwner)
@@ -5752,6 +5785,13 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // A panel without a prompt saves its source image, and createImage checks it.
+      await assertGenerationInputUrlsUsable({
+        urls: input.panels
+          .filter((p) => p.prompt?.trim() && p.sourceImageUrl)
+          .map((p) => p.sourceImageUrl),
+        userId: ctx.user!.id,
+      });
 
       const bulkModelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
 
@@ -5861,6 +5901,7 @@ export const comicsRouter = router({
           const image = await createImage({
             url: panelDef.sourceImageUrl,
             type: 'image',
+            clientUrl: true,
             userId: ctx.user!.id,
             width: panelDef.sourceImageWidth ?? 512,
             height: panelDef.sourceImageHeight ?? 512,
@@ -6322,126 +6363,6 @@ export const comicsRouter = router({
         },
       });
       return references;
-    }),
-
-  // ──── Phase 7: Chapter Comments ────
-
-  getChapterThread: comicPublicProcedure
-    .meta({ requiredScope: TokenScope.MediaRead })
-    .input(z.object({ projectId: z.number().int(), chapterPosition: z.number().int().min(0) }))
-    .query(async ({ input, ctx }) => {
-      const thread = await dbRead.thread.findUnique({
-        where: {
-          comicProjectId_comicChapterPosition: {
-            comicProjectId: input.projectId,
-            comicChapterPosition: input.chapterPosition,
-          },
-        },
-        select: {
-          id: true,
-          locked: true,
-          commentCount: true,
-          comments: {
-            orderBy: { createdAt: 'asc' },
-            where: ctx.user?.isModerator ? {} : { hidden: false, tosViolation: false },
-            select: commentV2Select,
-          },
-        },
-      });
-
-      if (!ctx.user?.isModerator) keepOwnReactorIds(thread, ctx.user?.id);
-      return thread;
-    }),
-
-  createChapterComment: comicGuardedProcedure
-    .meta({ requiredScope: TokenScope.SocialWrite })
-    .use(rateLimit(commentRateLimits))
-    .input(
-      z.object({
-        projectId: z.number().int(),
-        chapterPosition: z.number().int().min(0),
-        // Sanitised like every other comment write. Without this the row reached both the
-        // blocklist guard and the database as raw HTML, so an entity-escaped host
-        // (`blocked&#46;example`) carried no literal dot for the link matcher to see and then
-        // decoded back to a live URL in `RenderHtml` at read time — a bypass the other two
-        // paths do not have, because their zod schema decodes entities before the guard runs.
-        //
-        // No `allowStickers`: this path does not charge for sticker uses the way `upsertComment`
-        // does, so permitting the markup here would make paid stickers free.
-        content: getSanitizedStringSchema({ allowedTags: COMMENT_ALLOWED_TAGS })
-          .refine((v) => v.length > 0, 'Cannot be empty')
-          .refine((v) => v.length <= 10000, 'Comment content too long'),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      // Before the thread upsert: a rejected comment must not leave a Thread row behind.
-      await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator });
-
-      // Find or create thread for this chapter (upsert avoids race condition)
-      const thread = await dbWrite.thread.upsert({
-        where: {
-          comicProjectId_comicChapterPosition: {
-            comicProjectId: input.projectId,
-            comicChapterPosition: input.chapterPosition,
-          },
-        },
-        create: {
-          comicProjectId: input.projectId,
-          comicChapterPosition: input.chapterPosition,
-        },
-        update: {},
-        select: { id: true, locked: true },
-      });
-
-      if (thread.locked) {
-        throw throwBadRequestError('Comments are locked for this chapter');
-      }
-
-      const comment = await dbWrite.commentV2.create({
-        data: {
-          userId: ctx.user.id,
-          content: input.content,
-          threadId: thread.id,
-        },
-      });
-      queueScamScan({ entityType: 'CommentV2', entityId: comment.id });
-
-      // Notify the comic project owner (if commenter is not the owner)
-      const project = await dbRead.comicProject.findUnique({
-        where: { id: input.projectId },
-        select: { userId: true, name: true },
-      });
-      const chapter = await dbRead.comicChapter.findUnique({
-        where: {
-          projectId_position: {
-            projectId: input.projectId,
-            position: input.chapterPosition,
-          },
-        },
-        select: { name: true },
-      });
-
-      if (project && project.userId !== ctx.user.id) {
-        await createNotification({
-          type: 'new-comic-comment',
-          key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
-          category: NotificationCategory.Comment,
-          // Same CommentV2 row is also swept by new-mention / new-thread-response; this shares their
-          // dedupe key so the project owner gets one notification, not two.
-          dedupeKey: `comment:v2:${comment.id}`,
-          userId: project.userId,
-          details: {
-            comicProjectId: String(input.projectId),
-            comicProjectName: project.name,
-            chapterName: chapter?.name ?? `Chapter ${input.chapterPosition + 1}`,
-            commenterUsername: ctx.user.username ?? 'Someone',
-            chapterPosition: input.chapterPosition,
-            commentId: comment.id,
-          },
-        }).catch((e) => console.error('Failed to send comic comment notification:', e));
-      }
-
-      return comment;
     }),
 
   // ──── Project-scoped references ────

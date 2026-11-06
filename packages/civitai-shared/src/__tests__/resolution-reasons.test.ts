@@ -54,6 +54,8 @@ describe('RESOLUTION_REASONS', () => {
         'other',
       ],
       'flagAppeal/Rejected': ['flag-confirmed', 'other'],
+      'lockReview/Approved': ['lock-not-needed', 'context-provided', 'other'],
+      'lockReview/Rejected': ['lock-stands', 'other'],
       'heldDetection/Kept': ['detection-correct', 'other'],
       'heldDetection/Dismissed': ['not-a-minor', 'not-a-real-person', 'terms-misread', 'other'],
       'flagReview/Kept': ['detection-correct', 'other'],

@@ -49,3 +49,14 @@ function latestReasonCode(
   }
   return null;
 }
+
+/** The side the viewing moderator is on, if they are a party: they must not rule on their own deal. */
+export function viewerParty(
+  row: Pick<DisputeRow, 'buyer' | 'seller'>,
+  viewerId: number | null
+): 'buyer' | 'seller' | null {
+  if (viewerId === null) return null;
+  if (viewerId === row.buyer.id) return 'buyer';
+  if (viewerId === row.seller.id) return 'seller';
+  return null;
+}

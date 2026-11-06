@@ -295,7 +295,7 @@ export type AppOpenRecentRow = { appBlockId: string };
  * Degrading to "no new plays this run" is self-healing — the next run's watermark
  * still covers the gap. Failing the run instead would take `install_count`, a pure
  * Postgres counter, down with a ClickHouse blip; the store's `popular` sort
- * (`install_count DESC`) then freezes for the whole outage, and the retry has the
+ * (plays, then installs) then freezes for the whole outage, and the retry has the
  * same shape. `fetchAppOpenCounts` is the opposite and must stay that way: a
  * partial answer THERE is written over live counts as 0.
  *

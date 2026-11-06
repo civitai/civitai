@@ -10,7 +10,11 @@ import {
 } from '@civitai/orchestration-client';
 import { AUTO_LABEL_TAG, CIVITAI_TAG } from '$lib/data/trainingRows';
 import type { Media } from '$lib/data/trainingModels';
-import { describeSubmitError, type OrchestratorClient } from './orchestrator-core';
+import {
+  describeSubmitError,
+  TERMINAL_STATUSES,
+  type OrchestratorClient,
+} from './orchestrator-core';
 
 // One orchestrator step per image labels it for free (system-paid). Tag models use WD-tagging; caption
 // models use media (or audio) captioning. Each step is named by its batch index and carries the tile's
@@ -79,7 +83,7 @@ export async function submitAutoLabel(
 
   const { data, error } = await submitWorkflow({
     client,
-    // System-paid: no user Buzz currency required.
+    // Charged to the token's user (empty currencies = any account), so only a system token may submit this.
     body: { tags: AUTO_LABEL_TAGS, steps, currencies: [] },
     query: { wait: 0 },
   });
@@ -92,9 +96,9 @@ export interface AutoLabelResult {
   status: 'succeeded' | 'failed' | 'pending';
   tags?: string[];
   caption?: string;
+  /** Why a failed item was refused, when the submit itself was rejected (shown on the tile). */
+  error?: string;
 }
-
-const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 /** The orchestrator returns per-step output on discriminated step types; from a generic getWorkflow the
  *  step is the untyped base, so read the label fields through a permissive shape. */

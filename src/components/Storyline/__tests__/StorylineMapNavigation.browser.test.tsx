@@ -1,8 +1,8 @@
+import { useState } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import Router from 'next/router';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
 import { QS } from '~/utils/qs';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { withStorylineNavigation } from '~/components/Storyline/storyline-mode.utils';
@@ -31,9 +31,43 @@ const paths: Record<number, Chapter[]> = {
   7: [...route, chapter(7, 4, 700)],
   8: [...route, chapter(7, 4, 700), chapter(8, 5, 800)],
 };
+
+// A branch beside the canon chapter 5: 21 -> 22 -> 23 -> 24 -> {25 canon, 35}; 35 -> 36 -> {37, 38}.
+const main = [
+  chapter(21, 0, 2100),
+  chapter(22, 1, 2200),
+  chapter(23, 2, 2300),
+  chapter(24, 3, 2400),
+];
+const b5 = chapter(35, 4, 3500);
+const b6 = { ...chapter(36, 5, 3600), childCount: 2 };
+Object.assign(paths, {
+  35: [...main, b5],
+  36: [...main, b5, b6],
+  37: [...main, b5, b6, chapter(37, 6, 3700)],
+});
+// Chapter 5 with a community chapter 6 after it and no canon child: 21 -> 22 -> 23 -> 24 -> 45 -> 46.
+const c5 = chapter(45, 4, 4500);
+const c6 = chapter(46, 5, 4600);
+Object.assign(paths, { 45: [...main, c5], 46: [...main, c5, c6] });
+const child = (c: Chapter) => ({ ...c, rank: 'community', firstImage: null });
+const childrenOf: Record<number, unknown[]> = {
+  7: [child(chapter(8, 5, 800))],
+  24: [{ ...child(chapter(25, 4, 2500)), rank: 'canon' }, child(b5)],
+  35: [child(b6)],
+  45: [child(c6)],
+  36: [child(chapter(37, 6, 3700)), child(chapter(38, 6, 3800))],
+};
+const childrenByChapterId = (ids: number[]) =>
+  new Map(ids.flatMap((id) => (childrenOf[id] ? [[id, childrenOf[id]] as const] : [])));
+// The canon line ahead of a path's end: from B5 it is B6, which has no canon child.
+const aheadOf: Record<number, Chapter[]> = { 35: [b6] };
 const imageOf = (postId: number) => ({ id: postId / 10, postId, index: 0 });
 
-const mocks = vi.hoisted(() => ({ unwalkedPostIds: new Set<number>() }));
+const mocks = vi.hoisted(() => ({ unwalkedPostIds: new Set<number>(), warm: false }));
+// Prod's queries never go stale and outlive the detail, so a second entry reads them from cache.
+const cache = () =>
+  mocks.warm ? { staleTime: Infinity, gcTime: Infinity } : ({} as Record<string, never>);
 
 const later = <T,>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), 80));
 
@@ -46,6 +80,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     useQuery({
       queryKey: ['path', chapterId],
       enabled: !!chapterId,
+      ...cache(),
       placeholderData: keepPreviousData,
       queryFn: () =>
         later({
@@ -60,6 +95,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
     const query = useQuery({
       queryKey: ['images', postIds, [...mocks.unwalkedPostIds]],
       enabled: postIds.length > 0,
+      ...cache(),
       placeholderData: keepPreviousData,
       queryFn: () => later(postIds.filter((id) => !mocks.unwalkedPostIds.has(id)).map(imageOf)),
     });
@@ -69,14 +105,16 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
       isFetching: query.isFetching,
     };
   },
-  useStorylineCanonAhead: () => ({
-    ahead: [],
-    childrenByChapterId: new Map(),
-    isLoading: false,
-    isSuccess: true,
-  }),
-  useStorylinePathChildren: () =>
-    new Map([[7, [{ ...chapter(8, 5, 800), rank: 'community', firstImage: null }]]]),
+  useStorylineCanonAhead: (chapterId: number | undefined) => {
+    const ahead = aheadOf[chapterId as number] ?? [];
+    return {
+      ahead,
+      childrenByChapterId: childrenByChapterId(ahead.map((c) => c.chapterId)),
+      isLoading: false,
+      isSuccess: true,
+    };
+  },
+  useStorylinePathChildren: (ids: number[]) => childrenByChapterId(ids),
   useStorylineForkShares: () => ({ data: undefined }),
 }));
 vi.mock('~/components/PageLoader/PageLoader', () => ({ PageLoader: () => null }));
@@ -123,7 +161,11 @@ import {
   StorylineModeProvider,
   useStorylineMode,
 } from '~/components/Storyline/StorylineModeProvider';
-import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import {
+  ImageDetailCarousel,
+  SETTLE_FALLBACK_MS,
+} from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { StorylineToolbarChip } from '~/components/Storyline/StorylineDetail';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 
@@ -137,7 +179,7 @@ const imageProps = (id: number) => ({
   name: null,
 });
 
-/** ImageDetail2's carousel wiring, copied: the provider's index, its own carousel state, the sync. */
+/** ImageDetail2's carousel wiring: the provider's index, its own carousel state, the shared sync. */
 function Detail({
   placement,
   walked,
@@ -164,25 +206,17 @@ function Detail({
     images.length,
     storyline.active ? () => storyline.setEndOpen(true) : undefined
   );
-  const lastSettledIdRef = useRef(images[index]?.id);
-  const handleSettle = (settledIndex: number) => {
-    const settled = images[settledIndex];
-    if (!settled || lastSettledIdRef.current === settled.id) return;
-    lastSettledIdRef.current = settled.id;
-    navigate(settled.id);
-  };
-  const carouselNavigate = carouselNavigation.navigate;
-  useEffect(() => {
-    const target = images[index];
-    if (!storyline.active || !target || target.id === lastSettledIdRef.current) return;
-    lastSettledIdRef.current = target.id;
-    carouselNavigate(index);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, storyline.active]);
+  const handleSettle = useCarouselUrlSync({
+    images,
+    index,
+    navigate,
+    carouselNavigate: carouselNavigation.navigate,
+  });
   const shown = images[carouselNavigation.index]?.id;
   return (
     <div style={{ width: 400, height: 300, display: 'flex' }}>
       <output data-testid="image">{shown}</output>
+      <button type="button" data-testid="previous" onClick={navigation.previous} />
       <ImageDetailCarousel
         images={images}
         onSettle={handleSettle}
@@ -213,11 +247,11 @@ layout.textContent = `
 `;
 document.head.appendChild(layout);
 
-async function openReader(storylineChapter: number, width: number) {
+async function openReader(storylineChapter: number, width: number, imageId = 70) {
   await page.viewport(width, 800);
-  const asPath = `/images/70?storylineChapter=${storylineChapter}`;
+  const asPath = `/images/${imageId}?storylineChapter=${storylineChapter}`;
   Object.assign(Router, {
-    query: { imageId: '70', storylineChapter: String(storylineChapter) },
+    query: { imageId: String(imageId), storylineChapter: String(storylineChapter) },
     asPath,
     pathname: '/images/[imageId]',
   });
@@ -229,8 +263,8 @@ async function openReader(storylineChapter: number, width: number) {
     </BrowserRouterProvider>
   );
   await expect.element(page.getByTestId('image')).toBeInTheDocument();
-  getBrowserRouter().replace({ query: { imageId: 70, storylineChapter } }, asPath);
-  await expect.element(page.getByTestId('image')).toHaveTextContent('70');
+  getBrowserRouter().replace({ query: { imageId, storylineChapter } }, asPath);
+  await expect.element(page.getByTestId('image')).toHaveTextContent(String(imageId));
   await page.getByRole('button', { name: /map/i }).first().click();
 }
 
@@ -272,5 +306,181 @@ describe('the map from chapter 5 of a non-canon route', () => {
     await page.getByTestId('storyline-map-read-next').click();
     expect(Router.push).toHaveBeenCalledWith('/images/80?storylineChapter=8');
     await expect.element(page.getByTestId('image')).toHaveTextContent('70');
+  });
+});
+
+/**
+ * Chapter 5 is a branch (B5) beside the canon chapter 5, chapter 6 (B6) follows it, and B6 forks
+ * with no canon child.
+ */
+describe('the map from a branch chapter 5 beside the canon one', () => {
+  afterEach(() => {
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  // Entered at B5 (from the story page, or chosen at the end of chapter 4): B6 is the canon ahead.
+  test('"Read chapter 6" opens B6', async () => {
+    await openReader(35, 1200, 350);
+    await page.getByTestId('storyline-map-read-next').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+  });
+
+  test('the chapter 6 row opens B6', async () => {
+    await openReader(35, 1200, 350);
+    await page.getByText('ch36').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+  });
+
+  test('a chapter 7 branch opens that chapter', async () => {
+    await openReader(35, 1200, 350);
+    await page.getByText('ch37').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('370');
+  });
+});
+
+/**
+ * The address bar trails the carousel until it settles. A map click inside that window, here in the
+ * same task as the swipe back from B6 to B5, must still land where the reader chose.
+ */
+describe('the map clicked before a swipe back has settled', () => {
+  afterEach(() => {
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  const control = (target: string) =>
+    [...document.querySelectorAll<HTMLElement>('button')].find(
+      (el) => el.dataset.testid === target || el.textContent?.includes(target)
+    );
+  const swipeBackThenClick = async (target: string) => {
+    document.querySelector<HTMLElement>('[data-testid="previous"]')?.click();
+    // "Read chapter 6" only shows once the map sees B5.
+    await vi.waitFor(() => expect(control(target)).toBeDefined(), { interval: 1 });
+    expect(getBrowserRouter().query?.imageId, 'the swipe settled before the click').toBe(360);
+    control(target)?.click();
+  };
+
+  for (const target of ['ch36', 'storyline-map-read-next'])
+    test(`${target} brings the reader back to B6`, async () => {
+      await openReader(36, 1200, 360);
+      await swipeBackThenClick(target);
+      // Past the carousel's settle fallback: the swipe's late settle must not drag it back.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
+      await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+    });
+
+  test('a chapter 7 branch opens that chapter', async () => {
+    await openReader(36, 1200, 360);
+    await swipeBackThenClick('ch37');
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
+    await expect.element(page.getByTestId('image')).toHaveTextContent('370');
+  });
+});
+
+// The path says the reader may see chapter 6's first image; the walk's image read lacks it.
+describe('a branch chapter whose first image is not in the walk', () => {
+  afterEach(() => {
+    mocks.unwalkedPostIds.clear();
+    vi.mocked(Router.push).mockClear();
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  test('taking it opens its own link instead of leaving the reader on chapter 5', async () => {
+    mocks.unwalkedPostIds.add(4600);
+    await openReader(45, 1200, 450);
+    await page.getByText('ch46').click();
+    await vi.waitFor(() =>
+      expect(Router.push).toHaveBeenCalledWith('/images/460?storylineChapter=46')
+    );
+    expect(Router.push).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The slide embla has in view, not the index the detail holds. */
+function slideInView() {
+  const viewport = document.querySelector('.touch-pan-y');
+  const slides = [...(viewport?.firstElementChild?.children ?? [])];
+  const mid = viewport ? viewport.getBoundingClientRect().left + viewport.clientWidth / 2 : 0;
+  return slides.findIndex((slide) => {
+    const rect = slide.getBoundingClientRect();
+    return rect.left <= mid && mid < rect.right;
+  });
+}
+
+/**
+ * Tester retry, storyline 1 on prod: B5 -> map -> B6 worked on the first entry from the story
+ * page and failed on the second, with the path and its images already cached. The URL moved to
+ * B6 while the picture stayed on B5; here the stale slide also settles back into the URL.
+ */
+describe('taking a branch on a second entry, with the path cached', () => {
+  afterEach(() => {
+    mocks.warm = false;
+    getBrowserRouter().replace(
+      { query: { imageId: 70, storylineChapter: 8 } },
+      '/images/70?storylineChapter=8'
+    );
+  });
+
+  // The detail opens over the story page and closes back to it, as the modal does.
+  function StoryPage() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" data-testid="toggle-detail" onClick={() => setOpen(!open)} />
+        {open && <Reader placement="toolbar" />}
+      </>
+    );
+  }
+
+  const enterB5 = async () => {
+    getBrowserRouter().replace(
+      { query: { imageId: 350, storylineChapter: 35 } },
+      '/images/350?storylineChapter=35'
+    );
+    await expect.element(page.getByTestId('image')).toHaveTextContent('350');
+    await page.getByRole('button', { name: /map/i }).first().click();
+  };
+  // B6's first image, in the B6 walk: chapters 21-24, B5, B6.
+  const B6_SLIDE = 5;
+
+  test('the picture follows the URL to B6', async () => {
+    mocks.warm = true;
+    await page.viewport(1200, 800);
+    Object.assign(Router, {
+      query: { imageId: '350', storylineChapter: '35' },
+      asPath: '/images/350?storylineChapter=35',
+      pathname: '/images/[imageId]',
+    });
+    renderWithProviders(
+      <BrowserRouterProvider>
+        <ContainerProvider containerName="stage" style={{ width: 1200 }}>
+          <StoryPage />
+        </ContainerProvider>
+      </BrowserRouterProvider>
+    );
+    await expect.element(page.getByTestId('image')).toBeInTheDocument();
+    await enterB5();
+    await page.getByText('ch36').click();
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+    await vi.waitFor(() => expect(slideInView()).toBe(B6_SLIDE));
+
+    await page.getByTestId('toggle-detail').click();
+    getBrowserRouter().replace({ query: { id: 1 } }, '/storylines/1');
+    await page.getByTestId('toggle-detail').click();
+    await enterB5();
+    await page.getByText('ch36').click();
+
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_FALLBACK_MS * 2));
+    expect(getBrowserRouter().query?.imageId).toBe(360);
+    await expect.element(page.getByTestId('image')).toHaveTextContent('360');
+    expect(slideInView()).toBe(B6_SLIDE);
   });
 });

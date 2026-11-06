@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { showNotification } from '@mantine/notifications';
 import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
+import { cryptoDepositToast } from '~/components/Signals/crypto-deposit-toast';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -41,26 +42,9 @@ export const useCryptoDepositSignal = () => {
 
       const currencyDisplay = currencyNames[data.currency?.toLowerCase()] ?? data.currency.toUpperCase();
 
-      // Show a toast notification when a deposit completes
-      if (data.status === 'finished') {
-        const buzzAmount = data.outcomeAmount ? Math.floor(data.outcomeAmount * 1000) : null;
-        showNotification({
-          title: 'Crypto Deposit Complete',
-          message: buzzAmount
-            ? `You received ${buzzAmount.toLocaleString()} Buzz from your ${currencyDisplay} deposit.`
-            : `Your ${currencyDisplay} deposit has been processed.`,
-          color: 'green',
-        });
-
-        // Also invalidate buzz account since balance changed
-        queryUtils.buzz.getBuzzAccount.invalidate();
-      } else if (data.status === 'confirming') {
-        showNotification({
-          title: 'Crypto Deposit Detected',
-          message: `Your ${currencyDisplay} deposit is being confirmed on-chain.`,
-          color: 'blue',
-        });
-      }
+      const toast = cryptoDepositToast(data.status, currencyDisplay, data.outcomeAmount);
+      if (toast) showNotification(toast);
+      if (data.status === 'finished') queryUtils.buzz.getBuzzAccount.invalidate();
     },
     [queryUtils, currencyNames]
   );

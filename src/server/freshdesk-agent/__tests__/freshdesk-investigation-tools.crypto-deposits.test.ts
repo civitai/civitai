@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ManualCredit from '~/server/services/nowpayments-manual-credit';
 
 /**
  * Support sees a deposit NOWPayments never confirmed only as a labelled claim, and does not see
@@ -10,6 +11,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({
   default: { getPaymentStatus: vi.fn(async () => null) },
+}));
+const { findHandGrantsForDeposit } = vi.hoisted(() => ({
+  findHandGrantsForDeposit: vi.fn(),
+}));
+vi.mock('~/server/services/nowpayments-manual-credit', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManualCredit>()),
+  findHandGrantsForDeposit,
 }));
 
 const { investigateCryptoPayments } = await import(
@@ -106,5 +114,37 @@ describe('investigateCryptoPayments: deposits NOWPayments has not confirmed', ()
 
     expect(report).toContain('Payment #1 [finished]');
     expect(report.match(/\[unverified_exhausted\]/g)).toHaveLength(3);
+  });
+});
+
+describe('investigateCryptoPayments: a deposit held because support already paid it', () => {
+  beforeEach(() => {
+    stored = [row(4, 'held', { outcomeAmount: 20 })];
+  });
+
+  it('tells support not to credit it again, naming the grant that paid it', async () => {
+    findHandGrantsForDeposit.mockResolvedValue({
+      covering: [
+        { type: 'Tip', amount: 20000, date: '2026-10-02T00:00:00.000Z', ref: 'support-ticket-1' },
+      ],
+      possible: [],
+    });
+
+    const held = section(await investigateCryptoPayments(99), 'Payment #4');
+
+    expect(held).toContain(
+      'Already paid by a staff hand grant citing this payment; do not credit by hand'
+    );
+    expect(held).toContain('Matching grant: Tip of 20000 Buzz');
+    expect(held).toContain('(ref support-ticket-1)');
+  });
+
+  it('still warns support when the grant cannot be looked up', async () => {
+    findHandGrantsForDeposit.mockRejectedValue(new Error('Buzz service unavailable'));
+
+    const held = section(await investigateCryptoPayments(99), 'Payment #4');
+
+    expect(held).toContain('do not credit by hand');
+    expect(held).toContain('the "Deposit held" log entry for this payment names it');
   });
 });

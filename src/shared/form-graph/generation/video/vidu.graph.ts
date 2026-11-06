@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { viduVersionIds } from '~/shared/generation/version-ids';
@@ -117,9 +116,7 @@ export const vidu = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .field('seed', SEED)
-  .field('enablePromptEnhancer', ({ model }) =>
-    isQ1(model) ? { input: z.boolean().optional(), output: z.boolean(), default: true } : null
-  )
+  .field('enablePromptEnhancer', ({ model }) => (isQ1(model) ? boolDef(true) : null))
   .field('style', ({ model, _ext }) =>
     isQ1(model) && _ext.workflow === 'txt2vid'
       ? enumDef({ options: viduStyles, default: 'general' })

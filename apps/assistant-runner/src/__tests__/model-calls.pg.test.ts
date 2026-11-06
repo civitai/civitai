@@ -1,9 +1,8 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import type { ModelCallScope } from '../interfaces';
-import { PgModelCalls } from '../model-calls';
-import { freshDatabase, TEST_DATABASE_URL } from '../test-support/pg';
+import { PgModelCalls, type ModelCallScope } from '../model-calls';
+import { freshDatabase, TEST_DATABASE_URL } from '../core/test-support/pg';
 
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
 if (process.env.CI && !TEST_DATABASE_URL)

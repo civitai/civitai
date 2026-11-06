@@ -10,7 +10,7 @@ describe('listenChatChange on components-chat 0.22', () => {
     const onChange = vi.fn();
     listenChatChange(el, onChange);
     el.dispatchEvent(change('chat-1', false));
-    // 0.22: the same chat again, now saved. No chat change: Build it must survive it.
+    // 0.22: the same chat again, now saved. No chat change: a Submit for review offer must survive it.
     el.dispatchEvent(change('chat-1', true));
     el.dispatchEvent(change('chat-2', false));
     el.dispatchEvent(change(null, false));

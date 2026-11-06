@@ -28,6 +28,7 @@ const { updatePostNsfwLevels, updateBountyNsfwLevels, updateBountyEntryNsfwLevel
   '~/server/services/nsfwLevels.service'
 );
 const { notifyTextScanRatingRaised } = await import('~/server/services/text-scan/notify');
+const { logToAxiom } = await import('~/server/logging/client');
 const { maybeAutoResolveRatingDisputeAfterScan } = await import(
   '~/server/services/rating-review.service'
 );
@@ -35,6 +36,7 @@ const { maybeAutoResolveRatingDisputeAfterScan } = await import(
 const args = (level: number, raised: boolean) => ({
   entityId: 7,
   workflowId: 'wf-1',
+  textHash: 'h',
   outcome: {
     nsfw: { detectedLevel: level, declaredLevel: 1, raised, reason: 'r' },
     triggeredLabels: raised ? ['nsfw' as const] : [],
@@ -171,6 +173,37 @@ describe('applyRatingFloor', () => {
     expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 
+  describe('a post whose images are rated before the job recomputed it (stored level 0)', () => {
+    const imagesAt = (level: number) =>
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (query: {
+        text: string;
+        values: unknown[];
+      }) => {
+        expect(query.text).toContain(
+          'bit_or(i."nsfwLevel") AS level FROM "Image" i WHERE i."postId" ='
+        );
+        expect(query.values).toEqual([7]);
+        return [{ level }];
+      }) as never);
+
+    it('does not credit the text when the images already give the level', async () => {
+      imagesAt(8);
+      dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(0)).mockResolvedValueOnce(post(8));
+      await applyRatingFloor('Post', args(4, true));
+      expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+    });
+
+    it('notifies once when the floor lifts the post above its images', async () => {
+      imagesAt(1);
+      dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(0)).mockResolvedValueOnce(post(8));
+      await applyRatingFloor('Post', args(8, true));
+      expect(notifyTextScanRatingRaised).toHaveBeenCalledTimes(1);
+      expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(
+        expect.objectContaining({ level: 8 })
+      );
+    });
+  });
+
   it('does nothing without an nsfw verdict', async () => {
     await applyRatingFloor('Post', {
       ...args(4, true),
@@ -195,6 +228,93 @@ describe('applyRatingFloor', () => {
     expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(
       expect.objectContaining({ url: '/bounties/3/entries/7', title: null })
     );
+  });
+});
+
+describe('applyRatingFloor logs one decision', () => {
+  const decisions = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.message === 'rating notice decision');
+  const decision = (
+    name: string,
+    levels: { before?: number; baseline?: number; after?: number } = {}
+  ) => ({
+    type: 'info',
+    name: 'text-scan',
+    message: 'rating notice decision',
+    path: 'callback',
+    entityType: 'Post',
+    entityId: 7,
+    workflowId: 'wf-1',
+    decision: name,
+    before: levels.before ?? null,
+    baseline: levels.baseline ?? null,
+    after: levels.after ?? null,
+  });
+  const poi = { detected: true, declared: false, newlyDetected: true, names: ['A'], reason: 'r' };
+
+  it.each([
+    [
+      'sent',
+      [post(1), post(4)],
+      args(4, true),
+      decision('sent', { before: 1, baseline: 1, after: 4 }),
+    ],
+    [
+      'no-rise',
+      [post(4), post(4)],
+      args(4, true),
+      decision('no-rise', { before: 4, baseline: 4, after: 4 }),
+    ],
+    ['not-raised', [post(1)], args(4, false), decision('not-raised', { before: 1 })],
+    [
+      'moderator-rated',
+      [post(1, { moderatorNsfwLevel: 4 })],
+      args(4, true),
+      decision('moderator-rated', { before: 1 }),
+    ],
+    ['no-owner', [post(1, { userId: null })], args(4, true), decision('no-owner', { before: 1 })],
+    ['entity-gone before the scan', [null], args(4, true), decision('entity-gone')],
+    [
+      'entity-gone after the recompute',
+      [post(1), null],
+      args(4, true),
+      decision('entity-gone', { before: 1 }),
+    ],
+    [
+      'deferred-poi-minor',
+      [post(1), post(4)],
+      { ...args(4, true), outcome: { ...args(4, true).outcome, poi } },
+      decision('deferred-poi-minor', { before: 1, baseline: 1, after: 4 }),
+    ],
+  ])('%s', async (_, reads, input, expected) => {
+    for (const row of reads) dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(row as never);
+    await applyRatingFloor('Post', input);
+    expect(decisions()).toEqual([expected]);
+  });
+
+  it('logs the images as the baseline for a post the job has not rated yet', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ level: 1 }] as never);
+    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(0)).mockResolvedValueOnce(post(4));
+    await applyRatingFloor('Post', args(4, true));
+    expect(decisions()).toEqual([decision('sent', { before: 0, baseline: 1, after: 4 })]);
+  });
+
+  it('logs notice-failed, and still fails the floor, when the notice throws', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValueOnce(post(1)).mockResolvedValueOnce(post(4));
+    vi.mocked(notifyTextScanRatingRaised).mockRejectedValueOnce(new Error('insert failed'));
+    await expect(applyRatingFloor('Post', args(4, true))).rejects.toThrow('insert failed');
+    expect(decisions()).toEqual([decision('notice-failed', { before: 1, baseline: 1, after: 4 })]);
+  });
+
+  it('logs nothing for a scan with no nsfw verdict', async () => {
+    await applyRatingFloor('Post', {
+      ...args(4, true),
+      outcome: { triggeredLabels: [], nsfwLevel: null },
+    });
+    expect(decisions()).toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lastActionedBadge } from '../queue-thresholds';
+import { lastActionedBadge, queueWaitBadge } from '../queue-thresholds';
 import { needsAttention, type AttentionItem } from '../needs-attention';
 import { navWorstRank } from '../nav-links';
 
@@ -37,6 +37,31 @@ describe('lastActionedBadge', () => {
   it('a queue the lookup does not cover gets no badge, not a red one', () => {
     // Image › Minor has a count and no last-actioned source; "no time" there means "no data".
     expect(lastActionedBadge('minor', undefined, 500, NOW)).toBeNull();
+  });
+});
+
+describe('queueWaitBadge', () => {
+  it('shows nothing for an empty queue, however long since it was worked', () => {
+    expect(queueWaitBadge(IMAGE_REPORTS, ago(100), undefined, 0, NOW)).toBeNull();
+    expect(queueWaitBadge(IMAGE_REPORTS, ago(100), undefined, null, NOW)).toBeNull();
+  });
+
+  it('times a report filed into a quiet queue from the report, not the last action', () => {
+    const badge = queueWaitBadge(IMAGE_REPORTS, ago(100), ago(0.5), 1, NOW);
+    expect(badge?.at).toBe(ago(0.5));
+    expect(badge?.class).toBe('text-green-400');
+  });
+
+  it('restarts the clock when a moderator works the queue after the oldest report arrived', () => {
+    expect(queueWaitBadge(IMAGE_REPORTS, ago(2), ago(48), 3, NOW)?.at).toBe(ago(2));
+  });
+
+  it('ages from the oldest report when nobody has acted in the window', () => {
+    expect(queueWaitBadge(IMAGE_REPORTS, undefined, ago(100), 3, NOW)?.class).toBe('text-red-400');
+  });
+
+  it('a queue the lookups do not cover gets no badge', () => {
+    expect(queueWaitBadge('minor', ago(1), ago(1), 500, NOW)).toBeNull();
   });
 });
 

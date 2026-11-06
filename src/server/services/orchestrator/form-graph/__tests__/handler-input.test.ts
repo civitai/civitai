@@ -363,8 +363,7 @@ describe('krea3.handler', () => {
 });
 
 describe('ideogram.handler', () => {
-  // The fork is on the version id, so these two cases are the contract: 4.5 is a fal API
-  // model, 4.0 runs on our own comfy. Getting it backwards bills the wrong provider.
+  // The fork is on the version id: 4.5 is a fal API model.
   it('4.5 routes to fal with its own resolution and quality', async () => {
     const v45 = await dispatch({
       workflow: 'txt2img',
@@ -386,14 +385,17 @@ describe('ideogram.handler', () => {
     });
   });
 
-  it('4.0 stays on comfy', async () => {
+  // 4.0 generation is off and out of the locked version list, so a 4.0 request (a remix) is moved
+  // to 4.5 rather than sent to comfy.
+  it('moves a 4.0 request to 4.5 on fal', async () => {
     const v40 = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'Ideogram',
       prompt: 'a cat',
       seed: 42,
+      model: 3246186,
     });
-    expect(firstInput(v40)).toMatchObject({ engine: 'comfy', ecosystem: 'ideogram4' });
+    expect(firstInput(v40)).toMatchObject({ engine: 'fal', model: 'ideogram45' });
   });
 
   it('edit sends imageSize auto and keeps image order', async () => {
@@ -432,6 +434,45 @@ describe('hunyuan.handler', () => {
       model: 1314512,
     });
     expect(firstInput(steps)).toMatchObject({ checkpointModel: 'urn:air:test:1313562' });
+  });
+});
+
+describe('wan.handler v2.1', () => {
+  // Unnamed, text-to-video ran the orchestrator's 1.3B default, which is not enabled, so every
+  // submit was refused; image-to-video's unnamed default only happened to be enabled.
+  it('names the 14B text-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'WanVideo14B_T2V',
+      prompt: 'a cat',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'wan',
+      version: 'v2.1',
+      diffusionModel: 'urn:air:test:1707796',
+    });
+  });
+
+  it('names the 720p image-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'WanVideo14B_I2V_720p',
+      prompt: 'a cat',
+      resolution: '720p',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({ diffusionModel: 'urn:air:test:1501344' });
+  });
+
+  it('names the 480p image-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'WanVideo14B_I2V_480p',
+      prompt: 'a cat',
+      resolution: '480p',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({ diffusionModel: 'urn:air:test:1501125' });
   });
 });
 

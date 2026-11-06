@@ -52,8 +52,11 @@ export default ModEndpoint(
         // Only delete posts owned by the target user to avoid touching other users' posts
         // that may have referenced these images.
         deletedPosts = await dbWrite.$executeRaw`
-          DELETE FROM "Post"
-          WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+          WITH doomed AS (
+            SELECT id FROM "Post"
+            WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+          )
+          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       }
 

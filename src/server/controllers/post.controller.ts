@@ -45,6 +45,8 @@ import { closeAppealsDeletedByOwner } from '~/server/services/report.service';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { getHeldGalleryLevel } from '~/server/services/model.service';
+import { Flags } from '~/shared/utils/flags';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   AddPostTagInput,
@@ -83,6 +85,18 @@ export const getPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // A minor or SFW-only model's posts are served only at its gallery's held level, except to
+    // moderators, who must see what they may need to remove.
+    const heldLevel =
+      ctx.user?.isModerator && isSessionOrFullUserKey(ctx)
+        ? undefined
+        : await getHeldGalleryLevel({ ...input, postIds: input.ids });
+    if (heldLevel !== undefined) {
+      const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
+      // The feed reads 0 as no filter, so an empty intersection is an empty page.
+      if (!browsingLevel) return { items: [], nextCursor: undefined };
+      input = { ...input, browsingLevel };
+    }
     return await getPostsInfinite({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -147,6 +161,15 @@ export const createPostHandler = async ({
 };
 
 /**
+ * The router's image input, plus what only a server caller may set: the schema has neither field,
+ * so a client value never reaches here. See `addPostImage`.
+ */
+type PostWithImagesImage = CreatePostWithImagesInput['images'][number] & {
+  generationWorkflowId?: string;
+  serverMintedUrl?: boolean;
+};
+
+/**
  * Composite create-with-images handler for headless/agent (MCP) use.
  *
  * Creates the post, attaches each image in order, and optionally publishes —
@@ -165,7 +188,7 @@ export const createPostWithImagesHandler = async ({
   input,
   ctx,
 }: {
-  input: CreatePostWithImagesInput;
+  input: Omit<CreatePostWithImagesInput, 'images'> & { images: PostWithImagesImage[] };
   ctx: ProtectedContext;
 }) => {
   const { images, publish, collectionId, ...createInput } = input;
@@ -233,7 +256,11 @@ export const createPostWithImagesHandler = async ({
     };
   } catch (error) {
     // Roll back the orphan draft so no empty/partial post lingers.
-    await deletePost({ id: post.id, isModerator: ctx.user.isModerator }).catch(handleLogError);
+    await deletePost({
+      id: post.id,
+      isModerator: ctx.user.isModerator,
+      deletedById: ctx.user.id,
+    }).catch(handleLogError);
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
@@ -445,6 +472,7 @@ export const updatePostHandler = async ({
               imageIds: images.map((i) => i.id),
               userId: ctx.user.id,
               tagId: collectionTagId,
+              isModerator: ctx.user.isModerator,
               canAccessUserChallenges: ctx.features.userChallenges,
             },
             permissions,
@@ -650,7 +678,7 @@ export const deletePostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await deletePost({ ...input });
+    const result = await deletePost({ ...input, deletedById: ctx.user.id });
     if (result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({

@@ -280,6 +280,45 @@ describe('turns', () => {
       totalTokens: 10,
     });
     expect((await store.listAuditTurns({}))[0]).toMatchObject({ reasoning: '- look up 5' });
+    // Logged before rounds were kept: it reads back with no round, never as round 1.
+    expect((await store.listTurns(id))[0].toolCalls[0]).not.toHaveProperty('round');
+  });
+
+  it('keeps the round each lookup was asked for in', async () => {
+    const id = await store.createChat({
+      moderatorId: 1,
+      title: 'c',
+      seedUserId: null,
+      seedReportId: null,
+    });
+    const turnId = await store.startTurn({
+      chatId: id,
+      moderatorId: 1,
+      prompt: 'q',
+      playbookSlug: null,
+      playbookVersion: null,
+      model: 'm',
+    });
+    const call = { name: 'lookup', args: {}, rows: 1, truncated: false, ms: 1, error: null };
+    await store.finishTurn(
+      turnId,
+      {
+        status: 'done',
+        toolCalls: [
+          { ...call, round: 1 },
+          { ...call, round: 2 },
+        ],
+        sources: [],
+        answer: 'a',
+        reasoning: null,
+        unverified: [],
+        error: null,
+        promptTokens: 1,
+        completionTokens: 1,
+      },
+      NO_COST
+    );
+    expect((await store.listTurns(id))[0].toolCalls.map((c) => c.round)).toEqual([1, 2]);
   });
 
   it('adds the reasoning column to a table created before it existed', async () => {

@@ -121,11 +121,12 @@ const STAMPER_FUNCTIONS: string[] = [
 
 /**
  * Every site that writes a provenance key as an object key. `createImage` is the one
- * `Image` writer; the other entry stamps `Post.metadata`, a different column.
+ * `Image` writer; the other entries stamp `Post.metadata`, a different column.
  */
 const PROVENANCE_KEY_WRITE_LEDGER: Record<string, number> = {
   'src/server/services/image.service.ts#createImage': 1,
   'src/server/services/blocks/block-post.service.ts#writeBlockPost': 1,
+  'src/server/services/post-intent/post-intent.service.ts#publishIntent': 1,
 };
 
 const WRITE_CALL = /\.image\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\s*\(/g;
@@ -578,6 +579,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
+  'src/pages/api/admin/temp/backfill-block-image-blurhash.ts#backfillOne': {
+    decision: 'stored-merge-server-keys',
+    sites: 1,
+  },
   'src/server/jobs/remove-deleted-user-images.ts#blockUserImages': {
     decision: 'raw-server-keys',
     sites: 2,
@@ -617,7 +622,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 1,
   },
   // In the population only because their `data` is not a plain literal this file can read.
-  'src/server/services/report.service.ts#resolveEntityAppeal': {
+  'src/server/services/report.service.ts#settleResolvedAppeals': {
     decision: 'literal-branches',
     sites: 1,
   },
@@ -774,6 +779,7 @@ describe('Image metadata provenance — write-site ledger', () => {
     expect(files).toContain('src/server/services/image.service.ts');
     expect(IMAGE_RELATION_FIELDS).toEqual([
       'avatar',
+      'bannerImage',
       'cover',
       'coverImage',
       'headerImage',
@@ -785,6 +791,7 @@ describe('Image metadata provenance — write-site ledger', () => {
       'profilePicture',
       'sfwCoverImage',
       'sourceImage',
+      'sparkImage',
       'thumbnailImage',
     ]);
   });

@@ -159,12 +159,14 @@ export async function executeTurn(input: {
     ? `Follow the playbook "${playbook.title}" (${playbook.slug} v${playbook.version}):\n\n${playbook.body}\n\n---\n\n${input.prompt}`
     : input.prompt;
 
+  const turnBudget = turnTokenBudget();
   const outcome = await runTurn({
     system: systemPrompt({
       moderator: input.moderator.username,
       today: new Date(),
       playbooks,
       seed: { userId: chat?.seedUserId ?? null, reportId: chat?.seedReportId ?? null },
+      turnBudget,
     }),
     history,
     prompt,
@@ -172,7 +174,7 @@ export async function executeTurn(input: {
     specs: tools.map(toolSpec),
     ctx,
     budget: remainingTokens(input.allowance, price),
-    turnBudget: turnTokenBudget(),
+    turnBudget,
     knownRefs: turns.flatMap((t) => t.sources.map((s) => s.ref)),
     complete: (req) => complete({ ...req, model }),
     onUsage: (prompt, completion) =>

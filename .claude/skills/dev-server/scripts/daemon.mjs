@@ -26,6 +26,8 @@ import { isPortFree } from './port-probe.mjs';
 import { LOCAL_MAIL_ENV, LOCAL_MAIL_LOG } from './local-mail.mjs';
 import { DB_KEYS, DEV_DB_LOG, appDatabaseEnv } from './dev-db.mjs';
 import { blankKeys, blankedKeyNames } from './blank-keys.mjs';
+import { sweepWorktreeCaches } from './dev-cache-sweep.mjs';
+import { listWorktrees } from './worktree.mjs';
 import { samePath, canonicalPath, resolvePrimaryCheckout } from './paths.mjs';
 import { parsePort, resolveDaemonPort } from './daemon-port.mjs';
 import { DEFAULT_MAX_WORKERS, DEFAULT_RUN_TIMEOUT_MS, RUN_GROUPS, RUN_KINDS, TestQueue } from './test-queue.mjs';
@@ -72,7 +74,8 @@ function loadSkillConfig() {
     distCacheKeep: 4,
     distCacheMaxGb: 40,
     perBranchDistDir: false,
-    worktreeDevFsCache: false,
+    worktreeDevFsCache: true,
+    worktreeCacheMaxGb: 20,
     killOnBranchSwitch: false,
     autoInstall: true,
     // NOT empty by default. `_app` SSR-fetches /api/user/settings on every page render and gives
@@ -156,7 +159,10 @@ function loadSkillConfig() {
           config.perBranchDistDir = /^(true|1|yes|on)$/i.test(value);
           break;
         case 'WORKTREE_DEV_FS_CACHE':
-          config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
+          if (value) config.worktreeDevFsCache = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'WORKTREE_CACHE_MAX_GB':
+          if (value) config.worktreeCacheMaxGb = parseFloat(value);
           break;
         case 'KILL_ON_BRANCH_SWITCH':
           config.killOnBranchSwitch = /^(true|1|yes|on)$/i.test(value);
@@ -774,7 +780,7 @@ class DevSession {
     applyDevFsCacheDefault(envVars, {
       worktree: this.worktree,
       primary: primaryCheckout,
-      worktreeOptIn: skillConfig.worktreeDevFsCache,
+      worktreeCache: skillConfig.worktreeDevFsCache,
     });
 
     const env = spawnEnvFor(envVars, { blankedEnvDir: worktreeEnvDir(this.worktree, this.worktree) });
@@ -1967,8 +1973,8 @@ function worktreeEnvDir(worktree, dir) {
   return samePath(worktree, primaryCheckout) ? null : dir;
 }
 
-function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeOptIn }) {
-  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeOptIn && !samePath(worktree, primary)) {
+function applyDevFsCacheDefault(envVars, { worktree, primary, worktreeCache }) {
+  if (envVars.NEXT_DEV_FS_CACHE === undefined && !worktreeCache && !samePath(worktree, primary)) {
     envVars.NEXT_DEV_FS_CACHE = 'false';
   }
   return envVars;
@@ -2112,6 +2118,25 @@ async function stopAppSessions() {
 
 // Session manager
 const sessions = new Map();
+
+// Worktrees accumulate several GB of Turbopack dev cache each; trim the idle ones to a total budget.
+function sweepDevCaches() {
+  try {
+    const busy = (path) =>
+      [...sessions.values(), ...appSessions.values()].some(
+        (s) => s.worktree && samePath(s.worktree, path)
+      );
+    sweepWorktreeCaches({
+      trees: listWorktrees(primaryCheckout),
+      primary: primaryCheckout,
+      isBusy: busy,
+      maxBytes: skillConfig.worktreeCacheMaxGb * 1024 ** 3,
+      log: (level, msg) => console.error(`[cache sweep] ${level}: ${msg}`),
+    });
+  } catch (e) {
+    console.error(`[cache sweep] skipped: ${e.message}`);
+  }
+}
 
 const testQueue = new TestQueue({
   concurrency: {
@@ -3226,6 +3251,8 @@ async function main() {
   server.listen(config.port, '127.0.0.1', () => {
     console.error(`\nDaemon running on http://127.0.0.1:${config.port}`);
     console.error(`\nReady.`);
+    // Off the startup path: it walks every worktree's cache synchronously.
+    setTimeout(sweepDevCaches, 5000).unref();
 
     if (skillConfig.rgbProxyEnabled) {
       console.error('RGB_PROXY_ENABLED=true — starting RGB proxy...');

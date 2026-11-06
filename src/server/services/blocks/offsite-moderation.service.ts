@@ -2,6 +2,10 @@ import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  assertAcceptedAppDeveloperTermsTrpc,
+  assertListingOwnerAcceptedAppDeveloperTerms,
+} from '~/server/services/blocks/app-developer-terms.service';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import {
   APP_LISTING_REPORT_REASONS,
@@ -692,6 +696,9 @@ export async function relistListing(opts: {
   const reason = requireModReason(input.reason);
   const listing = await classifyListingForAction(input.appListingId);
   const isOnsite = listing.kind === 'onsite';
+  // A relist goes live, so the owner must have accepted the current terms. The reset-to-pending
+  // paths are exempt: they re-queue for review, and the approval they lead to is gated.
+  await assertListingOwnerAcceptedAppDeveloperTerms(input.appListingId);
   // Set when the on-site block-restore flip matched 0 rows (drift — see below).
   let onsiteBlockRestoreDrift = false;
 
@@ -1924,6 +1931,7 @@ export async function republishOwnListing(opts: {
   userId: number;
 }): Promise<RepublishOwnListingResult> {
   const { input, userId } = opts;
+  await assertAcceptedAppDeveloperTermsTrpc(userId);
   const reason = input.reason?.trim() ? input.reason.trim() : null;
   // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
   let onsiteBlockRestoreDrift = false;
@@ -2184,10 +2192,10 @@ export async function republishOwnListing(opts: {
  *
  * 🔴 THE ICON+COVER FLOOR IS PRE-CHECKED HERE, BEFORE ANYTHING IS WRITTEN, and it is not
  * decoration. `approveExternalRequest` asserts the floor and does NOT exempt on-site, while
- * the on-site FIRST-publish path (`approveRequest`) never asserts it — so an approved
- * on-site listing is genuinely allowed to have no icon or no cover. Routing such a listing
- * to review without this check strands it: it sits `pending`, its app is suspended, and the
- * moderator's approve fails on the floor every time, with no owner-reachable way out.
+ * a listing can have reached `removed` without art (ungated paths: see
+ * `listing-publish-floor.ts`). Routing such a listing to review without this check strands
+ * it: it sits `pending`, its app is suspended, and the moderator's approve fails on the floor
+ * every time, with no owner-reachable way out.
  * Failing HERE turns that into an ordinary, actionable "add an icon and a cover" error and
  * leaves the listing `removed` where the owner can still edit it.
  *

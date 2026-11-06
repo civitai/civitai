@@ -16,18 +16,10 @@
  * per-category preprocessor lists from that.
  */
 
-import {
-  Badge,
-  Button,
-  Group,
-  Input,
-  RangeSlider,
-  SegmentedControl,
-  Select,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { Badge, Button, Group, Input, RangeSlider, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
+import { SheetSelect } from './SheetSelect';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { IconEraser, IconPhoto, IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -448,7 +440,7 @@ function ControlNetEditor({
         </Button>
       )}
 
-      <Select
+      <SheetSelect
         label="Category"
         data={categoryOptions}
         value={currentCategory}
@@ -470,7 +462,7 @@ function ControlNetEditor({
         comboboxProps={{ withinPortal: true }}
       />
 
-      <Select
+      <SheetSelect
         label="Preprocessor"
         data={preprocessorSelectData}
         value={entry.preprocessor}
@@ -514,8 +506,9 @@ function ControlNetEditor({
             : 'Your image is preprocessed before being sent to the ControlNet.'
         }
       >
-        <SegmentedControl
-          fullWidth
+        <ChoiceGroup
+          aria-label="Image source"
+          className="mt-1"
           value={entry.mode}
           onChange={handleModeChange}
           disabled={modeLocked}
@@ -523,7 +516,6 @@ function ControlNetEditor({
             { value: 'auto', label: 'Auto-preprocess' },
             { value: 'preprocessed', label: 'Already preprocessed' },
           ]}
-          mt={4}
         />
       </Input.Wrapper>
       {modeLocked && (

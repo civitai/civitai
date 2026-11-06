@@ -772,6 +772,9 @@ export type TriggerApplyArgs = {
   sha: string;
   appBlockId: string;
   imageRef: string;
+  /** Also create the per-app Deployment / Service / IngressRoute / Middleware. Off in
+   *  production; the `app-blocks-per-app-objects` flag turns it back on (see buildApplyScript). */
+  perAppObjects: boolean;
 };
 
 export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: string }> {
@@ -835,7 +838,7 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
                 { name: 'tmp', mountPath: '/tmp' },
               ],
               command: ['/bin/bash', '-c'],
-              args: [buildApplyScript(ns)],
+              args: [buildApplyScript(ns, { perAppObjects: args.perAppObjects })],
               resources: {
                 requests: { cpu: '50m', memory: '64Mi' },
                 limits: { cpu: '500m', memory: '256Mi' },
@@ -903,7 +906,9 @@ export async function waitForApplyJob(
 ): Promise<ApplyJobOutcome> {
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
-  const timeoutMs = opts.timeoutMs ?? 6 * 60 * 1000; // 6 min — fits the worst-case backoffLimit=2 + 180s rollout
+  // 6 min default (review apply, dev tunnel). The production apply passes its
+  // own, longer budget: its Job runs a required publish (see build-callback.ts).
+  const timeoutMs = opts.timeoutMs ?? 6 * 60 * 1000;
   const pollMs = opts.pollMs ?? 5_000;
   const deadline = Date.now() + timeoutMs;
 
@@ -949,31 +954,37 @@ export async function waitForApplyJob(
 
 // ---------- apply-Job inner script (rendered into spec.containers[].args)
 
-/**
- * The bash script that runs inside the apply Job. Renders the per-app
- * manifest, runs a pre-flight smoke test against the new image, and
- * only then `kubectl apply`s the manifest into the live namespace.
- *
- * Smoke test fixes 2026-05-29's gen-from-model incident: a bundle with
- * Vite `base: '/<slug>/'` + nginx redirect from `/` shipped clean, then
- * mixed-content-blocked in the iframe because the redirect Location
- * leaked the in-pod port (:8080) through Traefik to the browser. The
- * smoke test catches that EXACT pattern by spinning up the candidate
- * image as a Pod, hitting it directly, and rejecting any redirect
- * whose Location embeds the in-pod port — a strong signal the bundle
- * would mixed-content-block the iframe under HTTPS.
- *
- * Failures during the smoke test exit non-zero so the Job is marked
- * Failed and the live Deployment is left untouched. The build chain
- * surfaces this back to civitai-web via the standard apply Job watch.
- *
- * Exported for the orchestration tests so the smoke shape stays
- * locked-in.
- */
-export function buildApplyScript(ns: string): string {
-  return `#!/usr/bin/env bash
-set -euo pipefail
+export type ApplyScriptOptions = {
+  /** Also render and apply the per-app manifest (`/templates/app.yaml.tmpl`) and wait for its
+   *  Deployment. Off in production; kept as a rollback path. */
+  perAppObjects: boolean;
+};
 
+/**
+ * The bash script that runs inside the production apply Job. A deploy succeeds (exit 0) only
+ * when the candidate image passed the smoke test AND was published to the shared static server,
+ * which is what serves `<slug>.<APPS_DOMAIN>`. Any failure exits non-zero, so the Job fails and
+ * build-callback.ts records the deploy as failed without stamping current_version_deployed_at.
+ *
+ * Steps:
+ *   1. Smoke test: run the candidate image as a Pod, probe it directly, and reject a redirect whose
+ *      Location embeds the in-pod port (2026-05-29 gen-from-model incident: a Vite `base` + nginx
+ *      redirect leaked :8080 through Traefik and mixed-content-blocked the iframe).
+ *   2. Publish: `/templates/publish.sh` with PUBLISH_REQUIRED=1, so every publish failure fails
+ *      the deploy. A templates ConfigMap without the script fails the deploy too: nothing would
+ *      serve the build. The shared static server serves every app host (a new app through its
+ *      catch-all route), so a successful publish is what makes the app live.
+ *   3. per-app objects ON only: render and `kubectl apply` the per-app manifest and wait for the
+ *      rollout. With it OFF no Deployment, Service, IngressRoute or Middleware is created.
+ *
+ * The review sandbox script (buildApplyReviewScript) never publishes: a pending build is never
+ * published.
+ *
+ * Exported for the tests, which run it under bash with kubectl and curl stubbed.
+ */
+export function buildApplyScript(ns: string, opts: ApplyScriptOptions): string {
+  const render = opts.perAppObjects
+    ? `
 # ---- Render the per-app manifest from /templates/app.yaml.tmpl --------------
 if command -v envsubst >/dev/null 2>&1; then
   envsubst < /templates/app.yaml.tmpl > /tmp/rendered.yaml
@@ -986,7 +997,20 @@ else
       /templates/app.yaml.tmpl > /tmp/rendered.yaml
 fi
 cat /tmp/rendered.yaml
+`
+    : '';
 
+  const apply = opts.perAppObjects
+    ? `
+# ---- Apply the per-app manifest into the live namespace --------------------
+kubectl apply -f /tmp/rendered.yaml
+kubectl -n ${ns} rollout status deploy/\${SLUG} --timeout=180s
+`
+    : '';
+
+  return `#!/usr/bin/env bash
+set -euo pipefail
+${render}
 # ---- Pre-flight smoke test against the candidate image ---------------------
 # 8-char short SHA keeps the pod name under the 63-char DNS label limit.
 SMOKE_POD="smoke-\${SLUG}-$(printf '%s' "\${SHA}" | head -c 8)"
@@ -1063,10 +1087,16 @@ fi
 
 echo "smoke test: PASSED — healthz 200, / 200 text/html, no port-leak redirect"
 
-# ---- Apply the per-app manifest into the live namespace --------------------
-kubectl apply -f /tmp/rendered.yaml
-kubectl -n ${ns} rollout status deploy/\${SLUG} --timeout=180s
-`;
+# ---- Publish to the shared static server (required) ------------------------
+# The shared static server is what serves the app, so a build that is not
+# published is not deployed. PUBLISH_REQUIRED=1 makes the publish script fail on
+# every error instead of warning and carrying on.
+if [ ! -f /templates/publish.sh ]; then
+  echo "publish: /templates/publish.sh is missing, so nothing would serve this build" >&2
+  exit 1
+fi
+PUBLISH_REQUIRED=1 bash /templates/publish.sh
+${apply}`;
 }
 
 /**

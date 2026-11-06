@@ -119,6 +119,8 @@ export const accountSections: AccountSection[] = [
       'generation count',
       'earned buzz',
       'creator showcase',
+      'hat turf',
+      'hats',
     ],
   },
   {
@@ -144,7 +146,15 @@ export const accountSections: AccountSection[] = [
     label: 'Security & Apps',
     icon: IconShieldLock,
     group: 'access',
-    keywords: ['sign in', 'connected accounts', 'api keys', 'oauth', 'connected apps'],
+    keywords: [
+      'sign in',
+      'connected accounts',
+      'api keys',
+      'oauth',
+      'connected apps',
+      'app storage',
+      'app data',
+    ],
   },
 ];
 

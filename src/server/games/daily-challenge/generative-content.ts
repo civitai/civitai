@@ -24,7 +24,7 @@ import {
   type ReviewTemplateVariables,
 } from './template-engine';
 
-// Default model for every daily-challenge stage: Qwen 3.8 on the orchestrator, with GPT-4o Mini on
+// Default model for every daily-challenge stage: Qwen 3.8 on the orchestrator, with GPT-6 Luna on
 // OpenRouter as the fallback when no model was asked for explicitly.
 //
 // MiMo had been the default since it was chosen against the two failure modes this pipeline has:
@@ -44,10 +44,11 @@ import {
 // From 2026-10-23 OpenRouter's MiMo providers rejected every request carrying an image ("Supplied
 // image did not pass validation checks"), which is every stage but winners. The orchestrator also
 // rejects some images outright ("Input image may violate our terms and services"); the fallback
-// covers both. GPT-4o Mini over GPT-5 Nano because the fallback mostly sees explicit entries, where
-// Nano's empty responses (above) would fail the review again.
+// covers both. GPT-6 Luna over GPT-5 Nano because the fallback mostly sees explicit entries, where
+// Nano's empty responses (above) would fail the review again; over GPT-4o Mini
+// because it is cheaper on both token rates.
 const DEFAULT_MODEL: AIModel = 'civitai/qwen3.8';
-const FALLBACK_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
+const FALLBACK_MODEL: AIModel = AI_MODELS.GPT_6_LUNA;
 export const DEFAULT_REVIEW_MODEL: AIModel = DEFAULT_MODEL;
 export const REVIEW_FALLBACK_MODEL: AIModel = FALLBACK_MODEL;
 
@@ -89,8 +90,7 @@ function pickClient(model: string) {
 // models. The orchestrator does return `usage` for those; it is civitai-llm's
 // ChatCompletionResponse type that omits the field, so it never reaches this file.
 export const MODEL_BUZZ_RATES: Record<string, { input: number; output: number }> = {
-  [AI_MODELS.GPT_5_NANO]: { input: 0.05, output: 0.4 },
-  [AI_MODELS.GPT_4O_MINI]: { input: 0.15, output: 0.6 },
+  [AI_MODELS.GPT_6_LUNA]: { input: 0.1, output: 0.5 },
   [AI_MODELS.MIMO]: { input: 0.14, output: 0.28 },
   [AI_MODELS.GROK_4_3]: { input: 1.25, output: 2.5 },
   // Pairwise judging routes. Published OpenRouter rates, verified 2026-08-11. Neither model

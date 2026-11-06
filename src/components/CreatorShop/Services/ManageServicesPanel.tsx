@@ -6,14 +6,15 @@ import {
   Center,
   Group,
   Loader,
-  Menu,
   Paper,
   Progress,
   Stack,
+  Tabs,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -32,6 +33,7 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useRouter } from 'next/router';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useState } from 'react';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string }> = {
@@ -46,12 +48,26 @@ const openForm = (offering?: ServiceOffering) =>
 
 export type ShopPublishState = { onPublish: () => void; publishing: boolean };
 
-/** `unpublishedShop` is set only while the seller's Creator Shop is known to be a draft. */
-export function ManageServicesPanel({ unpublishedShop }: { unpublishedShop?: ShopPublishState }) {
-  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(true);
+/**
+ * `unpublishedShop` is set only while the seller's Creator Shop is known to be a draft.
+ * `servicesEnabled` false is a seller without the services flag: they can only pause and remove.
+ */
+export function ManageServicesPanel({
+  unpublishedShop,
+  servicesEnabled = true,
+}: {
+  unpublishedShop?: ShopPublishState;
+  servicesEnabled?: boolean;
+}) {
+  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(
+    true,
+    servicesEnabled
+  );
   const router = useRouter();
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
+  const [requestsTab, setRequestsTab] = useState<string | null>('open');
+  const requestsStatus = requestsTab === 'closed' ? 'closed' : 'open';
 
   if (isLoading)
     return (
@@ -79,13 +95,30 @@ export function ManageServicesPanel({ unpublishedShop }: { unpublishedShop?: Sho
       </Group>
 
       {eligibility && !canSell && <SellGate eligibility={eligibility} />}
+      {!servicesEnabled && (
+        <Text size="sm" c="dimmed">
+          Services aren&apos;t open to your account right now. You can still pause or remove your
+          services and finish your open deals.
+        </Text>
+      )}
 
       <Stack gap="xs">
         <Title order={3}>Incoming requests</Title>
+        <Tabs value={requestsTab} onChange={setRequestsTab}>
+          <Tabs.List>
+            <Tabs.Tab value="open">Open</Tabs.Tab>
+            <Tabs.Tab value="closed">Closed</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
         <ServiceDealsList
+          key={requestsStatus}
           role="seller"
-          status="open"
-          emptyText="No open requests. They show up here when a buyer requests one of your services."
+          status={requestsStatus}
+          emptyText={
+            requestsStatus === 'open'
+              ? 'No open requests. They show up here when a buyer requests one of your services.'
+              : 'No closed requests yet. Declined, expired, cancelled and completed requests show up here.'
+          }
         />
       </Stack>
 

@@ -40,11 +40,7 @@ export type TosSection = '9.6' | '11.2' | '11.8';
 /** Retool's `StrikeReasons`, bound to the strike modal's radio group. */
 export const STRIKE_REASONS: CannedReason[] = [
   { label: 'Depicting Real People', message: 'Depicting real people is not allowed.', tos: '9.6' },
-  {
-    label: 'Real person model not marked correctly',
-    message: "Real person models need to be marked as such and don't allow nsfw content.",
-    tos: '9.6',
-  },
+  { label: 'Real person model', message: 'Models of real people are not allowed.', tos: '9.6' },
   {
     label: 'Minor displayed in mature context',
     message: 'Minors displayed in mature context is not allowed.',

@@ -30,7 +30,7 @@
  *      aggregate in the rail and half in the header.
  *
  * 🔴 `preview` POSTURE. The moderator listing-media review renders this body over an
- * UNAPPROVED shadow listing, which structurally has no reviews and no installs — its
+ * UNAPPROVED shadow listing, which structurally has no reviews and no metric rollup — its
  * rollup is 0/0 because nobody could have reviewed it, not because nobody did. Both
  * chips are therefore omitted, and that omission is decided HERE (the component just
  * renders the list, and renders nothing for an empty one) so the RULE is covered by
@@ -42,13 +42,13 @@
  * here does not cover the hand-off to it.
  */
 
-import { getRecommendLabel } from '~/components/Apps/appListingCardView';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /** One header stat chip: an `IconBadge` face wrapped in a `StatHoverCard`. */
 export type ListingStatChip = {
   /** Stable key — also the chip's `data-listing-stat` attribute in the DOM. */
-  key: 'recommend' | 'installs';
+  key: 'recommend' | 'plays' | 'installs';
   /** Hover-card TITLE. */
   label: string;
   /** The number printed on the chip face, and the hover card's `value` fallback. */
@@ -58,12 +58,15 @@ export type ListingStatChip = {
   /**
    * Hover-card body copy. When set, `StatHoverCard` renders THIS INSTEAD of the
    * numeric value — so a chip whose dropdown should just repeat its own number (the
-   * installs chip) must leave it undefined rather than spell the number again.
+   * usage chip) must leave it undefined rather than spell the number again.
    */
   message?: string;
 };
 
-type StatInput = Pick<ListingDetail, 'recommend' | 'reviewCount' | 'installCount'>;
+type StatInput = Pick<
+  ListingDetail,
+  'recommend' | 'reviewCount' | 'kindData' | 'openCount' | 'installCount'
+>;
 
 /** True when the rollup carries no reviews at all — no percentage, no negative half. */
 function hasNoReviews(detail: Pick<ListingDetail, 'recommend' | 'reviewCount'>): boolean {
@@ -129,13 +132,18 @@ export function buildListingStatChips(
     message: buildRecommendHoverMessage(detail),
   });
 
-  chips.push({
-    key: 'installs',
-    label: 'Installs',
-    value: detail.installCount,
-    ariaLabel: `${detail.installCount.toLocaleString()} installs`,
-    // No message: the dropdown showing the full, un-abbreviated count IS the content.
-  });
+  // USAGE — "Plays" on-site, "Installs" off-site, by the same `listingUsageStat` rule as
+  // the Details row, so the chip and the row never disagree.
+  const usage = listingUsageStat(detail);
+  if (usage) {
+    chips.push({
+      key: usage.key,
+      label: usage.label,
+      value: usage.count,
+      ariaLabel: `${usage.count.toLocaleString()} ${usage.label.toLowerCase()}`,
+      // No message: the dropdown showing the full, un-abbreviated count IS the content.
+    });
+  }
 
   return chips;
 }

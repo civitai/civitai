@@ -36,6 +36,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AppListingAuthoringContext } from '~/server/services/blocks/app-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -72,7 +73,7 @@ import { trpc } from '~/utils/trpc';
  * its other consumer is the server gate on collaborator invites.
  *
  * Access is single-sourced at the tRPC layer: `appListings.getAuthoringContext` resolves
- * the caller's role (owner OR accepted editor) and throws FORBIDDEN/NOT_FOUND otherwise
+ * the caller's role (owner, accepted editor, or moderator) and throws FORBIDDEN/NOT_FOUND otherwise
  * — both settle to `NotFound` here, which is the established non-enumerable posture.
  */
 export const getServerSideProps = createServerSideProps({
@@ -234,7 +235,7 @@ export default function AppListingEditPage() {
             component="button"
             type="button"
             size="sm"
-            onClick={() => goBackOrFallback(router, '/apps/build')}
+            onClick={() => goBackOrFallback(router, MY_APPS_HREF)}
             data-testid="apps-edit-back"
           >
             <Group gap={4}>
@@ -266,7 +267,7 @@ export default function AppListingEditPage() {
                   {/* FORKING — on-site only (an off-site app has no source here to fork), and
                       it gates itself on the `app-blocks-fork` rollout flag. Saves on its own,
                       in place, never through the form below: see `ListingForkSetting`. */}
-                  {context.kind === 'onsite' ? (
+                  {context.kind === 'onsite' && context.role !== 'moderator' ? (
                     <ListingForkSetting
                       appListingId={context.appListingId}
                       forkable={context.forkable}
@@ -309,7 +310,7 @@ export default function AppListingEditPage() {
                 publishing control actually exists (`approved` ⇒ Unpublish, `removed` ⇒
                 Republish) and only to the owner, because both procs are owner-scoped
                 server-side. It is the tab that makes an owner Unpublish reversible. */}
-            {tabs.includes('publishing') ? (
+            {tabs.includes('publishing') && context.role !== 'moderator' ? (
               <Tabs.Panel value="publishing" pt="md" data-testid="apps-edit-panel-publishing">
                 <ListingPublishingPanel
                   appListingId={context.appListingId}
@@ -349,7 +350,7 @@ export default function AppListingEditPage() {
               </Tabs.Panel>
             ) : null}
 
-            {tabs.includes('collaborators') ? (
+            {tabs.includes('collaborators') && context.role !== 'moderator' ? (
               <Tabs.Panel value="collaborators" pt="md" data-testid="apps-edit-panel-collaborators">
                 <AppCollaboratorsPanel
                   appListingId={context.appListingId}

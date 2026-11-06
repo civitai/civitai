@@ -12,7 +12,7 @@ App Assistant's rules, in one place for both places a reply runs: the page
 | `sandbox-client`        | The hosted sandbox service's client, and `openApp`                                                        |
 | `app-key` / `app-tools` | App keys and `create_app`                                                                                 |
 
-The page adds what only a page can do (the checklist and ready cards, Build it); the runner adds
+The page adds what only a page can do (the checklist, ready and Submit for review cards); the runner adds
 the sandbox MCP connection. Neither keeps its own copy of a rule here.
 
 ## Add to an app

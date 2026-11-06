@@ -16,7 +16,8 @@
  * in the footer — see `shared/generation/messages.ts`.
  */
 
-import { Alert, Popover, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Text, ThemeIcon } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconFlask } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';

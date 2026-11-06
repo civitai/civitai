@@ -63,4 +63,35 @@ describe('safeError', () => {
     expect(out.innerName).toBeUndefined();
     expect(out.innerStack).toBeUndefined();
   });
+
+  // An orchestrator 4xx hands back its parsed problem-details body, a plain object. String()
+  // of that is "[object Object]", which logged nothing about why the submit was rejected.
+  it('serializes a plain object to readable JSON text', () => {
+    const body = { title: 'Bad Request', status: 400, detail: 'mediaUrl is not reachable' };
+    const out = safeError(body)!;
+    expect(out.message).not.toBe('[object Object]');
+    expect(JSON.parse(out.message)).toEqual(body);
+  });
+
+  it('redacts credential-shaped keys at any depth', () => {
+    const out = safeError({
+      detail: 'denied',
+      headers: { Authorization: 'Bearer abc', Cookie: 'sid=1' },
+      config: { apiKey: 'k', password: 'p', clientSecret: 's', access_token: 't' },
+    })!;
+    for (const secret of ['Bearer abc', 'sid=1', '"k"', '"p"', '"s"', '"t"'])
+      expect(out.message).not.toContain(secret);
+    expect(out.message).toContain('denied');
+  });
+
+  it('caps the serialized text and survives values JSON cannot encode', () => {
+    expect(safeError({ detail: 'x'.repeat(10_000) })!.message.length).toBeLessThanOrEqual(2_000);
+    const circular: Record<string, unknown> = { detail: 'loop' };
+    circular.self = circular;
+    expect(safeError(circular)).toEqual({ message: '[object Object]' });
+    expect(JSON.parse(safeError({ n: BigInt(1) })!.message)).toEqual({ n: '1' });
+    const bare = Object.create(null) as Record<string, unknown>;
+    bare.self = bare;
+    expect(safeError(bare)).toEqual({ message: '[unserializable object]' });
+  });
 });

@@ -1,6 +1,6 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
-import { legacySessionCookieName, sessionCookieName } from '@civitai/auth';
+import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -11,7 +11,15 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import {
+  credentialLogFields,
+  getRequestCredential,
+  type RequestCredential,
+} from '~/server/auth/request-credential';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { Flags } from '~/shared/utils/flags';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
@@ -20,6 +28,7 @@ import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/erro
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -316,7 +325,47 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    if (req.query.token !== token) {
+    // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
+    // `?token=` stays accepted until every caller has moved to the header. Either one passing is
+    // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
+    // arrives as an array and is refused rather than read.
+    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+    const bearerOk = timingSafeEqualStrings(token, bearer);
+    const queryOk = timingSafeEqualStrings(token, queryToken);
+    if (!bearerOk && !queryOk) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    await handler(req, res);
+  });
+}
+
+const MIN_HEADER_TOKEN_LENGTH = 32;
+
+export function HeaderTokenSecuredEndpoint(
+  getToken: () => string | undefined,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    const token = getToken();
+    if (
+      !isConfiguredSecret(token) ||
+      token !== token.trim() ||
+      token.length < MIN_HEADER_TOKEN_LENGTH
+    ) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    if (req.url?.includes('?') || Object.keys(req.query ?? {}).length) {
+      res.status(400).json({ error: 'This endpoint takes no query string' });
+      return;
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (typeof presented !== 'string' || !timingSafeEqualStrings(token, presented)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -437,10 +486,10 @@ const CREDENTIALED_VARY = 'Authorization, Cookie';
  * Cookie names that can carry a session, hence make a response caller-dependent.
  *
  * 🔴 DERIVED, never spelled out. `@civitai/auth` owns the naming, and it varies
- * along two axes: the current thin-session cookie vs the legacy next-auth one
- * (both are still honoured by `getServerAuthSession`), and the `__Secure-`
- * prefix, which is applied when serving over https and dropped for http dev. All
- * four spellings are enumerated by calling the helpers with an explicit boolean,
+ * along three axes: the host-only `__Host-` session cookie, the shared thin-session
+ * cookie, and the legacy next-auth one (all still honoured by `getServerAuthSession`,
+ * whatever this app's cookie mode), plus the secure prefix, which is applied when
+ * serving over https and dropped for http dev. All five spellings are enumerated by calling the helpers with an explicit boolean,
  * rather than letting the env-derived default pick one — the guard must hold in
  * dev and prod alike, and it must not silently narrow if a deploy's env changes.
  *
@@ -451,6 +500,7 @@ const CREDENTIALED_VARY = 'Authorization, Cookie';
  */
 const SESSION_COOKIE_NAMES = Array.from(
   new Set([
+    hostSessionCookieName(true),
     sessionCookieName(true),
     sessionCookieName(false),
     legacySessionCookieName(true),
@@ -535,8 +585,8 @@ export function PublicEndpoint(
     // claim instead of asserting it unconditionally.
     //
     // The fallback is the platform default rather than nothing. `apiCacheMiddleware`
-    // already sets exactly this string, but its matcher covers only `/api/trpc/*`,
-    // `/api/v1/*` and `/api/testing/*` (verified in `src/proxy.ts`) — and this
+    // already sets exactly this string, but it covers only `/api/v1/*` (`/api/trpc/*`
+    // is outside the proxy matcher in `src/proxy.ts`; that route sets it itself) — and this
     // wrapper is used well outside those prefixes (`/api/user/*`, `/api/generation/*`,
     // `/api/track/*`, `/api/download/*`, `/api/internal/*`). Relying on the proxy
     // would leave those with no `Cache-Control` at all, which is a weaker
@@ -559,7 +609,8 @@ export function AuthedEndpoint(
     res: NextApiResponse,
     user: SessionUser
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowBanned = false }: { allowBanned?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods, { allowCredentials: true });
@@ -568,7 +619,11 @@ export function AuthedEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    const session = await getServerAuthSession({ req, res });
+    // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
     await handler(req, res, session.user);
   });
@@ -580,7 +635,8 @@ export function MixedAuthEndpoint(
     res: NextApiResponse,
     user: Session['user'] | undefined
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowBanned = false }: { allowBanned?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
@@ -596,7 +652,7 @@ export function MixedAuthEndpoint(
     //     so it also runs before any session work.
     //  2. **The credentialed arm now states a header.** It previously stated
     //     nothing and left the response to `apiCacheMiddleware`, whose matcher
-    //     covers `/api/v1/*` and `/api/trpc/*` only. Two of the twelve routes on
+    //     covers `/api/v1/*` only. Two of the twelve routes on
     //     this wrapper sit outside that: `/api/auth/freshdesk`, which answered
     //     with no `Cache-Control` at all, and
     //     `/api/blocks/screenshot/[appBlockId]/[file]`, whose 200 arm sets its
@@ -616,7 +672,12 @@ export function MixedAuthEndpoint(
     if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
 
-    const session = await getServerAuthSession({ req, res });
+    // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
+    // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
+    const session = allowBanned
+      ? await getServerAuthSession({ req, res })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
       const isNotUpToDate = await checkNotUpToDate(
@@ -812,6 +873,32 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
   }
 }
 
+// Off while `orchestrator-endpoint-scope-would-refuse` counts show which keys call these routes
+// without the route's scope; true refuses them on every `OrchestratorEndpoint` route.
+let enforceOrchestratorEndpointScope = false;
+
+export const orchestratorEndpointScopeTesting = {
+  isEnforcing: () => enforceOrchestratorEndpointScope,
+  setEnforce(value: boolean) {
+    enforceOrchestratorEndpointScope = value;
+  },
+};
+
+/** Records a call `OrchestratorEndpoint` would refuse once enforcing. No user, key or IP. */
+function logScopeWouldRefuse(
+  req: AxiomAPIRequest,
+  requiredScope: number,
+  credential: RequestCredential
+) {
+  logToAxiom({
+    name: 'orchestrator-endpoint-scope-would-refuse',
+    type: 'info',
+    route: req.url?.split('?')[0],
+    requiredScope,
+    ...credentialLogFields(credential),
+  }).catch(() => undefined);
+}
+
 export function OrchestratorEndpoint(
   handler: (
     req: AxiomAPIRequest,
@@ -819,10 +906,31 @@ export function OrchestratorEndpoint(
     user: SessionUser,
     token: string
   ) => Promise<void | NextApiResponse>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[],
+  requiredScope: number
 ) {
   return AuthedEndpoint(async (req, res, user) => {
-    const token = await getOrchestratorToken(user.id, { req, res });
+    // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
+    const credential = getRequestCredential(req);
+    if (
+      credential.tokenScope !== TokenScope.Full &&
+      !Flags.hasFlag(credential.tokenScope, requiredScope)
+    ) {
+      if (enforceOrchestratorEndpointScope)
+        return res
+          .status(403)
+          .json({ error: 'Your API key does not have the required scope for this action' });
+      logScopeWouldRefuse(req, requiredScope, credential);
+    }
+    let token: string;
+    try {
+      token = await getOrchestratorToken(user.id, { req, res });
+    } catch (error) {
+      // The mint reads the ban from the primary, so it can refuse a session whose cached user predates the ban.
+      if (error instanceof TRPCError && error.code === 'FORBIDDEN')
+        return res.status(403).json({ error: error.message });
+      throw error;
+    }
     return await handler(req, res, user, token);
   }, allowedMethods);
 }

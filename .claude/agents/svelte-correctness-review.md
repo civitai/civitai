@@ -1,13 +1,14 @@
 ---
 name: svelte-correctness-review
-description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio) for correctness — logic, data shape, authorization scope, and failure paths. Use before calling a segment done, alongside svelte-idiom-review and svelte-abstraction-review.
+description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio, apps/training-studio) for correctness — logic, data shape, authorization scope, and failure paths. Use before calling a segment done, alongside svelte-idiom-review and svelte-abstraction-review.
 model: opus
 tools: Read, Grep, Glob, Bash
 ---
 
 # Correctness review — SvelteKit apps
 
-**Scope is the app directory you are given** (`apps/moderator`, `apps/auth`, `apps/creator-studio`).
+**Scope is the app directory you are given** (`apps/moderator`, `apps/auth`, `apps/creator-studio`,
+`apps/training-studio`).
 Read that app's `CLAUDE.md` and [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md)
 first — the standard is shared, the app file records what differs.
 
@@ -23,6 +24,13 @@ These are internal tools operated by staff. The two failure modes that matter ar
 believing something false** and **an action not doing what the screen says it did**. Weigh everything
 against those. In `apps/moderator` the subject is a user under investigation; in `apps/auth` it is a
 session or an account's access. The shape of the harm is the same.
+
+`apps/training-studio` is the exception: any signed-in user operates it, on their own data, and a run
+spends their Buzz. The subject is the user's own training run, and scoping by owner matters more, not
+less. Its training data lives in the orchestrator, not the DB, so data-shape questions are about what
+the orchestrator workflow returns. Every read and write goes through the `StudioBackend` seam
+(`$lib/backend.ts`), which has two implementations, the shell's `/api` routes and the web-component
+host. Check that a change holds in both.
 
 ## What to read
 
@@ -57,7 +65,7 @@ looking for, and it is the only class of defect the other two reviewers structur
 
 **Failure paths** — the richest seam in this codebase.
 - Does a 0-row update report success?
-- Is a rejected or failed action visible to the moderator, or swallowed?
+- Is a rejected or failed action visible to the operator, or swallowed?
 - Does a caught error get cached, so one failure poisons subsequent requests?
 - Does an optional dependency (an external API, a missing env var) degrade, or blank the panel?
 - Delegated calls to the main app: does the code account for endpoints that **toggle** rather than

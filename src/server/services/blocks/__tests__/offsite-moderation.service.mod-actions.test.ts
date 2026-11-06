@@ -18,6 +18,17 @@ import {
   resolveReport,
   unpublishOwnListing,
 } from '~/server/services/blocks/offsite-moderation.service';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * W13 P3b PR3 — off-site moderation ACTION service tests (delist / relist / purge
@@ -633,6 +644,23 @@ describe('relistListing', () => {
       data: { status: 'approved' },
     });
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('relist');
+  });
+
+  it("refused while the listing's owner has not accepted the App Developer Terms; nothing flips", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertListingOwnerAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' })
+    );
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    await expect(
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' });
+    expect(terms.assertListingOwnerAcceptedAppDeveloperTerms).toHaveBeenCalledWith(APP_ID);
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
   it('OFF-SITE relist does NOT touch app_blocks', async () => {

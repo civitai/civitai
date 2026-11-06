@@ -1,5 +1,6 @@
 import type { MantineSize } from '@mantine/core';
-import { Group, Text, Tooltip } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import React from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

@@ -1,4 +1,5 @@
-import { Group, Text, Tooltip } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import React, { type ReactNode } from 'react';
 import type { AppsSection } from '~/components/Apps/apps-sections';
@@ -36,7 +37,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
  *     equivalent prop appears below.
  *
  * The `< 2 sections ⇒ no nav` collapse is NOT decided here — `AppsPageLayout` decides
- * it, because it also has to stop reserving the rail's 276px of horizontal chrome. See
+ * it, because it also has to stop reserving the rail's 292px of horizontal chrome. See
  * `useAppsNavSections` for the rule and the cohort it still fires for.
  *
  * 🔴 THE COLLAPSE TOGGLE IS A PROP (`headerAction`), NOT SOMETHING THIS COMPONENT OWNS,

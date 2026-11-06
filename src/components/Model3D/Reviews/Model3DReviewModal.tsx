@@ -57,7 +57,7 @@ export default function Model3DReviewModal({
   // via the review upsert. We pass `postId` back through `reviews.upsert` so the
   // server can link them atomically (Post.model3dReviewId @unique).
   const createPost = trpc.post.create.useMutation({
-    onError: (error) => showCreatePostError(error.message, 'Failed to create review post'),
+    onError: (error) => showCreatePostError(error, 'Failed to create review post'),
   });
 
   const isLoading = upsertReview.isPending || createPost.isPending;

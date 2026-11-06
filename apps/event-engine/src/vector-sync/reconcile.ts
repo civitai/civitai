@@ -6,7 +6,7 @@
  *   node dist/vector-sync/reconcile.js --from <id> --to <id> [--bucket 100000] [--dry-run] [--confirm]
  */
 import type { Pool } from 'pg';
-import { config } from '@/config';
+import { assertVectorSyncConfig, config } from '@/config';
 import { createGuardedPgPool } from '@/utils/pg-pool-guard';
 import { logger } from '@/utils/logger';
 import { eligibleSql } from './eligibility';
@@ -93,6 +93,7 @@ async function reconcileEmbedder(store: VectorStore) {
 }
 
 async function main() {
+  assertVectorSyncConfig();
   const args = process.argv.slice(2);
   const flag = (name: string) => {
     const i = args.indexOf(`--${name}`);

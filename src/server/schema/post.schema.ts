@@ -11,6 +11,7 @@ import {
   MAX_MANUAL_RESOURCES_PER_IMAGE,
   POST_IMAGE_LIMIT,
   POST_TAG_LIMIT,
+  POST_TITLE_MAX_LENGTH,
 } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
@@ -105,11 +106,16 @@ export function getDailyPostLimit(user: SessionUser): number {
   return isPaidMember(user) ? tier.limit * MEMBER_DAILY_POST_MULTIPLIER : tier.limit;
 }
 
+/** The one bucket every post-creating procedure counts against, and the usage-limits read reads. */
+export const POST_CREATE_RATE_LIMIT_KEY = 'post:create';
+
 export const postRateLimits: RateLimit[] = [
   // Newly created accounts: tight hourly clamp for the rest of the calendar day
   // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
   // Not overridden because no other rule uses the hour period.
   {
+    id: 'posts.hourly',
+    kind: 'product',
     limit: 2,
     period: CacheTTL.hour,
     userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
@@ -119,12 +125,16 @@ export const postRateLimits: RateLimit[] = [
   // no daily limit at all.
   ...dailyPostTiers.flatMap(({ minScore, limit }): RateLimit[] => [
     {
+      id: 'posts.daily',
+      kind: 'product',
       limit,
       period: CacheTTL.day,
       userReq: minScore > 0 ? (user) => hasReputation(user, minScore) : undefined,
       errorMessage: dailyPostLimitMessage({ minScore, limit, member: false }),
     },
     {
+      id: 'posts.daily',
+      kind: 'product',
       limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
       period: CacheTTL.day,
       userReq: (user) => isPaidMember(user) && hasReputation(user, minScore),
@@ -169,6 +179,9 @@ export const postsQuerySchema = baseQuerySchema.merge(
       .string()
       .transform((data) => postgresSlugify(data))
       .nullish(),
+    // Scopes to this account and wins over `username`: some older usernames hold characters the
+    // slug above strips, so their profile can only name them by id.
+    userId: z.number().int().positive().max(2147483647).optional(),
     modelVersionId: z.number().optional(),
     ids: z.array(z.number()).optional(),
     collectionId: z.number().optional(),
@@ -446,13 +459,19 @@ export const removeBatchMediaSchema = batchMediaIdsSchema;
 export const scheduleBatchPostSchema = z.object({
   /** Stable for one post across every attempt to create it, so a retry is recognised. */
   clientKey: z.string().uuid().optional(),
-  title: z.string().trim().max(255).nullish(),
+  title: z.string().trim().max(POST_TITLE_MAX_LENGTH).nullish(),
   publishedAt: z.coerce.date(),
   /** Rows `persistBatchMedia` created for this creator, still without a post. */
   images: z
     .array(z.object({ imageId: z.number().int().positive() }))
     .min(1)
     .max(POST_IMAGE_LIMIT),
+});
+
+/** The upload keys a restored batch draft holds; at most the key-check cap (`MAX_KEYS`) at once. */
+export const BATCH_DRAFT_KEYS_PER_CHECK = 64;
+export const checkBatchDraftKeysSchema = z.object({
+  keys: z.array(z.string().uuid()).min(1).max(BATCH_DRAFT_KEYS_PER_CHECK),
 });
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;

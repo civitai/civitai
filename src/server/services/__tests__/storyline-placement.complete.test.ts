@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 import type * as PlacementService from '~/server/services/placement.service';
@@ -6,6 +7,20 @@ import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const assertCanPlace = vi.fn();
 
+// The Kysely reads the real space resolver makes. Their rows, against a real database, are pinned
+// in placement-reads.kysely-parity.test.ts.
+const placementReads = vi.hoisted(() => ({
+  getChapterPlacementTarget: vi.fn(),
+  listPlacementSpacesFor: vi.fn(),
+  countPlacements: vi.fn(),
+}));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/placement', () => placementReads);
 vi.mock('~/server/services/placement-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementModeration>()),
   assertCanPlace,
@@ -21,7 +36,16 @@ const OWNER = 10;
 const PLACER = 20;
 const CHAPTER = 77;
 
-const givenStoryline = (status: 'Ongoing' | 'Complete') =>
+/** The parent chapter, as the submit's transaction reads it and as the space resolver reads it. */
+const givenStoryline = (status: 'Ongoing' | 'Complete') => {
+  placementReads.getChapterPlacementTarget.mockResolvedValue({
+    removedAt: null,
+    storylineId: 31,
+    storylineUserId: OWNER,
+    storylineStatus: status,
+    storylineTosViolation: false,
+    username: 'o',
+  });
   dbMock.dbWrite.storylineChapter.findUnique.mockResolvedValue({
     id: 1,
     storylineId: 31,
@@ -35,8 +59,22 @@ const givenStoryline = (status: 'Ongoing' | 'Complete') =>
       maxNsfwLevel: 4,
       whoCanContinue: 'Anyone',
       user: { username: 'o' },
+      chapters: [
+        {
+          id: 1,
+          postId: 101,
+          removedAt: null,
+          post: {
+            nsfwLevel: 1,
+            publishedAt: new Date(0),
+            tosViolation: false,
+            user: { bannedAt: null, deletedAt: null },
+          },
+        },
+      ],
     },
   });
+};
 
 const submit = () =>
   createStorylinePlacement({
@@ -62,9 +100,12 @@ beforeEach(() => {
       { ingestion: 'Scanned', tosViolation: false, minor: false, poi: false, needsReview: null },
     ],
   });
-  dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([]);
+  placementReads.listPlacementSpacesFor.mockResolvedValue([]);
+  placementReads.countPlacements.mockResolvedValue(0);
   dbMock.dbWrite.placement.count.mockResolvedValue(0);
   dbMock.dbWrite.placement.create.mockResolvedValue({ id: 1 });
+  // The submit's storyline lock finds the storyline.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }] as never);
 });
 
 /**

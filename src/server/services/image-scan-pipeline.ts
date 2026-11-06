@@ -59,6 +59,10 @@ import { hasBlockMarker } from '~/server/common/image-visibility';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  logShadowSexualPromptError,
+  submitShadowSexualPromptScan,
+} from '~/server/services/shadow-sexual-prompt.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -140,19 +144,21 @@ export async function sendIngestionSignal({
   userId,
   ingestion,
   blockedFor,
+  nsfwLevel,
   log = LEGACY_SCAN_LOG,
 }: {
   imageId: number;
   userId: number | null;
   ingestion: ImageIngestionStatus;
   blockedFor?: string | null;
+  nsfwLevel?: number;
   log?: ScanLog;
 }) {
   if (!userId) return;
   await signalClient
     .send({
       target: SignalMessages.ImageIngestionStatus,
-      data: { imageId, ingestion, blockedFor },
+      data: { imageId, ingestion, blockedFor, nsfwLevel },
       userId,
     })
     .catch((error) =>
@@ -392,9 +398,12 @@ export async function buildAndInsertScanTags({
 async function processTags({
   tags: normalized,
   prompt,
+  promptKeywords = false,
 }: {
   tags: NormalizedTag[];
   prompt?: string;
+  /** Also derive tags from prompt keywords. They feed safety checks only, never the stored tags. */
+  promptKeywords?: boolean;
 }): Promise<ProcessedTag[]> {
   if (prompt) {
     // Strip moderator-whitelisted phrases first, or a whitelisted proper noun is written as a
@@ -415,8 +424,7 @@ async function processTags({
       });
     }
 
-    // Detect tags from prompt
-    const promptTags = getTagsFromPrompt(prompt);
+    const promptTags = promptKeywords && getTagsFromPrompt(prompt);
     if (promptTags)
       normalized.push(
         ...promptTags.map((name) => ({ name, confidence: 70, source: TagSource.Computed }))
@@ -499,6 +507,8 @@ async function processTags({
 // --------------------------------------------------
 export type ScanOutcome = {
   ingestion: ImageIngestionStatus;
+  /** The level the row was written with; absent when the short-circuit left the row's level alone. */
+  nsfwLevel?: number;
   blockedFor: string | null;
   reviewKey: string | null;
   /** Present only when the image was audited (i.e. not the `blocked` short-circuit). */
@@ -682,10 +692,45 @@ export async function resolveScanOutcome({
 
   return {
     ingestion: toUpdate.ingestion as ImageIngestionStatus,
+    nsfwLevel: toUpdate.nsfwLevel as number,
     blockedFor: (toUpdate.blockedFor as string) ?? null,
     reviewKey,
     audit,
   };
+}
+
+type AuditTag = {
+  id: number;
+  name: string;
+  type?: TagType;
+  nsfwLevel: number;
+  confidence: number;
+  source: TagSource;
+};
+
+async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise<AuditTag[]> {
+  if (!prompt) return tags;
+  const derived = await processTags({
+    tags: tags
+      .filter((tag) => tag.source !== TagSource.Computed)
+      .map(({ name, confidence, source }) => ({ name, confidence, source })),
+    prompt,
+    promptKeywords: true,
+  });
+  const present = new Set(tags.map((tag) => tag.id));
+  return [
+    ...tags,
+    ...derived
+      .filter((tag) => !present.has(tag.id))
+      .map(({ id, name, type, nsfwLevel, confidence, source }) => ({
+        id,
+        name,
+        type,
+        nsfwLevel,
+        confidence,
+        source,
+      })),
+  ];
 }
 
 async function auditScanResults(args: {
@@ -702,14 +747,16 @@ async function auditScanResults(args: {
     stripBenignPhrases(normalizeText(args.prompt), BlocklistType.PromptBenignPhrase),
     stripBenignPhrases(normalizeText(args.negativePrompt), BlocklistType.NegativeBenignPhrase),
   ]);
-  const tags = await dbWrite.$queryRaw<
-    { id: number; name: string; type: TagType; nsfwLevel: number; confidence: number }[]
-  >`
-    SELECT t.id, t.name, t."nsfwLevel", toi.confidence
+  const imageTags = await dbWrite.$queryRaw<AuditTag[]>`
+    SELECT t.id, t.name, t."nsfwLevel", toi.confidence, toi.source
     FROM "TagsOnImageDetails" toi
     JOIN "Tag" t ON t.id = toi."tagId"
     WHERE toi."imageId" = ${args.imageId} AND toi.automated AND NOT toi.disabled
   `;
+  const ratingLevel = Math.max(...[...imageTags.map((x) => x.nsfwLevel), 0]);
+  // Prompt keywords no longer rate the image, but every check below still reads them, so no image
+  // is checked less than when they did.
+  const tags = await withPromptKeywordTags(imageTags, args.prompt);
   const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
   const nsfw = nsfwLevel > sfwBrowsingLevelsFlag;
   const minorTags = tags.filter((tag) => tagsNeedingReview.includes(tag.name.toLowerCase()));
@@ -760,7 +807,7 @@ async function auditScanResults(args: {
 
   return {
     tags,
-    nsfwLevel,
+    nsfwLevel: ratingLevel,
     nsfw,
     minorTags,
     poiTags,
@@ -976,6 +1023,16 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
+
+    // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
+    try {
+      submitShadowSexualPromptScan({
+        ...image,
+        nsfwLevel: outcome.nsfwLevel ?? image.nsfwLevel,
+      }).catch((e) => logShadowSexualPromptError(e, image.id));
+    } catch (e) {
+      logShadowSexualPromptError(e, image.id);
+    }
 
     const { audit, reviewKey } = outcome;
     if (audit) {

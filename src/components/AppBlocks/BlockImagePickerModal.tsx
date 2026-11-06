@@ -11,9 +11,9 @@ import {
   Text,
   TextInput,
   ThemeIcon,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';

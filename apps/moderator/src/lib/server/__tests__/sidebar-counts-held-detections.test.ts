@@ -6,7 +6,9 @@ const {
   getMinorQueueCounts,
   countStrikeReview,
   countSiteAppeals,
+  getRestrictedVerdictCount,
 } = vi.hoisted(() => ({
+  getRestrictedVerdictCount: vi.fn(),
   getFlaggedCount: vi.fn(),
   getHeldDetectionModelCount: vi.fn(),
   getMinorQueueCounts: vi.fn(),
@@ -62,6 +64,7 @@ vi.mock('../minor-hash.service', () => ({
 }));
 
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
+vi.mock('../restricted-nsfw-verdicts', () => ({ getRestrictedVerdictCount }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
 
 const { getSidebarCounts, LAST_GOOD_MS } = await import('../sidebar-counts.service');
@@ -71,6 +74,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getFlaggedCount.mockResolvedValue(0);
   getHeldDetectionModelCount.mockResolvedValue(3);
+  getRestrictedVerdictCount.mockResolvedValue(0);
   getMinorQueueCounts.mockResolvedValue({ pending: 10, pendingWithDetection: 1 });
 });
 
@@ -89,6 +93,15 @@ describe('sidebar counts for Model Flags', () => {
     expect((await getSidebarCounts()).counts).toMatchObject({
       modelFlagsNeedsReview: 12,
       modelFlagsNeedsReviewDetections: 3,
+      modelFlagsNeedsReviewMatches: 10,
+    });
+  });
+
+  it('adds restricted-verdict leads to the held-detection badges', async () => {
+    getRestrictedVerdictCount.mockResolvedValue(2);
+    expect((await getSidebarCounts()).counts).toMatchObject({
+      modelFlagsNeedsReview: 14,
+      modelFlagsNeedsReviewDetections: 5,
       modelFlagsNeedsReviewMatches: 10,
     });
   });

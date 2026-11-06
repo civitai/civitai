@@ -1,8 +1,9 @@
 import { ThreadStore, type StoredConversationMetadata } from '@civitai/components-chat/core';
 import { describe, expect, it } from 'vitest';
 
-import { OrchestrationConversationStore, type ConversationLock } from '../conversation-store';
-import { startTurn, withEnd, withPatch } from '../head';
+import { OrchestrationConversationStore } from '../conversation-store';
+import type { ConversationLock } from '../core/advisory-lock';
+import { startTurn, withEnd, withPatch } from '../core/head';
 import { MintRefusedError } from '../minter';
 import { OrchestrationClient } from '../orchestration';
 import { FakeOrchestration } from '../test-support/fake-orchestration';

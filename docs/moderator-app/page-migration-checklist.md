@@ -215,8 +215,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     version page reads their dataset from the training workflow and renders it with
     `$lib/components/WorkflowDataset.svelte`, shared with `/audit/training-data/workflow/[workflowId]`,
     and `trainingData.resolve` refuses that row.
-  - Filters: username is an EXACT match (as in the main app), plus workflow id, created-date range and
-    publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
+  - Filters: username is an EXACT match (as in the main app), plus model id (deep link from the main-app model menu; an unusable id matches nothing), workflow id,
+    created-date range and publishing status. Infinite scroll became cursor paging with a Next link, matching the other queues.
   - **Main-app trim:** deleted the page + its SCSS; removed `moderator.models.queryTraining`,
     `model.toggleCannotPublish`, `training.setAnnouncement` and their services/schemas
     (`getTrainingModelsForModerators`, `toggleCannotPublish`, `getTrainingModerationFeedSchema`).
@@ -240,7 +240,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     `userRestriction.getSuspiciousMatches` still serves `/moderator/suspicious-audit-matches` from.
   - Rulings go through the EXISTING `resolveRestriction` (`/api/mod/restriction/resolve`) — main owns the
     mute clear, the subscription, the notification and the session refresh in one write. Ban reuses
-    `setBanned` and then upholds, as the main app did.
+    `setBanned` and then upholds, as the main app did; an account already banned is upheld without a
+    second ban. The bulk ruling retries a 429 once its `Retry-After` has passed.
   - Trigger prompts are highlighted by `@civitai/mod-utils/prompt-audit` server-side rather than by
     re-running each row's stored `matchedRegex` in the browser; the recorded match and regex still render
     beside the prompt.

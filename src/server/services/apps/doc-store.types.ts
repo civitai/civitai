@@ -73,7 +73,13 @@ export type DocListQuery = {
 
 export type DocListResult = { items: DocRecord[]; nextCursor: string | null };
 
-/** Stored usage for (app, ns), and for the viewer within it (null for an anonymous viewer). */
+/**
+ * Stored usage for (app, ns), and for the viewer within it (null for an anonymous viewer).
+ * `app` is the app's SHARED documents only — what the app ceiling (`appBytes` / `appDocs`)
+ * measures. `viewer` is everything charged to the viewer: their private documents, the shared
+ * documents they authored and the counter documents their increment created — what the
+ * per-viewer ceiling (`userBytes` / `userDocs`) measures. So `viewer` can exceed `app`.
+ */
 export type DocStoreUsage = {
   app: { bytes: number; docs: number };
   viewer: { bytes: number; docs: number } | null;
@@ -86,7 +92,11 @@ export type DocStoreLimits = {
   userDocs: number;
 };
 
-/** Per-(app, namespace) and per-(app, namespace, user) ceilings, in the stored unit. */
+/**
+ * Per-(app, namespace) and per-(app, namespace, user) ceilings, in the stored unit. The app
+ * ceiling counts SHARED documents only; a private document counts toward its viewer's ceiling
+ * alone (see WHICH CEILINGS in `doc-store.ts`).
+ */
 export const DEFAULT_DOC_STORE_LIMITS: DocStoreLimits = {
   appBytes: 50 * 1024 * 1024,
   appDocs: 1_000_000,
@@ -125,10 +135,16 @@ export type DocStoreErrorCode =
   | 'sign_in_required'
   | 'insufficient_scope'
   | 'consent_required'
+  /** A collection call named another app (`from`) that the caller's manifest does not import. */
+  | 'import_not_declared'
+  /** The source app's collection is declared `exportable: false`. */
+  | 'not_exportable'
   | 'not_eligible'
   | 'not_author'
   | 'write_policy'
   | 'resource_not_owned'
+  /** A document body does not match its collection's declared `schema` (`doc-store-schema.ts`). */
+  | 'schema_violation'
   | 'not_found'
   | 'collection_not_declared'
   | 'version_conflict'
@@ -142,7 +158,10 @@ export type DocStoreErrorCode =
   | 'moderation_unavailable'
   /** The viewer's consent state could not be read; retryable (raised by the route layer). */
   | 'consent_unavailable'
-  /** A dependency of the token check could not be read; retryable (raised by the route layer). */
+  /**
+   * Retryable: a dependency of the token check could not be read (raised by the route layer), or
+   * the store's database could not be reached or dropped the connection (raised by the store).
+   */
   | 'service_unavailable';
 
 export type QuotaCeiling = 'app' | 'viewer' | 'author';
@@ -159,7 +178,10 @@ export type AccountWipeNamespaceResult = {
   mode: 'namespace' | 'user';
   /** Private documents deleted (their index rows went with them). */
   privateDocs: number;
-  /** Bytes refunded to the app's usage for those documents. */
+  /**
+   * Bytes of those documents. They were charged to the account's own usage only, which the wipe
+   * deletes; the app's usage never carried them, so nothing is refunded to it.
+   */
   privateBytes: number;
   /** Shared documents the account authored, deleted as a moderator delete does. */
   sharedDocs: number;
@@ -178,7 +200,25 @@ export type AccountWipeResult = {
   namespaces: AccountWipeNamespaceResult[];
   /** Namespaces whose transaction failed and rolled back in full; a re-run retries them. */
   failures: { appId: string; ns: string; error: string }[];
+  /** The caller's `proceed` said no before a namespace: the rest were not reached. */
+  stopped: boolean;
 };
+
+/**
+ * A maintenance operation that needs a hand-applied datastore migration ran before it was
+ * applied (today: the app purge without `20261102120000_appdata_app_purge.sql`). Nothing was
+ * deleted; every call refuses alike until the migration runs, so callers stop rather than retry
+ * per item.
+ */
+export class DocStoreMigrationPendingError extends Error {
+  readonly migration: string;
+
+  constructor(migration: string, message: string) {
+    super(message);
+    this.name = 'DocStoreMigrationPendingError';
+    this.migration = migration;
+  }
+}
 
 export class DocStoreError extends Error {
   readonly code: DocStoreErrorCode;

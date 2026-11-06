@@ -63,3 +63,17 @@ export function isValidSubject(sub: string): boolean {
 export function subjectForUserId(userId: number): string {
   return `user:${userId}`;
 }
+
+/**
+ * The `jti` of every claims object `withBlockScope` builds for a hub-issued OAuth bearer
+ * (`resolveHubTokenClaims` and its dev-tunnel branch in `block-scope.middleware.ts`). A signed
+ * block JWT's jti is 32 hex characters (`BlockTokenService.sign`), so it never starts with this.
+ * Here, in the leaf, for the same reason as the subject format: the builder and the readers
+ * (`isHubTokenClaims`) must spell it the same way.
+ */
+export const HUB_TOKEN_JTI_PREFIX = 'hub_';
+
+/** Whether verified claims came from a hub-issued OAuth bearer rather than a signed token. */
+export function isHubTokenClaims(claims: { jti: string }): boolean {
+  return claims.jti.startsWith(HUB_TOKEN_JTI_PREFIX);
+}

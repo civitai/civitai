@@ -6,6 +6,7 @@ import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
 import { MODEL_COVER_ORDER, modelCoverCount, modelCoverImages } from './model-covers';
+import { postCoverRows } from './post-covers';
 import { MAX_INT4 } from './users.service';
 
 export type CsamHoldRow = {
@@ -429,7 +430,7 @@ export type CsamHoldCovers = { images: CsamHoldImage[]; total: number };
 
 export const HOLD_IMAGE_LIMIT = 4;
 
-type CoverRow = CsamHoldImage & { entityId: number; total: string };
+type CoverRow = CsamHoldImage & { entityId: number; total: number | string };
 
 const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
   const byEntity = new Map<number, CsamHoldCovers>();
@@ -443,27 +444,12 @@ const toCovers = (rows: CoverRow[]): Map<number, CsamHoldCovers> => {
 
 /** A post's first images and videos in post order (lowest `index`, then id). */
 async function getPostCovers(postIds: number[]): Promise<Map<number, CsamHoldCovers>> {
-  const { rows } = await sql<CoverRow>`
-    select p.id as "entityId", c.id, c.url, c."nsfwLevel", c.type::text as type, c.minor, c."acceptableMinor", n.total
-    from "Post" p
-    cross join lateral (
-      select i.id, i.url, i."nsfwLevel", i.type, i.minor, i."acceptableMinor", i.index
-      from "Image" i
-      where i."postId" = p.id and i.type::text in ('image', 'video')
-      order by i.index asc nulls last, i.id asc
-      limit ${sql.raw(String(HOLD_IMAGE_LIMIT))}
-    ) c
-    cross join lateral (
-      select count(*)::int as total
-      from (
-        select 1 from "Image" i
-        where i."postId" = p.id and i.type::text in ('image', 'video')
-        limit ${sql.raw(String(PREVIEW_COUNT_CAP + 1))}
-      ) capped
-    ) n
-    where p.id in (${sql.join(postIds)})
-    order by p.id, c.index asc nulls last, c.id asc`.execute(dbRead);
-  return toCovers(rows);
+  const rows = await postCoverRows(postIds, {
+    limit: HOLD_IMAGE_LIMIT,
+    mediaTypes: ['image', 'video'],
+    countCap: PREVIEW_COUNT_CAP + 1,
+  });
+  return toCovers(rows.map(({ postId, ...row }) => ({ entityId: postId, ...row })));
 }
 
 /** A model's first images and videos, chosen as the model flags queues choose theirs (`modelCoverImages`). One

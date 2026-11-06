@@ -57,8 +57,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
 
-    // Mirror `guardedProcedure`: a muted or not-yet-onboarded user can't create a model.
-    if (session.user.muted || !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz))
+    // A banned, muted or not-yet-onboarded user can't create a model.
+    if (
+      session.user.bannedAt ||
+      session.user.muted ||
+      !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz)
+    )
       return { redirect: { destination: '/models', permanent: false } };
 
     const workflowId = typeof ctx.query.workflowId === 'string' ? ctx.query.workflowId : undefined;
@@ -68,10 +72,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
 
     const refuse = (refusal: Refusal) => ({ props: { session, refusal } });
 
-    const token = await getOrchestratorToken(session.user.id, {
-      req: ctx.req as unknown as NextApiRequest,
-      res: ctx.res as unknown as NextApiResponse,
-    });
+    let token: string;
+    try {
+      token = await getOrchestratorToken(session.user.id, {
+        req: ctx.req as unknown as NextApiRequest,
+        res: ctx.res as unknown as NextApiResponse,
+      });
+    } catch (e) {
+      if (e instanceof TRPCError && e.code === 'FORBIDDEN')
+        return { redirect: { destination: '/models', permanent: false } };
+      throw e;
+    }
     // A workflow the caller doesn't own returns NOT_FOUND from the orchestrator — that IS the ownership
     // check. A transient upstream fault (503) is NOT "not found" — let it surface as an error page the
     // user can retry, rather than telling them the run doesn't exist.

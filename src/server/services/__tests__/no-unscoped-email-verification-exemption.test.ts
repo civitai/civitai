@@ -55,11 +55,12 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
  */
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
-  'commentv2.router.ts': ['upsert'],
+  'commentv3.router.ts': ['create', 'update'],
   'comment.router.ts': ['upsert'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
+  'remix-app.router.ts': ['run'],
 };
 
 /**
@@ -88,25 +89,36 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  */
 const DERIVED_BASES: Record<string, string> = {
   appStorageProcedure: 'publicProcedure',
+  // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
+  appStorageUserProcedure: 'protectedProcedure',
   auctionProcedure: 'protectedProcedure',
   blurbProcedure: 'protectedProcedure',
   blurbWriteProcedure: 'guardedProcedure',
   buzzMembershipProcedure: 'protectedProcedure',
   buzzProcedure: 'protectedProcedure',
   cashManagementProcedure: 'moderatorProcedure',
+  comicGenerationProcedure: 'comicProtectedProcedure',
   comicGuardedProcedure: 'guardedProcedure',
   comicModeratorProcedure: 'moderatorProcedure',
   comicProtectedProcedure: 'protectedProcedure',
   comicPublicProcedure: 'publicProcedure',
+  // `csam.router.ts`: moderators with CSAM reporting access.
+  csamProcedure: 'moderatorProcedure',
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
+  orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
+  postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
+  // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  remixAppProcedure: 'protectedProcedure',
+  semanticSearchProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
+  sharedStorageProcedure: 'publicProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
   storylineWriteProcedure: 'guardedProcedure',

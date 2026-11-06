@@ -4,7 +4,10 @@ import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
 import { notifications } from '~/server/notifications/client';
 import { logToAxiom } from '~/server/logging/client';
-import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
+import {
+  imageReactionMilestoneKey,
+  imageReactionMilestones,
+} from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
@@ -21,8 +24,15 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ReactionType } from '../clickhouse/client';
 import { dbRead, dbWrite } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readImageNsfwLevelAndOwnerViaKysely,
+  readImagePostIdViaKysely,
+  readImagePostIdViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 
 /**
  * The exact payload `Tracker.reaction` accepts.
@@ -55,15 +65,8 @@ async function getTrackerEvent(
   const action = result === 'created' ? 'Create' : 'Delete';
   switch (input.entityType) {
     case 'image':
-      const image = await dbRead.image.findFirst({
-        where: {
-          id: input.entityId,
-        },
-        select: {
-          nsfwLevel: true,
-          userId: true,
-        },
-      });
+      const { kyselyRead } = await loadKyselyDb();
+      const image = await readImageNsfwLevelAndOwnerViaKysely(kyselyRead, input.entityId);
 
       if (image) {
         return {
@@ -129,43 +132,23 @@ async function getTrackerEvent(
       }
       break;
     case 'comment':
-      const commentV2 = await dbRead.commentV2.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
+      // A comment on a surface that writes CommentV3 may have no CommentV2 row. The event type stays
+      // `CommentV2_*` either way: the id is the same in both tables.
+      const commentV2 =
+        (await dbRead.commentV2.findFirst({
+          where: { id: input.entityId },
+          select: { userId: true },
+        })) ??
+        (
+          await dbRead.$queryRaw<{ userId: number }[]>`
+            SELECT "userId" FROM "CommentV3" WHERE id = ${input.entityId}
+          `
+        )[0];
       if (commentV2) {
         return {
           type: `CommentV2_${action}`,
           nsfw: NsfwLevelDeprecated.None,
           ownerId: commentV2.userId,
-          ...shared,
-        };
-      }
-      break;
-    case 'question':
-      const question = await dbRead.question.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (question) {
-        return {
-          type: `Question_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: question?.userId,
-          ...shared,
-        };
-      }
-      break;
-    case 'answer':
-      const answer = await dbRead.answer.findFirst({
-        where: { id: input.entityId },
-        select: { userId: true },
-      });
-      if (answer) {
-        return {
-          type: `Answer_${action}`,
-          nsfw: NsfwLevelDeprecated.None,
-          ownerId: answer.userId,
           ...shared,
         };
       }
@@ -218,10 +201,6 @@ async function holdsReaction({
   // The return annotation makes a missing entity type a compile error rather than a refusal.
   const count = await ((): Promise<number> => {
     switch (entityType) {
-      case 'question':
-        return dbWrite.questionReaction.count({ where: { ...where, questionId: entityId } });
-      case 'answer':
-        return dbWrite.answerReaction.count({ where: { ...where, answerId: entityId } });
       case 'commentOld':
         return dbWrite.commentReaction.count({ where: { ...where, commentId: entityId } });
       case 'comment':
@@ -266,6 +245,8 @@ export const toggleReactionHandler = async ({
       );
     }
 
+    if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
+
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
@@ -291,12 +272,14 @@ export const toggleReactionHandler = async ({
     // the door for private models.
     const checkAccess = ['image', 'post'];
     if (checkAccess.includes(input.entityType)) {
+      // A missing image runs the Prisma read, so its not-found throw is unchanged.
+      const readImagePostId = async (imageId: number) => {
+        const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);
+        if (row) return row.postId;
+        return readImagePostIdViaPrisma(dbRead, imageId);
+      };
       const entityId =
-        input.entityType === 'post'
-          ? input.entityId
-          : await dbRead.image
-              .findUniqueOrThrow({ where: { id: input.entityId } })
-              .then((image) => image?.postId);
+        input.entityType === 'post' ? input.entityId : await readImagePostId(input.entityId);
 
       if (entityId) {
         const [access] = await hasEntityAccess({
@@ -404,7 +387,7 @@ export const createReactionNotification = async ({ entityType, entityId }: Toggl
     if (!match) return;
 
     const type = 'image-reaction-milestone';
-    const key = `${type}:${entityId}:${match}`;
+    const key = imageReactionMilestoneKey(entityId, match);
 
     if (await notifications.notificationExists({ key })) return;
 

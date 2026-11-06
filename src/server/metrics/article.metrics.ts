@@ -106,7 +106,6 @@ export const articleMetrics = createMetricProcessor({
   rank: {
     table: 'ArticleRank',
     primaryKey: 'articleId',
-    indexes: ['reactionCountMonthRank'],
   },
 });
 
@@ -158,10 +157,9 @@ async function getReactionTasks(ctx: MetricContext) {
 async function getCommentTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent article comments
-    SELECT t."articleId" as id
-    FROM "Thread" t
-    JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."articleId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
+    SELECT c."entityId" as id
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'article' AND c."parentId" IS NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -170,14 +168,15 @@ async function getCommentTasks(ctx: MetricContext) {
     await getMetrics(ctx)`
       -- get article comment metrics
       SELECT
-        t."articleId",
+        c."entityId" AS "articleId",
         'AllTime'::"MetricTimeframe" AS timeframe,
         COUNT(c.id)::int AS "commentCount"
-      FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
-      WHERE t."articleId" IN (${ids})
-        AND t."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY t."articleId"
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'article' AND c."parentId" IS NULL AND c."deletedAt" IS NULL
+        AND c."tosViolation" = false
+        AND c."entityId" IN (${ids})
+        AND c."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+      GROUP BY c."entityId"
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });

@@ -26,7 +26,7 @@ export type RelayFallbackFailureReason = (typeof RELAY_FALLBACK_FAILURE_REASONS)
 export const CLIENT_DECLARABLE_RELAY_FALLBACK_OUTCOMES = [
   ...RELAY_FALLBACK_FAILURE_REASONS,
   'rescued',
-  /** `shouldRelayOnPartFailure` (`~/utils/upload-retry`) returned false; see its clauses. */
+  /** `selectRelayFallback` (`~/utils/upload-retry`) returned null; see its clauses. */
   'not_attempted',
 ] as const;
 export type ClientDeclarableRelayFallbackOutcome =

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * PROOF OF CONCEPT — ratchet gate for the type errors inside `src/ ** /__tests__/`.
+ * Ratchet gate for type errors in test files — the only typecheck they get.
  *
  * WHY THIS EXISTS
  * ---------------
- * The root `tsconfig.json` carries `"src/ ** /__tests__/ ** "` in its `exclude`, so
- * `pnpm typecheck` cannot see a single file under a `__tests__/` directory. A type
- * error planted in one of those files is reported as **0 errors, exit 0** — the
- * check is not lenient about test files, it is structurally blind to them.
+ * The root `tsconfig.json` excludes every test file (`TEST_EXCLUDES`), which keeps
+ * them out of `pnpm typecheck` and out of the editor's project. A type error
+ * planted in one of them is reported there as **0 errors, exit 0** — the check is
+ * not lenient about test files, it is structurally blind to them.
  *
- * `tsconfig.tests.json` is the same program with that one exclude entry removed.
+ * `tsconfig.tests.json` is the same program with those exclude entries removed.
  * It is a strict superset: every other `include`/`exclude`/`compilerOptions` value
  * is inherited via `extends`, deliberately. A hand-rolled narrowed program that
  * picks its own `include` drops `src/types/global.d.ts`, ambient names like
@@ -45,23 +45,21 @@
  *  1. EXIT-STATUS TRUTH TABLE. `classifyRun()` in `typecheck-tests-compare.mjs`
  *     decides the outcome from (exit status, signal, parsed diagnostic count).
  *     A non-zero exit with zero parsed diagnostics is a FAILURE TO RUN, never a
- *     clean tree — that single rule covers a rejected `TYPECHECK_HEAP_MB` (exit
- *     2), an unresolvable `typescript` (exit 2), a spawn error (exit 2), a
- *     missing binary (127) and a V8 heap abort (134). The previous version
- *     matched the literal string `TYPECHECK CRASHED`, which `scripts/typecheck.mjs`
- *     emits from exactly one of its failure paths and not from the other three;
- *     all four of those exits PASSED this gate at exit 0.
+ *     clean tree — that single rule covers a rejected argument (exit 2), an
+ *     unresolvable compiler (exit 2), a spawn error (exit 2), a missing binary
+ *     (127) and a heap abort (134). An earlier version matched the literal
+ *     string `TYPECHECK CRASHED`, which the old `scripts/typecheck.mjs` wrapper
+ *     emitted from only one of its failure paths; the others PASSED this gate.
  *  2. PARSE CONTROL. `pretty` is a legal `compilerOptions` key, inherited through
  *     `extends`, and tsc also enables it under a TTY. It changes every diagnostic
  *     from `path(l,c): error TS…` to `path:l:c - error TS…`, which the old
- *     single-format regex matched zero of — 801 real errors parsed as 0, and the
+ *     single-format regex matched zero of — every real error parsed as 0, and the
  *     gate PASSED. It is now forced off on the command line (`--pretty false`,
  *     which overrides the config), BOTH formats are recognised anyway, and the
  *     parse must ACCOUNT FOR EVERY LINE carrying the `error TS` marker. That last
  *     clause is not a restatement: the control used to fire only when the parser
- *     understood NOTHING, so a run that understood 5 of 801 marker lines was
- *     accepted and reported "136 file(s) now clean". Measured on this repo,
- *     unparsed === 0 across 801 diagnostics and 650 continuation lines.
+ *     understood NOTHING, so a run that understood a handful of marker lines out
+ *     of hundreds was accepted and reported its files as "now clean".
  *  3. PLAUSIBILITY. A parsed total of 0 against a baseline of N>0 is refused, and
  *     so is a COLLAPSE (a total under 25% of the baseline) — the zero was only
  *     the extreme of that spectrum, and the ratchet scores both as progress.
@@ -72,22 +70,21 @@
  *     and is REFUSED — not ignored — on a verdict run. One env var in one job
  *     definition must not be able to make this gate green.
  *  4. POSITIVE CONTROL ON THE MEASUREMENT ARM. `--listFilesOnly` proves the
- *     program actually READS test files. It now runs through the SAME wrapper,
- *     the same `-p`, and the same flags as the run that produces the verdict —
- *     the old one shelled out to `tsc.js` directly with different arguments, so
- *     it structurally could not witness the arm being validated. Its floor is
- *     `max(fixed 400, 90% of the count STORED IN THE BASELINE)`: at 938 real
- *     files a bare 400 let 57% of the test tree disappear with the control still
+ *     program actually READS test files. It runs through the same compiler, the
+ *     same `-p`, and the same flags as the run that produces the verdict, so it
+ *     witnesses the arm being validated. Its floor is
+ *     `max(fixed 400, 90% of the count STORED IN THE BASELINE)`: a bare 400 let
+ *     most of the test tree disappear with the control still
  *     green (vanished files score as `fixed`, i.e. PASS), while a bare derived
  *     floor was only as good as a number in a JSON file — `testFilesInProgram: 1`
  *     yielded a floor of ZERO while still logging "derived from the baseline".
  *     A corrupt, negative or absurd recorded count is refused, not silently
  *     downgraded to the fallback.
  *  5. CONFIG-DRIFT CONTROL. `tsconfig.tests.json` must be `tsconfig.json`'s
- *     exclude list minus exactly one entry. Both lists are written out verbatim,
- *     so without this an addition to the base list silently fails to reach the
- *     measurement program and the "one-line delta" property quietly stops being
- *     true.
+ *     exclude list minus exactly `TEST_EXCLUDES`. Both lists are written out
+ *     verbatim, so without this an addition to the base list silently fails to
+ *     reach the measurement program and the two stop being the same program plus
+ *     the tests.
  *
  * `--write-baseline` runs behind all five. A regeneration on a machine where the
  * check cannot run used to write `0 error(s) across 0 file(s)` and exit 0,
@@ -103,7 +100,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ALLOW_EMPTY_ENV,
   checkPlausibility,
@@ -113,6 +110,7 @@ import {
   countTestFilesInProgram,
   diffExcludes,
   isGatedTestFile,
+  TEST_EXCLUDES,
   parseDiagnostics,
   stripJsonComments,
   testFileFloor,
@@ -123,7 +121,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..');
 const TS_CONFIG = 'tsconfig.tests.json';
 const BASE_TS_CONFIG = 'tsconfig.json';
-const EXCLUDE_ENTRY = 'src/**/__tests__/**';
 
 // ------------------------------------------------------------------ seams
 // Three environment variables reach into this gate's production behaviour. They
@@ -132,12 +129,15 @@ const EXCLUDE_ENTRY = 'src/**/__tests__/**';
 // afford to run is not a control.
 //
 // They are ECHOED (see `provenance` below) because an unechoed seam makes a
-// stub-driven run byte-identical to a real one: the same "801 error(s) across
-// 141 file(s) … PASS" is printed whether the number came from the repository or
+// stub-driven run byte-identical to a real one: the same "N error(s) across
+// M file(s) … PASS" is printed whether the number came from the repository or
 // from a fixture. That is the gate's own thesis — a verdict must carry its
 // provenance — applied to the gate.
 const BASELINE_PATH = process.env.TYPECHECK_TESTS_BASELINE || path.join(HERE, 'typecheck-tests-baseline.json');
-const WRAPPER = process.env.TYPECHECK_TESTS_WRAPPER || path.join(REPO_ROOT, 'scripts', 'typecheck.mjs');
+// Unset, the gate runs the TypeScript 7 binary from `tools/ts7` (see `resolveTs7` below). Set,
+// it is a node script run in that binary's place.
+const WRAPPER = process.env.TYPECHECK_TESTS_WRAPPER;
+const TS7_DIR = path.join(REPO_ROOT, 'tools', 'ts7', 'node_modules', 'typescript');
 // Where the two tsconfigs are read from. Defaults to the repo root; the suite
 // points it at a fixture directory to exercise the config-drift control END TO
 // END, i.e. to pin that the gate ACTS on `diffExcludes`, not merely that
@@ -169,7 +169,7 @@ const WRITE_BASELINE = process.argv.includes('--write-baseline');
 // printed, because "no OVERRIDE line" and "nobody printed provenance" look the
 // same to a reader and only one of them is a fact about the run.
 const provenance = [
-  ['wrapper', WRAPPER, 'TYPECHECK_TESTS_WRAPPER'],
+  ['compiler', WRAPPER ?? 'tools/ts7 (TypeScript 7, --singleThreaded)', 'TYPECHECK_TESTS_WRAPPER'],
   ['baseline', BASELINE_PATH, 'TYPECHECK_TESTS_BASELINE'],
   ['tsconfig dir', CONFIG_DIR, 'TYPECHECK_TESTS_CONFIG_DIR'],
 ];
@@ -246,18 +246,18 @@ if (!WRITE_BASELINE) {
 
 // ------------------------------------------- control 5: config-drift control
 // Cheap, and it runs first: if the two programs have stopped being "the same
-// program minus one exclude entry", every number below means something else.
+// program plus the test files", every number below means something else.
 try {
   const readExclude = (file) =>
     JSON.parse(stripJsonComments(readFileSync(path.join(CONFIG_DIR, file), 'utf8'))).exclude;
-  const drift = diffExcludes(readExclude(BASE_TS_CONFIG), readExclude(TS_CONFIG), EXCLUDE_ENTRY);
+  const drift = diffExcludes(readExclude(BASE_TS_CONFIG), readExclude(TS_CONFIG), TEST_EXCLUDES);
   if (!drift.ok) {
     cannotMeasure(
       `${TS_CONFIG} is no longer ${BASE_TS_CONFIG}'s exclude list minus exactly ` +
-        `"${EXCLUDE_ENTRY}".\n` +
+        `TEST_EXCLUDES [${TEST_EXCLUDES.join(', ')}].\n` +
         `    removed from base: [${drift.removed.join(', ')}]\n` +
         `    added by ${TS_CONFIG}: [${drift.added.join(', ')}]\n` +
-        `    The one-line delta is what makes this a measurement of the SAME program with the ` +
+        `    That delta is what makes this a measurement of the SAME program with the ` +
         `test files added. Restore it, or re-derive what the numbers mean.`
     );
   }
@@ -270,14 +270,40 @@ try {
 // inherited compilerOption and tsc turns it on by itself under a TTY, either of
 // which reshapes every diagnostic into a format the parser below would have
 // matched zero of. The command line beats the config file.
+//
+// The compiler is TypeScript 7, single-threaded: the tests program is the whole
+// app plus every test file, TS 5.9 needs more heap for it than a standard CI
+// runner has, and single-threaded is TS 7's lowest-memory mode. The baseline is
+// measured by this same compiler, so 5.9 and 7 counts are never compared.
+// `--incremental false` keeps every run a cold measurement (tsconfig.json turns
+// incremental on).
+async function resolveTs7() {
+  const install = 'Run: pnpm -C tools/ts7 install --ignore-workspace';
+  const resolver = path.join(TS7_DIR, 'lib', 'getExePath.js');
+  if (!existsSync(resolver)) cannotMeasure(`TypeScript 7 is not installed. ${install}`);
+  // A missing platform package makes getExePath() throw; an unhandled rejection
+  // here would exit 1, which this gate reserves for a real regression.
+  try {
+    const { default: getExePath } = await import(pathToFileURL(resolver).href);
+    return getExePath();
+  } catch (err) {
+    cannotMeasure(`could not resolve the TypeScript 7 binary: ${err?.message ?? err}. ${install}`);
+  }
+}
+const ts7Exe = WRAPPER ? undefined : await resolveTs7();
+
 function runWrapper(extraArgs) {
-  const res = spawnSync(process.execPath, [WRAPPER, '-p', TS_CONFIG, '--pretty', 'false', ...extraArgs], {
+  const tscArgs = ['-p', TS_CONFIG, '--pretty', 'false', ...extraArgs];
+  const [cmd, args] = WRAPPER
+    ? [process.execPath, [WRAPPER, ...tscArgs]]
+    : [ts7Exe, ['--noEmit', '--singleThreaded', '--incremental', 'false', ...tscArgs]];
+  const res = spawnSync(cmd, args, {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
   });
-  if (res.error) cannotMeasure(`could not start the typecheck wrapper: ${res.error.message}`);
+  if (res.error) cannotMeasure(`could not start the typecheck: ${res.error.message}`);
   const output = `${res.stdout || ''}${res.stderr || ''}`;
   const parsed = parseDiagnostics(output);
   const verdict = classifyRun({
@@ -290,9 +316,9 @@ function runWrapper(extraArgs) {
 }
 
 // ---------------------------------- control 4: positive control, same arm
-// Same wrapper, same -p, same flags as the verdict run. The only difference is
-// `--listFilesOnly`, so anything that would break the measurement (a bad -p, a
-// rejected env var, a missing binary) breaks this too, out loud.
+// Same compiler, same -p, same flags as the verdict run. The only difference is
+// `--listFilesOnly`, so anything that would break the measurement (a bad -p, an
+// unknown flag, a missing binary) breaks this too, out loud.
 const listed = runWrapper(['--listFilesOnly']);
 if (!listed.verdict.ok) {
   cannotMeasure(`the positive control could not run: ${listed.verdict.reason}`);
@@ -300,7 +326,7 @@ if (!listed.verdict.ok) {
 // The count is computed in the pure module, on forward slashes. It used to be an
 // inline filter against a marker built from `path.sep` — which is `\` on Windows
 // while `tsc --listFilesOnly` emits `/` on every platform, so the marker matched
-// ZERO of 948 `__tests__` lines there and this control refused every run on a
+// ZERO of the `__tests__` lines there and this control refused every run on a
 // Windows machine while passing in CI. See `toPosixPath`.
 const testFilesInProgram = countTestFilesInProgram(listed.output);
 
@@ -317,7 +343,7 @@ const { floor, derived } = floorResult;
 if (testFilesInProgram < floor) {
   cannotMeasure(
     `POSITIVE CONTROL FAILED — the program built from ${TS_CONFIG} contains ` +
-      `${testFilesInProgram} file(s) under a __tests__ directory, below the floor of ${floor} ` +
+      `${testFilesInProgram} test file(s), below the floor of ${floor} ` +
       (derived
         ? `(90% of the ${recordedTestFiles} recorded in the baseline).`
         : recordedTestFiles === undefined || recordedTestFiles === null
@@ -351,17 +377,13 @@ if (measured.parsed.formats.size) {
   );
 }
 
-// Anything outside `src/**/__tests__/` is not this gate's business — the root
-// typecheck already covers it, and reporting it here would double-count. Note
-// the predicate is the ACTUAL exclusion (`src/**/__tests__/**`, anchored at the
-// repo-root src), not a bare `/__tests__/` substring: the 68 files under
-// `packages/*/src/**/__tests__/` are in BOTH programs, so claiming them here
-// would demand a baseline entry for an error `pnpm typecheck` already blocks on.
+// Anything `TEST_EXCLUDES` does not cover is not this gate's business — the root
+// typecheck already reports it, and reporting it here would double-count.
 const outsideTests = [...current.keys()].filter((f) => !isGatedTestFile(f));
 if (outsideTests.length) {
   console.log(
     `typecheck-tests-gate: note — ${outsideTests.length} file(s) with errors outside ` +
-      `src/**/__tests__/; those belong to \`pnpm typecheck\`, not this gate:`
+      `the test files; those belong to \`pnpm typecheck\`, not this gate:`
   );
   for (const f of outsideTests.slice(0, 10)) console.log(`    ${f} (${current.get(f)})`);
   for (const f of outsideTests) current.delete(f);
@@ -415,7 +437,7 @@ if (WRITE_BASELINE) {
     `${JSON.stringify(
       {
         _comment:
-          'Type errors inside src/**/__tests__/** that pnpm typecheck cannot see. ' +
+          'Type errors in test files, which pnpm typecheck excludes. ' +
           'Entries may shrink or disappear freely; adding one, or raising a count, is a ' +
           'deliberate act visible in review. Regenerate with: node scripts/ci/typecheck-tests-gate.mjs --write-baseline',
         config: TS_CONFIG,
@@ -486,9 +508,9 @@ if (result.renames.length) {
 }
 console.error('');
 console.error('  These are real type errors in test files. `pnpm typecheck` cannot see them');
-console.error('  because the root tsconfig excludes src/**/__tests__/**.');
+console.error('  because the root tsconfig excludes test files.');
 console.error('');
 console.error('  Reproduce locally:');
-console.error(`    pnpm typecheck -p ${TS_CONFIG}`);
+console.error('    pnpm run typecheck:tests');
 console.error('================================================================');
 process.exit(1);

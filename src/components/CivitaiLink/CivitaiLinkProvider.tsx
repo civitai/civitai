@@ -12,7 +12,6 @@ import type {
 } from '~/components/CivitaiLink/shared-types';
 import SharedWorker from '@okikio/sharedworker';
 import { showNotification } from '@mantine/notifications';
-import { v4 as uuid } from 'uuid';
 import { immer } from 'zustand/middleware/immer';
 import { create } from 'zustand';
 import { isEqual } from 'lodash-es';
@@ -266,7 +265,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 
   const runCommand = async (command: CommandRequest, timeout = 0) => {
     const payload = command as Command;
-    payload.id = uuid();
+    payload.id = crypto.randomUUID();
 
     // No reachable Link host: deliver nothing and hand back an already-settled
     // promise. Registering in `commandPromises` first would leak the entry

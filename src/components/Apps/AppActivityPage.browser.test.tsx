@@ -378,7 +378,7 @@ const selectedPageTab = () => pageTabs().find((el) => el.getAttribute('aria-sele
 
 /** Anchors to `/apps` OUTSIDE the sub-nav — i.e. the page's own marketplace links. */
 const bodyMarketplaceLinks = () =>
-  Array.from(document.querySelectorAll('a[href="/apps"]')).filter((el) => !el.closest('nav'));
+  Array.from(document.querySelectorAll('a[href="/apps/store"]')).filter((el) => !el.closest('nav'));
 
 beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksPages: true, appListings: true };
@@ -776,7 +776,7 @@ describe('Apps & permissions — the per-app daily Buzz limit', () => {
       document.querySelector('[data-testid="apps-installed-grants-grid"]')?.textContent ?? '';
     expect(gridText).toContain(ACTIVITY_EMPTY_LABEL);
     expect(gridText.split(ACTIVITY_EMPTY_LABEL)).toHaveLength(2);
-    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: `BlockScopeList`'s own
+    // 🔴 THE DEFAULT THIS LABEL EXISTS TO DISPLACE must not reach the card: the generic
     // fallback tells the viewer the app requests no permissions, which is false by construction
     // for a row minted from the app's scope-gated calls.
     expect(gridText).not.toContain("doesn't request any permissions");
@@ -1137,5 +1137,56 @@ describe('🔴 the revoke instruction is retracted, not reworded', () => {
     renderWithProviders(<AppActivityPage />);
     await expect.element(page.getByText(PERMISSIONS_TAB_COPY, { exact: true })).toBeInTheDocument();
     expect(document.body.textContent ?? '').toContain(ACTIVITY_PANEL_ANCHOR);
+  });
+});
+
+describe('Apps & permissions — each app is a collapsible row', () => {
+  beforeEach(() => {
+    router.query = { tab: 'permissions' };
+  });
+
+  test('starts collapsed with a permission count, and the toggle opens the plain-language list', async () => {
+    renderWithProviders(<AppActivityPage />);
+    // Spender is the fixture app holding a described, titled scope (`ai:write:budgeted`).
+    const toggle = page.getByTestId('apps-grant-toggle').nth(1);
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect.element(toggle).toHaveTextContent('1 permission');
+    const panel = document.getElementById(
+      toggle.element().getAttribute('aria-controls') ?? 'missing'
+    ) as HTMLElement;
+    expect(panel, 'the toggle points at no panel').not.toBeNull();
+    expect(panel.offsetHeight).toBe(0);
+
+    await toggle.click();
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect.poll(() => panel.offsetHeight).toBeGreaterThan(0);
+    expect(panel.querySelector('[data-testid="permission-title"]')?.textContent).toBe(
+      'Run AI work with your Buzz'
+    );
+    expect(panel.textContent).not.toContain('ai:write:budgeted');
+
+    await toggle.click();
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(panel.offsetHeight).toBe(0);
+  });
+
+  test('rows open independently, and an untitled scope falls back to a humanised title', async () => {
+    renderWithProviders(<AppActivityPage />);
+    const toggles = page.getByTestId('apps-grant-toggle');
+    await toggles.nth(0).click();
+    await toggles.nth(1).click();
+    await expect.element(toggles.nth(0)).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(toggles.nth(1)).toHaveAttribute('aria-expanded', 'true');
+    // Demo App's `read:profile` has no plain title; Spender's scope does.
+    const titlesIn = (toggle: HTMLElement) =>
+      Array.from(
+        document
+          .getElementById(toggle.getAttribute('aria-controls') ?? 'missing')
+          ?.querySelectorAll('[data-testid="permission-title"]') ?? []
+      ).map((t) => t.textContent);
+    expect(titlesIn(toggles.nth(0).element() as HTMLElement)).toEqual(['Read profile']);
+    expect(titlesIn(toggles.nth(1).element() as HTMLElement)).toEqual([
+      'Run AI work with your Buzz',
+    ]);
   });
 });

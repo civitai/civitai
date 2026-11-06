@@ -11,6 +11,7 @@ import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as PrizeService from '~/server/services/prize.service';
+import type * as BradleyTerry from '~/server/services/crucible-bradley-terry';
 import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
 
@@ -28,6 +29,8 @@ const setTTL = vi.fn();
 const afterPostsPublish = vi.fn();
 const createPrizes = vi.fn();
 const voidPrizes = vi.fn();
+const fitCrucibleScoresForPrizes = vi.fn();
+const usesBradleyTerryRanking = vi.fn(() => false);
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -52,6 +55,12 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
 vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
   ...(await importOriginal<typeof EloService>()),
   getAllEntryElos,
+}));
+
+vi.mock('~/server/services/crucible-bradley-terry', async (importOriginal) => ({
+  ...(await importOriginal<typeof BradleyTerry>()),
+  fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
 }));
 
 vi.mock('~/server/services/prize.service', async (importOriginal) => ({
@@ -213,7 +222,7 @@ describe('finalizeCrucible — positions', () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
-    expect(where).toEqual({
+    expect(where).toMatchObject({
       crucibleId: 1,
       user: { bannedAt: null },
       image: {
@@ -225,6 +234,43 @@ describe('finalizeCrucible — positions', () => {
       },
     });
     expect(where.image.nsfwLevel.in).not.toContain(2);
+  });
+
+  describe('contest-banned entrants', () => {
+    // The predicate is a nested Prisma.Sql value, so flatten the call the way Prisma would.
+    const sqlOf = (strings: TemplateStringsArray, values: unknown[]) =>
+      Prisma.sql(strings, ...values).sql;
+    const banQuery = (client: typeof dbMock.dbWrite.$queryRaw) =>
+      client.mock.calls.filter(([strings, ...values]) =>
+        sqlOf(strings as TemplateStringsArray, values).includes('contestBanDetails')
+      );
+
+    it("leaves their entries out of the ranking, asking the primary once for this crucible's entrants", async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          sqlOf(strings, values).includes('contestBanDetails') ? [{ userId: 7 }, { userId: 9 }] : []
+      );
+      pageEntries([[dbEntry(1, 7, 1000)], [dbEntry(2, 8, 2000)]]);
+
+      await finalizeCrucible(1);
+
+      const rankingWheres = findMany.mock.calls
+        .map(([args]) => args.where)
+        .filter((where) => !where.position);
+      expect(rankingWheres.length).toBeGreaterThan(1);
+      for (const where of rankingWheres) expect(where.userId).toEqual({ notIn: [7, 9] });
+
+      const queries = banQuery(dbMock.dbWrite.$queryRaw);
+      expect(queries).toHaveLength(1);
+      const [strings, ...values] = queries[0];
+      const sql = sqlOf(strings as TemplateStringsArray, values);
+      expect(sql).toMatch(/FROM "CrucibleEntry" ce\s+JOIN "User" u ON u\.id = ce\."userId"/);
+      expect(sql).toMatch(
+        /ce\."crucibleId" = \?\s+AND u\.meta ->> 'contestBanDetails' IS NOT NULL/
+      );
+      expect(Prisma.sql(strings as TemplateStringsArray, ...values).values).toEqual([1]);
+      expect(banQuery(dbMock.dbRead.$queryRaw)).toHaveLength(0);
+    });
   });
 
   it('holds the money for review, loudly, when every entry is disqualified', async () => {
@@ -490,11 +536,12 @@ describe('finalizeCrucible — completion', () => {
     await finalizeCrucible(1);
 
     expect(entryWrites()).toHaveLength(1);
-    const [lock] = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
       (strings as TemplateStringsArray).join('?').replace(/\s+/g, ' ')
     );
-    expect(lock).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
-    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    const lockIndex = calls.findIndex((sql) => sql.includes('FOR UPDATE'));
+    expect(calls[lockIndex]).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[lockIndex]).toBeLessThan(
       executeRaw.mock.invocationCallOrder.at(-1)!
     );
   });
@@ -1243,5 +1290,64 @@ describe('finalizeCrucible — entry posts', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
     );
+  });
+});
+
+describe('finalizeCrucible — Bradley-Terry ranking', () => {
+  // Elo says 1 > 2 > 3; the fit says the reverse, so the paid order shows which one ranked.
+  const fitReversed = new Map([
+    [1, 1400],
+    [2, 1500],
+    [3, 1600],
+  ]);
+  const paidOrder = () =>
+    awarded()
+      .sort((a, b) => a.position - b.position)
+      .map((prize) => prize.subjectId);
+  beforeEach(() => {
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000 });
+    fitCrucibleScoresForPrizes.mockResolvedValue(fitReversed);
+  });
+
+  it('pays by the fit for a crucible the switch covers', async () => {
+    const endAt = new Date(Date.now() - 1000);
+    setupCrucible({ voteCounts: { 1: 20, 2: 20, 3: 20 }, seededPrizePool: 1000, endAt });
+    usesBradleyTerryRanking.mockReturnValue(true);
+    await finalizeCrucible(1);
+    // The guard's ingest wait counts from endedAt: a missing one would defer a short count forever.
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledTimes(1);
+    expect(fitCrucibleScoresForPrizes).toHaveBeenCalledWith(1, { endedAt: endAt });
+    // The switch dates a crucible by startAt, else createdAt: both must be read for it.
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, createdAt: true, endAt: true }),
+      })
+    );
+    expect(usesBradleyTerryRanking).toHaveBeenCalledWith(
+      expect.objectContaining({ startAt: null, endAt })
+    );
+    expect(paidOrder(), 'entries by prize place').toEqual([3, 2, 1]);
+  });
+
+  it('pays by Elo when the guard falls back', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockResolvedValue(null);
+    await finalizeCrucible(1);
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('pays by Elo without fitting when the switch does not cover the crucible', async () => {
+    usesBradleyTerryRanking.mockReturnValue(false);
+    await finalizeCrucible(1);
+    expect(fitCrucibleScoresForPrizes).not.toHaveBeenCalled();
+    expect(paidOrder(), 'entries by prize place').toEqual([1, 2, 3]);
+  });
+
+  it('writes and pays nothing while the guard defers for ingest lag', async () => {
+    usesBradleyTerryRanking.mockReturnValue(true);
+    fitCrucibleScoresForPrizes.mockRejectedValue(new Error('waiting'));
+    await expect(finalizeCrucible(1)).rejects.toThrow('waiting');
+    expect(entryWrites()).toHaveLength(0);
+    expect(createPrizes).not.toHaveBeenCalled();
   });
 });

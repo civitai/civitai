@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { SessionClaims } from '@civitai/auth';
+import { generateKeyPairSync } from 'crypto';
+import { createAuthVerifier, createSessionSigner, type SessionClaims } from '@civitai/auth';
 // The REAL key constants, from the package. `~/server/redis/client` is mocked below and the
 // mock spreads this same package, so the shim production reads and the values asserted here
 // are pinned to one source. They used to be hand-typed in the hoisted block, and three of the
@@ -33,6 +34,9 @@ const h = vi.hoisted(() => {
       hashes.set(k, m);
     },
     hExpire: async () => {},
+    hDel: async (k: string, fields: string[]) => {
+      for (const f of fields) hashes.get(k)?.delete(f);
+    },
     hGet: async (k: string, f: string) => hashes.get(k)?.get(f) ?? null,
     get: async (k: string) => strings.get(k) ?? null,
     set: async (k: string, v: string) => {
@@ -63,6 +67,17 @@ vi.mock('~/server/redis/atomic', () => ({
     for (const [f, v] of Object.entries(fields)) m.set(f, String(v));
     h.hashes.set(key, m);
   },
+  hSetMultiWithTTLUnlessValue: async (
+    _c: unknown,
+    key: string,
+    fields: Record<string, string | number>,
+    _ttlMs: number,
+    keepValue: string
+  ) => {
+    const m = h.hashes.get(key) ?? new Map<string, string>();
+    for (const [f, v] of Object.entries(fields)) if (m.get(f) !== keepValue) m.set(f, String(v));
+    h.hashes.set(key, m);
+  },
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({ clearCacheByPattern: async () => {} }));
 vi.mock('~/server/auth/session-cache', () => ({ clearSessionCache: async () => {} }));
@@ -80,8 +95,6 @@ vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => {} }
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: () => {} }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => {} }));
 vi.mock('~/server/common/enums', () => ({ SignalMessages: { SessionRefresh: 'session:refresh' } }));
-// session-verifier constructs an AuthVerifier at module load — stub it (we only exercise isRevoked).
-vi.mock('@civitai/auth', () => ({ createAuthVerifier: () => ({}) }));
 // The global unit setup (src/__tests__/setup.ts) mocks session-invalidation to a stub; we need the REAL
 // module here to exercise the actual ban→revoke chain against our in-memory sysRedis.
 vi.unmock('~/server/auth/session-invalidation');
@@ -176,5 +189,77 @@ describe('ban / logout session revocation (B2 coverage)', () => {
     await invalidateSession(USER);
     expect(h.hashes.get(TOKEN_STATE)?.get('tok-x')).toBe('invalid');
     expect(await isRevoked(claims('tok-x'))).toBe(true);
+  });
+});
+
+describe('ban cuts (USER_CUT)', () => {
+  const before = () => Date.now() - 1000;
+  const after = () => Date.now() + 60_000;
+
+  it("a ban ends the user's tokens on hosts whose tracking lapsed, and not other accounts in the browser", async () => {
+    await invalidateSession(USER);
+
+    expect(await isRevoked({ jti: 'untracked', sub: String(USER), signedAt: before() })).toBe(true);
+    expect(await isRevoked({ jti: 'signed-in-later', sub: String(USER), signedAt: after() })).toBe(
+      false
+    );
+    expect(await isRevoked({ jti: 'other-account', sub: '6', signedAt: before() })).toBe(false);
+  });
+
+  it("a ban of the impersonated user leaves the moderator's own session alone", async () => {
+    const MOD = 100;
+    await invalidateSession(USER);
+
+    expect(
+      await isRevoked({ jti: 'imp', sub: String(USER), impersonatedBy: MOD, signedAt: before() })
+    ).toBe(true);
+    expect(await isRevoked({ jti: 'mod-own', sub: String(MOD), signedAt: before() })).toBe(false);
+  });
+
+  it('a ban of the moderator ends their impersonation tokens on every host', async () => {
+    const MOD = 100;
+    await invalidateSession(MOD);
+
+    const imp = { sub: String(USER), impersonatedBy: MOD, signedAt: before() };
+    expect(await isRevoked({ ...imp, jti: 'imp-com', sid: 'fam' })).toBe(true);
+    expect(await isRevoked({ ...imp, jti: 'imp-red', sid: 'fam' })).toBe(true);
+    expect(await isRevoked({ jti: 'target-own', sub: String(USER), signedAt: before() })).toBe(
+      false
+    );
+  });
+});
+
+describe('signed-out sessions stay signed out after a session refresh', () => {
+  const kp = generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  const issuer = 'https://auth.test';
+  const signer = createSessionSigner({
+    privateKeyPem: kp.privateKey,
+    publicKeyPem: kp.publicKey,
+    kid: 'k',
+    issuer,
+  });
+  const verifier = createAuthVerifier({ publicKeyPem: kp.publicKey, issuer, isRevoked });
+  const mint = (jti: string, extra: Record<string, unknown> = {}) =>
+    signer.mintSessionToken({ sub: String(USER), signedAt: Date.now(), ...extra }, { jti });
+
+  it('a replayed token from a signed-out family is refused after refreshSession', async () => {
+    const root = await mint('root');
+    const member = await mint('member', { sid: 'root' });
+    trackToken('root', USER);
+    trackToken('member', USER);
+    // What sign-out leaves behind: the caller's token and its family marked invalid.
+    h.hashes.set(TOKEN_STATE, new Map([['root', 'invalid']]));
+    h.hashes.set(REDIS_SYS_KEYS.SESSION.FAMILY_STATE, new Map([['root', 'invalid']]));
+
+    await refreshSession(USER, { sendSignal: false });
+
+    expect(h.hashes.get(REDIS_SYS_KEYS.SESSION.FAMILY_STATE)?.get('root')).toBe('invalid');
+    expect(await verifier.verifyToken(root)).toBeNull();
+    expect(await verifier.verifyToken(member)).toBeNull();
+    expect(await verifier.verifyToken(await mint('unrelated', { sid: 'other' }))).not.toBeNull();
   });
 });

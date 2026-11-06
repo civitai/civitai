@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -69,6 +70,14 @@ import { deleteVersionById } from '~/server/services/model-version.service';
 
 const VERSION_ID = 4242;
 
+/** Whether the version's own DELETE ran. */
+function versionDeleted() {
+  return vi.mocked(mockDbWrite.$executeRaw).mock.calls.some(([strings, ...values]) => {
+    const sql = Prisma.sql(strings as unknown as string[], ...(values as never[]));
+    return sql.text.includes('DELETE FROM "ModelVersion"') && sql.values.includes(VERSION_ID);
+  });
+}
+
 function stubVersion(trainingStatus: string | null) {
   mockDbWrite.$queryRaw.mockResolvedValue([{ trainingStatus }] as never);
   mockDbWrite.modelFile.findMany.mockResolvedValue([
@@ -84,7 +93,12 @@ function stubVersion(trainingStatus: string | null) {
     meta: {},
   });
   mockDbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 });
-  mockDbWrite.modelVersion.delete.mockResolvedValue({ id: VERSION_ID, modelId: 7 });
+  mockDbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+    id: VERSION_ID,
+    modelId: 7,
+  } as never);
+  // The guarded DELETE removes the one version: its owner is not held.
+  mockDbWrite.$executeRaw.mockResolvedValue(1 as never);
 }
 
 beforeEach(() => {
@@ -102,7 +116,7 @@ describe('deleteVersionById — training run lock', () => {
       await expect(deleteVersionById({ id: VERSION_ID, isModerator: false })).rejects.toThrow(
         "This version's training run is in progress, under review or denied, so it can't be deleted."
       );
-      expect(mockDbWrite.modelVersion.delete).not.toHaveBeenCalled();
+      expect(versionDeleted()).toBe(false);
       expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
     }
   );
@@ -114,7 +128,7 @@ describe('deleteVersionById — training run lock', () => {
 
       await deleteVersionById({ id: VERSION_ID, isModerator: false });
 
-      expect(mockDbWrite.modelVersion.delete).toHaveBeenCalledWith({ where: { id: VERSION_ID } });
+      expect(versionDeleted()).toBe(true);
     }
   );
 
@@ -123,6 +137,6 @@ describe('deleteVersionById — training run lock', () => {
 
     await deleteVersionById({ id: VERSION_ID, isModerator: true });
 
-    expect(mockDbWrite.modelVersion.delete).toHaveBeenCalledWith({ where: { id: VERSION_ID } });
+    expect(versionDeleted()).toBe(true);
   });
 });

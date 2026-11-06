@@ -57,6 +57,8 @@ const saveAllSchema = z.object({
           subject: z.string(),
           description: z.string(),
           aliases: z.string(),
+          category: z.string(),
+          references: z.array(z.object({ url: z.string(), label: z.string().optional() })),
           note: z.string(),
           baseUpdatedAt: z.string().max(40).optional(),
         })

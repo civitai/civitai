@@ -1,4 +1,5 @@
-import { ActionIcon, Anchor, HoverCard, Loader, Popover, Stack, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Loader, Stack, Text } from '@mantine/core';
+import { HoverCard, Popover } from '~/components/MantineOverlays';
 import { IconUsers } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -118,7 +119,11 @@ export function ImageReactorsList({ imageId }: { imageId: number }) {
         </Stack>
       )}
       <Anchor
-        href={`${CREATOR_STUDIO_URL}/analytics/content/image/${imageId}`}
+        // ?month pins Studio to the current UTC month; without it Studio opens on the last full month, which is
+        // empty for a new image.
+        href={`${CREATOR_STUDIO_URL}/analytics/content/image/${imageId}?month=${new Date()
+          .toISOString()
+          .slice(0, 7)}`}
         target="_blank"
         rel="noopener noreferrer"
         size="sm"

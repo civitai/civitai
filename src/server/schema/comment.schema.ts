@@ -1,12 +1,10 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
-import { CacheTTL, constants } from '~/server/common/constants';
+import { CacheTTL } from '~/server/common/constants';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
-import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
+import { commentContentSchema } from '~/server/schema/commentv3.schema';
 
 export const COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE = 1000;
 
@@ -46,17 +44,7 @@ export const commentUpsertInput = z.object({
   commentId: z.number().nullish(),
   reviewId: z.number().nullish(),
   parentId: z.number().nullish(),
-  content: getSanitizedStringSchema({
-    allowedTags: COMMENT_ALLOWED_TAGS,
-    // Read from STICKER_SURFACES rather than hardcoded, so "may contain a
-    // sticker" and "charges for one" can't drift apart — that split is what let
-    // sticker markup be containable on surfaces that never charged.
-    allowStickers: surfaceMayContainStickers('comment'),
-  })
-    .refine((data) => {
-      return data && data.length > 0 && data !== '<p></p>';
-    }, 'Cannot be empty')
-    .refine((data) => data.length <= constants.comments.maxLength, 'Comment content too long'),
+  content: commentContentSchema,
   hidden: z.boolean().nullish(),
 });
 
@@ -67,6 +55,13 @@ export type GetCommentCountByModelInput = z.infer<typeof getCommentCountByModelS
 export const getCommentCountByModelSchema = z.object({
   modelId: z.number(),
   hidden: z.boolean().optional(),
+});
+
+export type GetCommentCountsByModelInput = z.infer<typeof getCommentCountsByModelSchema>;
+export const getCommentCountsByModelSchema = z.object({
+  modelId: z.number(),
+  /** `false` when the client already holds every visible comment: only the hidden count runs. */
+  includeVisible: z.boolean().default(true),
 });
 
 export type ToggleReactionInput = z.infer<typeof toggleReactionInput>;

@@ -1,7 +1,6 @@
 import dayjs from '~/shared/utils/dayjs';
 import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
-import { unfurl } from 'unfurl.js';
 import { linkifyOptions } from '~/components/Chat/util';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -24,6 +23,7 @@ import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-grou
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { truncateAuditValue, type ChatAuditRow } from '~/server/common/chat-audit.constants';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { safeUnfurl } from '~/server/utils/safe-unfurl';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -690,7 +690,7 @@ export const createMessage = async ({
               ).catch(() => undefined);
             });
         } else {
-          unfurl(href)
+          safeUnfurl(href)
             .then(async (hrefData) => {
               const embedData = {
                 title: hrefData.title ?? hrefData.open_graph?.title ?? null,
@@ -722,7 +722,7 @@ export const createMessage = async ({
                 )
               ).catch(() => undefined);
             })
-            .catch();
+            .catch(() => undefined);
         }
       } catch (e: unknown) {
         logToAxiom(

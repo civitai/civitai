@@ -11,6 +11,7 @@ import {
   pickCoverImageId,
   resolveModelFace,
   showsSfwFace,
+  withSfwModelNames,
 } from '~/shared/utils/model-sfw-face';
 
 const model = {
@@ -59,6 +60,29 @@ describe('resolveModelFace', () => {
     const row = { ...model };
     resolveModelFace(row, true);
     expect(row).toEqual(model);
+  });
+});
+
+describe('withSfwModelNames', () => {
+  const rows = [
+    { modelId: 1, modelName: 'Red title', versionName: 'v1' },
+    { modelId: 2, modelName: 'No face', versionName: 'v2' },
+  ];
+
+  it('renames only the models that have a face', () => {
+    expect(withSfwModelNames(rows, new Map([[1, 'Com title']]))).toEqual([
+      { modelId: 1, modelName: 'Com title', versionName: 'v1' },
+      { modelId: 2, modelName: 'No face', versionName: 'v2' },
+    ]);
+  });
+
+  it('leaves the rows untouched for a viewer who gets the .red face', () => {
+    expect(withSfwModelNames(rows, new Map())).toEqual(rows);
+  });
+
+  it('does not write into rows shared with a cache', () => {
+    withSfwModelNames(rows, new Map([[1, 'Com title']]));
+    expect(rows[0].modelName).toBe('Red title');
   });
 });
 

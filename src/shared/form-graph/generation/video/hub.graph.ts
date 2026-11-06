@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph, rootScope } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
-import { getEcosystemStates } from '../ecosystem-gates';
+import { getEcosystemField } from '../ecosystem-gates';
 import { modelSelectorRules } from '../reconcile';
 import { ecosystemFieldSchemas, type RootCtx } from '../shared';
 
@@ -54,32 +54,26 @@ const QUANTITY = defFamily((max: number) => {
 
 export const videoHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
-    const { compatibleEcosystems, hiddenEcosystems, ecosystemStates } = getEcosystemStates(
-      _ext.workflow,
-      _ext
-    );
-    const disabledSet = new Set(ecosystemStates.map((e) => e.key));
-    const usableEcosystems = disabledSet.size
-      ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
-      : compatibleEcosystems;
-    const defaultValue = usableEcosystems.includes('MiniMaxH3')
-      ? 'MiniMaxH3'
-      : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'MiniMaxH3';
+    const {
+      compatibleEcosystems,
+      hiddenEcosystems,
+      ecosystemStates,
+      gatedKeys,
+      usableEcosystems,
+      defaultEcosystem,
+    } = getEcosystemField(_ext.workflow, _ext, { preferred: 'MiniMaxH3' });
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
-        usableEcosystems
-      ),
-      default: defaultValue,
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, gatedKeys, usableEcosystems),
+      default: defaultEcosystem,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'video',
       meta: {
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
+        usableEcosystems,
+        defaultEcosystem,
         mediaType: 'video' as const,
       },
       // the SELECTION: shadowed off the wire by the model-wins families'

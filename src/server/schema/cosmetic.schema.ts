@@ -71,8 +71,10 @@ const inRange = ([lo, hi]: readonly [number, number]) => z.number().min(lo).max(
 
 /**
  * A moderator's change to one event hat's placement. Only these fields can be set, so the art's
- * measured shape (canvas, bounds, brim, outline) is never touched; `null` puts a field back to the
- * default look.
+ * measured shape (canvas, bounds, outline) is never touched; `null` puts a field back to the
+ * default look. `brim` is the one measured field a moderator may correct: the measurement takes the
+ * widest row, which on a hat with hair or glasses below it is not where the hat sits. It is never
+ * cleared, and the service holds it inside the art's canvas.
  */
 export type UpdateEventHatFitInput = z.infer<typeof updateEventHatFitSchema>;
 export const updateEventHatFitSchema = z.object({
@@ -84,6 +86,9 @@ export const updateEventHatFitSchema = z.object({
       depth: inRange(HAT_FIT_LIMITS.depth).nullable(),
       grow: inRange(HAT_FIT_LIMITS.grow).nullable(),
       offset: z.tuple([inRange(HAT_FIT_LIMITS.offset), inRange(HAT_FIT_LIMITS.offset)]).nullable(),
+      brim: z
+        .tuple([z.number().min(0), z.number().min(0), z.number().min(0)])
+        .refine(([left, right]) => right > left, { message: 'The brim needs width' }),
     })
     .partial()
     .strict()

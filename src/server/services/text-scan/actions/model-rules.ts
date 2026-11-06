@@ -19,11 +19,9 @@ const loadModelService = () => import('~/server/services/model.service');
 
 async function claimAndUnpublishForModelRules({
   entityId,
-  meta,
   modelRules,
 }: {
   entityId: number;
-  meta: ModelMeta;
   modelRules: NonNullable<ModelMeta['modelRules']>;
 }): Promise<boolean> {
   const { workflowId } = modelRules;
@@ -41,19 +39,17 @@ async function claimAndUnpublishForModelRules({
   `;
   if (!claimed) return false;
 
-  await unpublishForModelRules({ entityId, meta, modelRules });
+  await unpublishForModelRules({ entityId, modelRules });
   return true;
 }
 
 export async function unpublishForModelRules({
   entityId,
-  meta,
   modelRules,
   userId = constants.system.user.id,
   needsReview = true,
 }: {
   entityId: number;
-  meta: ModelMeta;
   modelRules: NonNullable<ModelMeta['modelRules']>;
   /** Who the take-down is attributed to; the system user for a detection, the moderator for a ruling. */
   userId?: number;
@@ -61,14 +57,14 @@ export async function unpublishForModelRules({
   needsReview?: boolean;
 }) {
   const { unpublishModelById } = await loadModelService();
-  const { needsReview: _queued, ...kept } = meta;
   await unpublishModelById({
     id: entityId,
     userId,
     isModerator: true,
     reason: 'other',
     customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
-    meta: { ...kept, ...(needsReview ? { needsReview: true } : {}), modelRules },
+    metaPatch: { ...(needsReview ? { needsReview: true } : {}), modelRules },
+    metaUnset: needsReview ? [] : ['needsReview'],
   });
   await dataForModelsCache.refresh(entityId);
   await bustPublicModelResponseCache(entityId);
@@ -109,11 +105,10 @@ async function recordHold(modelId: number, hold: ModelRulesLiteralHold) {
  */
 export async function holdModelForLiteralRules({
   modelId,
-  meta,
   ...hold
-}: ModelRulesLiteralHold & { modelId: number; meta?: ModelMeta }) {
+}: ModelRulesLiteralHold & { modelId: number }) {
   const modelRules = literalModelRules(hold.ruleIds, hold.textHash);
-  await unpublishForModelRules({ entityId: modelId, meta: meta ?? {}, modelRules });
+  await unpublishForModelRules({ entityId: modelId, modelRules });
   await recordHold(modelId, hold);
 }
 
@@ -122,14 +117,8 @@ export async function unpublishLiveModelForLiteralRules({
   modelId,
   ...hold
 }: ModelRulesLiteralHold & { modelId: number }): Promise<boolean> {
-  const model = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
-  if (!model) return false;
   const modelRules = literalModelRules(hold.ruleIds, hold.textHash);
-  const taken = await claimAndUnpublishForModelRules({
-    entityId: modelId,
-    meta: (model.meta ?? {}) as ModelMeta,
-    modelRules,
-  });
+  const taken = await claimAndUnpublishForModelRules({ entityId: modelId, modelRules });
   if (taken) await recordHold(modelId, hold);
   return taken;
 }

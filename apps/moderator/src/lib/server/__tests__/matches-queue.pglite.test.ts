@@ -83,7 +83,7 @@ CREATE TABLE "EntityModeration" (
 );
 CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER, "category" TEXT
+  "status" TEXT NOT NULL DEFAULT 'Pending', "userId" INTEGER, "category" TEXT, "context" JSONB
 );
 `;
 

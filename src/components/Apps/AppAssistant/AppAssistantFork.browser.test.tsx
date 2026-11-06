@@ -14,7 +14,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 /**
- * FORKABLE APPS, PR 3 — App Assistant opened on a fork (`/apps/assistant?fork=<slug>`), through the
+ * FORKABLE APPS, PR 3 — App Assistant opened on a fork (`/apps/build?fork=<slug>`), through the
  * REAL `AppAssistantWorkspace`.
  *
  * Claims: the page creates the app WITH THE SEED OBJECT the fork session holds (before any reply),
@@ -202,7 +202,7 @@ beforeEach(async () => {
   m.afterRefetch = null;
   m.newChat.mockClear();
   router.query = { fork: FORK_SLUG };
-  router.pathname = '/apps/assistant';
+  router.pathname = '/apps/build';
   router.push.mockClear();
   router.replace.mockClear();
 });
@@ -234,11 +234,9 @@ describe('a fresh fork', () => {
       'Forked from Pixel Garden. Set it up and preview?Set up'
     );
     // The address loses ?fork=, so a reload does not try to create it again.
-    expect(router.replace).toHaveBeenCalledWith(
-      { pathname: '/apps/assistant', query: {} },
-      undefined,
-      { shallow: true }
-    );
+    expect(router.replace).toHaveBeenCalledWith({ pathname: '/apps/build', query: {} }, undefined, {
+      shallow: true,
+    });
     // Nothing was sent: no reply, no spend, until the user presses Set up.
     expect(m.sent).toEqual([]);
   });
@@ -337,7 +335,7 @@ describe('the service refuses the seed', () => {
     // A FRESH fork of the same parent; nothing to delete (nothing was created).
     expect(m.starts).toEqual([{ listingId: PARENT_LISTING }]);
     expect(m.removed).toEqual([]);
-    expect(router.push).toHaveBeenCalledWith(`/apps/assistant?fork=${NEXT_SLUG}`, undefined, {
+    expect(router.push).toHaveBeenCalledWith(`/apps/build?fork=${NEXT_SLUG}`, undefined, {
       shallow: true,
     });
   });

@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import { ImageIngestionStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -57,8 +58,8 @@ export const COHORT_PAGE_SIZE = 500;
  * normal daily signups still fits, and the cap goes back to being
  * a ceiling on work rather than a daily filter.
  *
- * It is still a bound and it is still cheap: at `COHORT_PAGE_SIZE` this is at most 50 account pages
- * and 400 `groupBy` reads — eight per page, see `createCohortReader` — all on the replica, all
+ * It is still a bound and it is still cheap: at `COHORT_PAGE_SIZE` this is at most 50 account pages,
+ * each with two `groupBy` reads per surface (see `createCohortReader`), all on the replica, all
  * keyset-paged.
  *
  * 🔴 The value is the SECOND line of defence, not the first. The walk below pages DESCENDING, so
@@ -86,21 +87,19 @@ export type NewAccountRow = {
 export type CountRow = { userId: number; count: number };
 
 /**
- * The eight content reads, unmerged. Kept apart so the merge stays a pure, testable step.
+ * The content reads, unmerged. Kept apart so the merge stays a pure, testable step.
  *
  * Two counts per surface, not one:
- *  - `comments`/`commentsV2`/`models`/`images` — the subset still on the site, i.e. what the
- *    visibility filters keep. Reported to the moderator.
+ *  - `comments`/`models`/`images` — the subset still on the site, i.e. what the visibility
+ *    filters keep. Reported to the moderator.
  *  - `all*` — every row the account owns on that surface, moderation outcome or not. This is what
  *    decides MEMBERSHIP; see `selectCohortMembers`.
  */
 export type RawPostCounts = {
   comments: CountRow[];
-  commentsV2: CountRow[];
   models: CountRow[];
   images: CountRow[];
   allComments: CountRow[];
-  allCommentsV2: CountRow[];
   allModels: CountRow[];
   allImages: CountRow[];
 };
@@ -317,22 +316,23 @@ const groupByUser = <W>(where: W) => ({
   _count: { _all: true as const },
 });
 
-/** Comments still on the page: not hidden by moderation, not TOS-flagged. */
+/** Comments still on the page: not hidden by moderation, not TOS-flagged, not deleted. */
 export function commentCountArgs(userIds: number[]) {
   return groupByUser({
     userId: { in: userIds },
-    hidden: { not: true },
+    hidden: false,
     tosViolation: false,
+    deletedAt: null,
   });
 }
 
-/** The newer comment system, same rule. */
-export function commentV2CountArgs(userIds: number[]) {
-  return groupByUser({
-    userId: { in: userIds },
-    hidden: { not: true },
-    tosViolation: false,
-  });
+/**
+ * Every comment the account still has, moderation outcome or not, except the author's own delete:
+ * CommentV3 keeps a tombstone when a comment has replies, and counting it would read a deletion as
+ * posting.
+ */
+export function allCommentCountArgs(userIds: number[]) {
+  return groupByUser({ userId: { in: userIds }, deletedAt: null });
 }
 
 /** Models with a live page: published, not soft-deleted, not TOS-flagged. */
@@ -358,11 +358,9 @@ export function imageCountArgs(userIds: number[]) {
 /**
  * Everything the account posted on one surface, with no visibility judgement at all.
  *
- * 🔴 ONE BUILDER FOR ALL FOUR SURFACES, deliberately, where the visible reads have four. There is
- * nothing per-surface to express: the question is "does this row belong to this account", and the
- * four filtered builders differ only because each surface spells "removed" in its own columns. A
- * second builder per surface here would be four copies of the same clause and four places for a
- * stray predicate to reappear — which is the exact defect this pair exists to undo.
+ * 🔴 ONE BUILDER FOR MODELS AND IMAGES, deliberately, where the visible reads have one each. There
+ * is nothing per-surface to express: the question is "does this row belong to this account". Comments
+ * have their own, `allCommentCountArgs`, for the one reason a deleted comment can still have a row.
  *
  * Soft-deleted, blocked, hidden and TOS-flagged rows are all counted. That is the point: a
  * moderation outcome is evidence about the account, not a reason to stop looking at it.
@@ -405,45 +403,65 @@ type Grouped<A> = { groupBy: GroupByFn<A | ReturnType<typeof allContentCountArgs
 
 export type CohortDb = {
   user: { findMany: (args: ReturnType<typeof newAccountPageArgs>) => Promise<NewAccountRow[]> };
-  comment: Grouped<ReturnType<typeof commentCountArgs>>;
-  commentV2: Grouped<ReturnType<typeof commentV2CountArgs>>;
+  commentV3: {
+    groupBy: GroupByFn<
+      ReturnType<typeof commentCountArgs> | ReturnType<typeof allCommentCountArgs>
+    >;
+  };
   model: Grouped<ReturnType<typeof modelCountArgs>>;
   image: Grouped<ReturnType<typeof imageCountArgs>>;
 };
 
 /**
- * The real reader, over the read replica.
- *
- * `commentsV2` is read alongside `comments` because the two comment systems both still carry
- * traffic and an account that only used the newer one would otherwise read as having posted nothing
- * — a false negative in the one direction a detector must not have.
+ * The comment surface behind the same `groupBy` seam as the others, on Kysely (CommentV3 is never
+ * read through the Prisma delegate). It reads only `where.userId.in` and whether `where` carries
+ * `tosViolation` (visible vs membership); any other predicate is ignored, so a change to
+ * `commentCountArgs` must be mirrored here.
  */
-export function createCohortReader(db: CohortDb = dbRead): CohortReader {
+export const commentV3Counts: CohortDb['commentV3'] = {
+  groupBy: async (args) => {
+    let query = kyselyRead
+      .selectFrom('CommentV3')
+      .select((eb) => ['userId', eb.fn.countAll<string>().as('n')])
+      .where('userId', 'in', args.where.userId.in)
+      .where('deletedAt', 'is', null);
+    if ('tosViolation' in args.where)
+      query = query.where('hidden', '=', false).where('tosViolation', '=', false);
+    const rows = await query.groupBy('userId').execute();
+    return rows.map((r) => ({ userId: r.userId, _count: { _all: Number(r.n) } }));
+  },
+};
+
+const defaultCohortDb: CohortDb = {
+  user: dbRead.user,
+  commentV3: commentV3Counts,
+  model: dbRead.model,
+  image: dbRead.image,
+};
+
+/** The real reader, over the read replica. */
+export function createCohortReader(db: CohortDb = defaultCohortDb): CohortReader {
   return {
     listNewAccounts: (args) => db.user.findMany(newAccountPageArgs(args)),
     countPosts: async (userIds) => {
       if (!userIds.length) return emptyRawPostCounts();
-      // 🔴 EIGHT READS PER PAGE, NOT FOUR — the visible count and the unfiltered count of each
+      // 🔴 TWO READS PER SURFACE PER PAGE, NOT ONE — the visible count and the unfiltered count of each
       // surface. That is the price of deciding membership on everything an account posted while
-      // still telling a moderator how much of it is still up, and it is paid on purpose. All eight
+      // still telling a moderator how much of it is still up, and it is paid on purpose. All of them
       // are per-user counts over the same `userId IN (…)` list on the replica, issued together.
-      const [comments, commentsV2, models, images, allC, allC2, allM, allI] = await Promise.all([
-        db.comment.groupBy(commentCountArgs(userIds)),
-        db.commentV2.groupBy(commentV2CountArgs(userIds)),
+      const [comments, models, images, allC, allM, allI] = await Promise.all([
+        db.commentV3.groupBy(commentCountArgs(userIds)),
         db.model.groupBy(modelCountArgs(userIds)),
         db.image.groupBy(imageCountArgs(userIds)),
-        db.comment.groupBy(allContentCountArgs(userIds)),
-        db.commentV2.groupBy(allContentCountArgs(userIds)),
+        db.commentV3.groupBy(allCommentCountArgs(userIds)),
         db.model.groupBy(allContentCountArgs(userIds)),
         db.image.groupBy(allContentCountArgs(userIds)),
       ]);
       return {
         comments: toCountRows(comments as GroupByRow[]),
-        commentsV2: toCountRows(commentsV2 as GroupByRow[]),
         models: toCountRows(models as GroupByRow[]),
         images: toCountRows(images as GroupByRow[]),
         allComments: toCountRows(allC as GroupByRow[]),
-        allCommentsV2: toCountRows(allC2 as GroupByRow[]),
         allModels: toCountRows(allM as GroupByRow[]),
         allImages: toCountRows(allI as GroupByRow[]),
       };
@@ -455,11 +473,9 @@ export function createCohortReader(db: CohortDb = dbRead): CohortReader {
 export function emptyRawPostCounts(): RawPostCounts {
   return {
     comments: [],
-    commentsV2: [],
     models: [],
     images: [],
     allComments: [],
-    allCommentsV2: [],
     allModels: [],
     allImages: [],
   };
@@ -468,17 +484,14 @@ export function emptyRawPostCounts(): RawPostCounts {
 const zeroSurface = (): SurfaceCounts => ({ comments: 0, models: 0, images: 0, total: 0 });
 
 /**
- * The eight reads folded into one per-user record.
+ * The reads folded into one per-user record.
  *
- * Comments from both systems add together — they are the same act to a moderator, and splitting
- * them in the report would invite reading a migration artefact as a signal.
- *
- * 🔴 `excluded` is SUBTRACTED, not read. There is no eighth query for "how much was taken down":
+ * 🔴 `excluded` is SUBTRACTED, not read. There is no extra query for "how much was taken down":
  * it is `all` minus `visible` on the same rows at the same instant, which is the only definition
  * under which the three numbers in a finding are guaranteed to add up.
  *
- * 🔴 THE TORN READ IS CLAMPED ON THE `visible` SIDE, BEFORE ANY SUBTRACTION OR ANY TOTAL. The eight
- * reads are separate statements in one `Promise.all` against a replica, so a surface's filtered count
+ * 🔴 THE TORN READ IS CLAMPED ON THE `visible` SIDE, BEFORE ANY SUBTRACTION OR ANY TOTAL. The reads
+ * are separate statements in one `Promise.all` against a replica, so a surface's filtered count
  * can exceed its unfiltered one and DIFFERENT surfaces can tear in opposite directions. Flooring each
  * difference at zero independently — which is what this used to do, including for `total` — made the
  * docstring above false: with `allComments=5, comments=6` and `allModels=3, models=0`, the per-surface
@@ -504,11 +517,9 @@ export function mergePostCounts(raw: RawPostCounts): Map<number, PostCounts> {
     return row;
   };
   for (const r of raw.comments) get(r.userId).visible.comments += r.count;
-  for (const r of raw.commentsV2) get(r.userId).visible.comments += r.count;
   for (const r of raw.models) get(r.userId).visible.models += r.count;
   for (const r of raw.images) get(r.userId).visible.images += r.count;
   for (const r of raw.allComments) get(r.userId).all.comments += r.count;
-  for (const r of raw.allCommentsV2) get(r.userId).all.comments += r.count;
   for (const r of raw.allModels) get(r.userId).all.models += r.count;
   for (const r of raw.allImages) get(r.userId).all.images += r.count;
   for (const row of merged.values()) {

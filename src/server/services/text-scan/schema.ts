@@ -30,6 +30,7 @@ function labelSchema(label: TextScanLabel): Record<string, unknown> {
     case 'minor':
     case 'scam':
     case 'csam':
+    case 'model-com-face-intent':
       return {
         type: 'object',
         properties: { detected: { ...detected }, reason: { ...reason } },

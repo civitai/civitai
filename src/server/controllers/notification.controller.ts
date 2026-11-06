@@ -1,3 +1,4 @@
+import { pageNotifications } from '@civitai/notifications';
 import type { ProtectedContext } from '~/server/createContext';
 import type {
   GetUserNotificationsSchema,
@@ -11,6 +12,8 @@ import {
 import { isOptInNotification } from '~/server/notifications/utils.notifications';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getUserNotificationsInfiniteHandler = async ({
   input,
@@ -27,15 +30,10 @@ export const getUserNotificationsInfiniteHandler = async ({
       ...input,
       limit: limit + 1,
       userId,
+      showSfwFace: showsSfwFace(getRequestBrowsingLevel(ctx)),
     });
 
-    let nextCursor: Date | undefined;
-    if (items.length > limit) {
-      const nextItem = items.pop();
-      nextCursor = nextItem?.createdAt;
-    }
-
-    return { items, nextCursor };
+    return pageNotifications(items, limit);
   } catch (error) {
     throw throwDbError(error);
   }

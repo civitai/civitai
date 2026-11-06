@@ -1,4 +1,5 @@
-import { Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
+import { Group, Paper, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { IconCheck, IconUsers, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';

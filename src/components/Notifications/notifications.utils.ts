@@ -1,9 +1,9 @@
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import type { InfiniteData, QueryClient, QueryKey } from '@tanstack/react-query';
+import type { InfiniteData, Query, QueryClient, QueryKey } from '@tanstack/react-query';
 import { useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 import {
   selectUndismissedAnnouncements,
@@ -65,6 +65,8 @@ export function useGetAnnouncementsAsNotifications({
               type: 'announcement',
               category: 'announcement' as any,
               createdAt: announcement.startsAt,
+              // Announcements are not paged, so they carry no list cursor position.
+              cursorAt: '',
               read: announcement.dismissed,
               details: {
                 url: announcement.metadata?.actions?.[0]?.link,
@@ -328,6 +330,70 @@ export const useMarkReadNotification = () => {
   return mutation;
 };
 
+/** Subtracts what the server reports it cleared, per category, from the badge counts. */
+export function applyClearedToCounts<T extends NotificationCounts>(
+  old: T,
+  cleared: Array<{ category: string; count: number }>
+): T {
+  const next: NotificationCounts = { ...old };
+  for (const { category, count } of cleared) {
+    const key = category.toLowerCase();
+    if (NON_CATEGORY_COUNT_KEYS.has(key) || !(key in next)) continue;
+    next[key] = Math.max(0, next[key] - count);
+    next.all = Math.max(0, (next.all ?? 0) - count);
+  }
+  return next as T;
+}
+
+// Per page load, so stepping back and forth through a carousel asks once per image.
+const imagesMarkedOnView = new Set<number>();
+
+export function shouldMarkImageMilestonesRead(
+  imageId: number | undefined,
+  unreadMilestones: number,
+  alreadyAsked: ReadonlySet<number>
+): imageId is number {
+  return imageId != null && unreadMilestones > 0 && !alreadyAsked.has(imageId);
+}
+
+/** Clears the viewer's milestone notifications for an image they own when they view it. */
+export function useMarkImageMilestonesReadOnView(ownImageId: number | undefined) {
+  const currentUser = useCurrentUser();
+  // The bell's own query and options, read directly: `useQueryNotificationsCount` also mounts the
+  // announcement queries, which the image viewer has no use for.
+  const { data: counts } = trpc.user.checkNotifications.useQuery(undefined, {
+    enabled: !!currentUser,
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
+  const milestone = counts?.milestone ?? 0;
+  const queryUtils = trpc.useUtils();
+  const queryClient = useQueryClient();
+  const { mutate } = trpc.notification.markImageMilestonesRead.useMutation({
+    onSuccess(cleared, { imageId }) {
+      if (!cleared.length) return;
+      queryUtils.user.checkNotifications.setData(undefined, (old) =>
+        old ? applyClearedToCounts(old, cleared) : old
+      );
+      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+        { queryKey: getQueryKey(trpc.notification.getAllByUser), exact: false },
+        produce((old) => {
+          for (const page of old?.pages ?? [])
+            for (const item of page.items)
+              if (item.type === 'image-reaction-milestone' && item.details?.imageId === imageId)
+                item.read = true;
+        })
+      );
+    },
+  });
+
+  useEffect(() => {
+    if (!shouldMarkImageMilestonesRead(ownImageId, milestone, imagesMarkedOnView)) return;
+    imagesMarkedOnView.add(ownImageId);
+    mutate({ imageId: ownImageId });
+  }, [ownImageId, milestone, mutate]);
+}
+
 /**
  * The cached notification lists a newly-signalled notification is written into: All + its category.
  *
@@ -336,7 +402,13 @@ export const useMarkReadNotification = () => {
  */
 export function notificationListFilters(listKey: QueryKey[number], category: string) {
   return [
-    { queryKey: [listKey, { input: { category: null } }], exact: false },
+    // Predicate, not `{ input: { category: null } }`: the All tab's key holds `category: undefined`,
+    // and partial key matching does not equate that with null.
+    {
+      queryKey: [listKey],
+      predicate: ({ queryKey }: Query) =>
+        !(queryKey[1] as { input?: { category?: unknown } } | undefined)?.input?.category,
+    },
     { queryKey: [listKey, { input: { category } }], exact: false },
   ];
 }

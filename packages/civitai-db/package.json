@@ -20,6 +20,7 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.4.6",
     "@types/pg": "^8.11.10",
     "vitest": "^4.1.11"
   }

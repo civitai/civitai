@@ -7,6 +7,11 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
+import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   countGuestFrameEvent,
@@ -22,6 +27,8 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
+import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   BLOCK_READY_TIMEOUT_MS,
@@ -64,6 +71,7 @@ import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
@@ -150,9 +158,14 @@ import {
   withDeadline,
 } from './resourceFileParse';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
+  resolveSourcePublishConsentRequest,
   resolveUngrantableConsentNotice,
   resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
@@ -302,6 +315,9 @@ const BlockMediaUploadModal = dynamic(() => import('./BlockMediaUploadModal'), {
  * surface from `readyWaitPolicyFor`, never from this constant directly.
  */
 export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
+
+/** How long a dev-tunnel Retry waits for `onRefreshEntryUrl` before re-arming on the current URL. */
+const ENTRY_REFRESH_TIMEOUT_MS = 10_000;
 
 /**
  * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
@@ -758,7 +774,7 @@ export interface PageBlockHostProps {
    *  because `token`/`tokenError` are owned upstream — only re-minting can. Wired
    *  to the same useBlockToken.refresh as onConsentGranted (it aborts any
    *  in-flight mint; the endpoint is rate-limited 60/min). Omitted → Retry on an
-   *  auth error only remounts (the pre-fix dead-end), so the route MUST pass it. */
+   *  auth error only remounts (a dead end), so the route MUST pass it. */
   onRetryToken?: () => void;
   /**
    * DEV-TUNNEL ONLY: the app reloaded itself inside the frame after it was ready (Vite's
@@ -767,6 +783,22 @@ export interface PageBlockHostProps {
    * other surface never calls it. See `isDevTunnelGuestReload` for the signal and why.
    */
   onGuestReloaded?: () => void;
+  /**
+   * DEV-TUNNEL ONLY: resolve a freshly signed entry URL for the frame. The dev entry token in
+   * `iframeSrc` is short-lived (minutes), and the edge refuses an entry-document load whose token
+   * has expired, so a Retry that remounted the ORIGINAL `iframeSrc` would load a refusal page and
+   * time out again. With this wired, every dev-tunnel Retry (manual and automatic) first awaits a
+   * fresh URL and remounts the frame on it IN PLACE: this host is not remounted, so the bounded
+   * auto-retry budget carries across attempts. A rejected or empty result keeps the current URL.
+   * Ignored on every other surface, whose `iframeSrc` does not expire.
+   */
+  onRefreshEntryUrl?: () => Promise<string>;
+  /**
+   * DEV-TUNNEL ONLY: every `BLOCK_ERROR` payload the block posts (unvalidated), for the dev host
+   * to keep for App Assistant's app activity (`useDevPreviewErrorReporter`). Unset on every other
+   * surface, so a production block's errors go nowhere new.
+   */
+  onBlockError?: (payload: unknown) => void;
   /**
    * MOD REVIEW SANDBOX (#2831) read-only gate. Default false → prod behavior is
    * BYTE-IDENTICAL. When true (the mod review preview host only), EVERY
@@ -825,6 +857,15 @@ export interface PageBlockHostProps {
    * Default false → a mounter that hasn't wired it shows no dead links.
    */
   canOpenPage?: boolean;
+  /**
+   * Where this run was launched from, for the chrome's way out (breadcrumb + mobile back
+   * chevron): `home` → "My apps" (`/apps`), otherwise "Marketplace" (`/apps/store`). Only
+   * the `/apps/run` route sets it (from `?from=home`, in `getServerSideProps`); every other
+   * mounter leaves the store default. Never put on the iframe `src` or in BLOCK_INIT; its
+   * one use outside the chrome is re-stamping `?from=home` on the URL a block NAVIGATE
+   * pushes, so a reload keeps the way out. See `apps-run-origin.ts`.
+   */
+  launchOrigin?: AppsRunOrigin;
   /**
    * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
    * it is spelled out rather than inferred from `surface`.
@@ -919,9 +960,12 @@ export function PageBlockHost({
   onConsentGranted,
   onRetryToken,
   onGuestReloaded,
+  onRefreshEntryUrl,
+  onBlockError,
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
+  launchOrigin = 'store',
   fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
@@ -958,7 +1002,10 @@ export function PageBlockHost({
    * `key`, the run page renders `<PageBlockHost` unkeyed, and
    * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
    */
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  //
+  // The dismissal also ends early when the app has a request refused for a permission
+  // the viewer can still grant — `reviveConsentNoticeOnRefusal` below.
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1022,6 +1069,10 @@ export function PageBlockHost({
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
   // frame instead of a wedged one. See `handleRetry`.
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  // DEV-TUNNEL Retry: the fresh entry URL `onRefreshEntryUrl` returned, and the `iframeSrc` it
+  // replaces (see `entrySrc` and `performRetry`). Set in the same batch as the `reloadNonce` bump,
+  // so the re-keyed <iframe> mounts on the fresh URL and never loads the expired one first.
+  const [freshEntry, setFreshEntry] = useState<{ base: string; src: string } | null>(null);
   // BOUNDED AUTO-RETRY budget for this mount. State (not a ref) because the
   // scheduling effect AND the render-failure beacon both derive from it, so it
   // has to drive re-renders. `attempts` counts every automatic attempt;
@@ -1293,13 +1344,18 @@ export function PageBlockHost({
     return () => clearTimeout(t);
   }, [status, revealMs]);
 
+  // The entry URL the frame loads: `iframeSrc`, or the fresh one a dev-tunnel Retry obtained
+  // through `onRefreshEntryUrl` (see `performRetry`). The fresh one is tied to the `iframeSrc` it
+  // replaced, so a parent that hands down a NEW `iframeSrc` always wins over it.
+  const entrySrc = freshEntry && freshEntry.base === iframeSrc ? freshEntry.src : iframeSrc;
+
   const expectedOrigin = useMemo(() => {
     try {
-      return new URL(iframeSrc).origin;
+      return new URL(entrySrc).origin;
     } catch {
       return '';
     }
-  }, [iframeSrc]);
+  }, [entrySrc]);
 
   // The `src` actually rendered: the publisher's src plus the init-fragment
   // fast path, but ONLY when this block+surface is gated on for it. Off by
@@ -1310,7 +1366,7 @@ export function PageBlockHost({
   // The page host's render mode is `'iframe'` by construction — the literal
   // this component already puts in its BLOCK_INIT payload below.
   const renderedIframeSrc = useBlockIframeSrc(
-    iframeSrc,
+    entrySrc,
     { theme, renderMode: 'iframe', blockInstanceId },
     blockInitFragmentEnabled({ surface, blockId, slug })
   );
@@ -1850,12 +1906,15 @@ export function PageBlockHost({
     });
   }, [status, appBlockId, blockInstanceId]);
 
-  // BLOCK_ERROR{fatal:true} → fatal.
+  // BLOCK_ERROR{fatal:true} → fatal. Every report also reaches `onBlockError` (dev tunnel only).
+  const onBlockErrorRef = useRef(onBlockError);
+  onBlockErrorRef.current = onBlockError;
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_ERROR', (raw) => {
       if (raw && typeof raw === 'object' && (raw as { fatal?: unknown }).fatal === true) {
         setStatus((current) => (current === 'loading' || current === 'ready' ? 'fatal' : current));
       }
+      onBlockErrorRef.current?.(raw);
     });
     return off;
   }, [onMessage]);
@@ -1933,6 +1992,30 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
+
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with IframeHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [appBlockId]
+  );
+
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -2035,6 +2118,28 @@ export function PageBlockHost({
           color: 'yellow',
           title: notification.title,
           message: notification.message,
+        });
+        return;
+      }
+
+      // `apps:storage:publish` in the SOURCE app of one of this app's imports (`from`): a prompt
+      // for that app, not for this one, so it never reaches the missing-set path below. The
+      // modal names the source from this app's approved imports, and the server records the grant
+      // only for a source this app imports with `readwrite`. A malformed request is refused.
+      const sourcePublish = resolveSourcePublishConsentRequest(payload);
+      if (sourcePublish === 'invalid') {
+        send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: [APP_STORAGE_PUBLISH_SCOPE] });
+        return;
+      }
+      if (sourcePublish !== null) {
+        openBlockConsentModal({
+          appBlockId,
+          blockName: appName,
+          missingScopes: [APP_STORAGE_PUBLISH_SCOPE],
+          from: sourcePublish.from,
+          onGranted: () => {
+            onConsentGranted?.();
+          },
         });
         return;
       }
@@ -2211,6 +2316,10 @@ export function PageBlockHost({
         base: BLOCK_HOST_DEEP_LINK_BASE[surface],
         slug,
         siteNavigation: BLOCK_HOST_SITE_NAVIGATION[surface],
+        // Keeps `?from=home` on the pushed URL of a home-launched run, so a reload after the
+        // app navigates still leads back to "My apps"; the host's value beats any `from` in
+        // the block's own path (see `resolveNavigateRequest`).
+        launchOrigin,
       });
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
@@ -2259,7 +2368,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode, surface]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
@@ -4898,6 +5007,10 @@ export function PageBlockHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -4919,7 +5032,9 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error });
         }
       })();
     });
@@ -4934,6 +5049,7 @@ export function PageBlockHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -5509,7 +5625,7 @@ export function PageBlockHost({
   // 🔴 It deliberately no longer resets `blockRenderEmittedRef`. See the
   // BEACON-SEMANTICS block on the render-failure beacon: one beacon per mount
   // describing the outcome the host settles on.
-  const performRetry = useCallback(
+  const rearm = useCallback(
     ({ remint }: { remint: boolean }) => {
       if (remint) onRetryToken?.();
       controllerRef.current?.dispose();
@@ -5519,6 +5635,47 @@ export function PageBlockHost({
       setStatus('loading');
     },
     [onRetryToken]
+  );
+  const iframeSrcRef = useRef(iframeSrc);
+  iframeSrcRef.current = iframeSrc;
+  const onRefreshEntryUrlRef = useRef(onRefreshEntryUrl);
+  onRefreshEntryUrlRef.current = onRefreshEntryUrl;
+  const entryRefreshInFlightRef = useRef(false);
+  const isMounted = useIsMounted();
+  // 🔴 DEV-TUNNEL: remounting alone reloads the expired entry URL, so when the
+  // parent wires `onRefreshEntryUrl` the Retry waits for a fresh one and swaps it
+  // in (`freshEntry`) in the same batch as the re-key. The in-flight guard stops a
+  // second fetch. A failed, empty or timed-out (`ENTRY_REFRESH_TIMEOUT_MS`) fetch
+  // re-arms on the current URL.
+  const performRetry = useCallback(
+    ({ remint }: { remint: boolean }) => {
+      const refreshEntryUrl = surface === 'dev-tunnel' ? onRefreshEntryUrlRef.current : undefined;
+      if (!refreshEntryUrl) {
+        rearm({ remint });
+        return;
+      }
+      if (entryRefreshInFlightRef.current) return;
+      entryRefreshInFlightRef.current = true;
+      const base = iframeSrcRef.current;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ENTRY_REFRESH_TIMEOUT_MS);
+      });
+      const fetched = Promise.resolve()
+        .then(refreshEntryUrl)
+        .then(
+          (src) => src,
+          () => null
+        );
+      void Promise.race([fetched, timedOut]).then((src) => {
+        clearTimeout(timer);
+        entryRefreshInFlightRef.current = false;
+        if (!isMounted()) return;
+        if (src) setFreshEntry({ base, src });
+        rearm({ remint });
+      });
+    },
+    [rearm, surface, isMounted]
   );
 
   const handleRetry = useCallback(() => {
@@ -5534,8 +5691,11 @@ export function PageBlockHost({
     // construction: `performRetry` flips the status back to 'loading', which makes
     // `decideAutoRetry` return 'none', which tears down the pending backoff timer
     // in the scheduling effect's cleanup — so exactly ONE attempt runs, the one
-    // the user asked for. It also does NOT consume the automatic budget: the user
-    // taking over shouldn't spend the platform's remaining recovery attempts.
+    // the user asked for. (A dev-tunnel Retry flips the status only once its fresh
+    // entry URL arrives; until then the timer skips itself while that fetch is in
+    // flight — see the scheduling effect.) It also does NOT consume the automatic
+    // budget: the user taking over shouldn't spend the platform's remaining
+    // recovery attempts.
     performRetry({ remint: prior === 'error' || prior === 'no_token' });
   }, [performRetry]);
 
@@ -5565,6 +5725,11 @@ export function PageBlockHost({
     if (autoRetry.kind !== 'retry') return;
     const { delayMs, remint } = autoRetry;
     const t = setTimeout(() => {
+      // A dev-tunnel Retry is already fetching its fresh entry URL (a manual Retry
+      // the user clicked during this backoff): that attempt is the one that runs,
+      // and its re-arm recomputes this decision. Firing here would spend the
+      // automatic budget on an attempt `performRetry` drops.
+      if (entryRefreshInFlightRef.current) return;
       // Consume the budget FIRST so the decision recomputes to the next attempt
       // (or to 'none') even if the retry re-fails instantly.
       setAutoRetryBudget((b) => ({
@@ -5575,6 +5740,17 @@ export function PageBlockHost({
     }, delayMs);
     return () => clearTimeout(t);
   }, [autoRetry]);
+
+  // The missing-permissions notice's scopes for this render, or null for no notice —
+  // see the comment where it renders below.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status: toHostGateStatus(status),
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId,
+    suppressed: reviewMode,
+  });
 
   return (
     <Box
@@ -5698,6 +5874,7 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         hostSurface={surface}
         canOpenPage={canOpenPage}
+        launchOrigin={launchOrigin}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`
@@ -5731,16 +5908,11 @@ export function PageBlockHost({
           decides how it maps. A cast here would have compiled and silently
           disagreed with every other gate. (`pnpm typecheck` caught exactly that —
           the first version of this passed `status` raw.) */}
-      {resolveHostConsentNotice({
-        status: toHostGateStatus(status),
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId,
-        suppressed: reviewMode,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={appName}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -5748,9 +5920,20 @@ export function PageBlockHost({
             const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
+          onDismiss={() => setConsentNotice((current) => dismissConsentNotice(current, appBlockId))}
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
+      {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when
+          the app opens, never one per storage call. Live runs of a storage app only; a review
+          or the dev tunnel writes to a namespace this does not measure. */}
+      {!reviewMode &&
+        surface === 'page-run' &&
+        viewer !== null &&
+        status === 'ready' &&
+        declaredScopes.includes(APP_STORAGE_BASE_SCOPE) && (
+          <AppStorageNearLimitNotice appBlockId={appBlockId} appName={appName} />
+        )}
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
           SURVIVING the upload modal's close — and on a verdict fires

@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   isCrucibleBlockedForViewer,
   isCrucibleHiddenByScan,
+  isCrucibleTakenDownForViewer,
 } from '~/server/services/crucible.service';
 import {
   isPrismaUniqueViolation,
@@ -47,10 +48,12 @@ export async function toggleCrucibleFollow({
       userId: true,
       status: true,
       ingestion: true,
+      takenDownAt: true,
       image: { select: { ingestion: true } },
     },
   });
-  if (!crucible) throw throwNotFoundError('Crucible not found');
+  if (!crucible || isCrucibleTakenDownForViewer(crucible, { isModerator }))
+    throw throwNotFoundError('Crucible not found');
 
   // Ids are sequential: without the detail page's own gates this would confirm, and subscribe a
   // user to, a crucible that page hides from them.

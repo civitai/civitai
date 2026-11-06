@@ -1,6 +1,7 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Group, Input, NumberInput, SegmentedControl } from '@mantine/core';
+import { Group, Input, NumberInput } from '@mantine/core';
 import { useEffect, useRef } from 'react';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { MAX_SEED, MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 
 // =============================================================================
@@ -11,13 +12,21 @@ export interface SeedInputProps extends Omit<InputWrapperProps, 'children' | 'on
   value?: number;
   onChange?: (value?: number) => void;
   disabled?: boolean;
+  /** The provider's ceiling; defaults to `MAX_SEED`. */
+  max?: number;
 }
 
 // =============================================================================
 // Component
 // =============================================================================
 
-export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: SeedInputProps) {
+export function SeedInput({
+  value,
+  onChange,
+  disabled,
+  max = MAX_SEED,
+  ...inputWrapperProps
+}: SeedInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Derive control state from value - undefined means random
@@ -57,7 +66,7 @@ export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: S
     }
 
     // Clamp to max if pasted value exceeds limit
-    onChange?.(Math.min(Math.max(0, numValue), MAX_SEED));
+    onChange?.(Math.min(Math.max(0, numValue), max));
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -66,14 +75,16 @@ export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: S
 
     if (!isNaN(parsed)) {
       e.preventDefault();
-      onChange?.(Math.min(Math.max(0, parsed), MAX_SEED));
+      onChange?.(Math.min(Math.max(0, parsed), max));
     }
   };
 
   return (
     <Input.Wrapper {...inputWrapperProps}>
       <Group>
-        <SegmentedControl
+        <ChoiceGroup
+          aria-label="Seed"
+          className="w-44 shrink-0"
           value={control}
           onChange={handleControlChange}
           data={[
@@ -89,6 +100,7 @@ export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: S
           onPaste={handlePaste}
           placeholder="Random"
           min={0}
+          max={max}
           allowNegative={false}
           allowDecimal={false}
           style={{ flex: 1 }}

@@ -443,7 +443,7 @@ export async function notifyAppealResolved(input: {
     await getNotifications().createNotification({
       userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
+      category: NotificationCategory.Moderation,
       // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
       key: `entity-appeal-resolved:${entityType}:${input.entityId}:${input.appeal.id}`,
       details: {

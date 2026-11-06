@@ -12,12 +12,3 @@ export function mostRecentApp(apps: Sandbox[]): Sandbox | null {
     null
   );
 }
-
-/** The app used longest ago that is not open now: what the free-a-slot card offers to delete first. */
-export function oldestInactiveApp(apps: Sandbox[], openName: string | null): Sandbox | null {
-  return apps.reduce<Sandbox | null>(
-    (oldest, s) =>
-      s.name !== openName && (!oldest || lastUsedAt(s) < lastUsedAt(oldest)) ? s : oldest,
-    null
-  );
-}

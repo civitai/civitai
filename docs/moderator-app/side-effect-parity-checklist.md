@@ -22,7 +22,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | 3 | Comic **project/chapter** mod tools not ported (TOS toggle, set project/chapter nsfw, unpublish chapter) | comic detail mod UI (not the queue) | BLOCKER-if-expected | 🅿️ **Deferred** — NOT a migrated page (this surface was never in the spoke); revisit if comic project/chapter moderation moves here. Every *migrated* page is at parity. |
 | 4 | **User moderation** (ban / mute / strikes / restrictions) unbuilt | `/users` still a placeholder; `/users/newest` is read-only | BLOCKER-if-expected | 🅿️ **Out of scope for now** (user decision) — stays main-app until session-revoke is designed |
 | 5 | `metadata.nsfwLevelReason` not written (+ `IMAGE_METADATA` bust) | `setLevel` (ratings/downleveled) | DEGRADED | ✅ **DONE** — reason + Model3D rollup + cache bust in `updateImageNsfwLevel` |
-| 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — `deleteImagesByIds` now recomputes each affected post (`update_post_nsfw_levels` + `bustPostGalleryCaches`); postMetrics self-heals |
+| 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — `finishImageDeletes` now recomputes each affected post (`update_post_nsfw_levels` + `bustPostGalleryCaches`); postMetrics self-heals |
 | 7 | Model3D thumbnail nsfwLevel rollup dropped | `setLevel` (ratings/downleveled) | COSMETIC (rare `postId==null` edge) | ✅ **DONE** — folded into `updateImageNsfwLevel` (#5) |
 | 8 | Restore **dispute auto-resolve** dropped | article restore | COSMETIC (narrow race) | ⏳ Deferred for review — unblocked (no Flipt), but auto-**lowers** nsfwLevel; port under supervision |
 | 9 | App Store **listing rating re-derive** not mirrored (re-rating an image used as a live listing's icon, cover or screenshot) | `setLevel` (ratings/downleveled) | DEGRADED | ⏳ Open — main runs `reDeriveListingRatingsForModeratedImage` after the image-level write; the spoke leaves the listing rating and its `rating-change` history untouched. Needs a call: delegate to main (like KoNO finalize) or port |
@@ -48,7 +48,7 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
   — see `deleteArticleById` (`article.service.ts:1265`).
   Sub-tasks:
   - [x] Wire `@civitai/storage` client in the spoke (`storage.ts` shim + dep + `STORAGE_ENDPOINT`/`STORAGE_TOKEN`)
-  - [x] Image-delete helper (`image-deletion.ts` `deleteImagesByIds`): remove from collections → delete Image
+  - [x] Image-delete helper (`image-deletion.ts` `deleteImageRows` + `finishImageDeletes`): remove from collections → delete Image
         row → `deleteObject` (S3, `b2Image`) w/ URL-dedup → `syncSearchIndex('image', delete)` →
         `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata`
   - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; delete
@@ -63,7 +63,7 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         S3 `DeleteObjectCommand`, **no** resize/CDN purge. Added `purgeResizeCache` to `image-deletion.ts`
         (best-effort POST to `IMAGE_CACHER_URL/admin/invalidate`, parity with the main app). `IMAGE_CACHER_URL`
         wired (empty in local dev → no-ops, matching the main app; prod sets it).
-  - [x] **postId images — DONE.** `deleteImagesByIds` collects every deleted image's `postId` and, after the
+  - [x] **postId images — DONE.** `finishImageDeletes` collects every deleted image's `postId` and, after the
         batch, runs `update_post_nsfw_levels` + `bustPostGalleryCaches` (the spoke's `bustCachesForPosts`
         port) for those posts. `deleteArticle` no longer excludes postId images (matching `deleteArticleById`,
         which deletes cover + truly-orphaned content images regardless of postId). `postMetrics.queueUpdate`

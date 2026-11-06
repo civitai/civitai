@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Tooltip } from '@mantine/core';
+import { Button } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPlayerPlay } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';

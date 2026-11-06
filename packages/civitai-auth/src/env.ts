@@ -33,6 +33,9 @@ const schema = z.object({
   AUTH_JWT_PUBLIC_KEY: z.string().optional(), // SPKI PEM, exported as a JWK at the endpoint
   AUTH_JWT_KID: z.string().optional(),
   AUTH_SESSION_MAX_AGE: z.coerce.number().default(30 * 24 * 60 * 60), // 30d, matches today
+  // Reject session tokens that carry no `iat0` (minted before the 90-day limit existed). Off until every live
+  // session has been re-minted with one.
+  AUTH_REQUIRE_IAT0: z.stringbool().default(false),
 });
 
 function buildEnv() {

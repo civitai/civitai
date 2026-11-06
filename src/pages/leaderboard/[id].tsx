@@ -10,12 +10,12 @@ import {
   Group,
   Loader,
   NavLink,
-  Popover,
   SegmentedControl,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
 import clsx from 'clsx';

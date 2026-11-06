@@ -17,6 +17,18 @@ describe('buildFliptContext', () => {
     expect(ctx.isMember).toBe('true');
     expect(ctx.isLoggedIn).toBe('true');
     expect(ctx.isEarlyAdopter).toBe('false');
+    expect(ctx.appBuilderApproved).toBe('false');
+  });
+
+  // The `app-builder-approved` segment is `appBuilderApproved eq "true"` — a STRING match, so only
+  // the literal 'true' grants; a boolean or 'undefined' would silently match nobody.
+  it('emits appBuilderApproved as the string "true" only for an approved user', () => {
+    expect(buildFliptContext({ id: 5, appBuilderApproved: true }).appBuilderApproved).toBe('true');
+    expect(buildFliptContext({ id: 5, appBuilderApproved: false }).appBuilderApproved).toBe(
+      'false'
+    );
+    expect(buildFliptContext({ id: 5 }).appBuilderApproved).toBe('false');
+    expect('appBuilderApproved' in buildFliptContext()).toBe(false);
   });
 
   it('defaults a tierless user to free and not a member', () => {

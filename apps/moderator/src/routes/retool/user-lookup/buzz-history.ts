@@ -15,6 +15,16 @@ export type BuzzTransaction = {
    *  Program bank, …) — those ids collide with real user ids and must never be linked. */
   counterpartyLabel: string | null;
   externalTransactionId: string | null;
+  /** Set when the transaction is a leg of a paid placement: its counterparty on the ledger is the
+   *  escrow account, and this names the two accounts the placement was between. */
+  placement: {
+    id: number;
+    surface: string;
+    placerId: number;
+    placerName: string | null;
+    ownerId: number;
+    ownerName: string | null;
+  } | null;
 };
 
 export type BuzzLedgerSide = {

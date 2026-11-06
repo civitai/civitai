@@ -22,6 +22,11 @@ vi.mock('../bulk-image.service', () => ({
 }));
 const sendModNotification = vi.fn(async () => ({ ok: true }));
 vi.mock('../moderation-memory.service', () => ({ sendModNotification }));
+const sendAsCivitai = vi.fn(async () => ({
+  ok: true,
+  value: { chatId: 1, messageId: 2, deduped: false },
+}));
+vi.mock('../message-as-civitai', () => ({ sendAsCivitai }));
 const setReportStatus = vi.fn(async () => ({ ok: true, changed: true }));
 vi.mock('../reports.service', () => ({ setReportStatus, updateReportNotes: vi.fn() }));
 vi.mock('../users.service', () => ({ MAX_INT4: 2_147_483_647 }));
@@ -56,6 +61,13 @@ describe('the content and owner actions', () => {
     ['setFlag', { imageIds: '1', flagValue: 'poi:true' }, 'images', 'image.moderate', setImageFlag],
     ['strike', { userId: '5', reason: 'spam' }, 'strike', 'user.strike', issueStrike],
     ['notify', { userId: '5', message: 'hi' }, 'notify', 'user.strike', sendModNotification],
+    [
+      'messageAsCivitai',
+      { userId: '5', message: 'hi', idempotencyKey: 'compose-key-1' },
+      'message',
+      'user.message.asCivitai',
+      sendAsCivitai,
+    ],
   ] as const)('%s needs %s', async (name, fields, scope, id, write) => {
     const r = refusal(await actions[name](event(fields)));
     expect(r.status).toBe(403);
@@ -84,5 +96,22 @@ describe('the ruling', () => {
       success: true,
     });
     expect(canAccess).toHaveBeenCalledWith({ id: 7 }, '/reports/post');
+  });
+});
+
+describe('messageAsCivitai', () => {
+  it('carries the report it was sent from', async () => {
+    await actions.messageAsCivitai(
+      event(
+        { userId: '5', message: 'hi', idempotencyKey: 'compose-key-1', reportId: '88' },
+        { 'user.message.asCivitai': true }
+      )
+    );
+    expect(sendAsCivitai).toHaveBeenCalledWith({
+      userId: 5,
+      message: 'hi',
+      idempotencyKey: 'compose-key-1',
+      context: { reportId: 88 },
+    });
   });
 });

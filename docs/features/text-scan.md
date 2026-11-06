@@ -49,7 +49,7 @@ ImageCaption's (an author's caption on one image of a storyline chapter, keyed b
 rating, and a refusal that hides the caption) is applied by `text-scan/actions/image-caption.ts`. It
 has no Clavata counterpart.
 
-ChatMessage, Comment, CommentV2, UserProfile, Post, Model and Article also list `csam`, asked only while its
+ChatMessage, Comment, CommentV2, CommentV3, UserProfile, Post, Model and Article also list `csam`, asked only while its
 gate is `review` (see Modes). A chat window is scanned only for senders a scam verdict could act on;
 in `review` every sender's window is scanned, and the others are asked for `csam` alone, still one
 workflow per window.
@@ -102,6 +102,15 @@ A label's action is one of: raise the content rating (the owner can dispute it),
 (the owner can appeal), mute the account pending moderator review, or, for `modelRules`, hold the
 match for a moderator (see Model rules). Disputes, appeals and mute reviews go through the existing moderator queues
 (a storyline title appeal is on Storylines > Title Appeals).
+A raised rating notifies the owner once per scan, compared against the rating stored before the
+verdict was written. A post's text is scanned when it is scheduled or published and when its text
+changes while scheduled or published; a draft's edits are not scanned. A draft keeps the floor from
+its last scan, including after an unschedule, until it is scheduled or published again: that scan
+reads its current text, and the old floor holds until the new verdict lands. Unchanged text is not
+rescanned.
+A post whose images are not rated yet stays unrated whatever the verdict. Its floor takes effect when
+the post is first rated, and that recompute sends the rating notice if the floor raised the post
+above what its images give alone. A post with a moderator rating gets no notice.
 A refused `ImageCaption` is only hidden from readers: its author is not notified, there is no
 appeal, and a clean scan of the caption's current text lets it back.
 
@@ -140,6 +149,7 @@ every entity type is off whatever the hash says, so XGuard and the profanity fil
 Clavata runs again for any entity cut over by `disableClavataFor` (the cutover is kept in its own
 set, `system:text-scan:clavata-cutover`, and the Clavata job skips a cut-over entity only while the
 switch is on and that entity type is 100% active; anything less hands it back to Clavata).
+`CommentV3` has no rollout of its own and uses `CommentV2`'s (`rolloutFor()` in `text-scan/mode.ts`), for both scanning and the cutover's 100%-active check.
 Turning it off does not undo verdicts already applied.
 
 - **off** — nothing is submitted.
@@ -217,7 +227,11 @@ so chat verdicts don't pair one to one with text scan's per-message ones.
   restricted" notice; see `docs/moderator-app/strike-rules.md`.
 - Bounty awards are recorded under the payout lock, then paid with one key shared by the manual and
   expiry paths (`bounty-award-b<bountyId>-<accountType>`), so a retry can't pay twice. The hourly
-  `bounty-payout-retry` job settles awards recorded but not yet marked paid.
+  `bounty-payout-retry` job settles awards recorded but not yet marked paid. An award, or a supporter
+  refund the ledger can't confirm, is recorded as unpaid for a manual ruling. Moderators resolve it on
+  the moderator app's `/bounties/unpaid-awards` page (sidebar count `bountyUnpaidAwards`), which calls
+  `/api/mod/bounty-unpaid-award/resolve`. That records the ruling and its ledger reference and moves no
+  Buzz.
 
 ## Adding an entity or a label
 

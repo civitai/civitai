@@ -415,5 +415,72 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
     h.selectResults.push({ domain: 'civitai.red', includeSubdomains: false }); // TrustedSpokeDomain registry
     const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT);
     expect(client?.isFirstParty).toBe(true);
+    expect(client?.skipConsent).toBe(true);
+  });
+
+  it('a registered client skips consent only as a confidential system app staff marked', async () => {
+    const row = { id: 'sys-1', grants: ['authorization_code'], redirectUris: [TRUSTED_REDIRECT] };
+    for (const [flags, skips] of [
+      [{ skipConsent: true, isConfidential: true, userId: -1 }, true],
+      [{ skipConsent: true, isConfidential: false, userId: -1 }, false], // public: any program could start its sign-in
+      [{ skipConsent: false, isConfidential: true, userId: -1 }, false],
+      [{ skipConsent: true, isConfidential: true, userId: 7 }, false], // flag left on an app no longer system
+    ] as const) {
+      h.selectResults.push({ ...row, ...flags });
+      const client = await resolveClientLite('sys-1', TRUSTED_REDIRECT);
+      expect(client?.skipConsent).toBe(skips);
+    }
+  });
+});
+
+describe('first-party resolution requires an https redirect_uri', () => {
+  const MOD_ID = 'firstparty-moderator_civitai_com';
+  const trustModerator = () => {
+    invalidateDomainCache();
+    h.selectResults.push(undefined); // no OauthClient row
+    h.selectResults.push({ domain: 'moderator.civitai.com', includeSubdomains: false });
+  };
+
+  it('resolves https://moderator.civitai.com as first-party', async () => {
+    trustModerator();
+    const client = await resolveClientLite(
+      MOD_ID,
+      'https://moderator.civitai.com/api/auth/callback'
+    );
+    expect(client?.isFirstParty).toBe(true);
+  });
+
+  it('refuses http:// on the same trusted host', async () => {
+    trustModerator();
+    expect(
+      await resolveClientLite(MOD_ID, 'http://moderator.civitai.com/api/auth/callback')
+    ).toBeUndefined();
+  });
+
+  it('getClient refuses an /authorize with an http:// redirect_uri, so no code is issued', async () => {
+    trustModerator();
+    const request: any = {
+      headers: {},
+      query: {
+        response_type: 'code',
+        redirect_uri: 'http://moderator.civitai.com/api/auth/callback',
+      },
+    };
+    expect(await oauthModel.getClient(MOD_ID, null, request)).toBe(false);
+  });
+
+  it('getClient resolves the https:// redirect_uri with its exact callback', async () => {
+    trustModerator();
+    const request: any = {
+      headers: {},
+      query: {
+        response_type: 'code',
+        redirect_uri: 'https://moderator.civitai.com/api/auth/callback',
+      },
+    };
+    expect(await oauthModel.getClient(MOD_ID, null, request)).toMatchObject({
+      id: MOD_ID,
+      redirectUris: ['https://moderator.civitai.com/api/auth/callback'],
+    });
   });
 });
