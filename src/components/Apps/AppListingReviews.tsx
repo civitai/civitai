@@ -19,7 +19,7 @@ const COLLAPSED_REVIEW_COUNT = 4;
  * TEXT via React's default escaping — NEVER dangerouslySetInnerHTML (`details` is
  * only length-capped/trimmed server-side, so the escaping is the XSS control).
  *
- * DARK: mounted only under the mod-only store-preview detail body today.
+ * Not mounted in preview: a shadow listing has no reviews.
  */
 export function AppListingReviews({
   appListingId,
