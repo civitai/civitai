@@ -18,6 +18,7 @@
   import LevelPicker from './LevelPicker.svelte';
   import ListSearch from './ListSearch.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
+  import QuestionCard from './QuestionCard.svelte';
   import YesNoReferenceCard from './YesNoReferenceCard.svelte';
   import type { PageData } from './$types';
 
@@ -28,12 +29,37 @@
     { value: 'fresh', label: `Fresh (${data.counts.fresh})`, href: '?tab=fresh' },
     { value: 'spot-check', label: `Spot-check (${data.counts.spotCheck})`, href: '?tab=spot-check' },
     { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
+    { value: 'questions', label: 'Questions', href: '?tab=questions' },
   ]);
+  const statusLinks = $derived(
+    (
+      [
+        { value: 'open', label: 'Open' },
+        { value: 'closed', label: 'Closed' },
+        { value: 'all', label: 'All' },
+      ] as const
+    ).map((s) => ({
+      ...s,
+      href: urlWith(page.url, { status: s.value === 'open' ? null : s.value, page: null }),
+    }))
+  );
+  const ALL_AXES = 'all';
+  const axisLabel = $derived.by(() => {
+    const { axis } = data.questionQueue.filters;
+    if (!axis) return 'All axes';
+    return data.questionQueue.axes.find((a) => a.key === axis)?.label ?? `${axis} (unknown)`;
+  });
+  const pickAxis = (axis: string) =>
+    goto(urlWith(page.url, { axis: axis === ALL_AXES ? null : axis, page: null }), {
+      keepFocus: true,
+      noScroll: true,
+    });
   const nouns = {
     core: 'core images',
     fresh: 'fresh images',
     'spot-check': 'images to spot-check',
     'yes-no': 'pairs',
+    questions: 'questions',
   } as const;
   const toPage = (p: number) =>
     goto(urlWith(page.url, { page: p === 1 ? null : p }), { keepFocus: true, noScroll: true });
@@ -42,6 +68,7 @@
     fresh: 'No fresh images are in Trials right now. They arrive with the next harvest of moderator rulings.',
     'spot-check': 'Nothing is waiting for a spot-check.',
     'yes-no': 'No yes/no reference pairs yet. Add one above.',
+    questions: 'No questions match these filters.',
   } as const;
 
   const noMatch = 'Nothing in this tab matches that image.';
@@ -177,6 +204,38 @@
     <div class="flex flex-col gap-3">
       {#each data.yesNo.items as item (item.id)}
         <YesNoReferenceCard {item} />
+      {/each}
+    </div>
+  {/if}
+{:else if data.tab === 'questions'}
+  <p class="mb-3 text-sm text-dark-2">
+    The yes/no questions players are asked, one per image and question. Retire one that makes no sense
+    for its image, or reword it (which retires it and opens a new question); answers already given
+    stay recorded, and pending ones become inconclusive and earn no gold. Search by image URL, by
+    image id or a number in the question, or by words in the question.
+  </p>
+  <div class="mb-3 flex flex-wrap items-center gap-2">
+    <LinkTabs items={statusLinks} active={data.questionQueue.filters.status} />
+    <Select.Root
+      type="single"
+      bind:value={() => data.questionQueue.filters.axis || ALL_AXES, pickAxis}
+    >
+      <Select.Trigger aria-label="Axis" class="h-8 w-48">{axisLabel}</Select.Trigger>
+      <Select.Content>
+        <Select.Item value={ALL_AXES}>All axes</Select.Item>
+        {#each data.questionQueue.axes as axis (axis.key)}
+          <Select.Item value={axis.key}>{axis.label}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+  </div>
+  {#key data.tab}<ListSearch {...searchProps} placeholder="Image id, image URL or question text" />{/key}
+  {#if data.questionQueue.items.length === 0}
+    <p class="text-sm text-dark-2">{empty.questions}</p>
+  {:else}
+    <div class="flex flex-col gap-3">
+      {#each data.questionQueue.items as item (item.id)}
+        <QuestionCard {item} />
       {/each}
     </div>
   {/if}

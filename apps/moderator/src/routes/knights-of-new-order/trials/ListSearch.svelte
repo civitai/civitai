@@ -12,7 +12,9 @@
     error,
     total,
     noun,
-  }: { text: string; error: string | null; total: number; noun: string } = $props();
+    placeholder = 'Search by image id or URL',
+  }: { text: string; error: string | null; total: number; noun: string; placeholder?: string } =
+    $props();
 
   // Writable derived: typing overrides it, and a new `text` from the URL (Back, pager, Clear) resets it.
   let value = $derived(text);
@@ -34,8 +36,8 @@
     {value}
     oninput={(e) => (value = e.currentTarget.value)}
     class="w-80"
-    placeholder="Search by image id or URL"
-    aria-label="Search by image id or URL"
+    {placeholder}
+    aria-label={placeholder}
   />
   <Button type="submit" size="sm" variant="outline">Search</Button>
   {#if text}

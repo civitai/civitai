@@ -1,5 +1,4 @@
-/**
- * Longest question an Acolyte yes/no pair may carry. Same figure as `MAX_QUESTION` in the Knights app's
- * yes/no import (`apps/knights/src/lib/server/yesno/import.ts`), which is not importable from here.
- */
+/** Client-safe mirror of `YESNO_QUESTION_MAX` in `@civitai/db/knights`, which client code cannot import. A moderator unit test pins them equal. */
 export const YESNO_PROMPT_MAX = 600;
+/** Longest note on a retire or reword. */
+export const NOTE_MAX = 500;

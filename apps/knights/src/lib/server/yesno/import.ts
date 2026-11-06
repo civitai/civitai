@@ -2,6 +2,12 @@ import { sql, type Kysely, type SqlBool } from 'kysely';
 import { closeOpenYesNoItem } from './close';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
+  isModeratedSql,
+  MODERATOR_RETIRED,
+  REWORD_OF_META_KEY,
+  YESNO_QUESTION_MAX,
+} from '@civitai/db/knights';
+import {
   axisKey,
   axisPrompt,
   isAxis,
@@ -31,7 +37,6 @@ export type Skipped = Partial<
 >;
 
 const MAX_ID = 200;
-const MAX_QUESTION = 600;
 const MAX_EFFECT = 40;
 const META_COLUMNS = {
   caseId: 'case_id',
@@ -52,6 +57,9 @@ const utcNow = sql<Date>`(now() AT TIME ZONE 'utc')`;
 
 /** An item the import closed as withdrawn. */
 const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "KnightsQueueItem"."reason" = 'retired')`;
+
+/** Closed by a moderator. Unlike other moderated items, the import never reopens it. */
+const moderatorRetired = sql<SqlBool>`("KnightsQueueItem"."reason" IS NOT DISTINCT FROM ${MODERATOR_RETIRED})`;
 
 const clip = (value: string | undefined, max: number) => (value ?? '').trim().slice(0, max);
 
@@ -101,7 +109,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
       skip('bad-kind');
       continue;
     }
-    const prompt = clip(r.question, MAX_QUESTION);
+    const prompt = clip(r.question, YESNO_QUESTION_MAX);
     if (!prompt) {
       skip('bad-question');
       continue;
@@ -130,8 +138,12 @@ export type ImportResult = {
   unchanged: number;
   /** Differ from what is stored but already have answers, so were left as they are. */
   refused: number;
+  /** Unanswered rows skipped because a moderator acted on them. */
+  moderated: number;
   /** Open questions the producer withdrew, closed with no outcome. */
   retired: number;
+  /** Reworded copies reopened because the file lists their moderator-retired original again. */
+  revived: number;
   axes: number;
 };
 
@@ -171,7 +183,9 @@ export async function importYesNo(
     updated: 0,
     unchanged: 0,
     refused: 0,
+    moderated: 0,
     retired: 0,
+    revived: 0,
     axes: axes.length,
   };
   for (let at = 0; at < rows.length; at += batchSize) {
@@ -207,7 +221,8 @@ export async function importYesNo(
             prompt: eb.ref('excluded.prompt'),
             yesEffect: eb.ref('excluded.yesEffect'),
             noEffect: eb.ref('excluded.noEffect'),
-            meta: eb.ref('excluded.meta'),
+            // Merged, so reopening a moderated item keeps its moderation record.
+            meta: sql`COALESCE("KnightsQueueItem"."meta", '{}'::jsonb) || excluded."meta"`,
             updatedAt: eb.ref('excluded.updatedAt'),
             // A question the file withdrew and now lists again, with no answers, is open again.
             status: sql<string>`CASE WHEN ${retired} THEN 'Open' ELSE "KnightsQueueItem"."status" END`,
@@ -217,7 +232,7 @@ export async function importYesNo(
             resolvedAt: sql<Date | null>`CASE WHEN ${retired} THEN NULL ELSE "KnightsQueueItem"."resolvedAt" END`,
           }))
           .where(
-            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND (${retired} OR
+            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND NOT ${moderatorRetired} AND (${retired} OR NOT ${isModeratedSql} AND
               ("KnightsQueueItem"."questionKey", "KnightsQueueItem"."imageId", "KnightsQueueItem"."audience", "KnightsQueueItem"."prompt",
                "KnightsQueueItem"."yesEffect", "KnightsQueueItem"."noEffect", "KnightsQueueItem"."meta")
               IS DISTINCT FROM
@@ -226,15 +241,22 @@ export async function importYesNo(
             )`
           )
       )
-      .returning(sql<boolean>`(xmax = 0)`.as('inserted'))
+      .returning(['externalId', sql<boolean>`(xmax = 0)`.as('inserted')])
       .execute();
     const inserted = written.filter((w) => w.inserted).length;
     result.inserted += inserted;
     result.updated += written.length - inserted;
     const skipped = batch.length - written.length;
-    const refused = skipped > 0 ? await countRefused(db, batch) : 0;
-    result.refused += refused;
-    result.unchanged += skipped - refused;
+    if (skipped > 0) {
+      const wrote = new Set(written.map((w) => w.externalId));
+      const left = batch.filter((r) => !wrote.has(r.externalId));
+      const moderated = await countModerated(db, left);
+      const refused = await countRefused(db, left);
+      result.moderated += moderated;
+      result.refused += refused;
+      result.unchanged += skipped - moderated - refused;
+      result.revived += await reviveReworded(db, left);
+    }
   }
   await retireWithdrawn(db, retire, result, now, batchSize);
   return result;
@@ -243,6 +265,66 @@ export async function importYesNo(
 const sameMeta = (a: unknown, b: Record<string, string>) =>
   JSON.stringify(Object.entries((a ?? {}) as Record<string, string>).sort()) ===
   JSON.stringify(Object.entries(b).sort());
+
+async function countModerated(db: Kysely<DB>, skipped: YesNoRow[]): Promise<number> {
+  const found = await db
+    .selectFrom('KnightsQueueItem')
+    .select('externalId')
+    .where('voteCount', '=', 0)
+    .where(sql<SqlBool>`(${isModeratedSql} OR ${moderatorRetired})`)
+    .where(
+      'externalId',
+      'in',
+      skipped.map((r) => r.externalId)
+    )
+    .execute();
+  return found.length;
+}
+
+/**
+ * A relisted question a moderator retired stays closed, but its latest reworded copy, if the import closed it when the
+ * producer withdrew the question, comes back. A copy a moderator retired, one with answers, or any copy while another is open stays as it is.
+ */
+async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<number> {
+  const originRow = sql<string | null>`"meta" ->> ${sql.lit(REWORD_OF_META_KEY)}`;
+  const origins = await db
+    .selectFrom('KnightsQueueItem')
+    .select('externalId')
+    .where('reason', '=', MODERATOR_RETIRED)
+    .where(
+      'externalId',
+      'in',
+      skipped.map((r) => r.externalId)
+    )
+    .execute();
+  if (origins.length === 0) return 0;
+  const copies = await db
+    .selectFrom('KnightsQueueItem')
+    .select(['id', 'externalId', 'status', 'reason', 'voteCount', originRow.as('origin')])
+    .where(originRow, 'in', origins.map((o) => o.externalId) as string[])
+    .execute();
+  let revived = 0;
+  for (const { externalId: origin } of origins) {
+    const mine = copies.filter((c) => c.origin === origin);
+    if (mine.some((c) => c.status === 'Open')) continue;
+    const number = (c: { externalId: string | null }) =>
+      Number(/:r(\d+)$/.exec(c.externalId ?? '')?.[1] ?? -1);
+    const latest = mine
+      .filter((c) => c.reason === 'retired' && c.voteCount === 0)
+      .sort((a, b) => number(b) - number(a))[0];
+    if (!latest) continue;
+    const reopened = await db
+      .updateTable('KnightsQueueItem')
+      .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
+      .where('id', '=', latest.id)
+      .where('status', '=', 'Closed')
+      .where('reason', '=', 'retired')
+      .where('voteCount', '=', 0)
+      .executeTakeFirst();
+    revived += Number(reopened.numUpdatedRows);
+  }
+  return revived;
+}
 
 /** Rows the upsert left alone because they have answers: those that still differ from the file are refused, the rest unchanged. */
 async function countRefused(db: Kysely<DB>, batch: YesNoRow[]): Promise<number> {
@@ -283,7 +365,7 @@ async function countRefused(db: Kysely<DB>, batch: YesNoRow[]): Promise<number> 
   }).length;
 }
 
-/** Closes open questions the producer withdrew. Unanswered ones just close; answered ones drop their answers' gold like any no-outcome close. */
+/** Closes open questions the producer withdrew, and their open reworded copies. Unanswered ones just close; answered ones drop their answers' gold like any no-outcome close. */
 async function retireWithdrawn(
   db: Kysely<DB>,
   ids: string[],
@@ -297,7 +379,13 @@ async function retireWithdrawn(
       .select('id')
       .where('status', '=', 'Open')
       .where('audience', 'is not', null)
-      .where('externalId', 'in', ids.slice(at, at + batchSize))
+      .where((eb) => {
+        const withdrawn = ids.slice(at, at + batchSize);
+        return eb.or([
+          eb('externalId', 'in', withdrawn),
+          sql<SqlBool>`"meta" ->> ${sql.lit(REWORD_OF_META_KEY)} IN (${sql.join(withdrawn)})`,
+        ]);
+      })
       .execute();
     for (const { id } of open) {
       if (await closeOpenYesNoItem(db, id, 'retired', now)) result.retired++;

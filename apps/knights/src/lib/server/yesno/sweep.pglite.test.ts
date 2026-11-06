@@ -7,6 +7,9 @@ import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import { importYesNo, type YesNoRow } from './import';
 import { closeStrandedYesNo } from './sweep';
+import { closeYesNoItemRow } from '@civitai/db/knights';
+import { settleFinalItems } from '../progression/progression';
+import { closeOpenYesNoItem } from './close';
 import { castYesNoVote } from './vote';
 
 const NOW = new Date('2026-12-21T12:00:00Z');
@@ -202,5 +205,58 @@ describe('closing stranded questions', () => {
     });
     // A close with no outcome pays no bulk XP; the vote XP was mirrored when each answer was given.
     expect(mirror).not.toHaveBeenCalled();
+  });
+});
+
+describe('closing without settling (the moderator app path)', () => {
+  const snapshot = async (itemId: number) => ({
+    item: await item(itemId).then((i) => ({ status: i.status, reason: i.reason })),
+    votes: (
+      await pg.query<{
+        playerId: number;
+        verdict: string;
+        gold: number;
+        xp: number;
+        settled: boolean;
+      }>(
+        `SELECT "playerId", verdict, gold, xp, "settledAt" IS NOT NULL AS settled FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+        [itemId]
+      )
+    ).rows,
+    players: [await player(1), await player(2)],
+  });
+
+  async function scenario(close: (itemId: number) => Promise<unknown>) {
+    await pg.exec(
+      `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    );
+    for (const p of [1, 2]) await seedPlayer(pg, p);
+    const ids = await seed([row('a', 10)]);
+    await answer(1, ids.a);
+    await answer(2, ids.a, 'no');
+    await close(ids.a);
+    return snapshot(ids.a);
+  }
+
+  it('pays the same gold, XP and verdicts as closing through closeOpenYesNoItem, once the tick has settled', async () => {
+    const inline = await scenario((id) => closeOpenYesNoItem(db, id, 'retired', NOW));
+
+    const helperOnly = await scenario(async (id) => {
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .selectFrom('KnightsQueueItem')
+          .select('id')
+          .where('id', '=', id)
+          .forUpdate()
+          .execute();
+        await closeYesNoItemRow(trx, id, 'retired', NOW);
+      });
+      expect((await snapshot(id)).votes.every((v) => !v.settled)).toBe(true);
+      expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ items: 1, votes: 2 });
+    });
+
+    expect(helperOnly).toEqual(inline);
+    expect(inline.votes.map((v) => v.verdict)).toEqual(['inconclusive', 'inconclusive']);
+    expect(inline.votes.every((v) => v.settled)).toBe(true);
   });
 });

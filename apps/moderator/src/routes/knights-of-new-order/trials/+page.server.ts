@@ -27,8 +27,18 @@ import {
   setYesNoReferenceActive,
   updateYesNoReference,
 } from '$lib/server/knights/yesno-reference.service';
+import {
+  getYesNoAxes,
+  getYesNoQuestionItems,
+  retireYesNoQuestion,
+  rewordYesNoQuestion,
+  unretireYesNoQuestion,
+  YESNO_QUESTION_STATUSES,
+  type YesNoQuestionItem,
+  type YesNoQuestionQuery,
+} from '$lib/server/knights/yesno-question.service';
 
-const TABS = ['core', 'fresh', 'spot-check', 'yes-no'] as const;
+const TABS = ['core', 'fresh', 'spot-check', 'yes-no', 'questions'] as const;
 type Tab = (typeof TABS)[number];
 
 const level = z.coerce.number().int();
@@ -60,6 +70,9 @@ const forms = {
     explanation: why.optional().default(''),
   }),
   deleteYesNo: z.object({ id: int4Id }),
+  retireQuestion: z.object({ id: int4Id, note: z.string().trim() }),
+  unretireQuestion: z.object({ id: int4Id }),
+  rewordQuestion: z.object({ id: int4Id, prompt: z.string().trim(), note: z.string().trim() }),
   add: z.object({ image: imageRef, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
   retire: z.object({ id: int4Id }),
@@ -71,29 +84,51 @@ const query = z.object({
   tab: z.enum(TABS).catch('core'),
   page: z.coerce.number().int().positive().max(100_000).catch(1),
   q: z.string().trim().max(500).catch(''),
+  axis: z.string().trim().max(200).catch(''),
+  status: z.enum(YESNO_QUESTION_STATUSES).catch('open'),
 });
 
 const blank = <T>(): ListPage<T> => ({ items: [], total: 0, page: 1 });
 
+const AXIS_PREFIX = 'knights.yesno.';
+
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
-  const { tab, page, q } = parseQuery(url, query);
+  const parsed = parseQuery(url, query);
+  const { tab, page, q } = parsed;
+  const questionsTab = tab === 'questions';
+  const axis = questionsTab ? parsed.axis : '';
+  const status = questionsTab ? parsed.status : 'open';
   const imageId = q ? parseImageRef(q) : null;
-  const searchError = q && imageId === null ? BAD_IMAGE : null;
+  // The question list also searches the prompt, so text that is not an image reference is not an error there.
+  const searchError = q && imageId === null && !questionsTab ? BAD_IMAGE : null;
   const list: ListQuery = imageId === null ? { page } : { page, imageId };
   const read = <T>(wanted: Tab, get: (q: ListQuery) => Promise<ListPage<T>>) =>
     tab === wanted && !searchError ? get(list) : Promise.resolve(blank<T>());
 
-  const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions] = await Promise.all([
-    getCoreSetCounts(),
-    getYesNoReferenceCount(),
-    read('core', getCoreItems),
-    read('fresh', getFreshItems),
-    read('spot-check', getSpotCheckItems),
-    read('yes-no', getYesNoReferences),
-    tab === 'yes-no' ? getYesNoQuestions() : Promise.resolve([]),
-  ]);
-  const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo }[tab];
+  // A bare number is an image id or a number in the question; a URL is only ever an image.
+  const questionQuery = (): YesNoQuestionQuery => {
+    const base = { page, status, axis: axis || undefined };
+    if (!q) return base;
+    if (imageId === null) return { ...base, search: { text: q } };
+    return /^\d+$/.test(q) ? { ...base, search: { text: q, imageId } } : { ...base, imageId };
+  };
+
+  const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions, queue, axes] =
+    await Promise.all([
+      getCoreSetCounts(),
+      getYesNoReferenceCount(),
+      read('core', getCoreItems),
+      read('fresh', getFreshItems),
+      read('spot-check', getSpotCheckItems),
+      read('yes-no', getYesNoReferences),
+      tab === 'yes-no' ? getYesNoQuestions() : Promise.resolve([]),
+      questionsTab
+        ? getYesNoQuestionItems(questionQuery())
+        : Promise.resolve(blank<YesNoQuestionItem>()),
+      questionsTab ? getYesNoAxes() : Promise.resolve([]),
+    ]);
+  const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo, questions: queue }[tab];
   return {
     tab,
     search: { text: q, error: searchError },
@@ -104,6 +139,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     items: tab === 'core' ? core.items : fresh.items,
     spotCheck: spotCheck.items,
     yesNo: { items: yesNo.items, questions },
+    questionQueue: {
+      items: queue.items,
+      axes: axes.map((a) => ({ key: a.key, label: a.key.replace(AXIS_PREFIX, '') })),
+      filters: { axis, status },
+    },
   };
 };
 
@@ -139,7 +179,7 @@ export const actions: Actions = {
   spotCheck: (event) => run(event, forms.spotCheck, 'record the rating', spotCheckItem),
   addYesNo: (event) =>
     run(event, forms.addYesNo, 'add the pair', ({ image, ...rest }) =>
-      addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user?.id ?? 0 })
+      addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user!.id })
     ),
   toggleYesNo: (event) =>
     run(event, forms.toggleYesNo, 'update the pair', ({ id, active }) =>
@@ -151,4 +191,16 @@ export const actions: Actions = {
     ),
   deleteYesNo: (event) =>
     run(event, forms.deleteYesNo, 'delete the pair', ({ id }) => deleteYesNoReference(id)),
+  retireQuestion: (event) =>
+    run(event, forms.retireQuestion, 'retire the question', (input) =>
+      retireYesNoQuestion({ ...input, by: event.locals.user!.id })
+    ),
+  unretireQuestion: (event) =>
+    run(event, forms.unretireQuestion, 'restore the question', ({ id }) =>
+      unretireYesNoQuestion({ id, by: event.locals.user!.id })
+    ),
+  rewordQuestion: (event) =>
+    run(event, forms.rewordQuestion, 'reword the question', (input) =>
+      rewordYesNoQuestion({ ...input, by: event.locals.user!.id })
+    ),
 };

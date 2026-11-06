@@ -1,5 +1,5 @@
 import type { Kysely, Transaction } from 'kysely';
-import { gradeKnightsVotes } from '@civitai/db/knights';
+import { closeYesNoItemRow, gradeKnightsVotes } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import type { XpDelta } from '../progression/legacy-exp';
@@ -22,30 +22,21 @@ export async function closeYesNoItem(
   closing: Closing,
   now: Date
 ): Promise<XpDelta[]> {
-  await trx
-    .updateTable('KnightsQueueItem')
-    .set(
-      closing.kind === 'consensus'
-        ? {
-            status: 'Consensus',
-            resolvedValue: closing.value,
-            resolvedAt: utc(now),
-            resolvedBy: closing.by,
-            updatedAt: utc(now),
-          }
-        : { status: 'Closed', reason: closing.reason, resolvedAt: utc(now), updatedAt: utc(now) }
-    )
-    .where('id', '=', itemId)
-    .execute();
   if (closing.kind === 'consensus') {
+    await trx
+      .updateTable('KnightsQueueItem')
+      .set({
+        status: 'Consensus',
+        resolvedValue: closing.value,
+        resolvedAt: utc(now),
+        resolvedBy: closing.by,
+        updatedAt: utc(now),
+      })
+      .where('id', '=', itemId)
+      .execute();
     await gradeKnightsVotes(trx, itemId, closing.value);
   } else {
-    await trx
-      .updateTable('KnightsVote')
-      .set({ verdict: 'inconclusive' })
-      .where('itemId', '=', itemId)
-      .where('verdict', '=', 'pending')
-      .execute();
+    await closeYesNoItemRow(trx, itemId, closing.reason, now);
   }
   return (await settleItemVotes(trx, itemId, now)).xp;
 }
