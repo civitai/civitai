@@ -25,6 +25,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { inferComponentType } from '~/server/utils/model-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import {
   ModelFileVisibility,
   ModelHashType,
@@ -34,6 +35,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -43,6 +45,10 @@ import {
   assertVersionAcceptsNewUpload,
 } from '~/server/utils/model-file-replace';
 import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
+import {
+  liveRunDatasetTrainingStatuses,
+  reviewedDatasetTrainingStatuses,
+} from '~/shared/constants/training.constants';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -157,6 +163,8 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   isModerator,
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
+  if (data.overrideName !== undefined)
+    data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
   // `name` is the uploaded file name, which some model types publish as the download name.
   await throwOnBlockedUserContent([data.overrideName, data.name], {
@@ -211,6 +219,14 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
+  // Skip a re-sent stored name: sanitising it would make it look changed and rescan it against
+  // the blocklist.
+  if (inputData.overrideName != null && inputData.overrideName !== modelFile.overrideName)
+    inputData.overrideName = sanitizeOverrideName(
+      inputData.overrideName,
+      inputData.name ?? modelFile.name
+    );
+
   // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
   // would leave a file whose name trips a list impossible to edit in any other way.
   const changedNames = [
@@ -242,6 +258,11 @@ export async function updateFile({
     });
   }
 
+  const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
+  // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
+  // write derives only the new one. Never throws.
+  if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
+
   const { count } = await dbWrite.modelFile.updateMany({
     where: { id },
     data: { ...inputData, metadata },
@@ -249,6 +270,20 @@ export async function updateFile({
   // Replaced or deleted since the lookup above: nothing was written.
   if (count === 0) throw throwNotFoundError();
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+  // GenerationCoverage decides by file type, so the version's cached coverage is stale.
+  if (typeChanged)
+    await Promise.all([
+      resourceDataCache.bust([modelFile.modelVersionId]),
+      bustOrchestratorModelCache(modelFile.modelVersionId),
+      bustVersionScannedFileAirs(modelFile.modelVersionId, modelFile.modelVersion),
+    ]).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-type-change',
+        message: `Failed to bust resource caches for file ${id}`,
+        error,
+      }).catch(() => undefined)
+    );
 
   // Merge committed updates back into the snapshot so the returned record
   // reflects post-update state. `updateMany` doesn't return the updated row,
@@ -464,8 +499,6 @@ function fileOwnerSql(id: number, userId?: number) {
   `;
 }
 
-const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
-
 export async function deleteFile({
   id,
   userId,
@@ -496,11 +529,23 @@ export async function deleteFile({
   if (
     file.type === 'Training Data' &&
     file.modelVersion.trainingStatus &&
-    reviewedDatasetStatuses.includes(file.modelVersion.trainingStatus) &&
+    reviewedDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
     !isModerator
   )
     throw throwBadRequestError(
       "Training data for a training run under review or denied can't be deleted."
+    );
+
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    liveRunDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
+    !isModerator
+  )
+    throw throwBadRequestError(
+      file.modelVersion.trainingStatus === TrainingStatus.InReview
+        ? "Training data for a training run that hasn't been published yet can't be deleted. Publish this version first."
+        : "Training data can't be deleted while its training run is in progress or awaiting review."
     );
 
   const modelStatus = file.modelVersion.model.status;
@@ -527,12 +572,12 @@ export async function deleteFile({
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
     AND NOT ${modelRowHeldSql()}
     ${
-      // Repeats the check above at delete time, in case the run was moved to review in between.
+      // Repeats the checks above at delete time, in case the run moved on in between.
       isModerator
         ? Prisma.empty
         : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
           Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
-            reviewedDatasetStatuses
+            [...reviewedDatasetTrainingStatuses, ...liveRunDatasetTrainingStatuses]
           )}))`
     }
     RETURNING

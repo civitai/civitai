@@ -20,6 +20,8 @@ import {
   STICKER_PLACEMENT_MIN_SCALE,
   STICKER_MEDIA_TYPES,
 } from '~/shared/utils/sticker-placement';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
+import { STICKER_TRACK_MAX_PAIRS, stickerTrackRefusal } from '~/shared/utils/sticker-track';
 
 export const placementSurfaceSchema = z.enum(
   placementSurfaces as [string, ...string[]]
@@ -57,9 +59,31 @@ export const stickerPlacementDataSchema = z.object({
     .default(STICKER_PLACEMENT_DEFAULT_OPACITY),
 });
 
+const stickerTrackPairs = z
+  .array(z.tuple([z.number().int().nonnegative(), finite]))
+  .max(STICKER_TRACK_MAX_PAIRS);
+
+/** Shape here, rules in `stickerTrackRefusal`; the creator's size limit is checked by the service. */
+export const stickerTrackSchema = z
+  .object({
+    v: z.literal(1),
+    ms: z.number().int(),
+    show: stickerTrackPairs.optional(),
+    x: stickerTrackPairs,
+    y: stickerTrackPairs,
+    s: stickerTrackPairs,
+    r: stickerTrackPairs,
+  })
+  .superRefine((track, ctx) => {
+    const refusal = stickerTrackRefusal(track as StickerTrack);
+    if (refusal) ctx.addIssue({ code: 'custom', message: `track: ${refusal}` });
+  });
+
 export const createStickerPlacementSchema = z.object({
   imageId: z.number().int().positive(),
   data: stickerPlacementDataSchema,
+  /** Movement over a video. `data` is replaced by its pose at time zero. */
+  track: stickerTrackSchema.optional(),
   /**
    * Take the creator's free capacity rather than paying their price.
    *

@@ -10,6 +10,11 @@ const metaPatch = {
   profanityMatches: ['x'],
   profanityEvaluation: { reason: 'r', metrics: {} },
 } as unknown as AutoNsfwResult['metaPatch'];
+const attribution: AutoNsfwResult['attribution'] = {
+  fields: ['name'],
+  category: 'mature-language',
+  textHash: 'hash-placeholder',
+};
 let pg: PGlite;
 let db: { $executeRaw: ReturnType<typeof pgliteRaw>['executeRaw'] };
 
@@ -64,14 +69,14 @@ describe('writeAutoNsfw', () => {
   it('locks nsfw, marks the lock the system’s and merges into the meta that is there now', async () => {
     await seed({ meta: { cannotPromote: true } });
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
     const m = await read();
     expect(m).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'], bumped: true });
     expect(m.meta).toMatchObject({
       cannotPromote: true,
       profanityMatches: ['x'],
-      systemNsfwLock: { source: 'profanity-filter', at: expect.any(String) },
+      systemNsfwLock: { source: 'profanity-filter', at: expect.any(String), ...attribution },
     });
     expect(Number.isNaN(Date.parse((m.meta!.systemNsfwLock as { at: string }).at))).toBe(false);
   });
@@ -79,7 +84,7 @@ describe('writeAutoNsfw', () => {
   it('records only the detection when an nsfw lock is already there', async () => {
     await seed({ locked: ['nsfw'], meta: { cannotPromote: true } });
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
     const m = await read();
     expect(m).toMatchObject({ nsfw: false, lockedProperties: ['nsfw'], bumped: true });
@@ -91,7 +96,7 @@ describe('writeAutoNsfw', () => {
     async (flag) => {
       await seed({ flag, meta: { cannotPromote: true } });
 
-      await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+      await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
       const m = await read();
       expect(m).toMatchObject({ nsfw: false, lockedProperties: [], bumped: true });
@@ -102,7 +107,7 @@ describe('writeAutoNsfw', () => {
   it('records only the detection when the caller has nothing to lock', async () => {
     await seed({});
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: false });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: false });
 
     const m = await read();
     expect(m).toMatchObject({ nsfw: false, lockedProperties: [], bumped: true });
@@ -112,7 +117,7 @@ describe('writeAutoNsfw', () => {
   it('keeps a Private model SFW and holds the detection as a lead for when it leaves Private', async () => {
     await seed({ availability: 'Private', meta: { cannotPromote: true } });
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
     const m = await read();
     expect(m).toMatchObject({ nsfw: false, lockedProperties: [], bumped: true });
@@ -130,7 +135,7 @@ describe('writeAutoNsfw', () => {
   it('holds no lead on a Private model that is also minor: the detection only, as before', async () => {
     await seed({ availability: 'Private', flag: 'minor' });
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
     expect((await read()).meta).toEqual(metaPatch);
   });
@@ -138,7 +143,7 @@ describe('writeAutoNsfw', () => {
   it('holds no lead on a Private model whose nsfw a moderator already ruled on', async () => {
     await seed({ availability: 'Private', locked: ['nsfw'] });
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
     expect((await read()).meta).toEqual(metaPatch);
   });
@@ -159,7 +164,7 @@ describe('writeAutoNsfw', () => {
       },
     };
 
-    await writeAutoNsfw(interleaved, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(interleaved, { id: ID, metaPatch, attribution, lock: true });
 
     const m = await read();
     expect(m.nsfw || 'restrictedNsfwVerdict' in (m.meta ?? {})).toBe(true);
@@ -169,7 +174,7 @@ describe('writeAutoNsfw', () => {
     await seed({ meta: null });
     await pg.exec(`UPDATE "Model" SET meta = 'null'::jsonb`);
 
-    await writeAutoNsfw(db, { id: ID, metaPatch, lock: true });
+    await writeAutoNsfw(db, { id: ID, metaPatch, attribution, lock: true });
 
     expect((await read()).meta).toMatchObject({ profanityMatches: ['x'] });
   });

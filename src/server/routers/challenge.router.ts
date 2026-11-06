@@ -63,6 +63,7 @@ import {
   upsertUserChallenge,
   upsertChallengeEvent,
   rescanChallenge,
+  rejudgeChallenge,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
@@ -301,6 +302,11 @@ export const challengeRouter = router({
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
+
+  rejudge: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => rejudgeChallenge({ id: input.id, moderatorId: ctx.user.id })),
 
   // Active judges for the challenge form dropdowns. Any authenticated user may call it; the service
   // returns the full list (with sensitive fields) to moderators and the public, SFW-selectable subset

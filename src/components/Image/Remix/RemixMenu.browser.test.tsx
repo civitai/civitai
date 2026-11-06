@@ -12,6 +12,8 @@ const { startRemix, startPromptReuse, trackAction, tour } = vi.hoisted(() => ({
   tour: { running: false },
 }));
 
+// No tRPC provider here: the menu's app list stands empty, as with the remix apps flag off.
+vi.mock('~/components/Image/Remix/useRemixAppList', () => ({ useRemixAppList: () => [] }));
 vi.mock('~/components/TrackView/track.utils', () => ({
   useTrackEvent: () => ({ trackAction }),
 }));

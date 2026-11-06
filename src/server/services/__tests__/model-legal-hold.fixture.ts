@@ -82,7 +82,10 @@ const BASE_SCHEMA = `
     "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
     name text NOT NULL DEFAULT 'v',
     status text NOT NULL DEFAULT 'Published',
-    "trainingStatus" text
+    "trainingStatus" text,
+    "baseModel" text NOT NULL DEFAULT 'SDXL 1.0',
+    "publishedAt" timestamp,
+    "initialPublishedAt" timestamp
   );
   CREATE TABLE "ModelFile" (
     id int PRIMARY KEY,

@@ -449,7 +449,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
- * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
+ * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
  * No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
@@ -457,10 +457,10 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
  */
 export async function clearUserProfileFields({
   userId,
-  fields = ['location', 'bio', 'message'],
+  fields = ['location', 'bio', 'message', 'showcaseSections'],
 }: {
   userId: number;
-  fields?: Array<'location' | 'bio' | 'message'>;
+  fields?: Array<'location' | 'bio' | 'message' | 'showcaseSections'>;
 }) {
   if (fields.length === 0) return { updated: false };
   const data: Prisma.UserProfileUpdateInput = {};
@@ -474,6 +474,7 @@ export async function clearUserProfileFields({
     data.sfwMessage = null;
     data.sfwMessageAddedAt = null;
   }
+  if (fields.includes('showcaseSections')) data.showcaseSections = [];
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
   return { updated: result.count > 0 };
 }

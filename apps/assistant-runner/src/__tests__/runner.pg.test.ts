@@ -1642,9 +1642,11 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       expect(refused).toBeGreaterThan(before);
       refuseEnds = false;
+      // The repair writes the head, then forgets the grant: wait for both, or this reads between them.
       const deadline = Date.now() + 5_000;
       while (
-        (await store.load(user, 'c-end-pending'))!.turns[0]!.assistant?.status === 'running' &&
+        ((await store.load(user, 'c-end-pending'))!.turns[0]!.assistant?.status === 'running' ||
+          (await grants.forRun(runId)) !== null) &&
         Date.now() < deadline
       )
         await new Promise((resolve) => setTimeout(resolve, 100));

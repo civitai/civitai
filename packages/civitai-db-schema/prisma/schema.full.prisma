@@ -564,6 +564,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  accessTokens               AccessToken[]
   ratingRequests             ImageRatingRequest[]
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
@@ -2244,7 +2245,8 @@ model Image {
   clubAvatar          Club[]                @relation("avatarImage")
   clubTierCover       ClubTier[]
   clubPostCoverImage  ClubPost[]
-  article             Article?
+  article             Article?              @relation("ArticleCover")
+  articleBanner       Article?              @relation("ArticleBanner")
   purchasableRewards  PurchasableReward[]
   tools               ImageTool[]
   techniques          ImageTechnique[]
@@ -5067,6 +5069,36 @@ model TrustedSpokeDomain {
   updatedAt         DateTime @default(now()) @updatedAt
 }
 
+// A bearer link to one resource (first use: a private share link to a draft article). Only the
+// sha256 of the token is stored; the raw token is shown to its creator once. A row grants nothing
+// once `revokedAt` is set or `expiresAt` has passed, and readers check both on every lookup.
+// `resourceType` is text, not an enum, so a new kind of link needs no enum migration.
+model AccessToken {
+  id           Int       @id @default(autoincrement())
+  resourceType String
+  resourceId   Int
+  tokenHash    String    @unique
+  createdById  Int
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([resourceType, resourceId])
+  @@index([createdById])
+}
+
+// The check a shared draft's read requires: the workflow whose verdict covers the draft's text, and
+// a hash of that text. Written under the share-token lock.
+model ArticleShareCheck {
+  articleId  Int      @id
+  // Bumped by every write that changes a shared draft's text.
+  generation Int      @default(0)
+  workflowId String?
+  textHash   String?
+  updatedAt  DateTime @updatedAt
+}
+
 model AdToken {
   id        Int       @id @default(autoincrement())
   token     String    @unique
@@ -6305,7 +6337,10 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  coverImage       Image?        @relation("ArticleCover", fields: [coverId], references: [id], onDelete: SetNull)
+  // Optional wide banner across the top of the article page; coverId stays the feed card image.
+  bannerId         Int?          @unique
+  bannerImage      Image?        @relation("ArticleBanner", fields: [bannerId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   // Go-live time for a never-published Draft; publishedAt stays NULL until then.
   scheduledAt      DateTime?
@@ -7074,6 +7109,26 @@ model EvidenceHoldPost {
   collectionId   Int?
   metadata       Json?
   keptAt         DateTime  @default(now())
+}
+
+/// An archived comment kept for a held owner, with its thread row in `thread`. Held here is a
+/// marker or a report that still holds (`evidence_hold_comment_owner_held`); purged once neither does.
+model EvidenceHoldComment {
+  commentId    Int       @id
+  userId       Int
+  threadId     Int?
+  content      String
+  createdAt    DateTime?
+  updatedAt    DateTime?
+  nsfw         Boolean?
+  tosViolation Boolean?
+  hidden       Boolean?
+  metadata     Json?
+  thread       Json?
+  source       String
+  keptAt       DateTime  @default(now())
+
+  @@index([userId])
 }
 
 /// @view
@@ -9247,6 +9302,7 @@ model UserProfile {
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
+  showcaseSections        Json      @default("[]")
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
@@ -10402,6 +10458,9 @@ model Placement {
   placerId              Int
   placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
   data                  Json      @default("{}")
+  /// A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+  /// `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+  track                 Json?
   status                String
   /// 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
   /// removals refund different amounts, so the status alone cannot settle the

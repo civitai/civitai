@@ -101,3 +101,9 @@
   height: 30px;
 }
 
+/* The phone bottom bar: the size of its Save, Tip and chevron buttons. */
+.group.large .hat {
+  width: 36px;
+  height: 36px;
+}
+

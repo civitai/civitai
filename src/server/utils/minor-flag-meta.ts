@@ -196,7 +196,7 @@ export const SERVER_OWNED_META_KEYS = [
   'comFaceRemoved',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
-export function systemNsfwLockMarker(source: string): ModelMeta['systemNsfwLock'] {
+export function systemNsfwLockMarker(source: string): { source: string; at: string } {
   return { source, at: new Date().toISOString() };
 }
 

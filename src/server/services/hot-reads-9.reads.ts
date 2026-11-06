@@ -7,6 +7,7 @@ import {
   type UserWithProfileWhere,
 } from '@civitai/db-queries/hot-reads-9';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
+import { profilePictureOf } from '~/server/services/user-creator.reads';
 
 /**
  * The read behind `kysely-hot-reads-9`: the user profile read (`getUserWithProfile`,
@@ -121,22 +122,7 @@ export async function readUserWithProfileViaKysely(
     username: row.username,
     deletedAt: row.deletedAt,
     image: row.image,
-    profilePicture:
-      row.profilePictureId !== null
-        ? {
-            id: row.profilePictureId,
-            name: row.profilePictureName,
-            url: row.profilePictureUrl,
-            nsfwLevel: row.profilePictureNsfwLevel,
-            hash: row.profilePictureHash,
-            userId: row.profilePictureUserId,
-            ingestion: row.profilePictureIngestion,
-            type: row.profilePictureType,
-            width: row.profilePictureWidth,
-            height: row.profilePictureHeight,
-            metadata: row.profilePictureMetadata,
-          }
-        : null,
+    profilePicture: profilePictureOf(row),
     leaderboardShowcase: row.leaderboardShowcase,
     createdAt: row.createdAt,
     muted: row.muted,
@@ -182,6 +168,7 @@ export async function readUserWithProfileViaKysely(
             profileSectionsSettings: row.profileSectionsSettings,
             privacySettings: row.profilePrivacySettings,
             showcaseItems: row.profileShowcaseItems,
+            showcaseSections: row.profileShowcaseSections,
             location: row.profileLocation,
             nsfw: row.profileNsfw,
             userId: row.profileUserId,

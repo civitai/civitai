@@ -6,7 +6,8 @@ import type { ModelPayload } from './source';
 /**
  * The search service reads these names (contract agreed with it 2026-11-06); exact-title and
  * quoted-phrase search switch on only once the first two show in the collection's payload_schema.
- * name, username, tags, triggerWords and docHash are stored, never filtered.
+ * name, username, tags, triggerWords and docHash are stored, never filtered; versionIds is only
+ * for the live sync's version-delete lookup.
  */
 export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
   // The demo's measured setting (model-search-demo docs/handoff.md).
@@ -32,6 +33,10 @@ export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
     ['nsfwLevel', { type: 'integer', lookup: true, range: false, on_disk: true }],
     ['publishedAt', { type: 'datetime', on_disk: true }],
     ['userId', { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false }],
+    [
+      'versionIds',
+      { type: 'integer', lookup: true, range: false, on_disk: true, enable_hnsw: false },
+    ],
   ],
 };
 

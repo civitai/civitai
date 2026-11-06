@@ -5,7 +5,6 @@ import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle, IconUnlink } from '@tabler/icons-react';
 import { TextStyleKit } from '@tiptap/extension-text-style';
-import ImageExtension from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extensions';
 import type { Editor, Extensions } from '@tiptap/react';
 import { Extension, nodePasteRule, useEditor } from '@tiptap/react';
@@ -13,15 +12,14 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
 import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
-import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
+import { InsertEmbedControl } from '~/components/RichTextEditor/InsertEmbedControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ImageSizeMenu } from './ImageSizeMenu';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
-import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import classes from './RichTextEditorComponent.module.scss';
 import clsx from 'clsx';
@@ -33,6 +31,8 @@ import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
+import { EmbedNode } from '~/shared/tiptap/embed.node';
+import { SizedImage } from '~/shared/tiptap/sized-image.node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
@@ -44,6 +44,7 @@ import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbContr
 import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
 import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
 import { BlurbEditNode, BlurbEditorProvider } from '~/components/TipTap/BlurbNode';
+import { CivitaiEmbedEditNode } from '~/components/TipTap/CivitaiEmbedEditNode';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -153,7 +154,11 @@ export function RichTextEditor({
   const addTimestamp = includeControls.includes('timestamp');
   const addStickers = includeControls.includes('sticker');
   const addBlurbs = includeControls.includes('blurb');
+  // Needs the addVideo branch: only it registers the image nodes that carry `size`.
+  const addImageSize = addVideo && includeControls.includes('imageSize');
   const addAlign = includeControls.includes('align');
+  const civitaiCardPaste =
+    !!useFeatureFlags().articleCivitaiCards && includeControls.includes('civitaiEmbed');
 
   // Autocomplete and the input rule are insertion paths just like the picker, so
   // they answer to the same flag. StickerPicker gates itself at its own mount
@@ -236,7 +241,7 @@ export function RichTextEditor({
     if (addVideo) {
       arr.push(
         EdgeMediaEditNode.configure({ accepts, inline: true }),
-        ImageExtension.configure({ inline: true })
+        SizedImage.configure({ inline: true })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));
@@ -254,7 +259,8 @@ export function RichTextEditor({
             ];
           },
         }),
-        InstagramNode
+        InstagramNode,
+        EmbedNode
       );
     }
     if (addMentions)
@@ -272,9 +278,12 @@ export function RichTextEditor({
     if (addStickers) arr.push(StickerEditNode);
     if (addBlurbs) arr.push(BlurbEditNode);
     if (addAlign) arr.push(TextAlignExtension);
+    // Registered everywhere, like the timestamp node, so content holding cards survives a save.
+    arr.push(CivitaiEmbedEditNode.configure({ pasteToCard: civitaiCardPaste }));
 
     return arr;
   }, [
+    civitaiCardPaste,
     addStickers,
     addBlurbs,
     addAlign,
@@ -426,6 +435,7 @@ export function RichTextEditor({
             ...props.classNames,
             content: clsx(
               classes.richTextEditor,
+              addImageSize && classes.sizedImages,
               props.classNames && 'content' in props.classNames
                 ? props.classNames.content
                 : undefined
@@ -502,13 +512,12 @@ export function RichTextEditor({
                   ) : addImages ? (
                     <InsertImageControlLegacy maxFileSize={constants.richTextEditor.maxFileSize} />
                   ) : null}
-                  <InsertYoutubeVideoControl />
-                  <InsertInstagramEmbedControl />
+                  <InsertEmbedControl />
                 </RTE.ControlsGroup>
               )}
-              {addPolls && (
+              {addPolls && !addMedia && (
                 <RTE.ControlsGroup>
-                  <InsertStrawPollControl />
+                  <InsertEmbedControl />
                 </RTE.ControlsGroup>
               )}
               {addTimestamp && (
@@ -538,6 +547,7 @@ export function RichTextEditor({
               shouldShow={({ editor }) =>
                 !editor.state.selection.empty &&
                 !editor.isActive('image') &&
+                !editor.isActive('media') &&
                 !editor.isActive('blurb')
               }
               className={classes.bubbleTooltip}
@@ -561,6 +571,8 @@ export function RichTextEditor({
               </RTE.ControlsGroup>
             </BubbleMenu>
           )}
+
+          {editor && addImageSize && <ImageSizeMenu editor={editor} />}
 
           <RTE.Content />
 
@@ -597,7 +609,9 @@ type ControlType =
   | 'timestamp'
   | 'sticker'
   | 'blurb'
-  | 'align';
+  | 'imageSize'
+  | 'align'
+  | 'civitaiEmbed';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;

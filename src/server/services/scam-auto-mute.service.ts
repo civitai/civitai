@@ -324,13 +324,15 @@ export async function autoMuteScamAccount({
   if (decision.kind === 'skip') return skip(decision.skipped);
 
   const { claim, slot, accountAgeDays } = decision;
-  if (!claim.deduped) await audit(userId, slot, evidence.source);
+  // A deduped claim on an account that was not muted mutes it now, so it is audited like a new one.
+  const recordMute = !claim.deduped || !claim.wasMuted;
+  if (recordMute) await audit(userId, slot, evidence.source);
   await announcePendingReviewMute({ userId, type: 'scam', updateSource: 'scamAutoMute', claim });
   const strikeId = claim.deduped ? null : await issueScamStrike(userId, evidence, slot);
 
   const record = await cleanUpAndRecord(cleanup, userId, evidence, slot);
 
-  if (!claim.deduped)
+  if (recordMute)
     await new Tracker()
       .userActivity({
         type: 'Muted',

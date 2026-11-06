@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { reviewCollectionImageSql } from '~/server/services/collection-review.sql';
+import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -51,7 +51,6 @@ import {
   type FeedPrimaryRoute,
 } from '~/server/services/feed-primary.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
-import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
   constants,
@@ -61,6 +60,7 @@ import {
 import {
   hasBlockMarker,
   imageReviewedSql,
+  pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '~/server/common/image-visibility';
 import {
@@ -2789,17 +2789,7 @@ const getAllImagesUncaptured = async (
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${
-          reviewCollectionId
-            ? Prisma.sql` OR ${reviewCollectionImageSql({
-                collectionId: reviewCollectionId,
-                userId,
-              })}`
-            : Prisma.empty
-        })`
-      );
+      AND.push(pendingViewerImageSql({ userId, browsingLevel, reviewCollectionId }));
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
@@ -6406,7 +6396,7 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
@@ -6665,7 +6655,7 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
@@ -6777,7 +6767,6 @@ export const removeImageResource = async ({
     });
     // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
-    purgeImageGenerationDataCache(imageId);
     await imageResourcesCache.refresh(imageId);
 
     return resource;
@@ -8470,10 +8459,6 @@ export async function addImageTools({
     lowPriority: true,
   });
 
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-
   await queueImageSearchIndexUpdate({
     ids: data.map((x) => x.imageId),
     action: SearchIndexUpdateQueueAction.Update,
@@ -8499,9 +8484,6 @@ export async function removeImageTools({
       dbWrite.imageTool.deleteMany({ where: { imageId: Number(imageId), toolId: { in: toolIds } } })
     )
   );
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
 
   await queueImageSearchIndexUpdate({
     ids: data.map((x) => x.imageId),
@@ -8530,9 +8512,6 @@ export async function updateImageTools({
       })
     )
   );
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
 }
 
 // #endregion
@@ -8547,9 +8526,6 @@ export async function addImageTechniques({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTechnique.createMany({ data, skipDuplicates: true });
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
 
   await queueImageSearchIndexUpdate({
     ids: data.map((x) => x.imageId),
@@ -8582,10 +8558,6 @@ export async function removeImageTechniques({
     )
   );
 
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-
   await queueImageSearchIndexUpdate({
     ids: data.map((x) => x.imageId),
     action: SearchIndexUpdateQueueAction.Update,
@@ -8613,23 +8585,9 @@ export async function updateImageTechniques({
       })
     )
   );
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
 }
 
 // #endregion
-
-export function purgeImageGenerationDataCache(id: number) {
-  purgeCache({ tags: [`image-generation-data-${id}`] }).catch((error) =>
-    logToAxiom({
-      type: 'error',
-      name: 'purgeImageGenerationDataCache',
-      message: error.message,
-      error,
-    })
-  );
-}
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 

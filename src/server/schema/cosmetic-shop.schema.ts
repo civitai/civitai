@@ -18,12 +18,14 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
     // be featurable), `true` shows only archived, `undefined` shows all (the
     // moderator store management list).
     archived: z.boolean().optional(),
-    // Only published creator-listed items marked sellable-by-others — lets mods
-    // pick up resellable creator cosmetics for official shop sections.
-    resellable: z.boolean().optional(),
+    publishedCreatorOnly: z.boolean().optional(),
     ids: z.array(z.number()).optional(),
   })
 );
+
+export const shopItemsFeaturedHistoryInput = z.object({
+  ids: z.array(z.number().int().positive()).max(200),
+});
 
 // Shop context for purchases: the official Civitai shop attributes as the
 // system user (-1); creator storefronts attribute as their owner's user id.

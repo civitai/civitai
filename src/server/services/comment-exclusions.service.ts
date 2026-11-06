@@ -1,4 +1,4 @@
-import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentTargetType } from '~/server/schema/commentv3.schema';
 import { isViewerContentOwner } from '~/server/services/commentsv2.service';
 import {
   BlockedByUsers,
@@ -17,7 +17,7 @@ export async function getCommentExcludedUserIds({
   entityId,
   userId,
 }: {
-  entityType: CommentConnectorInput['entityType'];
+  entityType: CommentTargetType;
   entityId: number;
   userId?: number;
 }) {
