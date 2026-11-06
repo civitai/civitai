@@ -5,7 +5,8 @@ import { isProd } from '~/env/other';
 /**
  * Registers /sw.js for every visitor so the offline fallback page can show. Same URL and scope as
  * the push opt-in path, so an existing registration is reused. Off outside production builds
- * (a stopped dev server should show the browser's error) unless NEXT_PUBLIC_ENABLE_SW_DEV=1.
+ * (a stopped dev server should show the browser's error) unless NEXT_PUBLIC_ENABLE_SW_DEV=1. Dev
+ * chunk names are not content-hashed, so with the flag on, unregister the worker in devtools after.
  */
 export function OfflineFallbackRegistration() {
   useEffect(() => {

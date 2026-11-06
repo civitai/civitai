@@ -6,8 +6,11 @@
 //
 // KILL SWITCH: ship a sw.js with no `fetch` listener whose `activate` deletes every cache and calls
 // `self.registration.unregister()`. Browsers re-check this file on navigation (at most every 24h) and
-// /sw.js is deliberately revalidate-always, so it reaches clients without a cache purge. To retire
-// only the caches, bump VERSION: `activate` deletes every cache not named for the current version.
+// skip the HTTP cache for it, so it reaches clients without a cache purge. To retire only the caches,
+// bump VERSION: `activate` deletes every cache not named for the current version.
+//
+// Do not enable navigationPreload: it is per registration, so the browser would also preload the
+// /api/ and non-HTML navigations this worker declines, then re-request them, hitting the server twice.
 
 const VERSION = 'v1';
 const SHELL_CACHE = `civitai-shell-${VERSION}`;
@@ -17,13 +20,15 @@ const STATIC_PREFIX = '/_next/static/';
 const STATIC_MAX_ENTRIES = 200;
 
 self.addEventListener('install', (event) => {
-  // addAll rejects if the page cannot be fetched, which fails the install and leaves the previous
+  // A failed or redirected fetch (e.g. a region redirect) fails the install and leaves the previous
   // worker (or none) in charge, i.e. today's behavior.
   event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.addAll([OFFLINE_URL]))
-      .then(() => self.skipWaiting())
+    (async () => {
+      const response = await fetch(OFFLINE_URL, { cache: 'reload' });
+      if (!response.ok || response.redirected) throw new Error(`offline page: ${response.status}`);
+      await (await caches.open(SHELL_CACHE)).put(OFFLINE_URL, response);
+      await self.skipWaiting();
+    })()
   );
 });
 
@@ -33,9 +38,6 @@ self.addEventListener('activate', (event) => {
       const keep = [SHELL_CACHE, STATIC_CACHE];
       const names = await caches.keys();
       await Promise.all(names.filter((name) => !keep.includes(name)).map((n) => caches.delete(n)));
-      // Without preload, a worker-controlled navigation waits for the worker to boot before the
-      // request leaves; with it, online navigations cost what they did before.
-      if (self.registration.navigationPreload) await self.registration.navigationPreload.enable();
       await self.clients.claim();
     })()
   );
@@ -63,25 +65,44 @@ self.addEventListener('fetch', (event) => {
 // server's answer and passes through. No timeout: slow is not offline.
 async function networkFirstWithOfflineFallback(event) {
   try {
-    return (await event.preloadResponse) || (await fetch(event.request));
+    return await fetch(event.request);
   } catch {
     const cached = await caches.match(OFFLINE_URL, { cacheName: SHELL_CACHE });
     return cached || Response.error();
   }
 }
 
-// Safe to cache forever: Next content-hashes these file names.
+// Safe to cache forever: Next content-hashes these file names. A cache fault falls through to the
+// network, since a rejection here would block the file for good.
 async function cacheFirstStatic(event) {
-  const cache = await caches.open(STATIC_CACHE);
-  const hit = await cache.match(event.request);
-  if (hit) return hit;
+  let cache = null;
+  try {
+    cache = await caches.open(STATIC_CACHE);
+    const hit = await cache.match(event.request);
+    if (hit) return hit;
+  } catch {
+    cache = null;
+  }
   const response = await fetch(event.request);
-  if (response.status === 200 && response.type === 'basic') {
+  if (cache && isCacheableAsset(response)) {
     event.waitUntil(
-      cache.put(event.request, response.clone()).then(() => trimCache(cache, STATIC_MAX_ENTRIES))
+      cache
+        .put(event.request, response.clone())
+        .then(() => trimCache(cache, STATIC_MAX_ENTRIES))
+        .catch(() => undefined)
     );
   }
   return response;
+}
+
+// A captive portal or proxy can answer a chunk URL with a 200 login page; never pin that.
+function isCacheableAsset(response) {
+  return (
+    response.status === 200 &&
+    response.type === 'basic' &&
+    !response.redirected &&
+    !(response.headers.get('content-type') || '').includes('text/html')
+  );
 }
 
 // cache.keys() is in insertion order, so this drops the oldest entries first.

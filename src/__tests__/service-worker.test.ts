@@ -26,13 +26,6 @@ function fakeCacheStorage() {
     },
     delete: async (r: any) => store.delete(keyOf(r)),
     keys: async () => [...store.keys()].map((url) => ({ url })),
-    addAll: async (urls: string[]) => {
-      for (const u of urls) {
-        const res = await sandbox.fetch(u);
-        if (!res.ok) throw new Error(`addAll ${u} ${res.status}`);
-        store.set(keyOf(u), res);
-      }
-    },
   });
   return {
     stores,
@@ -78,9 +71,17 @@ function load() {
   new Function('self', 'caches', 'fetch', SW_SOURCE)(self, caches, fetchMock);
 }
 
-function basic(body: string, status = 200) {
-  const res = new Response(body, { status });
-  Object.defineProperty(res, 'type', { value: 'basic' });
+function basic(
+  body: string,
+  status = 200,
+  opts: { type?: string; redirected?: boolean; contentType?: string } = {}
+) {
+  const res = new Response(body, {
+    status,
+    headers: opts.contentType ? { 'content-type': opts.contentType } : undefined,
+  });
+  Object.defineProperty(res, 'type', { value: opts.type ?? 'basic' });
+  if (opts.redirected) Object.defineProperty(res, 'redirected', { value: true });
   return res;
 }
 
@@ -176,16 +177,17 @@ describe('navigation: network first, fallback only when the network fails', () =
     expect(await out.response!.text()).toBe('server broke');
   });
 
-  it('uses the navigation preload response when there is one', async () => {
-    const out = await fire('fetch', {
-      request: request('/models', NAV),
-      preloadResponse: Promise.resolve(basic('preloaded')),
-    });
-    expect(await out.response!.text()).toBe('preloaded');
-    expect(sandbox.fetch).not.toHaveBeenCalled();
+  it('serves the cached offline page when the network is down', async () => {
+    await fire('install').then((o) => o.settle());
+    sandbox.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
+    const out = await fire('fetch', { request: request('/models', NAV) });
+    expect(await out.response!.text()).toContain('id="retry"');
   });
 
-  it('serves the cached offline page when the network is down', async () => {
+  it('reads the offline page from its own cache, not any cache that has the URL', async () => {
+    // Created before the install so the fake's insertion-order scan reaches it first.
+    const other = await sandbox.caches.open('civitai-static-v1');
+    await other.put('/offline.html', new Response('WRONG PAGE'));
     await fire('install').then((o) => o.settle());
     sandbox.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
     const out = await fire('fetch', { request: request('/models', NAV) });
@@ -201,6 +203,37 @@ describe('navigation: network first, fallback only when the network fails', () =
 
 describe('static asset cache', () => {
   const asset = () => request('/_next/static/chunks/a-abc123.js');
+  const cachedUrls = () => [...(sandbox.caches.stores.get('civitai-static-v1')?.keys() ?? [])];
+
+  it.each([
+    ['an opaque 200', basic('x', 200, { type: 'opaque' })],
+    ['a redirected 200', basic('x', 200, { redirected: true })],
+    // Captive portals and proxies answer a chunk URL with their login page at 200.
+    [
+      'an HTML 200 (captive portal)',
+      basic('<html>login</html>', 200, { contentType: 'text/html' }),
+    ],
+  ])('does not cache %s but still returns it', async (_label, res) => {
+    sandbox.fetch.mockResolvedValue(res);
+    const out = await fire('fetch', { request: asset() });
+    expect(await out.response!.text()).toBeTruthy();
+    await out.settle();
+    expect(cachedUrls()).toEqual([]);
+  });
+
+  it('registers the cache write with waitUntil so the worker is not killed mid-write', async () => {
+    sandbox.fetch.mockResolvedValue(basic('chunk'));
+    const out = await fire('fetch', { request: asset() });
+    expect(out.waits).toHaveLength(1);
+  });
+
+  it('still returns the network response when Cache Storage throws', async () => {
+    const open = vi.spyOn(sandbox.caches, 'open').mockRejectedValue(new Error('storage fault'));
+    sandbox.fetch.mockResolvedValue(basic('chunk'));
+    const out = await fire('fetch', { request: asset() });
+    expect(await out.response!.text()).toBe('chunk');
+    open.mockRestore();
+  });
 
   it('fetches once, then serves from cache without the network', async () => {
     sandbox.fetch.mockResolvedValue(basic('chunk'));
@@ -237,8 +270,33 @@ describe('install and activate', () => {
   it('a failed offline-page precache fails the install and does not skip waiting', async () => {
     sandbox.fetch.mockResolvedValue(new Response('nope', { status: 500 }));
     const out = await fire('install');
-    await expect(out.settle()).rejects.toThrow(/addAll/);
+    await expect(out.settle()).rejects.toThrow(/offline page: 500/);
     expect(sandbox.self.skipWaiting).not.toHaveBeenCalled();
+  });
+
+  it('a redirected offline page (e.g. a region redirect) fails the install', async () => {
+    sandbox.fetch.mockResolvedValue(basic('<html>blocked</html>', 200, { redirected: true }));
+    const out = await fire('install');
+    await expect(out.settle()).rejects.toThrow(/offline page/);
+    expect(sandbox.caches.stores.get('civitai-shell-v1')?.size ?? 0).toBe(0);
+  });
+
+  it('a good install caches the offline page and takes over without waiting for tabs to close', async () => {
+    const out = await fire('install');
+    await out.settle();
+    expect([...sandbox.caches.stores.get('civitai-shell-v1')!.keys()]).toEqual([
+      `${ORIGIN}/offline.html`,
+    ]);
+    expect(sandbox.self.skipWaiting).toHaveBeenCalledTimes(1);
+  });
+
+  // DECISION, not an oversight: navigation preload is per registration, so enabling it makes the
+  // browser also preload the /api/ and non-HTML navigations this worker declines, then re-request
+  // them. Measured in Chromium: GET /api/download/1 reached the server twice. Whoever deletes this
+  // test to speed up page loads is re-introducing double-hit downloads and auth callbacks.
+  it('never enables navigation preload', async () => {
+    await fire('activate').then((o) => o.settle());
+    expect(sandbox.self.registration.navigationPreload.enable).not.toHaveBeenCalled();
   });
 
   it('activate deletes caches from other versions, keeps current ones, claims clients', async () => {
@@ -251,16 +309,24 @@ describe('install and activate', () => {
       'civitai-shell-v1',
       'civitai-static-v1',
     ]);
-    expect(sandbox.self.registration.navigationPreload.enable).toHaveBeenCalled();
     expect(sandbox.self.clients.claim).toHaveBeenCalled();
   });
 });
 
 describe('offline.html', () => {
   it('is self-contained: no external requests and no app scripts', () => {
-    expect(OFFLINE_HTML).not.toMatch(/<script[^>]*\ssrc=/i);
-    expect(OFFLINE_HTML).not.toMatch(/<link[^>]*\shref=/i);
-    expect(OFFLINE_HTML).not.toMatch(/(?:src|href)=["']?(?:https?:)?\/\//i);
+    // Offline there is nothing to load a second resource from: any of these would render broken.
+    for (const loader of [
+      /\ssrc=/i,
+      /\ssrcset=/i,
+      /<link\b/i,
+      /<img\b/i,
+      /<iframe\b/i,
+      /@import/i,
+      /url\(/i,
+    ]) {
+      expect(OFFLINE_HTML).not.toMatch(loader);
+    }
   });
 
   it('has a Retry button that reloads the page', () => {
