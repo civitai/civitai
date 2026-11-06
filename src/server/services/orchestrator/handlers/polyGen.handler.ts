@@ -22,6 +22,7 @@ import type {
 } from '@civitai/orchestration-client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import type { Model3DGenerationSchema } from '~/server/orchestrator/polygen/polygen.schema';
@@ -379,6 +380,7 @@ async function ingestThumbnailImage(
       })
     );
     registerMediaLocation(s3Key, backend, buffer.length);
+    await recordMintedUploadKey(s3Key, userId);
 
     const image = await createImage({
       url: s3Key,
