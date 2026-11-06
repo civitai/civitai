@@ -96,6 +96,8 @@ describe('releaseExport', () => {
     expect(sent.to).toBe('owner@example.com');
     expect(sent.link).toContain('X-Amz-Expires=172800');
     expect(sent.link).toContain('exports/5/k.zip');
+    // Downloads under a fixed name, never the random object key.
+    expect(decodeURIComponent(sent.link)).toContain('attachment; filename="civitai-data.zip"');
     // Every lookup is of this export and its owner, never the acting moderator.
     expect(dbMock.dbWrite.personalDataExport.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 5 } })
