@@ -1,3 +1,4 @@
+import { mentionHref, mentionUserId } from '~/components/RenderHtml/mention-href';
 import { Popover } from '~/components/MantineOverlays';
 import type { RefObject } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -46,7 +47,9 @@ function readMention(el: HTMLElement): Omit<Mention, 'rect'> | null {
   // The profile the renderer would have linked to. `data-label` is what it uses
   // when present, falling back to the raw id attribute — so a mention stored
   // without a label still validates instead of silently losing its card.
-  if (anchor && !linksToProfile(anchor, label ?? idAttr)) return null;
+  const profilePaths = [`/user/${label ?? idAttr}`];
+  if (mentionUserId(idAttr)) profilePaths.push(mentionHref({ id: idAttr }));
+  if (anchor && !linksToProfile(anchor, profilePaths)) return null;
 
   return { userId, username, linked: !!anchor };
 }
@@ -55,7 +58,7 @@ function readMention(el: HTMLElement): Omit<Mention, 'rect'> | null {
  * Same-origin and same profile. Comparing only the path would accept
  * `https://evil.example/user/Justin`, which is the whole attack.
  */
-function linksToProfile(anchor: HTMLAnchorElement, expected: string) {
+function linksToProfile(anchor: HTMLAnchorElement, expected: string[]) {
   const href = anchor.getAttribute('href');
   // An empty href resolves to the current page, which would pass the check for
   // any reader who happened to be standing on that profile.
@@ -64,10 +67,8 @@ function linksToProfile(anchor: HTMLAnchorElement, expected: string) {
     const url = new URL(href, window.location.href);
     if (url.origin !== window.location.origin) return false;
     // Usernames resolve case-insensitively, so a link that works must pass.
-    return (
-      decodeURIComponent(url.pathname).replace(/\/$/, '').toLowerCase() ===
-      `/user/${expected}`.toLowerCase()
-    );
+    const path = decodeURIComponent(url.pathname).replace(/\/$/, '').toLowerCase();
+    return expected.some((e) => e.toLowerCase() === path);
   } catch {
     return false;
   }

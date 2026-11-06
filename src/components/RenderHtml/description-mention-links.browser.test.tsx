@@ -57,4 +57,31 @@ describe('description mentions', () => {
       .not.toBeNull();
     expect(document.querySelector('[data-testid="creator-card"]')?.textContent).toBe(label);
   });
+
+  // A stored mention keeps the name it was written with; the user may have been renamed since.
+  const stored = (id: number, label: string) =>
+    `<span data-type="mention" data-id="mention:${id}" data-label="${label}">@${label}</span>`;
+
+  test('a stored mention links by user id, so a rename does not move it', async () => {
+    await renderWithProviders(<RenderHtml html={`<p>${stored(7, 'OldName')}</p>`} withMentions />);
+    const link = document.querySelector<HTMLAnchorElement>('a[data-type="mention"]');
+    expect(link!.getAttribute('href')).toBe('/user-link/7');
+    expect(link!.textContent).toBe('@OldName');
+  });
+
+  test('the hover card still resolves for an id link', async () => {
+    await renderWithProviders(<RenderHtml html={`<p>${stored(7, 'OldName')}</p>`} withMentions />);
+    await userEvent.hover(document.querySelector<HTMLElement>('a[data-type="mention"]')!);
+    await expect
+      .poll(() => document.querySelector('[data-testid="creator-card"]'), { timeout: 5000 })
+      .not.toBeNull();
+  });
+
+  test('no card when an id link points at a different user', async () => {
+    const forged = `<a href="/user-link/8">${stored(7, 'OldName')}</a>`;
+    await renderWithProviders(<RenderHtml html={`<p>${forged}</p>`} />);
+    await userEvent.hover(document.querySelector<HTMLElement>('span[data-type="mention"]')!);
+    await new Promise((r) => setTimeout(r, 800));
+    expect(document.querySelector('[data-testid="creator-card"]')).toBeNull();
+  });
 });
