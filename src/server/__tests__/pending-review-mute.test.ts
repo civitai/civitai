@@ -427,6 +427,7 @@ describe('pending-review mute', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -446,7 +447,12 @@ describe('pending-review mute', () => {
       updateSource: 'test',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -631,6 +637,7 @@ describe('pending-review mute — restriction type', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -728,7 +735,12 @@ describe('pending-review mute — restriction type', () => {
       type: 'bot-account',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -1558,6 +1570,36 @@ describe('POST /api/mod/mute-user-pending-review', () => {
     expect(trackUserActivity).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'Muted', targetUserId: USER_ID })
     );
+  });
+
+  it('audits a mute that joins an open case on an unmuted account', async () => {
+    store.restrictions.push({
+      id: 99,
+      userId: USER_ID,
+      type: 'generation',
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(),
+    });
+
+    const { body } = await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+
+    expect(body).toMatchObject({ muted: true, deduped: true, wasMuted: false });
+    expect(trackModActivity).toHaveBeenCalledOnce();
+    expect(trackUserActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Muted', targetUserId: USER_ID })
+    );
+  });
+
+  it('audits nothing when the account is already muted under an open case', async () => {
+    await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+    vi.clearAllMocks();
+
+    const { body } = await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+
+    expect(body).toMatchObject({ muted: true, deduped: true, wasMuted: true });
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(trackUserActivity).not.toHaveBeenCalled();
   });
 
   it('audits the mute even when the session refresh fails', async () => {

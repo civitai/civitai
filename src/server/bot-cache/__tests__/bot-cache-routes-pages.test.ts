@@ -9,10 +9,6 @@ import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache';
  * only some of the allowlisted pages. So every allowlisted route must be a page file whose
  * `getServerSideProps` is built with it: a page that defines its own would hand the flag evaluation
  * the request (and its region) and never mark a failed prefetch, and still be cached.
- *
- * Deliberately not a registered convention guard (`docs/dev/convention-guards.md`): it checks the
- * pages of one allowlist, not a repo-wide rule, and fails only when that allowlist or its pages
- * change.
  */
 
 const PAGES_DIR = path.join(process.cwd(), 'src/pages');

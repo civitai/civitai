@@ -36,7 +36,7 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`, `label-store`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
@@ -137,6 +137,21 @@ explicit user approval.
 **Never stack PRs.** Base every PR on the integration branch (`main` or a `feat/...` branch), never on
 another open PR's branch — a squash-merged parent doesn't retarget the child, and its changes go missing.
 If a change depends on an unmerged PR, wait for it to merge or fold both into one PR.
+
+## 🔴 CI runs on CI, not on this workstation
+
+The GitHub Actions workflows (`.github/workflows/`: `apps`, `lint`, `full-ci`,
+`moderator-boot`, `schema-drift`, `submodule-pin-guard`, `trpc-server-parity`) are
+where a change is validated. Do **not** run the whole local mirror
+(`scripts/ci/*.mjs` across the workspace) to "reproduce CI" — this is a large
+monorepo and a workspace-wide run spins the disks and slows every agent and the
+operator's desktop. Workspace-wide `turbo` task runs and recursive
+`pnpm`/`npm`/`yarn` (`-r` / `--recursive` / `--workspaces`) are refused by the
+local agent tooling.
+
+**A change-scoped subset is the local loop** — one app's suite
+(`pnpm --filter <app> test`), one `scripts/ci/*.mjs` gate directly, or a single
+package's typecheck. The full workspace is CI's.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

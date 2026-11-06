@@ -42,7 +42,7 @@ CREATE TYPE "ArticleIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', '
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY);
 CREATE TABLE "Article" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "status" TEXT NOT NULL,
-  "publishedAt" TIMESTAMP(3), "scheduledAt" TIMESTAMP(3), "metadata" JSONB, "coverId" INTEGER, "title" TEXT, "content" TEXT,
+  "publishedAt" TIMESTAMP(3), "scheduledAt" TIMESTAMP(3), "metadata" JSONB, "coverId" INTEGER, "bannerId" INTEGER, "title" TEXT, "content" TEXT,
   "ingestion" "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned', "contentScannedAt" TIMESTAMP(3),
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "userNsfwLevel" INTEGER NOT NULL DEFAULT 1,
   "moderatorNsfwLevel" INTEGER

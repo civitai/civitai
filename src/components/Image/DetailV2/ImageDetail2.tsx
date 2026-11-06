@@ -325,7 +325,13 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
-      {takesHats(image) && <HatTurfDetailBadge imageId={image.id} />}
+      {/* On a phone the badge is in the top toolbar and the hat button is here, by Save and Tip. */}
+      {withStoryline && !narrowStage && takesHats(image) && (
+        <HatTurfDetailBadge imageId={image.id} />
+      )}
+      {!withStoryline && narrowStage && takesHats(image) && (
+        <HatTurfDetailControls imageId={image.id} large />
+      )}
     </>
   );
 
@@ -389,6 +395,9 @@ function ImageDetail2Content() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-1">
+                            {narrowStage && takesHats(image) && (
+                              <HatTurfDetailBadge imageId={image.id} />
+                            )}
                             <ImageGuard2.BlurToggle
                               {...sharedBadgeProps}
                               className={clsx('@md:hidden', sharedBadgeProps.className)}
@@ -540,7 +549,7 @@ function ImageDetail2Content() {
                               imageNsfwLevel={image.nsfwLevel}
                               className="ml-2"
                             />
-                            {takesHats(image) && (
+                            {!narrowStage && takesHats(image) && (
                               <div className="ml-2">
                                 <HatTurfDetailControls imageId={image.id} />
                               </div>
@@ -598,7 +607,11 @@ function ImageDetail2Content() {
                   }`}
                 >
                   <div className="flex gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                  <LegacyActionIcon
+                    {...sharedActionIconProps}
+                    onClick={toggleInfo}
+                    data-testid="image-detail-chevron"
+                  >
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>
                 </div>

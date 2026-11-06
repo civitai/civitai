@@ -50,7 +50,7 @@
   membership is ignored (no tier lookup — `isMember: true` drops member rules),
   so model pages / search / the API hard-block a resource only when a rule hides
   its ecosystem or version.
-- **Pickers** — `BaseModelInput` / `WorkflowInput` read one per-item state;
+- **Pickers** — `BaseModelInput` / `WorkflowPicker` read one per-item state;
   `FormFooter` resolves the selected ecosystem's state (members-only reuses the
   existing upsell + CTA).
 - **Mod UI** — on `/moderator/generation-config`, a "Gate rules" list of compact

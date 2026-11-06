@@ -143,6 +143,8 @@ export type ResolvedPlacementSpace = {
    * blank.
    */
   ownerUsername: string | null;
+  /** Whether an image target is a still or a video; absent for other targets. */
+  mediaType?: StickerMediaType;
   mode: PlacementSpaceMode;
   /** What the owner asks. `null` when they have never set one. */
   setPrice: number | null;
@@ -328,6 +330,7 @@ export async function resolvePlacementSpaceFor({
   return {
     ownerId,
     ...(storylineId ? { storylineId } : {}),
+    ...(mediaType ? { mediaType } : {}),
     ownerUsername,
     // A completed storyline takes no continuations, whatever its space says.
     // Read from the storyline itself rather than trusting Complete to have

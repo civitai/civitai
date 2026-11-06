@@ -43,7 +43,9 @@ function computeFileName({
   // A LoRA keeps the name its creator uploaded — creators encode the base model, the variant or the
   // character there, and `<model>_<version>` cannot carry any of it.
   const keepsUploadedName =
-    model.type === ModelType.LORA || model.type === ModelType.LoCon || modelName.length === 0;
+    ((model.type === ModelType.LORA || model.type === ModelType.LoCon) &&
+      !isTrainerBlobFileName(file.name)) ||
+    modelName.length === 0;
   if (keepsUploadedName) return fileName;
 
   const ext = file.name.split('.').pop();
@@ -106,6 +108,16 @@ const genericNamePatterns = [
   /^\d+$/,
 ];
 
+/**
+ * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID, Crockford
+ * alphabet, so no I, L, O or U), optionally followed by the 8-character token `uniqueAssetKey` adds.
+ * Keep it exact: a looser match would replace names creators typed.
+ */
+const trainerBlobFileName = /^[0-9A-HJKMNP-TV-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
+export function isTrainerBlobFileName(fileName: string) {
+  return trainerBlobFileName.test(fileName);
+}
+
 export function isGenericFileName(fileName: string) {
   const dot = fileName.lastIndexOf('.');
   const basename = (dot > 0 ? fileName.slice(0, dot) : fileName)
@@ -125,7 +137,9 @@ function preferredFileName(args: Parameters<typeof computeFileName>[0]) {
   // workflow tool, so both keep the scheme.
   if (model.type === ModelType.TextualInversion || file.type === 'Training Data')
     return computeFileName(args);
-  return isGenericFileName(file.name) ? computeFileName(args) : file.name;
+  return isGenericFileName(file.name) || isTrainerBlobFileName(file.name)
+    ? computeFileName(args)
+    : file.name;
 }
 
 /** Windows and macOS file systems ignore case, so names equal in any case overwrite each other. */
@@ -230,8 +244,9 @@ export function resolveModelFileName({
   file: NameableFile;
   versionFiles?: NameableFile[];
 }): string {
-  if (file.overrideName) return file.overrideName;
-  if (!versionFiles?.length) return preferredFileName({ model, modelVersion, file });
+  if (file.overrideName) return headerSafeName(file.overrideName);
+  if (!versionFiles?.length)
+    return headerSafeName(preferredFileName({ model, modelVersion, file }));
 
   // API callers pass a destructured copy of the file, so find it by id, or by content without one.
   let index = versionFiles.indexOf(file);
@@ -247,5 +262,58 @@ export function resolveModelFileName({
     );
   }
   const files = index < 0 ? [file, ...versionFiles] : versionFiles;
-  return nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index];
+  return headerSafeName(nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index]);
+}
+
+/** Read-time header safety for every returned name; stored and uploaded names were never cleaned. */
+function headerSafeName(fileName: string) {
+  return fileName
+    .replace(unsafeNameChars, '')
+    .replace(/["\\]/g, '_')
+    .replace(/%(?=[0-9a-f]{2})/gi, '_');
+}
+
+/** UTF-8 bytes, under the 255 most file systems allow, with room for a browser's ` (1)`. */
+export const MAX_OVERRIDE_NAME_BYTES = 200;
+
+// Bidi overrides and zero-width characters spoof a displayed name.
+const unsafeNameChars = /[\p{Cc}\p{Cf}]/gu;
+
+/** The stored name comes from a client too, so an extension that is not plain is not kept. */
+function fileExtension(fileName: string) {
+  const dot = fileName.lastIndexOf('.');
+  const ext = dot > 0 ? fileName.slice(dot) : '';
+  return /^\.[A-Za-z0-9]{1,16}$/.test(ext) ? ext : '';
+}
+
+/**
+ * The server's copy of a creator's download name, ending in the stored file's extension when that
+ * extension is plain. Null when nothing is left, which clears the override.
+ */
+export function sanitizeOverrideName(value: string | null | undefined, storedName: string) {
+  if (value == null) return null;
+  const ext = fileExtension(storedName);
+  let base = value
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .replace(unsafeNameChars, '')
+    .replace(/["\\/:*?<>|]/g, '_')
+    .replace(/%(?=[0-9a-f]{2})/gi, '_')
+    .trim();
+  if (ext && base.toLowerCase().endsWith(ext.toLowerCase())) base = base.slice(0, -ext.length);
+  // Leading dots hide a file or climb a directory; trailing ones Windows drops.
+  base = base.replace(/^[\s.]+|[\s.]+$/g, '');
+
+  const encoder = new TextEncoder();
+  const budget = MAX_OVERRIDE_NAME_BYTES - encoder.encode(ext).length;
+  let bytes = 0;
+  let kept = '';
+  for (const char of base) {
+    bytes += encoder.encode(char).length;
+    if (bytes > budget) break;
+    kept += char;
+  }
+  base = kept.replace(/[\s.]+$/, '');
+
+  return base ? `${base}${ext}` : null;
 }

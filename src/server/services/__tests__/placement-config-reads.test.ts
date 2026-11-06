@@ -110,6 +110,7 @@ describe('placement config reads per call', () => {
     expect(space).toEqual({
       ownerId: OWNER,
       ownerUsername: 'host-owner',
+      mediaType: 'image',
       mode: 'review',
       setPrice: 450,
       price: 300,

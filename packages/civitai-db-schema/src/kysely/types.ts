@@ -817,6 +817,7 @@ export type Article = {
   content: string;
   cover: string | null;
   coverId: number | null;
+  bannerId: number | null;
   publishedAt: Timestamp | null;
   scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
@@ -3262,6 +3263,21 @@ export type EvidenceHold = {
   releasedById: number | null;
   releaseReason: string | null;
 };
+export type EvidenceHoldComment = {
+  commentId: number;
+  userId: number;
+  threadId: number | null;
+  content: string;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+  nsfw: boolean | null;
+  tosViolation: boolean | null;
+  hidden: boolean | null;
+  metadata: unknown | null;
+  thread: unknown | null;
+  source: string;
+  keptAt: Generated<Timestamp>;
+};
 export type EvidenceHoldImage = {
   imageId: number;
   userId: number;
@@ -4512,6 +4528,11 @@ export type Placement = {
   ownerId: number;
   placerId: number;
   data: Generated<unknown>;
+  /**
+   * A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+   * `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+   */
+  track: unknown | null;
   status: string;
   /**
    * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
@@ -6231,6 +6252,7 @@ export type UserProfile = {
   privacySettings: Generated<unknown>;
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
+  showcaseSections: Generated<unknown>;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;
@@ -6663,6 +6685,7 @@ export type DB = {
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
+  EvidenceHoldComment: EvidenceHoldComment;
   EvidenceHoldImage: EvidenceHoldImage;
   EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;

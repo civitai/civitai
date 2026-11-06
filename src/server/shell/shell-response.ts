@@ -54,7 +54,7 @@ export function applyShellPrivateHeaders(res: ServerResponse) {
  * Only once the shell HAS rendered (`_document.getInitialProps`, which Next reaches after the page
  * rendered). Set earlier, they would survive a render that throws: Next renders `/_error` on the
  * same response and resets AT MOST `Cache-Control` — `renderErrorImpl` in `base-server.js` does so
- * only when called with `setHeaders`, which the thrown-`getServerSideProps` path does not (16.4.3),
+ * only when called with `setHeaders`, which the thrown-`getServerSideProps` path does not (16.4.5),
  * so even that header can survive — and a per-viewer error page would go out edge-cacheable. `_app`
  * also strips them on every non-shell run.
  */

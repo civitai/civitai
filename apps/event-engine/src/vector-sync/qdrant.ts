@@ -214,6 +214,25 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     return new Set(points.map((p) => Number(p.id)));
   }
 
+  /** Ids of the points whose integer `field` holds any of `values`. */
+  async idsMatching(field: keyof P & string, values: number[], pageSize = 1_000) {
+    const ids: number[] = [];
+    let offset: string | number | undefined;
+    if (!values.length) return ids;
+    do {
+      const page = await this.client.scroll(this.collection, {
+        filter: { must: [{ key: field, match: { any: values } }] },
+        offset,
+        limit: pageSize,
+        with_payload: false,
+        with_vector: false,
+      });
+      ids.push(...page.points.map((p) => Number(p.id)));
+      offset = page.next_page_offset == null ? undefined : (page.next_page_offset as number);
+    } while (offset !== undefined);
+    return ids;
+  }
+
   /** Point ids with lo <= id < hi. Scroll walks ids in ascending order from `offset`. */
   async idsInRange(lo: number, hi: number, pageSize = 10_000): Promise<number[]> {
     const ids: number[] = [];

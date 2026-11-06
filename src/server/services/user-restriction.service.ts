@@ -83,7 +83,7 @@ export function unwiredRulingReason(type: string): string | null {
 }
 
 export type PendingReviewMuteResult =
-  | { muted: true; userRestrictionId: number; deduped: boolean }
+  | { muted: true; userRestrictionId: number; deduped: boolean; wasMuted: boolean }
   | { muted: false; skipped: 'protected' | 'system-account' | 'moderator' | 'banned' | 'deleted' };
 
 async function bestEffort(name: string, userId: number, fn: () => Promise<unknown>) {
@@ -149,9 +149,7 @@ export async function applyPendingReviewMute({
     claimPendingReviewMute(tx, { userId, triggers, type })
   );
   if (claim.muted) await announcePendingReviewMute({ userId, type, updateSource, claim });
-  return claim.muted
-    ? { muted: true, userRestrictionId: claim.userRestrictionId, deduped: claim.deduped }
-    : claim;
+  return claim;
 }
 
 type RestrictionClient = Pick<Prisma.TransactionClient, 'user' | 'userRestriction'>;

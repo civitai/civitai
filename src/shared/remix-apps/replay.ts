@@ -40,9 +40,6 @@ export async function replayRemixApp(
   let next = 0;
   const step = (effect: RemixEffect) => {
     const index = next++;
-    // A run is stored only as its workflows: an answer given before the first has nowhere to live.
-    if (index === 0 && effect.type !== 'workflow')
-      throw new RemixReplayError(`${app.slug} must run a workflow before it asks anything`);
     const entry = log[index];
     if (!entry) throw new Suspend(index, effect);
     if (entry.type !== effect.type)
@@ -86,7 +83,11 @@ export function remixAnswerRefusal(spec: RemixAsk, answer: RemixAnswer): string 
         ? undefined
         : 'Not one of the images';
     case 'text':
-      return typeof answer === 'string' && answer.trim() && answer.length <= spec.maxLength
+      if (typeof answer !== 'string' || answer.length > spec.maxLength)
+        return `Enter up to ${spec.maxLength} characters`;
+      if (answer.trim()) return undefined;
+      // A skip is '' exactly, so the app never sees blank text it has to trim.
+      return spec.optional && answer === ''
         ? undefined
         : `Enter up to ${spec.maxLength} characters`;
   }
