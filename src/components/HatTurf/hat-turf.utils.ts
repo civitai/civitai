@@ -283,3 +283,20 @@ export const turfTopic = (event: string, imageId: number) =>
 /** Hat counts beside contest entries could sway judging, so no contest collection shows Hat Turf. */
 export const collectionHidesHatTurf = (collection?: { mode?: CollectionMode | null } | null) =>
   collection?.mode === CollectionMode.Contest;
+
+/**
+ * How long between new hats, compact enough for a phone tile: "30 s", "4 min", "2h 30m". Null when
+ * nothing refills. A duration, not a rate: "15/hr" reads as a batch at the end of the hour.
+ */
+export function formatRefillCadence(perHour: number) {
+  if (!Number.isFinite(perHour) || perHour <= 0) return null;
+  const seconds = Math.round(3600 / perHour);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const [h, m] = [Math.floor(minutes / 60), minutes % 60];
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+/** "1.5", "0.75": at most two decimals, none trailing. */
+export const formatMultiplier = (multiplier: number) => String(Number(multiplier.toFixed(2)));
