@@ -33,20 +33,23 @@ const { dbs, reads } = vi.hoisted(() => {
     primary: { images: [], spaces: [] } as { images: unknown[]; spaces: unknown[] },
     replica: { images: [], spaces: [] } as { images: unknown[]; spaces: unknown[] },
   };
-  return { dbs, reads: [] as { db: 'primary' | 'replica'; what: string }[] };
+  return { dbs, reads: [] as { db: string; what: string }[] };
 });
 
-// Sentinel clients: which one a read was handed says which database answered.
-vi.mock('~/server/db/kyselyDb', () => ({
-  kyselyRead: { name: 'replica' },
-  kyselyWrite: { name: 'primary' },
-}));
+// The real clients, as placement-reads.kysely.test.ts uses them: nothing is executed against them
+// (the statements are replaced below), so which one a read was handed says which database answered.
+const { kyselyRead, kyselyWrite } = await import('~/server/db/kyselyDb');
 
-const nameOf = (client: { name: 'primary' | 'replica' }) => client.name;
-const dbOf = (client: { name: 'primary' | 'replica' }) => dbs[nameOf(client)] as unknown as Db;
+type DbName = 'primary' | 'replica';
+function nameOf(client: unknown): DbName {
+  if (client === kyselyWrite) return 'primary';
+  if (client === kyselyRead) return 'replica';
+  throw new Error('placement-space display test: a read was handed an unknown client');
+}
+const dbOf = (client: unknown) => dbs[nameOf(client)] as unknown as Db;
 
 vi.mock('@civitai/db-queries/placement', () => ({
-  getImagePlacementTarget: vi.fn(async (client: { name: 'primary' | 'replica' }, id: number) => {
+  getImagePlacementTarget: vi.fn(async (client: unknown, id: number) => {
     reads.push({ db: nameOf(client), what: 'target' });
     const image = dbOf(client).images.find((candidate) => candidate.id === id);
     return image ? { ...image } : undefined;
@@ -55,7 +58,7 @@ vi.mock('@civitai/db-queries/placement', () => ({
   getChapterPlacementTarget: vi.fn(async () => undefined),
   listPlacementSpacesFor: vi.fn(
     async (
-      client: { name: 'primary' | 'replica' },
+      client: unknown,
       input: { surface: string; levels: { entityType: string; entityId: number }[] }
     ) => {
       reads.push({ db: nameOf(client), what: 'rows' });
@@ -311,7 +314,16 @@ describe('placement space display read: who calls it', () => {
         const full = path.join(dir, entry);
         if (statSync(full).isDirectory()) walk(full);
         else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.tsx?$/.test(entry))
-          if (readFileSync(full, 'utf8').includes('resolvePlacementSpaceForDisplay'))
+          if (
+            readFileSync(full, 'utf8')
+              .split('\n')
+              // Code, not prose: a comment naming it calls nothing.
+              .some(
+                (line) =>
+                  !/^\s*(\/\/|\*|\/\*)/.test(line) &&
+                  line.includes('resolvePlacementSpaceForDisplay')
+              )
+          )
             hits.push(path.relative(root, full));
       }
     };
