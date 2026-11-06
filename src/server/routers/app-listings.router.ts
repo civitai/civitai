@@ -2236,14 +2236,7 @@ export const appListingsRouter = router({
       });
     }),
 
-  /**
-   * MOD mark / unmark a listing Official ("made by the Civitai team") — the badge on its store
-   * card and page. `moderatorProcedure` + the inner `isModerator` recheck, like `delistListing`;
-   * the acting moderator is bound to `ctx.user.id`. A listing's OWNER has no path to this flag:
-   * it is not a key of any author input schema, and the column is absent from the Prisma client
-   * every author write goes through. One `set-official` moderation event per change, written in
-   * the same transaction as the flag.
-   */
+  /** MOD mark / unmark a listing Official. A listing's owner has no path to this flag. */
   setListingOfficial: moderatorProcedure
     .input(setListingOfficialSchema)
     .mutation(async ({ ctx, input }) => {

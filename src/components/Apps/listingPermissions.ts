@@ -11,6 +11,7 @@ import {
   TokenScope,
   tokenScopeLabels,
 } from '~/shared/constants/token-scope.constants';
+import { capitalize } from '~/utils/string-helpers';
 
 /**
  * The store detail page's permission list — ONE row model and ONE grouping/ordering rule for
@@ -62,11 +63,12 @@ export function blockScopeTitle(scope: string): string {
 
 /** `apps:storage:shared_write` → "Apps storage shared write". */
 function humaniseScopeId(scope: string): string {
-  const words = scope
-    .split(/[:_-]+/)
-    .filter(Boolean)
-    .join(' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  return capitalize(
+    scope
+      .split(/[:_-]+/)
+      .filter(Boolean)
+      .join(' ')
+  );
 }
 
 /**

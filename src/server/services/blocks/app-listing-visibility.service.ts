@@ -62,8 +62,8 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import { parseStoredVisibility } from '~/shared/utils/app-listing-visibility';
 
@@ -195,43 +195,22 @@ export async function readListingVisibilityManyForRender(
   try {
     return await readListingVisibilityMany(listingIds, db);
   } catch (err) {
-    noteDegradedVisibilityRead(err);
+    noteDegradedRead(VISIBILITY_READ_DEGRADED_EVENT, err);
     return new Map();
   }
 }
 
 /**
- * Record that a read fell back to the pre-feature predicate, without letting the recording
- * break the page.
+ * The log event for a visibility read that fell back to its inert answer.
  *
- * 🔴 IT WAS DEAD CODE — DEFINED, DOCUMENTED AT LENGTH AS LOAD-BEARING, AND CALLED FROM
- * NOWHERE. The consequence was that the whole manual-apply window was UNOBSERVABLE: the
- * store silently served the pre-feature predicate with no counter, log or metric saying so,
- * which is exactly the silent-gate class `store-scope.metrics` exists for. It is now called
- * from the store list path's catch, and from {@link readListingVisibilityManyForRender}.
- *
- * ⚠️ TWO CALLERS, TWO RATES. The list path's catch fires at most once per catalog cache MISS
- * (one per cohort per TTL), which is a usable signal for the manual-apply window. The badge
- * reader logs only REAL faults (the missing column is swallowed before it), on every grid
- * request that performs the read while such a fault lasts — signed-in, moderator or
- * non-`public`-floor traffic; an anonymous `public`-floor page skips the read entirely, so
- * its faults are not logged here. The DETAIL path's missing-column degrade stays deliberately silent: it would emit
- * at page-view rate on a public page. So the window is observable, not fully audited.
- *
- * `type: 'error'` because the missing-column case is swallowed UPSTREAM and never reaches
- * a caller's catch — what arrives here is the complement (connection failure, timeout,
- * `42P01`, `42501`), which is a server fault. The `.catch(() => null)` is load-bearing:
- * nothing awaits this, so an unhandled rejection would take down the render this exists
- * only to observe. Same reasoning as `app-listing-beta.service.ts`.
+ * TWO CALLERS, TWO RATES. The store list path's missing-column catch fires at most once per
+ * catalog cache MISS, which makes the manual-apply window observable.
+ * {@link readListingVisibilityManyForRender} logs only real faults (the missing column is
+ * swallowed before it), on every grid request that performs the read while the fault lasts.
+ * The detail path's missing-column degrade stays deliberately silent: it would emit at
+ * page-view rate on a public page.
  */
-export function noteDegradedVisibilityRead(err: unknown): void {
-  logToAxiom({
-    name: 'app-listing-visibility-read-degraded',
-    type: 'error',
-    message: err instanceof Error ? err.message : String(err),
-    code: (err as { code?: unknown })?.code ?? null,
-  }).catch(() => null);
-}
+export const VISIBILITY_READ_DEGRADED_EVENT = 'app-listing-visibility-read-degraded';
 
 /**
  * The message an author sees when they set a level before the manual-apply migration has

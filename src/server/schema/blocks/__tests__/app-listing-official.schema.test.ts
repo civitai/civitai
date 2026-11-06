@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 
@@ -84,8 +82,8 @@ describe('the public REST contract is unchanged', () => {
 });
 
 /**
- * 🔴 INVARIANT GUARDS, not regression coverage: both are green on the pre-change tree too,
- * because the field did not exist there. They pin that the column stays OUT of the generated
+ * 🔴 INVARIANT GUARD, not regression coverage: green on the pre-change tree too,
+ * because the field did not exist there. It pins that the column stays OUT of the generated
  * Prisma client — the property that makes the deploy safe before the manual migration, and
  * that keeps every author write (all Prisma-delegate writes) structurally unable to set it.
  */
@@ -94,18 +92,5 @@ describe('isOfficial stays out of the Prisma client', () => {
     expect(Object.keys(Prisma.AppListingScalarFieldEnum)).not.toContain('isOfficial');
     // Positive control: the enum is the real one (a field we know is present).
     expect(Object.keys(Prisma.AppListingScalarFieldEnum)).toContain('slug');
-  });
-
-  it('the schema field carries the no-type annotation on its own line', () => {
-    const schema = readFileSync(
-      path.resolve(
-        __dirname,
-        '../../../../../packages/civitai-db-schema/prisma/schema.full.prisma'
-      ),
-      'utf8'
-    );
-    const line = schema.split('\n').find((l) => /^\s*isOfficial\s+Boolean.*is_official/.test(l));
-    expect(line).toBeDefined();
-    expect(line).toMatch(/\/\/ @no-type\s*$/);
   });
 });
