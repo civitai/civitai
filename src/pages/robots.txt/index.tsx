@@ -53,6 +53,25 @@ const ruleSections: { comment?: string[]; rules: string[] }[] = [
     comment: ['# Site-search query URLs — thin/duplicate content, low SEO value'],
     rules: ['Disallow: /*?query=', 'Disallow: /*&query='],
   },
+  {
+    // Each of these tabs is a full server render of a listing that search engines send almost no
+    // visitors to. Disallowing the tab does not block the items it lists, which keep their own
+    // URLs. The profile page and its models, images, videos and posts tabs stay crawlable: they
+    // are how crawlers reach content that has no sitemap.
+    comment: [
+      '# Low-value profile tabs — the items they list stay crawlable at their own URLs',
+    ],
+    rules: [
+      'Disallow: /user/*/storylines',
+      'Disallow: /user/*/sticker-book',
+      'Disallow: /user/*/comics',
+      'Disallow: /user/*/3d-models',
+      'Disallow: /user/*/collections',
+      'Disallow: /user/*/articles',
+      'Disallow: /user/*/followers',
+      'Disallow: /user/*/following',
+    ],
+  },
 ];
 
 // AI training crawlers request HTML pages continuously. Crawl-delay asks each of them to wait 30 s

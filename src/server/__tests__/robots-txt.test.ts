@@ -160,7 +160,7 @@ ${ADID}
 # Site-search query URLs — thin/duplicate content, low SEO value
 ${QUERY}
 
-# Low-value profile tabs — thin listings of content that is crawlable from its own pages
+# Low-value profile tabs — the items they list stay crawlable at their own URLs
 ${PROFILE_TABS}
 
 # Host
