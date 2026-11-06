@@ -6,7 +6,10 @@ import {
   getModelPlacementTarget,
   listPlacementSpacesFor,
 } from '@civitai/db-queries/placement';
+import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { createCachedObject } from '~/server/utils/cache-helpers';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   countFreeTier,
@@ -50,7 +53,14 @@ async function resolveImageTarget(imageId: number) {
   // The username rides along on the lookup that was already happening. It is shown to the placer,
   // so a second query keyed on the id this one returns would be a round trip for a string this row
   // can reach in the same hop.
-  const row = await getImagePlacementTarget((await loadKyselyDb()).kyselyWrite, imageId);
+  return imageTargetFrom(
+    await getImagePlacementTarget((await loadKyselyDb()).kyselyWrite, imageId)
+  );
+}
+
+function imageTargetFrom(
+  row: Pick<ImageTargetRow, 'userId' | 'postId' | 'type' | 'username'> | undefined
+) {
   if (!row) throw throwBadRequestError('placement: that image no longer exists');
   return {
     ownerId: row.userId,
@@ -60,9 +70,16 @@ async function resolveImageTarget(imageId: number) {
   };
 }
 
+type ImageTargetRow = NonNullable<Awaited<ReturnType<typeof getImagePlacementTarget>>>;
+
 /** A model's space is configured on its owner's account only; there is no model or post level. */
 async function resolveModelTarget(modelId: number) {
-  const row = await getModelPlacementTarget((await loadKyselyDb()).kyselyWrite, modelId);
+  return modelTargetFrom(
+    await getModelPlacementTarget((await loadKyselyDb()).kyselyWrite, modelId)
+  );
+}
+
+function modelTargetFrom(row: { userId: number; username: string | null } | undefined) {
   if (!row) throw throwBadRequestError('placement: that model no longer exists');
   return { ownerId: row.userId, postId: null, ownerUsername: row.username ?? null };
 }
@@ -112,10 +129,7 @@ async function resolveChapterTarget(postId: number) {
   };
 }
 
-const resolveTarget = (
-  targetType: PlacementTargetType,
-  targetId: number
-): Promise<{
+type ResolvedTarget = {
   ownerId: number;
   postId: number | null;
   storylineId?: number;
@@ -123,7 +137,12 @@ const resolveTarget = (
   /** Only an image target has one; the account's media-type setting reads it. */
   mediaType?: StickerMediaType;
   ownerUsername: string | null;
-}> => {
+};
+
+const resolveTarget = (
+  targetType: PlacementTargetType,
+  targetId: number
+): Promise<ResolvedTarget> => {
   if (targetType === 'model') return resolveModelTarget(targetId);
   if (targetType === 'post') return resolveChapterTarget(targetId);
   return resolveImageTarget(targetId);
@@ -243,20 +262,39 @@ const displayedReservedFreeSlots = async (target: SpaceTarget) => {
  * score change must move the cap immediately, and a stored effective price goes
  * stale with nothing failing to say so.
  */
-export async function resolvePlacementSpaceFor({
-  surface,
-  targetType,
-  targetId,
-}: {
-  surface: PlacementSurface;
-  targetType: PlacementTargetType;
-  targetId: number;
-}): Promise<ResolvedPlacementSpace> {
+export function resolvePlacementSpaceFor(input: SpaceTarget): Promise<ResolvedPlacementSpace> {
+  return resolveSpaceWith(input, primaryReads);
+}
+
+type SpaceRow = Awaited<ReturnType<typeof listPlacementSpacesFor>>[number];
+type SpaceLevel = { entityType: string; entityId: number };
+
+/**
+ * The two row reads the cascade is built from. Everything else `resolveSpaceWith` reads — the
+ * price range, the config, the reserved count — is read live on every path, because each is
+ * documented above as computed at read and never persisted.
+ */
+type SpaceReads = {
+  target: (targetType: PlacementTargetType, targetId: number) => Promise<ResolvedTarget>;
+  rows: (surface: PlacementSurface, levels: SpaceLevel[]) => Promise<SpaceRow[]>;
+};
+
+/** From the primary, uncached: what every caller that decides or charges reads. */
+const primaryReads: SpaceReads = {
+  target: resolveTarget,
+  rows: async (surface, levels) =>
+    listPlacementSpacesFor((await loadKyselyDb()).kyselyWrite, { surface, levels }),
+};
+
+async function resolveSpaceWith(
+  { surface, targetType, targetId }: SpaceTarget,
+  reads: SpaceReads
+): Promise<ResolvedPlacementSpace> {
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
   const target = { surface, targetType, targetId };
-  const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await resolveTarget(
+  const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await reads.target(
     targetType,
     targetId
   );
@@ -267,10 +305,7 @@ export async function resolvePlacementSpaceFor({
     ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
     { entityType: 'user', entityId: ownerId },
   ];
-  const rows = await listPlacementSpacesFor((await loadKyselyDb()).kyselyWrite, {
-    surface,
-    levels,
-  });
+  const rows = await reads.rows(surface, levels);
 
   const at = (entityType: PlacementSpaceEntity): PlacementSpaceSetting | undefined => {
     const row = rows.find((candidate) => candidate.entityType === entityType);
@@ -360,6 +395,198 @@ export async function resolvePlacementSpaceFor({
     settings: resolved.settings ?? {},
   };
 }
+
+// #region [display read]
+
+/**
+ * `resolvePlacementSpaceFor` for SHOWING a space, never for deciding on one. Behind
+ * `placement-space-read-cache`, only the public `placement.getSpace` route reaches it.
+ *
+ * The space is viewer-independent, so its two row reads — who owns the target and the space rows
+ * at each level of the cascade — are cached per row and read from the replica on a miss. What the
+ * comments above call "computed at read" stays live here exactly as on the primary path: the price
+ * range (score, tier, config) and the reserved free-slot count. The client re-reads this route with
+ * `staleTime: 0` after a refused free claim to explain the refusal, and that re-read still sees a
+ * live count.
+ *
+ * Why a replica and a cache are allowed here and nowhere else: nothing this returns is acted on.
+ * Every path that allows, refuses or charges a placement calls `resolvePlacementSpaceFor`, which
+ * reads both rows from the primary, uncached. A stale display is at worst an offer the mutation
+ * then refuses, which is already true of any page left open.
+ *
+ * A storyline chapter (a `post` target) is not served from here: its target row carries the
+ * storyline's status, takedown and removal, which have writers all over the storyline service.
+ */
+export function resolvePlacementSpaceForDisplay(
+  input: SpaceTarget
+): Promise<ResolvedPlacementSpace> {
+  if (input.targetType === 'post') return resolvePlacementSpaceFor(input);
+  return resolveSpaceWith(input, displayReads);
+}
+
+/**
+ * The stalest a cached space row can be served. A write busts its own row (see
+ * `bustPlacementSpaceRow`), so this bounds only a lost bust or a refill racing one.
+ */
+const SPACE_ROW_TTL = CacheTTL.sm;
+/**
+ * How long a bust keeps a cleared row uncached. Reads inside it go to the replica and are not
+ * written back, so a replica still behind the delete cannot re-pin the old row. Well above normal
+ * replica lag; a lag longer than this is bounded by `SPACE_ROW_TTL`.
+ */
+const SPACE_ROW_BUST_WINDOW = 10;
+/**
+ * The stalest a cached target can be served: an owner's renamed username, or an image deleted since.
+ * No bust — both have writers far from this service — and both are display-only here: the name is
+ * shown to the placer, and a deleted image's placement is refused by the primary read.
+ */
+const SPACE_TARGET_TTL = CacheTTL.md;
+
+type CachedSpaceRow = SpaceRow & { entityId: number };
+type CachedSpaceTarget = {
+  targetId: number;
+  userId: number;
+  postId: number | null;
+  type: ImageTargetRow['type'] | null;
+  username: string | null;
+};
+type CachedTargetType = Exclude<PlacementTargetType, 'post'>;
+
+function createSpaceRowCache(surface: PlacementSurface, entityType: string) {
+  return createCachedObject<CachedSpaceRow>({
+    key: `${REDIS_KEYS.CACHES.PLACEMENT_SPACE}:row:${surface}:${entityType}`,
+    idKey: 'entityId',
+    ttl: SPACE_ROW_TTL,
+    debounceTime: SPACE_ROW_BUST_WINDOW,
+    // Most levels have no row of their own; the "none" answer is the one worth holding.
+    cacheNotFound: true,
+    staleWhileRevalidate: false,
+    // `fromWrite` is `refresh` after a write: that one must read the row just written.
+    lookupFn: async (ids, fromWrite) => {
+      const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+      const db = fromWrite ? kyselyWrite : kyselyRead;
+      const found: Record<string, CachedSpaceRow> = {};
+      await Promise.all(
+        ids.map(async (entityId) => {
+          const [row] = await listPlacementSpacesFor(db, {
+            surface,
+            levels: [{ entityType, entityId }],
+          });
+          if (row) found[entityId] = { ...row, entityId };
+        })
+      );
+      return found;
+    },
+  });
+}
+
+function createSpaceTargetCache(targetType: CachedTargetType) {
+  const read = async (db: KyselyClient, id: number) => {
+    if (targetType === 'model') {
+      const row = await getModelPlacementTarget(db, id);
+      return row && { userId: row.userId, postId: null, type: null, username: row.username };
+    }
+    return getImagePlacementTarget(db, id);
+  };
+  return createCachedObject<CachedSpaceTarget>({
+    key: `${REDIS_KEYS.CACHES.PLACEMENT_SPACE}:target:${targetType}`,
+    idKey: 'targetId',
+    ttl: SPACE_TARGET_TTL,
+    // A missing target is not held: an image too new for the replica would otherwise be refused as
+    // "no longer exists" for the whole TTL.
+    cacheNotFound: false,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids, fromWrite) => {
+      const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+      const found: Record<string, CachedSpaceTarget> = {};
+      await Promise.all(
+        ids.map(async (targetId) => {
+          // The primary only for what the replica does not have yet, so a just-uploaded image is
+          // not refused here when the primary path would accept it.
+          const row =
+            (fromWrite ? undefined : await read(kyselyRead, targetId)) ??
+            (await read(kyselyWrite, targetId));
+          if (row)
+            found[targetId] = {
+              targetId,
+              userId: row.userId,
+              postId: row.postId ?? null,
+              type: row.type ?? null,
+              username: row.username ?? null,
+            };
+        })
+      );
+      return found;
+    },
+  });
+}
+
+type KyselyClient = Awaited<ReturnType<typeof loadKyselyDb>>['kyselyRead'];
+
+// Created on first use, never at import (the repo's no-module-scope-cache rule).
+const spaceRowCaches = new Map<string, ReturnType<typeof createSpaceRowCache>>();
+function spaceRowCache(surface: PlacementSurface, entityType: string) {
+  const name = `${surface}:${entityType}`;
+  let cache = spaceRowCaches.get(name);
+  if (!cache) spaceRowCaches.set(name, (cache = createSpaceRowCache(surface, entityType)));
+  return cache;
+}
+const spaceTargetCaches: Partial<
+  Record<CachedTargetType, ReturnType<typeof createSpaceTargetCache>>
+> = {};
+function spaceTargetCache(targetType: CachedTargetType) {
+  return (spaceTargetCaches[targetType] ??= createSpaceTargetCache(targetType));
+}
+
+/** The same rows and the same target the primary reads return, through the caches above. */
+const displayReads: SpaceReads = {
+  target: async (targetType, targetId) => {
+    if (targetType === 'post') return resolveTarget(targetType, targetId);
+    const row = (await spaceTargetCache(targetType).fetch(targetId))[targetId];
+    if (targetType === 'model') return modelTargetFrom(row);
+    return imageTargetFrom(row && { ...row, type: row.type as ImageTargetRow['type'] });
+  },
+  rows: async (surface, levels) => {
+    const rows = await Promise.all(
+      levels.map(
+        async ({ entityType, entityId }) =>
+          (
+            await spaceRowCache(surface, entityType).fetch(entityId)
+          )[entityId]
+      )
+    );
+    return rows.filter((row): row is CachedSpaceRow => row !== undefined);
+  },
+};
+
+/**
+ * Called after every write to a `PlacementSpace` row. Unconditional — not behind the flag — so a
+ * flag turned off and on again cannot find a row written while it was off.
+ *
+ * An upsert writes the new row through from the primary, so the owner's next look at their own
+ * image shows what they just set. A delete marks the row uncached for `SPACE_ROW_BUST_WINDOW`
+ * instead: a plain delete would let the next miss re-read the old row from a replica still behind.
+ *
+ * Never throws. The write has already committed; a failed bust is bounded by `SPACE_ROW_TTL`.
+ *
+ * Every writer of the table, so a new one is added here: `setPlacementSpace` and
+ * `clearPlacementSpace` below. The only other is the storyline delete's raw `DELETE` of a
+ * `storyline`-level row, which no display read caches (storylines are not served from here).
+ */
+export async function bustPlacementSpaceRow(
+  { surface, entityType, entityId }: { surface: PlacementSurface } & SpaceLevel,
+  how: 'written' | 'deleted'
+) {
+  try {
+    const cache = spaceRowCache(surface, entityType);
+    if (how === 'written') await cache.refresh(entityId);
+    else await cache.bust(entityId);
+  } catch {
+    // Bounded by the TTL; see above.
+  }
+}
+
+// #endregion
 
 /**
  * Ownership of the entity whose space is being configured, from the primary.
@@ -536,6 +763,7 @@ export async function setPlacementSpace({
       ...(nextSettings === undefined ? {} : { settings: nextSettings as Prisma.InputJsonValue }),
     },
   });
+  await bustPlacementSpaceRow({ surface, entityType, entityId }, 'written');
 }
 
 /**
@@ -661,4 +889,5 @@ export async function clearPlacementSpace({
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
 
   await dbWrite.placementSpace.deleteMany({ where: { surface, entityType, entityId } });
+  await bustPlacementSpaceRow({ surface, entityType, entityId }, 'deleted');
 }
