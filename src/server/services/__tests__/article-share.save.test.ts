@@ -302,7 +302,7 @@ describe('publishing a draft that has a share link', () => {
     content: '<p>Body</p>',
   };
   // One link, made on the draft, that only a revoke can end.
-  let link: ReturnType<typeof activeLink> & {
+  let link: Omit<ReturnType<typeof activeLink>, 'revokedAt'> & {
     id: number;
     createdById: number;
     revokedAt: Date | null;

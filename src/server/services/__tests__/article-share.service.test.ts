@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ArticleService from '~/server/services/article.service';
 import type * as TextScanRoute from '~/server/services/text-scan/route';
@@ -399,5 +401,18 @@ describe('revokeArticleShareLink', () => {
     expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 7, revokedAt: null } })
     );
+  });
+});
+
+// Lives here, not in apps/moderator: an apps test reading a src/ file needs that file in the
+// apps.yml paths filter, while this suite runs on every change.
+describe('share-link lock key', () => {
+  // The moderator restore and the main app serialise on this lock only while the key matches.
+  it("is the same in the moderator app's restore", () => {
+    const read = (rel: string) => readFileSync(path.resolve(__dirname, rel), 'utf8');
+    const key = (source: string) => source.match(/ACCESS_TOKEN_LOCK_CLASS = (0x[0-9a-f]+)/)?.[1];
+    const main = key(read('../access-token.service.ts'));
+    expect(main).toBeDefined();
+    expect(key(read('../../../../apps/moderator/src/lib/server/article-moderation.ts'))).toBe(main);
   });
 });

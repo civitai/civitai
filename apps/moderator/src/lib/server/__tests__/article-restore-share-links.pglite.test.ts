@@ -93,18 +93,6 @@ const activeLinks = async () =>
   ).rows.map((r) => r.resourceId);
 
 describe("a moderator's article restore", () => {
-  // The two apps serialise on this lock only while the key is the same in both.
-  it("takes the main app's share-link lock", () => {
-    const main = readFileSync(
-      path.resolve(__dirname, '../../../../../../src/server/services/access-token.service.ts'),
-      'utf8'
-    );
-    const here = readFileSync(path.resolve(__dirname, '../article-moderation.ts'), 'utf8');
-    const key = (source: string) => source.match(/ACCESS_TOKEN_LOCK_CLASS = (0x[0-9a-f]+)/)?.[1];
-    expect(key(here)).toBeDefined();
-    expect(key(here)).toBe(key(main));
-  });
-
   // A share link belongs to the draft. Without this, a link made while the article was unpublished
   // reads it again once the author unpublishes it after the restore.
   it("revokes the restored article's share links, and no other article's", async () => {
