@@ -137,6 +137,10 @@ describe('filterModelMetaForClient', () => {
     minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
     minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
     profanityMatches: ['badword'],
+    profanityEvaluation: {
+      reason: 'test reason',
+      metrics: { matchCount: 1, uniqueWords: 1, totalWords: 10, density: 0.1 },
+    },
   };
 
   it('strips all three minor-hash keys for a normal user', () => {
@@ -158,9 +162,13 @@ describe('filterModelMetaForClient', () => {
     expect(filterModelMetaForClient(full, false).unpublishedReason).toBe('other');
   });
 
-  it('still applies profanity filtering: hidden for users, kept for moderators', () => {
-    expect(filterModelMetaForClient(full, false).profanityMatches).toBeUndefined();
-    expect(filterModelMetaForClient(full, true).profanityMatches).toEqual(['badword']);
+  it('hides both profanity keys from users and keeps them for moderators', () => {
+    const user = filterModelMetaForClient(full, false);
+    expect(user).not.toHaveProperty('profanityMatches');
+    expect(user).not.toHaveProperty('profanityEvaluation');
+    const mod = filterModelMetaForClient(full, true);
+    expect(mod.profanityMatches).toEqual(['badword']);
+    expect(mod.profanityEvaluation).toEqual(full.profanityEvaluation);
   });
 
   it('does not mutate the input', () => {
