@@ -1,10 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Selectable, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { BuzzRejectedError, type BuzzPort } from './buzz';
-import { CONVERSION, PENDING_CONVERSION_RETRY_AFTER_MS } from './config';
-import { spendableOf } from './balance';
+import { PENDING_CONVERSION_RETRY_AFTER_MS } from './config';
 import { heldSql } from './held';
 
 type Conversion = Selectable<DB['KnightsGoldConversion']>;
@@ -15,65 +13,7 @@ export type ConvertResult =
   /** Buzz did not confirm; the gold stays reserved and a retry sends the same key. */
   | { status: 'pending'; gold: number; buzz: number }
   /** Buzz refused it for good: the gold is convertible again, unless a career reset forfeited it (`forfeited`). */
-  | { status: 'failed'; gold: number; buzz: number; forfeited: boolean }
-  | { status: 'refused'; reason: 'no-player' | 'held' | 'below-minimum' };
-
-type Refusal = Extract<ConvertResult, { status: 'refused' }>['reason'];
-type Reserved = { refused: Refusal } | { conversion: Conversion };
-
-/** Two steps: reserve the gold under the player's row lock, then ask Buzz with the reservation's own key. An unknown outcome leaves it pending, and every retry sends the same key; a definitive rejection marks it failed and releases the gold. */
-export async function convertGold(
-  db: Kysely<DB>,
-  buzz: BuzzPort,
-  { playerId, now, log }: { playerId: number; now: Date; log?: Log }
-): Promise<ConvertResult> {
-  const reserved: Reserved = await db.transaction().execute(async (trx): Promise<Reserved> => {
-    const player = await trx
-      .selectFrom('NewOrderPlayer as p')
-      .select(['p.goldEarned', 'p.goldConverted', heldSql('p.userId').as('held')])
-      .where('p.userId', '=', playerId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!player) return { refused: 'no-player' };
-    if (player.held) return { refused: 'held' };
-
-    const open = await trx
-      .selectFrom('KnightsGoldConversion')
-      .selectAll()
-      .where('playerId', '=', playerId)
-      .where('status', '=', 'pending')
-      .orderBy('id', 'asc')
-      .executeTakeFirst();
-    if (open) return { conversion: open };
-
-    const buzzAmount = Math.floor(spendableOf(player) / CONVERSION.goldPerBuzz);
-    if (buzzAmount < CONVERSION.minBuzz) return { refused: 'below-minimum' };
-    const gold = buzzAmount * CONVERSION.goldPerBuzz;
-
-    const conversion = await trx
-      .insertInto('KnightsGoldConversion')
-      .values({
-        playerId,
-        gold,
-        buzz: buzzAmount,
-        status: 'pending',
-        externalTransactionId: `knights-gold-conversion:${randomUUID()}`,
-        // stamped after the player row lock, on the clock a reset's startAt uses
-        createdAt: sql<Date>`clock_timestamp()`,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await trx
-      .updateTable('NewOrderPlayer')
-      .set({ goldConverted: sql<number>`"goldConverted" + ${gold}` })
-      .where('userId', '=', playerId)
-      .execute();
-    return { conversion };
-  });
-
-  if ('refused' in reserved) return { status: 'refused', reason: reserved.refused };
-  return settleConversion(db, buzz, reserved.conversion, { now, log });
-}
+  | { status: 'failed'; gold: number; buzz: number; forfeited: boolean };
 
 /** Marks a conversion paid. Never overwrites a Buzz transaction id already stored, and fills in one a duplicate answer left empty. */
 export async function markConversionPaid(
