@@ -107,12 +107,17 @@ beforeAll(async () => {
       (u) => [`(${u * 10}, 'c', ${u}, 1)`, `(${u * 10 + 1}, 'c', ${u}, 1)`]
     ).join(', ')}`
   );
-  // One comment with every column distinct, so the copy is checked column by column.
+  // Two comments with every column set and each flag opposite between them, so the copy is checked
+  // column by column: a constant or a swapped column is wrong on at least one of the two.
   await db.exec(`
     UPDATE archive."CommentV2" SET content = 'kept text', "createdAt" = '2026-01-02 03:04:05',
-      "updatedAt" = '2026-02-03 04:05:06', nsfw = true, "tosViolation" = false, hidden = NULL,
+      "updatedAt" = '2026-02-03 04:05:06', nsfw = true, "tosViolation" = true, hidden = false,
       metadata = '{"k": 1}'
-    WHERE id = ${MARKER * 10}
+    WHERE id = ${MARKER * 10};
+    UPDATE archive."CommentV2" SET content = 'other text', "createdAt" = '2026-03-04 05:06:07',
+      "updatedAt" = '2026-04-05 06:07:08', nsfw = false, "tosViolation" = false, hidden = true,
+      metadata = '{"k": 2}'
+    WHERE id = ${MARKER * 10 + 1};
   `);
 });
 
@@ -165,7 +170,7 @@ describe('evidence_hold_keep_archived_comments', () => {
     const kept = await db.query(
       `SELECT "commentId", "userId", "threadId", content, "createdAt", "updatedAt", nsfw,
          "tosViolation", hidden, metadata, thread, source
-       FROM "EvidenceHoldComment" WHERE "commentId" = ${MARKER * 10}`
+       FROM "EvidenceHoldComment" WHERE "userId" = ${MARKER} ORDER BY "commentId"`
     );
     expect(kept.rows).toEqual([
       {
@@ -176,9 +181,23 @@ describe('evidence_hold_keep_archived_comments', () => {
         createdAt: new Date('2026-01-02T03:04:05.000Z'),
         updatedAt: new Date('2026-02-03T04:05:06.000Z'),
         nsfw: true,
-        tosViolation: false,
-        hidden: null,
+        tosViolation: true,
+        hidden: false,
         metadata: { k: 1 },
+        thread: { id: 1, postId: 900, imageId: null, parentThreadId: null },
+        source: 'archive',
+      },
+      {
+        commentId: MARKER * 10 + 1,
+        userId: MARKER,
+        threadId: 1,
+        content: 'other text',
+        createdAt: new Date('2026-03-04T05:06:07.000Z'),
+        updatedAt: new Date('2026-04-05T06:07:08.000Z'),
+        nsfw: false,
+        tosViolation: false,
+        hidden: true,
+        metadata: { k: 2 },
         thread: { id: 1, postId: 900, imageId: null, parentThreadId: null },
         source: 'archive',
       },
