@@ -306,6 +306,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'StorylineReport.heldStorylineId',
       'StorylineReport.storylineTitle',
       'app_listings.is_official',
+      'Placement.track',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

@@ -212,6 +212,39 @@ beforeEach(async () => {
   await db.exec(`DELETE FROM "Appeal"`);
 });
 
+describe("a ruling on the nsfw lock ends the owner's filter explanation", () => {
+  const marker = {
+    source: 'profanity-filter',
+    at: '2026-01-01T00:00:00.000Z',
+    fields: ['name'],
+    category: 'mature-language',
+    textHash: 'hash-placeholder',
+  };
+  const kept = { source: marker.source, at: marker.at };
+
+  // The appeal row is reopened in place on a new request, erasing this ruling from it.
+  it('a rejection keeps the lock and its marker, without the explanation', async () => {
+    await seed({ locked: ['nsfw'], meta: { [SYSTEM_NSFW_LOCK_META_KEY]: marker, other: 1 } });
+
+    await reject();
+
+    expect(await modelRow()).toEqual({ lockedProperties: ['nsfw'], nsfw: true });
+    expect(await modelMeta()).toEqual({ [SYSTEM_NSFW_LOCK_META_KEY]: kept, other: 1 });
+  });
+
+  it('a ruling on other settings leaves the explanation', async () => {
+    await seed({
+      locked: ['nsfw', 'tags'],
+      asked: ['tags'],
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: marker },
+    });
+
+    await reject();
+
+    expect(await modelMeta()).toEqual({ [SYSTEM_NSFW_LOCK_META_KEY]: marker });
+  });
+});
+
 describe('approving a lock review', () => {
   it('unlocks only the named settings still locked, and leaves their values', async () => {
     await seed({ locked: ['nsfw', 'category', 'tags'], asked: ['nsfw', 'sfwOnly'] });

@@ -107,8 +107,6 @@ export const getUserWithProfile = async ({
   if (!username && !id) {
     throwBadRequestError('Either username or id must be provided');
   }
-  // `kysely-hot-reads-9` picks the path once per call: Prisma on the primary, or the one-statement
-  // Kysely twin on the primary too.
   const viaKysely = await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_9);
   const getUser = async () => {
     const user = viaKysely

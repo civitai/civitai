@@ -370,7 +370,9 @@ export function ArticleUpsertForm({ article }: Props) {
                 'colors',
                 'timestamp',
                 'blurb',
+                'imageSize',
                 'align',
+                'civitaiEmbed',
               ]}
               withAsterisk
               stickyToolbar

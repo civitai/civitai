@@ -63,7 +63,6 @@ import {
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
-import { createProfanityFilter } from '~/libs/profanity-simple';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
@@ -4007,20 +4006,15 @@ export const upsertModel = async (
   // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
   let nsfwBeforeProfanity: boolean | undefined;
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
-    // Check model name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
-    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const evaluation = profanityFilter.evaluateContent(textToCheck);
+    const evaluation = evaluateAutoNsfw({
+      name: data.name,
+      description: data.description,
+      alreadyNsfw: !!data.nsfw,
+      lockedProperties: storedLockedProperties,
+    });
 
-    if (evaluation.shouldMarkNSFW && !data.nsfw) {
-      meta = {
-        ...(meta ?? {}),
-        profanityMatches: evaluation.matchedWords,
-        profanityEvaluation: {
-          reason: evaluation.reason,
-          metrics: evaluation.metrics,
-        },
-      };
+    if (evaluation) {
+      meta = { ...(meta ?? {}), ...evaluation.metaPatch };
       profanityDetected = true;
       // A stored nsfw lock is a moderator's call (minor-flagging sets it false), and a minor, POI,
       // SFW-only or Private model stays SFW: keep the detection for review, but never mark nsfw over them.
@@ -4028,7 +4022,13 @@ export const upsertModel = async (
         nsfwBeforeProfanity = data.nsfw;
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
-        meta = { ...meta, systemNsfwLock: systemNsfwLockMarker('profanity-filter') };
+        meta = {
+          ...meta,
+          systemNsfwLock: {
+            ...systemNsfwLockMarker('profanity-filter'),
+            ...evaluation.attribution,
+          },
+        };
         profanityAutoNsfw = true;
       }
     }

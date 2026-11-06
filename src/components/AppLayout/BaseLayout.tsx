@@ -8,6 +8,7 @@ import {
   useGenerationSidebarState,
 } from '~/components/ImageGeneration/GenerationSidebar';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { OfflineFallbackRegistration } from '~/components/Notifications/OfflineFallbackRegistration';
 import { PushOptInPrompt } from '~/components/Notifications/PushOptInPrompt';
 import { PushRegistrationManager } from '~/components/Notifications/PushRegistrationManager';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
@@ -41,6 +42,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
     <>
       <MetaPWA />
       <PushRegistrationManager />
+      <OfflineFallbackRegistration />
       <PushOptInPrompt blocked={!!isBanned || shouldOnboard} />
       {showSidebar && !!currentUser && features?.remixApps && <RemixTrayMount />}
       <div className="flex flex-1 overflow-hidden">
