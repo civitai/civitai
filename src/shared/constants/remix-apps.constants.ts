@@ -35,7 +35,7 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     output: 'image',
     engine: DEFAULT_ENGINE,
     prompt:
-      "Turn this image into a realistic photograph, keeping the subject and composition. Don't add any text or lettering.",
+      "Turn this image into a live-action photograph of the real person (or the real animal or object) shown, in the same outfit, pose and setting, as if shot on a DSLR in natural light: real skin, hair, fabric and materials, and real surroundings. Nothing may look drawn, painted or rendered, with no line art, no cel shading and no glossy anime eyes. Keep the pose, outfit and composition. Don't add any text or lettering.",
     params: { aspectRatio: 'source', quantity: 1 },
   },
   {
