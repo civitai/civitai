@@ -36,7 +36,8 @@ describe('the shared article link page', () => {
       redirect: { destination: `/articles/shared/${ARTICLE}`, permanent: false },
     });
     const [cookie] = headers.get('set-cookie') as string[];
-    expect(cookie).toMatch(new RegExp(`^civ-article-share-${ARTICLE}=${TOKEN};`));
+    expect(cookie).toMatch(new RegExp(`^__Host-civ-article-share-${ARTICLE}=${TOKEN};`));
+    expect(cookie).toContain('Secure');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('Max-Age=3600');
   });

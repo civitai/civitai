@@ -136,7 +136,8 @@ export const articleRouter = router({
     .input(openShareLinkSchema)
     .use(rateLimit(articleShareTokenRateLimits, undefined, { sharedKey: 'article:share-token' }))
     .query(({ input, ctx }) => {
-      if (ctx.cache) ctx.cache.skip = true;
+      // The token is in this query's input: never let a cache keep the answer.
+      if (ctx.cache) Object.assign(ctx.cache, { skip: true, edgeTTL: 0, browserTTL: 0 });
       return openArticleShareLink(input.shareToken);
     }),
   // The token arrives in its HttpOnly cookie, never in the input. A mutation, so no cache keeps it.

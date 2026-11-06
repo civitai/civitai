@@ -333,8 +333,8 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
   it('onError: an article share token is redacted, key kept', async () => {
     await h.options?.onError?.({
       error: new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }),
-      type: 'mutation',
-      path: 'article.getShared',
+      type: 'query',
+      path: 'article.openShareLink',
       input: { shareToken: TOKEN },
       ctx: {},
       req: request(2),

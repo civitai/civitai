@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
+import { isDev } from '~/env/other';
 import type { dbWrite } from '~/server/db/client';
 import { getResourceIdsWithActiveAccessTokens } from '~/server/services/access-token.service';
 import { isShareableArticleStatus } from '~/server/services/text-scan/public-content';
@@ -30,5 +31,9 @@ export function sharedArticleTextHash({
     .digest('hex');
 }
 
-/** One cookie per article, so opening a second link keeps the first. */
-export const articleShareCookieName = (articleId: number) => `civ-article-share-${articleId}`;
+/**
+ * One cookie per article, so opening a second link keeps the first. `__Host-` (Secure, Path=/, no
+ * Domain) stops a subdomain from setting it; plain http in development cannot carry the prefix.
+ */
+export const articleShareCookieName = (articleId: number) =>
+  `${isDev ? '' : '__Host-'}civ-article-share-${articleId}`;

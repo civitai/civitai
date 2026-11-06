@@ -101,45 +101,6 @@ describe('saving a draft that has an active share link', () => {
     });
   });
 
-  it('checks again when the text changed while its check was being sent', async () => {
-    checkRecord(true);
-    const draft = (content: string) => ({
-      userId: AUTHOR,
-      title: 'Title',
-      content,
-      coverId: null,
-      status: ArticleStatus.Draft,
-      scheduledAt: null,
-    });
-    dbMock.dbWrite.article.findUnique
-      .mockResolvedValueOnce(draft('<p>Old body</p>') as never) // the change's own read
-      .mockResolvedValueOnce(draft('<p>Old body</p>') as never) // the read under the lock
-      .mockResolvedValueOnce(draft('<p>New body</p>') as never) // text sent for the check
-      .mockResolvedValueOnce(draft('<p>Newer body</p>') as never) // a later save landed
-      .mockResolvedValue(draft('<p>Newer body</p>') as never);
-    await rewrite();
-    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(2);
-    expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('withdraws every link when the text never holds still for a check', async () => {
-    checkRecord(true);
-    let n = 0;
-    dbMock.dbWrite.article.findUnique.mockImplementation((async () => ({
-      userId: AUTHOR,
-      title: 'Title',
-      content: `<p>Body ${n++}</p>`,
-      coverId: null,
-      status: ArticleStatus.Draft,
-      scheduledAt: null,
-    })) as never);
-    await rewrite();
-    expect(vi.mocked(submitTextModerationOrScan).mock.calls.length).toBeLessThanOrEqual(3);
-    expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ resourceId: ARTICLE }) })
-    );
-  });
-
   it('leaves the verdict alone when its guarded write lands on nothing', async () => {
     checkRecord(true);
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
@@ -151,6 +112,22 @@ describe('saving a draft that has an active share link', () => {
     });
     expect(applied).toBe(false);
     expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('holds the share lock from reading the text until the check is recorded', async () => {
+    checkRecord(true);
+    await rewrite();
+    const locks = dbMock.dbWrite.$executeRaw.mock.calls
+      .map(([strings, ...values], i) => ({
+        sql: Prisma.sql(strings as TemplateStringsArray, ...values).sql,
+        order: dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[i],
+      }))
+      .filter(({ sql }) => sql.includes('pg_advisory_xact_lock'));
+    const submitAt = vi.mocked(submitTextModerationOrScan).mock.invocationCallOrder[0];
+    const recordAt = dbMock.dbWrite.articleShareCheck.upsert.mock.invocationCallOrder[0];
+    // The last lock before the submit is the check's own, and the record follows the submit.
+    expect(locks.filter(({ order }) => order < submitAt).length).toBeGreaterThanOrEqual(2);
+    expect(recordAt).toBeGreaterThan(submitAt);
   });
 
   it('keeps its verdict and links when a save leaves the text as it was', async () => {
