@@ -1004,25 +1004,18 @@ jobs:
     if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1, QUARANTINE ON SHARD 2 ──
     #
-    # Measured before the change, 22 green PR runs of the unsharded job, 2026-11-06, from the
-    # Actions jobs endpoint (medians):
-    #
-    #   Component tests step   ~665s   <- variable, scales with 1/shards
-    #   Geometry tests step    ~107s   <- not sharded; rides on shard 1
-    #   setup (job, checkout, pnpm, node, install, Playwright cache + Chromium)
-    #                           ~95s   <- fixed overhead, paid by EVERY shard
-    #   job total              ~870s
-    #
-    # So the slowest shard is ~95 + 665/N + 107:  N=2 -> ~535s, N=3 -> ~425s, N=4 -> ~370s.
-    # 3, not 4: the fourth shard saves under a minute of wall clock while adding another ~95s
-    # of fixed overhead and one more slot of the plan's org-wide concurrent-job limit (see the
-    # `unit` job's "WHY 4 AND NOT MORE" for that trade). Geometry and the quarantine run are
-    # put on DIFFERENT shards so neither stacks on the other; shard 3 carries `component` only.
+    # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
+    # EVERY shard, and geometry rides on shard 1. 3, not 4: a fourth shard saves under a minute
+    # of wall clock while adding another setup and one more slot of the plan's org-wide
+    # concurrent-job limit (see the `unit` job's "WHY 4 AND NOT MORE" for that trade). The
+    # measurements behind the choice are in the PR that introduced the sharding. Geometry and
+    # the quarantine run are put on DIFFERENT shards so neither stacks on the other; shard 3
+    # carries `component` only.
     #
     # `--shard` is not cost-aware: it splits by FILE COUNT, so READ THE THREE DURATIONS after
     # any change to this matrix or to the suite's heaviest files.
     #
-    # Every test still runs exactly once and is accounted for: each shard runs the zero check
+    # Every test file is still accounted for: each shard runs the zero check
     # on its own report, and the `component-ledger` job below merges the three reports, fails
     # on a missing shard, and runs the full ledger (zero check,
     # on-disk file ledger, floor) on the union — the same gate the unsharded run had.
@@ -1042,7 +1035,7 @@ jobs:
     # it, and every job a run starts queues someone else's. Every suite step carries its own
     # selector (`only: component` runs component + quarantine, `only: geometry` runs geometry),
     # and every suite after the first is `!cancelled()`, so one red suite never hides the others.
-    # `component` itself is now split across a 3-way matrix (see `strategy` below); geometry and
+    # `component` itself is now split across a 3-way matrix (see `strategy` above); geometry and
     # the quarantine run still share a shard's setup rather than taking a job of their own.
     #
     # 🔴 THE ONLY JOB IN THIS WORKFLOW THAT INSTALLS A BROWSER, AND THAT IS ALIGNED WITH THE
@@ -1062,10 +1055,9 @@ jobs:
     # is the PR's. (`main` has no required checks; this cannot block a merge, only
     # show red on it.) There is no job-level `continue-on-error`: report-only is per step.
     #
-    # Per shard. 25, not 35/3: the fixed overhead does not shard, and the Chromium install
-    # alone has taken 550-720s on a loaded runner (two of the 26 runs measured above). Re-read
-    # the step durations before raising it; if one shard is near the limit, raise the shard
-    # count rather than this.
+    # Per shard. 25, not 35/3: setup does not shard, and the Chromium install alone can take
+    # over 10 minutes on a loaded runner. If a shard nears the limit, raise the shard count
+    # rather than this.
     timeout-minutes: 25
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.
@@ -1394,7 +1386,7 @@ jobs:
   # nothing here blocks a merge either way). It is red when ANY shard job did not succeed
   # (geometry's report-only `continue-on-error` already turns its own red into a shard
   # success on PRs, so that stays report-only here too), and when the merged reports fail
-  # the full ledger: a missing shard, a file that ran in two shards, a `*.browser.test.tsx`
+  # the full ledger: a missing shard, a `*.browser.test.tsx`
   # on disk that no shard ran, zero executed, or fewer than the floor. Those are exactly the
   # checks the unsharded `pnpm run test:component` gate ran, applied to the union.
   #
@@ -1424,7 +1416,7 @@ jobs:
 
       # Both checks always run, so a missing shard and a missing file are both named; the
       # step fails if either did. The ledger reads the merged report written even on failure.
-      - name: Assert every component test ran exactly once
+      - name: Assert every component test file ran
         run: |
           rc=0
           node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/component-reports" 3 "$RUNNER_TEMP/component-merged.json" || rc=1

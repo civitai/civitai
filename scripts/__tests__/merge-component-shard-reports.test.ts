@@ -10,12 +10,8 @@ import {
 } from '../ci/merge-component-shard-reports.mjs';
 
 /**
- * Tests for the merge step of the sharded browser `component` suite. Each case kills one
- * mutation of the merge: a missing shard treated as nothing-to-merge, a shard's results dropped
- * from the merged report, or the failure counts not summed.
- *
- * Fixture counts are pairwise distinct (3, 5 and 7 assertions; failure counts 1, 2 and 4), so a
- * merge that keeps only one shard, or sums the wrong field, cannot land on the expected value.
+ * Fixture counts are pairwise distinct, and the failed-suite and failed-test totals differ
+ * (7 vs 14), so a merge that keeps one shard or sums the wrong field cannot match.
  */
 function file(name: string, statuses: string[], status = 'passed') {
   return { name, status, assertionResults: statuses.map((s) => ({ status: s })) };
@@ -42,7 +38,7 @@ const S3 = report(
     file('/r/src/d.browser.test.tsx', ['passed', 'passed', 'passed', 'passed']),
   ],
   4,
-  1
+  8
 );
 
 describe('mergeShardReports', () => {
@@ -63,7 +59,7 @@ describe('mergeShardReports', () => {
       '/r/src/d.browser.test.tsx',
     ]);
     expect(merged.numFailedTestSuites).toBe(7);
-    expect(merged.numFailedTests).toBe(7);
+    expect(merged.numFailedTests).toBe(14);
     expect(merged.numTotalTests).toBe(15);
   });
 
