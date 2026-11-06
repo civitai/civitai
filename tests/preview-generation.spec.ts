@@ -1,6 +1,14 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import {
+  ecosystemById,
+  getEcosystemGroup,
+  getEcosystemSetting,
+} from '~/shared/constants/basemodel.constants';
+import { getEcosystemsForWorkflow } from '~/shared/generation/config/workflows';
+import { rulesToStates, type GateRule } from '~/shared/generation/gates';
 import { storageStatePath } from './preview-fixtures';
 import { retryFlaky } from './preview-retry';
+import { trpcQuery } from './preview-trpc';
 
 /**
  * Generation cost-quote e2e for a deployed PR preview.
@@ -10,7 +18,9 @@ import { retryFlaky } from './preview-retry';
  * client actually fires the tRPC QUERY `orchestrator.whatIfFromGraph` and gets a
  * numeric Buzz cost back. whatIf is a pure price quote (no Buzz balance needed),
  * so it fires on-load once a model+workflow is selected — the default form
- * preselects a model, so we PREFER the on-load path (no interaction).
+ * preselects a model, so we PREFER the on-load path (no interaction). A generation
+ * gate rule can disable the preselected ecosystem, though; then the test picks an
+ * ecosystem the live gate config leaves open (see `quoteableEcosystems`).
  *
  * Runs only under playwright.preview.config.ts (needs PREVIEW_URL + minted
  * storage states). Cost source of truth: the whatIf payload
@@ -140,6 +150,127 @@ test.describe('generation cost quote (gold)', () => {
     return messages;
   }
 
+  // The workflow the form opens on, and the one the quote is taken for.
+  const QUOTE_WORKFLOW = 'txt2img';
+
+  /** An ecosystem the gold user may quote on, and the name its picker entry shows. */
+  type QuoteEcosystem = { key: string; pickerName: string };
+
+  /**
+   * The txt2img ecosystems the gold user can use RIGHT NOW, per the live gate config.
+   *
+   * Why the test chooses at all: moderators can gate ecosystems off for everyone else
+   * (generation gate rules), and such a rule can disable the ecosystem the form
+   * preselects. The product deliberately does NOT switch a gated selection to another
+   * ecosystem behind the user's back — it stays selected and the form says it is
+   * unavailable — so a test that only takes the default can never get a quote while
+   * the default is gated. That is the test's problem, not the product's, so the test
+   * reads the same config the form does and picks an ecosystem that is open.
+   *
+   * `getGenerationConfig` already narrows the rules to the ones that gate THIS user
+   * (`applicableRulesFor`, server side); `rulesToStates` is what the form graph folds
+   * them with, and drops `experimental` rules (they mark an item, they do not gate it).
+   * Requires a default model so the form has a checkpoint to price once it switches.
+   * Standalone ecosystems come first: a picker GROUP entry resolves to the group's
+   * last-used member, which on this page can be the gated one we are leaving.
+   */
+  async function quoteableEcosystems(page: Page): Promise<QuoteEcosystem[]> {
+    const config = await trpcQuery<{
+      gateRules?: GateRule[];
+      selfHostedDisabledEcosystems?: string[];
+    }>(page.request, 'generation.getGenerationConfig');
+    const gateRules = config?.gateRules;
+    if (!Array.isArray(gateRules)) {
+      throw new Error('generation.getGenerationConfig returned no gateRules array');
+    }
+    const states = rulesToStates(gateRules);
+    const workflowGate = states.workflows.get(QUOTE_WORKFLOW);
+    if (workflowGate) {
+      throw new Error(
+        `The ${QUOTE_WORKFLOW} workflow is gated (${workflowGate.state}) for the gold user, ` +
+          'so no ecosystem can quote a cost.'
+      );
+    }
+    const gated = new Set([
+      ...(config?.selfHostedDisabledEcosystems ?? []),
+      ...states.ecosystems.keys(),
+    ]);
+
+    const standalone: QuoteEcosystem[] = [];
+    const grouped: QuoteEcosystem[] = [];
+    for (const id of getEcosystemsForWorkflow(QUOTE_WORKFLOW)) {
+      const ecosystem = ecosystemById.get(id);
+      if (!ecosystem || gated.has(ecosystem.key)) continue;
+      const defaultVersionId = getEcosystemSetting(id, 'model')?.id;
+      if (!defaultVersionId || states.modelVersionIds.has(defaultVersionId)) continue;
+      const group = getEcosystemGroup(id);
+      // Clicking a group entry lands on its default member, so only that one is reachable.
+      if (group && group.defaultEcosystemId !== id) continue;
+      if (group) grouped.push({ key: ecosystem.key, pickerName: group.displayName });
+      else standalone.push({ key: ecosystem.key, pickerName: ecosystem.displayName });
+    }
+
+    const available = [...standalone, ...grouped];
+    if (!available.length) {
+      throw new Error(
+        `No ${QUOTE_WORKFLOW} ecosystem is available to the gold user: the live gate config ` +
+          `disables ${gated.size} ecosystem(s) (${[...gated].sort().join(', ')}) and leaves ` +
+          'none with a default model to quote on.'
+      );
+    }
+    return available;
+  }
+
+  /** The visible ecosystem trigger of the generator form ("Ecosystem: X. Change ecosystem"). */
+  const ecosystemTrigger = (page: Page, name?: string) =>
+    page
+      .getByRole(
+        'button',
+        name
+          ? { name: `Ecosystem: ${name}. Change ecosystem`, exact: true }
+          : { name: /^Ecosystem: .*\. Change ecosystem$/ }
+      )
+      .filter({ visible: true })
+      .first();
+
+  /**
+   * Make `target` the form's ecosystem the way a user does: open the picker, search,
+   * click the entry. The trigger's own label is then the proof the selection took.
+   */
+  async function selectEcosystem(page: Page, target: QuoteEcosystem) {
+    await ecosystemTrigger(page).click();
+    await page
+      .getByPlaceholder('Search ecosystems...')
+      .filter({ visible: true })
+      .first()
+      .fill(target.pickerName);
+    await page
+      .getByRole('button')
+      .filter({ has: page.getByText(target.pickerName, { exact: true }) })
+      .filter({ hasNotText: 'Change' })
+      .filter({ visible: true })
+      .first()
+      .click();
+    await expect(
+      ecosystemTrigger(page, target.pickerName),
+      `ecosystem picker switched the form to ${target.key}`
+    ).toBeVisible({ timeout: 15_000 });
+  }
+
+  /** One whatIf the route handler saw: what was asked, and the buffered answer. */
+  type Quote = { request: string; status: number; body: string };
+
+  /** The request's input as text, wherever the link put it (GET query or POST body). */
+  function requestText(url: string, postData: string | null): string {
+    let decoded = url;
+    try {
+      decoded = decodeURIComponent(url);
+    } catch {
+      // Malformed escape: match against the raw URL instead.
+    }
+    return `${decoded}\n${postData ?? ''}`;
+  }
+
   // 1. Primary, network-based: whatIf fires on /generate load and quotes a cost.
   test('whatIfFromGraph fires on /generate and returns a numeric cost', async ({ page }) => {
     // /generate is the heaviest SSR page; on a cold/contended single-replica preview
@@ -147,8 +278,9 @@ test.describe('generation cost quote (gold)', () => {
     // retries fire within seconds — too fast to outlast a load spike. Retry the whole
     // navigate+wait with backoff so a transient spike is ridden out (the assertion
     // must still pass; a sustained failure surfaces after the attempts). Extend the
-    // per-test timeout to fit ~2 attempts of the 45s wait + navigation + backoff.
-    test.setTimeout(200_000);
+    // per-test timeout to fit ~2 attempts of the 45s form wait + an ecosystem switch +
+    // the 45s whatIf wait + navigation + backoff.
+    test.setTimeout(260_000);
 
     // 🔴 Buffer the whatIf body OURSELVES instead of reading `response.text()` later.
     // Under `httpBatchStreamLink` the app reads the whole jsonl stream (cost included)
@@ -158,35 +290,39 @@ test.describe('generation cost quote (gold)', () => {
     // given identifier" — measured on 4 of 8 /generate loads, i.e. a coin-flip flake
     // that has nothing to do with the product. Routing the request lets Playwright do
     // the fetch and hold the complete body, removing the race entirely.
-    let capturedBody: string | null = null;
+    //
+    // Every whatIf is kept, not just the first 200: a batched response is HTTP 200 even
+    // when the whatIf inside it was refused, and the form can quote once on its initial
+    // selection before the gate config has loaded. Which one counts is decided below by
+    // the ecosystem the request asked about.
+    const quotes: Quote[] = [];
     await page.route(
       (url) => isWhatIfResponse(url.toString()),
       async (route) => {
         const routed = await route.fetch();
         const text = await routed.text();
-        if (routed.status() === 200 && capturedBody === null) capturedBody = text;
+        const request = route.request();
+        quotes.push({
+          request: requestText(request.url(), request.postData()),
+          status: routed.status(),
+          body: text,
+        });
         await route.fulfill({ response: routed, body: text });
       }
     );
+
+    // Read the live gate config before loading the form; a gated workflow or no open
+    // ecosystem fails here, by name, instead of as a whatIf timeout.
+    const available = await quoteableEcosystems(page);
 
     // 🔴 Unroute before the test ends. /generate fires whatIf more than once, so a later
     // whatIf can still be inside the handler's `route.fetch()` when the wait below
     // resolves, and teardown closing the page under it fails the test. `ignoreErrors`
     // stops waiting for in-flight handlers and swallows what they throw once unrouted.
-    const { body } = await retryFlaky(
+    const { body, target } = await retryFlaky(
       'whatIf on /generate',
       async () => {
-        capturedBody = null;
-        // Arm the response listener BEFORE navigating so an on-load fire isn't missed.
-        // 45s: whatIf is the heaviest client-side flow — page load + hydrate + form
-        // init + resource resolve + orchestrator round-trip must complete before it
-        // fires. The orchestrator itself is fast (~57ms), so when healthy this never
-        // approaches 45s — the budget is for a cold-pod slow window.
-        const whatIfResponse = page.waitForResponse(
-          (r) => isWhatIfResponse(r.url()) && r.status() === 200,
-          { timeout: 45_000 }
-        );
-
+        quotes.length = 0;
         const resp = await page.goto('/generate', { waitUntil: 'domcontentloaded' });
         expect(resp?.status(), 'HTTP status for /generate').toBeLessThan(400);
 
@@ -196,35 +332,63 @@ test.describe('generation cost quote (gold)', () => {
           '/preview-restricted'
         );
 
-        // NOTE: relies on the default /generate form preselecting a valid model+workflow
-        // so whatIf fires without interaction. If a future default ships with no model
-        // preselected this will time out — see the UI-fallback note below.
-        await whatIfResponse;
-        // Read the body the route handler buffered, NOT `response.text()` (see above).
-        // Raw text, not `.json()`: under batching the body is newline-delimited JSON
-        // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
-        // A plain null-check rather than `expect(...).not.toBeNull()` plus a cast.
-        // `capturedBody` is assigned from inside the `page.route` closure, which
-        // TS control-flow analysis cannot see, so after the reset above it narrows
-        // to `null` here and `as string` is an illegal null->string conversion.
-        // Checking explicitly narrows it honestly, needs no cast, and fails with a
-        // message that says which half broke: the response was seen, the body wasn't.
-        if (capturedBody === null) {
-          throw new Error(
-            'whatIf response was observed but its body was not captured by the route handler'
+        // Keep the on-load path (no interaction) when the preselected ecosystem is open
+        // to gold; otherwise pick an open one in the picker, as a user would. The form
+        // never switches a gated selection by itself — on purpose — so the test must.
+        // 45s: page load + hydrate + form init is the slow part on a cold preview pod.
+        const trigger = ecosystemTrigger(page);
+        await expect(trigger, 'generator form shows its ecosystem picker').toBeVisible({
+          timeout: 45_000,
+        });
+        const preselectedName = (await trigger.getAttribute('aria-label'))?.match(
+          /^Ecosystem: (.*)\. Change ecosystem$/
+        )?.[1];
+        const preselected = available.find((e) => e.pickerName === preselectedName);
+        const target = preselected ?? available[0];
+        if (!preselected) await selectEcosystem(page, target);
+        console.log(
+          `[cost-quote] preselected "${preselectedName}" is ${
+            preselected ? 'open to gold; quoting on load' : 'not open to gold; switched'
+          } -> ${target.key} (${available.length} open txt2img ecosystems)`
+        );
+
+        // The quote that counts is the one the form asked for `target`. 45s: whatIf is
+        // the heaviest client-side flow — resource resolve + orchestrator round-trip must
+        // complete before it fires. The orchestrator itself is fast (~57ms), so when
+        // healthy this never approaches 45s — the budget is for a cold-pod slow window.
+        const asked = `"ecosystem":"${target.key}"`;
+        const deadline = Date.now() + 45_000;
+        for (;;) {
+          // Read the body the route handler buffered, NOT `response.text()` (see above).
+          // Raw text, not `.json()`: under batching the body is newline-delimited JSON
+          // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
+          const hit = quotes.find(
+            (q) =>
+              q.request.includes(asked) && q.status === 200 && extractCostTotal(q.body) !== null
           );
+          if (hit) return { body: hit.body, target };
+          if (Date.now() > deadline) {
+            const seen = quotes.map((q) => ({
+              forTarget: q.request.includes(asked),
+              status: q.status,
+              errors: errorMessages(q.body),
+            }));
+            throw new Error(
+              `No whatIfFromGraph quote with a cost for ${target.key} within 45s; ` +
+                `whatIf responses seen: ${JSON.stringify(seen)}`
+            );
+          }
+          await page.waitForTimeout(250);
         }
-        return { body: capturedBody };
       },
       { attempts: 2 }
     ).finally(() => page.unrouteAll({ behavior: 'ignoreErrors' }));
 
     const total = extractCostTotal(body);
+    const errors = JSON.stringify(errorMessages(body));
     expect(
       total,
-      `cost.total parsed from whatIfFromGraph response (errors in it: ${JSON.stringify(
-        errorMessages(body)
-      )})`
+      `cost.total parsed from the ${target.key} whatIfFromGraph response (errors in it: ${errors})`
     ).not.toBeNull();
     expect(typeof total, 'cost.total is numeric').toBe('number');
     expect(total as number, 'cost.total is a non-negative quote').toBeGreaterThanOrEqual(0);
