@@ -100,14 +100,29 @@ describe('OfflineFallbackRegistration', () => {
     expect(register).not.toHaveBeenCalled();
   });
 
-  it('a rejected register() is swallowed', async () => {
-    const rejected = Promise.reject(new Error('SecurityError'));
-    const handled = vi.spyOn(rejected, 'catch');
-    register.mockReturnValue(rejected);
-    expect(() => mount()).not.toThrow();
-    // A rejection handler must be attached, or the browser logs an unhandled rejection per visit.
-    expect(handled).toHaveBeenCalledTimes(1);
-    await expect(rejected).rejects.toThrow('SecurityError');
+  it('a rejected register() is swallowed: a rejection handler is attached and it does not rethrow', () => {
+    // A thenable records whichever form attaches the handler (.catch or .then(_, onRejected)).
+    let onRejected: ((reason: unknown) => unknown) | undefined;
+    const attach = (_ok?: unknown, fail?: (reason: unknown) => unknown) => {
+      onRejected = fail;
+      return thenable;
+    };
+    const thenable = {
+      then: attach,
+      catch: (fail: (reason: unknown) => unknown) => attach(0, fail),
+    };
+    register.mockReturnValue(thenable);
+    mount();
+    expect(onRejected).toBeTypeOf('function');
+    expect(() => onRejected!(new Error('SecurityError'))).not.toThrow();
+  });
+
+  it('production, document interactive but not complete: still waits for load', () => {
+    setReadyState('interactive');
+    mount();
+    expect(register).not.toHaveBeenCalled();
+    act(() => void window.dispatchEvent(new Event('load')));
+    expect(register).toHaveBeenCalledTimes(1);
   });
 
   it('a browser without serviceWorker: mounts and does nothing', () => {
