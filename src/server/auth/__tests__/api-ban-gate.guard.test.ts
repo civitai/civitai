@@ -13,7 +13,8 @@ import { describe, expect, it } from 'vitest';
 const RAW_SESSION_ALLOWED: Record<string, string> = {
   'auth/session.ts': 'the client reads the banned session to show the banned page',
   'auth/post-login.ts': 'a banned user signing in must land on the banned page',
-  'auth/linked.ts': 'account-link sync after the OAuth redirect',
+  'auth/linked.ts': "syncs the user's Discord roles after an account is linked",
+  'page-data/images/[imageId].ts': 'page bootstrap for the image page; it renders the banned page',
   'application-error.ts': 'client error reporting',
   'admin/creator-shop-fees.ts': 'webhook-token route; the session only labels the audit actor',
 };

@@ -8,7 +8,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
  * The ban gate for API routes, run through the real `getServerAuthSession` and the real bearer-token
  * resolver. Only the layer below them is faked: `session-client` (the cookie session) and the API-key row.
  *
- * Two modes, both decided by the Moderation Lead:
+ * Two modes:
  *  - routes that act as the user (AuthedEndpoint, MixedAuthEndpoint, uploads) answer a banned cookie
  *    session with 403;
  *  - public routes that only personalize their answer treat it as no session at all ("a ban means you
@@ -124,6 +124,12 @@ describe('MixedAuthEndpoint', () => {
     const result = await call(route, { headers: { cookie: 'x' } });
     expect(result).toEqual({ status: 403, body: { error: BANNED_ACCOUNT_MESSAGE } });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('serves an active API key as that user', async () => {
+    getSessionUserById.mockResolvedValue(activeUser);
+    const result = await call(route, { headers: { authorization: 'Bearer k' } });
+    expect(result).toEqual({ status: 200, body: { userId: USER_ID } });
   });
 
   it('serves a banned API key as anonymous, not 403: the gate leaves the key path alone', async () => {

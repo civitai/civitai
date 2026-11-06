@@ -392,7 +392,7 @@ describe('image-upload relay', () => {
 
     await handler(req, res);
 
-    expect(res.statusCode).toBe(401);
+    expect(res.statusCode).toBe(403);
     expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
   });
 

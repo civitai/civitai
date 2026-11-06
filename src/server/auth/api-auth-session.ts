@@ -3,6 +3,11 @@ import type { Session } from '~/types/session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { BANNED_ACCOUNT_MESSAGE } from '~/server/utils/errorHandling';
 
+type ApiSessionContext = {
+  req: Parameters<typeof getServerAuthSession>[0]['req'];
+  res: NextApiResponse;
+};
+
 /**
  * How an API route treats a session whose user is banned:
  * - `refuse`: answer 403 and return `false`. For routes that act as the user.
@@ -11,11 +16,6 @@ import { BANNED_ACCOUNT_MESSAGE } from '~/server/utils/errorHandling';
  *
  * Bearer/API-key sessions never reach this with a banned user (`getSessionFromBearerToken` drops them).
  */
-type ApiSessionContext = {
-  req: Parameters<typeof getServerAuthSession>[0]['req'];
-  res: NextApiResponse;
-};
-
 export type BannedSessionMode = 'refuse' | 'anonymous';
 
 /**

@@ -120,7 +120,7 @@ export default PublicEndpoint(
       // against a ModelFile with the same ID, serving the wrong file content.
       const { url } = await getDownloadUrl(file.url, file.name);
 
-      const tracker = new Tracker(req, res);
+      const tracker = new Tracker(req, res, session);
       tracker
         .file({ type: 'Download', entityId: file.entityId, entityType: file.entityType })
         .catch(handleLogError);

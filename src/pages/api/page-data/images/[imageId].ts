@@ -16,7 +16,7 @@ import {
   getFeatureFlagsAsync,
   getFliptGatedEligibility,
 } from '~/server/services/feature-flags.service';
-import { getApiAuthSession } from '~/server/auth/api-auth-session';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import {
   bootstrapSession,
   resolveSettingsBootstrapSeeds,
@@ -97,9 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // (`resolveSettingsBootstrapForRender`), so the session the procedures below see is the one
     // `_app` seeds a render's `req.session` with — dates as ISO strings, not `Date`s.
     const session = jsonRoundTrip(
-      bootstrapSession(
-        await getApiAuthSession({ req: sessionRequest, res }, { whenBanned: 'anonymous' })
-      )
+      bootstrapSession(await getServerAuthSession({ req: sessionRequest, res }))
     );
 
     // The same evaluation as both `_app` (which passes the request's own host) and

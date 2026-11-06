@@ -312,7 +312,7 @@ export default PublicEndpoint(
         // An unpublished version is only reachable by its owner and by internal services — the scanner
         // fetches the file minutes after upload, which was landing a Download event and leaving every
         // draft showing 1 download before it went live.
-        const tracker = new Tracker(req, res);
+        const tracker = new Tracker(req, res, session);
         if (fileResult.published && countsAsPublicDownload(session?.user))
           await tracker.modelVersionEvent({
             type: 'Download',
