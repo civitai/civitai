@@ -202,6 +202,7 @@ describe('updateUserProfile — custom showcase placement rows', () => {
 
     await updateUserProfile({
       userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
       profileSectionsSettings: [
         { key: 'custom:kept', enabled: true },
         { key: 'custom:ghost', enabled: true },
@@ -229,6 +230,7 @@ describe('updateUserProfile — custom placement rows without sections', () => {
     storeShowcase([]);
     await updateUserProfile({
       userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
       profileSectionsSettings: [
         { key: 'custom:any', enabled: true },
         { key: 'showcase', enabled: true },
