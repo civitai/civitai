@@ -40,7 +40,9 @@ export function publishedManifest(manifest: unknown): Record<string, unknown> {
 
 /**
  * JSON with object keys sorted and `undefined` properties dropped, so a hash names a value rather
- * than a layout. Its inputs are already JSON (parsed manifests and bodies, or values built here),
+ * than a layout. Array order is kept, because it is meaningful here (a document's claimed majors,
+ * a manifest's scopes, a served list), which is why `stableStringify` in
+ * `entity-change-helpers.ts`, which sorts arrays of primitives, is not used. Its inputs are already JSON (parsed manifests and bodies, or values built here),
  * so it does not check them. Not the strict `canonicalJson` of `block-quote-grant.service.ts`,
  * which refuses anything but plain JSON: that module loads the system Redis client and the
  * server env on import, which the pure modules here and fixture mode must not.

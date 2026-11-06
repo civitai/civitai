@@ -321,6 +321,20 @@ describe('🔴 an empty published stream reads incrementally', () => {
   });
 });
 
+describe('a poll with nothing new', () => {
+  // Invariant guard: true before the unchanged-state shortcut too; it pins that the shortcut
+  // keeps it so.
+  it('writes no state and reads no documents', async () => {
+    const { store, make } = setup();
+    const h = make([() => undefined, () => undefined, () => undefined]);
+    const { cursor } = await h.feed.snapshot(V2);
+    const before = store.puts();
+    expect(await h.drain(V2, cursor)).toEqual([]);
+    // The resume refreshes the state it read, once; the four polls after it write nothing.
+    expect(store.puts() - before).toBe(1);
+  });
+});
+
 describe('🔴 a mint re-sends documents whose claims grew, on the old major too', () => {
   it('the @v1 stream re-sends a document that now also claims @v2, with the same rev @v2 shows', async () => {
     const { world, make } = setup();

@@ -240,6 +240,11 @@ export function createDocFeed(opts: DocFeedOptions) {
     }
 
     const digest = familyDigest(family);
+    // Nothing written since, and the same schemas: the state is unchanged. Returning it as is
+    // skips rebuilding the served set (and `changes` skips the diff).
+    if (same && head === prev.seq && prev.family === digest) {
+      return { next: prev, entities: new Map() };
+    }
     const claims = claimer(family, digest);
     const entityOf = (d: FeedDocument): Entity | null => {
       const schemas = claims(d.data);
@@ -324,6 +329,10 @@ export function createDocFeed(opts: DocFeedOptions) {
       while (!signal.aborted) {
         const before = state;
         const { next, entities } = await guarded(() => advance(schema, before));
+        if (next === before) {
+          await opts.sleep(opts.pollMs, signal);
+          continue;
+        }
         const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
         const still = new Set(next.served.map(([urn]) => urn));
         const deletes = [...was.keys()]

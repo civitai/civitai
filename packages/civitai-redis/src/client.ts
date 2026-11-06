@@ -2917,14 +2917,13 @@ export const REDIS_SYS_KEYS = {
     JUDGING_SESSION: 'crucible:judging-session',
   },
   REGISTRY_ADAPTER: {
-    // The served set a registry cursor names — `system:registry-adapter:snapshot:${digest}`, JSON
-    // `{ schema, entries: [urn, rev][] }`, TTL refreshed on every resume. Content-addressed: a
-    // digest always holds the same value. Losing one only expires that cursor (the consumer
-    // re-snapshots), so eviction is safe.
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
+    // only expires that cursor (the consumer re-snapshots).
     SNAPSHOT: 'system:registry-adapter:snapshot',
     // The newest snapshot digests of one stream, newest first — list
-    // `system:registry-adapter:stream-states:${sha256(stream schema)}`. Digests that fall off it
-    // are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
     STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;

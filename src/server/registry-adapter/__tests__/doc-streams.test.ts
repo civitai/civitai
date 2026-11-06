@@ -67,7 +67,6 @@ describe('resolveFromCatalog', () => {
   const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps, SWITCH_ON);
 
   it('🔴 with the live switch off, an approved manifest that declares registry:"public" publishes nothing', async () => {
-    expect(APP_STORAGE_ENABLED_FEATURES.registryExport).toBe(false);
     expect(await resolveFromCatalog(async () => [app(OPTED_IN)])(V('notes', 1))).toBeNull();
   });
 

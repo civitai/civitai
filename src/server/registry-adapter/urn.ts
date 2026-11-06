@@ -21,7 +21,7 @@ export type UrnRef =
   | { kind: 'runtime'; name: string; major: number };
 
 // A segment never contains `:`, `/` or `@`, so every URN parses back unambiguously.
-// Bounded like the store's own names: a listing slug is at most 64 characters, a collection 32.
+// Bounded like the store's own names.
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const COLLECTION_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,64}$/;

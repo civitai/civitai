@@ -77,8 +77,9 @@ import {
  * consumer of the scope — both listing-service entry points, the three store tRPC
  * procs — keeps failing closed exactly as #4041 left them; this module is scoped to
  * the public catalog readers: the two REST handlers and the registry adapter
- * (`src/server/registry-adapter/catalog-source.live.ts`), which publishes the same
- * anonymous catalog to registries and so must stop when the kill switch is thrown.
+ * (`src/server/registry-adapter/catalog-source.live.ts`), which publishes the public catalog
+ * to registries (every rating, rating-tagged — not the anonymous REST rating gate) and so must
+ * stop when the kill switch is thrown.
  *
  * ⚠️ Honest consequence, stated rather than discovered later: while the grant is
  * active and the floor is `full`, a caller in the external-only cohort and an

@@ -16,8 +16,9 @@ const PAGE_SIZE = 50;
 
 export function liveCatalogReadDeps(): CatalogReadDeps {
   return {
-    // The adapter has no principal of its own, so it gets exactly what an anonymous caller of
-    // the public catalog gets, kill switch included.
+    // The adapter has no principal of its own: it takes the public catalog's SCOPE as an
+    // anonymous caller would, so the kill switch and visibility levels apply. Its RATING rule is
+    // deliberately different from the anonymous REST catalog's (below).
     resolveScope: () => resolvePublicAppsCatalogScope(undefined, 'registry-adapter'),
 
     async listPage(scope, cursor) {
@@ -32,8 +33,9 @@ export function liveCatalogReadDeps(): CatalogReadDeps {
       const { items, nextCursor } = await listAvailableListings(input, {
         scope,
         floor: 'public',
-        // Every content rating is published, and consumers filter: the mature gate is opened
-        // the way a mature-capable host opens it for a viewer whose level includes R and X.
+        // Every content rating is published, each entity tagged with its rating, and consumers
+        // filter. So the mature gate is opened the way a mature-capable host opens it for a viewer
+        // whose level includes R and X — unlike the anonymous REST catalog, which shows PG only.
         redCapable: true,
         viewerBrowsingLevel: allBrowsingLevelsFlag,
       });
