@@ -422,14 +422,12 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Image search on /search/images, the header and the quick search. It answers from the semantic
-  // search (the cluster search service over Qdrant), never the retired `images_v6` Meilisearch
-  // index: `withSemanticImageSearch` routes every images-index request. Same audience as
-  // `semanticImageSearch` until the tester rollout gives both a Flipt key.
+  // Image search on /search/images, the header and the quick search: the Images entry in the
+  // pickers and tabs, and the search itself (without it, /search/images redirects to models). It
+  // answers from the semantic search, never Meilisearch: `withSemanticImageSearch` routes every
+  // images-index request. Same audience as `semanticImageSearch` until the tester rollout gives
+  // both a Flipt key.
   imageSearch: { availability: ['mod'] },
-  // Whether the Images entry appears in the search pickers and tabs. Without it, /search/images
-  // redirects to /search/models.
-  imageSearchEntry: ['mod'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {

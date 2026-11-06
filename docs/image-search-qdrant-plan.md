@@ -109,8 +109,9 @@ text, its Qdrant pass-through for "more like this") instead of Qdrant and the or
   `techniques`, `createdAt`, `sortBy`), so old links keep working. Names resolve to ids on the
   server: tags by name, users by username, tools and techniques by name.
 - Keep "more like this" (`imageId`) and the thumbs feedback, while the page is behind the tester flag.
-- Feature flags: `imageSearch` and `imageSearchEntry` follow the new Flipt flag, so the Images
-  entry and the old maintenance paths switch together.
+- Feature flags: `imageSearch` gates the Images entry and the search itself; it follows the new
+  Flipt flag. (The old Meilisearch maintenance paths and the separate `imageSearchEntry` flag are
+  gone; the retired `images_v6` indexer is removed in a follow-up.)
 
 ## Order of work
 

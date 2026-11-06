@@ -71,8 +71,9 @@ shape, and every other index passes through to Meilisearch.
 - An empty query shows a prompt instead of results, and a request refined by a filter the index
   cannot apply yet (aspect ratio, tools, techniques) returns nothing. The sidebar offers browsing
   level, posted date, users, tags and base model.
-- `imageSearch` and `imageSearchEntry` gate these surfaces; both follow `semanticImageSearch`'s
-  audience.
+- `imageSearch` gates these surfaces: the Images entry in the pickers and tabs, and the search
+  itself (without it, /search/images redirects to /search/models). It follows
+  `semanticImageSearch`'s audience.
 
 ## Feedback and logging
 
