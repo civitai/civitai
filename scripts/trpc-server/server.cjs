@@ -18,6 +18,14 @@
  * Mode: `TRPC_SERVER_MODE=route` (the default) is the only one implemented. Anything else exits
  * non-zero at boot.
  *
+ * Profile: `STANDALONE_SERVER_PROFILE` picks WHICH pages it serves (`./served-pages.cjs`). `trpc`
+ * (the default, unset) is the fixed list above. `api` adds every pages-API route under `/api/v1/`
+ * and `/api/auth/`; for `/api/v1/`, which the proxy covers under Next, it applies the proxy's API
+ * policy (451 region block, default response headers, verified-crawler request header) before the
+ * route runs, through the one implementation the proxy and the tRPC route share. An unknown
+ * profile exits non-zero at boot, and so does `api` when instrumentation did not register that
+ * policy.
+ *
  * Boot order mirrors `server.js` + `next/dist/server/lib/start-server.js`:
  *   1. process env, chdir and the standalone config, exactly as the generated `server.js` sets them
  *   2. `require('next')`, which installs Next's require hooks
@@ -42,6 +50,18 @@ const MODE = process.env.TRPC_SERVER_MODE || 'route';
 if (MODE !== 'route') {
   console.error(
     `[trpc-server] TRPC_SERVER_MODE=${JSON.stringify(MODE)} is not implemented; only "route" is.`
+  );
+  process.exit(1);
+}
+
+/** Which pages to serve (see that file). Unset is the `trpc` profile, the list this server always served. */
+const served = require('./served-pages.cjs');
+const PROFILE = served.resolveProfile(process.env.STANDALONE_SERVER_PROFILE);
+if (!PROFILE) {
+  console.error(
+    `[trpc-server] STANDALONE_SERVER_PROFILE=${JSON.stringify(
+      process.env.STANDALONE_SERVER_PROFILE
+    )} is not a profile; expected one of ${served.PROFILES.join(', ')}.`
   );
   process.exit(1);
 }
@@ -107,8 +127,8 @@ const pagesManifest = JSON.parse(
   fs.readFileSync(path.join(distDir, 'server', 'pages-manifest.json'), 'utf8')
 );
 
-/** The only pages this server answers (see that file). Anything else is a 404. */
-const SERVED_PAGES = require('./served-pages.cjs');
+/** The only pages this server answers (see `./served-pages.cjs`). Anything else is a 404. */
+const SERVED_PAGES = served.servedPages(PROFILE, pagesManifest);
 for (const page of SERVED_PAGES) {
   if (!pagesManifest[page]) throw new Error(`[trpc-server] ${page} is not in pages-manifest.json`);
 }
@@ -116,6 +136,11 @@ for (const page of SERVED_PAGES) {
 const routing = compat.createRouting({ routesManifest, nextConfig });
 const matchPage = compat.createPageMatcher(SERVED_PAGES);
 const routeModules = new Map();
+/**
+ * `applyApiRequestPolicy(req, res)` from instrumentation (set at boot when a served page needs it):
+ * true when it has answered the request itself (the 451).
+ */
+let applyApiPolicy = null;
 const relativeProjectDir = path.relative(process.cwd(), dir);
 
 // --- request handling -----------------------------------------------------------------------------
@@ -142,6 +167,11 @@ async function handle(req, res) {
   if (matched.decodeError) return compat.sendBadRequest(res);
   compat.applyRoutingHeaders(res, routed.headers);
   if (matched.notFound) return compat.sendNotFound(res);
+
+  // What the proxy does to an API request under Next, for the pages it covers there. Under Next the
+  // proxy runs inside router-server, before base-server fills the `x-forwarded-*` headers below,
+  // so it runs before that here too: it reads the client IP from the headers the edge sent.
+  if (applyApiPolicy && served.needsApiPolicy(matched.page) && applyApiPolicy(req, res)) return;
 
   compat.fillForwardedHeaders(req, { hostname, port: listenPort });
   compat.stripInternalQuery(req);
@@ -213,7 +243,9 @@ server.on('listening', async () => {
   listenPort = typeof addr === 'object' && addr ? addr.port : listenPort;
   // start-server exports the bound port; the warmer self-requests on it.
   process.env.PORT = String(listenPort);
-  console.log(`[trpc-server] listening on ${hostname}:${listenPort} (mode ${MODE})`);
+  console.log(
+    `[trpc-server] listening on ${hostname}:${listenPort} (mode ${MODE}, profile ${PROFILE})`
+  );
 
   try {
     // --- 4. instrumentation.ts register() --------------------------------------------------------
@@ -221,6 +253,18 @@ server.on('listening', async () => {
     // it is memoised process-wide in this same module, so that later call is a no-op.
     await compat.ensureInstrumentationRegistered(dir, nextConfig.distDir || '.next');
     console.log('[trpc-server] instrumentation registered');
+
+    // The proxy's API policy, for a profile that serves pages the proxy covers under Next.
+    // Registered by instrumentation (`registerStandaloneApiPolicy`); its absence is a boot failure,
+    // never a silent pass-through.
+    if (SERVED_PAGES.some(served.needsApiPolicy)) {
+      applyApiPolicy = globalThis[Symbol.for(served.API_POLICY_GLOBAL_KEY)];
+      if (typeof applyApiPolicy !== 'function') {
+        throw new Error(
+          `[trpc-server] profile ${PROFILE} serves proxy-covered pages, but instrumentation registered no API policy`
+        );
+      }
+    }
 
     // --- 5. route modules -----------------------------------------------------------------------
     for (const page of SERVED_PAGES) {
@@ -232,7 +276,11 @@ server.on('listening', async () => {
       }
       routeModules.set(page, mod);
     }
-    console.log(`[trpc-server] ready: ${SERVED_PAGES.join(', ')}`);
+    console.log(
+      `[trpc-server] ready (profile ${PROFILE}, ${SERVED_PAGES.length} pages): ${SERVED_PAGES.join(
+        ', '
+      )}`
+    );
     markReady();
   } catch (err) {
     markFailed(err);

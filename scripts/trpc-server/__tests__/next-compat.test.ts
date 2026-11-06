@@ -180,6 +180,58 @@ describe('createPageMatcher with the image-delivery page', () => {
   });
 });
 
+// The `api` profile serves many dynamic pages, some of which can match the same path. Next tries
+// them in `getSortedRoutes` order; the list is given here in the WRONG order on purpose, so a
+// matcher that tried pages in list order would pick the catch-all.
+describe('createPageMatcher with overlapping dynamic pages', () => {
+  const match = compat.createPageMatcher([
+    '/api/t/[...rest]',
+    '/api/t/[id]',
+    '/api/t/fixed',
+    '/api/t/[id]/sub',
+  ]);
+
+  it('prefers a static page, then one dynamic segment, then a catch-all, as Next does', () => {
+    expect(match('/api/t/fixed')).toEqual({ page: '/api/t/fixed' });
+    expect(match('/api/t/1')).toEqual({ page: '/api/t/[id]' });
+    expect(match('/api/t/1/sub')).toEqual({ page: '/api/t/[id]/sub' });
+    expect(match('/api/t/1/2')).toEqual({ page: '/api/t/[...rest]' });
+  });
+});
+
+describe('createPageMatcher with real api-profile pages', () => {
+  const match = compat.createPageMatcher([
+    '/api/v1/content/[[...slug]]',
+    '/api/v1/models/[id]',
+    '/api/v1/models/com-face',
+    '/api/v1/model-versions/[id]',
+    '/api/v1/model-versions/by-hash/[hash]',
+    '/api/v1/model-versions/mini/[id]',
+    '/api/auth/oauth/[...path]',
+  ]);
+
+  it('routes each path to the page Next would', () => {
+    expect(match('/api/v1/models/com-face')).toEqual({ page: '/api/v1/models/com-face' });
+    expect(match('/api/v1/models/42')).toEqual({ page: '/api/v1/models/[id]' });
+    expect(match('/api/v1/model-versions/by-hash/ABC')).toEqual({
+      page: '/api/v1/model-versions/by-hash/[hash]',
+    });
+    expect(match('/api/v1/model-versions/mini/7')).toEqual({
+      page: '/api/v1/model-versions/mini/[id]',
+    });
+    expect(match('/api/v1/content')).toEqual({ page: '/api/v1/content/[[...slug]]' });
+    expect(match('/api/v1/content/a/b')).toEqual({ page: '/api/v1/content/[[...slug]]' });
+    expect(match('/api/auth/oauth/x/y')).toEqual({ page: '/api/auth/oauth/[...path]' });
+  });
+
+  it('still does not serve a trailing slash or an unlisted path', () => {
+    expect(match('/api/v1/models/42/')).toEqual({ notFound: true });
+    expect(match('/api/v1/content/')).toEqual({ notFound: true });
+    expect(match('/api/v1/nope')).toEqual({ notFound: true });
+    expect(match('/api/auth/oauth')).toEqual({ notFound: true });
+  });
+});
+
 describe('filterInternalHeaders', () => {
   it('deletes the client-sent internal headers Next never honours', () => {
     const headers: Record<string, string> = {

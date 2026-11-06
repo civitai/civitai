@@ -55,6 +55,7 @@ const localePath = require('next/dist/shared/lib/i18n/normalize-locale-path');
 const pathPrefix = require('next/dist/shared/lib/router/utils/add-path-prefix');
 const routeRegex = require('next/dist/shared/lib/router/utils/route-regex');
 const routeMatcher = require('next/dist/shared/lib/router/utils/route-matcher');
+const sortedRoutes = require('next/dist/shared/lib/router/utils/sorted-routes');
 const nextConstants = require('next/dist/lib/constants');
 const instrumentationGlobals = require('next/dist/server/lib/router-utils/instrumentation-globals.external');
 const httpAgentEnv = require('next/dist/server/setup-http-agent-env');
@@ -126,6 +127,12 @@ const getRouteMatcher = expectExport(
   routeMatcher,
   `${NEXT}/shared/lib/router/utils/route-matcher`,
   'getRouteMatcher',
+  'function'
+);
+const getSortedRoutes = expectExport(
+  sortedRoutes,
+  `${NEXT}/shared/lib/router/utils/sorted-routes`,
+  'getSortedRoutes',
   'function'
 );
 const NEXT_QUERY_PARAM_PREFIX = expectExport(
@@ -343,18 +350,24 @@ function stripInternalQuery(req) {
  * Maps a request path to one of the served pages. `pages` maps a page (`/api/trpc/[trpc]`) to
  * anything; only the keys are used. Static pages match exactly; dynamic ones through Next's own
  * route matcher, which throws `DecodeError` on a malformed `%` escape exactly as it does inside
- * router-server.
+ * router-server. Dynamic pages are tried in the order Next's filesystem router tries them
+ * (`getSortedRoutes`, as `sortDynamicRoutes` in `router-utils/filesystem.js`): `[id]` before
+ * `[...rest]` before `[[...rest]]`, and a deeper static segment before a dynamic one, so when two
+ * served dynamic pages can both match a path the one Next would pick wins.
  *
  * Returns { page } | { notFound: true } | { decodeError: true }.
  */
 function createPageMatcher(pages) {
   const statics = new Set();
-  const dynamics = [];
+  const dynamicPages = [];
   for (const page of pages) {
-    if (/\[[^\]]+\]/.test(page))
-      dynamics.push({ page, match: getRouteMatcher(getRouteRegex(page)) });
+    if (/\[[^\]]+\]/.test(page)) dynamicPages.push(page);
     else statics.add(page);
   }
+  const dynamics = getSortedRoutes(dynamicPages).map((page) => ({
+    page,
+    match: getRouteMatcher(getRouteRegex(page)),
+  }));
   return function matchPage(pathname) {
     // Next never invokes a route for a trailing-slash path (it 308s first, and this server does
     // not port redirects), so this server does not serve one either.

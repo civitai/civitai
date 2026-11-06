@@ -738,3 +738,126 @@ export function buildBeaconCases(ctx) {
     },
   ];
 }
+
+// The `api` profile (`--cases api`): `/api/v1/**` and `/api/auth/**` served by the standalone server
+// booted with `STANDALONE_SERVER_PROFILE=api`.
+//
+// `/api/v1/` sits behind the proxy under Next, so these cases are also where the standalone
+// server's own application of the proxy's API policy is compared with the real proxy: the 451 for
+// a blocked region, the default Cache-Control and X-Handled-By headers, and the verified-crawler
+// request header. `/api/auth/` is outside the proxy matcher, as tRPC is.
+//
+// The job's database is empty, so DB-backed routes answer "not found" or an empty list, on both
+// sides; that is still compared byte for byte.
+
+const API_UNKNOWN_PATH =
+  'Next answers a path no route matches by rendering its 404 page (and, under /api/v1/, after running the proxy). The api profile renders no pages; it answers the plain 404, as for the tRPC paths above. Routing sends it only paths of served shapes.';
+
+/**
+ * @param {{ sessionCookie: string }} ctx
+ */
+export function buildApiCases(ctx) {
+  const signedIn = { ...edge, cookie: ctx.sessionCookie };
+  const apiClient = { 'user-agent': 'python-requests/2.32.3', 'cf-connecting-ip': NORMAL_IP };
+  return [
+    // --- /api/v1/: the proxy's policy -----------------------------------------------------------
+    { id: 'v1-static-json', path: '/api/v1/enums', headers: apiClient },
+    { id: 'v1-head', method: 'HEAD', path: '/api/v1/enums', headers: apiClient },
+    {
+      id: 'v1-blocked-region',
+      path: '/api/v1/enums',
+      headers: { ...apiClient, 'cf-ipcountry': 'GB' },
+    },
+    {
+      id: 'v1-spoofed-verified-bot-header',
+      path: '/api/v1/enums',
+      headers: { ...apiClient, 'x-civitai-verified-bot': 'googlebot' },
+    },
+    {
+      id: 'v1-crawler-ua-from-normal-ip',
+      path: '/api/v1/enums',
+      headers: { ...apiClient, 'user-agent': GOOGLEBOT_UA },
+    },
+    {
+      id: 'v1-no-client-ip-headers',
+      path: '/api/v1/enums',
+      headers: { 'user-agent': GOOGLEBOT_UA },
+    },
+    {
+      id: 'v1-client-sent-internal-headers',
+      path: '/api/v1/enums',
+      headers: {
+        ...apiClient,
+        'x-middleware-override-headers': 'x-civitai-verified-bot',
+        'x-middleware-request-x-civitai-verified-bot': 'googlebot',
+        'x-matched-path': '/api/v1/enums',
+        'x-nextjs-data': '1',
+      },
+    },
+    // --- /api/v1/: routing across dynamic pages ---------------------------------------------------
+    { id: 'v1-dynamic-id', path: '/api/v1/models/999999991', headers: apiClient },
+    { id: 'v1-static-beats-dynamic', path: '/api/v1/models/com-face', headers: apiClient },
+    { id: 'v1-invalid-id', path: '/api/v1/models/not-a-number', headers: apiClient },
+    {
+      id: 'v1-nested-dynamic',
+      path: '/api/v1/model-versions/by-hash/0123456789ABCDEF',
+      headers: apiClient,
+    },
+    { id: 'v1-mini-dynamic', path: '/api/v1/model-versions/mini/999999991', headers: apiClient },
+    { id: 'v1-optional-catch-all-base', path: '/api/v1/content', headers: apiClient },
+    { id: 'v1-optional-catch-all-deep', path: '/api/v1/content/a/b', headers: apiClient },
+    {
+      id: 'v1-internal-query-param-override',
+      path: '/api/v1/models/999999991?nxtPid=1',
+      headers: apiClient,
+    },
+    { id: 'v1-unauthenticated', path: '/api/v1/me', headers: apiClient },
+    { id: 'v1-signed-in-cookie', path: '/api/v1/me', headers: signedIn },
+    {
+      id: 'v1-post-json',
+      method: 'POST',
+      path: '/api/v1/model-versions/by-hash',
+      headers: { ...apiClient, 'content-type': 'application/json' },
+      body: JSON.stringify(['0123456789ABCDEF']),
+    },
+    { id: 'v1-tags-list', path: '/api/v1/tags?limit=1', headers: apiClient },
+    {
+      id: 'v1-unknown-path',
+      path: '/api/v1/does-not-exist',
+      headers: apiClient,
+      divergence: { reason: API_UNKNOWN_PATH, candidate: NOT_FOUND },
+    },
+    {
+      id: 'v1-trailing-slash',
+      path: '/api/v1/enums/',
+      headers: apiClient,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+    },
+    {
+      id: 'v1-bad-percent-escape',
+      path: '/api/v1/models/%E0%A4%A',
+      headers: apiClient,
+      divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
+    },
+
+    // --- /api/auth/ ----------------------------------------------------------------------------
+    { id: 'auth-session-anonymous', path: '/api/auth/session', headers: edge },
+    { id: 'auth-session-signed-in', path: '/api/auth/session', headers: signedIn },
+    { id: 'auth-jwks', path: '/api/auth/jwks', headers: edge },
+    { id: 'auth-accounts-anonymous', path: '/api/auth/accounts', headers: edge },
+    { id: 'auth-catch-all', path: '/api/auth/oauth/unknown/x', headers: edge },
+    {
+      id: 'auth-blocked-region-not-proxied',
+      path: '/api/auth/session',
+      headers: { ...edge, 'cf-ipcountry': 'GB' },
+    },
+
+    // --- the tRPC list is still served, unchanged, under this profile -----------------------------
+    {
+      id: 'trpc-still-served',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+    },
+    { id: 'probe-live-still-served', path: '/api/live?token={WEBHOOK_TOKEN}', headers: {} },
+  ];
+}
