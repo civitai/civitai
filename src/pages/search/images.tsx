@@ -68,7 +68,10 @@ function RenderFilters() {
   // Sort, media type, aspect ratio, tools and techniques return when the image index carries
   // what they need (docs/image-search-qdrant-plan.md).
   return (
-    <>
+    <div className="flex flex-col gap-1 pt-3">
+      <Text size="sm" c="dimmed" className="px-4 pb-2">
+        Filters narrow down a search. Type what you&rsquo;re looking for in the search bar first.
+      </Text>
       <BrowsingLevelFilter indexKey="images" filters={filters} />
       <DateRangeRefinement title="Filter by Posted Date" attribute="createdAtUnix" />
       <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
@@ -86,7 +89,7 @@ function RenderFilters() {
         searchable
         renderOption={renderBaseModelOption}
       />
-    </>
+    </div>
   );
 }
 
@@ -103,18 +106,25 @@ function ImagesHitList() {
   });
   const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
 
-  // Image search ranks by meaning, so it needs words to rank by.
+  // Image search ranks by meaning, so it needs words to rank by; filters alone list nothing.
   if (!indexUiState.query?.trim()) {
+    const hasFilters =
+      Object.values(indexUiState.refinementList ?? {}).some((values) => values.length > 0) ||
+      Object.values(indexUiState.range ?? {}).some(Boolean);
     return (
       <Center mt="md">
-        <Stack gap="md" align="center" maw={800}>
+        <Stack gap="md" align="center" maw={600}>
           <ThemeIcon size={128} radius={100} className="opacity-50">
             <IconPhotoSearch size={80} />
           </ThemeIcon>
           <Title order={1} lh={1} ta="center">
-            Search images
+            {hasFilters ? 'Add a search term' : 'Search images'}
           </Title>
-          <Text align="center">Describe what you want to see, like a red fox in the snow.</Text>
+          <Text align="center">
+            {hasFilters
+              ? 'Image search starts from what you describe. Filters like users, tags and base model narrow those results, but they can’t list images on their own.'
+              : 'Describe what you want to see, like “a red fox in the snow”, then use the filters to narrow the results.'}
+          </Text>
         </Stack>
       </Center>
     );
