@@ -39,7 +39,7 @@ describe('resolveBandcampEmbed', () => {
     expect(fetchPage).not.toHaveBeenCalled();
   });
 
-  it('reports a bot-challenge page as not found, and a fetch error as unavailable', async () => {
+  it('reports a page with no item id as not found, and a fetch error as unavailable', async () => {
     await expect(resolveBandcampEmbed(PAGE, page('<html>challenge</html>'))).resolves.toEqual({
       ok: false,
       reason: 'not-found',
@@ -54,7 +54,7 @@ describe('resolveBandcampEmbed', () => {
   });
 });
 
-// safeFetch checks allowUrl on every hop (its own suite pins that); this pins what we pass it.
+// safeFetch checks allowUrl on every hop (its own suite pins the redirect case); this pins what we pass it.
 describe('BANDCAMP_FETCH_OPTIONS.allowUrl', () => {
   const allow = (url: string) => BANDCAMP_FETCH_OPTIONS.allowUrl?.(new URL(url));
 

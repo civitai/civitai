@@ -1,9 +1,7 @@
-// Third-party embeds for the rich text editor. Shared by the editor (detect + insert), the
-// tiptap node (render), the sanitizer (save + render) and the Bandcamp lookup (server).
-//
-// Every host check compares `URL.hostname` for equality. `endsWith`/`includes` on a host lets
-// `evilvimeo.com` or `vimeo.com.evil.test` through; the only suffix rules are anchored
-// single-label regexes (`<label>.bandcamp.com`, `<label>.hf.space`).
+// Host checks compare `URL.hostname` for equality, never `endsWith`/`includes`: that would let
+// `evilvimeo.com` or `vimeo.com.evil.test` through. The exceptions are the anchored
+// single-label regexes (`<label>.bandcamp.com`, `<label>.hf.space`) and `isEmbedPlayerHost`,
+// whose broad `.hf.space` match only decides whether the exact player check must run.
 
 export const EMBED_PROVIDERS = [
   'bandcamp',
@@ -66,10 +64,6 @@ function parseUrl(input: string, { allowHttp }: { allowHttp: boolean }): URL | n
 
 const oneOf = (host: string, hosts: readonly string[]) => hosts.includes(host);
 
-// ---------------------------------------------------------------------------------------------
-// Page URL -> player URL
-// ---------------------------------------------------------------------------------------------
-
 const TWITCH_RESERVED = new Set([
   'directory',
   'downloads',
@@ -90,7 +84,6 @@ function parseBandcampPage(url: URL): ParsedEmbed | null {
   return { kind: 'bandcamp-lookup', pageUrl: `https://${url.hostname}${url.pathname}` };
 }
 
-// Bandcamp's own embed code. Needs no lookup, so it still works when the page fetch is refused.
 function parseBandcampPlayer(url: URL): ParsedEmbed | null {
   if (url.hostname !== 'bandcamp.com' || url.protocol !== 'https:') return null;
   if (!isAllowedPlayerUrl(url.toString())) return null;
@@ -222,8 +215,6 @@ function parseLegacy(url: URL, input: string): ParsedEmbed | null {
  * they come back as `bandcamp-lookup` for the server to resolve.
  */
 export function parseEmbedUrl(input: string): ParsedEmbed | null {
-  // A pasted embed code (`<iframe src="...">`, e.g. Bandcamp's Share → Embed) is read for its src
-  // and then held to exactly the same rules as a pasted URL.
   const snippetSrc = /^\s*<iframe\b[^>]*?\ssrc=["']([^"']+)["']/i.exec(input)?.[1];
   const raw = snippetSrc ? decodeEntities(snippetSrc) : input;
   const url = parseUrl(raw, { allowHttp: true });
@@ -260,7 +251,6 @@ export function legacyPreviewSrc(kind: LegacyEmbedKind, input: string): string |
   return poll ? `https://www.strawpoll.com/embed/${poll}` : null;
 }
 
-/** Bandcamp page URL check for the server lookup: https only, bandcamp hosts only. */
 export function parseBandcampPageUrl(input: string): URL | null {
   const url = parseUrl(input, { allowHttp: false });
   if (!url || !parseBandcampPage(url)) return null;
@@ -271,16 +261,12 @@ export function bandcampPlayerUrl(type: 'track' | 'album', id: string) {
   return `https://bandcamp.com/EmbeddedPlayer/${type}=${id}/size=large/bgcol=333333/linkcol=0f91ff/tracklist=false/artwork=small/transparent=true/`;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Player URL validation: the only shapes a stored iframe may have
-// ---------------------------------------------------------------------------------------------
-
 function onlyParams(url: URL, allowed: string[]) {
   return [...url.searchParams.keys()].every((key) => allowed.includes(key));
 }
 
 /**
- * Returns the provider when `src` is a player URL this module would have produced, otherwise
+ * Returns the provider when `src` matches a provider's player URL shape, otherwise
  * null. The sanitizer drops any iframe on an EMBED_PLAYER_HOSTS / hf.space host that fails this.
  * Twitch may carry `parent`: render-time sanitizing sees the src after embedRenderSrc added it.
  * Whatever is stored is overwritten at render, so a stored value is inert.
@@ -355,9 +341,7 @@ export function isEmbedPlayerHost(src: string | undefined | null): boolean {
   const read = (value: string, base: string) => {
     try {
       hosts.push(new URL(value, base).hostname.toLowerCase());
-    } catch {
-      // unparseable under this reading
-    }
+    } catch {}
   };
   read(src.trim().replace(/\\/g, '/'), 'https://relative.invalid');
   read(src.replace(/^(\w+:)?\s*[\\/]\s*[\\/]/, '$1//'), 'relative://relative-site/0');
@@ -365,10 +349,6 @@ export function isEmbedPlayerHost(src: string | undefined | null): boolean {
     (host) => oneOf(host, EMBED_PLAYER_HOSTS) || host === 'hf.space' || host.endsWith('.hf.space')
   );
 }
-
-// ---------------------------------------------------------------------------------------------
-// Render-time attributes: never stored, derived from the validated provider
-// ---------------------------------------------------------------------------------------------
 
 const FALLBACK_PARENT = 'civitai.com';
 
@@ -403,8 +383,9 @@ export const EMBED_HEIGHTS: Record<EmbedProvider, number> = {
 
 export function embedRenderAttrs(provider: EmbedProvider): Record<string, string> {
   if (provider === 'huggingface')
-    // A Space is an arbitrary third-party app. No allow-forms (a form inside our page is a
-    // phishing shape) and no allow-top-navigation (it must not be able to redirect the page).
+    // A Space is arbitrary third-party code. No allow-forms blocks native form submission only
+    // (scripts can still send input, so it is not a phishing guard alone); no
+    // allow-top-navigation means it cannot redirect the page.
     return { sandbox: 'allow-scripts allow-same-origin allow-popups allow-downloads' };
   return { allow: PLAYER_ALLOW };
 }

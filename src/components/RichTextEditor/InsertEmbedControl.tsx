@@ -21,8 +21,8 @@ import { trpc } from '~/utils/trpc';
 
 const controlTitle = 'Embed a link';
 
-// The legacy kinds insert through their own nodes, which only some editors register (StrawPoll
-// needs `polls`). Detection is limited to what this editor can hold.
+// Not every editor registers every node (StrawPoll needs `polls`, `embed` needs `addMedia`):
+// only offer what this editor's schema can hold.
 const LEGACY_NODE = { youtube: 'youtube', instagram: 'instagram', strawpoll: 'strawPoll' } as const;
 
 function detectFor(editor: Editor, input: string): ParsedEmbed | null {

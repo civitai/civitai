@@ -26,7 +26,7 @@ export const contentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ key: z.string() }))
     .query(({ input }) => getMarkdownContent(input)),
-  /** Bandcamp page URL -> player URL, for the editor's Embed dialog. Fetches bandcamp.com only. */
+  /** Bandcamp page URL -> player URL, for the editor's Embed dialog. Fetches Bandcamp hosts only. */
   resolveBandcampEmbed: protectedProcedure
     .meta({ blockApiKeys: true })
     .input(z.object({ url: z.string().max(500) }))

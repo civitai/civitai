@@ -78,8 +78,7 @@ export function embedIframeAttrs(provider: EmbedProvider, src: string, host?: st
   };
 }
 
-// The editor has no request context; Twitch only needs `parent` to match the page it is on.
-// Whatever lands in stored HTML is overwritten at render from the request host.
+// The editor has no request context; the stored Twitch parent is overwritten at render.
 function currentHost() {
   return typeof window !== 'undefined' ? window.location.hostname : undefined;
 }

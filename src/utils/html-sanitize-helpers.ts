@@ -204,8 +204,8 @@ export type santizeHtmlOptions = sanitize.IOptions & {
   /** Opt-in for surfaces registered with the blurb fan-out. */
   allowBlurbs?: boolean;
 };
-// The hostname allowlist admits any path on a player host. A new-provider iframe must also be
-// exactly a player URL embed-providers would produce, or it is dropped whole.
+// The hostname allowlist admits any path on a player host. A new-provider iframe must also
+// match its provider's player URL shape (isAllowedPlayerUrl), or it is dropped whole.
 function isRefusedEmbedIframe(frame: sanitize.IFrame) {
   if (frame.tag !== 'iframe') return false;
   const src = frame.attribs.src;

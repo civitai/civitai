@@ -6,8 +6,8 @@ export type BandcampLookupResult =
   | { ok: true; playerUrl: string }
   | { ok: false; reason: 'invalid-url' | 'unavailable' | 'not-found' };
 
-// safeFetch supplies the SSRF guard (public DNS, pinned socket, timeout, size and type caps);
-// allowUrl keeps every hop, redirects included, on Bandcamp's own hosts.
+// allowUrl holds every hop, redirects included, on Bandcamp hosts; safeFetch's SSRF guard alone
+// would follow a redirect to any public site.
 export const BANDCAMP_FETCH_OPTIONS: SafeFetchOptions = {
   timeoutMs: 5_000,
   maxBytes: 1_000_000,

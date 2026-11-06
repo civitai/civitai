@@ -3,9 +3,9 @@ import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
-// What the article save path does: sanitize the editor's HTML, then build contentJson from the
-// SHARED extension list (article.service). A node missing from that list is dropped silently,
-// and the saved article renders without the player.
+// What an article goes through: sanitized on save (article.schema), then turned into contentJson
+// on read from the SHARED extension list (getArticleById). A node missing from that list is
+// dropped silently, and the article renders without the player.
 const save = (html: string) =>
   generateJSON(sanitizeHtml(html, { allowBlurbs: true }), tiptapExtensions) as {
     content: { type: string; attrs?: { src?: string } }[];

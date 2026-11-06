@@ -156,8 +156,8 @@ describe('sanitizeHtml embed iframes', () => {
     expect(sanitizeHtml(iframe(url))).toBe('');
   });
 
-  // Each of these resolves in a browser to a provider host. `new URL(src)` with no base throws
-  // on them, which once let them skip the exact check and render without the HF sandbox.
+  // Each resolves in a browser to a provider host. The player check accepts only a literal
+  // `https://host` prefix, so relative, backslash and entity-encoded spellings are refused.
   it.each([
     '//civitai-login.hf.space/signin',
     '//x.hf.space/',
@@ -166,7 +166,7 @@ describe('sanitizeHtml embed iframes', () => {
     '//player.vimeo.com/video/1',
     '&#x2f;&#x2f;open.spotify.com/login',
     'https:\\\\player.vimeo.com/video/1',
-    // Scheme-less: once passed the player check, then threw in embedRenderSrc and blanked the page.
+    // Scheme-less: not an absolute https URL, so the player check refuses it.
     'player.twitch.tv/?video=v1',
     // Read as absolute by sanitize-html's host gate, as a same-origin path by a browser.
     'https:/x.hf.space/../../user/account',
@@ -215,9 +215,8 @@ describe('embedRenderSrc', () => {
   });
 });
 
-// Decided with the Articles lead: a Space is an arbitrary third-party app, so it may run
-// scripts but never submit forms in our page or navigate it. Do not add either flag back
-// without that decision being revisited.
+// Product decision: no allow-forms and no allow-top-navigation for Spaces. Adding either flag
+// back reverses that decision; revisit it first, not this test.
 describe('embedRenderAttrs', () => {
   it('sandboxes Hugging Face Spaces without forms or top navigation', () => {
     const { sandbox, allow } = embedRenderAttrs('huggingface');

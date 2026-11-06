@@ -101,8 +101,8 @@ export function RenderHtml({
           if (thirdPartyAllowed) {
             const provider = isAllowedPlayerUrl(attribs.src);
             if (!provider) {
-              // Second line behind sanitizeHtml's filter: a provider host that is not an exact
-              // player URL never loads, so it can never load without its sandbox.
+              // Runs before sanitizeHtml's exclusive filter: a provider-host src that is not a
+              // player URL is removed here, so the iframe stays empty and never loads.
               if (isEmbedPlayerHost(attribs.src)) delete attribs.src;
               return { tagName: 'iframe', attribs };
             }
