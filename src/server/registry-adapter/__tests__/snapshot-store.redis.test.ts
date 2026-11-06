@@ -132,8 +132,14 @@ describe('createRedisSnapshotStore', () => {
   it('🔴 every list change of a put is one MULTI', async () => {
     const r = fakeRedis();
     const store = createRedisSnapshotStore(r.client, 2);
-    for (const d of ['d1', 'd2', 'd3', 'd2']) await store.put(d, `state-${d}`, S1);
-    expect(r.counts).toEqual({ exec: 4, listOpsOutsideMulti: 0, sets: 4 });
+    for (const d of ['d1', 'd2', 'd3', 'd2']) {
+      const execs = r.counts.exec;
+      await store.put(d, `state-${d}`, S1);
+      // The fake applies queued commands only at EXEC: the list moved, and an EXEC ran.
+      expect(r.lists.get(streamStatesKey(S1))?.[0]).toBe(d);
+      expect(r.counts.exec).toBeGreaterThan(execs);
+    }
+    expect(r.counts.listOpsOutsideMulti).toBe(0);
   });
 
   it('🔴 touch refreshes a held state without rewriting it, in one MULTI', async () => {

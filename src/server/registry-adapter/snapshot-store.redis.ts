@@ -33,10 +33,7 @@ export function createRedisSnapshotStore(
   client: SnapshotRedis = sysRedis,
   keep: number = STATES_KEPT_PER_STREAM
 ): SnapshotStore {
-  /**
-   * One MULTI: write the snapshot (or, with `value` null, only refresh its TTL), move its digest to
-   * the head of the stream's list, read and trim what falls past the bound, refresh the list's TTL.
-   */
+  /** With `value` null, only refreshes the snapshot's TTL (a resume). */
   async function retain(digest: string, stream: string, value: string | null): Promise<void> {
     const states = streamStatesKey(stream);
     const tx = client.multi();
