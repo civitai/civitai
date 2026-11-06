@@ -1,7 +1,7 @@
 ---
 paths:
-  - "src/server/**"
-  - "src/pages/api/**"
+  - 'src/server/**'
+  - 'src/pages/api/**'
 ---
 
 # Server
@@ -11,7 +11,7 @@ paths:
 The most-edited and largest code in the repo. Read the specific file before changing it; grep within the big ones instead of reading end to end.
 
 - **tRPC API:** `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~100 per-domain), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
-- **Images:** `services/image.service.ts` (8K+ lines, hot feed path: `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
+- **Images:** `services/image.service.ts` (8K+ lines, hot feed path: `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API `src/pages/api/v1/images/index.ts`; image search is the semantic search (`services/semantic-image-search.service.ts`).
 - **Models:** `services/model.service.ts`, `search-index/models.search-index.ts`.
 - **Search (Meilisearch):** `meilisearch/client.ts` (tags requests with `X-Search-Actor`), `meilisearch/cleanup.ts`, `search-index/base.search-index.ts` (shared sync engine).
 - **Redis / caching:** `redis/client.ts` (incl. sysRedis), `redis/caches.ts` (`createCachedObject` defs + TTLs, e.g. `imageMetaCache`, `tagIdsForImagesCache`), `utils/cache-helpers.ts`.
