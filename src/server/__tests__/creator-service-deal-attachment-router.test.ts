@@ -48,8 +48,8 @@ const input = {
   fileName: 'dataset.zip',
   mimeType: 'application/zip',
   size: 100,
-  rightsAttested: true,
-  likenessAttested: true,
+  rightsAttested: true as const,
+  likenessAttested: true as const,
 };
 
 beforeEach(() => {
@@ -78,7 +78,9 @@ describe('attachment procedures', () => {
     'refuse a request without %s before it reaches the service',
     async (field) => {
       const caller = callerWith(ON);
-      await expect(caller.requestAttachment({ ...input, [field]: false })).rejects.toMatchObject({
+      await expect(
+        caller.requestAttachment({ ...input, [field]: false } as never)
+      ).rejects.toMatchObject({
         code: 'BAD_REQUEST',
       });
       const { [field]: _, ...missing } = input;

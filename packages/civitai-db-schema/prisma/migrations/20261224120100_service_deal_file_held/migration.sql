@@ -1,5 +1,5 @@
--- Deal files kept as evidence after their uploader deleted them. Applied by hand, BEFORE the deploy
--- that writes to it. Additive: a new table, no backfill, no foreign keys.
+-- Deal files the hold rules keep after a delete or a refused upload. Applied by hand, BEFORE the
+-- deploy that writes to it. Additive: a new table, no backfill, no foreign keys.
 CREATE TABLE IF NOT EXISTS "ServiceDealFileHeld" (
   "id" SERIAL PRIMARY KEY,
   "fileId" INTEGER NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS "ServiceDealFileHeld" (
   "fileName" TEXT NOT NULL,
   "mimeType" TEXT NOT NULL,
   "size" INTEGER NOT NULL,
-  "s3Key" TEXT NOT NULL,
+  "s3Key" TEXT,
   "deliveryKey" TEXT,
   "imageId" INTEGER,
   "entryIds" INTEGER[] NOT NULL DEFAULT '{}',

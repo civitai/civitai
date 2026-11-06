@@ -1185,7 +1185,7 @@ describe('copies of scanned images', () => {
       ]);
     });
 
-    it('removes the rows of images that were never submitted', async () => {
+    it('keeps the rows of images not submitted yet, and holds the file', async () => {
       const dealId = await accepted();
       const fileId = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
       await q(
@@ -1193,7 +1193,12 @@ describe('copies of scanned images', () => {
         [fileId, dealId]
       );
       await files.deleteServiceDealFile({ fileId, userId: SELLER });
-      expect(await q(`SELECT 1 FROM "ServiceDealFileEntry"`)).toEqual([]);
+      expect(await q(`SELECT "fileId", "imageId" FROM "ServiceDealFileEntry"`)).toEqual([
+        { fileId: null, imageId: null },
+      ]);
+      expect(
+        await q(`SELECT reason FROM "ServiceDealFileHeld" WHERE "fileId" = $1`, [fileId])
+      ).toEqual([{ reason: 'scan' }]);
     });
 
     it('still judges the image whose scan finishes later, and drops it once it passes', async () => {

@@ -7018,7 +7018,7 @@ export interface ServiceDealFileHeld {
   fileName: string;
   mimeType: string;
   size: number;
-  s3Key: string;
+  s3Key: string | null;
   deliveryKey: string | null;
   imageId: number | null;
   entryIds: number[];

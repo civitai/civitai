@@ -11169,10 +11169,10 @@ model ServiceDealFile {
   @@index([dealId, round, kind])
 }
 
-/// A deal file its uploader deleted while it was evidence: an image in it was still being scanned or
-/// was rejected, or the uploader is named on a CsamReport. The ServiceDealFile row is gone, so no
-/// list, download or deal gate sees it; this keeps its objects and what moderators need to find
-/// them. No foreign keys, so it never blocks deleting the deal or the user. Nothing purges it.
+/// A deal file the hold rules keep after its uploader deleted it, or after the server refused the
+/// upload. Nothing lists, serves or gates on this table; it keeps the objects and what moderators
+/// need to find them. No foreign keys, so it never blocks deleting the deal or the user. Nothing
+/// purges it.
 model ServiceDealFileHeld {
   id          Int                 @id @default(autoincrement())
   /// The deleted ServiceDealFile's id; its retained entries keep `dealId` and are listed in `entryIds`.
@@ -11184,12 +11184,13 @@ model ServiceDealFileHeld {
   fileName    String
   mimeType    String
   size        Int
-  s3Key       String
+  /// The server's copy of the upload; null when none could be kept.
+  s3Key       String?
   deliveryKey String?
   /// A preview's own scan copy, kept with it.
   imageId     Int?
   entryIds    Int[]
-  /// retained-scan | csam-report
+  /// Which hold rule kept it: scan | account
   reason      String
   heldAt      DateTime            @default(now())
 

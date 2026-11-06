@@ -648,7 +648,27 @@ describe('deleting', () => {
       await q(`SELECT reason, "imageId", "s3Key" FROM "ServiceDealFileHeld" WHERE "fileId" = $1`, [
         fileId,
       ])
-    ).toEqual([{ reason: 'retained-scan', imageId: 321, s3Key }]);
+    ).toEqual([{ reason: 'scan', imageId: 321, s3Key }]);
+  });
+
+  it('deletes a preview whose own scan passed, copy and all, with no hold', async () => {
+    const dealId = await accepted();
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    await q(
+      `UPDATE "ServiceDealFile" SET "imageId" = 321, "scanStatus" = 'Passed', "processingAt" = NULL WHERE id = $1`,
+      [fileId]
+    );
+    const { s3Key } = await fileRow(fileId);
+    images.deleteImageById.mockResolvedValue(undefined);
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
+    expect(s3.deleteObject.mock.calls.map((call) => call[1])).toContain(s3Key);
+    expect(await q(`SELECT 1 FROM "ServiceDealFileHeld"`)).toEqual([]);
   });
 
   it('leaves a delivered round alone: after a revision its files can be neither completed nor removed', async () => {

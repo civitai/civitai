@@ -9,10 +9,11 @@ const MAX_DEALS = 25;
 export default defineModeratorEndpoint('creatorServices.dealFiles', {
   method: 'GET',
   summary: 'Every delivery file of one or more Creator Services deals, for dispute review.',
-  returns: '{ items, accessRecordedSince }',
+  returns: '{ items, attachments, accessRecordedSince }',
   notes: [
     'Pass `dealId` for one deal, or `dealIds` (comma separated, at most 25) for a page of them in one call. Each item carries its `dealId`; a deal that does not exist contributes no items.',
     'A moderator sees every file, including previews that failed processing and finals that have not passed their scan.',
+    "`items` is the seller's delivery (previews and finals). `attachments` holds the files the buyer attached for the seller, with the same item shape; a Buyer download there is the buyer fetching their own upload, not receiving the delivery.",
     'Get a short-lived download link for one with GET /api/mod/creator-services/deal-file-url (the original, not the watermarked preview).',
     '`previewUrl` is the watermarked derivative a buyer sees. Null until the preview is Ready.',
     '`access` lists who has been handed a download link for the file: one entry per role on the deal (Buyer, Seller, or Moderator for a non-party) and kind (Download through the site, ModeratorFetch through deal-file-url), with `count`, `firstAt` and `lastAt`. Empty if nobody has; absent if the access log could not be read. A very recent download may not appear yet.',
@@ -57,21 +58,24 @@ export default defineModeratorEndpoint('creatorServices.dealFiles', {
       ),
       readServiceDealFileAccess([...ids]),
     ]);
+    const withAccess = <T extends { id: number }>(file: T) => ({
+      ...file,
+      ...(access && {
+        access: access.rows
+          .filter((a) => a.fileId === file.id)
+          .map(({ role, kind, count, firstAt, lastAt }) => ({
+            role,
+            kind,
+            count,
+            firstAt,
+            lastAt,
+          })),
+      }),
+    });
+    const all = perDeal.flat();
     return {
-      items: perDeal.flat().map((file) => ({
-        ...file,
-        ...(access && {
-          access: access.rows
-            .filter((a) => a.fileId === file.id)
-            .map(({ role, kind, count, firstAt, lastAt }) => ({
-              role,
-              kind,
-              count,
-              firstAt,
-              lastAt,
-            })),
-        }),
-      })),
+      items: all.filter((file) => file.kind !== 'Attachment').map(withAccess),
+      attachments: all.filter((file) => file.kind === 'Attachment').map(withAccess),
       accessRecordedSince: access?.recordedSince ?? null,
     };
   },

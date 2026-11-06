@@ -5433,7 +5433,10 @@ export type ServiceDealFileHeld = {
   fileName: string;
   mimeType: string;
   size: number;
-  s3Key: string;
+  /**
+   * The server's copy of the upload; null when none could be kept.
+   */
+  s3Key: string | null;
   deliveryKey: string | null;
   /**
    * A preview's own scan copy, kept with it.
@@ -5441,7 +5444,7 @@ export type ServiceDealFileHeld = {
   imageId: number | null;
   entryIds: number[];
   /**
-   * retained-scan | csam-report
+   * Which hold rule kept it: scan | account
    */
   reason: string;
   heldAt: Generated<Timestamp>;

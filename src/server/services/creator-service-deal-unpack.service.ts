@@ -486,6 +486,9 @@ export async function settleMalwareScans({
   return counts;
 }
 
+/** Files `settleFinals` reads per query and pass. */
+export const SETTLE_BATCH = 50;
+
 /**
  * Step 4: a Final's verdict from its parts. One failed image, or a failed malware scan, fails it.
  * It passes only when it is unpacked and every image and the malware scan passed; while the scan is
@@ -505,7 +508,7 @@ export async function settleFinals() {
         WHERE "kind"::text IN (${SCANNED_FILE_KINDS})
           AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
           AND "malwareScanStatus" = 'NotScanned'::"ServiceDealFileScanStatus"
-        ORDER BY "id" LIMIT 50)
+        ORDER BY "id" LIMIT ${SETTLE_BATCH}::int)
       RETURNING "id"`;
     if (skipped.length) logUnpack('skipped malware scans queued', { count: skipped.length });
   }
@@ -520,7 +523,7 @@ export async function settleFinals() {
         OR f."malwareScanStatus" = 'Failed'::"ServiceDealFileScanStatus"
         OR EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = f."id" AND e."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"))
-    ORDER BY f."id" LIMIT 50`;
+    ORDER BY f."id" LIMIT ${SETTLE_BATCH}::int`;
   let failed = 0;
   for (const { id } of failing) {
     await dbWrite.$executeRaw`
@@ -542,7 +545,7 @@ export async function settleFinals() {
           AND f."kind"::text <> 'Attachment'))
       AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
-    ORDER BY f."id" LIMIT 50`;
+    ORDER BY f."id" LIMIT ${SETTLE_BATCH}::int`;
   let passed = 0;
   for (const { id } of clear) {
     const result = await recordFinalScanResult({ fileId: id, verdict: 'Passed' });
