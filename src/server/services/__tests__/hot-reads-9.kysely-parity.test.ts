@@ -426,17 +426,30 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
     expect(dangling.bannedAt).toStrictEqual(BANNED_AT);
   });
 
-  it('one statement where Prisma issues one per relation', async () => {
-    prismaStatements.length = 0;
-    await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
-    const prismaCount = prismaStatements.length;
-    kyselyStatements.length = 0;
-    await readUserWithProfileViaKysely(logged, { username: 'full-profile' });
-    expect(kyselyStatements).toHaveLength(1);
-    // The user, its picture, cosmetics, their cosmetics, links, rank, profile, and each cover image
-    // with its tags and their tags.
-    expect(prismaCount, prismaStatements.join('\n')).toBe(13);
-  });
+  // Counted by the engine, not from the `query` log: those events can land after the read's
+  // promise resolves, so the log read 3 or 8 of the 13 in CI.
+  const datasourceQueries = async () =>
+    (await prisma.$metrics.json()).counters.find(
+      (counter) => counter.key === 'prisma_datasource_queries_total'
+    )?.value ?? 0;
+
+  it.each(Array.from({ length: 20 }, (_, i) => i + 1))(
+    'one statement where Prisma issues one per relation (run %i of 20)',
+    async () => {
+      prismaStatements.length = 0;
+      const before = await datasourceQueries();
+      await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
+      const prismaCount = (await datasourceQueries()) - before;
+      kyselyStatements.length = 0;
+      await readUserWithProfileViaKysely(logged, { username: 'full-profile' });
+      expect(kyselyStatements).toHaveLength(1);
+      // A counter that no longer exists reads 0 - 0, never 13.
+      expect(prismaCount).toBeGreaterThan(0);
+      // The user, its picture, cosmetics, their cosmetics, links, rank, profile, and each cover image
+      // with its tags and their tags.
+      expect(prismaCount, prismaStatements.join('\n')).toBe(13);
+    }
+  );
 
   // "TagsOnImageDetails" is a VIEW. It is a per-row projection (no GROUP BY, no UNION), so Postgres
   // flattens it and the image id reaches the scan of its base table.
