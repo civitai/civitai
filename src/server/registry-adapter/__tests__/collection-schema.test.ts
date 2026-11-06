@@ -194,7 +194,7 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_a', { cards: coll(SEED) }),
       step('pubreq_b', { cards: coll(SEED_WIDER) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_WIDER] });
+    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_WIDER], migrations: [null, []] });
     expect(majorsByStep(d)).toEqual([
       ['pubreq_a', 1],
       ['pubreq_b', 2],
@@ -206,7 +206,11 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_a', { cards: coll(SEED) }),
       step('pubreq_b', { cards: coll(SEED_NARROWER, ACK_STARS) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_NARROWER] });
+    expect(cards).toEqual({
+      declared: true,
+      majors: [SEED, SEED_NARROWER],
+      migrations: [null, []],
+    });
     expect(majorsByStep(d)).toEqual([
       ['pubreq_a', 1],
       ['pubreq_b', 2],
@@ -218,7 +222,7 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_a', { cards: coll(SEED) }),
       step('pubreq_b', { cards: coll(SEED_PLUS_MOOD) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED_PLUS_MOOD] });
+    expect(cards).toEqual({ declared: true, majors: [SEED_PLUS_MOOD], migrations: [null] });
     expect(majorsByStep(d)).toEqual([
       ['pubreq_a', 1],
       ['pubreq_b', 1],
@@ -230,18 +234,18 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_a', { cards: coll() }),
       step('pubreq_b', { cards: coll(SEED) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [undefined, SEED] });
+    expect(cards).toEqual({ declared: true, majors: [undefined, SEED], migrations: [null, []] });
     expect(collectionSchemaDocuments('pixel-garden', d)).toEqual([
       {
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
         body: {
           $schema: DIALECT,
-          $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
-          'x-successor': 'urn:schema:app-blocks:pixel-garden/cards@v2',
+          $id: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
+          deprecated: true,
         },
       },
       {
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v2',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v2',
         body: {
           type: 'object',
           properties: {
@@ -249,7 +253,11 @@ describe('deriveCollectionMajors', () => {
             stars: { type: 'integer', maximum: 10 },
           },
           $schema: DIALECT,
-          $id: 'urn:schema:app-blocks:pixel-garden/cards@v2',
+          $id: 'urn:schema:apps.civitai.com:pixel-garden/cards@v2',
+          'x-migrateFrom': {
+            schema: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
+            steps: [],
+          },
         },
       },
     ]);
@@ -261,7 +269,7 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_b', { notes: coll() }),
       step('pubreq_c', { cards: coll(SEED), notes: coll() }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED] });
+    expect(cards).toEqual({ declared: true, majors: [SEED], migrations: [null] });
     expect(majorsByStep(d)).toEqual([
       ['pubreq_a', 1],
       ['pubreq_b', null],
@@ -275,7 +283,11 @@ describe('deriveCollectionMajors', () => {
       step('pubreq_b', { notes: coll() }),
       step('pubreq_c', { cards: coll(SEED_NARROWER, ACK_STARS), notes: coll() }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED, SEED_NARROWER] });
+    expect(cards).toEqual({
+      declared: true,
+      majors: [SEED, SEED_NARROWER],
+      migrations: [null, []],
+    });
     expect(majorsByStep(d)).toEqual([
       ['pubreq_a', 1],
       ['pubreq_b', null],
@@ -290,7 +302,7 @@ describe('deriveCollectionMajors', () => {
     ]);
     expect(cards?.declared).toBe(false);
     expect(collectionSchemaDocuments('pixel-garden', d).map((x) => x.urn)).toEqual([
-      'urn:schema:app-blocks:pixel-garden/notes@v1',
+      'urn:schema:apps.civitai.com:pixel-garden/notes@v1',
     ]);
   });
 
@@ -311,8 +323,98 @@ describe('deriveCollectionMajors', () => {
       { id: 'pubreq_bad', manifest: { storage: { collections: { cards: { visibility: 9 } } } } },
       step('pubreq_c', { cards: coll(SEED) }),
     ]);
-    expect(cards).toEqual({ declared: true, majors: [SEED] });
+    expect(cards).toEqual({ declared: true, majors: [SEED], migrations: [null] });
     expect(d.stepMajors.get('pubreq_bad')).toEqual(new Map());
+  });
+});
+
+describe('x-migrateFrom on a new major', () => {
+  const V = (n: number) => `urn:schema:apps.civitai.com:pixel-garden/cards@v${n}`;
+  const docOf = (steps: ManifestStep[], major: number) =>
+    collectionSchemaDocuments('pixel-garden', deriveCollectionMajors(steps)).find(
+      (d) => d.urn === V(major)
+    )?.body;
+
+  // @v1 → @v2 with one op of each kind. `legacy` and `old` leave a closed schema, `status` is
+  // newly required, `stars` and `bio` are narrowed.
+  const CLOSED = { additionalProperties: false };
+  const BEFORE = obj(
+    {
+      title: { type: 'string' },
+      legacy: { type: 'string' },
+      old: { type: 'string' },
+      stars: { type: 'integer', maximum: 10 },
+      bio: { type: 'string', maxLength: 500 },
+    },
+    CLOSED
+  );
+  const AFTER = obj(
+    {
+      title: { type: 'string' },
+      subtitle: { type: 'string' },
+      status: { enum: ['published', 'draft'] },
+      stars: { type: 'integer', maximum: 5 },
+      bio: { type: 'string', maxLength: 100 },
+    },
+    { ...CLOSED, required: ['status'] }
+  );
+  const OPS: StorageMigrationOp[] = [
+    { op: 'default', path: '/status', value: 'published' },
+    { op: 'rename', from: '/legacy', to: '/subtitle' },
+    { op: 'remove', path: '/old' },
+    { op: 'acknowledge', path: '/stars', keyword: 'maximum' },
+    { op: 'remove', path: '/bio' },
+  ];
+  const MINT = [
+    step('pubreq_a', { cards: coll(BEFORE) }),
+    step('pubreq_b', { cards: coll(AFTER, OPS) }),
+  ];
+
+  it('🔴 translates the ops of the minting transition, in order; acknowledge and a narrowing remove have no step', () => {
+    expect(docOf(MINT, 2)?.['x-migrateFrom']).toEqual({
+      schema: V(1),
+      steps: [
+        { op: 'default', path: '/status', value: 'published' },
+        { op: 'rename', from: '/legacy', to: '/subtitle' },
+        { op: 'remove', path: '/old' },
+      ],
+    });
+  });
+
+  it('@v1 carries none', () => {
+    expect(docOf(MINT, 1)).not.toHaveProperty('x-migrateFrom');
+  });
+
+  it('🔴 a mint changes the old major only by the annotation deprecated: true', () => {
+    const before = docOf(MINT.slice(0, 1), 1);
+    expect(before).toEqual({ ...BEFORE, $schema: DIALECT, $id: V(1) });
+    expect(docOf(MINT, 1)).toEqual({ ...before, deprecated: true });
+    expect(docOf(MINT, 2)).not.toHaveProperty('deprecated');
+  });
+
+  it('🔴 fixed at the mint: a later additive step of the same major keeps the steps', () => {
+    const later = obj(
+      { ...(AFTER.properties as S), mood: { type: 'string' } },
+      {
+        ...CLOSED,
+        required: ['status'],
+      }
+    );
+    const steps = [...MINT, step('pubreq_c', { cards: coll(later, OPS) })];
+    expect(deriveCollectionMajors(steps).stepMajors.get('pubreq_c')?.get('cards')).toBe(2);
+    expect(docOf(steps, 2)?.['x-migrateFrom']).toEqual(docOf(MINT, 2)?.['x-migrateFrom']);
+  });
+
+  it("🔴 ops left over in a later manifest are not the next mint's steps", () => {
+    const wider = obj(
+      { ...(AFTER.properties as S), stars: { type: 'integer', maximum: 50 } },
+      {
+        ...CLOSED,
+        required: ['status'],
+      }
+    );
+    const steps = [...MINT, step('pubreq_c', { cards: coll(wider, OPS) })];
+    expect(docOf(steps, 3)?.['x-migrateFrom']).toEqual({ schema: V(2), steps: [] });
   });
 });
 
@@ -320,23 +422,23 @@ describe('synthesizeCollectionSchema', () => {
   it('is the declared schema with $schema and $id = the URN', () => {
     expect(
       synthesizeCollectionSchema({
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
         declared: { type: 'object', properties: { title: { type: 'string' } } },
       })
     ).toEqual({
       type: 'object',
       properties: { title: { type: 'string' } },
       $schema: DIALECT,
-      $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+      $id: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
     });
   });
 
   it('a declared $id never replaces the URN', () => {
     expect(
       synthesizeCollectionSchema({
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v4',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v4',
         declared: { $id: 'https://elsewhere.example/schema-q2' },
       }).$id
-    ).toBe('urn:schema:app-blocks:pixel-garden/cards@v4');
+    ).toBe('urn:schema:apps.civitai.com:pixel-garden/cards@v4');
   });
 });
