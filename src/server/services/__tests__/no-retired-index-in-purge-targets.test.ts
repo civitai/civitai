@@ -675,7 +675,6 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('still tells a retired index from a live one', () => {
     // Both directions: a resolver stuck on either answer makes the prohibition useless.
-    expect(isRetired('IMAGES_SEARCH_INDEX'), 'the images index is retired in this tree').toBe(true);
     expect(isRetired('MODELS_SEARCH_INDEX'), 'the models index is not retired').toBe(false);
     expect(
       isRetired('METRICS_IMAGES_SEARCH_INDEX'),
@@ -685,8 +684,11 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('reports a retired target and an undeclared attribute when handed one', () => {
     expect(
-      violations([synthetic({ constName: 'IMAGES_SEARCH_INDEX', filter: 'user.username IN [x]' })])
-    ).toEqual(['IMAGES_SEARCH_INDEX: the index is retired, so a filtered delete cannot succeed']);
+      // The images index (`images_v6`) was the example until its processor was deleted.
+      violations([synthetic({ constName: 'METRICS_IMAGES_SEARCH_INDEX', filter: 'id IN [x]' })])
+    ).toEqual([
+      'METRICS_IMAGES_SEARCH_INDEX: the index is retired, so a filtered delete cannot succeed',
+    ]);
     expect(
       violations([synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'nope IN [x]' })])
     ).toEqual(['MODELS_SEARCH_INDEX: `nope` is not declared filterable']);

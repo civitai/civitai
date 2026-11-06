@@ -61,7 +61,6 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { getImagesFromSearchPreFilter, getImagesFromSearchPostFilter } from '../image.service';
-import { imagesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { filterableAttributes as metricsImagesFilterableAttributes } from '~/server/search-index/metrics-images.search-index';
 
 // A viewer with no NSFW access on a PG-capped domain: the exact request that used to
@@ -111,11 +110,11 @@ describe.each([
 // here is what turns a re-introduced `combinedNsfwLevel` filter into a loud failure
 // instead of a silent empty page.
 describe('combinedNsfwLevel is retired from the image indexes', () => {
-  it.each([
-    ['images', imagesFilterableAttributes],
-    ['metrics images', metricsImagesFilterableAttributes],
-  ])('%s index does not offer it as a filterable attribute', (_name, attributes) => {
-    expect(attributes).toContain('nsfwLevel');
-    expect(attributes).not.toContain('combinedNsfwLevel');
-  });
+  it.each([['metrics images', metricsImagesFilterableAttributes]])(
+    '%s index does not offer it as a filterable attribute',
+    (_name, attributes) => {
+      expect(attributes).toContain('nsfwLevel');
+      expect(attributes).not.toContain('combinedNsfwLevel');
+    }
+  );
 });
