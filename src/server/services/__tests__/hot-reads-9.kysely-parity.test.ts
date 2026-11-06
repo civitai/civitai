@@ -6,7 +6,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getUserWithProfileRow } from '@civitai/db-queries/hot-reads-9';
 import { Kysely, PostgresDialect, type CompiledQuery } from 'kysely';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import {
   compiledRelations,
@@ -426,15 +426,23 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
     expect(dangling.bannedAt).toStrictEqual(BANNED_AT);
   });
 
+  // Counted by the engine, not from the `query` log: those events can land after the read's
+  // promise resolves, so the log read 3 or 8 of the 13 in CI.
+  const datasourceQueries = async () =>
+    (await prisma.$metrics.json()).counters.find(
+      (counter) => counter.key === 'prisma_datasource_queries_total'
+    )?.value ?? 0;
+
   it('one statement where Prisma issues one per relation', async () => {
     prismaStatements.length = 0;
+    const before = await datasourceQueries();
     await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
-    // Prisma emits 'query' events after the read resolves, so count once they stop arriving.
-    await vi.waitFor(() => expect(prismaStatements.length).toBeGreaterThanOrEqual(13));
-    const prismaCount = prismaStatements.length;
+    const prismaCount = (await datasourceQueries()) - before;
     kyselyStatements.length = 0;
     await readUserWithProfileViaKysely(logged, { username: 'full-profile' });
     expect(kyselyStatements).toHaveLength(1);
+    // A counter that no longer exists reads 0 - 0, never 13.
+    expect(prismaCount).toBeGreaterThan(0);
     // The user, its picture, cosmetics, their cosmetics, links, rank, profile, and each cover image
     // with its tags and their tags.
     expect(prismaCount, prismaStatements.join('\n')).toBe(13);

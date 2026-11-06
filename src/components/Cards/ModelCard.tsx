@@ -66,8 +66,8 @@ function ModFlagBadge({ labels }: { labels: string[] }) {
   );
 }
 
-export const ModelCard = memo(function ModelCard({ data }: Props) {
-  return <ModelCardContent data={data} />;
+export const ModelCard = memo(function ModelCard({ data, linkVersionId }: Props) {
+  return <ModelCardContent data={data} linkVersionId={linkVersionId} />;
 });
 
 const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 4 } } as const;
@@ -140,7 +140,7 @@ function AccessChip({
   );
 }
 
-function ModelCardContent({ data }: Props) {
+function ModelCardContent({ data, linkVersionId }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -207,9 +207,9 @@ function ModelCardContent({ data }: Props) {
       getModelUrl({
         modelId: data.id,
         modelName,
-        modelVersionId: useModelVersionRedirect ? targetVersionId : null,
+        modelVersionId: linkVersionId ?? (useModelVersionRedirect ? targetVersionId : null),
       }),
-    [data.id, modelName, targetVersionId, useModelVersionRedirect]
+    [data.id, modelName, targetVersionId, useModelVersionRedirect, linkVersionId]
   );
 
   // The search doc carries images for the newest version of each base model, but
@@ -458,4 +458,9 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };
+type Props = {
+  data: UseQueryModelReturn[number];
+  forceInView?: boolean;
+  /** Links to this version instead of the model; set by article embeds of a version URL. */
+  linkVersionId?: number;
+};

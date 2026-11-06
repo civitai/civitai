@@ -7,12 +7,16 @@ import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
+  type BadgeFigure,
   RING_LENGTH,
   RING_RADIUS,
+  badgeFigure,
+  formatMargin,
   badgeLeader,
   ringArcs,
   standingsLabel,
 } from '~/components/HatTurf/hat-turf.utils';
+import { useHatStock } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
@@ -21,6 +25,24 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 // In the ring's 48-unit viewBox.
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+const figureLabel = (figure: BadgeFigure) => {
+  if (!figure.pointsTeam) return '';
+  const earns = `This image earns ${plural(figure.points, 'point', 'points')} for ${
+    figure.pointsTeam
+  }.`;
+  if (figure.margin === null) return ` ${earns}`;
+  const { margin } = figure;
+  const position =
+    margin > 0
+      ? `up by ${plural(margin, 'hat', 'hats')}`
+      : margin < 0
+      ? `behind by ${plural(-margin, 'hat', 'hats')}`
+      : 'level with the lead';
+  return ` ${earns} Your team is ${position}.`;
+};
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
@@ -44,14 +66,9 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const guard = summary?.hatted ? summary.hattedTeam : null;
   const holder = guard ?? leader;
   const blocked = guard && leader && leader !== guard ? leader : null;
-  // A protected image earns one point, for its hat's team; otherwise the holder's counted stickers.
-  const shownCount = summary
-    ? summary.hatted
-      ? 1
-      : holder
-      ? summary.counted[holder] ?? 0
-      : 0
-    : null;
+  const stock = useHatStock();
+  const figure = summary ? badgeFigure(summary, feed?.team, stock?.creditedPlayers) : null;
+  const shownCount = figure ? figure.points : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
   const [seenCount, setSeenCount] = useState(shownCount);
@@ -65,22 +82,28 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
-  const discColor = holder ? colorOf(holder) : summary.hatted ? FALLBACK_COLOR : undefined;
+  const discTeam = figure?.pointsTeam ?? null;
+  const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
 
-  const label = `${standingsLabel(summary, feed.team)}${
+  const label = `${figure?.pointsTeam ? 'Hat Turf:' : standingsLabel(summary, feed.team)}${
+    figure ? figureLabel(figure) : ''
+  }${
     summary.hatted
       ? summary.hattedTeam
         ? ` A ${summary.hattedTeam} hat protects this image.`
         : ' A hat protects this image.'
       : ''
   }`;
-  // The dial's centre is always a number. Two digits don't fit it, so from 10 up it reads "9+" and
-  // the full count goes beside the dial.
-  const countBeside = count >= 10 && !summary.hatted;
+  // The dial's centre is always the number; from 10 up its font shrinks so both digits fit the disc.
   const countEl = (
     <span
       key={count}
-      className={clsx(classes.count, !countBeside && classes.countInside, bump && classes.bump)}
+      className={clsx(
+        classes.count,
+        classes.countInside,
+        count >= 10 && classes.countTwo,
+        bump && classes.bump
+      )}
       data-testid="hat-turf-count"
     >
       {abbreviateNumber(count)}
@@ -119,19 +142,18 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
           />
         </svg>
         <span className={classes.disc} data-testid="hat-turf-disc">
-          {countBeside ? (
-            <span
-              className={clsx(classes.count, classes.countInside)}
-              data-testid="hat-turf-count-cap"
-            >
-              9+
-            </span>
-          ) : (
-            countEl
-          )}
+          {countEl}
         </span>
       </span>
-      {countBeside && countEl}
+      {figure?.margin != null && (
+        <span
+          className={clsx(classes.count, classes.margin)}
+          data-testid="hat-turf-margin"
+          data-margin={figure.margin}
+        >
+          {formatMargin(figure.margin)}
+        </span>
+      )}
       {blocked && (
         <span className={classes.blocked} data-testid="hat-turf-blocked" data-team={blocked}>
           <span className={classes.blockedDot} style={{ backgroundColor: colorOf(blocked) }} />
@@ -150,7 +172,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
       )}
     </>
   );
-  const chip = countBeside || summary.hatted;
+  const chip = summary.hatted || figure?.margin != null;
 
   if (feed.arm !== 'badge-popover') {
     return (

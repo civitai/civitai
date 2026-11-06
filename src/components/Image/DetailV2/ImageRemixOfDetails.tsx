@@ -44,13 +44,9 @@ function sourceAspectRatio(image: { width?: number | null; height?: number | nul
  * generations in a 24h prod sample carried any provenance at all. A blank
  * sidebar here is the ordinary answer, not a broken query.
  *
- * 🔴 `image.get` per id, not `useQueryImages({ ids })`. Before `ids` joined
- * `requiresImageDbPath`, an ids-only feed query went to the search index, which
- * ignores `ids` (measured 2026-08-27: `ids: [140383933]` returned unrelated image
- * `12097475`). It now takes the DB path, which filters `i.id = ANY(ids)`. The reason
- * to stay on `image.get` is the per-image gates listed below, which the feed path
- * applies differently. Anyone switching must assert on the returned ids, never on
- * the count.
+ * 🔴 `image.get` per id. The search index ignores `ids` and answers with the global
+ * feed (`requiresImageDbPath` now keeps ids batches off it), so a wrong image looks like a
+ * right one. Anyone moving this to the feed helper must assert on the returned IDS, never the count.
  *
  * What actually gates a source tile, stated precisely because an earlier version
  * of this comment overclaimed it twice:

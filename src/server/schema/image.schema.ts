@@ -371,6 +371,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter
+// - ids: the index feed builder never applies it, so an ids batch would return the global feed
 // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
 //   a modelId-only query would silently return the global feed (matches the
 //   /api/v1/images legacy-method logic)
@@ -419,15 +420,13 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // A hub can only be served from the index, so this list is also the set `hubId`
 // cannot be combined with. Both the dispatcher and that rejection read it here so
 // the two cannot drift.
-//
-// `ids`: the index feed never filters on it, so an ids query served there returns an unrelated page.
 export function requiresImageDbPath(input: {
-  ids?: number[] | null;
   postId?: number | null;
   postIds?: number[] | null;
   collectionId?: number | null;
   reactions?: unknown[] | null;
   imageId?: number | null;
+  ids?: number[] | null;
   modelId?: number | null;
   modelVersionId?: number | null;
   prioritizedUserIds?: number[] | null;
@@ -436,13 +435,13 @@ export function requiresImageDbPath(input: {
   hidden?: boolean | null;
 }) {
   return (
-    !!input.ids?.length ||
     !!input.hidden ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
     !!input.reactions?.length ||
     !!input.imageId ||
+    !!input.ids?.length ||
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
     (!!input.publishedOnly && !!input.userId)
