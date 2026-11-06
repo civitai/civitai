@@ -83,7 +83,8 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId", "nsfwLevel", ingestion, "nsfwLevelLocked", "acceptableMinor") VALUES
       (15, 100, 1, 'Pending', true, false),   -- rated by a locked rating before its scan finished
       (16, 100, 1, 'Scanned', false, true),   -- acceptable in a collection, not in the public feeds
-      (17, 100, 0, 'Pending', false, false);  -- not yet rated, added by someone other than its uploader
+      (17, 100, 0, 'Pending', false, false),  -- not yet rated, added by someone other than its uploader
+      (18, 100, 1, 'Scanned', false, true);   -- acceptableMinor, added by someone other than its uploader
 
     INSERT INTO "Article" VALUES (200, 'Published', now(), 'Scanned', 1), (201, 'Published', now(), 'Pending', 1);
     INSERT INTO "ModelMetric" VALUES (300, 'Published', 1, NULL, 'Public'), (301, 'Published', 1, NULL, 'Private');
@@ -93,7 +94,8 @@ beforeAll(async () => {
       (1, 'REVIEW', 6), (1, 'REVIEW', 7), (1, 'REVIEW', 8), (1, 'ACCEPTED', 9), (2, 'REVIEW', 10),
       (1, 'REJECTED', 11), (1, 'REVIEW', 12), (1, 'REVIEW', 13), (1, 'REVIEW', 14),
       (1, 'REVIEW', 15), (1, 'REVIEW', 16);
-    INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES (1, 'REVIEW', 17, ${OWNER});
+    INSERT INTO "CollectionItem" ("collectionId", status, "imageId", "addedById") VALUES
+      (1, 'REVIEW', 17, ${OWNER}), (1, 'REVIEW', 18, ${OWNER});
     INSERT INTO "CollectionItem" ("collectionId", status, "postId") VALUES (1, 'REVIEW', 100), (1, 'REVIEW', 101);
     INSERT INTO "CollectionItem" ("collectionId", status, "articleId") VALUES (1, 'REVIEW', 200), (1, 'REVIEW', 201);
     INSERT INTO "CollectionItem" ("collectionId", status, "modelId") VALUES (1, 'REVIEW', 300), (1, 'REVIEW', 301);
@@ -163,6 +165,14 @@ describe('the review queue count', () => {
 
   it('counts only the rated images the requesting domain can serve, and the unrated ones', async () => {
     expect(await counted('imageId', 1)).toEqual([1, 2, 15, 16]);
+  });
+
+  it('leaves out unrated and acceptableMinor images someone other than their uploader added', async () => {
+    for (const levels of [ALL_LEVELS, 1]) {
+      const ids = await counted('imageId', levels);
+      expect(ids).not.toContain(17);
+      expect(ids).not.toContain(18);
+    }
   });
 
   it('leaves out posts, articles and models the queue does not show', async () => {

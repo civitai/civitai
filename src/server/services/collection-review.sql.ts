@@ -108,7 +108,8 @@ export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
  * `getAllImages`' `pending` filter for a signed-in non-moderator, over `Image` aliased `i` joined to
  * its `Post` aliased `p`. Another user's image must pass the same checks as any read of it: not
  * awaiting review, rated within `browsingLevel`, reviewed (`imageReviewedSql`), and not
- * `acceptableMinor`. The viewer's own images are exempt from all four.
+ * `acceptableMinor`. The viewer's own images are exempt from the first three, and from the level
+ * check only while unrated.
  *
  * Two widenings, both scoped to collections the viewer manages:
  * - a post in a collection they MANAGE shows its rated, reviewed images above `browsingLevel`

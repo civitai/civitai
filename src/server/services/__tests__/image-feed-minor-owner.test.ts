@@ -227,6 +227,11 @@ describe.each([
     );
   });
 
+  it("hides other users' images awaiting moderator review", async () => {
+    const stmt = await pendingStatement();
+    expect(boundTo(stmt, /\(i\."needsReview" IS NULL OR i\."userId" = \$(\d+)\)/)).toBe(STRANGER);
+  });
+
   it("requires other users' rated images to be reviewed", async () => {
     const stmt = await pendingStatement();
     expect(
