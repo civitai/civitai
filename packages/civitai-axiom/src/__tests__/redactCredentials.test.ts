@@ -87,6 +87,10 @@ describe('redactCredentials', () => {
     'passwordHash',
     'x-internal-token',
     'x-request-signature',
+    'authorizationHeader',
+    'cookieHeader',
+    'accessTokens',
+    'apiKeys',
   ])('treats %s as a credential field', (name) => {
     expect(isCredentialField(name)).toBe(true);
   });
@@ -111,6 +115,13 @@ describe('redactCredentials', () => {
     expect(input.token).toBe(FAKE_KEY);
     expect(input.list[0]).toContain(FAKE_KEY);
     expect(out.list[0]).toBe('?token=[redacted]');
+  });
+
+  it('keeps boolean flags on credential-named fields', () => {
+    expect(redactCredentials({ hasPassword: true, password: FAKE_KEY })).toEqual({
+      hasPassword: true,
+      password: '[redacted]',
+    });
   });
 
   it('returns clean subtrees by reference', () => {

@@ -55,8 +55,9 @@ export const isCredentialParam = (name: string) => CREDENTIAL_PARAM_NAMES.has(no
 // Compound names (`authToken`, `x-internal-token`, `privateKey`, `passwordHash`) match by suffix
 // or by containing `secret`/`password`. `token` must END the name, so `tokens`, `tokenizer` and
 // `promptTokens` survive.
-const CREDENTIAL_SUFFIX_RE = /(token|signature|apikey|privatekey|secretkey|accesskey)$/;
-const CREDENTIAL_WORD_RE = /secret|password|passwd/;
+const CREDENTIAL_SUFFIX_RE =
+  /(token|signature|apikey|privatekey|secretkey|accesskey|(access|refresh|auth|id|session)tokens|apikeys)$/;
+const CREDENTIAL_WORD_RE = /secret|password|passwd|authorization|cookie/;
 
 export const isCredentialField = (name: string) => {
   const n = normalize(name);
@@ -138,9 +139,12 @@ function walk(value: unknown, depth: number, path: WeakSet<object>): unknown {
     for (const k in value) {
       if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
       const v = value[k];
-      // Blanked whole, whatever its shape: `set-cookie` arrives as a string[].
+      // Blanked whole, whatever its shape (`set-cookie` arrives as a string[]); flags such as
+      // `hasPassword` stay readable.
       const next =
-        v != null && isCredentialField(k) ? REDACTED_CREDENTIAL : walk(v, depth + 1, path);
+        v != null && typeof v !== 'boolean' && isCredentialField(k)
+          ? REDACTED_CREDENTIAL
+          : walk(v, depth + 1, path);
       if (next !== v) (copy ??= { ...value })[k] = next;
     }
     if (copy) out = copy;
