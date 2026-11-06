@@ -76,7 +76,8 @@ export const botCacheMiddleware = createMiddleware({
       if (!origin) return;
       origin.recordBotCacheOrigin('error', 'lookup');
       origin.logBotCacheOriginFailure('lookup', error);
-      // A stored entry that does not decode: the render's store replaces it.
+      // Not a failed lookup (no `BOT_CACHE_LOOKUP_FAILED`): the render may store, replacing an
+      // entry that did not decode.
       return renderAs('miss');
     }
   },
