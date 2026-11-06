@@ -3,7 +3,7 @@
 -- kept stays recorded until no hold of any kind remains, and a held owner's model, image or post
 -- cannot be moved to another account.
 --
--- Apply AFTER 20261227120000_evidence_hold_owner_held_indexes (the function relies on its indexes),
+-- Apply AFTER 20261227140000_evidence_hold_owner_held_indexes (the function relies on its indexes),
 -- and after 20261019220000_evidence_hold and 20261204120000_evidence_hold_image_prior_state, whose
 -- functions this replaces. Hand-applied. Dry run: the whole file inside BEGIN; ... ROLLBACK;.
 

@@ -136,7 +136,7 @@ beforeAll(async () => {
   await holder.db.exec(BASE_SCHEMA);
   await holder.db.exec(migration('20261019220000_evidence_hold'));
   await holder.db.exec(migration('20261204120000_evidence_hold_image_prior_state'));
-  await holder.db.exec(migration('20261227130000_evidence_hold_owner_held'));
+  await holder.db.exec(migration('20261227150000_evidence_hold_owner_held'));
 });
 
 const reset = () =>
