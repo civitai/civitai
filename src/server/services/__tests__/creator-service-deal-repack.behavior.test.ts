@@ -200,7 +200,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
-  '20261224150000_service_deal_file_held',
+  '20261224150000_service_deal_file_removed_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -340,7 +340,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDealFileHeld", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")

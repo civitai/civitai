@@ -114,7 +114,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
-  '20261224150000_service_deal_file_held',
+  '20261224150000_service_deal_file_removed_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -141,6 +141,7 @@ type FileRecord = {
   watermarkedKey: string | null;
   nsfwLevel: number | null;
   processingAt: Date | null;
+  removedAt: Date | null;
 };
 
 const fileRow = async (id: number) =>
@@ -241,7 +242,7 @@ beforeEach(async () => {
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDealFileHeld", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER}), (${MOD});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -323,7 +324,7 @@ describe('requesting an upload', () => {
     };
     for (const [status, reach] of Object.entries(states)) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDealFileHeld", "ServiceDeal" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
       );
       const dealId = await reach();
       const [row] = await q<{ status: string }>(
@@ -363,7 +364,7 @@ describe('requesting an upload', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     await q(
-      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDealFileHeld", "ServiceDeal" RESTART IDENTITY`
+      `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal" RESTART IDENTITY`
     );
     const dealId = await accepted('Image');
     const p = { kind: 'Preview', fileName: 'p.mp4' };
@@ -618,7 +619,7 @@ describe('deleting', () => {
     expect(await q(`SELECT 1 FROM "ServiceDealFile"`)).toHaveLength(1);
   });
 
-  it('keeps a preview deleted mid-scan, and its hidden copy, as evidence', async () => {
+  it('keeps a preview deleted mid-scan, and its hidden copy', async () => {
     const dealId = await accepted();
     const fileId = await uploaded(dealId, {
       kind: 'Preview',
@@ -644,11 +645,11 @@ describe('deleting', () => {
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
     expect(images.deleteImageById).not.toHaveBeenCalled();
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).not.toContain(s3Key);
-    expect(
-      await q(`SELECT reason, "imageId", "s3Key" FROM "ServiceDealFileHeld" WHERE "fileId" = $1`, [
-        fileId,
-      ])
-    ).toEqual([{ reason: 'scan', imageId: 321, s3Key }]);
+    expect(await fileRow(fileId)).toMatchObject({
+      imageId: 321,
+      s3Key,
+      removedAt: expect.any(Date),
+    });
   });
 
   it('keeps the scan copy of a preview deleted while the copy was being made', async () => {
@@ -674,9 +675,7 @@ describe('deleting', () => {
       return { id: 321 };
     });
     await files.startPreviewScans();
-    expect(
-      await q(`SELECT reason, "imageId" FROM "ServiceDealFileHeld" WHERE "fileId" = $1`, [fileId])
-    ).toEqual([{ reason: 'scan', imageId: 321 }]);
+    expect(await fileRow(fileId)).toMatchObject({ imageId: 321, removedAt: expect.any(Date) });
   });
 
   it('deletes a preview whose own scan passed, copy and all, with no hold', async () => {
@@ -696,7 +695,7 @@ describe('deleting', () => {
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
     expect(images.deleteImageById).toHaveBeenCalledWith({ id: 321, updatePost: false });
     expect(s3.deleteObject.mock.calls.map((call) => call[1])).toContain(s3Key);
-    expect(await q(`SELECT 1 FROM "ServiceDealFileHeld"`)).toEqual([]);
+    expect(await fileRow(fileId)).toBeUndefined();
   });
 
   it('leaves a delivered round alone: after a revision its files can be neither completed nor removed', async () => {
@@ -1233,7 +1232,7 @@ describe('preview pipeline', () => {
   it('passes a PG or PG-13 preview and records the rating the scan gave it', async () => {
     for (const level of [1, 2]) {
       await q(
-        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDealFileHeld", "ServiceDeal", "Image" RESTART IDENTITY`
+        `TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "Image" RESTART IDENTITY`
       );
       const { fileId } = await waiting();
       await files.startPreviewScans();

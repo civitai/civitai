@@ -173,7 +173,7 @@ const MIGRATIONS = [
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
-  '20261224150000_service_deal_file_held',
+  '20261224150000_service_deal_file_removed_at',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -196,6 +196,7 @@ type FileRecord = {
   repackedAt: Date | null;
   deliveryKey: string | null;
   deliverySize: number | null;
+  removedAt: Date | null;
 };
 type EntryRecord = {
   id: number;
@@ -346,7 +347,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDealFileHeld", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -834,7 +835,8 @@ describe('resuming', () => {
       imageId: number;
       scanKey: string;
     }>(`SELECT "fileId", "dealId", "imageId", "scanKey" FROM "ServiceDealFileEntry"`);
-    expect(rows).toEqual([{ fileId: null, dealId, imageId: 1, scanKey: 'scan-key-1' }]);
+    expect(rows).toEqual([{ fileId, dealId, imageId: 1, scanKey: 'scan-key-1' }]);
+    expect((await fileRow(fileId)).removedAt).not.toBeNull();
     // And the verdict, when it comes, is taken like any other.
     await q(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 1`);
     await unpack.settleEntryScans();
@@ -1174,14 +1176,15 @@ describe('copies of scanned images', () => {
       );
 
     it('removes the copy of a passed image only: a rejected one and one still being scanned stay', async () => {
-      await threeImages();
+      const { fileId } = await threeImages();
       expect(images.deleteImageById).toHaveBeenCalledTimes(1);
       expect(images.deleteImageById).toHaveBeenCalledWith({ id: 1, updatePost: false });
       expect(await q(`SELECT id FROM "Image" ORDER BY id`)).toEqual([{ id: 2 }, { id: 3 }]);
       const rows = await orphans();
       expect(rows.map((r) => [r.scanStatus, r.imageId, r.fileId, r.dealId])).toEqual([
-        ['Failed', 2, null, 1],
-        ['Pending', 3, null, 1],
+        ['Passed', null, fileId, 1],
+        ['Failed', 2, fileId, 1],
+        ['Pending', 3, fileId, 1],
       ]);
     });
 
@@ -1194,11 +1197,9 @@ describe('copies of scanned images', () => {
       );
       await files.deleteServiceDealFile({ fileId, userId: SELLER });
       expect(await q(`SELECT "fileId", "imageId" FROM "ServiceDealFileEntry"`)).toEqual([
-        { fileId: null, imageId: null },
+        { fileId, imageId: null },
       ]);
-      expect(
-        await q(`SELECT reason FROM "ServiceDealFileHeld" WHERE "fileId" = $1`, [fileId])
-      ).toEqual([{ reason: 'scan' }]);
+      expect((await fileRow(fileId)).removedAt).not.toBeNull();
     });
 
     it('still judges the image whose scan finishes later, and drops it once it passes', async () => {
@@ -1207,8 +1208,8 @@ describe('copies of scanned images', () => {
       expect((await unpack.settleEntryScans()).passed).toBe(1);
       expect(await unpack.deleteEntryScanCopies()).toBe(1);
       expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: 2 }]);
-      // Its row goes with its copy; the rejected image's stays.
-      expect((await orphans()).map((r) => r.imageId)).toEqual([2]);
+      // Its copy goes; the rejected image's stays.
+      expect((await orphans()).map((r) => r.imageId)).toEqual([null, 2, null]);
     });
 
     it("rejects the image that comes back above the deal's limit, and keeps its copy", async () => {
@@ -1217,6 +1218,7 @@ describe('copies of scanned images', () => {
       await unpack.settleEntryScans();
       expect(await unpack.deleteEntryScanCopies()).toBe(0);
       expect((await orphans()).map((r) => [r.scanStatus, r.imageId])).toEqual([
+        ['Passed', null],
         ['Failed', 2],
         ['Failed', 3],
       ]);

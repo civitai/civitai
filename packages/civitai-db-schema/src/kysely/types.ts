@@ -5405,6 +5405,11 @@ export type ServiceDealFile = {
    * An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
    */
   attestedAt: Timestamp | null;
+  /**
+   * Set when the uploader removed the file but its row and objects must stay; only moderators
+   * see it after that. Null is a live file.
+   */
+  removedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFileEntry = {
@@ -5424,35 +5429,6 @@ export type ServiceDealFileEntry = {
   scanStatus: Generated<ServiceDealFileScanStatus>;
   failReason: string | null;
   createdAt: Generated<Timestamp>;
-};
-export type ServiceDealFileHeld = {
-  id: Generated<number>;
-  /**
-   * The deleted ServiceDealFile's id; its retained entries keep `dealId` and are listed in `entryIds`.
-   */
-  fileId: number;
-  dealId: number;
-  uploaderId: number;
-  kind: ServiceDealFileKind;
-  round: number;
-  fileName: string;
-  mimeType: string;
-  size: number;
-  /**
-   * The server's copy of the upload; null when none could be kept.
-   */
-  s3Key: string | null;
-  deliveryKey: string | null;
-  /**
-   * A preview's own scan copy, kept with it.
-   */
-  imageId: number | null;
-  entryIds: number[];
-  /**
-   * Which hold rule kept it: scan | account
-   */
-  reason: string;
-  heldAt: Generated<Timestamp>;
 };
 export type ServiceDealTransaction = {
   id: Generated<number>;
@@ -6843,7 +6819,6 @@ export type DB = {
   ServiceDealEvent: ServiceDealEvent;
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
-  ServiceDealFileHeld: ServiceDealFileHeld;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

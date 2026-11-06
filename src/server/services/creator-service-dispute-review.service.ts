@@ -229,11 +229,12 @@ export async function getServiceDisputeEvidence({
         size: number;
         deliverySize: number | null;
         uploadedAt: Date | null;
+        removedAt: Date | null;
       }[]
     >`
       SELECT "id", "kind"::text AS "kind", "round", "status"::text AS "status",
         "scanStatus"::text AS "scanStatus", "malwareScanStatus"::text AS "malwareScanStatus",
-        "failReason", "fileName", "mimeType", "size", "deliverySize", "uploadedAt"
+        "failReason", "fileName", "mimeType", "size", "deliverySize", "uploadedAt", "removedAt"
       FROM "ServiceDealFile" WHERE "dealId" = ${dealId}::int ORDER BY "round", "id"`,
     dbWrite.$queryRaw<{ buyer: number; seller: number }[]>`
       SELECT

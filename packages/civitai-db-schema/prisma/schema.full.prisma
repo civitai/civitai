@@ -11175,39 +11175,13 @@ model ServiceDealFile {
   repackedAt     DateTime?
   /// An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
   attestedAt     DateTime?
+  /// Set when the uploader removed the file but its row and objects must stay; only moderators
+  /// see it after that. Null is a live file.
+  removedAt      DateTime?
   createdAt      DateTime                  @default(now())
   entries        ServiceDealFileEntry[]
 
   @@index([dealId, round, kind])
-}
-
-/// A deal file the hold rules keep after its uploader deleted it, or after the server refused the
-/// upload. Nothing lists, serves or gates on this table; it keeps the objects and what moderators
-/// need to find them. No foreign keys, so it never blocks deleting the deal or the user. Nothing
-/// purges it.
-model ServiceDealFileHeld {
-  id          Int                 @id @default(autoincrement())
-  /// The deleted ServiceDealFile's id; its retained entries keep `dealId` and are listed in `entryIds`.
-  fileId      Int                 @unique
-  dealId      Int
-  uploaderId  Int
-  kind        ServiceDealFileKind
-  round       Int
-  fileName    String
-  mimeType    String
-  size        Int
-  /// The server's copy of the upload; null when none could be kept.
-  s3Key       String?
-  deliveryKey String?
-  /// A preview's own scan copy, kept with it.
-  imageId     Int?
-  entryIds    Int[]
-  /// Which hold rule kept it: scan | account
-  reason      String
-  heldAt      DateTime            @default(now())
-
-  @@index([dealId])
-  @@index([uploaderId])
 }
 
 /// One image inside a Final, scanned on its own. Rows exist only for images; other files in a zip

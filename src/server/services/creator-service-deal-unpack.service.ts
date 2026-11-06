@@ -1,7 +1,7 @@
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
+import { liveFile, SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   getFinalScanReading,
@@ -82,7 +82,7 @@ function claimFinal() {
       WHERE p."kind"::text IN (${SCANNED_FILE_KINDS})
         AND p."status" = 'Ready'::"ServiceDealFileStatus"
         AND p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
-        AND p."unpackedAt" IS NULL
+        AND p."unpackedAt" IS NULL AND ${liveFile(Prisma.sql`p`)}
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_UNPACK_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -383,6 +383,7 @@ export async function settleEntryScans() {
   return { passed, rejected, unchecked, timedOut };
 }
 
+const LIVE = liveFile(Prisma.sql`"ServiceDealFile"`);
 const WAITING_FOR_MALWARE_SCAN = Prisma.sql`
   "kind"::text IN (${SCANNED_FILE_KINDS})
   AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
@@ -445,6 +446,7 @@ export async function settleMalwareScans({
     const orphans = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT "id" FROM "ServiceDealFile"
       WHERE ${WAITING_FOR_MALWARE_SCAN} AND "malwareScanWorkflowId" IS NULL AND "repackedAt" IS NOT NULL
+        AND ${LIVE}
       ORDER BY "id" LIMIT 50`;
     for (const { id } of orphans) await handOffToScan(id);
     return counts;
@@ -466,7 +468,7 @@ export async function settleMalwareScans({
   const due = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT "id" FROM "ServiceDealFile"
     WHERE ${WAITING_FOR_MALWARE_SCAN} AND "repackedAt" IS NOT NULL AND "failReason" IS NULL
-      AND "malwareScanWorkflowId" IS NULL
+      AND "malwareScanWorkflowId" IS NULL AND ${LIVE}
       AND ("malwareScanSubmittedAt" IS NULL
         OR "malwareScanSubmittedAt" < now() - (${SERVICE_FINAL_SCAN_RETRY_MS}::int * interval '1 millisecond'))
     ORDER BY "id" LIMIT ${submitLimit}::int`;

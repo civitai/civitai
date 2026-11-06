@@ -11,6 +11,12 @@ import { Prisma } from '@prisma/client';
 const DEAL = Prisma.sql`"ServiceDeal"`;
 
 /**
+ * A file its uploader has not removed. Every party-facing read, gate, count and job start ANDs this
+ * in; only moderator reads and work already in flight see removed rows.
+ */
+export const liveFile = (f: Prisma.Sql) => Prisma.sql`${f}."removedAt" IS NULL`;
+
+/**
  * The kinds the Final scan pipeline (unpack, repack, malware scan, verdict) runs on, as text to
  * compare `"kind"::text` with: the pipeline must keep running on a database that does not have the
  * Attachment value yet. Only the scan steps use it: what gates delivery and payout counts Finals
@@ -28,27 +34,32 @@ export const dealReadyToDeliver = (deal: Prisma.Sql = DEAL) => Prisma.sql`(
   (${deal}."previewKind" = 'None'::"ServicePreviewKind" OR EXISTS (
     SELECT 1 FROM "ServiceDealFile" p
     WHERE p."dealId" = ${deal}."id" AND p."round" = ${deal}."revisionsUsed"
+      AND ${liveFile(Prisma.sql`p`)}
       AND p."kind" = 'Preview'::"ServiceDealFileKind" AND p."status" = 'Ready'::"ServiceDealFileStatus"
   ))
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" p
     WHERE p."dealId" = ${deal}."id" AND p."round" = ${deal}."revisionsUsed"
+      AND ${liveFile(Prisma.sql`p`)}
       AND p."kind" = 'Preview'::"ServiceDealFileKind" AND p."status" <> 'Ready'::"ServiceDealFileStatus"
   )
   AND EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
+      AND ${liveFile(Prisma.sql`f`)}
       AND f."kind" = 'Final'::"ServiceDealFileKind" AND f."status" = 'Ready'::"ServiceDealFileStatus"
   )
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
+      AND ${liveFile(Prisma.sql`f`)}
       AND f."kind" = 'Final'::"ServiceDealFileKind"
       AND (f."status" <> 'Ready'::"ServiceDealFileStatus" OR f."unpackedAt" IS NULL)
   )
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
+      AND ${liveFile(Prisma.sql`f`)}
       AND f."kind" = 'Final'::"ServiceDealFileKind" AND f."scanStatus" = 'Failed'::"ServiceDealFileScanStatus"
   )
 )`;

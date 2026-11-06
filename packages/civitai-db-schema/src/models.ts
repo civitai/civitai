@@ -7006,26 +7006,9 @@ export interface ServiceDealFile {
   deliverySize: number | null;
   repackedAt: Date | null;
   attestedAt: Date | null;
+  removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
-}
-
-export interface ServiceDealFileHeld {
-  id: number;
-  fileId: number;
-  dealId: number;
-  uploaderId: number;
-  kind: ServiceDealFileKind;
-  round: number;
-  fileName: string;
-  mimeType: string;
-  size: number;
-  s3Key: string | null;
-  deliveryKey: string | null;
-  imageId: number | null;
-  entryIds: number[];
-  reason: string;
-  heldAt: Date;
 }
 
 export interface ServiceDealFileEntry {

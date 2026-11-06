@@ -161,7 +161,7 @@ const MIGRATIONS = [
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
   '20261208120000_creator_service_dispute_review',
-  '20261224150000_service_deal_file_held',
+  '20261224150000_service_deal_file_removed_at',
   '20261224150100_service_deal_file_attachment',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
@@ -186,6 +186,7 @@ type FileRecord = {
   repackedAt: Date | null;
   deliveryKey: string | null;
   deliverySize: number | null;
+  removedAt: Date | null;
 };
 type EntryRecord = {
   id: number;
@@ -326,7 +327,7 @@ beforeEach(async () => {
     await q(`DELETE FROM "Image" WHERE id = $1`, [id]);
   });
   await holder.db.exec(`
-    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "ServiceDealFileHeld", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
+    TRUNCATE "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image", "CsamReport", "ServiceDisputeReview" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
@@ -659,9 +660,10 @@ describe('the scan an attachment goes through', () => {
   });
 });
 
-const heldRows = (fileId: number) =>
-  q<{ reason: string; s3Key: string; uploaderId: number; kind: string; entryIds: number[] }>(
-    `SELECT reason, "s3Key", "uploaderId", kind::text, "entryIds" FROM "ServiceDealFileHeld" WHERE "fileId" = $1`,
+/** The file's row if it was kept on removal. */
+const keptRows = (fileId: number) =>
+  q<{ s3Key: string; status: string }>(
+    `SELECT "s3Key", status::text FROM "ServiceDealFile" WHERE id = $1 AND "removedAt" IS NOT NULL`,
     [fileId]
   );
 const deletedKeys = () => s3.deleteObject.mock.calls.map((call) => call[1]);
@@ -843,7 +845,7 @@ describe('a moderator', () => {
   });
 });
 
-describe('removing a file that is evidence', () => {
+describe('removing a file that must be kept', () => {
   it("keeps the original of a rejected attachment the buyer removes, out of everyone's reach", async () => {
     const dealId = await accepted();
     const fileId = await rejectedZip(dealId, attach);
@@ -853,33 +855,32 @@ describe('removing a file that is evidence', () => {
 
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
 
-    expect(await heldRows(fileId)).toEqual([
-      {
-        reason: 'scan',
-        s3Key,
-        uploaderId: BUYER,
-        kind: 'Attachment',
-        entryIds: [entry.id],
-      },
-    ]);
+    expect(await keptRows(fileId)).toEqual([{ s3Key, status: 'Ready' }]);
+    expect((await entries(fileId)).map((e) => e.id)).toEqual([entry.id]);
     expect(deletedKeys()).not.toContain(s3Key);
-    expect(await fileRow(fileId)).toBeUndefined();
     expect(await list(dealId, BUYER)).toEqual([]);
     expect(await list(dealId, SELLER)).toEqual([]);
     expect(await download(fileId, BUYER)).toBeNull();
+    expect(await download(fileId, SELLER)).toBeNull();
+    // A moderator who is not a party still finds it, marked removed.
+    expect(await list(dealId, STRANGER, true)).toMatchObject([
+      { id: fileId, removedAt: expect.any(Date), canDownload: true },
+    ]);
+    expect((await download(fileId, STRANGER, true))?.key).toBe(s3Key);
   });
 
   it('keeps the original of a rejected Final the seller removes', async () => {
     const dealId = await accepted();
     const fileId = await rejectedZip(dealId, (id, name, content) => final(id, name, content));
-    const { s3Key } = await fileRow(fileId);
+    const { s3Key, status } = await fileRow(fileId);
+    // A failed scan leaves the Final Ready, and its seller can still take it back.
+    expect(status).toBe('Ready');
+    expect(await download(fileId, SELLER)).not.toBeNull();
     s3.deleteObject.mockClear();
 
     await files.deleteServiceDealFile({ fileId, userId: SELLER });
 
-    expect(await heldRows(fileId)).toMatchObject([
-      { reason: 'scan', s3Key, uploaderId: SELLER, kind: 'Final' },
-    ]);
+    expect(await keptRows(fileId)).toMatchObject([{ s3Key }]);
     expect(deletedKeys()).not.toContain(s3Key);
   });
 
@@ -896,7 +897,7 @@ describe('removing a file that is evidence', () => {
 
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
 
-    expect(await heldRows(fileId)).toMatchObject([{ reason: 'scan', s3Key }]);
+    expect(await keptRows(fileId)).toMatchObject([{ s3Key }]);
     expect(deletedKeys()).not.toContain(s3Key);
   });
 
@@ -909,16 +910,8 @@ describe('removing a file that is evidence', () => {
 
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
 
-    expect(await heldRows(fileId)).toMatchObject([{ reason: 'account', s3Key }]);
+    expect(await keptRows(fileId)).toMatchObject([{ s3Key }]);
     expect(deletedKeys()).not.toContain(s3Key);
-  });
-
-  it('records the hold that applies first when two do', async () => {
-    const dealId = await accepted();
-    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
-    const fileId = await rejectedZip(dealId, attach);
-    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
-    expect(await heldRows(fileId)).toMatchObject([{ reason: 'account' }]);
   });
 
   it('holds a file deleted while it is being unpacked, and the copy made after attaches to it', async () => {
@@ -938,12 +931,12 @@ describe('removing a file that is evidence', () => {
     s3.deleteObject.mockClear();
     await unpack.unpackFinals();
 
-    expect(await heldRows(fileId)).toMatchObject([{ reason: 'scan', s3Key }]);
+    expect(await keptRows(fileId)).toMatchObject([{ s3Key }]);
     expect(deletedKeys()).not.toContain(s3Key);
     const rows = await q<{ fileId: number | null; imageId: number | null }>(
       `SELECT "fileId", "imageId" FROM "ServiceDealFileEntry"`
     );
-    expect(rows).toEqual([{ fileId: null, imageId: expect.any(Number) }]);
+    expect(rows).toEqual([{ fileId, imageId: expect.any(Number) }]);
     expect(await q(`SELECT id FROM "Image"`)).toEqual([{ id: rows[0].imageId }]);
   });
 
@@ -957,7 +950,7 @@ describe('removing a file that is evidence', () => {
     await q(`UPDATE "ServiceDealFile" SET "processingAt" = now() WHERE id = $1`, [fileId]);
     expect(await entries(fileId)).toEqual([]);
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
-    expect(await heldRows(fileId)).toMatchObject([{ reason: 'scan' }]);
+    expect(await keptRows(fileId)).toHaveLength(1);
   });
 
   it.each([
@@ -986,17 +979,18 @@ describe('removing a file that is evidence', () => {
         files.completeServiceDealAttachment({ fileId, userId: BUYER })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
-      const [held] = await heldRows(fileId);
-      expect(held).toMatchObject({ reason: 'account' });
-      expect(held.s3Key).toMatch(/^service-deals\/files\//);
+      // The row points at the server copy, and is otherwise the Failed file the buyer is shown.
+      const refused = await fileRow(fileId);
+      expect(refused).toMatchObject({ status: 'Failed', removedAt: null });
+      expect(refused.s3Key).toMatch(/^service-deals\/files\//);
       expect(deletedKeys()).toEqual([uploaderKey]);
-      expect((await fileRow(fileId)).status).toBe('Failed');
+      expect(await list(dealId, BUYER)).toMatchObject([{ id: fileId, status: 'Failed' }]);
       expect(await download(fileId, BUYER)).toBeNull();
-      expect(copiesTo(held.s3Key!)).toEqual([uploaderKey]);
+      expect(copiesTo(refused.s3Key)).toEqual([uploaderKey]);
 
-      // The buyer then removes the refused file: still one held row, still the server copy.
+      // The buyer then removes the refused file: kept, still at the server copy.
       await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
-      expect(await heldRows(fileId)).toEqual([held]);
+      expect(await keptRows(fileId)).toEqual([{ s3Key: refused.s3Key, status: 'Failed' }]);
       // Nor is a second copy made from the uploader's key, which they can still write to.
       expect(
         s3.send.mock.calls.filter(([command]) =>
@@ -1013,6 +1007,7 @@ describe('removing a file that is evidence', () => {
     const dealId = await accepted();
     const { fileId } = await requestAs(dealId, BUYER);
     await q(`UPDATE "ServiceDealFile" SET "fileName" = $2 WHERE id = $1`, [fileId, name]);
+    const uploaderKey = (await fileRow(fileId)).s3Key;
     s3.headObject
       .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength })
       .mockResolvedValueOnce({ status: 'present', size });
@@ -1021,11 +1016,11 @@ describe('removing a file that is evidence', () => {
     await expect(
       files.completeServiceDealAttachment({ fileId, userId: BUYER })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(await heldRows(fileId)).toEqual([]);
+    expect((await fileRow(fileId)).s3Key).toBe(uploaderKey);
     expect(deletedKeys()).toHaveLength(2);
   });
 
-  it('records no key at all when the server copy of a held upload cannot be made', async () => {
+  it('keeps the upload where it is when the server copy of a kept upload cannot be made', async () => {
     const dealId = await accepted();
     await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
     const { fileId } = await requestAs(dealId, BUYER);
@@ -1035,8 +1030,11 @@ describe('removing a file that is evidence', () => {
 
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
 
-    expect(await heldRows(fileId)).toMatchObject([{ reason: 'account', s3Key: null }]);
-    expect(deletedKeys()).toEqual([uploaderKey]);
+    expect(await keptRows(fileId)).toMatchObject([{ s3Key: uploaderKey }]);
+    // Not deleted on a failed copy: it may be the only one there is.
+    expect(deletedKeys()).toEqual([]);
+    // Nor served as what it was: the uploader can still write to it.
+    expect(await download(fileId, STRANGER, true)).toBeNull();
   });
 
   it('tries the server copy of a held upload again before giving up', async () => {
@@ -1045,8 +1043,8 @@ describe('removing a file that is evidence', () => {
     const { fileId } = await requestAs(dealId, BUYER);
     s3.send.mockRejectedValueOnce(new Error('transient')).mockResolvedValue({});
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
-    const [held] = await heldRows(fileId);
-    expect(held.s3Key).toMatch(/^service-deals\/held\//);
+    const [kept] = await keptRows(fileId);
+    expect(kept.s3Key).toMatch(/^service-deals\/held\//);
   });
 
   it('never records the key of a refused upload that comes under a hold later', async () => {
@@ -1060,15 +1058,12 @@ describe('removing a file that is evidence', () => {
     await expect(
       files.completeServiceDealAttachment({ fileId, userId: BUYER })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(await heldRows(fileId)).toEqual([]);
     expect((await fileRow(fileId)).s3Key).toBe(uploaderKey);
 
     await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
-    const [held] = await heldRows(fileId);
-    expect(held.reason).toBe('account');
-    expect(held.s3Key).not.toBe(uploaderKey);
-    expect(held.s3Key).toMatch(/^service-deals\/held\//);
+    const [kept] = await keptRows(fileId);
+    expect(kept.s3Key).toMatch(/^service-deals\/held\//);
   });
 
   it('never records the key the uploader can still write to', async () => {
@@ -1080,10 +1075,9 @@ describe('removing a file that is evidence', () => {
 
     await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
 
-    const [held] = await heldRows(fileId);
-    expect(held.s3Key).toMatch(/^service-deals\/held\//);
-    expect(held.s3Key).not.toBe(uploaderKey);
-    expect(copiesTo(held.s3Key!)).toEqual([uploaderKey]);
+    const [kept] = await keptRows(fileId);
+    expect(kept.s3Key).toMatch(/^service-deals\/held\//);
+    expect(copiesTo(kept.s3Key)).toEqual([uploaderKey]);
     expect(deletedKeys()).toEqual([uploaderKey]);
   });
 
@@ -1102,9 +1096,133 @@ describe('removing a file that is evidence', () => {
     await files.deleteServiceDealAttachment({ fileId: zipId, userId: BUYER });
     await files.deleteServiceDealAttachment({ fileId: textId, userId: BUYER });
 
-    expect(await heldRows(zipId)).toEqual([]);
-    expect(await heldRows(textId)).toEqual([]);
+    expect(await fileRow(zipId)).toBeUndefined();
+    expect(await fileRow(textId)).toBeUndefined();
     expect(deletedKeys()).toEqual(expect.arrayContaining(keys));
+  });
+});
+
+describe('a removed file that is kept', () => {
+  /** A Final the seller removes while their account is on a report, so it is kept. */
+  async function removedFinal(dealId: number) {
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [SELLER]);
+    const fileId = await final(dealId, 'old.txt', TEXT);
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    expect(await keptRows(fileId)).toHaveLength(1);
+    return fileId;
+  }
+
+  it('neither gates delivery or payout, nor is listed, served or worked on for the parties', async () => {
+    const dealId = await accepted();
+    const removedId = await removedFinal(dealId);
+    const liveId = await final(dealId, 'new.txt', TEXT);
+    await scanned([liveId]);
+    expect((await fileRow(liveId)).scanStatus).toBe('Passed');
+
+    // The removed Final was never unpacked, yet the round is ready and clear.
+    expect((await fileRow(removedId)).unpackedAt).toBeNull();
+    expect(await readyToDeliver(dealId)).toBe(true);
+    expect(await finalsClear(dealId)).toBe(true);
+    expect((await list(dealId, SELLER)).map((f) => f.id)).toEqual([liveId]);
+    expect((await list(dealId, BUYER)).map((f) => f.id)).not.toContain(removedId);
+    expect(await download(removedId, SELLER)).toBeNull();
+    // Nor can its uploader complete or remove it again.
+    await expect(
+      files.deleteServiceDealFile({ fileId: removedId, userId: SELLER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('frees its place in the attachment limit', async () => {
+    const dealId = await accepted();
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
+    s3.send.mockResolvedValue({});
+    const ids: number[] = [];
+    for (let i = 0; i < SERVICE_ATTACHMENT_MAX_FILES; i++)
+      ids.push((await requestAs(dealId, BUYER)).fileId);
+    await files.deleteServiceDealAttachment({ fileId: ids[0], userId: BUYER });
+    expect(await keptRows(ids[0])).toHaveLength(1);
+    await expect(requestAs(dealId, BUYER)).resolves.toMatchObject({ fileId: expect.any(Number) });
+  });
+
+  it("serves nothing of a refused upload to its uploader, though the server's copy is kept", async () => {
+    const dealId = await accepted();
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [SELLER]);
+    const { fileId } = await files.requestServiceDealUpload({
+      dealId,
+      userId: SELLER,
+      kind: 'Final',
+      fileName: 'big.txt',
+      mimeType: 'text/plain',
+      size: TEXT.byteLength,
+    });
+    s3.headObject
+      .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength })
+      .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength + 1 });
+    s3.send.mockResolvedValue(body(TEXT));
+    await expect(files.completeServiceDealUpload({ fileId, userId: SELLER })).rejects.toMatchObject(
+      {
+        code: 'BAD_REQUEST',
+      }
+    );
+    const { status, s3Key } = await fileRow(fileId);
+    expect(status).toBe('Failed');
+    expect(s3Key).toMatch(/^service-deals\/files\//);
+    expect(await download(fileId, SELLER)).toBeNull();
+    expect(await download(fileId, SELLER, true)).toBeNull();
+    expect((await download(fileId, STRANGER, true))?.key).toBe(s3Key);
+  });
+
+  /** A Final removed while its malware scan is in flight: kept until the verdict lands. */
+  async function removedInFlight(dealId: number) {
+    const fileId = await final(dealId, 'late.txt', TEXT);
+    await unpack.unpackFinals();
+    await q(`UPDATE "ServiceDealFile" SET "processingAt" = now() WHERE id = $1`, [fileId]);
+    await files.deleteServiceDealFile({ fileId, userId: SELLER });
+    expect(await keptRows(fileId)).toHaveLength(1);
+    return fileId;
+  }
+  const verdictLands = (fileId: number, malware: string) =>
+    q(
+      `UPDATE "ServiceDealFile" SET "malwareScanStatus" = $2::"ServiceDealFileScanStatus",
+         "repackedAt" = COALESCE("repackedAt", now()), "processingAt" = NULL WHERE id = $1`,
+      [fileId, malware]
+    );
+
+  it('goes for good once a scan that was running passes', async () => {
+    const dealId = await accepted();
+    const fileId = await removedInFlight(dealId);
+    const { s3Key } = await fileRow(fileId);
+    expect(await files.purgeRemovedFiles()).toBe(0);
+
+    await verdictLands(fileId, 'Passed');
+    await settle();
+    s3.deleteObject.mockClear();
+    expect(await files.purgeRemovedFiles()).toBe(1);
+    expect(await fileRow(fileId)).toBeUndefined();
+    expect(deletedKeys()).toContain(s3Key);
+  });
+
+  it('stays when that scan fails, has no verdict yet, or its uploader is on a report', async () => {
+    const dealId = await accepted();
+    const failedId = await removedInFlight(dealId);
+    await verdictLands(failedId, 'Failed');
+    // The run let go of it before any verdict: nothing is open on the row, but nothing passed.
+    const unjudgedId = await removedInFlight(dealId);
+    await q(`UPDATE "ServiceDealFile" SET "processingAt" = NULL WHERE id = $1`, [unjudgedId]);
+    await settle();
+    expect((await fileRow(failedId)).scanStatus).toBe('Failed');
+    expect((await fileRow(unjudgedId)).scanStatus).toBe('Pending');
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await keptRows(failedId)).toHaveLength(1);
+    expect(await keptRows(unjudgedId)).toHaveLength(1);
+
+    const reportedId = await removedInFlight(dealId);
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [SELLER]);
+    await verdictLands(reportedId, 'Passed');
+    await settle();
+    expect((await fileRow(reportedId)).scanStatus).toBe('Passed');
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await keptRows(reportedId)).toHaveLength(1);
   });
 });
 
