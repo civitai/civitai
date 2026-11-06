@@ -1,4 +1,4 @@
-import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
 
@@ -21,6 +21,25 @@ export const REFERENCE_STATUS = {
 export const YESNO_QUESTION_MAX = 600;
 /** `reason` of a yes/no item a moderator closed. The import never reopens one. */
 export const MODERATOR_RETIRED = 'moderator-retired';
+/** `meta` key holding a yes/no item's last moderator action. */
+export const MODERATION_META_KEY = 'moderation';
+/** `meta` key on a reworded copy, holding the producer id of the question it replaces. */
+export const REWORD_OF_META_KEY = 'rewordOf';
+
+export type ModerationNote = { action: string; by: number; note: string; at: string };
+
+export const moderationMeta = (action: string, by: number, note: string, now: Date) => ({
+  [MODERATION_META_KEY]: { action, by, note, at: now.toISOString() } satisfies ModerationNote,
+});
+
+/** Merges `patch` into the item's `meta`, creating it when null. */
+export const mergeMeta = (patch: Record<string, unknown>) =>
+  sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
+
+/** A yes/no item a moderator has acted on. Expects `KnightsQueueItem` unaliased. */
+export const isModeratedSql = sql<SqlBool>`COALESCE("KnightsQueueItem"."meta" ? ${sql.lit(
+  MODERATION_META_KEY
+)}, false)`;
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
@@ -56,13 +75,7 @@ export async function gradeKnightsVotes(
     .execute();
 }
 
-/**
- * Closes a yes/no item with no outcome: the item becomes `Closed` with `reason`, and its pending votes become `inconclusive`.
- * The caller holds the item row lock and runs this in a transaction. It pays nothing: `settleFinalItems` (Knights) settles an
- * inconclusive vote on a closed item, as `closeYesNoItem` does inline. Lock order: item row, then its vote rows, never player rows,
- * so the moderator app can call it without taking the player locks the Knights close path takes.
- * `metaPatch` is merged into the item's `meta`.
- */
+/** The caller holds the item row lock, in a transaction. Settles nothing: `settleFinalItems` (the Knights tick) settles the inconclusive votes later. Locks the item row, then its votes, never player rows, so the moderator app avoids the player locks Knights' close path takes. `metaPatch` is merged into `meta`. */
 export async function closeYesNoItemRow(
   trx: Kysely<DB> | Transaction<DB>,
   itemId: number,
@@ -78,9 +91,7 @@ export async function closeYesNoItemRow(
       reason,
       resolvedAt: at,
       updatedAt: at,
-      ...(metaPatch
-        ? { meta: sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb` }
-        : {}),
+      ...(metaPatch ? { meta: mergeMeta(metaPatch) } : {}),
     })
     .where('id', '=', itemId)
     .execute();

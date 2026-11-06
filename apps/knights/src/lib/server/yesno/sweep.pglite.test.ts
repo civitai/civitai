@@ -251,7 +251,6 @@ describe('closing without settling (the moderator app path)', () => {
           .execute();
         await closeYesNoItemRow(trx, id, 'retired', NOW);
       });
-      // Until the tick settles them the votes are inconclusive and unpaid.
       expect((await snapshot(id)).votes.every((v) => !v.settled)).toBe(true);
       expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ items: 1, votes: 2 });
     });
