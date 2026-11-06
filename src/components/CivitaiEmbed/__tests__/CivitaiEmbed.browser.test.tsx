@@ -13,6 +13,10 @@ import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelP
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 // Stand-in feed endpoint: a row comes back only when its rating intersects the requested level.
 // The query hooks and browsing-level providers are real; settings, flags, the user, hidden
@@ -38,7 +42,8 @@ const mocks = vi.hoisted(() => {
     server: 'ok' as 'ok' | 'fail',
   };
   const requests: { type: 'model' | 'image'; ids: number[]; browsingLevel: number }[] = [];
-  return { rows, state, requests };
+  const availabilityRequests: { modelIds: number[]; imageIds: number[] }[] = [];
+  return { rows, state, requests, availabilityRequests };
 });
 
 function fakeFeed(type: 'model' | 'image') {
@@ -62,12 +67,38 @@ function fakeFeed(type: 'model' | 'image') {
   };
 }
 
+// Stand-in for content.getEmbedAvailability: booleans only, capped as the server caps the request
+// (signed in on a site without mature content: PG and PG-13).
+function useFakeAvailability(
+  input: { modelIds: number[]; imageIds: number[]; browsingLevel: number },
+  opts?: { enabled?: boolean }
+) {
+  return useQuery({
+    queryKey: ['availability', input],
+    enabled: opts?.enabled ?? true,
+    queryFn: async () => {
+      mocks.availabilityRequests.push({ modelIds: input.modelIds, imageIds: input.imageIds });
+      const cap = mocks.state.canViewNsfw ? allBrowsingLevelsFlag : sfwBrowsingLevelsFlag;
+      const answer = (type: 'model' | 'image', ids: number[]) =>
+        ids.map((id) => {
+          const row = mocks.rows[type].find(
+            (r) => r.id === id && Flags.intersects(r.nsfwLevel, cap)
+          );
+          const available = !!row && Flags.intersects(row.nsfwLevel, input.browsingLevel);
+          return { id, available, aboveViewerLevel: !!row && !available };
+        });
+      return { models: answer('model', input.modelIds), images: answer('image', input.imageIds) };
+    },
+  });
+}
+
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy(
     {
       'model.getAll': { useInfiniteQuery: fakeFeed('model') },
       'image.getInfinite': { useInfiniteQuery: fakeFeed('image') },
+      'content.getEmbedAvailability': { useQuery: useFakeAvailability },
     },
     // useQueryModels writes back to this cache when a request fails.
     { useUtils: () => ({ model: { getAll: { setInfiniteData: () => undefined } } }) }
@@ -176,6 +207,7 @@ beforeEach(() => {
     server: 'ok',
   });
   mocks.requests.length = 0;
+  mocks.availabilityRequests.length = 0;
 });
 
 describe('Civitai cards in an article', () => {
@@ -244,20 +276,43 @@ describe('Civitai cards in an article', () => {
     expect(host().innerHTML).not.toContain('mature-cover.jpg');
   });
 
-  // Nothing above the viewer's level may even be requested where they could not see it: the
-  // response reaches the client whether or not it renders.
+  // No item above the viewer's level may be fetched where they could not see it: the response
+  // reaches the client whether or not it renders. Signed in, they get a yes/no per missing id;
+  // signed out, not even that.
   test.each([
-    ['the site does not allow mature content', { canViewNsfw: false }],
-    ['the viewer is signed out', { user: null }],
-    ['the viewer has mature content off', { showNsfw: false }],
-  ])('when %s, a mature model is not available and nothing more is fetched', async (_, state) => {
+    ['the viewer is signed out', { user: null }, 'This model is not available', []],
+    [
+      'the site does not allow this rating',
+      { canViewNsfw: false },
+      'This model is not available',
+      [{ modelIds: [2], imageIds: [] }],
+    ],
+    [
+      'the viewer has mature content off',
+      { showNsfw: false },
+      'Mature content hidden',
+      [{ modelIds: [2], imageIds: [] }],
+    ],
+  ])('when %s, a mature model shows only its tile', async (_, state, text, availability) => {
     Object.assign(mocks.state, state);
-    renderArticle(article([link('model', 2)]));
+    renderArticle(article([link('model', 1), link('model', 2)]));
+
+    await settled();
+    const mature = host().querySelectorAll('[data-testid="civitai-embed-item"]')[1];
+    expect(mature.textContent).toContain(text);
+    expect(host().textContent).not.toContain('Spicy model');
+    expect(host().innerHTML).not.toContain('mature-cover.jpg');
+    expect(page.getByRole('button', { name: 'Show' }).elements()).toHaveLength(0);
+    expect(mocks.requests.map((r) => r.ids)).toEqual([[1, 2]]);
+    expect(mocks.availabilityRequests).toEqual(availability);
+  });
+
+  test('with mature content off, a deleted id still reads not available', async () => {
+    mocks.state.showNsfw = false;
+    renderArticle(article([link('model', 3)]));
 
     await settled();
     expect(host().textContent).toContain('This model is not available');
-    expect(host().textContent).not.toContain('Mature content');
-    expect(mocks.requests.map((r) => r.ids)).toEqual([[2]]);
   });
 
   test('a failed request shows not-available, never the mature follow-up', async () => {

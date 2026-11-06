@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   BrowsingLevelProvider,
+  useBrowsingLevelDebounced,
   ViewerBrowsingLevelScope,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useQueryImages } from '~/components/Image/image.utils';
@@ -11,15 +12,18 @@ import { useQueryModels } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { EmbedAvailability } from '~/server/controllers/civitai-embed.controller';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CivitaiEmbedType } from '~/shared/tiptap/civitai-embed.utils';
+import { trpc } from '~/utils/trpc';
 
 export type EmbedModel = UseQueryModelReturn[number];
 export type EmbedImage = ImagesInfiniteModel;
 
 type Result<T> = { loaded: boolean; failed?: boolean; byId: Map<number, T> };
 const pending = <T,>(): Result<T> => ({ loaded: false, byId: new Map() });
+const none: Result<EmbedAvailability> = { loaded: true, byId: new Map() };
 
 type EmbedState = {
   requestLoad: () => void;
@@ -28,6 +32,8 @@ type EmbedState = {
   images: Result<EmbedImage>;
   matureModels: Result<EmbedModel>;
   matureImages: Result<EmbedImage>;
+  hiddenModels: Result<EmbedAvailability>;
+  hiddenImages: Result<EmbedAvailability>;
 };
 
 const CivitaiEmbedContext = createContext<EmbedState | null>(null);
@@ -72,14 +78,42 @@ function ImageFetcher({ ids, enabled, onResult }: FetcherProps<EmbedImage>) {
   return null;
 }
 
+/** Only whether each id is public and above this viewer's level; no field of the item. */
+function HiddenFetcher({
+  modelIds,
+  imageIds,
+  enabled,
+  onModels,
+  onImages,
+}: {
+  modelIds: number[];
+  imageIds: number[];
+  enabled: boolean;
+  onModels: (result: Result<EmbedAvailability>) => void;
+  onImages: (result: Result<EmbedAvailability>) => void;
+}) {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data, isLoading, isFetched, isError } = trpc.content.getEmbedAvailability.useQuery(
+    { modelIds, imageIds, browsingLevel },
+    { enabled }
+  );
+  const models = useMemo(() => data?.models.filter((x) => x.aboveViewerLevel), [data]);
+  const images = useMemo(() => data?.images.filter((x) => x.aboveViewerLevel), [data]);
+  const query = { enabled, isLoading, isFetched, isError };
+  useReport(models, query, onModels);
+  useReport(images, query, onImages);
+  return null;
+}
+
 const missing = <T,>(ids: number[], result: Result<T>) =>
   result.loaded && !result.failed ? ids.filter((id) => !result.byId.has(id)) : [];
 
 /**
  * Ids the viewer's level drops get one follow-up at the domain's widest level, to tell
  * "mature" from "gone"; that data stays out of the DOM until Show. With mature content off
- * nothing above their level is requested at all: showNsfw is the over-18 confirmation, and a
- * response is a disclosure whether or not it renders.
+ * no item above their level is requested at all: showNsfw is the over-18 confirmation, and a
+ * response is a disclosure whether or not it renders. Those viewers get only a yes/no per id
+ * from getEmbedAvailability, and signed out not even that: their cap is PG, so it is always no.
  */
 export function CivitaiEmbedProvider({
   modelIds,
@@ -94,12 +128,15 @@ export function CivitaiEmbedProvider({
   const features = useFeatureFlags();
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const canEnableMature = !!features.canViewNsfw && !!currentUser && showNsfw;
+  const checkHidden = !canEnableMature && !!currentUser;
 
   const [requested, setRequested] = useState(false);
   const [models, setModels] = useState(pending<EmbedModel>);
   const [images, setImages] = useState(pending<EmbedImage>);
   const [matureModels, setMatureModels] = useState(pending<EmbedModel>);
   const [matureImages, setMatureImages] = useState(pending<EmbedImage>);
+  const [hiddenModels, setHiddenModels] = useState(pending<EmbedAvailability>);
+  const [hiddenImages, setHiddenImages] = useState(pending<EmbedAvailability>);
 
   const missingModelIds = useMemo(() => missing(modelIds, models), [modelIds, models]);
   const missingImageIds = useMemo(() => missing(imageIds, images), [imageIds, images]);
@@ -110,8 +147,29 @@ export function CivitaiEmbedProvider({
 
   const requestLoad = useCallback(() => setRequested(true), []);
   const value = useMemo(
-    () => ({ requestLoad, canEnableMature, models, images, matureModels, matureImages }),
-    [requestLoad, canEnableMature, models, images, matureModels, matureImages]
+    () => ({
+      requestLoad,
+      canEnableMature,
+      models,
+      images,
+      matureModels,
+      matureImages,
+      hiddenModels: checkHidden && missingModelIds.length ? hiddenModels : none,
+      hiddenImages: checkHidden && missingImageIds.length ? hiddenImages : none,
+    }),
+    [
+      requestLoad,
+      canEnableMature,
+      models,
+      images,
+      matureModels,
+      matureImages,
+      checkHidden,
+      missingModelIds,
+      missingImageIds,
+      hiddenModels,
+      hiddenImages,
+    ]
   );
 
   return (
@@ -127,6 +185,15 @@ export function CivitaiEmbedProvider({
           enabled={requested && !!imageIds.length}
           onResult={setImages}
         />
+        {checkHidden && (
+          <HiddenFetcher
+            modelIds={missingModelIds}
+            imageIds={missingImageIds}
+            enabled={!!(missingModelIds.length || missingImageIds.length)}
+            onModels={setHiddenModels}
+            onImages={setHiddenImages}
+          />
+        )}
         {canEnableMature && (
           <BrowsingLevelProvider browsingLevel={allBrowsingLevelsFlag}>
             <ModelFetcher
@@ -153,18 +220,24 @@ export type EmbedView<T> =
   | { state: 'loading' }
   | { state: 'card'; data: T }
   | { state: 'mature'; data: T }
+  | { state: 'hidden' }
   | { state: 'unavailable' };
 
 export function resolveEmbedView<T>(
   id: number,
   result: Result<T>,
   mature: Result<T>,
-  canEnableMature: boolean
+  canEnableMature: boolean,
+  hidden: Result<EmbedAvailability>
 ): EmbedView<T> {
   if (!result.loaded) return { state: 'loading' };
   const data = result.byId.get(id);
   if (data) return { state: 'card', data };
-  if (result.failed || !canEnableMature) return { state: 'unavailable' };
+  if (result.failed) return { state: 'unavailable' };
+  if (!canEnableMature) {
+    if (!hidden.loaded) return { state: 'loading' };
+    return hidden.byId.has(id) ? { state: 'hidden' } : { state: 'unavailable' };
+  }
   if (!mature.loaded) return { state: 'loading' };
   const matureData = mature.byId.get(id);
   return matureData ? { state: 'mature', data: matureData } : { state: 'unavailable' };
@@ -178,6 +251,24 @@ export function useEmbedView(type: CivitaiEmbedType, id: number): EmbedItemView 
   const ctx = useCivitaiEmbedContext();
   if (!ctx) return { type, state: 'unavailable' };
   return type === 'model'
-    ? { type, ...resolveEmbedView(id, ctx.models, ctx.matureModels, ctx.canEnableMature) }
-    : { type, ...resolveEmbedView(id, ctx.images, ctx.matureImages, ctx.canEnableMature) };
+    ? {
+        type,
+        ...resolveEmbedView(
+          id,
+          ctx.models,
+          ctx.matureModels,
+          ctx.canEnableMature,
+          ctx.hiddenModels
+        ),
+      }
+    : {
+        type,
+        ...resolveEmbedView(
+          id,
+          ctx.images,
+          ctx.matureImages,
+          ctx.canEnableMature,
+          ctx.hiddenImages
+        ),
+      };
 }
