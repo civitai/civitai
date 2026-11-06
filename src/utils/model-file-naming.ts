@@ -249,3 +249,48 @@ export function resolveModelFileName({
   const files = index < 0 ? [file, ...versionFiles] : versionFiles;
   return nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index];
 }
+
+/** UTF-8 bytes, under the 255 most file systems allow, with room for a browser's ` (1)`. */
+export const MAX_OVERRIDE_NAME_BYTES = 200;
+
+// eslint-disable-next-line no-control-regex
+const unsafeNameChars = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+
+function fileExtension(fileName: string) {
+  const dot = fileName.lastIndexOf('.');
+  return dot > 0 ? fileName.slice(dot) : '';
+}
+
+/**
+ * The server's copy of a creator's download name, whatever the client sent: one path segment, no
+ * character that ends a header or a quoted string, no `%XX` the delivery path would decode into
+ * one, capped in bytes, and always the stored file's extension. Null when nothing is left, which
+ * clears the override.
+ */
+export function sanitizeOverrideName(value: string | null | undefined, storedName: string) {
+  if (value == null) return null;
+  const ext = fileExtension(storedName);
+  let base = value
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .replace(unsafeNameChars, '')
+    .replace(/["\\/:*?<>|]/g, '_')
+    .replace(/%(?=[0-9a-f]{2})/gi, '_')
+    .trim();
+  if (ext && base.toLowerCase().endsWith(ext.toLowerCase())) base = base.slice(0, -ext.length);
+  // Leading dots hide a file or climb a directory; trailing ones Windows drops.
+  base = base.replace(/^[\s.]+|[\s.]+$/g, '');
+
+  const encoder = new TextEncoder();
+  const budget = MAX_OVERRIDE_NAME_BYTES - encoder.encode(ext).length;
+  let bytes = 0;
+  let kept = '';
+  for (const char of base) {
+    bytes += encoder.encode(char).length;
+    if (bytes > budget) break;
+    kept += char;
+  }
+  base = kept.replace(/[\s.]+$/, '');
+
+  return base ? `${base}${ext}` : null;
+}

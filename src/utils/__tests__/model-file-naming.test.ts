@@ -4,6 +4,8 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   GENERIC_FILE_BASENAMES,
   isGenericFileName,
+  MAX_OVERRIDE_NAME_BYTES,
+  sanitizeOverrideName,
   resolveModelFileName,
 } from '~/utils/model-file-naming';
 
@@ -518,5 +520,52 @@ describe('resolveModelFileName', () => {
         versionFiles: [file],
       })
     ).toBe(jobIdName);
+  });
+});
+
+describe('sanitizeOverrideName', () => {
+  const stored = 'X40F7C8WA9TN0XW80MTTCT2TT0.aB3dE6gH.safetensors';
+
+  it('keeps a plain name', () => {
+    expect(sanitizeOverrideName('My Bunny v2.safetensors', stored)).toBe('My Bunny v2.safetensors');
+  });
+
+  it('adds the stored extension, and keeps it when the creator typed another one', () => {
+    expect(sanitizeOverrideName('My Bunny', stored)).toBe('My Bunny.safetensors');
+    expect(sanitizeOverrideName('My Bunny.ckpt', stored)).toBe('My Bunny.ckpt.safetensors');
+    expect(sanitizeOverrideName('My Bunny.SAFETENSORS', stored)).toBe('My Bunny.safetensors');
+  });
+
+  it.each([
+    ['CR/LF', 'a\r\nSet-Cookie: x=1', 'a Set-Cookie_ x=1.safetensors'],
+    ['a NUL and a tab', 'a\u0000b\tc', 'ab c.safetensors'],
+    ['quotes', 'a"; filename="evil', 'a_; filename=_evil.safetensors'],
+    ['slashes', 'models/sub\\name', 'models_sub_name.safetensors'],
+    ['path traversal', '../../etc/passwd', '_.._etc_passwd.safetensors'],
+    ['leading dots', '...hidden', 'hidden.safetensors'],
+    ['a %XX the delivery path would decode', 'a%0D%0Ab%22', 'a_0D_0Ab_22.safetensors'],
+    ['a bidi override', 'abc‮gpj.exe', 'abcgpj.exe.safetensors'],
+  ])('neutralises %s', (_label, input, expected) => {
+    expect(sanitizeOverrideName(input, stored)).toBe(expected);
+  });
+
+  it('keeps non-ASCII names', () => {
+    expect(sanitizeOverrideName('キュアスパークル', stored)).toBe('キュアスパークル.safetensors');
+  });
+
+  it('caps an over-long name in UTF-8 bytes and keeps the extension', () => {
+    const ascii = sanitizeOverrideName('a'.repeat(1000), stored)!;
+    expect(new TextEncoder().encode(ascii).length).toBe(MAX_OVERRIDE_NAME_BYTES);
+    expect(ascii.endsWith('.safetensors')).toBe(true);
+
+    const wide = sanitizeOverrideName('キ'.repeat(300), stored)!;
+    expect(new TextEncoder().encode(wide).length).toBeLessThanOrEqual(MAX_OVERRIDE_NAME_BYTES);
+    expect(wide).toMatch(/^キ+\.safetensors$/);
+  });
+
+  it('clears the override when nothing is left', () => {
+    expect(sanitizeOverrideName('  ...  ', stored)).toBeNull();
+    expect(sanitizeOverrideName('', stored)).toBeNull();
+    expect(sanitizeOverrideName(null, stored)).toBeNull();
   });
 });

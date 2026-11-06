@@ -25,6 +25,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { inferComponentType } from '~/server/utils/model-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import {
   ModelFileVisibility,
   ModelHashType,
@@ -157,6 +158,8 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   isModerator,
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
+  if (data.overrideName !== undefined)
+    data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
   // `name` is the uploaded file name, which some model types publish as the download name.
   await throwOnBlockedUserContent([data.overrideName, data.name], {
@@ -210,6 +213,14 @@ export async function updateFile({
     select: replaceableFileSelect,
   });
   if (!modelFile) throw throwNotFoundError();
+
+  // A re-sent stored name is left as it was: rewriting it would make a name saved before this rule
+  // look changed, and send it back through the blocklist on every save.
+  if (inputData.overrideName != null && inputData.overrideName !== modelFile.overrideName)
+    inputData.overrideName = sanitizeOverrideName(
+      inputData.overrideName,
+      inputData.name ?? modelFile.name
+    );
 
   // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
   // would leave a file whose name trips a list impossible to edit in any other way.

@@ -13,9 +13,16 @@ download; the S3 key and `name` are untouched, so it is fully reversible. `getDo
 in `src/server/services/file.service.ts` prefers it, which is why the public API and the download
 handler needed no change.
 
-Where it is editable: the model-wizard version step (`ModelWizard.tsx`, prefilled
-`modelVersion.name + '.safetensors'`) and the file list (`Files.tsx`). Persisted through
+Where it is editable: the model-wizard version step for trained models (`ModelWizard.tsx`,
+prefilled `modelVersion.name + '.safetensors'`), and the file list (`Files.tsx`) for every saved
+primary file of any model, uploaded or trained. Persisted through
 `modelFileCreateSchema`/`modelFileUpdateSchema` and exposed via `modelFileSelect`.
+
+The server rewrites every new value with `sanitizeOverrideName` (`src/utils/model-file-naming.ts`):
+one path segment, no control, quote or `%XX` characters, at most 200 UTF-8 bytes, and always the
+stored file's extension. The in-repo S3 links build their header with
+`attachmentContentDisposition` (`src/utils/content-disposition.ts`), an ASCII `filename` plus an
+RFC 5987 `filename*`.
 
 **Not built:** a rename input inside `TrainingSelectFile`'s epoch-publish dialog, so a creator
 names the file one screen later than planned. Also unbuilt: an architecture segment on the
