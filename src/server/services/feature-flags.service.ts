@@ -646,7 +646,8 @@ const featureFlags = createFeatureFlags({
   // picker — and not the node: a blurb span already in a draft must keep parsing, or turning
   // this off would unwrap references the fan-out job still owns.
   textBlurbs: { availability: ['mod'], fliptKey: 'text-blurbs' },
-  // Only the paste-to-card insertion path; stored cards render for every reader.
+  // Inserting cards only (paste and the Embed dialog). Stored cards and
+  // content.getEmbedAvailability serve every reader, flag or not.
   articleCivitaiCards: ['mod'],
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],

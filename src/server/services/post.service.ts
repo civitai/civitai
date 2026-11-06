@@ -108,12 +108,15 @@ import {
   Availability,
   CollectionMode,
   CollectionType,
+  EntityType,
+  JobQueueType,
   MediaType,
   Model3DStatus,
   ModelHashType,
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import { isValidAIGeneration } from '~/utils/image-utils';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { readImageUploadObjectHead } from '~/utils/s3-utils';
@@ -1231,6 +1234,15 @@ export async function afterPostsUnpublish(posts: { postId: number; userId: numbe
   const userIds = uniq(posts.map((post) => post.userId));
   await userPostCountCache.refresh(userIds);
   await userImageVideoCountCaches.refresh(userIds);
+  // Last, so a failed queue write can't skip the search delete above. The nsfw trigger fires on
+  // publish only, and the version's level still counts this post's images.
+  await enqueueJobs(
+    posts.map((post) => ({
+      entityId: post.postId,
+      entityType: EntityType.Post,
+      type: JobQueueType.UpdateNsfwLevel,
+    }))
+  );
 }
 
 export const deletePost = async ({
@@ -1973,6 +1985,10 @@ export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostIma
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);
+  // The version level counts the first 20 images by index, so an order change can move one in or out.
+  await enqueueJobs([
+    { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+  ]);
 
   return transaction;
 };

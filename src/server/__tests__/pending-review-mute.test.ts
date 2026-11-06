@@ -427,6 +427,7 @@ describe('pending-review mute', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -446,7 +447,12 @@ describe('pending-review mute', () => {
       updateSource: 'test',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -631,6 +637,7 @@ describe('pending-review mute — restriction type', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -728,7 +735,12 @@ describe('pending-review mute — restriction type', () => {
       type: 'bot-account',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });

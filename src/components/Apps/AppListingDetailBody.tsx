@@ -36,6 +36,7 @@ import {
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useCallback, useState } from 'react';
@@ -85,6 +86,11 @@ import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
+import {
+  ReviewListingModal,
+  ReviewListingTrigger,
+  useCanReviewListing,
+} from '~/components/Apps/ReviewListingButton';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -1039,7 +1045,8 @@ export function AppListingDetailBody({
   // the old block explained — why the modals are siblings of the `Menu` rather
   // than of a `Menu.Item`, why the report affordance's two prop bags must both be
   // spread, why the mod set is an intersection rather than a hand-rolled list —
-  // moved with the code and is documented there.
+  // moved with the code and is documented there. The ONE exception is the review
+  // modal: this body owns it (see `canReview` below) and the menu hands its item to it.
   //
   // What stays here is only what is TRUE OF THIS SURFACE: the trigger's geometry
   // (Mantine's default size + a 20px glyph, `variant="light"`), and `preview`.
@@ -1068,6 +1075,16 @@ export function AppListingDetailBody({
       : null;
   const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
   const categoryHref = appsStoreCategoryHref(detail.category);
+
+  // REVIEW ENTRY POINTS: the `⋮` item, the Reviews-heading button and the empty-state
+  // CTA all open THIS one modal, so the page never holds two review forms. Same gate as
+  // the menu's item (`useCanReviewListing`; the detail surface admits viewer actions).
+  const canReview = useCanReviewListing({
+    ownerUserId: detail.creator?.id ?? null,
+    listingKind: detail.kind,
+  });
+  const [reviewOpened, reviewModal] = useDisclosure(false);
+  const showReviewCta = !preview && canReview;
 
   return (
     <Stack gap="lg">
@@ -1111,6 +1128,7 @@ export function AppListingDetailBody({
             }}
             surface="detail"
             preview={preview}
+            onOpenReview={reviewModal.open}
           />
         </Box>
       </Box>
@@ -1554,9 +1572,24 @@ export function AppListingDetailBody({
         // with middle-click, and before hydration, and it survives being copied.
         <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
-          <Title order={2}>Reviews</Title>
-          <AppListingReviews appListingId={detail.id} />
+          <Group justify="space-between" align="center" gap="sm">
+            <Title order={2}>Reviews</Title>
+            {showReviewCta && (
+              <ReviewListingTrigger appListingId={detail.id} onOpen={reviewModal.open} />
+            )}
+          </Group>
+          <AppListingReviews
+            appListingId={detail.id}
+            onLeaveReview={showReviewCta ? reviewModal.open : undefined}
+          />
         </Stack>
+      )}
+      {showReviewCta && (
+        <ReviewListingModal
+          appListingId={detail.id}
+          opened={reviewOpened}
+          onClose={reviewModal.close}
+        />
       )}
 
       {/* Not in preview: a shadow listing has no comments to load. */}

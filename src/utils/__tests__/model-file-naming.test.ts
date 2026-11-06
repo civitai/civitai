@@ -4,6 +4,8 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   GENERIC_FILE_BASENAMES,
   isGenericFileName,
+  MAX_OVERRIDE_NAME_BYTES,
+  sanitizeOverrideName,
   resolveModelFileName,
 } from '~/utils/model-file-naming';
 
@@ -437,6 +439,33 @@ describe('resolveModelFileName', () => {
       ).toBe('pytorch_lora_weights.safetensors');
     });
 
+    describe('a trainer publish that was never named', () => {
+      // The stored name is the orchestrator blob id: unreadable, and identical in shape for every
+      // trained LoRA, so the download falls back to `<model>_<version>`.
+      it.each([
+        ['with the key token', 'X40F7C8WA9TN0XW80MTTCT2TT0.aB3dE6gH.safetensors'],
+        ['before the key token existed', jobIdName],
+      ])('gets a readable default %s', (_label, name) => {
+        const file = { id: 1, name, type: 'Model' };
+        expect(
+          resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
+        ).toBe('bbBunny_v1.safetensors');
+      });
+
+      it.each([
+        'AshleyGraves_Krea2_byKonan.safetensors',
+        'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors.bak',
+        'x40f7c8wa9tn0xw80mttct2tt0.safetensors',
+        'X40F7C8WA9TN0XW80MTTCT2TT0_v2.safetensors',
+        'MYCHARACTERLORAFORFLUXDEV1.safetensors',
+      ])('keeps a name that only resembles one: %s', (name) => {
+        const file = { id: 1, name, type: 'Model' };
+        expect(
+          resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
+        ).toBe(name);
+      });
+    });
+
     it('separates LoRA files whose names differ only in case', () => {
       const upper = { id: 1, name: 'B.safetensors', type: 'Model', metadata: {} };
       const lower = { id: 2, name: 'b.safetensors', type: 'Model', metadata: {} };
@@ -518,5 +547,57 @@ describe('resolveModelFileName', () => {
         versionFiles: [file],
       })
     ).toBe(jobIdName);
+  });
+});
+
+describe('sanitizeOverrideName', () => {
+  const stored = 'X40F7C8WA9TN0XW80MTTCT2TT0.aB3dE6gH.safetensors';
+
+  it('keeps a plain name', () => {
+    expect(sanitizeOverrideName('My Bunny v2.safetensors', stored)).toBe('My Bunny v2.safetensors');
+  });
+
+  it('adds the stored extension, and keeps it when the creator typed another one', () => {
+    expect(sanitizeOverrideName('My Bunny', stored)).toBe('My Bunny.safetensors');
+    expect(sanitizeOverrideName('My Bunny.ckpt', stored)).toBe('My Bunny.ckpt.safetensors');
+    expect(sanitizeOverrideName('My Bunny.SAFETENSORS', stored)).toBe('My Bunny.safetensors');
+  });
+
+  it.each([
+    ['CR/LF', 'a\r\nSet-Cookie: x=1', 'a Set-Cookie_ x=1.safetensors'],
+    ['a NUL and a tab', 'a\u0000b\tc', 'ab c.safetensors'],
+    ['quotes', 'a"; filename="evil', 'a_; filename=_evil.safetensors'],
+    ['slashes', 'models/sub\\name', 'models_sub_name.safetensors'],
+    ['path traversal', '../../etc/passwd', '_.._etc_passwd.safetensors'],
+    ['leading dots', '...hidden', 'hidden.safetensors'],
+    ['a %XX the delivery path would decode', 'a%0D%0Ab%22', 'a_0D_0Ab_22.safetensors'],
+    ['a bidi override', 'abc‮gpj.exe', 'abcgpj.exe.safetensors'],
+  ])('neutralises %s', (_label, input, expected) => {
+    expect(sanitizeOverrideName(input, stored)).toBe(expected);
+  });
+
+  it('drops an extension from a stored name that is not plain', () => {
+    expect(sanitizeOverrideName('My Bunny', 'a.safe"\r\n%0D/x')).toBe('My Bunny');
+    expect(sanitizeOverrideName('My Bunny', 'noextension')).toBe('My Bunny');
+  });
+
+  it('keeps non-ASCII names', () => {
+    expect(sanitizeOverrideName('キュアスパークル', stored)).toBe('キュアスパークル.safetensors');
+  });
+
+  it('caps an over-long name in UTF-8 bytes and keeps the extension', () => {
+    const ascii = sanitizeOverrideName('a'.repeat(1000), stored)!;
+    expect(new TextEncoder().encode(ascii).length).toBe(MAX_OVERRIDE_NAME_BYTES);
+    expect(ascii.endsWith('.safetensors')).toBe(true);
+
+    const wide = sanitizeOverrideName('キ'.repeat(300), stored)!;
+    expect(new TextEncoder().encode(wide).length).toBeLessThanOrEqual(MAX_OVERRIDE_NAME_BYTES);
+    expect(wide).toMatch(/^キ+\.safetensors$/);
+  });
+
+  it('clears the override when nothing is left', () => {
+    expect(sanitizeOverrideName('  ...  ', stored)).toBeNull();
+    expect(sanitizeOverrideName('', stored)).toBeNull();
+    expect(sanitizeOverrideName(null, stored)).toBeNull();
   });
 });
