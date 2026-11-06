@@ -184,28 +184,28 @@ describe('getImagesForPosts minor exclusion', () => {
 describe.each([
   [
     'getImagesForPosts',
-    () =>
+    (isModerator = false) =>
       getImagesForPosts({
         postIds: [1],
         pending: true,
         browsingLevel: 1,
-        user: { id: STRANGER, isModerator: false } as never,
+        user: { id: STRANGER, isModerator } as never,
       }),
   ],
   [
     'getImagesForModelVersion',
-    () =>
+    (isModerator = false) =>
       getImagesForModelVersion({
         modelVersionIds: [1],
         pending: true,
         browsingLevel: 1,
-        user: { id: STRANGER, isModerator: false } as never,
+        user: { id: STRANGER, isModerator } as never,
       }),
   ],
 ] as const)('%s pending read by a signed-in non-moderator', (name, read) => {
-  async function pendingStatement() {
+  async function pendingStatement(isModerator = false) {
     dbMock.dbRead.$queryRaw.mockClear();
-    await read();
+    await read(isModerator);
     const call = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
     expect(call, `${name} no longer reaches dbRead.$queryRaw`).toBeDefined();
     const [first, ...values] = call as unknown as [TemplateStringsArray | Prisma.Sql, ...unknown[]];
@@ -230,6 +230,12 @@ describe.each([
   it("hides other users' images awaiting moderator review", async () => {
     const stmt = await pendingStatement();
     expect(boundTo(stmt, /\(i\."needsReview" IS NULL OR i\."userId" = \$(\d+)\)/)).toBe(STRANGER);
+  });
+
+  it("leaves a moderator's pending read without these checks", async () => {
+    const { text } = await pendingStatement(true);
+    expect(text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
+    expect(text).not.toMatch(/"needsReview"|"acceptableMinor"|"i"\."ingestion"/);
   });
 
   it("requires other users' rated images to be reviewed", async () => {

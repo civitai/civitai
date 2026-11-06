@@ -142,6 +142,8 @@ describe("a collection review's image read", () => {
     const { text } = await statementFor({ id: REVIEWER, isModerator: true }, { pending: true });
     // Any filter on the column, however spelled; the bare column is selected, so match a predicate.
     expect(text).not.toMatch(/"acceptableMinor"\s*(=|IS|!=|<>)|NOT\s+i\."acceptableMinor"/);
+    expect(text).not.toMatch(/"needsReview" IS NULL|"i"\."ingestion"/);
+    expect(text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });
 
   it("checks the collection's ownership and MANAGE against the viewer, not a profile being browsed", async () => {
