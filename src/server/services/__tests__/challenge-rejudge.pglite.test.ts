@@ -15,7 +15,10 @@ const JUDGED_TAG = 11;
 const REVIEW_ME_TAG = 12;
 
 const { mockBulkDeleteComments, mockAcquireJobLock } = vi.hoisted(() => ({
-  mockBulkDeleteComments: vi.fn(async () => ({ commentDeleted: 0, commentV2Deleted: 0 })),
+  mockBulkDeleteComments: vi.fn<typeof CommentService.bulkDeleteComments>(async () => ({
+    commentDeleted: 0,
+    commentV2Deleted: 0,
+  })),
   mockAcquireJobLock: vi.fn(),
 }));
 vi.mock('~/server/jobs/job-lock', async (importOriginal) => ({
@@ -135,7 +138,7 @@ describe('rejudgeChallenge', () => {
       commentIds: [],
       commentV2Ids: expect.arrayContaining([10, 11]),
     });
-    expect(mockBulkDeleteComments.mock.calls[0][0].commentV2Ids).toHaveLength(2);
+    expect(mockBulkDeleteComments.mock.calls[0]?.[0].commentV2Ids).toHaveLength(2);
     expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalledWith({
       where: { imageId: { in: expect.arrayContaining([1, 2]) }, userId: JUDGE_USER },
     });
