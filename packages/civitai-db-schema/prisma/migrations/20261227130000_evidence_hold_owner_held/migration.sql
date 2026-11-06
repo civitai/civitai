@@ -1,6 +1,7 @@
 -- An owner's content is kept while ANY hold on the account stands, not only while an evidence-hold
--- marker does: a deleted image or post of such an owner is kept and taken off the site, and what a
--- hold kept stays recorded until no hold of any kind remains.
+-- marker does: a deleted image or post of such an owner is kept and taken off the site, what a hold
+-- kept stays recorded until no hold of any kind remains, and a held owner's model, image or post
+-- cannot be moved to another account.
 --
 -- Apply AFTER 20261227120000_evidence_hold_owner_held_indexes (the function relies on its indexes),
 -- and after 20261019220000_evidence_hold and 20261204120000_evidence_hold_image_prior_state, whose
@@ -161,3 +162,17 @@ CREATE OR REPLACE FUNCTION evidence_hold_purge_unheld(target_user INTEGER DEFAUL
   WHERE (target_user IS NULL OR i."userId" = target_user)
     AND NOT evidence_hold_owner_held(i."userId");
 $$ LANGUAGE sql SET search_path = public, pg_temp;
+
+-- A held owner's models, images and posts keep their owner, whatever the hold: moving a row to another
+-- account would take it out of the hold. Rows of the placeholder owner can still move, as before:
+-- restoring an account hands its models back from the placeholder. As in 20261019220000_evidence_hold
+-- otherwise.
+CREATE OR REPLACE FUNCTION evidence_hold_keep_owner() RETURNS trigger AS $$
+BEGIN
+  IF NEW."userId" IS DISTINCT FROM OLD."userId"
+    AND OLD."userId" <> -1 AND evidence_hold_owner_held(OLD."userId") THEN
+    RAISE EXCEPTION '% % cannot change owner', TG_TABLE_NAME, OLD."id";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;

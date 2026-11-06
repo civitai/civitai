@@ -382,3 +382,29 @@ describe('the delete triggers’ per-owner memo', () => {
     expect(await keptImages(PENDING)).toBe(51);
   });
 });
+
+describe('changing the owner', () => {
+  const NEW_OWNER = 77;
+  const move = (table: string, id: number) =>
+    db.query(`UPDATE "${table}" SET "userId" = $1 WHERE id = $2`, [NEW_OWNER, id]);
+
+  it.each([
+    ['Image', liveImage(PENDING)],
+    ['Post', postOf(PENDING)],
+    ['Model', 4000 + PENDING],
+  ])('of a held owner’s %s with no marker is refused', async (table, id) => {
+    await db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${4000 + PENDING}, ${PENDING})`);
+    await expect(move(table, id)).rejects.toThrow(/cannot change owner/);
+  });
+
+  it('of an unheld owner’s model goes ahead', async () => {
+    await db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${4000 + PLAIN}, ${PLAIN})`);
+    expect((await move('Model', 4000 + PLAIN)).affectedRows).toBe(1);
+  });
+
+  // Restoring an account hands its models back from the placeholder owner.
+  it('of a placeholder-owned model goes ahead, as before', async () => {
+    await db.exec(`INSERT INTO "Model" (id, "userId") VALUES (3999, ${PLACEHOLDER})`);
+    expect((await move('Model', 3999)).affectedRows).toBe(1);
+  });
+});
