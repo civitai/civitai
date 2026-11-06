@@ -8,7 +8,7 @@ import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 type Search = NonNullable<Parameters<typeof createSemanticImageSearch>[0]>['search'];
 
 function fakeSearch(pages: { ids: number[]; nextCursor?: number; correctedQuery?: string }[]) {
-  const search = vi.fn(async () => {
+  const search = vi.fn(async (_input: Parameters<NonNullable<Search>>[0]) => {
     const page = pages[search.mock.calls.length - 1] ?? { ids: [] };
     return {
       items: page.ids.map((id) => ({ id })),
