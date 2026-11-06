@@ -97,9 +97,9 @@ const reviewSubmissionSql = ({ collectionId, userId }: ReviewViewer) => Prisma.s
 
 /**
  * The images a collection's reviewer may see before they are rated: those that are REVIEW or
- * REJECTED submissions of that collection by their uploader, when the viewer owns it or has MANAGE on it. Used as an
- * arm of `getAllImages`' pending filter over `Image` aliased `i`; every other filter of that read
- * still applies.
+ * REJECTED submissions of that collection by their uploader, when the viewer owns it or has
+ * MANAGE on it. Used as an arm of `getAllImages`' pending filter over `Image` aliased `i`; every
+ * other filter of that read still applies.
  */
 export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
   Prisma.sql`(i."nsfwLevel" = 0 AND ${reviewSubmissionSql(viewer)})`;
@@ -108,8 +108,8 @@ export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
  * `getAllImages`' `pending` filter for a signed-in non-moderator, over `Image` aliased `i` joined to
  * its `Post` aliased `p`. Another user's image must pass the same checks as any read of it: not
  * awaiting review, rated within `browsingLevel`, reviewed (`imageReviewedSql`), and not
- * `acceptableMinor`. The viewer's own images are exempt from the first three, and from the level
- * check only while unrated.
+ * `acceptableMinor`. The viewer's own images are exempt from the needsReview, reviewed and
+ * `acceptableMinor` checks, and from the level check only while unrated.
  *
  * Two widenings, both scoped to collections the viewer manages:
  * - a post in a collection they MANAGE shows its rated, reviewed images above `browsingLevel`
