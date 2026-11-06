@@ -119,11 +119,8 @@ export async function claimNextExport(): Promise<ExportRow | null> {
 }
 
 /**
- * The account's holds as neutral codes (`legs`, with `['unconfirmed']` when they cannot be read),
- * and whether the hold marker view exists (`markerView`, for `accountHoldSql`). Beyond the
- * account legal holds: `safety-content` when any image of theirs is one the archive leaves out
- * (`IMAGE_SAFETY_CONDITION`), since an archive missing those must not reach the owner, who could
- * tell what was left out by what is missing.
+ * Returns the account's legal-hold reasons, if any: `legs` (`['unconfirmed']` when they cannot be
+ * read) and `markerView` (for `accountHoldSql`).
  */
 export async function exportHoldReasons(
   userId: number

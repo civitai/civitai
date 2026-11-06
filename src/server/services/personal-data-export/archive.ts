@@ -99,7 +99,7 @@ export async function streamArchiveToBucket(
   const archive = archiver('zip', { zlib: { level: 6 } });
   const sink = new stream.PassThrough();
   // `pipeline`, not `.pipe()`: a destroyed sink must error the archiver, or every pending append
-  // waits forever (the CSAM archive's uploadStream has the measured failure).
+  // waits forever (see `uploadStream` in csam.service-new.ts).
   stream.pipeline(archive, sink, () => undefined);
 
   const upload = new Upload({

@@ -9,9 +9,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * The release claim is one UPDATE that must refuse in the same statement when the account turns out
- * to have content the archive leaves out, even though the check just before it said otherwise (a
- * flag landing between the two). It runs here against Postgres, not as a string.
+ * The release claim is one UPDATE that must refuse in the same statement when a hold lands between
+ * the check and the claim. It runs here against Postgres, not as a string.
  */
 
 const m = vi.hoisted(() => ({ readySend: vi.fn(), accountHeld: false }));
@@ -99,7 +98,7 @@ const status = async () =>
   ).status;
 
 describe('release claim, run', () => {
-  it('claims nothing, and sends nothing, when the account has an image the archive leaves out', async () => {
+  it('claims nothing, and sends nothing, when the account is under a hold', async () => {
     await db.exec(`INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (1, ${OWNER}, 'CSAM')`);
     expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
       ok: false,
@@ -109,7 +108,7 @@ describe('release claim, run', () => {
     expect(await status()).toBe('built');
   });
 
-  it('claims and sends for an account with only ordinary images (control)', async () => {
+  it('claims and sends for an account under no hold (control)', async () => {
     await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (1, ${OWNER})`);
     expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toMatchObject({
       ok: true,

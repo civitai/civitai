@@ -53,7 +53,7 @@ beforeEach(() => {
   vi.mocked(dbMock.dbWrite.$executeRaw)
     .mockReset()
     .mockResolvedValue(1 as never);
-  // The safety-content check: none.
+  // No hold.
   vi.mocked(dbMock.dbWrite.$queryRaw)
     .mockReset()
     .mockResolvedValue([{ present: false }] as never);
@@ -119,7 +119,7 @@ describe('releaseExport', () => {
     expect(claim[at + 1]).toBe(9);
   });
 
-  it('refuses when an image of the account is one the archive leaves out', async () => {
+  it('refuses when the account is under a hold', async () => {
     vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ present: true }] as never);
     expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
       ok: false,
