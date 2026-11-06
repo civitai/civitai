@@ -18,7 +18,10 @@ function getFlipt(): FliptFeatureFlags {
 }
 
 // Segments match on context properties, not the entity id; a context-less call matches no segment.
-export async function isFlagOn(user: FliptTargetUser, flag: string = KNIGHTS_APP_FLAG): Promise<boolean> {
+export async function isFlagOn(
+  user: FliptTargetUser,
+  flag: string = KNIGHTS_APP_FLAG
+): Promise<boolean> {
   try {
     const flipt = getFlipt();
     await flipt.ensureInitialized();

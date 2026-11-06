@@ -496,7 +496,12 @@ export async function castVote(
         if (writesBack) {
           const winner = Number(decision.value);
           if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
-            await toInquisitor(trx, item.id, now, isBlockedLevel(winner) ? 'blocked' : 'pushed-down');
+            await toInquisitor(
+              trx,
+              item.id,
+              now,
+              isBlockedLevel(winner) ? 'blocked' : 'pushed-down'
+            );
             return { result: { status: 'inquisitor' }, xp: [voted] };
           }
         }

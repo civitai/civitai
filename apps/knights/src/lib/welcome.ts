@@ -25,7 +25,8 @@ export function wantedPath(url: URL): string {
 }
 
 /** Whether a request is for the welcome page, which `/` serves to a signed-out visitor. */
-export const isWelcomeRequest = (url: URL): boolean => wantedPath(url).split('?')[0] === WELCOME_PATH;
+export const isWelcomeRequest = (url: URL): boolean =>
+  wantedPath(url).split('?')[0] === WELCOME_PATH;
 
 /**
  * Where a signed-out request goes. A page load lands on the welcome screen, which holds the hub sign-in and
@@ -40,7 +41,8 @@ export function signedOutLocation({
   navigation: boolean;
   loginRedirect: string;
 }): string {
-  if (!navigation || url.pathname === '/api' || url.pathname.startsWith('/api/')) return loginRedirect;
+  if (!navigation || url.pathname === '/api' || url.pathname.startsWith('/api/'))
+    return loginRedirect;
   const next = safeNext(wantedPath(url));
   return next === WELCOME_PATH ? WELCOME_PATH : `${WELCOME_PATH}?next=${encodeURIComponent(next)}`;
 }

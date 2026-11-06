@@ -55,7 +55,12 @@ describe('home load', () => {
     findRecap.mockRejectedValue(new Error('down'));
     railFor.mockRejectedValue(new Error('down'));
     const page = await run();
-    expect(page).toMatchObject({ status: { rank: 'Knight' }, daily: { streak: 12 }, recap: null, fervorPosition: null });
+    expect(page).toMatchObject({
+      status: { rank: 'Knight' },
+      daily: { streak: 12 },
+      recap: null,
+      fervorPosition: null,
+    });
     vi.restoreAllMocks();
   });
 

@@ -17,9 +17,7 @@ export const sendBatch: SendBatch = makeSendBatch((rows) =>
 const MODERATOR_LOOKUP_CHUNK = 5000;
 
 /** Banned and deleted accounts are dropped. Moderators always pass; everyone else is gated by the app's access flag. */
-export async function accessibleToday(
-  ids: number[]
-): Promise<{ ids: number[]; unknown: boolean }> {
+export async function accessibleToday(ids: number[]): Promise<{ ids: number[]; unknown: boolean }> {
   const users: { id: number; isModerator: boolean }[] = [];
   for (let at = 0; at < ids.length; at += MODERATOR_LOOKUP_CHUNK) {
     const rows = await db

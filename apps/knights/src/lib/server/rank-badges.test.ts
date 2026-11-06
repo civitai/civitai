@@ -32,7 +32,7 @@ describe('rankBadgeUrls', () => {
         q.execute = execute;
         return q;
       },
-    }) as never;
+    } as never);
 
   beforeEach(() => {
     vi.resetModules();

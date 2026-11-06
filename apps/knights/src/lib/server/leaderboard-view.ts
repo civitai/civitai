@@ -28,6 +28,9 @@ export function fervorCopy() {
     accuracy: `Accuracy is the share you judged rightly. It never counts below ${percent(
       floor
     )}, and inconclusive images don't count either way. It counts twice, so careful judging beats guessing fast, and there is no cap on how many judgments count.`,
-    example: `Example: ${correct} right of ${graded} judged is ${fervorSum(correct, graded)} fervor.`,
+    example: `Example: ${correct} right of ${graded} judged is ${fervorSum(
+      correct,
+      graded
+    )} fervor.`,
   };
 }

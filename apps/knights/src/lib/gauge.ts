@@ -81,11 +81,10 @@ export function nextRankRequirements(
       met: next.accuracyMet,
     },
   ];
-  const days =
-    next.minDaysPlayed ?? ladder.find((row) => row.rank === next.rank)?.minDaysPlayed;
+  const days = next.minDaysPlayed ?? ladder.find((row) => row.rank === next.rank)?.minDaysPlayed;
   if (days) {
     const have = next.daysPlayed;
-    const met = have === undefined ? null : (next.daysMet ?? have >= days);
+    const met = have === undefined ? null : next.daysMet ?? have >= days;
     const stand = have === undefined ? '' : met ? ' · reached' : ` · you have ${have}`;
     out.push({ key: 'days', text: `At least ${days} days played${stand}`, met });
   }

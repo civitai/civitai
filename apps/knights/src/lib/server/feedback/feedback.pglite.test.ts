@@ -1,7 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { FEEDBACK_MESSAGE_MAX_LENGTH, FEEDBACK_RATE_LIMIT } from '@civitai/shared/feedback.constants';
+import {
+  FEEDBACK_MESSAGE_MAX_LENGTH,
+  FEEDBACK_RATE_LIMIT,
+} from '@civitai/shared/feedback.constants';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { feedbackContext, submitFeedback } from './feedback.service';
@@ -28,9 +31,15 @@ afterAll(() => pg.close());
 beforeEach(() => pg.exec(`TRUNCATE "Feedback" RESTART IDENTITY`));
 
 const rows = async () =>
-  (await pg.query<{ area: string; userId: number; message: string; context: unknown; status: string }>(
-    `SELECT * FROM "Feedback" ORDER BY "id"`
-  )).rows;
+  (
+    await pg.query<{
+      area: string;
+      userId: number;
+      message: string;
+      context: unknown;
+      status: string;
+    }>(`SELECT * FROM "Feedback" ORDER BY "id"`)
+  ).rows;
 
 const send = (message: unknown, userId = 7, now = NOW) =>
   submitFeedback(db, { userId, message, context: { path: '/play' }, now });
@@ -50,13 +59,14 @@ describe('submitFeedback', () => {
     ]);
   });
 
-  it.each([['empty', ''], ['blank', '   \n '], ['not a string', 42]])(
-    'refuses a message that is %s',
-    async (_name, message) => {
-      expect(await send(message)).toEqual({ ok: false, reason: 'invalid' });
-      expect(await rows()).toEqual([]);
-    }
-  );
+  it.each([
+    ['empty', ''],
+    ['blank', '   \n '],
+    ['not a string', 42],
+  ])('refuses a message that is %s', async (_name, message) => {
+    expect(await send(message)).toEqual({ ok: false, reason: 'invalid' });
+    expect(await rows()).toEqual([]);
+  });
 
   it('accepts a message at the limit and refuses one past it', async () => {
     expect(await send('x'.repeat(FEEDBACK_MESSAGE_MAX_LENGTH))).toEqual({ ok: true });
@@ -68,7 +78,8 @@ describe('submitFeedback', () => {
   });
 
   it('refuses past the hourly cap, per player, and lets the player back in when the window passes', async () => {
-    for (let i = 0; i < FEEDBACK_RATE_LIMIT.max; i++) expect(await send(`report ${i}`)).toEqual({ ok: true });
+    for (let i = 0; i < FEEDBACK_RATE_LIMIT.max; i++)
+      expect(await send(`report ${i}`)).toEqual({ ok: true });
 
     expect(await send('one too many')).toEqual({ ok: false, reason: 'rate-limited' });
     expect(await send('someone else', 8)).toEqual({ ok: true });
@@ -80,7 +91,9 @@ describe('submitFeedback', () => {
 
   it("does not count another area's rows against the cap", async () => {
     for (let i = 0; i < FEEDBACK_RATE_LIMIT.max; i++) {
-      await pg.query(`INSERT INTO "Feedback" ("area","userId","message") VALUES ('site-bug-report', 7, 'x')`);
+      await pg.query(
+        `INSERT INTO "Feedback" ("area","userId","message") VALUES ('site-bug-report', 7, 'x')`
+      );
     }
     expect(await send('still fine')).toEqual({ ok: true });
   });
@@ -91,7 +104,9 @@ describe('feedbackContext', () => {
     expect(
       feedbackContext({ path: '/codex', userAgent: 'UA/1', status: { rank: 'Knight', level: 12 } })
     ).toEqual({ path: '/codex', userAgent: 'UA/1', rank: 'Knight', level: 12 });
-    expect(feedbackContext({ path: 'https://evil.test/x', userAgent: null, status: null })).toEqual({});
+    expect(feedbackContext({ path: 'https://evil.test/x', userAgent: null, status: null })).toEqual(
+      {}
+    );
   });
 
   it('clips an over-long path and user agent to what the main app accepts', () => {

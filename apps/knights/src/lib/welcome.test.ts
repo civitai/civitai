@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { isWelcomeRequest, safeNext, signedOutLocation, WELCOME_PATH } from './welcome';
 
 describe('safeNext', () => {
-  it.each(['/play', '/judgments?tab=mine', '/ranks#top', '/'])('keeps the same-origin path %s', (p) => {
-    expect(safeNext(p)).toBe(p);
-  });
+  it.each(['/play', '/judgments?tab=mine', '/ranks#top', '/'])(
+    'keeps the same-origin path %s',
+    (p) => {
+      expect(safeNext(p)).toBe(p);
+    }
+  );
 
   it.each([
     '//evil.com',
@@ -34,7 +37,11 @@ describe('safeNext', () => {
 describe('signedOutLocation', () => {
   const hub = 'https://auth.civitai.com/login?returnUrl=x';
   const at = (path: string, navigation = true) =>
-    signedOutLocation({ url: new URL(`https://knights.civitai.com${path}`), navigation, loginRedirect: hub });
+    signedOutLocation({
+      url: new URL(`https://knights.civitai.com${path}`),
+      navigation,
+      loginRedirect: hub,
+    });
 
   it('sends a signed-out page load to the welcome page, remembering where it was going', () => {
     expect(at('/play')).toBe(`${WELCOME_PATH}?next=%2Fplay`);

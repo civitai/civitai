@@ -20,7 +20,9 @@ describe('imagePageUrl', () => {
 describe('imageUrl', () => {
   it('serves the stored key from the image CDN at a fixed width, compressed and without animation', () => {
     process.env.IMAGE_LOCATION = 'https://cdn.example/acct';
-    expect(imageUrl('abc-123')).toBe('https://cdn.example/acct/abc-123/width=1200,optimized=true/abc-123.jpeg');
+    expect(imageUrl('abc-123')).toBe(
+      'https://cdn.example/acct/abc-123/width=1200,optimized=true/abc-123.jpeg'
+    );
   });
 
   it('serves a narrower variant on request', () => {

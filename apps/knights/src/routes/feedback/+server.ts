@@ -11,7 +11,10 @@ const refuse = (status: number, message: string) => json({ ok: false, message },
 
 const REFUSALS = {
   invalid: { status: 400, message: 'Write a message of up to 2,000 characters.' },
-  'rate-limited': { status: 429, message: 'You have sent a lot of feedback lately. Try again later.' },
+  'rate-limited': {
+    status: 429,
+    message: 'You have sent a lot of feedback lately. Try again later.',
+  },
 };
 
 export const POST: RequestHandler = async ({ request, locals }) => {
