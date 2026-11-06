@@ -5,24 +5,25 @@
 -- Apply after 20261019220000_evidence_hold. Creates no rows. Hand-applied; the copy is a separate
 -- step: SELECT evidence_hold_keep_archived_comments();
 
--- The report part of "held": the same predicate as `legalHoldUserIdsSql` in
+-- The report part of "held", one "userId" text per row: the same set as `legalHoldUserIdsSql` in
 -- src/server/utils/legal-hold.ts, kept identical by evidence-hold-comment.behavior.test.ts.
-CREATE OR REPLACE FUNCTION evidence_hold_report_names(uid INTEGER) RETURNS boolean AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM "CsamReport" r
-    WHERE (r."userId" = uid OR r.details ->> 'secondaryUserId' = uid::text)
-      AND (
-        r."reportSentAt" IS NULL
-        OR r."archivedAt" IS NULL
-        OR r."reportSentAt" > now() - interval '1 year'
-      )
-  );
+CREATE OR REPLACE FUNCTION evidence_hold_report_named_users() RETURNS SETOF text AS $$
+  WITH holding AS (
+    SELECT r."userId", r.details FROM "CsamReport" r
+    WHERE r."reportSentAt" IS NULL
+       OR r."archivedAt" IS NULL
+       OR r."reportSentAt" > now() - interval '1 year'
+  )
+  SELECT "userId"::text FROM holding WHERE "userId" IS NOT NULL
+  UNION
+  SELECT details ->> 'secondaryUserId' FROM holding WHERE details ->> 'secondaryUserId' IS NOT NULL;
 $$ LANGUAGE sql STABLE SET search_path = public, pg_temp;
 
--- Held for the comment table: an active marker, or named on a report that still holds.
+-- Held for the comment table: an active marker, or named on a report that still holds. For one
+-- owner; a statement over many rows uses the set above once instead.
 CREATE OR REPLACE FUNCTION evidence_hold_comment_owner_held(uid INTEGER) RETURNS boolean AS $$
   SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = uid)
-      OR evidence_hold_report_names(uid);
+      OR uid::text IN (SELECT evidence_hold_report_named_users());
 $$ LANGUAGE sql STABLE SET search_path = public, pg_temp;
 
 -- A comment as it was in the archive. `thread` is its thread row, so what it was posted on survives
@@ -76,7 +77,8 @@ CREATE OR REPLACE FUNCTION evidence_hold_purge_unheld(target_user INTEGER DEFAUL
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = i."userId");
   DELETE FROM "EvidenceHoldComment" c
   WHERE (target_user IS NULL OR c."userId" = target_user)
-    AND NOT evidence_hold_comment_owner_held(c."userId");
+    AND NOT EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c."userId")
+    AND c."userId"::text NOT IN (SELECT evidence_hold_report_named_users());
 $$ LANGUAGE sql SET search_path = public, pg_temp;
 
 -- The copy. Idempotent: a comment already kept is skipped. Returns the rows it added. plpgsql, so
@@ -85,11 +87,10 @@ CREATE OR REPLACE FUNCTION evidence_hold_keep_archived_comments() RETURNS intege
 DECLARE
   added integer;
 BEGIN
-  -- Held is decided once per author, not once per comment.
   WITH held AS MATERIALIZED (
-    SELECT a."userId"
-    FROM (SELECT DISTINCT "userId" FROM archive."CommentV2") a
-    WHERE evidence_hold_comment_owner_held(a."userId")
+    SELECT "userId"::text AS uid FROM "EvidenceHeldUser"
+    UNION
+    SELECT evidence_hold_report_named_users()
   )
   INSERT INTO "EvidenceHoldComment" (
     "commentId", "userId", "threadId", "content", "createdAt", "updatedAt", "nsfw",
@@ -98,7 +99,7 @@ BEGIN
   SELECT c."id", c."userId", c."threadId", c."content", c."createdAt", c."updatedAt", c."nsfw",
          c."tosViolation", c."hidden", c."metadata", to_jsonb(t), 'archive'
   FROM archive."CommentV2" c
-  JOIN held h ON h."userId" = c."userId"
+  JOIN held h ON h.uid = c."userId"::text
   LEFT JOIN archive."Thread" t ON t."id" = c."threadId"
   ON CONFLICT ("commentId") DO NOTHING;
   GET DIAGNOSTICS added = ROW_COUNT;

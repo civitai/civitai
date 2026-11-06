@@ -107,6 +107,13 @@ beforeAll(async () => {
       (u) => [`(${u * 10}, 'c', ${u}, 1)`, `(${u * 10 + 1}, 'c', ${u}, 1)`]
     ).join(', ')}`
   );
+  // One comment with every column distinct, so the copy is checked column by column.
+  await db.exec(`
+    UPDATE archive."CommentV2" SET content = 'kept text', "createdAt" = '2026-01-02 03:04:05',
+      "updatedAt" = '2026-02-03 04:05:06', nsfw = true, "tosViolation" = false, hidden = NULL,
+      metadata = '{"k": 1}'
+    WHERE id = ${MARKER * 10}
+  `);
 });
 
 afterAll(() => db?.close());
@@ -131,11 +138,11 @@ describe('held, for the comment table', () => {
     const ts = (
       await db.query<{ userId: string }>(legalHoldUserIdsSql.text, legalHoldUserIdsSql.values)
     ).rows.map((r) => Number(r.userId));
-    const { rows } = await db.query<{ id: number; held: boolean }>(
-      `SELECT id, evidence_hold_report_names(id) AS held FROM unnest($1::int[]) id ORDER BY id`,
-      [ALL]
-    );
-    const sqlHeld = rows.filter((r) => r.held).map((r) => r.id);
+    const sqlHeld = (
+      await db.query<{ u: string }>(`SELECT u FROM evidence_hold_report_named_users() u`)
+    ).rows
+      .map((r) => Number(r.u))
+      .sort((a, b) => a - b);
 
     // Both sides against the expected set, so a change to one is not matched by a change to the other.
     expect([...ts].sort((a, b) => a - b)).toEqual(REPORT_HELD);
@@ -155,10 +162,27 @@ describe('evidence_hold_keep_archived_comments', () => {
   it('keeps the held owners archived comments, once', async () => {
     expect(await keep()).toBe(HELD.length * 2);
     expect(await keptUsers()).toEqual(HELD);
-    const thread = await db.query<{ thread: { postId: number } }>(
-      `SELECT thread FROM "EvidenceHoldComment" WHERE "commentId" = ${MARKER * 10}`
+    const kept = await db.query(
+      `SELECT "commentId", "userId", "threadId", content, "createdAt", "updatedAt", nsfw,
+         "tosViolation", hidden, metadata, thread, source
+       FROM "EvidenceHoldComment" WHERE "commentId" = ${MARKER * 10}`
     );
-    expect(thread.rows[0].thread.postId).toBe(900);
+    expect(kept.rows).toEqual([
+      {
+        commentId: MARKER * 10,
+        userId: MARKER,
+        threadId: 1,
+        content: 'kept text',
+        createdAt: new Date('2026-01-02T03:04:05.000Z'),
+        updatedAt: new Date('2026-02-03T04:05:06.000Z'),
+        nsfw: true,
+        tosViolation: false,
+        hidden: null,
+        metadata: { k: 1 },
+        thread: { id: 1, postId: 900, imageId: null, parentThreadId: null },
+        source: 'archive',
+      },
+    ]);
 
     expect(await keep()).toBe(0);
     expect(await count(`SELECT count(*) AS n FROM "EvidenceHoldComment"`)).toBe(HELD.length * 2);
@@ -203,6 +227,18 @@ describe('evidence_hold_purge_unheld', () => {
     await db.exec(`
       UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
       WHERE "userId" = ${MARKER}
+    `);
+
+    expect(await keptUsers()).toEqual(HELD.filter((id) => id !== MARKER));
+  });
+
+  it('on release, leaves another unheld owner to the sweep', async () => {
+    await db.exec(`
+      UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days',
+        "archivedAt" = now() - interval '366 days'
+      WHERE "userId" = ${SENT_364};
+      UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'r'
+      WHERE "userId" = ${MARKER};
     `);
 
     expect(await keptUsers()).toEqual(HELD.filter((id) => id !== MARKER));
