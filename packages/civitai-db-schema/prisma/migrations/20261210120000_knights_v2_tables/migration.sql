@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "escalatedAt" TIMESTAMP(3)
 );
 
--- Databases that applied an earlier copy of this file already have the table without "prompt"; CREATE TABLE IF NOT EXISTS skips it.
+-- Databases that applied an earlier copy of this file have the table without "escalationReason"; CREATE TABLE IF NOT EXISTS skips it.
 ALTER TABLE "KnightsQueueItem" ADD COLUMN IF NOT EXISTS "escalationReason" TEXT;
 
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_minRank_priority_createdAt_idx"
@@ -276,7 +276,7 @@ CREATE TABLE IF NOT EXISTS "KnightsYesNoReference" (
   "prompt" TEXT
 );
 
--- A database that applied an earlier copy of this file has the table without the column, so the guard does not check it.
+-- Databases that applied an earlier copy of this file have the table without "prompt"; CREATE TABLE IF NOT EXISTS skips it.
 ALTER TABLE "KnightsYesNoReference" ADD COLUMN IF NOT EXISTS "prompt" TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsYesNoReference_imageId_questionKey_key"

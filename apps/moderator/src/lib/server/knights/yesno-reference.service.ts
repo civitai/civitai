@@ -1,4 +1,4 @@
-import type { ExpressionBuilder } from 'kysely';
+import type { ExpressionBuilder, Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import { YESNO_PROMPT_MAX } from '../../knights/trials-limits';
@@ -17,7 +17,7 @@ export type YesNoReferenceItem = {
   questionPrompt: string;
   answer: boolean;
   explanation: string | null;
-  /** The question Acolytes see for this pair. Null on pairs made before it existed: they see the axis prompt. */
+  /** The question Acolytes see for this pair. Null when it has none: they see the axis question's prompt. */
   prompt: string | null;
   active: boolean;
   /** Acolyte answers naming this pair. While any exist it can only be deactivated. */
@@ -29,7 +29,6 @@ const GONE = 'This pair is no longer available. Reload the page.';
 const NEEDS_PROMPT = 'Write the question Acolytes will be asked about this image.';
 const PROMPT_TOO_LONG = `Keep the question to ${YESNO_PROMPT_MAX} characters or fewer.`;
 
-/** The trimmed question, or the reason it cannot be used. */
 function checkedPrompt(raw: string): { prompt: string } | { error: string } {
   const prompt = raw.trim();
   if (!prompt) return { error: NEEDS_PROMPT };
@@ -166,6 +165,17 @@ const hasNoAnswers = (eb: ExpressionBuilder<DB, 'KnightsYesNoReference'>) =>
     )
   );
 
+// Lock first: a lone UPDATE or DELETE would test "no answers" against a snapshot taken before a concurrent answer
+// committed. Statements after the lock see it.
+async function lockPair(trx: Transaction<DB>, id: number): Promise<void> {
+  await trx
+    .selectFrom('KnightsYesNoReference')
+    .select('id')
+    .where('id', '=', id)
+    .forUpdate()
+    .executeTakeFirst();
+}
+
 async function whyUntouched(id: number, verb: string): Promise<Outcome> {
   const remaining = await dbWrite
     .selectFrom('KnightsYesNoReference')
@@ -180,7 +190,7 @@ async function whyUntouched(id: number, verb: string): Promise<Outcome> {
     : { ok: false, error: GONE };
 }
 
-/** Answered pairs are frozen: the recap shows the answer as given beside the explanation, and answers were given to this question text. */
+/** Answered pairs are frozen: history shows each answer against the answer, explanation and question text it was given to. */
 export async function updateYesNoReference(
   id: number,
   input: { answer: boolean; explanation: string; prompt: string }
@@ -189,15 +199,7 @@ export async function updateYesNoReference(
   if ('error' in checked) return { ok: false, error: checked.error };
   const { prompt } = checked;
   const updated = await dbWrite.transaction().execute(async (trx) => {
-    // Takes the lock an Acolyte's answer holds while it grades. The UPDATE alone is not enough: the answer's
-    // foreign key takes only a weak lock on this row, and an UPDATE judges "no answers" against the snapshot it
-    // began with. Run after the lock, it sees every committed answer.
-    await trx
-      .selectFrom('KnightsYesNoReference')
-      .select('id')
-      .where('id', '=', id)
-      .forUpdate()
-      .executeTakeFirst();
+    await lockPair(trx, id);
     return trx
       .updateTable('KnightsYesNoReference')
       .set({
@@ -214,10 +216,13 @@ export async function updateYesNoReference(
 }
 
 export async function deleteYesNoReference(id: number): Promise<Outcome> {
-  const deleted = await dbWrite
-    .deleteFrom('KnightsYesNoReference')
-    .where('id', '=', id)
-    .where(hasNoAnswers)
-    .executeTakeFirst();
+  const deleted = await dbWrite.transaction().execute(async (trx) => {
+    await lockPair(trx, id);
+    return trx
+      .deleteFrom('KnightsYesNoReference')
+      .where('id', '=', id)
+      .where(hasNoAnswers)
+      .executeTakeFirst();
+  });
   return Number(deleted.numDeletedRows) > 0 ? { ok: true } : whyUntouched(id, 'deleted');
 }

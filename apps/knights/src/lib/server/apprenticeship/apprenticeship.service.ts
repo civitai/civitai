@@ -35,10 +35,7 @@ export type ApprenticeItem = {
   referenceId: number;
   questionKey: string;
   prompt: string;
-  /**
-   * Identifies the pair as served (its `updatedAt`), so an answer can be refused if a moderator changed it since.
-   * Null for a rating, whose row also takes the answer counters.
-   */
+  /** The pair's `updatedAt` as served; an answer is refused if a moderator changed the pair since. Null for a rating. */
   version: string | null;
   options: QuestionOption[];
   imageKey: string;
@@ -377,7 +374,7 @@ export async function answerApprentice(
 
     let correctAnswer = current.correctAnswer;
     if (kind === 'yesno') {
-      // Locked so an edit cannot commit between this read and the insert; the edit takes the same lock.
+      // Lock the pair so a moderator edit cannot commit between this read and the insert.
       const pair = await trx
         .selectFrom('KnightsYesNoReference')
         .select(['answer', 'active', sql<string>`"updatedAt"::text`.as('version')])

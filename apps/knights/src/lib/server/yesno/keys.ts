@@ -18,7 +18,7 @@ export const YESNO_MAX_VOTES = 10;
 const AXIS = /^[a-z][a-z0-9_]{0,39}$/;
 export const isAxis = (value: string): boolean => AXIS.test(value);
 
-/** What a player is shown for an axis when an item or Acolyte pair has no question text of its own. */
+/** Seeds an axis question's prompt on import; items and pairs with no question text of their own fall back to it. */
 const AXIS_PROMPTS: Record<string, string> = {
   language: 'Does text in this image contain strong profanity?',
   language_level: 'Does text in this image contain strong profanity?',
