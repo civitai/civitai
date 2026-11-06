@@ -65,6 +65,7 @@ import { PriorReviewCard } from '~/components/CreatorShop/PriorReviewCard';
 import { ShopItemEventTagsPanel } from '~/components/CreatorShop/ShopItemEventTagsPanel';
 import { ShopSectionsPanel } from '~/components/CreatorShop/ShopSectionsPanel';
 import { priorReviewFromHistory } from '~/components/CreatorShop/review-history';
+import { nextQueueSelection } from '~/components/CreatorShop/review-queue-selection';
 import { shopItemReviewVersion } from '~/server/services/creator-shop.data';
 import { SimilarArtworkCard } from '~/components/CreatorShop/SimilarArtworkCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -370,8 +371,11 @@ function CreatorShopReviewPage() {
   const activeTypeTab =
     typeFilter.length === 0 ? 'all' : typeFilter.length === 1 ? typeFilter[0] : null;
 
+  const prevItemsRef = useRef(items);
   useEffect(() => {
-    setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
+    const prev = prevItemsRef.current;
+    prevItemsRef.current = items;
+    setSelectedId((cur) => nextQueueSelection(prev, items, cur));
   }, [items]);
 
   // Reviewing items shrinks the queue, and the last page can disappear out from

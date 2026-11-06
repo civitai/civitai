@@ -39,6 +39,7 @@ import { constants } from '~/server/common/constants';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
+  awaitsRequestedChanges,
   buildCosmeticData,
   changesDisplay,
   creatorGrantRemaining,
@@ -992,6 +993,9 @@ export const updateCreatorShopItem = async ({
     recordChange('sellableByOthers', yesNo(meta.sellableByOthers), yesNo(nextSellableByOthers));
     recordChange('sellerShare', meta.sellerShare ?? 0, nextSellerShare);
   }
+  // Without this a save with nothing changed resubmits the item unaltered.
+  if (existing.status === CosmeticShopItemStatus.RequestedChanges && !changes.length)
+    throw throwBadRequestError('Make the requested changes before resubmitting');
 
   const reviewNote = !backToReview
     ? undefined
@@ -1280,11 +1284,13 @@ export const setCreatorShopItemListed = async ({
     if (current.status === CosmeticShopItemStatus.Rejected)
       throw throwBadRequestError(REJECTED_IS_FINAL);
     const meta = current.meta as CosmeticShopItemMeta | null;
+    // Still waiting on the creator: listing again must not put it back in the queue unaltered.
+    const keepsVerdict = current.status === CosmeticShopItemStatus.RequestedChanges;
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         listed,
-        ...(listed
+        ...(listed && !keepsVerdict
           ? {
               status: CosmeticShopItemStatus.PendingReview,
               rejectionReason: null,
@@ -1357,16 +1363,22 @@ export const unarchiveCreatorShopItem = async ({
     const rejectionUnprovable = !meta.history?.length && !!current.rejectionReason;
     if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
       throw throwBadRequestError(REJECTED_IS_FINAL);
+    // An item archived while it waited on requested changes comes back still waiting on them.
+    const keepsVerdict = awaitsRequestedChanges(meta.history);
     return tx.cosmeticShopItem.update({
       where: { id },
       data: {
         // Same rule as re-listing: archiving ended this item's resale listings, so
         // bringing it back is a fresh submission, not an undo.
-        status: CosmeticShopItemStatus.PendingReview,
         archivedAt: null,
-        rejectionReason: null,
-        reviewedById: null,
-        reviewedAt: null,
+        ...(keepsVerdict
+          ? { status: CosmeticShopItemStatus.RequestedChanges }
+          : {
+              status: CosmeticShopItemStatus.PendingReview,
+              rejectionReason: null,
+              reviewedById: null,
+              reviewedAt: null,
+            }),
         meta: {
           ...meta,
           displayApproved: recordedDisplayVerdict({
