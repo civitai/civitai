@@ -1033,7 +1033,6 @@
     </button>
   {:else}
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       {...drop}
       class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
@@ -1183,7 +1182,6 @@
                 {:else if img.mediaType === 'image'}
                   <img src={img.previewUrl} alt={img.name} class="h-full w-full object-cover" />
                 {:else if img.mediaType === 'video'}
-                  <!-- svelte-ignore a11y_media_has_caption -->
                   <video
                     src={img.previewUrl}
                     muted
