@@ -120,6 +120,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON serves `getImageContestCollectionDetails` (an image's contest entries) from a shared Redis
+  // cache, busted on entry writes, instead of the per-pod LRU, which nothing busts. The shared
+  // value holds no rejection reason; a viewer allowed to read one gets it from a live read. Output
+  // is identical either way. Boolean, evaluated with no entityId, once per call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
