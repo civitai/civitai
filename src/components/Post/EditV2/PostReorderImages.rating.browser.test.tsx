@@ -60,5 +60,12 @@ describe('rearrange tile rating badge', () => {
     });
 
     await expect.element(page.getByText('PG', { exact: true })).toBeVisible();
+
+    act(() => {
+      imageStore.setImage(602, { ingestion: 'Scanned' as never, nsfwLevel: NsfwLevel.X });
+    });
+
+    await expect.element(page.getByText('X', { exact: true })).toBeVisible();
+    await expect.element(page.getByText('R', { exact: true })).not.toBeInTheDocument();
   });
 });
