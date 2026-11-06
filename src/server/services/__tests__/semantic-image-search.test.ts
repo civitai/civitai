@@ -19,14 +19,17 @@ const h = vi.hoisted(() => {
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
     embed: vi.fn(),
+    blob: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
   };
 });
 
 vi.mock('~/server/services/orchestrator/client', () => ({
   internalOrchestratorClient: { post: h.embed },
 }));
-vi.stubGlobal('fetch', async () =>
-  Response.json({ result: { config: { metadata: { modelRevision: 'r1', profile: 'p1' } } } })
+vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) =>
+  String(url).includes('/v2/consumer/blobs/')
+    ? h.blob(String(url), init)
+    : Response.json({ result: { config: { metadata: { modelRevision: 'r1', profile: 'p1' } } } })
 );
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
@@ -313,6 +316,113 @@ describe('query embedding', () => {
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(calls).toEqual([]);
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+  });
+
+  // The recipe's answer when the vector's blob was not readable yet (seen in prod 2026-11-06).
+  const BLOB_URL = 'https://orchestrator.test/v2/consumer/blobs/embedding-abc.bin?sig=s';
+  const pending = (extra: Record<string, unknown> = {}) => ({
+    data: {
+      model: 'wemm-2b',
+      modelRevision: 'r1',
+      profile: 'p1',
+      dimensions: 256,
+      embedding: [],
+      blob: { id: 'embedding-abc.bin', available: false, url: BLOB_URL },
+      ...extra,
+    },
+  });
+  // Distinct values, exact in float32, so a wrong byte order or offset cannot decode to them.
+  const blobVector = Array.from({ length: 256 }, (_, i) => (i - 128) / 1024);
+  const blobBytes = (values: number[]) => {
+    const view = new DataView(new ArrayBuffer(values.length * 4));
+    values.forEach((v, i) => view.setFloat32(i * 4, v, true));
+    return view.buffer;
+  };
+  const search = async () => {
+    const ranked = rankedSource([5]);
+    const run = searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox' }),
+      user: VIEWER,
+      candidateSource: ranked.source,
+    });
+    return { run, calls: ranked.calls };
+  };
+
+  it('reads the vector from its blob when the recipe returns none inline', async () => {
+    setEnv({
+      QDRANT_URL: 'http://qdrant.test',
+      ORCHESTRATOR_ENDPOINT: 'https://orchestrator.test',
+      ORCHESTRATOR_ACCESS_TOKEN: 'orch-token',
+    });
+    h.embed.mockResolvedValue(pending());
+    h.blob
+      .mockReset()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValue(new Response(blobBytes(blobVector)));
+    const { run, calls } = await search();
+    await run;
+
+    expect(calls[0].query).toEqual(blobVector);
+    expect(h.blob).toHaveBeenCalledTimes(3);
+    expect(h.blob.mock.calls[0][0]).toBe(BLOB_URL);
+    expect(new Headers(h.blob.mock.calls[0][1]?.headers).get('authorization')).toBe(
+      'Bearer orch-token'
+    );
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
+      expect.any(String),
+      blobVector,
+      expect.anything()
+    );
+  });
+
+  it('prefers an inline vector over the blob', async () => {
+    h.embed.mockResolvedValue(pending({ embedding: vector }));
+    h.blob.mockReset();
+    const { run, calls } = await search();
+    await run;
+    expect(calls[0].query).toEqual(vector);
+    expect(h.blob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an empty vector and no blob', { embedding: [], blob: undefined }],
+    ['a short inline vector', { embedding: vector.slice(1), blob: undefined }],
+  ])('refuses %s, and caches nothing', async (_, extra) => {
+    h.embed.mockResolvedValue(pending(extra));
+    const { run, calls } = await search();
+    await expect(run).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+    expect(calls).toEqual([]);
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a short blob', () => new Response(blobBytes(blobVector.slice(1)))],
+    ['a NaN in the blob', () => new Response(blobBytes([NaN, ...blobVector.slice(1)]))],
+    ['a blob error other than not-ready', () => new Response(null, { status: 403 })],
+  ])('refuses %s, and caches nothing', async (_, response) => {
+    h.embed.mockResolvedValue(pending());
+    h.blob.mockReset().mockImplementation(async () => response());
+    const { run, calls } = await search();
+    await expect(run).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+    expect(calls).toEqual([]);
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+  });
+
+  it('gives up on a blob that never appears', async () => {
+    vi.useFakeTimers();
+    try {
+      h.embed.mockResolvedValue(pending());
+      h.blob.mockReset().mockImplementation(async () => new Response(null, { status: 404 }));
+      const { run, calls } = await search();
+      const settled = expect(run).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+      await vi.advanceTimersByTimeAsync(11_000);
+      await settled;
+      expect(h.blob.mock.calls.length).toBeGreaterThan(2);
+      expect(calls).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -65,7 +65,43 @@ export function normalizeQuery(query: string) {
   return query.trim().replace(/\s+/g, ' ');
 }
 
-type EmbeddingOutput = ModelStamp & { embedding?: number[] };
+type EmbeddingOutput = ModelStamp & { embedding?: number[]; blob?: { url?: string } };
+
+const EMBED_BLOB_TIMEOUT_MS = 10_000;
+const embeddingFailed = () => new TRPCError({ code: 'BAD_GATEWAY', message: 'Embedding failed' });
+
+/** A float32 embedding blob: EMBED_DIMENSIONS little-endian floats, nothing else. */
+function decodeEmbedding(buffer: ArrayBuffer) {
+  if (buffer.byteLength !== EMBED_DIMENSIONS * 4) throw embeddingFailed();
+  const view = new DataView(buffer);
+  return Array.from({ length: EMBED_DIMENSIONS }, (_, i) => view.getFloat32(i * 4, true));
+}
+
+/**
+ * The recipe leaves `embedding` empty when the vector's blob was not readable yet, and returns a
+ * signed URL that answers 404 (not written) or 503 (scan pending) until it is.
+ */
+async function readEmbeddingBlob(url: string) {
+  const target = new URL(url, env.ORCHESTRATOR_ENDPOINT);
+  const ownHost =
+    !!env.ORCHESTRATOR_ENDPOINT && target.origin === new URL(env.ORCHESTRATOR_ENDPOINT).origin;
+  const headers: Record<string, string> =
+    ownHost && env.ORCHESTRATOR_ACCESS_TOKEN
+      ? { authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` }
+      : {};
+  const deadline = Date.now() + EMBED_BLOB_TIMEOUT_MS;
+  for (let delay = 50; ; delay = Math.min(delay * 2, 500)) {
+    const remaining = deadline - Date.now();
+    const res = await fetch(target, {
+      headers,
+      signal: AbortSignal.timeout(Math.max(remaining, 500)),
+    }).catch(() => undefined);
+    if (res?.ok) return decodeEmbedding(await res.arrayBuffer());
+    if (!res || (res.status !== 404 && res.status !== 503) || remaining <= delay)
+      throw embeddingFailed();
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+}
 
 async function embedQuery(text: string) {
   const stamp = await getIndexStamp();
@@ -83,8 +119,7 @@ async function embedQuery(text: string) {
     body: { model: EMBED_MODEL, dimensions: EMBED_DIMENSIONS, precision: 'float32', text },
     headers: { 'Content-Type': 'application/json' },
   });
-  const vector = data?.embedding;
-  if (error || !vector) throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Embedding failed' });
+  if (error || !data || !(data.embedding?.length || data.blob?.url)) throw embeddingFailed();
   // A query vector from another model or profile is meaningless against the index.
   if (data.modelRevision !== stamp.modelRevision || data.profile !== stamp.profile) {
     stampCache = undefined;
@@ -98,6 +133,12 @@ async function embedQuery(text: string) {
       message: 'The search model does not match the index',
     });
   }
+
+  const vector = data.embedding?.length
+    ? data.embedding
+    : await readEmbeddingBlob(data.blob?.url as string);
+  // An empty or short vector would reach Qdrant as a malformed query, and stay cached for a week.
+  if (vector.length !== EMBED_DIMENSIONS || !vector.every(Number.isFinite)) throw embeddingFailed();
 
   await redis.packed.set(key, vector, { EX: QUERY_VECTOR_TTL });
   return vector;
