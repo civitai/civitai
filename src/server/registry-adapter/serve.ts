@@ -3,11 +3,12 @@
  * route, `GET /subscribe`, plus `/healthz` for a process supervisor.
  *
  * A request's `filter` is applied as the SDK applies it: a snapshot entity that does not match
- * is left out, and a change that stops matching is sent as a delete.
+ * is left out, and a change that stops matching is sent as a delete. A filter this source will
+ * not evaluate (too large, or using a regular expression) is not applied; the registry still is.
  */
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
-import { compileFilter } from '~/server/registry-adapter/json-schema';
+import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import {
   HTTP_STATUS,
@@ -47,7 +48,7 @@ function sendError(res: ServerResponse, err: unknown, onError?: (err: unknown) =
 function openStream(req: IncomingMessage, res: ServerResponse) {
   if (res.closed) return { signal: AbortSignal.abort(), send: () => undefined };
   const abort = new AbortController();
-  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), HEARTBEAT_MS);
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   res.on('close', () => {
     clearInterval(heartbeat);
     abort.abort();
@@ -56,6 +57,7 @@ function openStream(req: IncomingMessage, res: ServerResponse) {
   return {
     signal: abort.signal,
     send(event: StreamEvent) {
+      if (abort.signal.aborted) return;
       if (!started) {
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -63,6 +65,9 @@ function openStream(req: IncomingMessage, res: ServerResponse) {
           ...CORS,
         });
         started = true;
+        // Armed only once the head is written: a heartbeat before it would send default
+        // headers, and the writeHead above would then throw.
+        heartbeat = setInterval(() => res.write(': heartbeat\n\n'), HEARTBEAT_MS);
       }
       res.write(sseFrame(event));
       if (event.type === 'end') res.end();
@@ -74,6 +79,7 @@ export function handleRequest(
   adapter: Adapter,
   opts: { onError?: (err: unknown) => void } = {}
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const compileFilter = createFilterCompiler();
   return async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/healthz') return sendJson(res, 200, { ok: true });

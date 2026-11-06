@@ -72,6 +72,8 @@ export type ResolveStream = (schema: string) => Promise<CollectionStream | null>
 
 export const FEED_PAGE = 500;
 const STATE_FORMAT = 'f1';
+/** The cursor of a stream that holds nothing for no app; it names no stored state. */
+export const EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^f1\.([0-9a-f]{32})$/;
 
 type Served = { rev: string; seq: number };
@@ -85,8 +87,20 @@ type FeedState = {
   served: Array<[urn: string, rev: string, seq: number]>;
 };
 
-const docRev = (d: FeedDocument) =>
-  sha256Hex(canonicalJson({ version: d.version, data: d.data })).slice(0, 16);
+// The claim set is part of the rev: a mint that makes a document claim one more major changes
+// it, so every stream that carries the document re-sends it with its new label set.
+const docRev = (d: FeedDocument, schemas: readonly string[]) =>
+  sha256Hex(canonicalJson({ version: d.version, data: d.data, schemas })).slice(0, 16);
+
+const emptyState = (schema: string): FeedState => ({
+  v: STATE_FORMAT,
+  schema,
+  appId: null,
+  seq: 0,
+  family: null,
+  witness: null,
+  served: [],
+});
 
 /**
  * Validators for one collection's family, compiled once per distinct family. A document claims
@@ -124,6 +138,9 @@ export function createDocFeed(opts: DocFeedOptions) {
   const claimer = createClaimer();
 
   const save = async (state: FeedState): Promise<string> => {
+    // A stream of no app serving nothing needs no record: its cursor is a constant. So a
+    // subscription to an unpublished (or invented) collection URN writes nothing.
+    if (state.appId === null && state.served.length === 0) return EMPTY_CURSOR;
     const raw = canonicalJson(state);
     const digest = sha256Hex(raw).slice(0, 32);
     await opts.store.put(digest, raw, state.schema);
@@ -131,6 +148,7 @@ export function createDocFeed(opts: DocFeedOptions) {
   };
 
   const load = async (schema: string, cursor: string): Promise<FeedState> => {
+    if (cursor === EMPTY_CURSOR) return emptyState(schema);
     const digest = CURSOR_RE.exec(cursor)?.[1];
     if (!digest) throw cursorExpired('not a cursor this source issued');
     const raw = await opts.store.get(digest);
@@ -204,18 +222,7 @@ export function createDocFeed(opts: DocFeedOptions) {
   ): Promise<{ next: FeedState; entities: Map<string, Entity> }> {
     const stream = await opts.resolve(schema);
     if (!stream) {
-      return {
-        next: {
-          v: STATE_FORMAT,
-          schema,
-          appId: null,
-          seq: 0,
-          family: null,
-          witness: null,
-          served: [],
-        },
-        entities: new Map(),
-      };
+      return { next: emptyState(schema), entities: new Map() };
     }
     const { appId, slug, collection, family } = stream;
     if (prev?.appId && prev.appId !== appId) {
@@ -240,7 +247,7 @@ export function createDocFeed(opts: DocFeedOptions) {
       return {
         urn: registryUrn({ kind: 'document', slug, collection, key: d.key }),
         schemas,
-        rev: docRev(d),
+        rev: docRev(d, schemas),
         body: d.data,
       };
     };

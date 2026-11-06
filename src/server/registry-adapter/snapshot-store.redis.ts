@@ -1,45 +1,57 @@
 import { createHash } from 'node:crypto';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
-import { retainLatest } from '~/server/registry-adapter/cursor';
+import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 /** How long a cursor stays resumable after it was last issued or resumed from. */
 export const SNAPSHOT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
+/** The sys-client surface this store uses, so a test can hand in a fake. */
+export type SnapshotRedis = Pick<typeof sysRedis, 'get' | 'del' | 'multi'>;
+
+export const snapshotKey = (digest: string) =>
+  `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.SNAPSHOT}:${digest}` as const;
+export const streamStatesKey = (stream: string) =>
+  `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.STREAM_STATES}:${createHash('sha256')
+    .update(stream)
+    .digest('hex')
+    .slice(0, 32)}` as const;
+
 /**
- * Snapshots in system Redis, at most `STATES_KEPT_PER_STREAM` per stream.
+ * Snapshots in system Redis, at most {@link STATES_KEPT_PER_STREAM} per stream, newest first.
  *
- * The per-stream list is read and rewritten without a transaction, so two subscriptions of one
- * stream writing at once can each drop the other's newest digest from the list. Both outcomes
- * are safe: a digest left off the list is still deleted by its TTL, and a digest deleted early
- * only turns its cursor into `cursor_expired` (a re-snapshot).
+ * One MULTI writes the snapshot and moves its digest to the head of the stream's list, reads
+ * what falls past the bound and trims it, and refreshes the list's TTL, so concurrent writers of
+ * one stream never lose each other's digests (a multi-key MULTI on the system client, as
+ * `download-repeats.ts` and `rate-limiting.ts` use). The digests that fell off are deleted after
+ * the MULTI.
+ * If one of them is pushed again meanwhile, its cursor expires early, which costs a
+ * re-snapshot and nothing else.
  */
-export function createRedisSnapshotStore(): SnapshotStore {
-  const key = (digest: string) => `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.SNAPSHOT}:${digest}` as const;
-  const listKey = (stream: string) =>
-    `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.STREAM_STATES}:${createHash('sha256')
-      .update(stream)
-      .digest('hex')
-      .slice(0, 32)}` as const;
+export function createRedisSnapshotStore(
+  client: SnapshotRedis = sysRedis,
+  keep: number = STATES_KEPT_PER_STREAM
+): SnapshotStore {
   return {
     async get(digest) {
-      return decodeRedisString(await withSysReadDeadline(sysRedis.get(key(digest)))) ?? null;
+      return decodeRedisString(await withSysReadDeadline(client.get(snapshotKey(digest)))) ?? null;
     },
     async put(digest, value, stream) {
-      await sysRedis.set(key(digest), value, { EX: SNAPSHOT_RETENTION_SECONDS });
-      const states = listKey(stream);
-      const current = (await withSysReadDeadline(sysRedis.lRange(states, 0, -1))).map((d) =>
-        String(decodeRedisString(d))
-      );
-      const { list, evicted } = retainLatest(current, digest);
-      if (current[0] !== digest || evicted.length > 0) {
-        await sysRedis.del(states);
-        // LPUSH of the reversed list leaves it newest first.
-        await sysRedis.lPush(states, [...list].reverse());
-        await sysRedis.expire(states, SNAPSHOT_RETENTION_SECONDS);
+      const states = streamStatesKey(stream);
+      const tx = client.multi();
+      tx.set(snapshotKey(digest), value, { EX: SNAPSHOT_RETENTION_SECONDS });
+      tx.lRem(states, 0, digest);
+      tx.lPush(states, digest);
+      tx.lRange(states, keep, -1);
+      tx.lTrim(states, 0, keep - 1);
+      tx.expire(states, SNAPSHOT_RETENTION_SECONDS);
+      const results = await withSysReadDeadline(tx.exec());
+      const evicted = Array.isArray(results?.[3]) ? (results[3] as unknown[]) : [];
+      for (const old of evicted) {
+        const d = String(decodeRedisString(old as string));
+        if (d !== digest) await client.del(snapshotKey(d));
       }
-      for (const old of evicted) await sysRedis.del(key(old));
     },
   };
 }

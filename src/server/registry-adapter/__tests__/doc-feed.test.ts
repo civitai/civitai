@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
-import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { EMPTY_CURSOR, createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import { fixtureDocSource } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
@@ -35,12 +35,17 @@ const doc = (key: string, t: string, seq: number, extra: Record<string, unknown>
   ...extra,
 });
 
-function memoryStore(): SnapshotStore & { clear(): void } {
+function memoryStore(): SnapshotStore & { clear(): void; puts: () => number } {
   const m = new Map<string, string>();
+  let puts = 0;
   return {
     get: async (k) => m.get(k) ?? null,
-    put: async (k, v) => void m.set(k, v),
+    put: async (k, v) => {
+      puts++;
+      m.set(k, v);
+    },
     clear: () => m.clear(),
+    puts: () => puts,
   };
 }
 
@@ -234,5 +239,62 @@ describe('deletes', () => {
     const { world, make } = setup();
     world.stream = null;
     expect((await make().feed.snapshot(V2)).entities).toEqual([]);
+  });
+});
+
+describe('🔴 an unpublished stream writes nothing to the store', () => {
+  it('a snapshot of a collection URN that resolves to nothing gets a constant cursor and no write', async () => {
+    const { world, store, make } = setup();
+    world.stream = null;
+    const snap = await make().feed.snapshot('urn:schema:civitai-apps:no-such-app/invented@v1');
+    expect([snap.cursor, store.puts()]).toEqual([EMPTY_CURSOR, 0]);
+  });
+
+  it('positive control: a published stream does write its state', async () => {
+    const { store, make } = setup();
+    await make().feed.snapshot(V2);
+    expect(store.puts()).toBe(1);
+  });
+
+  it('the deletes of an app that leaves end on the constant cursor, with no state written for them', async () => {
+    const { world, store, make } = setup();
+    const h = make([() => (world.stream = null)]);
+    const { cursor } = await h.feed.snapshot(V2);
+    const before = store.puts();
+    const changes = await h.drain(V2, cursor);
+    expect(changes.map(shape)).toEqual([
+      ['delete', urn('n1')],
+      ['delete', urn('n2')],
+    ]);
+    expect(changes[1].cursor).toBe(EMPTY_CURSOR);
+    // The resume itself refreshes the state it read; nothing else is written.
+    expect(store.puts() - before).toBe(1);
+  });
+
+  it('a stream resumed from the constant cursor picks up a collection published since', async () => {
+    const { world, make } = setup();
+    const published = world.stream;
+    world.stream = null;
+    const h = make([() => (world.stream = published)]);
+    expect((await h.drain(V2, EMPTY_CURSOR)).map(shape)).toEqual([
+      ['upsert', urn('n1')],
+      ['upsert', urn('n2')],
+    ]);
+  });
+});
+
+describe('🔴 a mint re-sends documents whose claims grew, on the old major too', () => {
+  it('the @v1 stream re-sends a document that now also claims @v2, with the same rev @v2 shows', async () => {
+    const { world, make } = setup();
+    world.stream!.family = ONE_MAJOR;
+    const h = make([() => (world.stream!.family = TWO_MAJORS)]);
+    const before = await h.feed.snapshot(V1);
+    expect(before.entities.map((e) => [e.urn, e.schemas])).toEqual([[urn('n1'), [V1]]]);
+    const changes = await h.drain(V1, before.cursor);
+    expect(changes.map(shape)).toEqual([['upsert', urn('n1')]]);
+    const resent = (changes[0] as { upsert: Entity }).upsert;
+    expect(resent.schemas).toEqual([V1, V2]);
+    const onV2 = (await make().feed.snapshot(V2)).entities.find((e) => e.urn === urn('n1'))!;
+    expect([onV2.rev, onV2.schemas]).toEqual([resent.rev, resent.schemas]);
   });
 });

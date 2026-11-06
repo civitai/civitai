@@ -34,6 +34,10 @@ describe('registryUrn', () => {
     { kind: 'collection-schema', slug: 'pixel-garden', collection: 'seed_packs', major: 1.5 },
     { kind: 'document', slug: 'pixel-garden', collection: 'seed_packs', key: 'a/b' },
     { kind: 'document', slug: 'pixel-garden', collection: 'seed_packs', key: 'a@b' },
+    // Bounded like the store's own names: 64 for a slug, 32 for a collection, 64 for a version.
+    { kind: 'app', slug: 'a'.repeat(65) },
+    { kind: 'collection-schema', slug: 'pixel-garden', collection: 'c'.repeat(33), major: 1 },
+    { kind: 'release', slug: 'pixel-garden', version: '1'.repeat(65) },
   ] as const)('refuses %o', (ref) => {
     expect(() => registryUrn(ref)).toThrow(/registry urn: invalid/);
   });
@@ -50,7 +54,19 @@ describe('parseCollectionSchemaUrn', () => {
     );
   });
 
+  it('the longest names the store allows still parse', () => {
+    const slug = `a${'b'.repeat(62)}c`;
+    const collection = `c${'d'.repeat(31)}`;
+    expect(parseCollectionSchemaUrn(`urn:schema:civitai-apps:${slug}/${collection}@v1`)).toEqual({
+      slug,
+      collection,
+      major: 1,
+    });
+  });
+
   it.each([
+    `urn:schema:civitai-apps:${'a'.repeat(65)}/notes@v1`,
+    `urn:schema:civitai-apps:orbit-notes/${'c'.repeat(33)}@v1`,
     'urn:schema:civitai-schemas:app@v1',
     'urn:schema:other-apps:pixel-garden/seed_packs@v1',
     'urn:schema:civitai-apps:pixel-garden/seed_packs@v0',

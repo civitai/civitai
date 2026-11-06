@@ -1,9 +1,10 @@
 import type { AddressInfo } from 'node:net';
-import type { Server } from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
-import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { FILTER_MAX_BYTES, usesRegex } from '~/server/registry-adapter/json-schema';
+import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 
 const APPS = 'urn:schema:civitai-schemas:app@v1';
 const one: Entity = {
@@ -40,6 +41,7 @@ async function get(a: Adapter, query: string) {
   return { status: res.status, type: res.headers.get('content-type'), text: await res.text() };
 }
 
+const asFilter = (f: unknown) => `&filter=${encodeURIComponent(JSON.stringify(f))}`;
 const sub = (schema: string, extra = '') =>
   `/subscribe?schema=${encodeURIComponent(schema)}${extra}`;
 
@@ -113,6 +115,74 @@ describe('the HTTP/SSE binding', () => {
   });
 });
 
+describe('🔴 a snapshot slower than the heartbeat', () => {
+  // Like Node's: anything written before writeHead sends default headers, and a writeHead
+  // after that throws ERR_HTTP_HEADERS_SENT.
+  function fakeRes() {
+    const out: string[] = [];
+    const listeners: Record<string, () => void> = {};
+    let headersSent = false;
+    const res = {
+      out,
+      closed: false,
+      writableEnded: false,
+      get headersSent() {
+        return headersSent;
+      },
+      writeHead() {
+        if (headersSent) throw new Error('ERR_HTTP_HEADERS_SENT');
+        headersSent = true;
+        out.push('<head>');
+        return res;
+      },
+      write(chunk: string) {
+        headersSent = true;
+        out.push(chunk);
+        return true;
+      },
+      end(chunk?: string) {
+        if (chunk) out.push(chunk);
+        res.writableEnded = true;
+        listeners.close?.();
+        return res;
+      },
+      on(event: string, fn: () => void) {
+        listeners[event] = fn;
+        return res;
+      },
+    };
+    return res;
+  }
+
+  it('sends the head before any heartbeat, and never an error for it', async () => {
+    vi.useFakeTimers();
+    try {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const slow = adapter({
+        snapshot: async () => {
+          await gate;
+          // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+          return { cursor: 'c1.slow', entities: [one] };
+        },
+      });
+      const res = fakeRes();
+      const done = handleRequest(slow)(
+        { url: sub(APPS), headers: {} } as unknown as IncomingMessage,
+        res as unknown as ServerResponse
+      );
+      await vi.advanceTimersByTimeAsync(20_000);
+      release();
+      await done;
+      expect(res.out[0]).toBe('<head>');
+      expect(res.out.join('')).not.toContain('event: error');
+      expect(res.out.join('')).toContain('event: end');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('a request filter', () => {
   const filter = (f: unknown) => `&filter=${encodeURIComponent(JSON.stringify(f))}`;
   const changed: Entity = { ...one, rev: 'rev-8b', body: { slug: 'renamed-orbit' } };
@@ -149,5 +219,46 @@ describe('a request filter', () => {
   it('a filter that is not a schema is bad_request', async () => {
     const res = await get(withChange, sub(APPS, filter({ type: 12 })));
     expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
+  });
+});
+
+describe('🔴 a filter this source will not evaluate is not applied', () => {
+  it('a regular expression is never compiled: the entity it would exclude is still sent', async () => {
+    const res = await get(
+      adapter(),
+      sub(APPS, asFilter({ properties: { slug: { pattern: '^zzz' } } }))
+    );
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('positive control: the same filter without the regex is applied', async () => {
+    const res = await get(
+      adapter(),
+      sub(APPS, asFilter({ properties: { slug: { const: 'zzz' } } }))
+    );
+    expect(res.text.startsWith('event: live')).toBe(true);
+  });
+
+  it('a filter over the size bound is not applied', async () => {
+    const big = {
+      properties: { slug: { const: 'zzz' } },
+      description: 'x'.repeat(FILTER_MAX_BYTES),
+    };
+    const res = await get(adapter(), sub(APPS, asFilter(big)));
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+});
+
+describe('usesRegex', () => {
+  it.each([
+    [{ pattern: 'a' }, true],
+    [{ patternProperties: { '^a': {} } }, true],
+    [{ allOf: [{ properties: { a: { items: { pattern: 'x' } } } }] }, true],
+    [{ $defs: { d: { not: { pattern: 'x' } } } }, true],
+    [{ properties: { pattern: { const: 'a property named pattern' } } }, false],
+    [{ enum: [{ pattern: 'a value, not a keyword' }] }, false],
+    [{ properties: { a: { type: 'string', maxLength: 3 } } }, false],
+  ])('%o → %s', (schema, expected) => {
+    expect(usesRegex(schema)).toBe(expected);
   });
 });
