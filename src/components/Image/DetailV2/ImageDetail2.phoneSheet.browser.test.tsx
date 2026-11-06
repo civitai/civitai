@@ -245,41 +245,38 @@ afterEach(() => {
 });
 
 describe('image detail on a phone', () => {
-  test.each([0, 34])(
-    'the collapsed sheet leaves the controls under the image uncovered (bottom inset %ipx)',
-    async (inset) => {
-      renderDetail(inset);
-      await vi.waitFor(() => expect(q('hat-controls')).not.toBeNull());
-      await vi.waitFor(() => expect(sheet()).not.toBeNull());
-      const controls = q('hat-controls')!.getBoundingClientRect();
-      const strip = sheet()!.getBoundingClientRect();
-      expect(strip.top).toBeLessThan(PHONE.height);
-      expect(controls.bottom).toBeLessThanOrEqual(strip.top);
-    }
-  );
-
   const shown = (id: string) =>
     [...document.body.querySelectorAll(`[data-testid="${id}"]`)].filter((el) =>
       el.checkVisibility()
     );
 
-  // Hat Turf in the reaction row squeezed the reaction counts on a phone, and the bottom strip is
-  // where Justin did not want it: on a phone both pieces ride in the top toolbar.
+  // Hat Turf in the reaction row squeezed the reaction counts on a phone: the badge goes to the top
+  // toolbar and the hat button to the bottom strip, by Save and Tip.
   test.each([false, true])(
-    'the badge and the hat button show once each, in the top toolbar (sheet expanded: %s)',
+    'the badge shows once, in the top toolbar (sheet expanded: %s)',
     async (active) => {
       ctx.active = active;
       renderDetail(0);
       await vi.waitFor(() => expect(sheet()).not.toBeNull());
       const badges = shown('hat-badge');
-      const hats = shown('hat-controls');
       expect(badges).toHaveLength(1);
+      expect(sheet()!.contains(badges[0])).toBe(false);
+      // The toolbar is the first thing under the page's top edge, above the picture.
+      expect(badges[0].getBoundingClientRect().top).toBeLessThan(PHONE.height / 4);
+    }
+  );
+
+  test.each([false, true])(
+    'the hat button shows once, in the bottom strip after Save (sheet expanded: %s)',
+    async (active) => {
+      ctx.active = active;
+      renderDetail(0);
+      await vi.waitFor(() => expect(sheet()).not.toBeNull());
+      const hats = shown('hat-controls');
       expect(hats).toHaveLength(1);
-      for (const el of [badges[0], hats[0]]) {
-        expect(sheet()!.contains(el)).toBe(false);
-        // The toolbar is the first thing under the page's top edge, above the picture.
-        expect(el.getBoundingClientRect().top).toBeLessThan(PHONE.height / 4);
-      }
+      expect(sheet()!.contains(hats[0])).toBe(true);
+      const save = [...sheet()!.querySelectorAll('button')].find((b) => b.textContent === 'Save')!;
+      expect(save.compareDocumentPosition(hats[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
   );
 });

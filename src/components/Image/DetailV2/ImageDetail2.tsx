@@ -325,9 +325,12 @@ function ImageDetail2Content() {
           </Badge>
         </InteractiveTipBuzzButton>
       )}
-      {/* On a phone Hat Turf is in the top toolbar, not this bottom bar. */}
+      {/* On a phone the badge is in the top toolbar and the hat button is here, by Save and Tip. */}
       {withStoryline && !narrowStage && takesHats(image) && (
         <HatTurfDetailBadge imageId={image.id} />
+      )}
+      {!withStoryline && narrowStage && takesHats(image) && (
+        <HatTurfDetailControls imageId={image.id} />
       )}
     </>
   );
@@ -385,12 +388,6 @@ function ImageDetail2Content() {
                               postId={image.postId ?? null}
                               placement="mobile"
                             />
-                            {narrowStage && takesHats(image) && (
-                              <div className="ml-1 flex shrink-0 items-center gap-2">
-                                <HatTurfDetailBadge imageId={image.id} />
-                                <HatTurfDetailControls imageId={image.id} />
-                              </div>
-                            )}
                           </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
@@ -398,6 +395,9 @@ function ImageDetail2Content() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-1">
+                            {narrowStage && takesHats(image) && (
+                              <HatTurfDetailBadge imageId={image.id} />
+                            )}
                             <ImageGuard2.BlurToggle
                               {...sharedBadgeProps}
                               className={clsx('@md:hidden', sharedBadgeProps.className)}
