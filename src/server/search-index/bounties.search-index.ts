@@ -153,7 +153,7 @@ const WHERE = [
   Prisma.sql`b."availability" NOT IN ('Unsearchable'::"Availability", 'Private'::"Availability")`,
 ];
 
-const transformData = async ({
+export const transformData = async ({
   bounties,
   imageTags,
   profilePictures,

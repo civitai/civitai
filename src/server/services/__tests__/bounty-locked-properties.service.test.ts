@@ -304,6 +304,12 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
       });
     });
 
+    it('writes a moderator edit as sent, which can clear it', async () => {
+      await upsert({ isModerator: true, details: { baseModel: 'SDXL 1.0' } });
+
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0' });
+    });
+
     it('replaces it with a fresh detection', async () => {
       mockEvaluateContent.mockReturnValue({
         shouldMarkNSFW: true,

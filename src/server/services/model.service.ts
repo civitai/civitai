@@ -2085,7 +2085,7 @@ export const getModelVersionsMicro = async ({
 // Mutations hand their updated row straight back to the caller, so the keys the read path hides
 // from non-moderators have to come off here too. Stripping beats narrowing the Prisma `select`:
 // these rows feed many callers, and moderators read the keys back from the stored row.
-function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
+function withoutModeratorOnlyMeta<T extends { meta: unknown }>(model: T): T {
   const meta = model.meta as ModelMeta | null;
   return { ...model, meta: meta && filterModelMetaForClient(meta, false) } as T;
 }
@@ -2145,7 +2145,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return withoutMinorHashMeta(model);
+  return withoutModeratorOnlyMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -4693,7 +4693,7 @@ export const upsertModel = async (
       });
     }
 
-    return withoutMinorHashMeta(result);
+    return withoutModeratorOnlyMeta(result);
   }
 };
 
@@ -7281,7 +7281,7 @@ export const privateModelFromTraining = async ({
     await bustModelGallerySettings([id]);
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
-    return withoutMinorHashMeta(result);
+    return withoutModeratorOnlyMeta(result);
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
