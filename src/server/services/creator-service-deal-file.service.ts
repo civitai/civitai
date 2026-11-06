@@ -82,6 +82,7 @@ const ATTACHABLE = Prisma.sql`'Requested'::"ServiceDealStatus", 'Accepted'::"Ser
 const NOT_ATTACHMENT = Prisma.sql`f."kind"::text <> 'Attachment'`;
 
 const UPLOAD_KEY_ROOT = 'service-deals';
+const HELD_COPY_ATTEMPTS = 3;
 
 /** What a seller types is shown back; strip paths and control characters, and bound it. */
 export function cleanFileName(name: string) {
@@ -491,12 +492,12 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
         deliveryKey: string | null;
         imageId: number | null;
         scanKey: string | null;
-        status: ServiceDealFileStatus;
+        uploadedAt: Date | null;
       }[]
     >`
       DELETE FROM "ServiceDealFile" f USING "ServiceDeal" d
       WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND ${scope}
-      RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId", f."scanKey", f."status"`;
+      RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId", f."scanKey", f."uploadedAt"`;
     if (!file) throw throwNotFoundError('File not found');
     return { ...file, copies, held };
   });
@@ -508,9 +509,9 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
   }
   const bucket = await getBucket();
   if (removed.held) {
-    // An upload never completed is still at the uploader's key, which they can write to: the hold
-    // keeps a server copy instead, and the uploader's key goes.
-    if (removed.status === 'Uploading') await keepServerCopy(bucket, removed.id, removed.s3Key);
+    // A key that never moved to the server's (no completed upload) is the uploader's, which they can
+    // still write to: the hold keeps a server copy instead, and the uploader's key goes.
+    if (!removed.uploadedAt) await keepServerCopy(bucket, removed.id, removed.s3Key);
     return { id: removed.id };
   }
 
@@ -557,8 +558,7 @@ async function holdAsEvidence(tx: Prisma.TransactionClient, fileId: number, serv
       ("fileId", "dealId", "uploaderId", "kind", "round", "fileName", "mimeType", "size", "s3Key",
        "deliveryKey", "imageId", "entryIds", "reason")
     SELECT "id", "dealId", "uploaderId", "kind", "round", "fileName", "mimeType", "size",
-      COALESCE(${serverKey ?? null}::text,
-        CASE WHEN "status" <> 'Uploading'::"ServiceDealFileStatus" THEN "s3Key" END),
+      COALESCE(${serverKey ?? null}::text, CASE WHEN "uploadedAt" IS NOT NULL THEN "s3Key" END),
       "deliveryKey", CASE WHEN "ownCopy" THEN "imageId" END, "entryIds", "reason"
     FROM judged WHERE "reason" IS NOT NULL
     ON CONFLICT ("fileId") DO NOTHING`;
@@ -569,28 +569,41 @@ async function holdAsEvidence(tx: Prisma.TransactionClient, fileId: number, serv
 
 /**
  * A held upload that never completed: copies what is at the uploader's key to a key only the
- * server has, records it on the held row, and deletes the uploader's key. Nothing there, or a copy
- * that fails, leaves the held row without a key.
+ * server has, records it on the held row, and deletes the uploader's key. A held row that already
+ * has a server copy (a refused upload, held at the time) keeps it. A copy that still fails after
+ * retries leaves the held row without a key.
  */
 async function keepServerCopy(bucket: string, fileId: number, uploaderKey: string) {
-  const serverKey = `${UPLOAD_KEY_ROOT}/held/${fileId}/${randomUUID()}`;
-  try {
-    await getS3Client().send(
-      new CopyObjectCommand({
-        Bucket: bucket,
-        Key: serverKey,
-        CopySource: encodeURI(`${bucket}/${uploaderKey}`),
-      })
-    );
-    await dbWrite.$executeRaw`
-      UPDATE "ServiceDealFileHeld" SET "s3Key" = ${serverKey}::text WHERE "fileId" = ${fileId}::int`;
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'service-deal-file-held',
-      message: 'no server copy of a held upload',
-      details: { fileId, error: (error as Error)?.message },
-    }).catch(() => null);
+  const [held] = await dbWrite.$queryRaw<{ s3Key: string | null }[]>`
+    SELECT "s3Key" FROM "ServiceDealFileHeld" WHERE "fileId" = ${fileId}::int`;
+  if (held && !held.s3Key) {
+    const serverKey = `${UPLOAD_KEY_ROOT}/held/${fileId}/${randomUUID()}`;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < HELD_COPY_ATTEMPTS; attempt++) {
+      try {
+        await getS3Client().send(
+          new CopyObjectCommand({
+            Bucket: bucket,
+            Key: serverKey,
+            CopySource: encodeURI(`${bucket}/${uploaderKey}`),
+          })
+        );
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFileHeld" SET "s3Key" = ${serverKey}::text
+          WHERE "fileId" = ${fileId}::int AND "s3Key" IS NULL`;
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError)
+      logToAxiom({
+        type: 'error',
+        name: 'service-deal-file-held',
+        message: 'no server copy of a held upload',
+        details: { fileId, error: (lastError as Error)?.message },
+      }).catch(() => null);
   }
   await deleteObject(bucket, uploaderKey).catch(() => null);
 }
@@ -1083,9 +1096,14 @@ export async function startPreviewScans({ limit = 5 } = {}) {
         }
         imageId = (await createScanImage(scanKey, copy, preview.sellerId)).id;
       }
-      await dbWrite.$executeRaw`
+      const linked = await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile" SET "imageId" = ${imageId}::int, "processingAt" = NULL
         WHERE "id" = ${preview.id}::int`;
+      // Deleted while the copy was made: the hold keeps the file, so it keeps the copy too.
+      if (linked === 0)
+        await dbWrite.$executeRaw`
+          UPDATE "ServiceDealFileHeld" SET "imageId" = ${imageId}::int
+          WHERE "fileId" = ${preview.id}::int AND "imageId" IS NULL`;
       started++;
       logPreview('scan copy submitted', { fileId: preview.id, frames, ms: Date.now() - began });
     } catch (error) {

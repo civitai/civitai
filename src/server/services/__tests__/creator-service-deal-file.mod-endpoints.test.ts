@@ -22,7 +22,10 @@ type Handler<I, O> = {
   handler: (input: I, ctx: { actor: { id: number }; tracker?: unknown }) => Promise<O>;
 };
 const files = (await import('../../../pages/api/mod/creator-services/deal-files'))
-  .default as unknown as Handler<{ dealId?: number; dealIds?: string }, { items: any[] }>;
+  .default as unknown as Handler<
+  { dealId?: number; dealIds?: string },
+  { items: any[]; attachments: any[] }
+>;
 const url = (await import('../../../pages/api/mod/creator-services/deal-file-url'))
   .default as unknown as Handler<{ fileId: number }, { url: string; expiresAt: string }>;
 
@@ -115,7 +118,7 @@ describe('deal-files', () => {
     });
     const result = await files.handler({ dealId: 4 }, actor);
     expect(result.items).toEqual([{ dealId: 4, id: 40, kind: 'Final', access: [] }]);
-    expect((result as unknown as { attachments: unknown[] }).attachments).toEqual([
+    expect(result.attachments).toEqual([
       {
         dealId: 4,
         id: 41,

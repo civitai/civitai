@@ -651,6 +651,34 @@ describe('deleting', () => {
     ).toEqual([{ reason: 'scan', imageId: 321, s3Key }]);
   });
 
+  it('keeps the scan copy of a preview deleted while the copy was being made', async () => {
+    const dealId = await accepted();
+    const fileId = await uploaded(dealId, {
+      kind: 'Preview',
+      fileName: 'p.png',
+      mimeType: 'image/png',
+      size: 500,
+    });
+    s3.send.mockResolvedValue(body(Buffer.from('original bytes')));
+    preview.scanCopy.mockResolvedValue({
+      data: Buffer.from('c'),
+      mimeType: 'image/webp',
+      width: 10,
+      height: 10,
+      frames: 1,
+    });
+    s3.uploadImageBufferToStore.mockResolvedValue({ key: 'scan-copy-key' });
+    images.createImage.mockImplementation(async () => {
+      // The seller removes the preview between the copy and its Image row being linked.
+      await files.deleteServiceDealFile({ fileId, userId: SELLER });
+      return { id: 321 };
+    });
+    await files.startPreviewScans();
+    expect(
+      await q(`SELECT reason, "imageId" FROM "ServiceDealFileHeld" WHERE "fileId" = $1`, [fileId])
+    ).toEqual([{ reason: 'scan', imageId: 321 }]);
+  });
+
   it('deletes a preview whose own scan passed, copy and all, with no hold', async () => {
     const dealId = await accepted();
     const fileId = await uploaded(dealId, {

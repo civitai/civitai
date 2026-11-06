@@ -665,6 +665,12 @@ const heldRows = (fileId: number) =>
     [fileId]
   );
 const deletedKeys = () => s3.deleteObject.mock.calls.map((call) => call[1]);
+/** The source keys of every CopyObject the bucket was sent with `key` as its destination. */
+const copiesTo = (key: string) =>
+  s3.send.mock.calls
+    .map(([command]) => (command as { input?: { Key?: string; CopySource?: string } }).input)
+    .filter((input) => input?.Key === key && input.CopySource)
+    .map((input) => decodeURI(input!.CopySource!).replace(/^bucket\//, ''));
 
 /** A zip whose one image was rated above the deal's level. */
 async function rejectedZip(dealId: number, upload: typeof attach) {
@@ -986,6 +992,17 @@ describe('removing a file that is evidence', () => {
       expect(deletedKeys()).toEqual([uploaderKey]);
       expect((await fileRow(fileId)).status).toBe('Failed');
       expect(await download(fileId, BUYER)).toBeNull();
+      expect(copiesTo(held.s3Key!)).toEqual([uploaderKey]);
+
+      // The buyer then removes the refused file: still one held row, still the server copy.
+      await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+      expect(await heldRows(fileId)).toEqual([held]);
+      // Nor is a second copy made from the uploader's key, which they can still write to.
+      expect(
+        s3.send.mock.calls.filter(([command]) =>
+          (command as { input?: { Key?: string } }).input?.Key?.startsWith('service-deals/held/')
+        )
+      ).toEqual([]);
     }
   );
 
@@ -1022,6 +1039,38 @@ describe('removing a file that is evidence', () => {
     expect(deletedKeys()).toEqual([uploaderKey]);
   });
 
+  it('tries the server copy of a held upload again before giving up', async () => {
+    const dealId = await accepted();
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
+    const { fileId } = await requestAs(dealId, BUYER);
+    s3.send.mockRejectedValueOnce(new Error('transient')).mockResolvedValue({});
+    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+    const [held] = await heldRows(fileId);
+    expect(held.s3Key).toMatch(/^service-deals\/held\//);
+  });
+
+  it('never records the key of a refused upload that comes under a hold later', async () => {
+    const dealId = await accepted();
+    const { fileId } = await requestAs(dealId, BUYER);
+    const uploaderKey = (await fileRow(fileId)).s3Key;
+    s3.headObject
+      .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength })
+      .mockResolvedValueOnce({ status: 'present', size: TEXT.byteLength + 1 });
+    s3.send.mockResolvedValue(body(TEXT));
+    await expect(
+      files.completeServiceDealAttachment({ fileId, userId: BUYER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await heldRows(fileId)).toEqual([]);
+    expect((await fileRow(fileId)).s3Key).toBe(uploaderKey);
+
+    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
+    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+    const [held] = await heldRows(fileId);
+    expect(held.reason).toBe('account');
+    expect(held.s3Key).not.toBe(uploaderKey);
+    expect(held.s3Key).toMatch(/^service-deals\/held\//);
+  });
+
   it('never records the key the uploader can still write to', async () => {
     const dealId = await accepted();
     await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [BUYER]);
@@ -1034,6 +1083,7 @@ describe('removing a file that is evidence', () => {
     const [held] = await heldRows(fileId);
     expect(held.s3Key).toMatch(/^service-deals\/held\//);
     expect(held.s3Key).not.toBe(uploaderKey);
+    expect(copiesTo(held.s3Key!)).toEqual([uploaderKey]);
     expect(deletedKeys()).toEqual([uploaderKey]);
   });
 
