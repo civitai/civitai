@@ -28,12 +28,18 @@ type Space = {
 type Image = { id: number; userId: number; postId: number | null; type: string; username: string };
 type Db = { images: Image[]; spaces: Space[] };
 
-const { dbs, reads } = vi.hoisted(() => {
+const { dbs, reads, gate } = vi.hoisted(() => {
   const dbs = {
     primary: { images: [], spaces: [] } as { images: unknown[]; spaces: unknown[] },
     replica: { images: [], spaces: [] } as { images: unknown[]; spaces: unknown[] },
   };
-  return { dbs, reads: [] as { db: string; what: string }[] };
+  return {
+    dbs,
+    reads: [] as { db: string; what: string }[],
+    // While set, a replica row read answers from the state it saw on arrival, then waits for this
+    // to settle: a fill whose read started before a write and lands after it.
+    gate: { replicaRows: null as Promise<void> | null },
+  };
 });
 
 // The real clients, as placement-reads.kysely.test.ts uses them: nothing is executed against them
@@ -62,7 +68,7 @@ vi.mock('@civitai/db-queries/placement', () => ({
       input: { surface: string; levels: { entityType: string; entityId: number }[] }
     ) => {
       reads.push({ db: nameOf(client), what: 'rows' });
-      return dbOf(client)
+      const rows = dbOf(client)
         .spaces.filter(
           (space) =>
             space.surface === input.surface &&
@@ -77,6 +83,8 @@ vi.mock('@civitai/db-queries/placement', () => ({
           freeSlots,
           settings: structuredClone(settings),
         }));
+      if (nameOf(client) === 'replica' && gate.replicaRows) await gate.replicaRows;
+      return rows;
     }
   ),
   countPlacements: vi.fn(async () => 1),
@@ -185,6 +193,11 @@ beforeEach(() => {
   wirePrimaryWrites();
 });
 
+/** Past the window in which a just-written row is read from the primary. Literal, not imported. */
+const PAST_WRITE_WINDOW_MS = 11_000;
+const T0 = new Date('2026-11-06T12:00:00.000Z');
+const later = (ms: number) => vi.setSystemTime(new Date(T0.getTime() + ms));
+
 describe('placement space display read: parity with the primary read', () => {
   it('answers what the primary read answers, cold and then from the cache', async () => {
     const truth = await resolvePlacementSpaceFor(TARGET);
@@ -194,8 +207,8 @@ describe('placement space display read: parity with the primary read', () => {
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
     const mark = reads.length;
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
-    // The warm read touched neither database for the target or the rows.
-    expect(readsSince(mark)).toEqual([]);
+    // The warm read took every space row from the cache; only the (uncached) target was read.
+    expect(readsSince(mark)).toEqual([{ db: 'replica', what: 'target' }]);
   });
 
   it('reads its misses from the replica and the primary read stays on the primary', async () => {
@@ -224,6 +237,26 @@ describe('placement space display read: parity with the primary read', () => {
     await expect(resolvePlacementSpaceForDisplay(missing)).rejects.toThrow(
       'placement: that image no longer exists'
     );
+  });
+
+  // 🔴 The sticker flow sends no expected price: what this shows is what the next placement is
+  // charged at. A target held in a cache would keep showing the old post's price after the image
+  // moved, while the charge read the new one.
+  it('follows an image moved to another post on the very next read', async () => {
+    const OTHER_POST = 62;
+    primary().spaces = [
+      space({ entityType: 'user', entityId: OWNER, mode: 'review', price: 120 }),
+      space({ entityType: 'post', entityId: OTHER_POST, mode: 'auto', price: 444 }),
+    ];
+    replicate();
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject({ setPrice: 120 });
+
+    primary().images[0].postId = OTHER_POST;
+    replicate();
+
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ mode: 'auto', setPrice: 444 });
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
   });
 });
 
@@ -281,7 +314,9 @@ describe('placement space display read: a space write busts it', () => {
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
   });
 
-  it('does not pin a cleared row that a lagging replica still returns', async () => {
+  it('shows a clear at once while the replica lags, and caches the row again once it caught up', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
     await resolvePlacementSpaceForDisplay(TARGET);
 
     await clearPlacementSpace({
@@ -290,47 +325,109 @@ describe('placement space display read: a space write busts it', () => {
       entityId: IMAGE,
       userId: OWNER,
     });
-    // Behind: the replica still has the image row, and a read now may show it.
-    await resolvePlacementSpaceForDisplay(TARGET);
-    // Once it catches up, the very next read shows the clear — the lagging answer was not cached.
+    // Behind: the replica still has the image row. Inside the write window the row is the primary's.
+    const cleared = { mode: 'review', setPrice: 120 };
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject(cleared);
+
     replicate();
-    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject({
-      mode: 'review',
-      setPrice: 120,
-    });
+    later(PAST_WRITE_WINDOW_MS);
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject(cleared);
+    const mark = reads.length;
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject(cleared);
+    expect(readsSince(mark).filter((read) => read.what === 'rows')).toEqual([]);
+  });
+
+  // 🔴 The race a plain SET loses: a miss fill reads the replica, the row is cleared, and the fill's
+  // write lands after the clear. Without the guard that entry is served until it expires.
+  it('does not serve a fill that read the replica before a clear and landed after it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+    let release!: () => void;
+    gate.replicaRows = new Promise<void>((resolve) => (release = resolve));
+    try {
+      // Reads the image row from the replica, then stalls before writing it to the cache.
+      const stale = resolvePlacementSpaceForDisplay(TARGET);
+      await vi.waitFor(() => expect(reads.some((read) => read.what === 'rows')).toBe(true));
+
+      await clearPlacementSpace({
+        surface: 'sticker',
+        entityType: 'image',
+        entityId: IMAGE,
+        userId: OWNER,
+      });
+      replicate();
+
+      gate.replicaRows = null;
+      release();
+      expect(await stale).toMatchObject({ mode: 'auto', setPrice: 90 }); // what it read, served once
+    } finally {
+      gate.replicaRows = null;
+      release?.();
+    }
+
+    // Past the window, so the answer cannot come from the primary read a fresh write gets.
+    later(PAST_WRITE_WINDOW_MS);
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ mode: 'review', setPrice: 120 });
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
   });
 });
 
 describe('placement space display read: who calls it', () => {
+  const SRC = path.resolve(__dirname, '../../..');
+  /** Lines that are code, not prose: a comment naming the function calls nothing. */
+  const codeLines = (file: string) =>
+    readFileSync(path.join(SRC, file), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+
   // 🔴 A ledger, failing if the set GROWS or SHRINKS. The display read takes rows from a cache and
-  // a replica, which is only safe for a caller that decides nothing; a second caller is a decision
-  // made against a stale space, so it has to be added here on purpose.
-  it('is referenced only by its own service and the public getSpace route', () => {
-    const root = path.resolve(__dirname, '../../..');
-    const hits: string[] = [];
+  // a replica, which is only safe for a caller that shows what the primary read would charge; a
+  // second caller has to be added here on purpose.
+  it('is referenced by exactly one call in the getSpace route and nowhere else', () => {
+    const counts: Record<string, number> = {};
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir)) {
         if (entry === 'node_modules' || entry === '__tests__') continue;
         const full = path.join(dir, entry);
         if (statSync(full).isDirectory()) walk(full);
-        else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.tsx?$/.test(entry))
-          if (
-            readFileSync(full, 'utf8')
-              .split('\n')
-              // Code, not prose: a comment naming it calls nothing.
-              .some(
-                (line) =>
-                  !/^\s*(\/\/|\*|\/\*)/.test(line) &&
-                  line.includes('resolvePlacementSpaceForDisplay')
-              )
-          )
-            hits.push(path.relative(root, full));
+        else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.tsx?$/.test(entry)) {
+          const file = path.relative(SRC, full);
+          const n = codeLines(file).filter((line) =>
+            line.includes('resolvePlacementSpaceForDisplay')
+          ).length;
+          if (n) counts[file] = n;
+        }
       }
     };
-    walk(root);
-    expect(hits.sort()).toEqual([
-      'server/routers/placement.router.ts',
-      'server/services/placement-space.service.ts',
-    ]);
+    walk(SRC);
+    expect(counts).toEqual({
+      // The import and the one call.
+      'server/routers/placement.router.ts': 2,
+      // The definition.
+      'server/services/placement-space.service.ts': 1,
+    });
+
+    const routerCalls = codeLines('server/routers/placement.router.ts').filter((line) =>
+      /resolvePlacementSpaceForDisplay\s*\(/.test(line)
+    );
+    expect(routerCalls).toHaveLength(1);
+  });
+
+  it('uses the display reads only inside resolvePlacementSpaceForDisplay', () => {
+    const lines = codeLines('server/services/placement-space.service.ts');
+    const start = lines.findIndex((line) =>
+      line.startsWith('export function resolvePlacementSpaceForDisplay(')
+    );
+    const end = lines.findIndex((line, i) => i > start && line === '}');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const uses = lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => /\bdisplayReads\b/.test(line) && !/const displayReads\b/.test(line));
+    expect(uses).toHaveLength(1);
+    expect(uses[0].i).toBeGreaterThan(start);
+    expect(uses[0].i).toBeLessThan(end);
   });
 });
