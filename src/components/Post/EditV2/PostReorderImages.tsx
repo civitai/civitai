@@ -8,6 +8,7 @@ import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-rea
 import { isEqual } from 'lodash-es';
 import type { CSSProperties } from 'react';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
+import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
@@ -127,6 +128,10 @@ function SortableImage({ image, sortableId }: ItemProps) {
           className="pointer-events-none absolute left-2 top-2 z-20"
         />
       )}
+      <ImageReactionCount
+        count={image.reactionCount}
+        className="pointer-events-none absolute bottom-2 left-2 z-20"
+      />
     </div>
   );
 }

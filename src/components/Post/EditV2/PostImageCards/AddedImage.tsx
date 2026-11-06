@@ -102,6 +102,7 @@ import {
 } from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
+import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { queryClient, trpc } from '~/utils/trpc';
 import {
   spaceRowInput,
@@ -1362,6 +1363,10 @@ function PostImage() {
           )}
         </div>
       )}
+      <ImageReactionCount
+        count={image.reactionCount}
+        className="pointer-events-none absolute bottom-2 left-2 z-20"
+      />
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
