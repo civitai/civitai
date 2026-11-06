@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 import type * as Trpc from '~/utils/trpc';
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
@@ -573,6 +574,62 @@ describe('hats on a feed ImageCard', () => {
     expect(q('hat-turf-gear')).not.toBeNull();
     expect(q('hat-turf-button')).not.toBeNull();
     expect(actions()).toEqual(['hide_all_hats_on']);
+  });
+
+  // Tester report 2026-11-06: a resting hat on the corner covered the Hat Turf badge. The card's
+  // header and footer are later, unstacked siblings of the hat layer, so the layer must take no
+  // z-index of its own on a feed card; a z-index there lifts every hat over every chip.
+  describe('a resting hat sits under the card chips', () => {
+    // Hats and the control-arm badge take no taps, so hit-testing cannot see them unless forced.
+    let restore: () => void = () => undefined;
+    beforeEach(() => {
+      const style = document.createElement('style');
+      style.textContent =
+        '[data-testid="hat-turf-hat"], [data-testid="hat-turf-hat"] *, [data-testid="hat-turf-badge"] { pointer-events: auto !important; }';
+      document.head.appendChild(style);
+      restore = () => style.remove();
+    });
+    afterEach(() => restore());
+
+    const big = (x: number, y: number) => ({
+      ...sticker(1, 'blue'),
+      data: { x, y, scale: 0.6, rotation: 0, flip: false },
+    });
+    const topAt = (el: HTMLElement) => {
+      const r = el.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    };
+    const hatCovers = (el: HTMLElement) => {
+      const hat = hats()[0].getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+      return x > hat.left && x < hat.right && y > hat.top && y < hat.bottom;
+    };
+
+    // Hovered, the card's zoom transforms the hat layer, which makes it a stacking context.
+    test.each([false, true])('the badge, top left (hovered: %s)', async (hovered) => {
+      renderCard({ images: { 77: summary() }, stickers: { 77: [big(0.15, 0.1)] } });
+      await vi.waitFor(() => expect(hats()[0]?.getBoundingClientRect().width).toBeGreaterThan(0));
+      const badge = await vi.waitFor(() => q('hat-turf-badge')!);
+      if (hovered) {
+        await userEvent.hover(document.body.querySelector<HTMLElement>('[data-card-hover]')!);
+        await vi.waitFor(() =>
+          expect(getComputedStyle(q('hat-turf-layer')!).transform).not.toBe('none')
+        );
+      }
+      expect(hatCovers(badge), 'the hat is not over the badge: the test proves nothing').toBe(true);
+      expect(badge.contains(topAt(badge)), 'a hat paints over the badge').toBe(true);
+    });
+
+    test('the hat button, bottom right', async () => {
+      renderCard({ images: { 77: summary() }, stickers: { 77: [big(0.8, 0.9)] } });
+      await vi.waitFor(() => expect(hats()[0]?.getBoundingClientRect().width).toBeGreaterThan(0));
+      const button = q('hat-turf-button')!.querySelector<HTMLElement>('button[aria-pressed]')!;
+      expect(hatCovers(button), 'the hat is not over the button: the test proves nothing').toBe(
+        true
+      );
+      expect(button.contains(topAt(button)), 'a hat paints over the hat button').toBe(true);
+    });
   });
 
   describe('Show hats off, and the reveal', () => {

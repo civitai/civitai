@@ -157,14 +157,14 @@ describe('the picker reads featured history', () => {
   });
 });
 
-describe('the resellable picker lists newest approved first', () => {
+describe('the published-creator picker lists newest approved first', () => {
   beforeEach(() => {
     dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValue([]);
     dbMock.dbRead.cosmeticShopItem.count.mockResolvedValue(0);
   });
 
   it('orders by reviewedAt, unreviewed last', async () => {
-    await getPaginatedCosmeticShopItems({ limit: 20, page: 2, resellable: true });
+    await getPaginatedCosmeticShopItems({ limit: 20, page: 2, publishedCreatorOnly: true });
 
     expect(dbMock.dbRead.cosmeticShopItem.findMany).toHaveBeenLastCalledWith(
       expect.objectContaining({

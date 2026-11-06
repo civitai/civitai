@@ -19,6 +19,10 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  bustContestCollectionItemsCache,
+  bustContestCollectionItemsCacheForItems,
+} from '~/server/services/contest-collection-items.cache';
 import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -1260,6 +1264,7 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {
     await Promise.all(
@@ -1803,6 +1808,7 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+  await bustContestCollectionItemsCache([imageId]);
 
   if (shouldScanCollection(null, collection))
     scanEntityInBackground({ entityType: 'Collection', entityId: collection.id });
@@ -2815,6 +2821,7 @@ export const updateCollectionItemsStatus = async ({
       "rejectionDetail" = ${persistedDetail}
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
+    await bustContestCollectionItemsCacheForItems(collectionItemIds);
   }
 
   if (priorItems.length > 0) {
@@ -3632,6 +3639,7 @@ export const bulkSaveItems = async ({
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
   const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
+  await bustContestCollectionItemsCache(savedImageIds);
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
@@ -3658,6 +3666,7 @@ export const bulkSaveItems = async ({
             imageIds,
           });
         });
+      await bustContestCollectionItemsCache(imageIds);
     };
 
     let chargeResult;
@@ -3933,6 +3942,7 @@ export const removeCollectionItem = async ({
     if (deletableIds.length) {
       await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
     }
+    if (tableKey === 'Image') await bustContestCollectionItemsCache([itemId]);
   }
 
   return {
@@ -3989,6 +3999,7 @@ export const setItemScore = async ({
     where: { id: collectionItemId },
     select: {
       id: true,
+      imageId: true,
       collection: {
         select: { id: true, mode: true },
       },
@@ -4004,6 +4015,7 @@ export const setItemScore = async ({
     create: { userId, collectionItemId: collectionItem.id, score },
     update: { score },
   });
+  await bustContestCollectionItemsCache([collectionItem.imageId]);
 
   return itemScore;
 };
@@ -4146,6 +4158,7 @@ export async function removeEntityFromAllCollections(
   await dbWrite.collectionItem.deleteMany({
     where: whereClause,
   });
+  if (entityType === 'image') await bustContestCollectionItemsCache([entityId]);
 }
 
 const collectionItemEntityColumn = {
@@ -4210,6 +4223,7 @@ export async function setCollectionItemsTag({
     where: { collectionId, id: { in: collectionItemIds }, ...changeable },
     data: { tagId },
   });
+  await bustContestCollectionItemsCache(found.map((item) => item.imageId));
 
   // The write has committed; a failed bust must not make the audit row record it as an error.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId).catch((error) =>

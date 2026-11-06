@@ -10,6 +10,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   readPostDetailViaKysely,
@@ -79,7 +80,6 @@ import {
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   invalidateManyImageExistence,
-  purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
   isPlainOwnerDelete,
   imagesWithOpenReports,
@@ -1855,8 +1855,6 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       userId: result.userId,
     });
   }
-
-  purgeImageGenerationDataCache(image.id);
 };
 
 export const addResourceToPostImage = async ({
@@ -2141,6 +2139,7 @@ export const updatePostCollectionTagId = async ({
       tagId: collectionTagId,
     },
   });
+  await bustContestCollectionItemsCache(images.map((i) => i.id));
 };
 
 async function refreshSfwFaceLevels(modelIds: number[]) {

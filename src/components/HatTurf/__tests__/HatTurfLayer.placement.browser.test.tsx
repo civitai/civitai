@@ -153,7 +153,7 @@ const CARD = { width: 171, height: 228 };
 
 type Fit = 'contain' | 'cover';
 
-function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
+function renderPictures(pictures: [Fit, [number, number]][], card = CARD, after?: ReactNode) {
   return renderWithProviders(
     <TurfSummaryContext.Provider
       value={{
@@ -177,6 +177,7 @@ function renderPictures(pictures: [Fit, [number, number]][], card = CARD) {
             />
             <HatTurfLayer imageId={5 + i} />
             <OpenDraft />
+            {after}
           </div>
         </HatTurfCardProvider>
       ))}
@@ -470,5 +471,48 @@ describe('a hat is placed with the sticker editor', () => {
       expect(q('hat-turf-draft')?.querySelector('[data-testid="hat-turf-cone"]')).toBeTruthy()
     );
     expect(q('hat-turf-draft')!.querySelector('img')).toBeNull();
+  });
+});
+
+// AspectRatioImageCard paints its header and footer chips over the picture as later, unstacked
+// siblings of the hat layer. A z-index on the resting layer put hats over the reaction counts and
+// the hat button (tester report, 2026-11-06); only the hat being placed may sit on top of them.
+describe('hats and the card chips painted over the picture', () => {
+  // Hats take no pointer events, so hit-testing can't see them until they do. The card's hover
+  // zoom is on too: its transform makes the layer a stacking context, which caps a draft's own
+  // z-index under the chips unless the layer itself is raised.
+  const hoveredAndHitTestable = () => {
+    const style = document.createElement('style');
+    style.textContent = [
+      '[data-testid="hat-turf-layer"], [data-testid="hat-turf-layer"] * { pointer-events: auto !important; }',
+      '[data-sticker-overlay] { transform: scale(1.05) rotate(0.02deg); }',
+    ].join('\n');
+    document.head.appendChild(style);
+    return () => style.remove();
+  };
+  const chip = <div data-testid="chip" style={{ position: 'absolute', inset: 0 }} />;
+  const topAt = (el: HTMLElement) => {
+    const { x, y } = centre(el);
+    return document.elementFromPoint(x, y);
+  };
+
+  test('a placed hat sits under the chips; the hat being placed sits over them', async () => {
+    const restore = hoveredAndHitTestable();
+    try {
+      renderPictures([['contain', [700, 500]]], { width: 700, height: 500 }, chip);
+      await measured('contain', [700, 500], { width: 700, height: 500 });
+      const draft = await editorPart(BODY);
+      expect(
+        q('hat-turf-layer')!.contains(topAt(draft)),
+        'the hat being placed is under the chips'
+      ).toBe(true);
+
+      await saved();
+      await act(async () => h.mutate.mock.calls[0][1].onSuccess());
+      const placed = await editorPart('[data-testid="hat-turf-placed"]');
+      expect(topAt(placed), 'a placed hat paints over the chips').toBe(q('chip'));
+    } finally {
+      restore();
+    }
   });
 });

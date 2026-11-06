@@ -51,7 +51,6 @@ import { FormFooter } from './FormFooter';
 import { WhatIfProvider } from './WhatIfProvider';
 import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
-import { correctUnavailableEcosystem, preservingStorage } from './ecosystem-repick';
 import { useOutputType, type GenerationStore } from './store';
 import { useWhatIfContext } from './WhatIfProvider';
 import { useActiveGenerationForm } from '~/store/active-generation-form.store';
@@ -77,12 +76,7 @@ export function BaseGenerationForm() {
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-  const {
-    selfHostedDisabledEcosystems,
-    selfHostedMode,
-    gateRules,
-    isFetched: generationConfigFetched,
-  } = useGenerationConfig();
+  const { selfHostedDisabledEcosystems, selfHostedMode, gateRules } = useGenerationConfig();
 
   const isModerator = !!currentUser?.isModerator;
 
@@ -116,19 +110,11 @@ export function BaseGenerationForm() {
 
   const storage = useMemo(() => {
     migrateV1GenerationStorage(STORAGE_KEY);
-    return preservingStorage(persistedStorage(STORAGE_KEY));
+    return persistedStorage(STORAGE_KEY);
   }, []);
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
-  // Once, when the gates first load. Declared after useForm so its setExt has
-  // already applied them; a child's effect would run before it.
-  const correctedStore = useRef<GenerationStore | undefined>(undefined);
-  useEffect(() => {
-    if (!generationConfigFetched || correctedStore.current === store) return;
-    correctedStore.current = store;
-    correctUnavailableEcosystem(store, storage);
-  }, [generationConfigFetched, store, storage]);
   useEffect(() => {
     useActiveGenerationForm.setState({ store });
     return () => useActiveGenerationForm.setState({ store: undefined });
@@ -137,8 +123,7 @@ export function BaseGenerationForm() {
   return (
     <FormProvider store={store}>
       <ExperimentalRulesSync />
-      {/* No quote until availability is known: before it, a gated selection quotes and fails. */}
-      <WhatIfProvider store={store} ext={ext} enabled={generationConfigFetched}>
+      <WhatIfProvider store={store} ext={ext}>
         <GenerationFormBody store={store} isMember={ext.user?.isMember ?? false} />
       </WhatIfProvider>
     </FormProvider>

@@ -130,12 +130,12 @@ const CosmeticShopItemSearch = ({
       />
       <Checkbox
         size="xs"
-        label="Resellable creator cosmetics only"
-        description="Published creator-shop items marked sellable by others, newest approved first."
-        checked={!!filters.resellable}
+        label="Published creator cosmetics only"
+        description="Published creator-shop items, newest approved first."
+        checked={!!filters.publishedCreatorOnly}
         onChange={(e) => {
-          const resellable = e.currentTarget.checked || undefined;
-          setFilters((f) => ({ ...f, resellable, page: 1 }));
+          const publishedCreatorOnly = e.currentTarget.checked || undefined;
+          setFilters((f) => ({ ...f, publishedCreatorOnly, page: 1 }));
         }}
       />
       <Paper withBorder radius="md">
