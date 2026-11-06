@@ -129,6 +129,18 @@ describe('upload prompt retry queue', () => {
     expect(zset.size).toBe(1);
   });
 
+  it('still hands back an entry whose attempt cannot be read, as the last retry', async () => {
+    const { store, raw } = fakeStore();
+    await queueUploadPromptRetry({ imageId: 5, attempt: 1, now: T0, store });
+    raw.hGet = async () => {
+      throw new Error('deadline');
+    };
+
+    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + HOUR, store })).toEqual([
+      { imageId: 5, attempt: UPLOAD_PROMPT_MAX_RETRIES },
+    ]);
+  });
+
   it('reports a failed write as not queued instead of throwing', async () => {
     const { store, raw } = fakeStore();
     raw.hSet = async () => {
@@ -192,6 +204,7 @@ describe('retrying upload prompt scans end to end', () => {
     expect(mockRequest).toHaveBeenCalledTimes(1 + UPLOAD_PROMPT_MAX_RETRIES);
     expect(runs).toBe(UPLOAD_PROMPT_MAX_RETRIES);
     expect(fake.zset.size).toBe(0);
+    expect(fake.hash.size).toBe(0);
     expect(mockRecordFlag).not.toHaveBeenCalled();
   });
 
@@ -222,7 +235,18 @@ describe('retrying upload prompt scans end to end', () => {
     await labelUploadPrompt({ imageId: 9, userId: 2, prompt: 'a prompt' });
 
     expect([...fake.zset.keys()]).toEqual(['9']);
+    expect(fake.hash.get('9')).toBe('1');
     expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it('counts a failed pre-scan check against the cap', async () => {
+    mockHasFlag.mockRejectedValue(new Error('db down'));
+
+    await labelUploadPrompt({ imageId: 9, userId: 2, prompt: 'a prompt' });
+    const runs = await drain();
+
+    expect(runs).toBe(UPLOAD_PROMPT_MAX_RETRIES);
+    expect(fake.zset.size).toBe(0);
   });
 
   it('drops an image that is gone or has no prompt, without scanning', async () => {
@@ -255,6 +279,27 @@ describe('retrying upload prompt scans end to end', () => {
 
     expect(fake.hash.get('1')).toBe('2');
     expect(fake.zset.has('1')).toBe(true);
+  });
+
+  it('starts no new batch once the run is cancelled', async () => {
+    mockRequest.mockResolvedValue(workflow(false));
+    for (const imageId of [1, 2, 3, 4, 5, 6, 7])
+      await queueUploadPromptRetry({ imageId, attempt: 1 });
+    vi.setSystemTime(Date.now() + 5 * HOUR);
+    let canceled = false;
+
+    const result = await retryUploadPromptScans(
+      deps({
+        label: async (args) => {
+          canceled = true;
+          return labelUploadPrompt(args);
+        },
+        isCanceled: () => canceled,
+      })
+    );
+
+    expect(result.taken).toBe(5);
+    expect(fake.zset.size).toBe(2);
   });
 
   it('starts no new batch once the run budget is spent', async () => {

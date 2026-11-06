@@ -3,8 +3,8 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 /**
  * Scans an upload prompt gets after the first one ends with no verdict. The entry for the last
- * retry is not re-queued, so an image is scanned at most `1 + UPLOAD_PROMPT_MAX_RETRIES` times per
- * ingestion.
+ * retry is not re-queued, so one scan request (one delivery of the image scan webhook) leads to at
+ * most `1 + UPLOAD_PROMPT_MAX_RETRIES` scans. A redelivered webhook starts its own count.
  */
 export const UPLOAD_PROMPT_MAX_RETRIES = 3;
 /** The wait before retry n (index n - 1). Together they outlast an orchestrator outage of hours. */
@@ -91,8 +91,11 @@ export async function takeDueUploadPromptRetries({
     // The Sentinel sysRedis client can hand members back as Buffers.
     const member = String(raw);
     if (!(await store.zRem(QUEUE, member))) continue;
-    const stored = await store.hGet(ATTEMPTS, member);
-    await store.hDel(ATTEMPTS, member);
+    // The entry is ours now. If its attempt cannot be read it still runs, as the last retry.
+    const stored = await store
+      .hGet(ATTEMPTS, member)
+      .then(async (value) => (await store.hDel(ATTEMPTS, member), value))
+      .catch(() => null);
     const imageId = Number(member);
     if (!Number.isInteger(imageId) || imageId <= 0) continue;
     const attempt = Number(stored == null ? NaN : String(stored));

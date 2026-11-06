@@ -1,5 +1,7 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import { logToAxiom } from '~/server/logging/client';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
 import {
   queueUploadPromptRetry,
@@ -27,6 +29,8 @@ export type RetryUploadPromptScansDeps = {
   label: typeof labelUploadPrompt;
   requeue: typeof queueUploadPromptRetry;
   now: () => number;
+  /** True once run-jobs has cancelled the run (the caller went away): no new batch starts. */
+  isCanceled?: () => boolean;
 };
 
 const defaultDeps: RetryUploadPromptScansDeps = {
@@ -35,6 +39,9 @@ const defaultDeps: RetryUploadPromptScansDeps = {
     SELECT id, "userId", meta->>'prompt' AS prompt, meta->>'negativePrompt' AS "negativePrompt"
     FROM "Image"
     WHERE id = ANY(${ids}::int[])
+      -- Ingestion scans only R and above; an image rated down or blocked since has no scan due.
+      AND ("nsfwLevel" & ${NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX}) <> 0
+      AND ingestion <> 'Blocked'::"ImageIngestionStatus"
   `,
   label: labelUploadPrompt,
   requeue: queueUploadPromptRetry,
@@ -44,14 +51,15 @@ const defaultDeps: RetryUploadPromptScansDeps = {
 /**
  * Scans again the upload prompts whose scan had no verdict, when each is due. Each scan only adds
  * a label for moderators to verify; a scan with no verdict again queues its next retry, until the
- * cap in `upload-prompt-retry.service.ts`. An image that is gone or has no prompt is dropped.
+ * cap in `upload-prompt-retry.service.ts`. An image that is gone, has no prompt, is blocked or is
+ * now rated below R is dropped.
  */
 export async function retryUploadPromptScans(deps: RetryUploadPromptScansDeps = defaultDeps) {
   const startedAt = deps.now();
   let taken = 0;
   let scanned = 0;
   let dropped = 0;
-  while (taken < MAX_PER_RUN && deps.now() - startedAt < RUN_BUDGET_MS) {
+  while (taken < MAX_PER_RUN && deps.now() - startedAt < RUN_BUDGET_MS && !deps.isCanceled?.()) {
     const due = await deps.take(Math.min(CONCURRENCY, MAX_PER_RUN - taken));
     if (!due.length) break;
     taken += due.length;
@@ -84,7 +92,15 @@ export async function retryUploadPromptScans(deps: RetryUploadPromptScansDeps = 
             negativePrompt: image.negativePrompt ?? undefined,
             attempt,
           })
-          .catch(() => null);
+          .catch((error) =>
+            logToAxiom({
+              name: 'upload-prompt-scan',
+              type: 'error',
+              message: `retry failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              imageId,
+              attempt,
+            }).catch(() => null)
+          );
       })
     );
   }
@@ -94,6 +110,8 @@ export async function retryUploadPromptScans(deps: RetryUploadPromptScansDeps = 
 export const retryUploadPromptScansJob = createJob(
   'retry-upload-prompt-scans',
   '4,14,24,34,44,54 * * * *',
-  () => retryUploadPromptScans(),
-  { lockExpiration: LOCK_SECONDS }
+  (ctx) => retryUploadPromptScans({ ...defaultDeps, isCanceled: () => ctx.status === 'canceled' }),
+  // Keeps the lock if the caller disconnects, so a scheduler retry cannot start a second run
+  // beside one still finishing its batch.
+  { lockExpiration: LOCK_SECONDS, keepLockOnDisconnect: true }
 );
