@@ -13,8 +13,11 @@ import {
 
 const built: unknown[] = [];
 
-function build(env: NodeJS.ProcessEnv) {
-  const list = buildOtelInstrumentations(env);
+/** A partial environment. `NodeJS.ProcessEnv` requires NODE_ENV, which these functions never read. */
+const env = (vars: Record<string, string>) => vars as unknown as NodeJS.ProcessEnv;
+
+function build(vars: NodeJS.ProcessEnv) {
+  const list = buildOtelInstrumentations(vars);
   built.push(...list);
   return list;
 }
@@ -31,9 +34,16 @@ function httpInstrumentations(list: unknown[]): HttpInstrumentation[] {
   return list.filter((i): i is HttpInstrumentation => i instanceof HttpInstrumentation);
 }
 
+/** The one HttpInstrumentation in `list`; throws unless there is exactly one. */
+function onlyHttp(list: unknown[]): HttpInstrumentation {
+  const http = httpInstrumentations(list);
+  if (http.length !== 1) throw new Error(`expected one HttpInstrumentation, got ${http.length}`);
+  return http[0] as HttpInstrumentation;
+}
+
 describe('buildOtelInstrumentations', () => {
   it('registers the inbound-only HttpInstrumentation when OTEL_HTTP_INSTRUMENTATION is unset', () => {
-    const list = build({});
+    const list = build(env({}));
     const http = httpInstrumentations(list);
 
     expect(list).toHaveLength(1);
@@ -47,14 +57,16 @@ describe('buildOtelInstrumentations', () => {
   it.each(['on', 'true', '1', ''])(
     'keeps it registered for OTEL_HTTP_INSTRUMENTATION=%j',
     (value) => {
-      expect(httpInstrumentations(build({ OTEL_HTTP_INSTRUMENTATION: value }))).toHaveLength(1);
+      expect(httpInstrumentations(build(env({ OTEL_HTTP_INSTRUMENTATION: value })))).toHaveLength(
+        1
+      );
     }
   );
 
   it.each(['off', 'OFF', ' off ', 'false', '0'])(
     'registers no instrumentation for OTEL_HTTP_INSTRUMENTATION=%j',
     (value) => {
-      expect(build({ OTEL_HTTP_INSTRUMENTATION: value })).toEqual([]);
+      expect(build(env({ OTEL_HTTP_INSTRUMENTATION: value }))).toEqual([]);
     }
   );
 
@@ -62,37 +74,37 @@ describe('buildOtelInstrumentations', () => {
   // so the default config is today's; off must stop the outbound patch while keeping the inbound
   // instrumentation and the ignore hook unchanged.
   it('leaves disableOutgoingRequestInstrumentation unset when OTEL_HTTP_OUTGOING is unset', () => {
-    const [http] = httpInstrumentations(build({}));
+    const http = onlyHttp(build(env({})));
     expect('disableOutgoingRequestInstrumentation' in http.getConfig()).toBe(false);
   });
 
   it.each(['on', 'true', '1', '', 'patched'])(
     'keeps the outbound patch for OTEL_HTTP_OUTGOING=%j',
     (value) => {
-      const [http] = httpInstrumentations(build({ OTEL_HTTP_OUTGOING: value }));
+      const http = onlyHttp(build(env({ OTEL_HTTP_OUTGOING: value })));
       expect(http.getConfig().disableOutgoingRequestInstrumentation).toBeUndefined();
-      expect(isHttpOutgoingPatchEnabled({ OTEL_HTTP_OUTGOING: value })).toBe(true);
+      expect(isHttpOutgoingPatchEnabled(env({ OTEL_HTTP_OUTGOING: value }))).toBe(true);
     }
   );
 
   it.each(['off', 'OFF', ' off ', 'false', '0'])(
     'stops patching outbound calls, and only that, for OTEL_HTTP_OUTGOING=%j',
     (value) => {
-      const list = build({ OTEL_HTTP_OUTGOING: value });
-      const [http] = httpInstrumentations(list);
+      const list = build(env({ OTEL_HTTP_OUTGOING: value }));
       expect(list).toHaveLength(1);
+      const http = onlyHttp(list);
       const config = http.getConfig();
       expect(config.disableOutgoingRequestInstrumentation).toBe(true);
       expect(config.disableIncomingRequestInstrumentation).toBeUndefined();
       expect(config.ignoreOutgoingRequestHook?.({} as RequestOptions)).toBe(true);
       expect(config.ignoreIncomingRequestHook).toBeUndefined();
-      expect(isHttpOutgoingPatchEnabled({ OTEL_HTTP_OUTGOING: value })).toBe(false);
+      expect(isHttpOutgoingPatchEnabled(env({ OTEL_HTTP_OUTGOING: value }))).toBe(false);
     }
   );
 
   it('registers nothing when the instrumentation is off, whatever OTEL_HTTP_OUTGOING says', () => {
-    expect(build({ OTEL_HTTP_INSTRUMENTATION: 'off', OTEL_HTTP_OUTGOING: 'off' })).toEqual([]);
-    expect(build({ OTEL_HTTP_INSTRUMENTATION: 'off', OTEL_HTTP_OUTGOING: 'on' })).toEqual([]);
+    expect(build(env({ OTEL_HTTP_INSTRUMENTATION: 'off', OTEL_HTTP_OUTGOING: 'off' }))).toEqual([]);
+    expect(build(env({ OTEL_HTTP_INSTRUMENTATION: 'off', OTEL_HTTP_OUTGOING: 'on' }))).toEqual([]);
   });
 
   it('reads process.env by default', () => {
