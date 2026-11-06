@@ -129,10 +129,19 @@ describe.each([{ rls: true }, { rls: false }])('the registry feed (rls %o)', (op
   });
 
   it('every statement it sent carried the bound app and the production namespace', () => {
-    const feedStatements = h.statements.filter((s) =>
-      /\b(d|tb)\.scope_uid = 0\b|SELECT u\.last_seq FROM/.test(s.sql)
-    );
-    expect(feedStatements.length).toBeGreaterThan(5);
+    // Fragments only the feed's own statements contain (head, both seq reads, the full read,
+    // both witness reads), so the namespace check is about the feed and nothing else.
+    const FEED_SQL = [
+      'SELECT u.last_seq FROM',
+      'AND d.seq > $4::bigint',
+      'AND tb.seq > $4::bigint',
+      'AND d.hidden_at IS NULL AND d.seq <= $5',
+      'SELECT d.seq FROM appdata',
+      'tb.scope_uid = 0 AND tb.key = $4',
+    ];
+    const feedStatements = h.statements.filter((s) => FEED_SQL.some((f) => s.sql.includes(f)));
+    // Positive control: every feed statement kind was seen.
+    expect(FEED_SQL.filter((f) => !feedStatements.some((s) => s.sql.includes(f)))).toEqual([]);
     expect(new Set(feedStatements.map((s) => s.ns))).toEqual(new Set([NS_PROD]));
     expect(h.violations).toEqual([]);
   });
