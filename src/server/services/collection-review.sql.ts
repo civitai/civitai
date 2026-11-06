@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
@@ -22,8 +23,8 @@ import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma
  *
  * No browsing level includes the top level bit, so a target rated only at it never hydrates and is not
  * counted either. Only images keep nsfwLevel 0 (`pending`). A rated image must also pass the ingestion
- * check every non-pending read applies (`imageReviewedSql`): stricter than the reviewer's own
- * `pending` read, which skips it, so a rated image the public reads would not show stays out of the queue.
+ * check every read applies (`imageReviewedSql`), so a rated image the public reads would not show
+ * stays out of the queue.
  * The CASE order is hydration's: a row with two target columns is judged by the first one only.
  *
  * NOT mirrored: drops made after the SQL in hydration (a model with no published version or no
@@ -74,27 +75,73 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
   ELSE false
 END)`;
 
+type ReviewViewer = { collectionId: number; userId: number };
+
+// `i` is a REVIEW or REJECTED item of the collection, and the viewer owns it or has MANAGE on it.
+// `byUploader` also requires that the image's own uploader added it: a real submission, not an
+// item an owner saved from someone else's images.
+const reviewSubmissionSql = (
+  { collectionId, userId }: ReviewViewer,
+  { byUploader = false } = {}
+) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "CollectionItem" rci
+  JOIN "Collection" rc ON rc.id = rci."collectionId"
+  WHERE rci."imageId" = i.id
+    AND rci."collectionId" = ${collectionId}
+    AND rci."status" IN ('REVIEW', 'REJECTED')${
+      byUploader
+        ? Prisma.sql`
+    AND rci."addedById" = i."userId"`
+        : Prisma.empty
+    }
+    AND (rc."userId" = ${userId} OR EXISTS (
+      SELECT 1 FROM "CollectionContributor" rcc
+      WHERE rcc."collectionId" = rc.id AND rcc."userId" = ${userId}
+        AND rcc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+    ))
+)`;
+
 /**
  * The images a collection's reviewer may see before they are rated: those that are REVIEW or
  * REJECTED submissions of that collection, when the viewer owns it or has MANAGE on it. Used as an
  * arm of `getAllImages`' pending filter over `Image` aliased `i`; every other filter of that read
  * still applies.
  */
-export const reviewCollectionImageSql = ({
-  collectionId,
+export const reviewCollectionImageSql = (viewer: ReviewViewer) =>
+  Prisma.sql`(i."nsfwLevel" = 0 AND ${reviewSubmissionSql(viewer)})`;
+
+/**
+ * `getAllImages`' `pending` filter for a signed-in non-moderator, over `Image` aliased `i` joined to
+ * its `Post` aliased `p`. Another user's image must pass the same checks as any read of it: not
+ * awaiting review, rated within `browsingLevel`, reviewed (`imageReviewedSql`), and not
+ * `acceptableMinor`. The viewer's own images are exempt from all four.
+ *
+ * Two widenings, both scoped to collections the viewer manages:
+ * - a post in a collection they MANAGE shows its rated, reviewed images above `browsingLevel`
+ *   (never unrated or Blocked ones);
+ * - with the server-set `reviewCollectionId`, that collection's REVIEW and REJECTED items show
+ *   unrated, and `acceptableMinor` ones submitted by their uploader show too, so a judge can reject
+ *   them. That exception does not reach above `browsingLevel`.
+ */
+export const pendingViewerImageSql = ({
   userId,
+  browsingLevel,
+  reviewCollectionId,
 }: {
-  collectionId: number;
   userId: number;
-}) => Prisma.sql`(i."nsfwLevel" = 0 AND EXISTS (
-  SELECT 1 FROM "CollectionItem" rci
-  JOIN "Collection" rc ON rc.id = rci."collectionId"
-  WHERE rci."imageId" = i.id
-    AND rci."collectionId" = ${collectionId}
-    AND rci."status" IN ('REVIEW', 'REJECTED')
-    AND (rc."userId" = ${userId} OR EXISTS (
-      SELECT 1 FROM "CollectionContributor" rcc
-      WHERE rcc."collectionId" = rc.id AND rcc."userId" = ${userId}
-        AND rcc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-    ))
-))`;
+  browsingLevel: number;
+  reviewCollectionId?: number;
+}) => {
+  const own = Prisma.sql`i."userId" = ${userId}`;
+  const review = reviewCollectionId ? { collectionId: reviewCollectionId, userId } : undefined;
+  return Prisma.sql`((i."needsReview" IS NULL OR ${own})
+    AND (i."acceptableMinor" = FALSE OR ${own}${
+    review ? Prisma.sql` OR ${reviewSubmissionSql(review, { byUploader: true })}` : Prisma.empty
+  })
+    AND (${own} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})
+    AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND ${own}) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ${
+    NsfwLevel.Blocked
+  }) AND (i."acceptableMinor" = FALSE OR ${own}) AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${
+    review ? Prisma.sql` OR ${reviewCollectionImageSql(review)}` : Prisma.empty
+  }))`;
+};
