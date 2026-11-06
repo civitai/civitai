@@ -85,6 +85,8 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { logToAxiom } from '~/server/logging/client';
+import { Tracker } from '~/server/clickhouse/client';
+import { logSectionPlacements } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   CosmeticShopItemStatus,
   CosmeticSource,
@@ -2600,7 +2602,19 @@ export const takedownCosmeticShopItem = async ({
     }
     // Official-shop placements are curated rows, not a status filter — drop them
     // or the item keeps rendering in its section.
+    const placements = await dbWrite.cosmeticShopSectionItem.findMany({
+      where: { shopItemId: id },
+      select: { shopSectionId: true },
+    });
     await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
+    const tracker = new Tracker();
+    for (const { shopSectionId } of placements)
+      await logSectionPlacements({
+        tracker,
+        sectionId: shopSectionId,
+        removed: [id],
+        reason: 'takedown',
+      });
     await endResaleListings({ shopItemId: id, title: item.title });
 
     if (item.addedById) {

@@ -32,7 +32,7 @@ import {
 } from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { assertCommentActionable } from '~/server/controllers/commentv2.controller';
+import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 
 /**
  * The exact payload `Tracker.reaction` accepts.

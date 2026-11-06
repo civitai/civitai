@@ -65,6 +65,20 @@ const v3PageBudgetOverrides: Record<string, number> = {
   post: 15,
 };
 const v3PageBudget = 40;
+const v3ReadSurfaces: string[] = [
+  'article',
+  'post',
+  'image',
+  'review',
+  'bounty',
+  'bountyEntry',
+  'challenge',
+  'crucible',
+  'storyline',
+  'model3d',
+  'appListing',
+  'comicChapter',
+];
 
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
@@ -452,25 +466,12 @@ export const constants = {
      * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
      * it here and mounts `CommentSection`; notifications build their deep links from this list.
      */
-    v3ReadSurfaces: [
-      'article',
-      'post',
-      'image',
-      'review',
-      'bounty',
-      'bountyEntry',
-      'challenge',
-      'crucible',
-      'storyline',
-      'model3d',
-      'appListing',
-      'comicChapter',
-    ] as string[],
+    v3ReadSurfaces,
     /**
      * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
-     * on one exists only there.
+     * on one exists only there. A surface read-flipped ahead of its write flip must be left out.
      */
-    v3WriteSurfaces: ['article'] as string[],
+    v3WriteSurfaces: [...v3ReadSurfaces],
     /** Most replies the v3 suite opens up front under one top-level comment. */
     v3RepliesPerRoot: 10,
     /** Replies per "show more" page in the v3 suite. */

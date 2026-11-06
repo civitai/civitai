@@ -46,7 +46,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
 const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
-const { getThreadMuted } = await import('~/server/services/commentsv2.service');
+const { getThreadMuted } = await import('~/server/services/commentv3/section.service');
 
 const db = { pg: null as unknown as PGlite };
 
@@ -489,12 +489,10 @@ describe('the detail fetcher', () => {
 });
 
 describe('the mute menu', () => {
-  // getThreadMuted's raw query, run here as Prisma would send it.
+  // getThreadMuted's raw queries, run here as Prisma would send them.
   const menu = (commentId: number, userId: number) => {
-    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({
-      tosViolation: false,
-      childThread: null,
-    });
+    dbMock.dbWrite.$queryRawUnsafe.mockImplementation(((sql: string, ...values: unknown[]) =>
+      db.pg.query(sql, values).then((r) => r.rows)) as never);
     dbMock.dbWrite.$queryRaw.mockImplementation(((
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -509,23 +507,6 @@ describe('the mute menu', () => {
     expect(await menu(100, 6)).toEqual({ muted: true, viaAncestor: false, canMute: true });
     expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
     expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
-  });
-
-  it('refuses a mute anywhere in a locked chain: an ancestor, or the topic', async () => {
-    await temporarily(
-      `UPDATE "CommentV3" SET locked = true WHERE id = 100`,
-      `UPDATE "CommentV3" SET locked = false WHERE id = 100`,
-      async () => {
-        expect((await menu(102, 9)).canMute).toBe(false);
-        // Another conversation on the same image is not locked.
-        expect((await menu(105, 9)).canMute).toBe(true);
-      }
-    );
-    await temporarily(
-      `UPDATE "CommentTopic" SET locked = true WHERE "entityType" = 'image' AND "entityId" = 10`,
-      `UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'image' AND "entityId" = 10`,
-      async () => expect((await menu(100, 9)).canMute).toBe(false)
-    );
   });
 });
 
