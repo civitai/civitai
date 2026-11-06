@@ -294,19 +294,28 @@ describe('approving a lock review', () => {
   it.each([
     { poi: true },
     { minor: true },
-    { locked: ['nsfw', 'minor'] },
-    { locked: ['nsfw', 'poi'] },
-  ])(
-    'refuses once the model is flagged or locked as a real person or a minor (%o)',
-    async (flag) => {
-      await seed({ locked: ['nsfw'], ...flag });
-      const before = (await modelRow()).lockedProperties;
+    { locked: ['nsfw', 'minor'], minor: true },
+    { locked: ['nsfw', 'poi'], poi: true },
+  ])('refuses once the model is flagged as a real person or a minor (%o)', async (flag) => {
+    await seed({ locked: ['nsfw'], ...flag });
+    const before = (await modelRow()).lockedProperties;
 
-      await expect(approve()).rejects.toThrow(/real person or a minor/);
-      expect((await modelRow()).lockedProperties).toEqual(before);
-      expect((await appealRow()).status).toBe('Pending');
-    }
-  );
+    await expect(approve()).rejects.toThrow(/real person or a minor/);
+    expect((await modelRow()).lockedProperties).toEqual(before);
+    expect((await appealRow()).status).toBe('Pending');
+  });
+
+  it('lifts the named lock while poi and minor stay locked off', async () => {
+    await seed({ locked: ['poi', 'minor', 'sfwOnly', 'nsfw'] });
+
+    await approve();
+
+    expect(await modelRow()).toMatchObject({
+      lockedProperties: ['poi', 'minor', 'sfwOnly'],
+      nsfw: true,
+    });
+    expect((await appealRow()).status).toBe('Approved');
+  });
 
   it('refuses a request filed by someone who no longer owns the model', async () => {
     await seed({ locked: ['nsfw'], owner: NEW_OWNER });

@@ -232,7 +232,7 @@ export async function resolveLockReviewAppeal({
         );
       if (row.held) throw throwBadRequestError(LOCK_REVIEW_HELD);
       const locked = row.lockedProperties ?? [];
-      if (row.poi || row.minor || locked.includes('poi') || locked.includes('minor'))
+      if (row.poi || row.minor)
         throw throwBadRequestError(
           'This model is now flagged as a real person or a minor; its locks stay. Reject the review instead.'
         );
