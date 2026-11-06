@@ -130,7 +130,11 @@ export function HatTurfPanelPopover({
   );
 }
 
-/** Your hat and what's left of your supply, the image's standings, then Show hats and Leave. */
+/**
+ * Your hat and what's left of your supply, the image's standings, then Show hats.
+ * No Leave here by product decision: leaving is on the event page's Hat Turf section and the
+ * "Take part in Hat Turf" account setting.
+ */
 export function HatTurfPanel({
   imageId,
   surface,
@@ -234,25 +238,6 @@ export function HatTurfPanel({
           }}
           styles={{ root: { width: '100%' }, body: { justifyContent: 'space-between' } }}
         />
-        {joined && (
-          <>
-            <Button
-              fullWidth
-              mt="sm"
-              size="xs"
-              variant="outline"
-              color="red"
-              loading={optIn.isPending}
-              data-testid="hat-turf-panel-leave"
-              onClick={() => optIn.mutate({ event: feed.event, optedIn: false })}
-            >
-              Leave Hat Turf
-            </Button>
-            <Text size="xs" c="dimmed" mt={4}>
-              You stop seeing hats and can&apos;t place any. Hats you placed keep counting.
-            </Text>
-          </>
-        )}
       </div>
     </div>
   );
