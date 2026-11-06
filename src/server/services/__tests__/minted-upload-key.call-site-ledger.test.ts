@@ -37,9 +37,10 @@ describe('upload key issue records', () => {
     for (const route of UPLOAD_ROUTES) expect(calls(route, 'trackImageUpload'), route).toBe(1);
   });
 
-  it('cover each key the server mints: four in comics, one in generation polling', () => {
+  it('cover each key the server mints: four in comics, one in generation polling, one in 3D generation', () => {
     expect(scan.callersOf('recordMintedUploadKey')).toEqual([
       'src/server/routers/comics.router.ts',
+      'src/server/services/orchestrator/handlers/polyGen.handler.ts',
       'src/server/services/orchestrator/poll-iteration.ts',
     ]);
     expect(calls('src/server/routers/comics.router.ts', 'recordMintedUploadKey')).toBe(4);

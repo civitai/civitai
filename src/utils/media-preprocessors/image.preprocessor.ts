@@ -38,20 +38,29 @@ export const auditImageMeta = async (meta: ImageMetaProps | undefined, nsfw: boo
   return { blockedFor: !auditResult?.success ? auditResult?.blockedFor : undefined };
 };
 
-// latin1 so binary bytes map 1:1 and the ASCII chunk fourcc survives intact.
-async function scanHeader(file: File, marker: string) {
-  const buffer = await file.slice(0, 4096).arrayBuffer();
-  const str = new TextDecoder('latin1').decode(new Uint8Array(buffer));
-  return str.includes(marker);
-}
+const fourcc = (bytes: Uint8Array, offset: number) =>
+  String.fromCharCode(...bytes.subarray(offset, offset + 4));
 
+// Read the VP8X header's animation flag rather than look for the ANIM chunk: an ICC profile comes
+// before that chunk and can push it arbitrarily far into the file.
 async function isAnimatedWebP(file: File) {
-  return scanHeader(file, 'ANIM');
+  const header = new Uint8Array(await file.slice(0, 21).arrayBuffer());
+  return header.length === 21 && fourcc(header, 12) === 'VP8X' && (header[20] & 0x02) !== 0;
 }
 
-// APNG advertises itself with an 'acTL' chunk that precedes the first frame.
+// APNG declares 'acTL' before the first IDAT, possibly after chunks of any size, so walk them.
 async function isAnimatedPng(file: File) {
-  return scanHeader(file, 'acTL');
+  const PNG_SIGNATURE_LENGTH = 8;
+  let offset = PNG_SIGNATURE_LENGTH;
+  while (offset + 8 <= file.size) {
+    const chunk = new Uint8Array(await file.slice(offset, offset + 8).arrayBuffer());
+    const type = fourcc(chunk, 4);
+    if (type === 'acTL') return true;
+    if (type === 'IDAT' || type === 'IEND') return false;
+    // Length field + type + payload + CRC.
+    offset += new DataView(chunk.buffer).getUint32(0) + 12;
+  }
+  return false;
 }
 
 // An image sequence declares the 'avis' brand in its leading ftyp box; a still image does not.

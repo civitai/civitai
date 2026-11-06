@@ -1268,8 +1268,6 @@ function CreatorShopReviewPage() {
                         placeable={
                           isMysteryPack
                             ? 'Mystery packs are sold only through their own page.'
-                            : selected.cosmetic && !selectedMeta.sellableByOthers
-                            ? "The creator hasn't allowed resale, so it can't be placed by hand. An event tag below still adds it to sections with that tag."
                             : true
                         }
                       />
