@@ -1,6 +1,7 @@
 import { generateHTML, generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { articleContentJson } from '~/server/utils/article-content-json';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 // `upsertArticleInput.content` runs through sanitize-html, which only strips markup — a JSON
@@ -61,7 +62,8 @@ describe('article content is interpreted as HTML, never as JSON', () => {
 
   it('keeps a centered paragraph through the save sanitizer, generateJSON and back', () => {
     const saved = sanitizeHtml('<p style="text-align: center; position: fixed">hi</p>');
-    const html = generateHTML(generateJSON(saved, tiptapExtensions), tiptapExtensions);
+    // The article service's own entry point, so a later step on that path cannot drop the alignment.
+    const html = generateHTML(articleContentJson(saved), tiptapExtensions);
 
     expect(html).toContain('text-align: center');
     expect(html).not.toContain('position');
