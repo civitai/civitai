@@ -299,14 +299,17 @@ export function RemixAppModalContent({
         }
       );
     else
-      runOnce.mutate(input, {
-        onSuccess: ({ workflowId }) => {
-          started();
-          setPhase({ kind: 'running', workflowId: workflowId as string });
-          onClose();
-        },
-        onError,
-      });
+      runOnce.mutate(
+        { ...input, quote: cost },
+        {
+          onSuccess: ({ workflowId }) => {
+            started();
+            setPhase({ kind: 'running', workflowId: workflowId as string });
+            onClose();
+          },
+          onError,
+        }
+      );
   }
 
   /** Advances the run; one with no workflow yet has nothing to advance, so it starts again with its answers. */

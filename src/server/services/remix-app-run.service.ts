@@ -25,6 +25,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   assertInputsUsable,
+  assertWithinQuote,
   buildRuntimeRequest,
   loadSource,
   remixRunId,
@@ -417,11 +418,7 @@ async function advance({
     flags: caller.features,
   });
   if (quote == null) return { status: 'priced', runId, ...priced };
-  if (priced.cost > quote)
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: `The price changed to ${priced.cost.toLocaleString()} Buzz. Check it and run again.`,
-    });
+  assertWithinQuote(priced.cost, quote);
 
   const tags = remixRunTags({ slug: app.slug, runId, segment: index });
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, answers };

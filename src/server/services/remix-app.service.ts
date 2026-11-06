@@ -502,15 +502,27 @@ export async function quoteTeamRemix({
   return { team: offer.team, price };
 }
 
+/** Refuses a step that now costs more than the price the viewer tapped. */
+export function assertWithinQuote(cost: number, quote: number) {
+  if (cost > quote)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `The price changed to ${cost.toLocaleString()} Buzz. Check it and run again.`,
+    });
+}
+
+/** `quote`: the price the viewer tapped; a run that now costs more is refused before it submits. */
 export async function runRemixApp({
   slug,
   imageId,
   nonce,
+  quote,
   caller,
 }: {
   slug: string;
   imageId: number;
   nonce: string;
+  quote: number;
   caller: RemixAppCaller;
 }) {
   let app: RemixAppDefinition | undefined;
@@ -527,13 +539,22 @@ export async function runRemixApp({
   }
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertInputsUsable([run.sourceUrl], caller, 'remixAppRun');
+  const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  const priced = await whatIfPresetImageGen({
+    ...run.submit,
+    user: caller.user,
+    token: caller.token,
+    currencies,
+    flags: caller.features,
+  });
+  assertWithinQuote(priced.cost, quote);
 
   // A one-segment run, so the tray lists it beside the runtime apps' runs.
   const runId = remixRunId({ userId: caller.user.id, slug, imageId: image.id, nonce });
   const tags = remixRunTags({ slug: app.slug, runId, segment: 0 });
   const result = await submitPresetImageGen({
     ...run.submit,
-    ...remixSubmitArgs(caller, tags, getAllowedAccountTypes(caller.features, ['blue'])),
+    ...remixSubmitArgs(caller, tags, currencies),
     remixOfId: image.id,
     externalId: remixAppExternalId({ userId: caller.user.id, slug, imageId: image.id, nonce }),
   });

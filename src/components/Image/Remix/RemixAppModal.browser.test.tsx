@@ -249,7 +249,7 @@ describe('RemixAppModal', () => {
     expect(h.start).toHaveBeenCalledTimes(1);
   });
 
-  test('a team remix is held while it is quoting, and its run sends no team', async () => {
+  test('a team remix is held while it is quoting, and its run sends no team, capped at the price shown', async () => {
     h.price = undefined;
     const screen = await renderWithProviders(
       <RemixAppModalContent app={team} imageId={5} onClose={onClose} />
@@ -263,8 +263,14 @@ describe('RemixAppModal', () => {
     await expect.element(runButton()).toBeEnabled();
     await runButton().click();
     await vi.waitFor(() => expect(h.run).toHaveBeenCalledTimes(1));
-    expect(Object.keys(h.run.mock.calls[0][0]).sort()).toEqual(['imageId', 'nonce', 'slug']);
-    expect(h.run.mock.calls[0][0]).toMatchObject({ slug: TEAM_REMIX_SLUG, imageId: 5 });
+    // No team (the server reads it from the joins); the price shown is the cap.
+    expect(Object.keys(h.run.mock.calls[0][0]).sort()).toEqual([
+      'imageId',
+      'nonce',
+      'quote',
+      'slug',
+    ]);
+    expect(h.run.mock.calls[0][0]).toMatchObject({ slug: TEAM_REMIX_SLUG, imageId: 5, quote: 44 });
   });
 
   test('a started run refetches the queue, so the tray and the queue list it', async () => {
