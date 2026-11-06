@@ -12,8 +12,9 @@ import { stripCodeComments } from '~/test-utils/strip-code-comments';
  * Prisma, Kysely, raw SQL and the nested `items: { create }` — with how each is handled, and how
  * many bust calls the file makes. It fails when the set of writes GROWS (a writer nobody has
  * classified), when it SHRINKS (a listed writer moved, so its reason describes nothing), and when
- * a file's bust calls change (a bust removed, or one added without updating the reason). The
- * behavioural bust is pinned in contest-collection-items-redis-cache.test.ts.
+ * a file's bust calls change (a bust removed, or one added without updating the reason). A count
+ * cannot see wrong ids, a dropped await or a bust moved ahead of its write: the collection.service
+ * busts are pinned behaviourally, writer by writer, in contest-collection-items-redis-cache.test.ts.
  */
 
 const ROOT = path.resolve(__dirname, '../../../..');
