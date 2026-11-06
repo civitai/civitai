@@ -123,6 +123,24 @@ describe('shop_purchases paid-from matching', () => {
   });
 });
 
+describe('shop_purchases legs that are not the buyer paying', () => {
+  const charge = itemCharge('k');
+  const paidFromWith = (over: Partial<LegRow>) =>
+    summarize([purchase(charge)], [leg(`${charge}-User`, over)]).items[0].paidFrom;
+
+  it('counts the plain debit, so the cases below each turn on their one difference', () => {
+    expect(paidFromWith({})).toEqual({ yellow: 100 });
+  });
+
+  it('ignores a leg paid to someone other than the platform', () => {
+    expect(paidFromWith({ toAccountId: '9' })).toEqual({});
+  });
+
+  it('ignores a leg paid by an account that was not asked about', () => {
+    expect(paidFromWith({ fromAccountId: '9' })).toEqual({});
+  });
+});
+
 describe('shop_purchases missing charges', () => {
   it('does not report a free row as missing its charge', () => {
     const { items } = summarize([purchase(itemCharge('k'), { unitAmount: 0 })], []);
@@ -234,6 +252,21 @@ describe('shop_purchases sticker top-ups', () => {
   it('leaves out a top-up from the extra day read before the window', () => {
     const { topUps } = summarize([], [leg(`${topUp(44)}-User`, { inWindow: 0 })]);
     expect(topUps).toEqual([]);
+  });
+
+  it('keeps each account to its own top-ups', () => {
+    const { accounts } = summarizeShopPurchases(
+      [BUYER, OTHER_BUYER],
+      [],
+      [
+        leg(`${topUp(44)}-User`),
+        leg(`${topUp(55, UUID, OTHER_BUYER)}-User`, { fromAccountId: String(OTHER_BUYER) }),
+      ],
+      new Map(),
+      30
+    );
+    expect(accounts[0].topUps.map((t) => t.cosmeticId)).toEqual([44]);
+    expect(accounts[1].topUps.map((t) => t.cosmeticId)).toEqual([55]);
   });
 
   it('does not treat a purchase charge as a top-up', () => {

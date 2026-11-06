@@ -20,7 +20,7 @@ const PACK_PREFIX = 'cosmetic-pack-v2-';
 const BOX_PREFIX = 'item-purchase-v1-';
 const LEG_PREFIXES = ['cosmetic-purchase-v2-', PACK_PREFIX, BOX_PREFIX, 'sticker-topup-'];
 
-const TOP_UP_LEG = /^(sticker-topup-(\d+)-(\d+)-.+)-[A-Za-z]+$/;
+const TOP_UP_LEG = /^(sticker-topup-\d+-(\d+)-.+)-[A-Za-z]+$/;
 const USER_ACCOUNT_TYPE_SET = new Set<string>(USER_ACCOUNT_TYPES);
 
 export const SHOP_PURCHASE_KINDS = [
@@ -177,7 +177,7 @@ function summarizeTopUps(legs: LegRow[]): StickerTopUp[] {
   for (const leg of legs) {
     const m = TOP_UP_LEG.exec(leg.externalTransactionId);
     if (!m || !Number(leg.inWindow)) continue;
-    const cosmeticId = Number(m[3]);
+    const cosmeticId = Number(m[2]);
     let topUp = byCosmetic.get(cosmeticId);
     if (!topUp) {
       topUp = {
@@ -225,10 +225,7 @@ export function summarizeShopPurchases(
     const legsCut = legs.filter((l) => Number(l.fromAccountId) === userId).length >= LEG_ROW_LIMIT;
     const shown = kind ? own.filter((p) => kindOf(p) === kind) : own;
     const items = summarizeItems(shown, paidByCharge, legsCut);
-    const ownTopUps = debits.filter((l) => {
-      const m = TOP_UP_LEG.exec(l.externalTransactionId);
-      return m && Number(m[2]) === userId && Number(l.fromAccountId) === userId;
-    });
+    const ownTopUps = debits.filter((l) => Number(l.fromAccountId) === userId);
     return {
       userId,
       username: usernames.get(userId)?.username ?? null,
