@@ -69,8 +69,9 @@ function deps(over: Partial<CatalogReadDeps> & { calls?: string[] } = {}): Catal
 
 const appUrns = (apps: Awaited<ReturnType<typeof readCatalog>>) =>
   (
-    buildEntities(apps, { baseUrl: 'https://site.example' }).get('urn:schema:app-blocks:app@v1') ??
-    []
+    buildEntities(apps, { baseUrl: 'https://site.example' }).get(
+      'urn:schema:apps.civitai.com:app@v1'
+    ) ?? []
   ).map((e) => e.urn);
 
 describe('listingFromCard', () => {
@@ -155,7 +156,7 @@ describe('readCatalog — the public-catalog decision comes first', () => {
   it('positive control: the same reads with a `full` scope yield the app', async () => {
     const calls: string[] = [];
     const apps = await readCatalog(deps({ calls }));
-    expect(appUrns(apps)).toEqual(['urn:app-blocks:app/orbit-notes']);
+    expect(appUrns(apps)).toEqual(['urn:apps.civitai.com:app/orbit-notes']);
     expect(calls).toEqual(['listPage']);
   });
 
