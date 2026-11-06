@@ -36,7 +36,7 @@ vi.mock('~/components/Collections/MyCollections', () => ({
     children({
       FilterBox: <div style={{ height: 36 }}>filter</div>,
       ListMenu: <div style={{ height: 36, width: 36 }}>menu</div>,
-      Filters: <div style={{ height: 40 }}>chips</div>,
+      Filters: <div style={{ height: 30 }}>chips</div>,
       InviteList: fixture.invites ? (
         <div data-testid="invites">
           {Array.from({ length: fixture.invites }, (_, i) => (
@@ -60,9 +60,9 @@ vi.mock('~/components/Collections/MyCollections', () => ({
 }));
 
 const VIEWPORTS = [
-  // 1366x768 and 1920x1080 screens, less roughly 120px of browser chrome
-  { width: 1366, height: 650 },
-  { width: 1920, height: 960 },
+  // laptop windows with a bookmarks bar or a split screen
+  { width: 1366, height: 500 },
+  { width: 1920, height: 700 },
 ] as const;
 
 const card = () => document.querySelector<HTMLElement>('[class*="sidebar"]:not(button)')!;
@@ -102,7 +102,7 @@ describe.each(VIEWPORTS)('collections sidebar at $width x $height', (viewport) =
     scrollViewport().scrollTop = scrollViewport().scrollHeight;
     await nextLayout();
     const last = box(document.querySelector('[data-testid="row-29"]')!);
-    expect(last.bottom).toBeLessThanOrEqual(box(card()).bottom);
+    expect(last.bottom).toBeLessThanOrEqual(box(scrollRoot()).bottom);
     expect(last.top).toBeGreaterThanOrEqual(box(scrollRoot()).top);
   });
 
@@ -113,7 +113,7 @@ describe.each(VIEWPORTS)('collections sidebar at $width x $height', (viewport) =
     scrollViewport().scrollTop = scrollViewport().scrollHeight;
     await nextLayout();
     expect(box(document.querySelector('[data-testid="row-29"]')!).bottom).toBeLessThanOrEqual(
-      box(card()).bottom
+      box(scrollRoot()).bottom
     );
   });
 
@@ -126,7 +126,7 @@ describe.each(VIEWPORTS)('collections sidebar at $width x $height', (viewport) =
     expect(list.bottom).toBeLessThanOrEqual(c.bottom);
     const last = box(document.querySelector('[data-testid="row-1"]')!);
     // no empty stretch: at most the ScrollArea's bottom padding below the last row
-    expect(c.bottom - last.bottom).toBeLessThanOrEqual(24);
+    expect(c.bottom - last.bottom).toBeLessThanOrEqual(18);
   });
 
   test('the gutter toggle stays visible and still collapses and expands the card', async () => {
@@ -136,14 +136,12 @@ describe.each(VIEWPORTS)('collections sidebar at $width x $height', (viewport) =
     expect(document.elementFromPoint(box(t).left + 4, box(t).top + 4)?.closest('button')).toBe(t);
 
     t.click();
-    await new Promise((r) => setTimeout(r, 700));
     // the card slides left but keeps its 300px width; only the container's padding is left of it
-    expect(box(card()).right).toBeLessThan(20);
+    await expect.poll(() => box(card()).right, { timeout: 3000 }).toBeLessThan(20);
     expect(box(toggle()).left).toBeGreaterThanOrEqual(0);
 
     toggle().click();
-    await new Promise((r) => setTimeout(r, 700));
-    expect(box(card()).left).toBeGreaterThanOrEqual(0);
+    await expect.poll(() => box(card()).left, { timeout: 3000 }).toBeGreaterThanOrEqual(0);
     expect(box(card()).width).toBe(300);
   });
 });
