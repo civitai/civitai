@@ -17,11 +17,14 @@ const RAW_SESSION_ALLOWED: Record<string, string> = {
   'page-data/images/[imageId].ts': 'page bootstrap for the image page; it renders the banned page',
   'application-error.ts': 'client error reporting',
   'admin/creator-shop-fees.ts': 'webhook-token route; the session only labels the audit actor',
+  'user/settings.ts': "returns the caller's own settings bootstrap, like auth/session",
 };
 
 const API_DIR = join(process.cwd(), 'src/pages/api');
 // The import as well as the call, so an aliased import or a call by reference is caught too.
-const DIRECT_CALL = /get-server-auth-session['"]|\bgetServerAuthSession\s*\(/;
+// `resolveSettingsBootstrap` reads the raw session itself, so calling it counts as a direct call.
+const DIRECT_CALL =
+  /get-server-auth-session['"]|\bgetServerAuthSession\s*\(|\bresolveSettingsBootstrap\s*\(/;
 
 function routeFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

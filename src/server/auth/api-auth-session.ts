@@ -21,7 +21,6 @@ export type BannedSessionMode = 'refuse' | 'anonymous';
 /**
  * The session for an API route, with the ban applied. `getServerAuthSession` itself still returns a
  * banned user, because page renders and `/api/auth/session` need it to show the banned page.
- * Every `src/pages/api` caller goes through this unless allowlisted in api-ban-gate.guard.test.ts.
  */
 export async function getApiAuthSession(
   ctx: ApiSessionContext,
