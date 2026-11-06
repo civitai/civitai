@@ -208,7 +208,15 @@ export async function resolveLockReviewAppeal({
   // Outside the row lock: it reads the model's files and every moderator-flagged minor model's.
   let minorMatchPending = false;
   if (approve)
-    minorMatchPending = await hasPendingMinorHashMatch(modelId, dbWrite).catch(() => {
+    minorMatchPending = await hasPendingMinorHashMatch(modelId, dbWrite).catch((error: Error) => {
+      logToAxiom({
+        type: 'error',
+        name: 'lock-review-match-check',
+        message: 'Minor file-match check failed; approval refused',
+        appealId,
+        modelId,
+        error: error.message,
+      });
       throw throwBadRequestError(LOCK_REVIEW_MATCH_CHECK_FAILED);
     });
   const { claimed, unlocked } = await dbWrite.$transaction(async (tx) => {
