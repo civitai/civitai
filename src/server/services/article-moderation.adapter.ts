@@ -1,12 +1,19 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { recomputeArticleIngestion } from '~/server/services/article.service';
+import type { ArticleMetadata } from '~/server/schema/article.schema';
+import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
+import { isSharedArticle } from '~/server/services/article-share.helpers';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { applyRatingFloor, readRatedEntity } from '~/server/services/text-scan/rated-entities';
-import { isPublicArticle } from '~/server/services/text-scan/public-content';
+import {
+  blockReturnsToAuthor,
+  isPublicArticle,
+  violationMetadata,
+} from '~/server/services/text-scan/public-content';
 import {
   submitTextModerationOrScan,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
@@ -38,7 +45,8 @@ export const articleModerationAdapter: ModerationAdapter = {
       where: { id: entityId },
       select: { status: true, scheduledAt: true },
     });
-    if (article && !isPublicArticle(article)) return TEXT_SCAN_ENTITY_NOT_PUBLIC;
+    if (article && !isPublicArticle(article) && !(await isSharedArticle(entityId, article.status)))
+      return TEXT_SCAN_ENTITY_NOT_PUBLIC;
     return submitTextModerationOrScan({
       entityType: 'Article',
       entityId,
@@ -67,17 +75,33 @@ export const articleModerationAdapter: ModerationAdapter = {
       await updateArticleNsfwLevels([entityId]);
     }
 
-    // If blocked, auto-unpublish and notify.
+    // If blocked, auto-unpublish and notify. Its share links end in the same write, under the
+    // lock a link being created takes, so none outlives the block. The row is read FOR UPDATE, so
+    // this writes from the row as it is now, and a write to it that starts later waits for this one.
     if (blocked) {
-      const article = await dbWrite.article.findUnique({
-        where: { id: entityId },
-        select: { status: true, userId: true },
-      });
-      if (article && article.status !== ArticleStatus.UnpublishedViolation) {
-        await dbWrite.article.update({
+      const article = await dbWrite.$transaction(async (tx) => {
+        await lockAccessTokens(tx, entityId);
+        const [article] = await tx.$queryRaw<
+          {
+            status: ArticleStatus;
+            userId: number;
+            scheduledAt: Date | null;
+            metadata: ArticleMetadata | null;
+          }[]
+        >`SELECT status, "userId", "scheduledAt", metadata FROM "Article" WHERE id = ${entityId} FOR UPDATE`;
+        if (!article || article.status === ArticleStatus.UnpublishedViolation) return null;
+        await tx.article.update({
           where: { id: entityId },
-          data: { status: ArticleStatus.UnpublishedViolation },
+          data: {
+            status: ArticleStatus.UnpublishedViolation,
+            metadata: violationMetadata(article, article.metadata ?? {}),
+          },
         });
+        await revokeActiveAccessTokens('Article', entityId, tx);
+        return article;
+      });
+      // One its author had not sent live was not unpublished, so there is nothing to tell.
+      if (article && !blockReturnsToAuthor(article)) {
         await createNotification({
           userId: article.userId,
           category: NotificationCategory.System,
