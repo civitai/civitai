@@ -246,7 +246,6 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: { pickleScanResult: true, virusScanResult: true },
   });
   const failedScan = ranScan && hasFailedScan(written);
-  // The version leaves coverage, or may come back to it.
   const coverageMoved = ranScan && (excludedFromCoverage(written) || excludedFromCoverage(file));
 
   // Hash upsert (delete + createMany) — same pattern as legacy.

@@ -36,8 +36,7 @@ const REWARD_SWEEP_LIMIT = 5000;
 // The due selects skip a model a content wipe kept as the go-live statements do, or its side effects
 // (cache busts, index updates) fire again every run on a model that never goes live.
 
-// A version with a file that failed its scan never goes live on schedule; the scan webhook normally
-// takes it down first, and this holds when that did not happen.
+// Backstop for when the scan webhook did not unpublish a failed-scan version first.
 const noFailedScanFileSql = (versionId: string) => Prisma.sql`
   NOT EXISTS (
     SELECT 1 FROM "ModelFile" mf
@@ -93,7 +92,8 @@ export const scheduledPostsDueSql = (now: Date) => Prisma.sql`
     AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
     AND m."userId" = p."userId"
     AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-    AND ${notRemovedWithOwnerSql('m.meta')}    AND ${noFailedScanFileSql('mv.id')}
+    AND ${notRemovedWithOwnerSql('m.meta')}
+    AND ${noFailedScanFileSql('mv.id')}
 `;
 
 // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the

@@ -129,7 +129,8 @@ describe('process-scheduled-publishing on a version with a file that failed its 
     (await run(sql)).rows.map((r) => (r as { id: number }).id);
 
   beforeEach(async () => {
-    // The ordinary model's version gets a second, failed file; model 3's errored file is not a failure.
+    // The ordinary model's version gets a second file that failed its virus scan, model 4's only
+    // file failed its pickle scan; model 3's errored file is not a failure.
     await db.exec(`
       INSERT INTO "ModelFile" ("modelVersionId", "virusScanResult") VALUES (20, 'Danger');
       INSERT INTO "Model" (id, "userId", status, "publishedAt", meta)
@@ -137,6 +138,11 @@ describe('process-scheduled-publishing on a version with a file that failed its 
       INSERT INTO "ModelVersion" VALUES (30, 3, 'Scheduled', '${DUE}', 'Private');
       INSERT INTO "ModelFile" ("modelVersionId", "pickleScanResult") VALUES (30, 'Error');
       INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (300, ${OWNER}, 30);
+      INSERT INTO "Model" (id, "userId", status, "publishedAt", meta)
+        VALUES (4, ${OWNER}, 'Scheduled', '${DUE}', '{}');
+      INSERT INTO "ModelVersion" VALUES (40, 4, 'Scheduled', '${DUE}', 'Private');
+      INSERT INTO "ModelFile" ("modelVersionId", "pickleScanResult") VALUES (40, 'Danger');
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (400, ${OWNER}, 40);
     `);
   });
 
@@ -148,11 +154,12 @@ describe('process-scheduled-publishing on a version with a file that failed its 
         [
           { postId: 200, versionId: 20 },
           { postId: 300, versionId: 30 },
+          { postId: 400, versionId: 40 },
         ],
         NOW
       )
     );
     expect(rows).toEqual([{ id: 300, userId: OWNER }]);
-    expect(await ids(scheduledVersionsGoLiveSql([20, 30], NOW))).toEqual([30]);
+    expect(await ids(scheduledVersionsGoLiveSql([20, 30, 40], NOW))).toEqual([30]);
   });
 });

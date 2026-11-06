@@ -54,6 +54,7 @@ function run() {
 describe('/api/download/vault/[vaultItemId] — a file that failed its scan', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    TEST_USER.isModerator = false;
     setEnv({ S3_VAULT_BUCKET: 'vault-bucket' });
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
     mockGetVaultWithStorage.mockResolvedValue({
@@ -82,6 +83,22 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     await promise;
     expect(res.status).toHaveBeenCalledWith(403);
     expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a failed pickle scan with 403 too', async () => {
+    scanOf({ pickleScanResult: 'Danger', virusScanResult: 'Success' });
+    const { promise, res } = run();
+    await promise;
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('serves it to a moderator', async () => {
+    TEST_USER.isModerator = true;
+    scanOf({ pickleScanResult: 'Success', virusScanResult: 'Danger' });
+    const { promise, res } = run();
+    await promise;
+    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
   });
 
   it('serves a file whose scan only errored', async () => {

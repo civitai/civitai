@@ -1,7 +1,6 @@
 -- GenerationCoverage: a version with any model file whose pickle or virus scan result is 'Danger' or
--- 'Error' is not covered under either rule. The body is 20260923140000's with one more column in the
--- files pass and one more line in the outer filter; columns and their order are unchanged, so
--- CREATE OR REPLACE applies in place.
+-- 'Error' is not covered under either rule. Columns and their order are unchanged, so CREATE OR
+-- REPLACE applies in place.
 --
 -- Error is excluded here although publish and download refuse only Danger: a scanner that errored
 -- vouched for nothing, and generation loads the file without a person choosing to. Pending is NOT

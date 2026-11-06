@@ -18,7 +18,9 @@ vi.mock('~/server/services/non-commercial-publish.service', async (importOrigina
   assertNonCommercialVersionsUnmonetized: async () => undefined,
 }));
 
-const { publishModelById, publishPrivateModel } = await import('~/server/services/model.service');
+const { publishModelById, publishPrivateModel, privateModelFromTraining } = await import(
+  '~/server/services/model.service'
+);
 const { publishModelVersionById } = await import('~/server/services/model-version.service');
 const { restoreModelRemovedWithOwner } = await import(
   '~/server/services/model-removed-with-owner.service'
@@ -28,19 +30,26 @@ const { failedScanPublishMessage } = await import('~/server/utils/failed-scan');
 const FAILED = 7;
 const CLEAN = 8;
 const OTHER_MODEL_FAILED = 9;
+const TAKEN_DOWN_FAILED = 10;
 const versions = [
   { id: FAILED, modelId: 1, status: 'Published' },
   { id: CLEAN, modelId: 1, status: 'Draft' },
   { id: OTHER_MODEL_FAILED, modelId: 2, status: 'Published' },
+  { id: TAKEN_DOWN_FAILED, modelId: 4, status: 'UnpublishedViolation' },
 ];
 const files = [
   { modelVersionId: FAILED, pickleScanResult: 'Success', virusScanResult: 'Danger' },
   { modelVersionId: CLEAN, pickleScanResult: 'Error', virusScanResult: 'Success' },
   { modelVersionId: OTHER_MODEL_FAILED, pickleScanResult: 'Danger', virusScanResult: 'Success' },
+  { modelVersionId: TAKEN_DOWN_FAILED, pickleScanResult: 'Danger', virusScanResult: 'Success' },
 ];
 
 type IdFilter = number | { in: number[] };
-type VersionWhere = { id?: IdFilter; modelId?: number; status?: { in: string[] } };
+type VersionWhere = {
+  id?: IdFilter;
+  modelId?: number;
+  status?: { in?: string[]; notIn?: string[] };
+};
 type CountWhere = {
   modelVersion: VersionWhere;
   OR: Array<{ pickleScanResult?: string; virusScanResult?: string }>;
@@ -58,7 +67,8 @@ beforeEach(() => {
         (v) =>
           matchesId(scope.id, v.id) &&
           (scope.modelId === undefined || scope.modelId === v.modelId) &&
-          (!scope.status || scope.status.in.includes(v.status))
+          (!scope.status?.in || scope.status.in.includes(v.status)) &&
+          (!scope.status?.notIn || !scope.status.notIn.includes(v.status))
       )
       .map((v) => v.id);
     return files.filter(
@@ -159,5 +169,41 @@ describe('publishing a version with a file that failed its scan', () => {
     expect(await restore([{ id: FAILED, status: 'Published' }])).toBe(failedScanPublishMessage);
     // Restored as a draft, it is not made public.
     expect(await restore([{ id: FAILED, status: 'Draft' }])).not.toBe(failedScanPublishMessage);
+  });
+
+  it('is refused by privateModelFromTraining, ignoring versions a moderator took down', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'm',
+      userId: 1,
+      lockedProperties: [],
+      meta: {},
+      status: 'Draft',
+      availability: 'Private',
+      minor: false,
+      poi: false,
+    } as never);
+    const fromTraining = (id: number) =>
+      failure(
+        privateModelFromTraining({
+          id,
+          name: 'm',
+          type: 'LORA',
+          user: { id: 1, isModerator: false },
+        } as never)
+      );
+
+    expect(await fromTraining(1)).toBe(failedScanPublishMessage);
+    // Model 3 has no versions; model 4's failed file is in a version that stays down.
+    for (const id of [3, 4]) {
+      expect(await fromTraining(id)).not.toBe(failedScanPublishMessage);
+      // Reached the guard rather than failing before it.
+      expect(dbMock.dbWrite.modelFile.count).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            modelVersion: expect.objectContaining({ modelId: id }),
+          }),
+        })
+      );
+    }
   });
 });
