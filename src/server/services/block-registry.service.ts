@@ -1,3 +1,4 @@
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -3704,6 +3705,9 @@ export class BlockRegistry {
       select: { id: true, status: true },
     });
     if (!existing) throwNotFoundError('App block not found');
+    // A remix app's `featuredOrder` is its menu place, edited at /moderator/remix-apps.
+    if (REMIX_STATUSES.includes(existing!.status))
+      throwBadRequestError('A remix app is edited on the remix apps page.');
 
     // Approved-only featuring: refuse to feature anything not approved (it would
     // otherwise appear in the anon-capable featured rail).
@@ -3833,9 +3837,11 @@ export class BlockRegistry {
 
     const existing = await dbWrite.appBlock.findUnique({
       where: { id: appBlockId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!existing) throwNotFoundError('App block not found');
+    if (REMIX_STATUSES.includes(existing!.status))
+      throwBadRequestError('A remix app has no App Blocks spend caps.');
 
     // Build the patch from ONLY the provided fields. Override values are
     // normalised with the exact read-side rules (positive int, floored,

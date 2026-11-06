@@ -154,7 +154,7 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
 const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   const result = await next();
   const version = ctx.req?.headers['x-client-version'] as string;
-  if (!version || version === 'unknown') return result;
+  if (!semver.valid(version)) return result;
 
   // Fail open: this middleware runs on every generation tRPC call. A
   // sysRedis outage would otherwise 500 every gen request — defeating
@@ -170,7 +170,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   }
 
   const genVersion = decodeRedisString(genClient.version);
-  if (genVersion && semver.lt(version, genVersion)) {
+  if (semver.valid(genVersion) && semver.lt(version, genVersion as string)) {
     ctx.res?.setHeader('x-generation-update-required', genVersion);
     if (genClient.notes)
       ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));

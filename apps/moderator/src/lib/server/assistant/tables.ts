@@ -88,6 +88,7 @@ export type AssistantTables = {
     response: string | null;
     created_at: Generated<Timestamp>;
     resolved_at: Timestamp | null;
+    resolved_by: number | null;
   };
   assistant_spend_cap: {
     scope: SpendCapScope;

@@ -1,3 +1,16 @@
+diff --git a/cjs/components/Spoiler/Spoiler.cjs b/cjs/components/Spoiler/Spoiler.cjs
+index 1dfa3ccae807dabc7fd05191eac3366f6c6e289e..1bd500ce597212d57d46caf058bd7aa348832c29 100644
+--- a/cjs/components/Spoiler/Spoiler.cjs
++++ b/cjs/components/Spoiler/Spoiler.cjs
+@@ -99,7 +99,7 @@ const Spoiler = factory.factory((_props, ref) => {
+           "div",
+           {
+             ...getStyles("content", {
+-              style: { maxHeight: !show ? rem.rem(maxHeight) : height ? rem.rem(height) : void 0 }
++              style: { maxHeight: !show ? `${maxHeight}px` : height ? `${height}px` : void 0 }
+             }),
+             "data-reduce-motion": true,
+             role: "region",
 diff --git a/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs b/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
 index f99f78b22530a5589d87873a7d82c910b61bf41e..e12a9edbf90a5f884c48e3aaa9842d6b141ff808 100644
 --- a/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
@@ -218,6 +231,19 @@ index d5fa03fe5617f61b979c1e4e7944cd774bf31c7d..2f86eccbadc32a559c3ff24445f667f8
  }
  
  exports.filterProps = filterProps;
+diff --git a/esm/components/Spoiler/Spoiler.mjs b/esm/components/Spoiler/Spoiler.mjs
+index 7b5195c422ee8975609d9a8113cd00f2e3315426..9a8cad294a75184838e310fdef7ca5e83890d7a7 100644
+--- a/esm/components/Spoiler/Spoiler.mjs
++++ b/esm/components/Spoiler/Spoiler.mjs
+@@ -97,7 +97,7 @@ const Spoiler = factory((_props, ref) => {
+           "div",
+           {
+             ...getStyles("content", {
+-              style: { maxHeight: !show ? rem(maxHeight) : height ? rem(height) : void 0 }
++              style: { maxHeight: !show ? `${maxHeight}px` : height ? `${height}px` : void 0 }
+             }),
+             "data-reduce-motion": true,
+             role: "region",
 diff --git a/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs b/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs
 index aa2d8677d9c4996b26d80163c7e3d51f7bf754f0..5e4e6882508b5a4370448ae3b9078fddc600306f 100644
 --- a/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs

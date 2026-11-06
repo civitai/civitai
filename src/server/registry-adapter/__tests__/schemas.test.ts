@@ -15,9 +15,9 @@ import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.c
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
 const OWN = [
-  'urn:schema:app-blocks:app@v1',
-  'urn:schema:app-blocks:app-release@v1',
-  'urn:schema:app-blocks:service@v1',
+  'urn:schema:apps.civitai.com:app@v1',
+  'urn:schema:apps.civitai.com:app-release@v1',
+  'urn:schema:apps.civitai.com:service@v1',
 ];
 
 const listing = (over: Partial<CatalogApp['listing']>): CatalogApp['listing'] => ({
@@ -128,7 +128,7 @@ function compiled(sets: ReturnType<typeof buildEntities>) {
 describe('the schemas of our own entities', () => {
   it('🔴 the live adapter serves them on the schema stream, with the registry switch off', async () => {
     const adapter = createPollingAdapter({
-      namespace: 'app-blocks',
+      namespace: 'apps.civitai.com',
       serves: SERVED_SCHEMAS,
       // As the live entrypoint builds them: the platform's own switch, which ships off.
       read: async () => buildEntities(CATALOG, { baseUrl: 'https://site.example' }),
@@ -166,11 +166,11 @@ describe('the schemas of our own entities', () => {
       expect(failures).toEqual([]);
       // Positive control on the loop: every entity of the three streams was checked.
       expect(checked).toEqual([
-        'urn:app-blocks:app/orbit-notes',
-        'urn:app-blocks:app/tide-log',
-        'urn:app-blocks:app/orbit-notes@1.0.0',
-        'urn:app-blocks:app/orbit-notes@1.1.0',
-        'urn:app-blocks:runtime/iframe@1',
+        'urn:apps.civitai.com:app/orbit-notes',
+        'urn:apps.civitai.com:app/tide-log',
+        'urn:apps.civitai.com:app/orbit-notes@1.0.0',
+        'urn:apps.civitai.com:app/orbit-notes@1.1.0',
+        'urn:apps.civitai.com:runtime/iframe@1',
       ]);
     }
   );
@@ -216,7 +216,9 @@ describe('the schemas of our own entities', () => {
   it('🔴 an app with no content rating validates: contentRating is required and nullable', () => {
     const sets = buildEntities(CATALOG, { baseUrl: 'https://site.example' });
     const validate = compiled(sets)(APP_SCHEMA);
-    const tide = (sets.get(APP_SCHEMA) ?? []).find((e) => e.urn === 'urn:app-blocks:app/tide-log');
+    const tide = (sets.get(APP_SCHEMA) ?? []).find(
+      (e) => e.urn === 'urn:apps.civitai.com:app/tide-log'
+    );
     const body = tide!.body as Record<string, unknown>;
     expect(body.contentRating).toBeNull();
     expect(validate(body)).toBe(true);

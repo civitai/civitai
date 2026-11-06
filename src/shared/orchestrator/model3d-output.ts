@@ -40,3 +40,20 @@ export function isFbxOnlyDelivered(steps: Model3DStepLike[]) {
       )
   );
 }
+
+type Model3DFileLike = { format: string; variant: string | null; isPrimary: boolean };
+
+/**
+ * The file a single-file preview should mount: the primary when it's viewable, else the first viewable
+ * file (an FBX-primary model can still ship a GLB variant). With nothing viewable it returns the
+ * primary, so the viewer shows its download fallback.
+ */
+export function pickModel3DPreviewFile<T extends Model3DFileLike>(files: T[]): T | null {
+  return (
+    files.find((f) => f.isPrimary && isInlineViewableModel3DFile(f)) ??
+    files.find(isInlineViewableModel3DFile) ??
+    files.find((f) => f.isPrimary) ??
+    files[0] ??
+    null
+  );
+}
