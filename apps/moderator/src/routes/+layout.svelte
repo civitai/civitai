@@ -16,7 +16,7 @@
     IconScanLetterT,
     IconChartBar,
     IconScale,
-    IconChessKnight,
+    IconShield,
     IconCircle,
     IconChevronRight,
     IconLogout,
@@ -91,7 +91,7 @@
   const groupIcons: Record<string, typeof IconPhoto> = {
     Images: IconPhoto,
     Users: IconUsers,
-    'Knights of New Order': IconChessKnight,
+    'Knights of New Order': IconShield,
   };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
