@@ -27,6 +27,7 @@ const summary = (over: Record<string, unknown>) => ({
   trainingsOnBlue: '0',
   spend: [[], [], []],
   refunds: [[], []],
+  earnings: [[], []],
   ...over,
 });
 const summarySql = () => queries.find((q) => q.includes('GROUP BY uid')) ?? '';
@@ -70,7 +71,19 @@ describe('buzz_flows platform spend', () => {
       "sumIf(amount, dir = 'in' AND type = 'reward' AND toAccountType = 'blue' AND other = 0) AS blueRewarded"
     );
     expect(sql).toContain(
-      "sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type IN ('refund', 'compensation')) AS refunds"
+      "sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type = 'refund') AS refunds,"
+    );
+  });
+
+  // Compensation from the platform is creator income (compensation, generation tips): netting it
+  // against spend would read earnings as money handed back.
+  it('reports platform compensation as earnings, apart from refunds', async () => {
+    summaryRows = [summary({ refunds: [['blue'], ['10']], earnings: [['yellow'], ['40000']] })];
+    const { accounts } = await getBuzzFlows([5]);
+    expect(accounts[0].platformRefunds).toEqual({ blue: 10 });
+    expect(accounts[0].platformEarnings).toEqual({ yellow: 40000 });
+    expect(summarySql()).toContain(
+      "sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type = 'compensation') AS earnings"
     );
   });
 
@@ -101,7 +114,7 @@ describe('buzz_flows platform spend', () => {
     // The 4 smallest (amounts 1..4) fold into one row; nothing is lost from the total.
     expect(spend.at(-1)).toEqual({
       type: 'other',
-      accountType: 'mixed',
+      accountType: 'blue',
       transactions: 4,
       amount: 10,
     });

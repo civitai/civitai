@@ -29,8 +29,13 @@ export type AccountBuzz = {
    * into one `type: 'other'` row.
    */
   platformSpend: PlatformSpend[];
-  /** Buzz the platform gave back as a refund or compensation, by the account type it landed in. */
+  /** Buzz the platform gave back as a refund, by the account type it landed in. */
   platformRefunds: Record<string, number>;
+  /**
+   * Buzz the platform paid this account as `compensation` (creator compensation and generation tips
+   * from other users), by account type. Income, not a refund: never net it against spend.
+   */
+  platformEarnings: Record<string, number>;
 };
 
 export type PlatformSpend = {
@@ -92,6 +97,7 @@ export async function getBuzzFlows(
       trainingsOnBlue: string;
       spend: [string[], string[], string[]];
       refunds: [string[], string[]];
+      earnings: [string[], string[]];
     }>(`
       SELECT uid,
              sumIf(amount, dir = 'in' AND type = 'reward' AND toAccountType = 'blue' AND other = 0) AS blueRewarded,
@@ -104,7 +110,8 @@ export async function getBuzzFlows(
              countIf(dir = 'out' AND type = 'training') AS trainings,
              countIf(dir = 'out' AND type = 'training' AND fromAccountType = 'blue') AS trainingsOnBlue,
              sumMapIf([concat(type, ':', fromAccountType)], [toInt64(amount)], [toInt64(1)], dir = 'out' AND other = 0) AS spend,
-             sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type IN ('refund', 'compensation')) AS refunds
+             sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type = 'refund') AS refunds,
+             sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type = 'compensation') AS earnings
       FROM (
         SELECT toAccountId AS uid, 'in' AS dir, fromAccountId AS other, type, amount, fromAccountType, toAccountType
         FROM default.buzzTransactions PREWHERE toAccountId IN (${set})
@@ -163,6 +170,7 @@ export async function getBuzzFlows(
       trainingsOnBlue: Number(s?.trainingsOnBlue ?? 0),
       platformSpend: platformSpend(s?.spend),
       platformRefunds: byAccountType(s?.refunds),
+      platformEarnings: byAccountType(s?.earnings),
     };
   });
 
@@ -191,7 +199,8 @@ function platformSpend(map: [string[], string[], string[]] | undefined): Platfor
     ...rows.slice(0, PLATFORM_SPEND_SHOWN - 1),
     {
       type: 'other',
-      accountType: 'mixed',
+      accountType:
+        new Set(rest.map((r) => r.accountType)).size === 1 ? rest[0].accountType : 'mixed',
       transactions: rest.reduce((n, r) => n + r.transactions, 0),
       amount: rest.reduce((n, r) => n + r.amount, 0),
     },
