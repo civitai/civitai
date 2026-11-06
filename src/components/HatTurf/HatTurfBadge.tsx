@@ -94,13 +94,16 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
         : ' A hat protects this image.'
       : ''
   }`;
-  // The dial's centre is always a number. Two digits don't fit it, so from 10 up it reads "9+" and
-  // the full count goes beside the dial.
-  const countBeside = count >= 10 && !summary.hatted;
+  // The dial's centre is always the number; from 10 up its font shrinks so both digits fit the disc.
   const countEl = (
     <span
       key={count}
-      className={clsx(classes.count, !countBeside && classes.countInside, bump && classes.bump)}
+      className={clsx(
+        classes.count,
+        classes.countInside,
+        count >= 10 && classes.countTwo,
+        bump && classes.bump
+      )}
       data-testid="hat-turf-count"
     >
       {abbreviateNumber(count)}
@@ -139,26 +142,15 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
           />
         </svg>
         <span className={classes.disc} data-testid="hat-turf-disc">
-          {countBeside ? (
-            <span
-              className={clsx(classes.count, classes.countInside)}
-              data-testid="hat-turf-count-cap"
-            >
-              9+
-            </span>
-          ) : (
-            countEl
-          )}
+          {countEl}
         </span>
       </span>
-      {countBeside && countEl}
       {figure?.margin != null && (
         <span
           className={clsx(classes.count, classes.margin)}
           data-testid="hat-turf-margin"
           data-margin={figure.margin}
         >
-          {countBeside && '\u00b7 '}
           {formatMargin(figure.margin)}
         </span>
       )}
@@ -180,7 +172,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
       )}
     </>
   );
-  const chip = countBeside || summary.hatted || figure?.margin != null;
+  const chip = summary.hatted || figure?.margin != null;
 
   if (feed.arm !== 'badge-popover') {
     return (

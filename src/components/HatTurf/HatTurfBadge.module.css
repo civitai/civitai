@@ -1,6 +1,6 @@
 /*
  * A 24px dial (team ring around the leader's disc), and, when there is more to say, a dark chip
- * that carries the count (10 and up) and the lock to its right. A surface resizes it by setting
+ * that carries the viewer's margin and the lock to its right. A surface resizes it by setting
  * `--hat-turf-badge-size`: a different property from `--dial`, so it wins whatever the order the
  * two stylesheets load in.
  */
@@ -86,6 +86,12 @@
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--mantine-color-white);
+}
+
+/* Two digits in the disc: the font follows the dial so both fit, on the card and in the detail row. */
+.countTwo {
+  font-size: calc(var(--dial) * 0.34);
+  letter-spacing: -0.03em;
 }
 
 /* White has to read on the lightest team colour (yellow) too. */

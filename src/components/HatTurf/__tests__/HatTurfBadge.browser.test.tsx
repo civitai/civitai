@@ -228,6 +228,17 @@ describe('Hat Turf badge on a feed ImageCard', () => {
       getComputedStyle(el.querySelector('[data-testid="hat-turf-disc-fill"]') as SVGElement).fill;
     return { el, count, disc, arc, discFill };
   };
+  /** How many corners of the digits' box fall outside the disc's circle. */
+  const cornersOutside = (box: DOMRect, disc: DOMRect) => {
+    const [cx, cy] = [disc.left + disc.width / 2, disc.top + disc.height / 2];
+    const radius = disc.width / 2;
+    return [
+      [box.left, box.top],
+      [box.right, box.top],
+      [box.left, box.bottom],
+      [box.right, box.bottom],
+    ].filter(([x, y]) => Math.hypot(x - cx, y - cy) > radius).length;
+  };
   const centre = (r: DOMRect) => [r.left + r.width / 2, r.top + r.height / 2];
 
   test('one digit sits centred in the disc, with no hat behind it', async () => {
@@ -346,7 +357,7 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     await vi.waitFor(() => expect(badge()).not.toBeNull());
     const { disc } = parts();
     expect(disc.querySelector('svg')).toBeNull();
-    expect(disc.textContent).toMatch(/^(\u2212?\d|9\+)$/);
+    expect(disc.textContent).toMatch(/^\d+$/);
   });
 
   test("a trailing viewer's disc is still the leader's colour: it is the team earning", async () => {
@@ -499,28 +510,44 @@ describe('Hat Turf badge on a feed ImageCard', () => {
     expect(disc.contains(count)).toBe(true);
   });
 
-  test.each([
-    [10, '10'],
-    [42, '42'],
-    [1240, '1.2k'],
-  ])('%s: the full count moves beside the dial and the disc reads 9+', async (lead, shown) => {
-    renderCard({
-      feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
-    });
-    await vi.waitFor(() => expect(badge()).not.toBeNull());
-    const { el, count, disc } = parts();
-    expect(count!.textContent).toBe(shown);
-    expect(disc.contains(count)).toBe(false);
-    expect(count!.getBoundingClientRect().left).toBeGreaterThanOrEqual(
-      disc.getBoundingClientRect().right
-    );
-    expect(disc.textContent).toBe('9+');
-    expect(disc.querySelector('svg')).toBeNull();
-    expect(getComputedStyle(el).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
-    // Still inside a phone card.
-    const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
-    expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
-  });
+  test.each([[10], [12], [42], [99]])(
+    '%s hats: both digits sit inside the disc, on the card',
+    async (lead) => {
+      renderCard({
+        feed: feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) }),
+      });
+      await vi.waitFor(() => expect(badge()).not.toBeNull());
+      const { el, count, disc } = parts();
+      expect(count!.textContent).toBe(String(lead));
+      expect(disc.contains(count)).toBe(true);
+      const c = count!.getBoundingClientRect();
+      const d = disc.getBoundingClientRect();
+      expect(cornersOutside(c, d)).toBe(0);
+      // Still inside a phone card.
+      const card = document.querySelector('[data-testid="card-root"]')!.getBoundingClientRect();
+      expect(el.getBoundingClientRect().right).toBeLessThanOrEqual(card.right);
+    }
+  );
+
+  test.each([[10], [99]])(
+    '%s hats: both digits sit inside the disc in the detail row',
+    async (lead) => {
+      document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+      renderWithProviders(
+        <TurfSummaryContext.Provider
+          value={feedWith({ 1: standing({ counted: { blue: lead, pink: 9 }, leader: 'blue' }) })}
+        >
+          <HatTurfBadge imageId={1} className={detailClasses.rowBadge} />
+        </TurfSummaryContext.Provider>
+      );
+      await vi.waitFor(() => expect(badge()).not.toBeNull());
+      const { count, disc } = parts();
+      const c = count!.getBoundingClientRect();
+      const d = disc.getBoundingClientRect();
+      expect(c.left).toBeGreaterThanOrEqual(d.left - 0.5);
+      expect(c.right).toBeLessThanOrEqual(d.right + 0.5);
+    }
+  );
 
   test('the detail action row draws the dial at its 36px', async () => {
     document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
@@ -698,14 +725,14 @@ describe('the badge: points in the dial, the viewer margin beside it', () => {
     expect(badge()!.querySelector('[data-testid="hat-turf-badge-lock"]')).not.toBeNull();
   });
 
-  test('ten or more points: 9+ in the dial, the figure and the margin beside it', async () => {
+  test('ten or more points: both digits in the dial, the margin beside it', async () => {
+    stock.data = { creditedPlayers: 10, optedIn: true };
     await show(standing({ counted: { blue: 12, pink: 1 } }), 'pink');
-    expect(badge()!.querySelector('[data-testid="hat-turf-count-cap"]')!.textContent).toBe('9+');
-    expect(count()).toBe('12');
-    expect(margin()).toContain('\u221211');
+    expect(count()).toBe('10');
+    expect(margin()).toBe('\u221211');
   });
 
-  test('no pop-over-the-edge: the chip stays inside a 171px phone card', async () => {
+  test('the chip with a margin and a lock stays inside a 171px phone card', async () => {
     await show(
       standing({ hatted: true, hattedTeam: 'blue', counted: { blue: 12, pink: 1 } }),
       'pink'
