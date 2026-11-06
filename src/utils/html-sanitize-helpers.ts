@@ -127,6 +127,31 @@ export const CSS_COLOR = [
   /^[a-z]+$/i,
 ];
 
+// Pasted text keeps the source page's color syntax, so spans also accept the numeric-only
+// space-separated forms (oklch(), lab(), color(srgb …), rgb(0 0 0 / 50%)).
+const SPAN_COLOR = [
+  ...CSS_COLOR,
+  /^(?:rgba?|hsla?|lab|lch|oklab|oklch)\(\s*[-\d.%\s/]+\)$/i,
+  /^color\(\s*(?:srgb|srgb-linear|display-p3)\s+[-\d.%\s/]+\)$/i,
+];
+const CSS_GLOBAL = /^(?:inherit|initial|unset)$/i;
+// Bounded: under 100px/pt, under 1000%, under 10em/rem.
+const CSS_LENGTH =
+  /^(?:\d{1,2}(?:\.\d+)?|\.\d+)(?:px|pt)$|^\d{1,3}(?:\.\d+)?%$|^\d(?:\.\d+)?r?em$/i;
+
+// The properties TextStyleKit (the editor's `colors` control) writes on a span.
+export const SPAN_ALLOWED_STYLES = {
+  color: SPAN_COLOR,
+  'background-color': SPAN_COLOR,
+  'font-size': [
+    CSS_LENGTH,
+    CSS_GLOBAL,
+    /^(?:xx-small|x-small|small|medium|large|x-large|xx-large|smaller|larger)$/i,
+  ],
+  'line-height': [CSS_LENGTH, CSS_GLOBAL, /^normal$/i, /^\d(?:\.\d+)?$/],
+  'font-family': [/^[\p{L}\p{N} "',-]{1,300}$/u],
+};
+
 export const BLURB_INTERIOR_SANITIZE_OPTIONS = {
   allowedTags: BLURB_INTERIOR_ALLOWED_TAGS,
   allowedAttributes: BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
@@ -210,6 +235,25 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     ...options
   } = args ?? {};
 
+  // With parseStyleAttributes off, sanitize-html passes `style` through unfiltered and throws if
+  // allowedStyles is set, so `style` is dropped from every tag and allowedStyles is omitted.
+  // `allowedAttributes: false` (allow everything) stays the caller's explicit choice.
+  const parsesStyles = options.parseStyleAttributes !== false;
+  const suppliedAttributes = options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES;
+  const allowedAttributes =
+    parsesStyles || !suppliedAttributes
+      ? suppliedAttributes
+      : Object.fromEntries(
+          Object.entries(suppliedAttributes).map(([tag, attrs]) => [
+            tag,
+            (attrs ?? []).filter((attr) => {
+              const name = typeof attr === 'string' ? attr : attr.name;
+              // A glob such as `s*` or `*` would also admit `style`.
+              return name !== 'style' && !name.includes('*');
+            }),
+          ])
+        );
+
   const stripBlurbMarker: Transformer = (tagName, attribs) => {
     const supplied = transformTags?.div;
     const applied =
@@ -226,7 +270,6 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
 
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
-    allowedAttributes: DEFAULT_ALLOWED_ATTRIBUTES,
     exclusiveFilter: (frame) =>
       (!allowStickers && isStickerSpan(frame)) ||
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
@@ -234,6 +277,7 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
     transformTags: {
       a: function (tagName, { href, ...attr }) {
+        if (!href) return { tagName: 'span', attribs: {} };
         const updatedHref = href.startsWith('http') ? href : `http://${href}`;
         const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;
         if (!hrefDomain) return { tagName: 'span', ...attr };
@@ -254,5 +298,12 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       div: stripBlurbMarker,
     },
     ...options,
+    allowedAttributes,
+    // Per-tag replace, not merge: a caller's `span` entry replaces SPAN_ALLOWED_STYLES. `*` is
+    // fixed empty, after the spread, because sanitize-html merges it into every tag's rule; it
+    // drops style on any tag without its own entry.
+    allowedStyles: parsesStyles
+      ? { span: SPAN_ALLOWED_STYLES, ...options.allowedStyles, '*': {} }
+      : undefined,
   });
 }
