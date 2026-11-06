@@ -9267,6 +9267,7 @@ model UserProfile {
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
+  showcaseSections        Json      @default("[]")
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
