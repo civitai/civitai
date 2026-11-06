@@ -50,6 +50,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>Home · Knights of New Order</title>
+</svelte:head>
+
 {#if data.player && status}
   <div class="page-wide home">
     <section class="hero" aria-label="Your standing in the Order">

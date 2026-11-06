@@ -430,6 +430,10 @@
   );
 </script>
 
+<svelte:head>
+  <title>Judge · Knights of New Order</title>
+</svelte:head>
+
 <svelte:window {onkeydown} />
 
 {#snippet pill(option: { value: string; label: string }, index: number, locked: boolean, asksReason: boolean)}

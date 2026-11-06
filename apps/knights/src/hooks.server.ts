@@ -10,6 +10,7 @@ import { isWelcomeRequest, safeNext, signedOutLocation } from '$lib/welcome';
 
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
+  '/robots.txt',
   '/logout',
   '/api/auth/authorize',
   '/api/auth/callback',

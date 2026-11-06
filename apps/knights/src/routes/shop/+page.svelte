@@ -117,6 +117,10 @@
     status in STATUS ? STATUS[status as keyof typeof STATUS] : { label: status, tone: '' };
 </script>
 
+<svelte:head>
+  <title>Shop · Knights of New Order</title>
+</svelte:head>
+
 <div class="page-wide shop" data-skipped={skipped ? '' : undefined}>
   <header class="head">
     <div class="intro">
