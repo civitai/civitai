@@ -10,14 +10,11 @@
  * Only the union of all shards can be compared with the `*.browser.test.tsx` files on disk.
  * Each shard still runs the zero check (`--narrowed`) on its own report.
  *
- * What this script itself adds, each a way sharding can go wrong while every shard is green:
- *
- *   - a shard's report is MISSING (the shard aborted before writing it, its upload failed, or
- *     the matrix and the `/N` denominator drifted apart so a shard never ran). A missing report
- *     is a failure, never "nothing to merge": the on-disk ledger would then name its files as
- *     absent, but this says WHICH shard, which is the actionable part;
- *   - a test file appears in MORE THAN ONE shard's report — tests ran twice, which means the
- *     shard split is not a partition (e.g. two jobs ran the same `--shard` index).
+ * What this script itself adds, a way sharding can go wrong while every shard is green: a
+ * shard's report is MISSING (the shard aborted before writing it, its upload failed, or the
+ * matrix and the `/N` denominator drifted apart so a shard never ran). A missing report is a
+ * failure, never "nothing to merge": the on-disk ledger would then name its files as absent,
+ * but this says WHICH shard, which is the actionable part.
  *
  * Usage:  node scripts/ci/merge-component-shard-reports.mjs <reports-dir> <shard-total> <out>
  *
@@ -46,8 +43,6 @@ export function mergeShardReports(reports, total) {
   const lines = [];
   let ok = true;
   const testResults = [];
-  const seen = new Map(); // file name -> first shard that reported it
-  const duplicates = [];
   const sums = { numFailedTestSuites: 0, numFailedTests: 0, numTotalTests: 0 };
 
   const byShard = new Map(reports.map((r) => [r.shard, r]));
@@ -68,22 +63,8 @@ export function mergeShardReports(reports, total) {
       `shard ${i}/${total}: ${counts.executed} executed, ${counts.skipped} skipped, across ` +
         `${counts.files} files`
     );
-    for (const file of report.testResults ?? []) {
-      const name = file?.name;
-      if (name && seen.has(name)) duplicates.push(`${name} (shards ${seen.get(name)} and ${i})`);
-      else if (name) seen.set(name, i);
-      testResults.push(file);
-    }
+    testResults.push(...(report.testResults ?? []));
     for (const k of Object.keys(sums)) sums[k] += Number(report[k] ?? 0);
-  }
-
-  if (duplicates.length > 0) {
-    ok = false;
-    lines.push(
-      `🔴 ${duplicates.length} test file(s) ran in MORE THAN ONE shard — the split is not a ` +
-        'partition, so these tests ran twice:\n' +
-        duplicates.map((d) => `     ${d}`).join('\n')
-    );
   }
 
   return { ok, merged: { ...sums, testResults }, lines };

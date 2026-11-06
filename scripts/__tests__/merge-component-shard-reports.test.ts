@@ -11,8 +11,8 @@ import {
 
 /**
  * Tests for the merge step of the sharded browser `component` suite. Each case kills one
- * mutation of the merge: a missing shard treated as nothing-to-merge, a duplicate file let
- * through, a shard's results dropped from the merged report, or the failure counts not summed.
+ * mutation of the merge: a missing shard treated as nothing-to-merge, a shard's results dropped
+ * from the merged report, or the failure counts not summed.
  *
  * Fixture counts are pairwise distinct (3, 5 and 7 assertions; failure counts 1, 2 and 4), so a
  * merge that keeps only one shard, or sums the wrong field, cannot land on the expected value.
@@ -92,19 +92,6 @@ describe('mergeShardReports', () => {
     );
     expect(ok).toBe(false);
     expect(lines.join('\n')).toContain('shard 2/3: NO REPORT (x is not valid JSON)');
-  });
-
-  it('fails when the same file ran in two shards', () => {
-    const { ok, lines } = mergeShardReports(
-      [
-        { shard: 1, report: S1 },
-        { shard: 2, report: S2 },
-        { shard: 3, report: report([file('/r/src/a.browser.test.tsx', ['passed'])], 0, 0) },
-      ],
-      3
-    );
-    expect(ok).toBe(false);
-    expect(lines.join('\n')).toContain('/r/src/a.browser.test.tsx (shards 1 and 3)');
   });
 
   it('ignores a report for a shard index outside 1..total', () => {

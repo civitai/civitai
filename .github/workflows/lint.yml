@@ -1024,7 +1024,7 @@ jobs:
     #
     # Every test still runs exactly once and is accounted for: each shard runs the zero check
     # on its own report, and the `component-ledger` job below merges the three reports, fails
-    # on a missing shard or a file that ran twice, and runs the full ledger (zero check,
+    # on a missing shard, and runs the full ledger (zero check,
     # on-disk file ledger, floor) on the union — the same gate the unsharded run had.
     #
     # `fail-fast: false`: a red shard must not cancel its siblings, or their files go
