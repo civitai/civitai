@@ -3,7 +3,6 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { unpublishModelById } from '~/server/services/model.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -222,7 +221,6 @@ export async function checkDuplicateHashOnScan({
   modelId,
   ownerId,
   modelStatus,
-  modelMeta,
 }: {
   fileId: number;
   fileType: string;
@@ -232,7 +230,6 @@ export async function checkDuplicateHashOnScan({
   modelId: number;
   ownerId: number;
   modelStatus: ModelStatus;
-  modelMeta: ModelMeta | null;
 }): Promise<DuplicateHashScanOutcome> {
   if (!primaryModelFileTypes.includes(fileType as ModelFileType)) return 'skipped';
   if (sizeKB < DUPLICATE_HASH_MIN_SIZE_KB) return 'skipped';
@@ -256,7 +253,6 @@ export async function checkDuplicateHashOnScan({
     id: modelId,
     reason: 'duplicate',
     customMessage: duplicateHashMessage(match),
-    meta: modelMeta ?? undefined,
     userId: constants.system.user.id,
     isModerator: true,
   });

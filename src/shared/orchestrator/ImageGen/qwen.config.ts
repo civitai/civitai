@@ -1,4 +1,7 @@
-import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
+import type {
+  Qwen20bCreateImageGenInput,
+  Qwen20bEditImageGenInput,
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import {
   negativePromptSchema,

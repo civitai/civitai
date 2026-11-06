@@ -46,8 +46,10 @@ export type ServiceDealLegName = 'hold' | 'release' | 'fee' | 'refund';
  * The Buzz external id of one leg. Derived from the deal and never time-based, so a retried leg
  * presents the same id and the Buzz service's dedupe is a real second line.
  */
+export const SERVICE_DEAL_TRANSACTION_PREFIX = 'creator-service-';
+
 export const serviceDealTransactionId = (dealId: number, leg: ServiceDealLegName) =>
-  `creator-service-${dealId}-${leg}`;
+  `${SERVICE_DEAL_TRANSACTION_PREFIX}${dealId}-${leg}`;
 
 /**
  * Delivery files. Previews are deliberately worth less than the product: capped in size, and the
@@ -212,6 +214,12 @@ export const SERVICE_UNPACK_STALE_MS = 60 * 60_000;
 export const SERVICE_UNPACK_RETRY_MS = 5 * 60_000;
 /** An image still Pending this long after its row was created is failed, so a round never hangs. */
 export const SERVICE_FINAL_SCAN_GIVE_UP_MS = 6 * HOUR;
+/** A Final's malware scan is submitted at most this many times before the Final is failed. */
+export const SERVICE_FINAL_SCAN_MAX_ATTEMPTS = 5;
+/** A malware scan that could not run is submitted again no sooner than this. */
+export const SERVICE_FINAL_SCAN_RETRY_MS = 10 * 60_000;
+/** A malware scan workflow with no verdict this long after submission is abandoned and resubmitted. */
+export const SERVICE_FINAL_SCAN_STALE_MS = 2 * HOUR;
 
 /**
  * Why the system sent a deal to the moderators rather than paying it out. Moderation detail about

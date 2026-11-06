@@ -48,6 +48,7 @@ const EXPECTED: [string, string, string][] = [
   ['article', 'ArticleReport', 'articleId'],
   ['comment', 'CommentReport', 'commentId'],
   ['commentV2', 'CommentV2Report', 'commentV2Id'],
+  ['commentV3', 'CommentV3Report', 'commentId'],
   ['bounty', 'BountyReport', 'bountyId'],
   ['bountyEntry', 'BountyEntryReport', 'bountyEntryId'],
   ['collection', 'CollectionReport', 'collectionId'],
@@ -135,6 +136,34 @@ describe('the queries that fan out over every entity at once', () => {
     for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
   });
 
+  it('getReportLastActioned names every report table and keeps the index predicate literal', async () => {
+    await service.getReportLastActioned();
+
+    const [sql] = emitted();
+    noBareSubquery(sql);
+    for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
+    // Report_human_statusSetAt_idx is partial on exactly this; a bound parameter cannot match it.
+    expect(sql).toContain(`"statusSetBy" <> -1`);
+    // Only a review outcome counts; a move to Processing must not freshen the badge.
+    expect(sql).toMatch(/"status" in \('Actioned', 'Unactioned'\)/);
+  });
+
+  it('getReportOldestOpen names every report table and ages the same set the badge counts', async () => {
+    await service.getReportOldestOpen();
+
+    const [sql] = emitted();
+    noBareSubquery(sql);
+    for (const [, table] of EXPECTED) expect(sql).toContain(`"${table}"`);
+    // An oldest-waiting age over a different set from the count beside it describes other reports.
+    await service.getReportCounts();
+    const counts = h.queries.at(-1)!.sql;
+    // The CTE's whole predicate: up to the paren that closes it, just before the first branch.
+    const where = (s: string) =>
+      s.match(/\bwhere\s([\s\S]*?)\)\s*select\b/i)?.[1].replace(/\s+/g, ' ');
+    expect(where(sql)).toMatch(/"status" in .* and "reason" in /);
+    expect(where(sql)).toBe(where(counts));
+  });
+
   it('getMostReported keeps every entity subselect parenthesised', async () => {
     await service.getMostReported({ limit: 10 });
 
@@ -201,12 +230,12 @@ describe('report rows link to what was reported', () => {
       expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
   });
 
-  it("links a service offering report to its seller's shop", async () => {
+  it("links a service offering report to its card in the seller's shop", async () => {
     await service.getMostReported({ limit: 10 });
 
     const sql = emitted().find((s) => s.includes('context:serviceOffering'))!;
     expect(flat(sql)).toContain(
-      `SELECT '/user/' || u.username || '/shop' FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
+      `SELECT '/user/' || u.username || '/shop#service-' || o.id FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
     );
   });
 

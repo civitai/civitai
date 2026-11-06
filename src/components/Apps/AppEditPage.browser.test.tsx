@@ -9,7 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 /**
  * Item 2 — the UNIFIED tabbed owner editor page `/apps/[appBlockId]/edit`. Browser-
- * mode render test (report-only; the sandbox has no chromium binary). Verifies the
+ * mode render test (`Component tests` in CI). Verifies the
  * two tabs render, `?tab=media` selects the media tab, and a non-owner (getMyAppManifest
  * errors) settles to NotFound. The heavy children + SSR helper are mocked so the page's
  * OWN tab/gating logic is what's under test.

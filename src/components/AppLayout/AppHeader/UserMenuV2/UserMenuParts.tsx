@@ -1,25 +1,22 @@
 import { Badge } from '@mantine/core';
-import { IconPin, IconPinFilled } from '@tabler/icons-react';
+import { IconBell, IconBellOff, IconPin, IconPinFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useEffect, useRef, useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import type { ResolvedMenuItem } from './resolveUserMenu';
 import type { useUserMenuPins } from './useUserMenuPins';
-import {
-  findUserMenuGroup,
-  USER_MENU_LAYOUT,
-  USER_MENU_SIGNED_OUT_LAYOUT,
-} from './user-menu.layout';
+import { findUserMenuGroup, getUserMenuLayout } from './user-menu.layout';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TrackActionInput } from '~/server/schema/track.schema';
+import { isUserMenuBadgeItemId } from '~/shared/constants/user-menu.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import { USER_MENU_HEADER_GROUP } from '~/shared/constants/user-menu-groups.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
-export function MenuItemLabel({ item }: { item: UserMenuItem }) {
+export function MenuItemLabel({ item }: { item: UserMenuItem & { badgeMuted?: boolean } }) {
   return (
     <span className="flex items-center gap-1">
       <span className="text-sm leading-none">{item.label}</span>
@@ -29,7 +26,13 @@ export function MenuItemLabel({ item }: { item: UserMenuItem }) {
           NEW
         </Badge>
       )}
-      <QueueCountBadge count={item.badge ?? 0} max={99} ml={4} />
+      <QueueCountBadge
+        count={item.badge ?? 0}
+        tooltip={item.badgeTooltip}
+        max={99}
+        ml={4}
+        color={item.badgeMuted ? 'gray' : undefined}
+      />
     </span>
   );
 }
@@ -54,22 +57,71 @@ export function PinGlyph({ pinned, touch }: { pinned: boolean; touch?: boolean }
   );
 }
 
+export type PinTarget = Pick<ResolvedMenuItem, 'id' | 'label'>;
+
+/**
+ * The frame of the account card on both menus: a border, a faint Blue-to-Yellow wash and a lift off the
+ * sheet. A flat tint alone vanishes into the sheet, which is white in light mode and the same grey in dark.
+ */
+export const ACCOUNT_CARD_FRAME =
+  'rounded-xl border border-gray-3 bg-gradient-to-br from-blue-0 via-gray-0 to-yellow-0 shadow-sm dark:border-dark-4 dark:from-dark-4 dark:via-dark-5 dark:to-dark-4';
+
+/** The profile row above the menu is in no group, but it is a pinnable item. */
+export const PROFILE_PIN: PinTarget = { id: 'profile', label: 'Your Profile' };
+
+/** Bell on a row whose count lights the avatar; crossed out while that count is muted. */
+export function MuteGlyph({ muted, touch }: { muted: boolean; touch?: boolean }) {
+  const Glyph = muted ? IconBellOff : IconBell;
+  return (
+    <Glyph
+      size={16}
+      stroke={1.5}
+      aria-hidden
+      className={clsx(
+        'transition-opacity',
+        touch
+          ? muted
+            ? 'opacity-80'
+            : 'opacity-40'
+          : muted
+          ? 'opacity-60'
+          : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70 group-data-[hovered]:opacity-70'
+      )}
+    />
+  );
+}
+
+/** Toggles the mute on a row's count; absent where counts cannot be muted (signed out, legacy). */
+export const BadgeMuteCtx = createContext<
+  ((item: Pick<ResolvedMenuItem, 'id' | 'label'>) => void) | undefined
+>(undefined);
+
+/** A count can be muted only where it is shown: a mutable item with something waiting. */
+export const canMuteBadge = (item: { id?: UserMenuItemId; badge?: number }, toggleMute: unknown) =>
+  !!toggleMute && isUserMenuBadgeItemId(item.id) && (item.badge ?? 0) > 0;
+
 /** Render `region` once in the menu: it is the live region the announcements go to. */
 export function usePinActions(pins: ReturnType<typeof useUserMenuPins>) {
   const [message, setMessage] = useState('');
   const announce = useCallback((text: string) => setMessage(text), []);
-  const toggle = (item: ResolvedMenuItem) => {
+  const toggle = (item: PinTarget) => {
     if (!pins.canEdit) return;
     const wasPinned = pins.pins.includes(item.id);
     pins.toggle(item.id);
     announce(`${wasPinned ? 'Unpinned' : 'Pinned'} ${item.label}`);
+  };
+  const toggleMute = (item: Pick<ResolvedMenuItem, 'id' | 'label'>) => {
+    if (!pins.canEdit || !isUserMenuBadgeItemId(item.id)) return;
+    const wasMuted = pins.mutedBadges.includes(item.id);
+    pins.toggleBadgeMute(item.id);
+    announce(`${wasMuted ? 'Unmuted' : 'Muted'} the count on ${item.label}`);
   };
   const region = (
     <div aria-live="polite" className="sr-only">
       {message}
     </div>
   );
-  return { toggle, announce, region };
+  return { toggle, toggleMute, announce, region };
 }
 
 /**
@@ -85,8 +137,17 @@ export function useDragClickGuard() {
       event.preventDefault();
       event.stopPropagation();
     };
+    // dnd-kit skips the end and cancel callbacks when the browser cancels a drag before it has
+    // rendered, which would leave every later click cancelled. Every drag starts after a pointerdown.
+    const reset = (event: PointerEvent) => {
+      if (event.isPrimary) dragging.current = false;
+    };
     window.addEventListener('click', cancel, true);
-    return () => window.removeEventListener('click', cancel, true);
+    window.addEventListener('pointerdown', reset, true);
+    return () => {
+      window.removeEventListener('click', cancel, true);
+      window.removeEventListener('pointerdown', reset, true);
+    };
   }, []);
   return {
     onDragStart: () => {
@@ -112,7 +173,7 @@ export function userMenuClickAction({
   fromPins: boolean;
   surface: UserMenuSurface;
 }): TrackActionInput {
-  const layout = signedIn ? USER_MENU_LAYOUT : USER_MENU_SIGNED_OUT_LAYOUT;
+  const layout = getUserMenuLayout({ signedIn, mobile: surface === 'mobile' });
   return {
     type: 'UserMenu_Click',
     details: { item: id, group: findUserMenuGroup(layout, id) ?? null, pinned: fromPins, surface },
@@ -147,6 +208,13 @@ export function useTrackHeaderOpen(surface: UserMenuSurface) {
 
 export const isPinKey = (event: React.KeyboardEvent) =>
   event.key.toLowerCase() === 'p' &&
+  !event.altKey &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  !event.shiftKey;
+
+export const isMuteKey = (event: React.KeyboardEvent) =>
+  event.key.toLowerCase() === 'm' &&
   !event.altKey &&
   !event.ctrlKey &&
   !event.metaKey &&

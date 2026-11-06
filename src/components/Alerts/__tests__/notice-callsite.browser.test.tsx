@@ -373,11 +373,10 @@ describe('RemixGallery / RemixGalleryExplainer', () => {
   // the rendered-DOM statement of the whole feature: the announcement reaches
   // the people who have the thing and nobody else.
   //
-  // 🔴 They are NOT the gate. This project (`component`) is not what CI runs;
-  // the same claim is asserted against the hook's return value in
-  // `useFeatureNotice.audience.test.ts`, in the `unit` project, and THAT is the
-  // one that blocks a merge. These exist because a real render through the real
-  // component is the only place the composition
+  // 🔴 They are NOT the only check. This project (`component`) runs in CI as
+  // `Component tests`; the same claim is asserted against the hook's return value
+  // in `useFeatureNotice.audience.test.ts`, in the `unit` project. These exist because a real
+  // render through the real component is the only place the composition
   // `hasSettings && !isDismissed && isInAudience` is exercised end to end.
   // ---------------------------------------------------------------------------
   test('renders nothing for a user outside the `remixGallery` rollout', async () => {

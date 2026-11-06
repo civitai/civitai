@@ -1,7 +1,7 @@
 // The web-component's StudioBackend: the browser-direct half of the contract in
 // docs/training-studio-web-component.md. Every call runs with a freshly-minted host token and talks
 // to the orchestrator with the client-safe cores — no server routes involved.
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import type { StudioBackend } from '$lib/backend';
 import type {
   GenerateRequest,
@@ -13,10 +13,11 @@ import type {
 } from '$lib/host';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
-import * as label from '$lib/autolabel-core';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
+import * as edit from '$lib/edit-helpers-core';
+import type { TrainingTextCheckInput } from '$lib/training-text';
 import { parseServiceStatus } from '$lib/service-status-core';
 
 /** What an embedding page must inject into <civitai-training-studio> (as a JS property, never an
@@ -24,17 +25,27 @@ import { parseServiceStatus } from '$lib/service-status-core';
 export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
-  /** The main app's trigger word check for one run, called before anything is submitted. Resolves
-   *  `{ ok: false, error }` on a refusal; rejects when the check could not run. A host without it
-   *  cannot start training: the element refuses rather than submit unchecked. */
-  checkTrainingText?(input: {
-    triggerWord: string;
-  }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** The main app's check, called before anything is submitted: a run's trigger word, or the
+   *  prompt of an edit the element is about to generate. Resolves `{ ok: false, error }` on a
+   *  refusal; rejects when the check could not run. A host without it cannot start training or
+   *  generate an edit: the element refuses rather than submit unchecked. */
+  checkTrainingText?(
+    input: TrainingTextCheckInput
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
+   *  its stored modelId unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
    *  and the element shows no status banner and leaves Start enabled. */
   getTrainingStatus?(): Promise<{ available: boolean; message?: string | null } | null>;
+  /** Auto-label is free to the user, so it must run on the host's system-paid path: a workflow
+   *  submitted with the user's token is charged to the user. A host without these makes
+   *  auto-label unavailable rather than charge for it. */
+  autoLabelSubmit?: StudioBackend['autoLabelSubmit'];
+  autoLabelPoll?: StudioBackend['autoLabelPoll'];
   config: {
     orchestratorEndpoint: string;
     orchestratorMode?: 'dev' | 'prod';
@@ -82,6 +93,8 @@ export interface StudioElementHost {
 }
 
 class UnauthorizedError extends Error {}
+
+const AUTO_LABEL_UNAVAILABLE = 'Auto-labeling is unavailable right now.';
 
 export function elementBackend(host: StudioElementHost): StudioBackend {
   // Orchestrator tokens are short-lived and a watched training outlives them, so a 401 anywhere in a
@@ -138,6 +151,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         return detail;
       }),
 
+    // No hook: the stored link stands unchecked.
+    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
+
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 
     datasetBlob: (air, workflowId) =>
@@ -166,16 +182,38 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     },
 
     autoLabelSubmit: (items, mode, media) =>
-      call(async (client) => ({
-        workflowId: await label.submitAutoLabel(client, mode, media, items),
-      })),
+      host.autoLabelSubmit
+        ? host.autoLabelSubmit(items, mode, media)
+        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
-    autoLabelPoll: (workflowId) => call((client) => label.pollAutoLabel(client, workflowId)),
+    autoLabelPoll: (workflowId, signal) =>
+      host.autoLabelPoll
+        ? host.autoLabelPoll(workflowId, signal)
+        : Promise.reject(new Error(AUTO_LABEL_UNAVAILABLE)),
 
     submitTraining: (runs) =>
       call((client) =>
         train.submitTrainingBatch(client, runs, { ...submitOpts(), checkText: hostTextCheck })
       ),
+
+    listEditGenerations: () => call((client) => edit.listEditGenerations(client)),
+
+    editImageQuote: (imageUrl) => call((client) => edit.editImageQuote(client, imageUrl)),
+
+    editImageSubmit: async (req) => {
+      await hostTextCheck({ editPrompt: req.prompt, inputImages: [req.imageUrl] });
+      return { workflowId: await call((client) => edit.submitEditImage(client, req)) };
+    },
+
+    editImagePoll: (workflowId) => call((client) => edit.pollEditImage(client, workflowId)),
+
+    suggestQuote: () => call((client) => edit.suggestQuote(client)),
+
+    suggestSubmit: async (req) => ({
+      workflowId: await call((client) => edit.submitSuggest(client, req)),
+    }),
+
+    suggestPoll: (workflowId) => call((client) => edit.pollSuggest(client, workflowId)),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
@@ -192,11 +230,11 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         )
       ),
 
-    continueRun: (workflowId, fromEpoch, addEpochs, currencies) =>
+    continueRun: (workflowId, fromEpoch, addEpochs, currencies, matureAck) =>
       call((client) =>
         train.continueTraining(
           client,
-          { workflowId, fromEpoch, addEpochs, currencies },
+          { workflowId, fromEpoch, addEpochs, currencies, matureAck },
           { ...submitOpts(), checkText: hostTextCheck }
         )
       ),

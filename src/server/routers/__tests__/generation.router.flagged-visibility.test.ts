@@ -29,6 +29,9 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/services/wildcard-pack.service', () => ({
   resolveWildcardPackForUser: vi.fn(),
 }));
+vi.mock('~/server/services/resource-file.service', () => ({
+  resolveResourceFileForUser: vi.fn(),
+}));
 vi.mock('~/server/services/orchestrator/comfy/comfy.utils', () => ({
   getWorkflowDefinitions: vi.fn(),
   setWorkflowDefinition: vi.fn(),

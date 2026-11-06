@@ -10,7 +10,8 @@ Execution tracking lives in the companion checklist:
 Status: **proposal; decisions settled 2026-08-24, amended through 2026-10-20** (Briant). What
 changed after the 2026-08-25 merged design is listed under _Changes since 2026-08-25_ below.
 
-1. Questions & Answers comments are **not migrated** — dropped with the surface.
+1. Questions & Answers comments are **not migrated** to CommentV3. Amended 2026-11-02 (Briant):
+   they are kept, archived in the `qa_archive` schema before `Thread` is dropped (Phase 6).
 2. The model page **keeps its current UI** for now — the migration swaps the storage under it,
    not the presentation (display depth 1, flat root+replies).
 3. Hard stored-depth cap of **20** with clamp-to-sibling: approved.
@@ -20,19 +21,25 @@ changed after the 2026-08-25 merged design is listed under _Changes since 2026-0
 5. The table is named **`CommentV3` permanently** — no post-teardown rename.
 6. Deletion semantics (settled 2026-08-25, via Koen's counter-proposal): **tombstone when a
    comment has replies, hard-delete when childless**, enforced by `deletedAt` +
-   `parentId ON DELETE RESTRICT`.
+   `parentId ON DELETE RESTRICT`. Extended 2026-10-20: also tombstone a comment a clamped reply
+   answers via `replyToId`, and collapse tombstones on both edges (_Deletion semantics_).
 7. Per-thread notification mute is **in scope** (added 2026-09-01, Briant). PR #4524 shipped it for
    CommentsV2 after this plan was written; consolidation must carry it rather than rediscover it.
    Two tables, `CommentMute` + `CommentTopicMute` — settled 2026-09-01, to be re-reviewed with the
    rest of the schema before Phase 1 starts. See [Thread mute](#thread-mute-phase-5-detail).
-8. The v3 code is **Kysely, not the Prisma client** (added 2026-10-19, Briant): the v3 service,
-   the backfill jobs and the app-level writes that accompany the trigger mirror run on the main
+8. The v3 **reads** are Kysely, not the Prisma client, and the **writes are raw SQL** (amendment
+   below) (added 2026-10-19, Briant): the v3 read service and the backfill jobs run on the main
    app's Kysely clients (`src/server/db/kyselyDb.ts`, already used by five services) —
    `kyselyV3Read`/`kyselyV3Write` wherever `path`, `rootId` or `depth` is touched, since they add
    the `path` type and make the generated columns select-only — with `path` operations as `sql`
    fragments in the query builder. The tables are still declared
    in `schema.full.prisma`, because the Kysely `DB` types are generated from it; nothing calls the
    Prisma delegate for them. Old-table code keeps whatever client it has until Phase 6.
+   **Amended 2026-10-30 (Briant): the write path is raw SQL over a `SqlRunner`**
+   (`commentv3/write.service.ts`, with `prismaRunner(tx)` adapting a Prisma transaction). Each v3
+   write commits with Prisma-only work (the sticker charge, the old-table delete, the
+   `CommentV2` row kept in step), and a Kysely transaction runs on
+   its own connection, so it cannot join them. Reads stay on Kysely.
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
 path as the single source of tree truth, with `rootId`/`depth` generated from it — adopted with
@@ -44,6 +51,49 @@ kept (hot list-page reads), and the ltree operational constraints documented.
 Amendments to the merged design that Koen has not yet reviewed, newest first. Each names the
 section that holds the detail.
 
+- **2026-10-30 — article writes flip before the remaining cross-surface readers move** (Briant;
+  _Phase 4_). Article's writes ship first, keeping each article comment's `CommentV2` row in step
+  for the readers still on the old tables. Every other surface's reads and those readers then
+  move in one flip, then every other surface's writes flip at once in two releases, with the
+  old-row sync kept until Phase 6 (revised 2026-11-03, `docs/plans/comments-v3-write-flip.md`). Comic chapters and model comments write through the same v3 path
+  (`docs/plans/comments-v3-article-flip.md`).
+- **2026-10-30 — v3 writes are raw SQL, not Kysely** (decision 8, amended). Porting the old writes
+  to Kysely instead was rejected: the old code is deleted in Phase 6.
+- **2026-10-22 — the cross-surface readers read CommentV3.** Amendments on the way: the challenge
+  and resource-review counts (were `Thread.commentCount`), the collection judged check and the
+  metrics jobs (were root-thread CommentV2 joins) count live top-level `CommentV3` rows, not `CommentTopic.commentCount`, which counts
+  replies and tombstones; model-comment notifications keep the v1 detail shape and `comment:v1:`
+  dedupe key and address comments by `legacyV1Id` until the model surface flips (_Notifications
+  impact_); the mute filter is `notCommentMuted` over `path`, and `thread-chain.ts` stays for the
+  block guard, the block hide sweep and the v2 lock check (_Thread mute_; the v2 lock check went
+  2026-11-05, release 2 of the write flip, not deployed); the moderator
+  report-queue joins and `csam-holds.queries.ts` stay on the old link tables until `ReportEntity.CommentV3`
+  (_Moderator app impact_); two `createdAt` indexes (`CommentV3`, `CommentV3Reaction`) are added for
+  the per-minute notification cursors; CommentV3 is read through Kysely or raw SQL, never the
+  Prisma delegate (decision 8).
+- **2026-10-21 — the Phase 3 backfill is built** as steps of one admin endpoint that reuse the
+  mirror's row functions, with an `unmirrored` report (skipped rows by reason), a `parity`
+  report (the old-versus-new checks in the checklist, as counts with sample ids) and the two
+  residue sweeps. Run on prod 2026-10-21, converged with parity all zero. The parity monitor job
+  and the reverse-copy script (not yet proven on a prod sample) followed the same day, and the
+  reader re-point on 2026-10-22.
+- **2026-10-20 — the Phase 2 mirror is built (`20261120120000_comment_v3_mirror`), and the
+  moderation work moves to Phase 4.** The lock pair (`toggleLockCommentsThread`) and the mutes
+  (`toggleThreadMute`/`toggleSectionMute`) are mirrored by triggers on `Thread` and `ThreadMute`,
+  with no app-level write in Phase 2. The v3 service, the Clavata trigger migration, the
+  `entity-moderation.ts` consumer, the text-scan profile/entity type and `ReportEntity.CommentV3`
+  move to the first Phase 4 write flip: under dual-write every `CommentV3` row mirrors a row the
+  old triggers already scanned. The rules the mirror adds (kept v1 ids, tombstone collapse,
+  `SECURITY DEFINER` with `EXECUTE` revoked from `PUBLIC` and the sequence grant it still needs,
+  the deferred topic count, and `SKIP LOCKED` on every row a deleter or an entity cascade can
+  hold, which leaves a write unmirrored for the backfill instead of waiting) are listed under
+  _Phase 2_. CDC for `CommentV3` lands with its handler before the first write flip
+  (_Phase 2_, last paragraph).
+- **2026-10-20 — D6 tombstones a comment a clamped reply answers (`replyToId`), and collapses
+  tombstones on both edges.** A hard delete would fire the `replyToId SET NULL`, whose lock on
+  the reply can deadlock an entity cascade against an edit of it. The mirror's delete is a
+  two-step lock (`NO KEY UPDATE SKIP LOCKED` probe, then plain `FOR UPDATE`); the v3 service must
+  match (_Deletion semantics_, _Phase 2_).
 - **2026-10-20 — `CommentTopic` is list-partitioned on `entityType`, one partition per enum
   value, each with an `ON DELETE CASCADE` FK to its entity table** (Koen's proposal, 2026-10-19).
   This replaces the per-entity `AFTER DELETE` triggers: the link is a visible constraint, a topic
@@ -58,9 +108,9 @@ section that holds the detail.
   2026-03-04; comic chapters key on it, and one `commentv3_thread_entity` function resolves
   `Thread` rows for both the mirror and the backfill (keying note above _Phase 1_).
 - **2026-10-19 — `CREATE EXTENSION ltree` is installed on prod** (1.3, schema `public`; verified
-  on the replica). The Phase 0 infra sign-off is done; dev, CI and local still need it before the
-  migration runs there.
-- **2026-10-19 — the v3 service, backfill and app-level writes use Kysely, not the Prisma
+  on the replica). The Phase 0 infra sign-off is done; dev already had it (seen at the
+  2026-10-20 dev apply); CI and local still need it before the migration runs there.
+- **2026-10-19 — the v3 service and backfill use Kysely, not the Prisma
   client** (decision 8). The Prisma-only constraints on `path` (blocker 5) fall away; the DDL,
   triggers and ltree sign-off are unchanged.
 - **2026-10-19 — `rootId`/`depth` stay `GENERATED ALWAYS` columns, as in Koen's draft.** The
@@ -158,8 +208,8 @@ prod on 2026-10-16; the Phase 3 topic recount covers any residue regardless.
    does not infer it for a generated column, and the drift tool compares nullability). `nlevel`,
    `subltree` and the ltree I/O functions are IMMUTABLE, as the expression requires (checked in
    prod's `pg_proc` on 2026-10-19, once the extension was installed, and the expression evaluated
-   on the replica); the exact DDL still has to run once on an ltree-enabled database — Phase 1
-   applies it on dev first.
+   on the replica); the exact DDL ran on dev and prod on 2026-10-20
+   (`20261110120000_comment_v3_schema`).
 7. **Crucible is a comment surface** (`Thread.crucibleId`, #5780, after this plan was written):
    add `'crucible'` to `CommentEntityType`, the backfill, the topic copy and the flip order.
 8. **`CommentTopic` as first drafted had no FK to its entity** (a single FK cannot reference 13
@@ -349,7 +399,9 @@ New writers and readers the phases below now include: the text-scan / scam-scan 
 `creator-score-self-activity.service.ts`, `bot-account-detection/cohort.ts`, and four raw
 `Thread.commentCount` reads in `challenge.service.ts`. "Hide in place" (#5076) removed
 `hiddenCount` and the hidden-count `groupBy`. `commentsv2.service.ts` now derives reply ancestry
-server-side (#5622), ignoring the client's `parentThreadId`.
+server-side (#5622), ignoring the client's `parentThreadId`. (Built 2026-11-05, release 2 of the write flip, not deployed:
+`commentv2.controller.ts` and the v2 write paths are deleted; comment visibility is each surface's
+`assertVisible` in `commentv3/surfaces.ts`.)
 
 ## Why the current system is expensive
 
@@ -371,7 +423,7 @@ fallback chain is re-implemented in at least 9 places (notifications ×4, permal
 
 **"Load more replies" costs a recursive CTE.** Because reply pages live in child threads,
 `getReplyThreads` walks `Thread.parentThreadId` recursively, then fetches comments for the selected
-thread ids, then regroups them in JS (`commentsv2.reply-threads.ts`). It works, but every level of
+thread ids, then regroups them in JS (`commentsv2.reply-threads.ts`, deleted 2026-11-05, release 2 of the write flip, not deployed). It works, but every level of
 the tree is a join through a second table, and reply counts require trigger-maintained
 `Thread.commentCount` plus a per-request `groupBy`.
 
@@ -401,7 +453,7 @@ CREATE TABLE "CommentTopic" (
   "entityType"   "CommentEntityType" NOT NULL,
   "entityId"     integer             NOT NULL,
   "locked"       boolean             NOT NULL DEFAULT false,
-  "commentCount" integer             NOT NULL DEFAULT 0,  -- trigger-maintained; hot list reads stay O(1)
+  "commentCount" integer             NOT NULL DEFAULT 0,  -- trigger-maintained (deferred constraint trigger, installed by the Phase 2 mirror migration); hot list reads stay O(1)
   PRIMARY KEY ("entityId", "entityType")
 ) PARTITION BY LIST ("entityType");
 
@@ -516,9 +568,9 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   list pages (resource-review cards), where count-on-read would mean N subqueries per page.
 - **`replyToId`** preserves who a clamped reply was answering (display-only, `SET NULL` on
   delete, CHECK'd to require a parent) — replaces the earlier "keep an @mention in the content".
-- **Deletion is structural.** `deletedAt` tombstones a comment that has replies;
-  `parentId ON DELETE RESTRICT` makes a childless hard-delete that races a new reply _fail_
-  instead of orphaning. Tombstones stay in indexes and pages — they render as "[deleted]"
+- **Deletion is structural.** `deletedAt` tombstones a comment that has replies or that a
+  clamped reply answers (`replyToId`); `parentId ON DELETE RESTRICT` makes a hard-delete that
+  races a new reply _fail_ on the `parentId` edge instead of orphaning. Tombstones stay in indexes and pages — they render as "This comment was deleted"
   placeholders, which is the point.
 - **`CommentTopic` is a required parent** (FK with CASCADE): the service upserts the topic on
   first comment (replacing lazy Thread creation 1:1) with `ON CONFLICT ("entityId", "entityType")`,
@@ -528,7 +580,7 @@ Schema-review notes (2026-08-25, merged with Koen's counter-proposal):
   check via `path` (`@>` on the GiST index) at write time. Stronger and simpler than v1's
   one-level propagation; note it in the moderation section.
 - **ltree operational constraints**: `CREATE EXTENSION ltree` is installed on prod (2026-10-19,
-  1.3 in `public`) and has to exist on every other database the migration runs against (dev, the
+  1.3 in `public`) and has to exist on every other database the migration runs against (dev has it; the
   CI Postgres service, local docker-compose). The schema declares the column as
   `Unsupported("ltree") @default(dbgenerated())` for type generation only (decision 8: no Prisma
   delegate touches the table); prisma-kysely omits the column, so the v3 Kysely handles add it as
@@ -674,9 +726,9 @@ topic alone — the entity still exists.
   raw SQL, since Prisma has no partition syntax, and `schema.full.prisma` declares one
   `CommentTopic` model with `@@id([entityId, entityType])` matching the DDL and **no
   `@relation` to any entity table** — the FKs live on the partitions, so a declared relation
-  would make the schema-drift gate report 13 missing constraints (the Phase 1 dev apply checks
-  that `db:generate`, `db:check-generated` and `db:moderator:pull` tolerate the 13 partition
-  children); never `UPDATE` a topic's `entityType` (a cross-partition update is a delete plus
+  would make the schema-drift gate report 13 missing constraints (`db:generate` and
+  `db:check-generated` passed with the partitions in prod; `db:moderator:pull` introspects the
+  separate moderator database, so they never reach it); never `UPDATE` a topic's `entityType` (a cross-partition update is a delete plus
   insert, which the `CommentV3` FK rejects while comments exist); retiring a type is delete its
   rows then `DROP TABLE` the partition, not `DETACH`, since `CommentV3` references the parent.
 - Keying: `ComicChapter` by its unique SERIAL `id` (its PK is composite); app listings by
@@ -688,10 +740,11 @@ topic alone — the entity still exists.
   NO ACTION both see the children go within the same statement. A single-row delete of a parent
   whose reply exists still fails, which is the D6 race guard. Koen reported testing the partition
   form (insert, upsert, lookup, lock, cascade delete) on 18.6 on 2026-10-19 (results not
-  recorded here); the Phase 1 dev apply re-runs the reply-tree case from the entity side, one
-  cascade level deeper.
+  recorded here); the mirror behaviour test runs the reply-tree case from the entity side, one
+  cascade level deeper (the dev apply did not repeat it).
 - `Report` rows whose comment is gone stay, with no target. D6 already accepts this for childless
-  hard-deletes, so the moderator queue has to tolerate it either way.
+  hard-deletes, so the moderator queue has to tolerate it either way. A tombstone drops its report
+  links too, so the same holds for it.
 - The event-points hook only recounts a user's comments when the comment service deletes them; a
   cascade bypasses it and awarded points stand. The 2026-10-16 FK cascade already does the same:
   an entity hard-delete removes its comments without the hook, and the points stand — not a
@@ -699,8 +752,8 @@ topic alone — the entity still exists.
 - Volume: the ~6K comments a month that used to orphan are the measure — a few hundred
   entity-with-comments deletes a day. Nothing to batch.
 - **Cost of a big cascade — benchmarked 2026-10-16** (Postgres 18.6, the DDL and index set of
-  that date, before the topic was partitioned — the Phase 1 dev apply re-runs it from the entity
-  side; 326K-row table, reaction- and topic-count triggers live, 3 reactions per comment).
+  that date, before the topic was partitioned, and not re-run from the entity side since;
+  326K-row table, reaction- and topic-count triggers live, 3 reactions per comment).
   Articles are the only entity with threads over 200 comments (26 of them; the largest is 5,361
   comments, p90 of those 26 is 3,408), and articles are hard-deleted (`article.service.ts`
   `tx.article.delete`, plus `deleteMany` on account deletion).
@@ -722,7 +775,7 @@ topic alone — the entity still exists.
 -- Top-level pages, three sort modes (Oldest scans the newest index backward). Deliberately NOT
 -- filtered on hidden: hidden rows are rare, a residual filter is cheap, and the same index then
 -- serves the moderator hidden-comments view (which would otherwise have no index at all).
--- Tombstoned rows stay in — they render as "[deleted]" placeholders.
+-- Tombstoned rows stay in — they render as "This comment was deleted" placeholders.
 -- Newest/Oldest lead with createdAt, not id: once v1 rows take new ids from the shared sequence,
 -- id order is no longer creation order (ID strategy below). id is the keyset tiebreak.
 CREATE INDEX commentv3_top_newest    ON "CommentV3" ("entityType", "entityId", "createdAt" DESC, "id" DESC)     WHERE "parentId" IS NULL;
@@ -733,6 +786,7 @@ CREATE INDEX commentv3_entity ON "CommentV3" ("entityType", "entityId");
 -- Reply pages and capped reply counts under one parent (hidden second so count branches don't cross)
 CREATE INDEX commentv3_replies_newest    ON "CommentV3" ("parentId", "hidden", "createdAt", "id");
 CREATE INDEX commentv3_replies_reactions ON "CommentV3" ("parentId", "hidden", "reactionCount" DESC, "id" DESC);
+-- Phase 3 may recreate the two replies indexes WHERE "parentId" IS NOT NULL before the load (checklist, Phase 3).
 -- Auto-expand a page of roots
 CREATE INDEX commentv3_root_depth ON "CommentV3" ("rootId", "depth");
 -- Subtree reads: re-root, ancestry / lock checks, on-demand totals
@@ -789,17 +843,34 @@ cascades a delete through the whole subtree (destroying other users' replies), w
 the child thread and quietly orphans them. Neither survives into the new model. Instead:
 
 - A deleted comment with replies gets `deletedAt` set; content is blanked and the author hidden at
-  read time; the row keeps rendering as a "[deleted]" placeholder so its replies stay in place.
-- A childless comment hard-deletes. `parentId ON DELETE RESTRICT` makes this race-proof: a
-  hard-delete that loses a race against a new reply **fails** (and the service retries as a
-  tombstone) rather than orphaning the reply.
-- Account deletion tombstones the user's parented comments and hard-deletes the rest — confirm
-  against privacy/GDPR expectations that a tombstone (no content, no author) satisfies erasure;
-  retention of _other users'_ replies is unchanged from v2 either way. The order matters: `userId`
-  is `ON DELETE CASCADE`, so a raw `DELETE FROM "User"` that has not tombstoned first fails on
-  `parentId ON DELETE RESTRICT` as soon as one of the user's comments has a reply (verified
-  2026-10-20). It fails closed — nothing is lost — but the by-hand erasure path has to run the
-  tombstone pass before the row delete.
+  read time; the row keeps rendering as a "This comment was deleted" placeholder so its replies stay in place.
+- A childless comment hard-deletes. `parentId ON DELETE RESTRICT` makes this race-proof on the
+  `parentId` edge: a hard-delete that loses a race against a new reply **fails** (and the service
+  retries as a tombstone) rather than orphaning the reply. `replyToId` is `SET NULL`, so a
+  hard-delete racing a clamped reply would silently drop the answered link instead of failing:
+  the v3 delete must take the mirror's two-step row lock (a `NO KEY UPDATE SKIP LOCKED` probe, then
+  a plain `FOR UPDATE`) before checking `parentId` and `replyToId` dependents, not rely on the
+  failure.
+- A comment that a clamped reply answers (`replyToId`) is tombstoned like one with replies, and a
+  tombstone whose last reply or last answerer is deleted is deleted with it, walking up through
+  tombstoned ancestors on both edges; otherwise childless "[deleted]" rows accumulate. The Phase 2
+  mirror does this; the v3 service must too.
+- A tombstone keeps its `userId`, timestamps, position and any `CommentMute` rows; only
+  `content` is blanked, and its `CommentV3Report` links are deleted (as a hard delete's cascade
+  does), so its reports leave the queue instead of linking to a placeholder. The old side drops the row entirely, so a self-delete leaves a link to a
+  live account the old side did not keep. Decided 2026-10-29: keep `userId`, with the display
+  hiding the author (`docs/plans/comments-v3-article-flip.md`).
+- Account deletion tombstones the user's parented comments and hard-deletes the rest. A tombstone
+  as stored (blank content, `userId` kept) satisfies erasure, because account deletion keeps the
+  `User` row and removes its personal details (decided 2026-10-29);
+  retention of _other users'_ replies is unchanged from v2 either way. A raw `DELETE FROM "User"`
+  cannot work while any of the user's comments has a reply: `userId` is `ON DELETE CASCADE`, so
+  the cascade tries to remove the tombstone too and `parentId ON DELETE RESTRICT` rejects it,
+  tombstoned or not (verified 2026-10-20, both orders). It fails closed, and nothing in the app
+  hard-deletes a `User` row: erasure is `deleteUser` (soft delete, PII nulled) plus
+  `removeAllContent`, whose comment deletes the mirror turns into tombstones with blank content
+  and hard-deletes. If a hard User delete is ever wanted, tombstones need an owner that survives
+  it (a sentinel user, or `userId` nullable with `SET NULL`) — a schema decision, not a recipe.
 
 ## Moderation, blocking, and comment-gating — preserve-behavior checklist
 
@@ -854,24 +925,25 @@ parentId = id`) → per-comment `locked` is now **subtree-scoped**: the write pa
 
 - Mute/ban/onboarding gating is `guardedProcedure` (`trpc.ts` — `isOnboarded` + `isMuted`) on both
   `comment.upsert` and `commentv2.upsert`. It's router-level and the routers don't change; the only
-  requirement is that the unified upsert stays behind `guardedProcedure`.
+  requirement is that the unified upsert stays behind `guardedProcedure`. (`commentv3.create` and
+  `update` are; `commentv2` is deleted. Rate-limit keys: `commentv3:write`, `commentv3:mute`.)
 - The scam auto-mute also bulk-hides the muted user's comments — its dual-table branches are in
   the Phase 5 cron-jobs section.
 - `throwOnBlockedCommentContent` (content blocklist) runs on create **and** edit in all three
   write paths (`commentsv2.service.ts`, `comment.controller.ts`, `comics.router.ts`); carries over
-  with the service.
+  with the service. (The v2 and comics write paths are deleted, 2026-11-05, release 2 of the write flip, not deployed.)
 - Every write also calls `queueScamScan` (text-scan pipeline, 2026-10); the new write path must
   keep that call, and `text-scan` needs a `CommentV3` profile and entity type.
-- Comment **reads** are entity-gated too: `assertCommentEntityVisible` in
-  `commentv2.controller.ts` checks bounty/bountyEntry/crucible visibility before returning a
-  thread. The row's `entityType`/`entityId` makes that one lookup; keep it.
+- Comment **reads** are entity-gated too: each surface's `assertVisible` in `commentv3/surfaces.ts`
+  (bounty, bountyEntry, crucible, storyline and comic chapter; it was `assertCommentEntityVisible`
+  in the deleted `commentv2.controller.ts`) checks visibility before returning a thread. The row's `entityType`/`entityId` makes that one lookup; keep it.
 - Verified: there is **no** per-entity "comments disabled" flag anywhere — entity/comment locks are
   the only mechanism, so nothing else needs a home in the new model.
 
 ## ID strategy — the part that keeps history working
 
 Old ids are load-bearing in three places: notification `details` rows carry a `version`
-discriminator (`comment.detail-fetcher.ts` splits on it), permalinks (`/comments/v2/<id>`,
+discriminator (`comment.detail-fetcher.ts` splits on it), permalinks (`/comments/<id>`, alias `/comments/v2/<id>`,
 `?dialog=commentThread&highlight=<id>`), and ClickHouse `commentEvents.commentId` (which already
 mixes both id spaces with no discriminator — pre-existing corruption we can stop, not fix).
 
@@ -887,11 +959,12 @@ Plan:
   space — no headroom guessing, no `setval` choreography at each flip, and dual-written rows carry
   the same id on both sides by construction.
 - **Legacy v1 rows get new ids**, with the original id in `legacyV1Id` (unique). The notification
-  detail-fetcher's `version !== 2` branch resolves via `legacyV1Id` — that shim is permanent (old
-  notification rows never go away) but tiny. A v1 row written _during_ dual-write already holds an
-  id that is unique across all three tables (it came from the shared sequence), so the mirror
-  keeps it as the V3 id and sets `legacyV1Id` to the same value; only pre-existing v1 rows are
-  re-numbered, by the backfill.
+  detail fetcher resolves a model-page row through `legacyV1Id` — that shim is permanent (old
+  notification rows never go away) but tiny. A v1 row allocated by the shared sequence (id above
+  `commentv3_v1_id_floor()`, the old sequences' frozen position) holds an id that is unique
+  across all three tables, so the mirror keeps it as the V3 id with `legacyV1Id` set to the same
+  value; an older row is renumbered from the shared sequence by whichever of the mirror (on its
+  first touch) or the backfill reaches it first.
 - **Ids are identities, not timestamps** (added 2026-10-19). Today v2 sorts Newest by `id DESC`.
   That stops being creation order the moment the v1 backfill runs under dual-write: a comment
   posted on a model during the backfill takes a sequence id _below_ the ids handed to older
@@ -908,6 +981,8 @@ Plan:
 
 The tRPC contract (`commentv2` router shapes) and the client (`CommentsProvider`, `Comment.tsx`)
 stay as-is — the swap happens inside the service layer, so UI churn is near zero for v2 surfaces.
+(Superseded: the contract moved to the `commentv3` router, and the `commentv2` router is deleted,
+2026-11-05, release 2 of the write flip, not deployed.)
 
 **Phase 0 — measure & decide.** Measured 2026-10-16 — results in the viability review above.
 What was asked for: row counts for `Comment`/`CommentV2`/`Thread`; v1 depth distribution (rows with
@@ -934,12 +1009,13 @@ reading a column, and the join is consistent inside a re-pack transaction becaus
 updates `Thread` in the same statement. Comic chapters and app listings key on `ComicChapter.id`
 and `app_listings.serial_id` (_Entity deletion_, keying).
 
-**Phase 1 — schema.** `CREATE EXTENSION ltree` (on prod since 2026-10-19; dev, CI and local as
+**Phase 1 — schema.** `CREATE EXTENSION ltree` (on prod since 2026-10-19; already on dev; CI and local as
 needed), then the DDL above: new tables
 (`CommentV3`, `CommentTopic` with its 13 partitions and their entity FKs, `CommentV3Reaction`,
 `CommentV3Report`, `CommentMute`, `CommentTopicMute`), indexes, `CHECK` constraints, the
 `commentv3_set_path` tree trigger, plus the count triggers
-(`CommentTopic.commentCount`, and a port of `update_comment_reaction_count` — the trigger on
+(`CommentTopic.commentCount`, created immediate here and made deferred by the Phase 2 mirror
+migration, and a port of `update_comment_reaction_count` — the trigger on
 `CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). The tables are
 declared in `schema.full.prisma` so the Kysely `DB` types are generated (decision 8): `path` as
 `Unsupported("ltree") @default(dbgenerated())`, `rootId`/`depth` as `Int @default(dbgenerated())`
@@ -952,59 +1028,194 @@ sweep:
 
 - **Clavata auto-moderation triggers**: `trg_moderation_comment`/`trg_moderation_commentv2`
   (migration `20250521094141`) enqueue `('ModerationRequest', entityType, id)` into `JobQueue` on
-  insert/content-update. Both are still live in prod, but the text-scan cutover
-  (`text-scan/clavata-cutover.ts`) is draining them per entity. If comments have cut over before
-  Phase 1, CommentV3 needs no trigger — `queueScamScan` on the write path plus a text-scan profile
-  cover it. If not, CommentV3 needs the equivalent trigger, which needs a `CommentV3` value in the
-  `EntityType` pg enum — an additive enum change, so the expand/contract deploy-first rule applies
-  — and `entity-moderation.ts` must consume the new value. Phase 1 (2026-10-20) wrote that trigger
-  as its own migration and left it unapplied: the consumer's flagged path files a `Report`, which
-  needs the v3 report plumbing, so consumer and trigger ship together in Phase 2, after the
-  backfill or with the trigger disabled while it runs; the text-scan profile and entity type move
-  with them, because a profile without an adapter logs a verdict as acted on and acts on nothing.
-  Either way the text-scan verdict and
-  retention ledgers persist `Comment`/`CommentV2` ids, so v1 ids need the `legacyV1Id` alias there
+  insert/content-update; the text-scan cutover (`text-scan/clavata-cutover.ts`) drains them per
+  entity. `CommentV3` is moderated exactly as `CommentV2` is (decided 2026-10-30): an `EntityType`
+  value plus `trg_moderation_commentv3` (`20261211120000_comment_v3_moderation_trigger`, applied
+  2026-10-30), consumed by `entity-moderation.ts`, with a `CLAVATA_TARGETS` entry owned on
+  `CommentV2`'s rollout (`rolloutFor()` in `text-scan/mode.ts`). The trigger fires only on direct
+  writes (`WHEN pg_trigger_depth() = 0`), so under dual-write a mirrored row, which the old
+  table's trigger already queued, is not scanned twice; a backfill rerun calls the mirror's row
+  functions outside a trigger, so its copies are queued while the trigger is enabled. Phase 1
+  (2026-10-20) had written the trigger and pulled it out (#6449) for that double scan. The
+  ClickHouse `moderationRequest.entityType` column is `LowCardinality(String)`, so it needs no
+  change. The text-scan verdict and retention ledgers persist `Comment`/`CommentV2` ids, so v1 ids need the `legacyV1Id` alias there
   too.
 - **`packages/civitai-db-schema/src/kysely/updated-at-tables.ts`** is generated from the
   `@updatedAt` columns in `schema.full.prisma` (`pnpm run db:generate`): a table whose `updatedAt`
-  lacks `@updatedAt` silently never updates. Under decision 8 every v3 writer is a Kysely writer,
-  so this is the only thing that maintains `updatedAt`.
+  lacks `@updatedAt` silently never updates. The v3 write path is raw SQL (decision 8, amended),
+  which the plugin never rewrites, so an edit stamps `CommentV3."updatedAt"` itself; a Kysely
+  writer of the table gets it from this list.
   Deploy the regenerated client _before_ applying the enum-bearing migration (expand/contract
   rule in CLAUDE.md). Migrations applied manually as always.
 
 **Phase 2 — dual-write, deployed to production first.** Mirror at the database, not in the
 services: `AFTER INSERT/UPDATE/DELETE` triggers on `Comment` and `CommentV2` (and on the reaction,
-report and `ThreadMute` tables) write the new tables in the same transaction as the old write.
+report, `Thread` (the lock) and `ThreadMute` tables) write the new tables in the same transaction
+as the old write.
 This is what the viability review's blockers 2 and 3 require — database cascades (model →
 comments, v1 parent → replies, `Thread` → `CommentV2`, account deletion's post/model/article
 cascades) and the writers that bypass the services (`comics.router.ts`, `scam-cleanup.service.ts`
 raw SQL, ban `removeComments`) never reach application code, and an app-level mirror would leave
 `CommentV3` holding rows the old side no longer has. The trigger applies the deletion rule itself:
-tombstone when the `CommentV3` row has children, hard-delete otherwise — mirroring a v2 delete
+tombstone when the `CommentV3` row has replies or is answered by a clamped reply, hard-delete
+otherwise — mirroring a v2 delete
 one-for-one would hit `parentId ON DELETE RESTRICT` and fail the user's delete. A reply whose
-parent has not been backfilled yet is the other trap (blocker 1): the insert trigger walks
-`Thread.commentId → CommentV2.threadId` to the root and copies any missing ancestors first, so the
-`parentId` FK always resolves. Before the comment it upserts the `CommentTopic`
-(`ON CONFLICT DO NOTHING` on the full PK); if the entity row is already gone — a comment insert
-racing an entity hard-delete — the partition FK rejects the topic, the mirror skips the V3 write
-and the old-side write proceeds. The reverse race, entity delete → `Thread` cascade → mirror
-delete, must not collide with the partition cascade in the same statement (checked on the
-Phase 1 dev apply). Both the mirror and the backfill resolve a `Thread` row to its
+parent has not been backfilled yet is the other trap (blocker 1): the insert trigger copies any
+missing ancestors first (the loop bullet below). Before the comment it ensures the `CommentTopic`
+(`commentv3_ensure_topic`: `FOR KEY SHARE SKIP LOCKED` on the topic row, else on the entity row,
+then an `ON CONFLICT DO NOTHING` insert on the full PK followed by a second
+`FOR KEY SHARE SKIP LOCKED` probe of the row, since an insert that no-opped means a concurrent
+creator won and the caller's comment insert needs the row held before an entity cascade can take
+it); if the topic row is held by a deleter or cascade, if that second probe finds it held, or if
+the entity row is already gone or held by an entity hard-delete — a comment insert racing that
+delete — nothing is inserted, the
+mirror skips the V3 write and the old-side write proceeds. The reverse race, entity delete → `Thread` cascade → mirror
+delete, must not collide with the partition cascade in the same statement (covered by
+`comment-v3-mirror.sql.behavior.test.ts`; the mirror's delete never hard-deletes a row with
+replies or one a clamped reply answers, so the two cascades cannot collide on `parentId RESTRICT`). Both the mirror and the backfill resolve a `Thread` row to its
 `(entityType, entityId)` through the same `commentv3_thread_entity` function, so the two cannot
 disagree; comic chapter is the one entity that needs a join there (see the keying note above
-Phase 1). `toggleLockCommentsThread` still needs an app-level pair (set
-`Thread.locked` and `CommentTopic.locked` together), and `toggleThreadMute`/`toggleSectionMute`
-write `CommentMute`/`CommentTopicMute` directly. Those app-level writes, and everything in the v3
-service from Phase 4 on, are Kysely transactions on `kyselyV3Write` (decision 8). Note the
-`no-io-in-transaction` guard — same-DB SQL inside a transaction is fine — and run
-`test:lint-rules` whenever a transaction is touched.
+Phase 1). Built 2026-10-20 as migration `20261120120000_comment_v3_mirror`, with these
+particulars:
+
+- The lock and the mutes mirror the same way, so `toggleLockCommentsThread`,
+  `toggleThreadMute` and `toggleSectionMute` need no app-level pair until their surfaces flip (since
+  2026-11-05, release 2 of the write flip, not deployed: the v2 toggles are deleted, and `commentv3/section.service.ts` writes
+  `CommentMute`, `CommentTopicMute` and the topic lock directly): a
+  root `Thread` insert or `locked` update upserts the topic's `locked` (so the locked empty
+  thread the lock toggle creates has a locked topic, and the first `Thread` for a model whose
+  v1 mirror already made the topic still locks it), a v1 insert into a model that already has a
+  `Thread` copies that lock into the topic it creates, a reply thread's `locked` sets the
+  comment's `locked`, and a `ThreadMute` row becomes a `CommentMute` on the comment its thread
+  hangs off or a `CommentTopicMute` on the entity.
+- A v1 row keeps its id when it is above `commentv3_v1_id_floor()`, the position the old
+  `Comment_id_seq`/`CommentV2_id_seq` froze at when Phase 1 re-pointed the defaults, captured
+  when the mirror migration ran; an older row is renumbered, as the backfill would.
+- Tombstone collapse (D6) also applies to a v1 subtree cascade and a user content wipe.
+- A reply deeper than the cap, live or copied as a missing ancestor, is clamped exactly as the
+  backfill clamps: parent = the ancestor at depth 19, `replyToId` = the comment answered.
+- A reaction, report link or mute on a comment not yet in `CommentV3` copies the comment first.
+- The trigger functions are `SECURITY DEFINER`: prod has roles with write access to the old
+  tables and only read access to the new ones, and their writes must not fail inside the
+  mirror. Their `EXECUTE` is revoked from `PUBLIC`: firing needs no grant, but creating a trigger
+  does, so no other table owner can attach a definer function to a table of their own and write
+  `CommentV3` through it. An update that finds no v3 row copies the comment and then applies its
+  values again, because a copy already in flight elsewhere makes the second copy a no-op and
+  would otherwise drop a hide, a ToS flag or a lock that raced it. (The shared-sequence default
+  on `Comment`/`CommentV2` is evaluated as the inserting role, so those roles still need `USAGE`
+  on `comment_shared_id_seq`, granted by hand after Phase 1.)
+- The mirrored delete locks the row in two steps instead of catching `parentId RESTRICT`: a
+  `NO KEY UPDATE SKIP LOCKED` probe yields to a `FOR UPDATE` holder (a deleter or an entity
+  cascade removing the row, which is left to that holder) and to another delete's probe of the
+  same tombstone (two sibling deletes collapsing one parent; a `KEY SHARE` probe would deadlock
+  on the upgrade, and the yielding side leaves the childless tombstone the Phase 3 sweep
+  removes), then a plain `FOR UPDATE` waits for `KEY SHARE` holders, i.e. replies in flight,
+  including a clamped reply holding the depth-19 ancestor. Once held no reply can be in flight. A comment a clamped reply answers is tombstoned like one with
+  replies: hard-deleting it would fire the `replyToId SET NULL`, whose lock on that reply can
+  deadlock an entity cascade (which deletes thread by thread) against an edit of it.
+- `CommentTopic.commentCount` is now maintained by a **deferred** constraint trigger (the mirror
+  migration replaces the Phase 1 immediate one; the function is `SECURITY DEFINER` because a
+  deferred trigger runs as the session role at commit). Every comment on an entity touches that
+  one row, and holding it mid-transaction deadlocks a multi-row delete against a concurrent
+  reply: the delete holds the topic row from its first row and wants the old parent of its next
+  row, on which the reply already holds `KEY SHARE` while it waits for the topic row. Deferred,
+  both take the topic row last, at commit. The delete branch probes the topic row with
+  `KEY SHARE SKIP LOCKED` first: an entity delete whose topic cascade fires before its `Thread`
+  cascade holds the topic `FOR UPDATE` while it waits on a row the comment delete holds, and the
+  decrement would otherwise deadlock at commit. The topic is going with the entity, so the skipped
+  decrement costs nothing unless that entity delete later rolls back (count drift, caught by the
+  Phase 3 parity pass). That rests on the entity cascade being the only thing that ever holds a
+  `CommentTopic` row `FOR UPDATE`: an explicit `SELECT ... FOR UPDATE` on a topic row (a Phase 3
+  sweep, an app lock) would make every concurrent comment delete skip its decrement. The insert
+  branch needs no probe: the reply already holds `KEY SHARE` on the topic row from
+  `commentv3_ensure_topic`, which its own `NO KEY UPDATE` does not wait behind.
+- Missing ancestors are collected in a loop and copied top-down, not recursively: an unmirrored
+  chain can be hundreds deep, and that many nested plpgsql frames would exhaust
+  `max_stack_depth` inside the user's write. The chain's ids are collected first and the old
+  rows then locked `FOR KEY SHARE SKIP LOCKED` in one statement; the comment a lock, mute,
+  reaction or report trigger copies (or attaches to) is locked the same way, and a skipped row
+  leaves the reaction, report, mute or lock unmirrored. The same applies to every `CommentV3`
+  row the mirror's own FK checks or writes would otherwise wait on: the clamp's parent and the
+  depth-19 ancestor a clamped reply attaches to (a bulk delete can hold it `FOR UPDATE` while
+  waiting on a `Thread` row the reply holds), the topic row and, when the topic has to be
+  created, the entity row (an entity delete holds both while its `Thread` cascade waits on the
+  reply), the comment a reaction, report or mute links to and the comment a reaction un-links
+  from (its count update touches the comment row; report and mute deletes lock only their own
+  join row), and the rows a mirrored edit, lock toggle or delete touches (an entity cascade can be removing them while it
+  waits on the old row the edit or delete holds). An edit or lock toggle probes with
+  `KEY SHARE SKIP LOCKED`, which yields only to a deleter or cascade, and then runs a plain
+  `UPDATE` that waits for any other holder (a reaction count update, another toggle, a
+  `replyToId SET NULL`); skipping those would drop the edit on v3. So a mirroring transaction
+  never waits on a row a deleter or an entity cascade can hold, and none of this needs a
+  subtransaction. The mirrored delete's `FOR UPDATE` can wait on a reply's `KEY SHARE`, but
+  never on one whose other holdings the delete needs: a v2 reply holds `KEY SHARE` on its reply
+  `Thread` row (or on the old parent, when it created that `Thread`); that row's
+  `commentId SET NULL` action takes `FOR UPDATE` because `commentId` is unique, fires before the
+  mirror, and waits for the reply; a v1 reply holds it on the old parent; a clamped reply holds
+  it on the depth-19 ancestor and on a `Thread` row the deleter wants only inside an entity
+  cascade, which already holds the ancestor `FOR UPDATE` and so makes the reply's own
+  `SKIP LOCKED` probes yield. That rests on RI action triggers firing before `commentv3_mirror`
+  (name order) and on `Thread.commentId` keeping a full unique index (checklist, Phase 2). The
+  only holder that
+  conflicts with `KEY SHARE` is a deleter, so who yields depends on who locked first. If the
+  copy locked first, the deleter waits, then its mirror delete tombstones the row because the
+  copy gave it a reply; the copy never resurrects a deleted comment on the v3 side. If the
+  deleter locked first, the copy does not wait, since the deleter may already be waiting on a
+  `Thread` row the mirroring transaction holds (its reply thread's FK) and waiting would
+  deadlock; the write is left unmirrored, which the backfill covers and the old side treats the
+  same way (a reply into a dead-parent thread). The trigger blocks install in the app's write
+  order (`Thread`, then `CommentV2`, then the rest), after the count-trigger swap on `CommentV3`,
+  which nothing writes before the mirror exists; that matches a comment insert's lock order but
+  not a comment delete's (its `SET NULL` cascade touches `Thread` second), so an install racing
+  a delete can still abort one side, in which case the file re-runs and nothing persists.
+- One deadlock is accepted: two transactions that each touched two topics in opposite order
+  and commit in the same instant can deadlock at `COMMIT` in the deferred count trigger, since
+  row triggers cannot order their locks. It needs two concurrent multi-topic writes (two user
+  wipes with interleaved rows), and one side aborts with `40P01`. No caller retries yet: add one
+  on `removeAllContent` and the scam cleanup if it shows up (checklist, Phase 2). Everything
+  else was run with two to four connections on Postgres 18.6 (scratchpad harness, not
+  committed): two replies to one parent, replies and reactions racing deletes of their parent,
+  grandparent or entity, overlapping user wipes, tombstone collapse racing a reply, two first
+  copies of one unmirrored chain, lock toggles and mutes racing deletes, and four writers on one
+  topic; after each, every old row had its mirror (except a write that deliberately yielded to
+  a `SKIP LOCKED` conflict), no deleted row survived except as a tombstone with live replies or
+  live answerers, no tombstone had neither except in the two cases named below (a delete
+  yielding to another delete's probe of the same tombstone, and the `replyToId` edge), and every
+  topic count matched its rows. The
+  no-childless-tombstone property for the `parentId` edge in v2 rests on the old
+  `comment_count_update` trigger serialising sibling deletes on the parent's `Thread` row; it
+  stays until Phase 6. The `replyToId` edge has no such serialisation, so a last reply and a
+  last answerer deleted concurrently can leave a childless tombstone, which the Phase 3 sweep
+  removes.
+- Both comment triggers also fire on `updatedAt`, so an edit to a column the mirror does not
+  carry still keeps the parity pass's `updatedAt` comparison true. A v1 update that changes
+  `parentId` or `modelId` is refused: the path trigger is INSERT-only, so a move has no mirror.
+- The migration refuses to install where a v1 id above the floor is also a v2 id, which would
+  otherwise fail that row's first touch on `CommentV3_pkey`.
+- `src/server/services/__tests__/comment-v3-mirror.sql.behavior.test.ts` runs the schema and
+  mirror migrations on PGlite (session zone UTC+5, so an implicit timestamp cast shows) against a
+  fixture of the old tables. It covers the rules above except the `SKIP LOCKED` yields, the re-apply
+  after a copy, and anything that needs a second session (the delete-during-copy race, the
+  multi-row-delete-versus-reply deadlock shape, a comment insert racing an entity delete);
+  those were run with two to four connections (previous bullet). It also covers the cascades,
+  the bypass writers' statement shapes, all eight triggers under a role that cannot write the
+  new tables, the `EXECUTE` revoke and the pinned search path on every definer function, the
+  file's statement order and atomicity, a dead-parent thread, and the floor taken from the
+  higher old sequence. The single-session scenarios also passed on Postgres 18.6.
+
+The v3 write path from Phase 4 on is raw SQL over a `SqlRunner`, inside the caller's Prisma
+transaction (decision 8, amended). Note the `no-io-in-transaction` guard — same-DB SQL inside a transaction is fine —
+and run `test:lint-rules` whenever a transaction is touched.
 
 Dual-write ships **before** the backfill runs: with the live edge already maintained, one
 converged backfill pass makes the table complete and it _stays_ complete — no moving-target
-window to chase. Before enabling, provision the CDC pipeline for the new table: add
-`public.CommentV3` to `apps/event-engine/src/config/index.ts`'s table subscription list and create
-the `postgres.CommentV3` Kafka topic (`apps/event-engine/scripts/create-kafka-topics.ts`) — a gap
-here silently stops comment-driven metrics for rows that only exist in the new table.
+window to chase. CDC for the new table lands with its handler, just before the first Phase 4 write
+flip (the Phase 5 event-engine bullet): the `Comment`/`CommentV2` handlers already count every
+mirrored row, so a `CommentV3` handler under dual-write would double-count, and a subscription
+without one would only stream a second full-row event for every reaction (the `reactionCount`
+update) into a topic nothing reads. `REPLICA IDENTITY FULL`, the subscription (`public.CommentV3`
+in `apps/event-engine/src/config/index.ts`), the `postgres.CommentV3` topic
+(`scripts/create-kafka-topics.ts`) and the handler land together.
 
 **Phase 3 — backfill.** Runs under live dual-write, so every copy job uses skip-existing semantics
 (`ON CONFLICT (id) DO NOTHING` for v2 rows, `ON CONFLICT ("legacyV1Id") DO NOTHING` for v1 rows
@@ -1012,41 +1223,69 @@ here silently stops comment-driven metrics for rows that only exist in the new t
 copied twice; a mirrored row is always at least as fresh as the copy). With the trigger mirror in
 place there is no read-then-insert window for a live edit or delete to fall into; if the mirror is
 ever app-level instead, add an `updatedAt` comparison pass and a delete log to the parity checks.
-Idempotent, batched copy jobs:
+The jobs are steps of one admin endpoint (`src/pages/api/admin/temp/comment-v3-backfill.ts`,
+service `comment-v3-backfill.service.ts`), each range-based over the source table's id and
+re-runnable; the comment copies call the mirror's own `commentv3_mirror_v2`/`commentv3_mirror_v1`
+per source row, so a backfilled row is exactly what the mirror would have written (entity
+resolution, clamp, id floor, timestamps) and ancestors are copied before each row, which makes
+batch order irrelevant. Idempotent, batched copy jobs:
 
 - v2 comments: `threadId → (entityType, entityId)` via the thread's root chain; `parentId` = the
-  thread's `commentId`. **Insert in depth order** (parents before children — one recursive pass
-  over `parentThreadId` produces the order; prod has 2 child threads with a null `parentThreadId`,
-  handled by hand) so the `commentv3_set_path` trigger finds each parent's path. **Clamp rows
-  deeper than 20** to a sibling at depth 20 with `replyToId` set, as the write path does — 692
-  comments in prod, and without the clamp `commentv3_depth_cap` aborts the batch. Ids and
+  thread's `commentId`. Ancestors are copied before each row (the step calls the mirror's own
+  `commentv3_mirror_v2`), so the `commentv3_set_path` trigger always finds the parent's path and
+  batch order does not matter; the 2 child threads in prod with a null `parentThreadId` resolve
+  through `commentId` like any other. **Clamp rows deeper than 20** to a sibling at depth 20 with
+  `replyToId` set, as the write path does — 692 comments in prod, and without the clamp
+  `commentv3_depth_cap` aborts the batch. Ids and
   `createdAt`/`updatedAt` preserved; nullable `hidden`/`locked` coalesce to false; `replyToId`
-  stays null for every other migrated row.
+  stays null for every other migrated row. Each batch reads its source rows
+  `FOR KEY SHARE SKIP LOCKED`, so it never waits on a deleter and never commits a copy of a
+  comment that is gone.
 - v1 comments: direct copy with `entityType='model'`, `legacyV1Id` set, new ids from the shared
   sequence for pre-existing rows (rows the mirror already copied keep the id it gave them — the
   `legacyV1Id` conflict no-ops). `createdAt` is copied verbatim and is what the Newest sort reads,
   so the order the backfill hands out ids in does not matter (_ID strategy_). Most models with
-  v1 comments have no `Thread`, so this job upserts the model topics itself before the comments
+  v1 comments have no `Thread`, so the model topic is created on demand by the row function
   (`ON CONFLICT DO NOTHING`); a model that no longer exists is skipped and counted.
-- Topics: one `CommentTopic` per entity-bearing Thread whose entity row exists (join to the
-  entity table; a Thread whose entity is gone is skipped and counted, like orphaned threads —
-  the partition FK would otherwise abort the batch), inserted with `ON CONFLICT DO NOTHING` on
-  the full PK, copying `locked`; `commentCount` recomputed
-  by trigger-equivalent count. **The counted set must match today's trigger exactly — all rows,
+- Topics: one `CommentTopic` per entity-bearing root Thread that carries information — a
+  comment, a lock or a mute — whose entity row exists (a Thread whose entity is gone is skipped
+  and counted, like orphaned threads — the partition FK would otherwise abort the batch),
+  inserted with `ON CONFLICT DO NOTHING` on the full PK, copying `locked` and re-syncing it
+  where a topic's lock drifted from its thread. The other 3.6M root threads in prod would only
+  add empty topics, which every reader must already treat as "no comments" (most entities have
+  no Thread at all), so they are left out (decided 2026-10-21 while building the step; veto by
+  widening the predicate). `commentCount` is maintained by the deferred trigger as the comment
+  copies land, never copied from `Thread.commentCount`. **The counted set must match today's trigger exactly — all rows,
   including hidden and self-authored** — because `challenge.service.ts` and `getCommentCount` read
   it raw.
 - Reactions: `CommentV2Reaction` copies with the same `commentId`; `CommentReaction` maps through
-  `legacyV1Id`. Recompute `CommentV3.reactionCount` from the copied rows at the end.
+  `legacyV1Id`. `reactionCount` is maintained by the reaction-count trigger as the links insert;
+  `parity` checks it against the copied rows.
 - Reports: `CommentV2Report` copies as-is; `CommentReport` maps through `legacyV1Id`. The `Report`
   rows themselves don't move.
 - Orphaned-thread comments and their reactions/report links are **skipped** and the counts
-  logged. Both existing classes were purged 2026-10-19. Entity-less root threads can no longer
+  logged. Both classes known then were purged 2026-10-19; the dev rehearsal found two more that
+  the FK cascades predate (v2 comments whose `Thread` row is gone, v1 replies whose parent is
+  gone), which the `unmirrored` report names and the parity counts leave aside. Entity-less root threads can no longer
   occur, so that skip is a guard; the dead-parent class (replies whose `Thread.commentId` was
   nulled by a v2 hard-delete) still can until V3 lands, so that skip matters. Comments under a
   Thread the topic copy skipped (entity gone) are skipped with it and counted.
-- Parity checks: per-entity counts vs `Thread.commentCount` (recomputed from `CommentV2` first —
-  comic threads were over-counted until the double increment was removed), reaction counts vs the
-  two source tables, spot checksums, and an `updatedAt`/`deletedAt` comparison against the old rows.
+- Parity checks (step `parity`, old side against new, every finding zero after `sweep`): live v3
+  rows whose old row is gone (v2 by id, v1 by `legacyV1Id`; the mirror's delete yields to an
+  entity cascade holding the row, and a cascade that later rolls back leaves it live) and deletes
+  that were resurrected; per-Thread (root and reply thread) and per-model counts against the live
+  old rows, not `Thread.commentCount` (which over-counted comic threads until the double
+  increment was removed; a clamped reply answers through `replyToId`); `CommentTopic.commentCount`
+  against its own rows (the trigger counts tombstones); reaction counts against the copied links;
+  link and mute extras; locked state (`CommentTopic.locked` / `CommentV3.locked` vs
+  `Thread.locked`); full-row column drift against the old rows (replaces spot checksums and the
+  `updatedAt`/`deletedAt` comparison); and v1 parent mismatches.
+- Two sweeps the mirror can leave behind (the topic-mute sweep only after the topic copy has
+  converged): tombstones with neither a reply
+  nor an answerer (a delete that yielded to another delete's probe of the same tombstone, or a
+  last reply and last answerer deleted concurrently), and `CommentTopicMute` rows whose entity is
+  gone (no FK to the topic by design; an entity delete cascades `ThreadMute` after its `Thread`
+  row is already gone, so the mirror cannot map them).
 
 Once the backfill has converged and parity holds, the cross-surface **readers** move (see the
 Phase 4 prerequisite) — still before any write flip.
@@ -1054,8 +1293,13 @@ Phase 4 prerequisite) — still before any write flip.
 **Rollback story** (why reads flip before writes): while writes still land in the old tables,
 flipping a surface's reads back is instant and lossless — dual-write kept both sides current. Once
 a surface's _writes_ flip, new rows exist only in CommentV3; rolling that back requires a
-reverse-copy (CommentV3 → old tables, trivial since ids are shared) — keep that script ready
-before the first write flip, and don't remove a surface's old write path until it has soaked.
+reverse-copy (CommentV3 → old tables: ids are shared, but a v3-only comment also needs its entity's
+root `Thread` and its parent's reply `Thread` recreated, a model comment follows its parent's
+shape into the v1 or v2 table, and edits, deletes and links must flow back; the `reverse*` steps of
+the backfill endpoint do this, scoped to the flip's window and surface so a comment the mirror
+yielded on is never taken for a v3 delete, nor a post-rollback ghost for a v3 write) — proven on a
+prod sample before the first write flip, and don't remove a surface's old write path until it has
+soaked.
 
 **Phase 4 — flip reads, then writes, per surface, behind Flipt.** **Prerequisite — readers move
 first:** dual-write makes CommentV3 a complete superset of both old tables, so every cross-surface
@@ -1070,7 +1314,19 @@ just implementation — the model discussion UI moves onto the unified provider)
 includes its reactions and reports: reads of reactions come from `CommentV3Reaction`, and the model
 surface's client switches its reaction entityType from `commentOld` to `comment` (its comment ids
 are new ids from that point). After each surface's reads and writes are flipped and stable, its old
-write path is removed; `commentOld` is removed once the model surface is flipped.
+write path is removed; `commentOld` is removed once the model surface is flipped. The first write
+flip also carries the Clavata trigger, its consumer, the text-scan profile and
+`ReportEntity.CommentV3` (the Clavata bullet under Phase 1 above). A surface that writes
+`CommentV3` directly must also delete through the v3 service. The mirror's delete is safe against
+replies only because every reply in flight also holds an old `Thread` row or old parent that the
+delete already waited on; a v3-direct reply holds neither, so that argument no longer covers it.
+The same invariant covers every `NO KEY UPDATE` on a v3 row (a reaction count, an edit, a lock
+toggle): each is preceded by a lock on the row's old side, so the old-side delete blocks before
+its mirror runs and never skips a live row. A direct write to `CommentV3` or its reaction table
+breaks that, and so does a hard `DELETE FROM "User"` (its `CommentV3Reaction` cascade locks v3
+rows with no old-side lock; dormant, since `deleteUser` soft-deletes). The v3 delete must also
+tombstone a comment that a clamped reply answers (`replyToId`) and collapse tombstones on both
+edges (`parentId` and `replyToId`).
 
 Per-surface cutover checklist additions from the residue sweep:
 
@@ -1079,16 +1335,19 @@ Per-surface cutover checklist additions from the residue sweep:
   caches over the metric tables and would serve stale counts for a day otherwise.
 - **image flip**: `EntityMetric` rows with `metricType='Comment'` (surfaced by the
   `EntityMetricImage` view) are written on comment create/delete — re-point that writer with the
-  image surface.
-- **comicChapter flip**: `ChapterComments.tsx` bypasses the comment providers and passes
-  `parentThreadId` in its mutation input — the comics client changes shape with its surface flip,
-  unlike every provider-based surface. It also feeds the `Thread` id into `CommentsCtx` as the
-  `entityId`; after the flip the entity id is `ComicChapter.id`, which `getChapterThread` (or the
-  chapter shell) has to return. Its server side, `createChapterComment` in `comics.router.ts`,
-  also bypasses `upsertComment` and writes `Thread`/`CommentV2` directly; it moves onto the
-  unified service with this flip.
-- **crucible flip**: the newest surface (#5780); `getCommentThreadCrucibleId` and the
-  `new-crucible-comment` notification go with it.
+  image surface. Done in release 1: the image entry in `commentv3/surfaces.ts` writes it on a
+  create, as v2 did (v2 writes none on a delete).
+- **comicChapter flip**: reads built 2026-11-03 (`CommentSection` on the comics page, keyed by
+  `ComicChapter.id`; `ChapterComments.tsx` and `getChapterThread` removed). Its server side,
+  `createChapterComment` in `comics.router.ts`, bypassed `upsertComment` and wrote
+  `Thread`/`CommentV2` directly, because `commentv2.upsert` cannot address a thread keyed by project
+  and position. Release 2 of the write flip (built 2026-11-05, not deployed) removes it, and chapter
+  comments write through the `commentv3` mutations (decided 2026-10-30).
+- **crucible flip**: `getCommentThreadCrucibleId` and the `new-crucible-comment` notification go
+  with it (#5780).
+- **storyline flip**: the newest surface (#6628); `getCommentThreadStorylineId` /
+  `getCommentStorylineId` (the v2 read gate's thread walk) and the `new-storyline-comment`
+  notification go with it.
 
 **Phase 5 — downstream re-point.** Ordering note: the **read-only** consumers in this phase
 (notification queries, moderator app reads, creator-studio, metrics jobs, the challenge gate) move
@@ -1098,14 +1357,14 @@ prerequisite. What lands after the flips is the cleanup that requires old write 
 moderator app are the two largest consumers and get their own sections below. The rest:
 
 - event-engine: one CDC handler on `CommentV3` replaces `comments.ts` + `comment-v2.ts`; owner
-  resolution becomes one entity lookup instead of the 15-way COALESCE. Kafka table subscriptions
-  change — coordinate the handler swap with the write flip per surface, or run both handlers with
-  the new one deduping on comment id during the dual-write window.
+  resolution becomes one entity lookup instead of the 15-way COALESCE. The handler, replica
+  identity, subscription and topic are provisioned together just before the first Phase 4 write
+  flip (end of _Phase 2_), not earlier: under dual-write the old handlers already count every
+  mirrored row, so the new one dedupes on comment id until each surface's writes flip.
 - Metrics jobs (`article/bounty/post/model3d.metrics.ts`): count from CommentV3.
-  Preserve `ModelMetric.commentCount` = **distinct commenters** semantics. `question/answer.metrics.ts`
-  retire with that surface.
-- Creator-studio analytics (`analytics.ts` all-time tile + per-image series): single-table query;
-  model comments become visible there for the first time (feature win, note it in release comms).
+  Preserve `ModelMetric.commentCount` = **distinct commenters** semantics.
+- Creator-studio analytics (`analytics.ts` all-time tile + per-image series): one `CommentV3` query
+  each since Phase 3, still scoped to the creator's images (`entityType = 'image'`).
 - Unify exclusion logic (`boundExcludedUserIds` + hidden/blocked handling) into one shared helper —
   today it's duplicated between v1 and v2 with subtle drift.
 - Cron jobs touching the tables directly (beyond the metrics jobs above):
@@ -1126,9 +1385,10 @@ moderator app are the two largest consumers and get their own sections below. Th
     a single `WHERE entityType='image' AND entityId=... AND userId=...` lookup (add a covering
     check that `(entityType, entityId, userId)` is answerable from the planned indexes — it is via
     the `(userId, id)` index only for small per-user sets; if slow, extend `(entityType, entityId,
-id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes** already go
-    through `upsertComment`, so dual-write covers them; `getJudgeCommentForImage` in
-    `commentsv2.service.ts` is the matching read to port. Flip these with the `image` surface.
+id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes** go through
+    `writeJudgeComment` (`commentv3/comment-write.service.ts`), which writes CommentV3 directly
+    (release 2 of the write flip removed its `upsertComment` branch); `getJudgeCommentForImage` in
+    `commentsv2.service.ts` is the matching read; both read CommentV3 since Phase 3.
   - `src/server/jobs/job-queue.ts` — `EntityType.Comment`/`CommentV2` mappings are marked
     `// unused`; delete them in Phase 6 rather than porting.
   - `src/server/jobs/update-user-score.ts` — touches comments only via `ArticleMetric.commentCount`
@@ -1148,24 +1408,19 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
   literals alongside `CommentV3_*`. Client twin: the `commentOld` key in
   `src/components/Reaction/Reactions.tsx`.
 - Raw-SQL stragglers found in the full sweep, each a contained rewrite:
-  `src/server/services/resourceReview.service.ts` (**owns** its Thread — creates one eagerly on
-  review create and reads `thread.commentCount` through `resourceReview.selector.ts` into
-  `ResourceReviewCard`/`ResourceReviewDetail`; replace with lazy `CommentTopic` joined on
-  `entityType = 'review' AND entityId = r.id` (both columns, so the join prunes to one
-  partition) + `COALESCE(0)`,
-  a client-visible shape change), `src/server/services/collection.service.ts` (Thread-join
-  count → `CommentTopic` on both columns), `src/server/services/challenge.service.ts` (four raw
-  `Thread.commentCount` reads by `challengeId` → `entityType = 'challenge' AND entityId`),
-  `src/server/metrics/post.metrics-old.ts` (live sibling of `post.metrics.ts`
-  — migrate or delete), `src/pages/api/mod/daily-challenge/re-review.ts`,
-  `src/server/notifications/report.notifications.ts` (CASE over both report join tables), and the
-  Q&A thread `_count` reads in `answer.controller.ts`/`question.controller.ts` (retire with the
-  surface, decision 1).
+  `src/server/services/resourceReview.service.ts` (**owns** its Thread: creates one eagerly on
+  review create, dropped in Phase 5; its two `thread.commentCount` reads count live top-level
+  `CommentV3` rows since Phase 3, not `CommentTopic.commentCount`, which counts replies and
+  tombstones), `src/server/services/collection.service.ts` (judged check) and
+  `src/server/services/challenge.service.ts` (four counts), both on `CommentV3` the same way,
+  `src/server/metrics/post.metrics-old.ts` (used while `simplified-post-metrics` is off; ported in Phase 3) and `src/server/notifications/report.notifications.ts` (CASE over the comment report join tables; the
+  `CommentV3Report` arm since Phase 3).
 - Entity-label/URL maps: `src/utils/string-helpers.ts` (`commentV2`/`CommentV2` → 'Comment'
   entries), `src/pages/moderator/strikes.tsx` entity→URL map, and
   `src/server/utils/moderator-endpoint-catalog.generated.ts` (regenerate). The
-  `src/pages/comments/v2/[id].tsx` permalink redirect keeps working because v2 ids are preserved —
-  just re-point its query; moderator tooling and strike links depend on that route.
+  permalink redirect is now `src/pages/comments/[id].tsx` (`/comments/v2/[id].tsx` re-exports it
+  as an alias); it keeps working because v2 ids are preserved. Strike links to `CommentV2` and
+  `CommentV3` point at `/comments/<id>`, and `strikes.tsx` no longer links v1 `Comment` ids.
 - Moderator app extras beyond the section above: `queue-thresholds.ts` (`commentV2` threshold key
   and `report:commentV2` mapping — renaming the key silently zeroes thresholds),
   `src/lib/reports.ts` label maps. The moderator **database** (tracked schema
@@ -1183,41 +1438,37 @@ id)` usage or add `(entityType, entityId, userId)`). Its judge-comment **writes*
 
 ### Notifications impact (Phase 5 detail)
 
-`src/server/notifications/comment.notifications.ts` defines ~16 notification types. On the current
-schema they fall into three shapes; all three simplify:
+`src/server/notifications/comment.notifications.ts` defines 18 notification types. Before Phase 3
+they fell into three shapes:
 
-- **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the `"Comment"`
-  join in `reaction.notifications.ts`): move from `"Comment"` + `parentId` self-joins to
-  `CommentV3 WHERE entityType = 'model'`. The permalink they emit
-  (`?dialog=commentThread&highlight=<id>`) must carry the **new** id — the client dialog reads it
-  against the live table, so nothing else changes.
+- **Pure-v1** (`new-comment`, `new-comment-response`, `new-comment-nested`, plus the model arm of
+  `reaction.notifications.ts`): read v1-shaped model rows of CommentV3 (with a `legacyV1Id`) since Phase 3. Until the
+  model surface flips, its dialog reads the v1 `Comment` table, so they keep the v1 detail shape and
+  `comment:v1:` dedupe namespace and address comments by their old id in `legacyV1Id` (a v1 row from
+  the shared sequence carries its own id there). They switch to the v3 id with the
+  model flip.
 - **Per-entity v2** (`new-image-comment`, `new-post-comment`, `new-article-comment`,
-  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`,
-  `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`):
-  each is today a `CommentV2 → Thread` join on one entity FK (reply variants double-join through the
-  child thread's `commentId`). All become `WHERE entityType = X AND parentId IS [NOT] NULL` on one
-  table — near-mechanical rewrites, and candidates for one parameterized query builder instead of a
-  dozen near-copies.
-- **Both-table UNIONs** (`new-thread-response` here, and `mention.notifications.ts`): the UNION
-  disappears; thread-participant fanout becomes `ARRAY_AGG(userId) ... WHERE parentId = c.parentId`
-  (siblings) instead of one arm each for `parentId` (v1) and `threadId` (v2).
+  `new-bounty-comment`, `new-bounty-entry-comment`, `new-challenge-comment`, `new-crucible-comment`, `new-storyline-comment`,
+  `new-app-listing-comment`, `new-review-response`, the three `model3d` types, `new-comment-reply`): each was a `CommentV2 → Thread` join on one entity FK; since
+  Phase 3 each is `WHERE entityType = X AND parentId IS [NOT] NULL` on CommentV3, the near-copies the
+  Phase 5 builder collapses.
+- **Both-table UNIONs** (`new-thread-response`, `mention.notifications.ts`): one CommentV3 query
+  each since Phase 3. Thread participants are a comment's siblings: for a top-level comment the
+  entity's other top-level comments of the same shape (v2 comments on a model thread never shared a
+  thread with the v1 ones), for a reply everyone answering the same comment.
 
 Two things must hold through the transition:
 
-- **Historical rows are forever.** `Notification.details` carries `version: 2` (absent = v1) and old
-  comment ids. `comment.detail-fetcher.ts` keeps its split permanently: `version === 2` resolves by
-  id directly (ids preserved), otherwise via `legacyV1Id`. New notifications write `version: 3` with
-  new ids so the fetcher stays unambiguous.
+- **Historical rows are forever.** `Notification.details` carries `version: 3` (since Phase 3),
+  `version: 2`, or no version (v1), with the ids of their day. `comment.detail-fetcher.ts` reads
+  all of them from CommentV3 permanently: a model-page row (versionless, one of the three model-page types, or a `new-thread-response`
+  or `new-mention` with no `threadType`) by its old id in `legacyV1Id`, anything else by id (v2 ids are preserved).
 - **Cutover alignment.** Notification `prepareQuery`s run off `lastSent` windows against whichever
   table they query. Because CommentV3 is complete during dual-write, the simple safe order is:
   rewrite **all** notification queries against CommentV3 once, during the dual-write window, before
   any surface's write flip. No per-surface flag coupling needed — a query on CommentV3 sees every
   comment regardless of which side wrote it. The only forbidden state is a query still on an old
   table after that surface's writes flipped.
-
-Also fix in passing: `reaction.notifications.ts` links `?dialog=commentThread&commentId=<rootId>` —
-verify the root-resolution logic against `rootId` on the new row (it currently self-joins to find
-the v1 root).
 
 ### Thread mute (Phase 5 detail)
 
@@ -1228,15 +1479,18 @@ plan above predates it, so everything in this section is new scope, not a restat
 What v2 has today:
 
 - `ThreadMute (userId, threadId)`, FK'd to `Thread` with `ON DELETE CASCADE` on both sides.
-- `muteableThreadsCte` in `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
+- `muteableThreadsCte` (since Phase 3 `threadAncestorsCte`, the block guard's only) in
+  `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
   `Thread.commentId → CommentV2.threadId`, capped at `MAX_THREAD_CHAIN_DEPTH = 100`.
-- `notThreadMuted(recipient, threadId)` in `base.notifications.ts`, applied at **14 sites** in
-  `comment.notifications.ts` (crucible added the 14th), producer-side.
+- The mute filter at **15 sites** in `comment.notifications.ts` (storyline added the 15th),
+  producer-side: `notThreadMuted(recipient, threadId)` over the walk until Phase 3, now
+  `notCommentMuted(recipient, alias)` in `base.notifications.ts` over CommentV3.
 - Two controls: per-comment (overflow menu) via `toggleThreadMute`, and section-level (beside the
-  top-level composer) via `toggleSectionMute`, which is the only writer that targets an entity-root
+  top-level composer) via `toggleSectionMute` (both now on `commentv3`, in
+  `commentv3/section.service.ts`), which is the only writer that targets an entity-root
   thread.
-- `getThreadMuted` / `getSectionMuted` read the same shared CTE so the menu label and the
-  suppression cannot disagree.
+- `getThreadMuted` / `getSectionMuted` read the suppression's own predicate (`notCommentMuted`;
+  `CommentTopicMute` for the section), so the menu label and the suppression agree (past the depth clamp, one hop only).
 - A convention guard, `no-unmuteable-comment-processor`, wired into `test:lint-rules`.
 
 #### What consolidation changes
@@ -1244,33 +1498,29 @@ What v2 has today:
 **The recursive walk disappears.** v2 has to climb thread-by-thread because nesting is modeled as a
 child `Thread` per comment. In CommentV3 ancestry _is_ `path`, so suppression is one `@>` GiST
 containment test — the identical shape as the lock check, and a natural row in the interactions
-table above. That deletes `thread-chain.ts` outright and takes three properties with it:
+table above. That took the mute check off `thread-chain.ts` in Phase 3 (the file itself goes with
+the block guard and the block hide sweep, which still import it), with three consequences:
 
 - **The depth cap stops being a correctness hole.** `MAX_THREAD_CHAIN_DEPTH` is a bound on work, not
-  a proof; past it `notThreadMuted` fails open and sends. Measured on prod 2026-08-27: 149 chains are
-  past the cap, where a mute silently stops suppressing today. A containment test has no cap, and the
-  stored depth cap of 20 makes the question moot regardless.
+  a proof; past it `notThreadMuted` failed open and sent. Measured on prod 2026-08-27: 149 chains
+  were past the cap, where a mute silently stopped suppressing until the Phase 3 re-point. A containment test has no cap. The stored depth cap of 20 leaves one residue: past it,
+  `replyToId` carries a mute one hop only (checklist, Phase 3, Accepted).
 - **The `parentThreadId` exclusion becomes unnecessary.** The v2 walk deliberately refuses that edge
   because it is written from client input, so trusting it would let a replier steer their reply into
   a chain the recipient muted and have the notification dropped — a suppression operated by someone
   other than its owner. The cost is 3,110 orphaned threads (0.057% of all threads) whose mutes go
   unrecognised. `CommentV3.parentId` is server-derived and `path` is set by a DB trigger, so there is
   no client-steerable edge and no trade to make.
-- **The section mute stops depending on lazy row creation.** `toggleSectionMute` today returns
+- **The section mute stops depending on lazy row creation.** `toggleSectionMute` returned
   `hasThread: false` and does nothing on an entity with no comments yet. `CommentTopicMute` keys off
   `(entityType, entityId)` and needs no row to exist, so it works before the first comment.
 
-**The 14 filter sites ride on the notification rewrite.** Phase 3 re-points every notification
-`prepareQuery` at CommentV3, and Phase 5 offers to collapse the per-entity queries into one
-parameterized builder. Both must carry the mute filter — a rewrite that drops it reads as a clean
-diff and silently un-mutes every user who set a mute, with no failing test unless the guard is
-re-pointed in the same change. Do the collapse _because_ of this rather than as optional cleanup:
-one builder is one place the filter can be missing.
-
-**`no-unmuteable-comment-processor` must be re-pointed in lockstep.** It asserts over the v2 SQL
-text. Left alone it either fails on the rewrite or, worse, passes vacuously against v3 SQL it no
-longer recognises. It also pins one deliberate _exclusion_ — `new-mention` is intentionally not
-muteable — which is a product decision the rewrite must preserve, not a gap.
+**The mute filter rides on every notification rewrite.** Phase 3 carried it to all 15 sites, and
+`no-unmuteable-comment-processor` was re-pointed in the same change (it also fails on a
+comment-family query that reads an old table). A rewrite that drops the filter reads as a clean diff
+and silently un-mutes everyone, so the Phase 5 builder is not optional: one builder is one place it
+can be missing. The guard pins two deliberate exclusions: `new-mention` (a product decision, not a
+gap) and the three model-page processors, which have no mute control until the model surface flips.
 
 🔴 **`ThreadMute` cascades to nothing in Phase 6.** The teardown drops `Thread`, and
 `ThreadMute_threadId_fkey` is `ON DELETE CASCADE` — so unless mutes are migrated first, teardown
@@ -1316,20 +1566,21 @@ until a notification they muted arrives.
 so the two can share query shapes) has the v1/v2 split baked into six modules; consolidation
 deletes about half of each:
 
-- `user-account.service.ts`: `getComments()` (v1) and `getCommentsV2()` (v2, hand-built
-  `coalesce` over `THREAD_TARGETS` that **omits** challenge/comicChapter/model3d/appListing/crucible
-  — those render with a null entity today) merge into one query reading `entityType`/`entityId`
-  off the row.
-  The merge fixes the missing-entity bug for free; keep the surfaces list exhaustive via the enum.
-- `user-lookup.service.ts`: `COUNT_SOURCES` collapses "Model comments" + "Image comments" into one
-  CommentV3 count (optionally grouped by entityType); `getCommentFlags()` extends from v1-only to
-  all comments — a **behavior change to flag to the mod team**, since flag counts will rise.
-- `user-signals.service.ts::getCommentBurst`: two-table sum becomes one count.
+- `user-account.service.ts`: `getComments()` (model, by old id) and `getCommentsV2()` (everything
+  else) both read CommentV3 since Phase 3. Reading `entityType`/`entityId` off the row fixed the null
+  entity the hand-built `THREAD_TARGETS` coalesce gave challenge/comicChapter/model3d/appListing/
+  crucible comments. The two merge into one query with the single checkbox list below.
+- `user-lookup.service.ts`: the "Model comments" / "Image comments" counts read CommentV3 since
+  Phase 3, still as two rows (model vs everything else). `getCommentFlags()` reads CommentV3 but
+  stays model-only; extending it to all comments is a **behavior change to flag to the mod team**,
+  since flag counts will rise.
 - `reports.service.ts::commentContextUrl`: the 10-branch Thread-FK `CASE` + `rootThreadId` fallback
   becomes a single `entityType` switch on the row.
-- `report-entities.ts`: the two `{ reportTable, table }` entries collapse to one
-  `{ 'CommentV3Report', 'CommentV3' }` entry once the report backfill lands (Phase 3 maps
-  `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here).
+- `report-entities.ts`: gains a `{ 'CommentV3Report', 'CommentV3' }` entry beside the old two with
+  `ReportEntity.CommentV3` at the first write flip; the old two go in Phase 6 (the report backfill
+  maps `CommentReport` rows through `legacyV1Id`, so no legacy-id handling survives here). Until
+  then the `commentV3` entry lists only reports with no old link, so the mirror's copies are not
+  listed twice.
 - `entity-url.ts` + `retool/user-lookup/CommentsPanel.svelte`: `modelCommentUrl()`/`commentV2Url()`
   collapse to one builder; the "Model comments"/"Other comments" panels and the separate
   `commentIds`/`commentV2Ids` checkbox groups become one list. The backing mod endpoints
@@ -1339,17 +1590,23 @@ deletes about half of each:
 
 Sequencing: the moderator app's read rewrite lands **during the dual-write window, before the
 first write flip** (CommentV3 is complete then, and dual-write is one-directional — waiting until
-after flips would leave mod tooling blind to new comments on flipped surfaces). Its old-table code
+after flips would leave mod tooling blind to new comments on flipped surfaces), except the
+report-queue joins and `csam-holds.queries.ts`, which move with `ReportEntity.CommentV3` at the first
+write flip. Its old-table code
 paths are deleted with Phase 6. Pre-existing dead link to note while in there:
 `src/pages/moderator/strikes.tsx` links v1 comments to `/comments/<id>`, a route that doesn't exist.
 
-**Phase 6 — contract.** Drop `ThreadMute`, `Thread` (and its 16 entity relations' reverse
-relations), `Comment`,
-`CommentV2`, `CommentReaction`, `CommentV2Reaction`, `CommentReport`, `CommentV2Report`; drop the
+**Phase 6 — contract.** First drop the Phase 2 mirror triggers (all named `commentv3_mirror`) and
+the `commentv3_*` functions that take old-table row types as parameters (`thread_entity`,
+`mirror_v1`, `mirror_v1_one`, `mirror_v2`, `mirror_v2_one`); `DROP TABLE` fails while they exist.
+Then drop `ThreadMute`, `Thread` (and its 16 entity relations' reverse relations), `Comment`,
+`CommentV2`, `CommentReaction`, `CommentV2Reaction`, `CommentReport`, `CommentV2Report`, the
 triggers `comment_count_update` (function `update_thread_comment_count`),
 `trg_moderation_comment`/`trg_moderation_commentv2`, `comment_reaction_count_update`, and the
-Phase 2 mirror triggers. Drop order: reaction/report join tables first (they FK-reference
-the comment tables), then `Comment`/`CommentV2`, then `Thread`. Also:
+remaining `commentv3_*` functions (`ensure_topic`, `clamp_parent`, `v1_id_floor`,
+`mirror_delete`, the eight `mirror_*_trigger`). Drop order for the tables: reaction/report join
+tables first (they FK-reference the comment tables), then `Comment`/`CommentV2`, then `Thread`.
+Also:
 
 - Remove any remaining `Thread` entries from `schema-drift/drift-baseline.json` and update the
   remediation plan + its `production-plan.test.ts`, or the drift gate fails on a table that no
@@ -1377,8 +1634,9 @@ mute check and block-hide alike.
 ### Explicitly not migrated
 
 - `clubPost` threads — clubs are dead code; rows (if any) are left behind and dropped with Thread.
-- `question`/`answer` — decided (decision 1): not migrated; rows drop with Thread, and
-  `QuestionAnswerComments.tsx` + `question/answer.metrics.ts` retire alongside.
+- `question`/`answer` — decided (decision 1): not migrated; archived in `qa_archive` before
+  Thread is dropped. The feature code, `QuestionAnswerComments.tsx` and
+  `question/answer.metrics.ts` included, is removed; the Q&A tables themselves stay.
 - Comments attached to orphaned Threads (all entity FKs null) — purged and archived 2026-10-19;
   the backfill still skips any that recur (inventory in _Orphaned-thread comments — decided_).
 
@@ -1404,5 +1662,4 @@ notifications, permalink, controllers, event-engine handler tests) — mostly me
 rewrites. Three need judgment, not find-and-replace: the two moderator SQL-assertion tests
 (`reports.sql.test.ts`, `reports.queries.explain.test.ts` assert exact SQL text and query plans)
 and `schema-drift/.../production-plan.test.ts`. One E2E gate: `tests/preview-engagement.spec.ts`
-drives `commentv2.upsert`/`delete` end-to-end and keeps working as long as the tRPC contract stays
-(the plan keeps it).
+drives `commentv3.create`/`delete` end-to-end (moved with `tests/example.spec.ts`, 2026-11-05, release 2 of the write flip, not deployed).

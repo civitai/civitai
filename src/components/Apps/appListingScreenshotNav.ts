@@ -5,10 +5,8 @@
  * only interesting logic is index math, and index math is exactly the class of bug
  * that ships silently: an off-by-one on open, an off-by-one on next, or prev/next
  * swapped all render a perfectly healthy modal showing the WRONG screenshot. The
- * browser-mode `component` project can see that — but it runs only as the preview
- * pipeline's `preview / component-tests`, which is report-only and not reported at
- * all when the preview build fails. So the arithmetic lives here, where the
- * BLOCKING node `unit` project can pin it (`__tests__/appListingScreenshotNav.test.ts`).
+ * browser-mode `component` project can see that, and the arithmetic lives here, where
+ * the node `unit` project can pin it (`__tests__/appListingScreenshotNav.test.ts`).
  * The wiring — that the tile hands these functions the index it actually represents
  * — is a DOM fact and is pinned in `AppListingDetailBody.viewer.browser.test.tsx`.
  * Two separate claims; neither substitutes for the other.

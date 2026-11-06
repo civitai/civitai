@@ -120,8 +120,8 @@ export-vs-build pass. Two findings worth knowing here because they change other 
   fixed. Copying Retool (any message author) would have been worse: it always includes the reporter, so
   every harassment report would also mark the victim. The answer is the participant who is **not** a
   reporter, in a two-party chat — `chatReportSubject` in `report-entities.ts`, used by both the count and
-  the rows. 99.0% of human-filed reports resolve to exactly one account; group chats match nobody. The
-  old version also counted `Automated` reports the rows list hides, over-counting 11,056 accounts.
+  the rows. Nearly every human-filed report resolves to exactly one account; group chats match nobody.
+  The old version also counted `Automated` reports the rows list hides, over-counting many accounts.
 
 - [x] ~~Front Page Audit has no section~~ — covered by the 2026-08-20 pass.
 - [x] ~~**`UserRestriction` is read nowhere** (User Lookup)~~ — **fixed in `e40e93106e`**, before this
@@ -261,7 +261,8 @@ A queue/stat board rather than a lookup tool.
 - [x] **Queue-lag indicators + the `Mods_TaskTimers` protocol** — built on the dashboard, with the acknowledge ("Mark swept") write so the mark actually advances.
 - [x] **Who is working a queue** — `RecentReports`/`RecentRating`/`RecentTagger` gave each dashboard row
       "last touched by `<mod>`, N minutes ago", coloured against a per-type threshold table that exists in
-      no query. The board here is count-only.
+      no query. The dashboard now shows it: *Recently worked*, *Working now* and per-queue last-actioned
+      ages.
 - [x] **The `Graphs` tab** — built as `/retool/queue-stats`, its own route because Retool put it behind a "Load Graphs" button. Inline SVG rather than a charting dependency. `RRatingStats` is bounded to 30 days (Retool was unbounded over ModActivity) and the window is stated on the page.
 - [ ] **The `Who is who?` tab** — contents not enumerated by the layout; needs the raw export or a
       screenshot before it can be scoped.
@@ -378,10 +379,12 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       a colour failing renders `—` beside a yellow figure that is still true.
       Not ported: `SubTierStatus` (a site-wide roll-up, not per-user), `CreatorClub`/`CreatorClubBuzz`
       (Stripe-Connect payouts — a different domain from moderation).
-- [x] **Reviews / comments** — `ReviewList`, `ComboComments` as read-only lists in
-      `/api/user-account/[userId]`, with ToS/excluded/nsfw flags and links to the model.
+- [x] **Reviews / comments** — `ComboComments` as a list in `/api/user-account/[userId]`. `ReviewList`
+      moved to its own paged endpoint (2026-10-26), `/api/user-reviews/[userId]`: Written / Received
+      tabs, 50 rows a page, filters (owner, rating, flags, text) applied in the query, with
+      ToS/excluded/nsfw flags and links to the model.
       **Bulk delete and ToS actions are built** (2026-08-20; `bulkCommentAction`) — the "side effects
-      the spoke does not own" premise was wrong, see §D.
+      the spoke does not own" premise was wrong, see §D. Bulk review actions batch at 500 ids.
 - [x] **Cosmetics** — owned cosmetics with type and equipped state. `RemoveCosmetics` not ported for
       the same reason (destructive; the main app also refreshes entity caches and search indexes).
 - [x] **Support context** — `GetFreshdesk`. Contact lookup by email in `freshdesk.service.ts`, shown in

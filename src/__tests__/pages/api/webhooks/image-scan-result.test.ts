@@ -718,7 +718,11 @@ describe('image-scan-result webhook - pipeline tests', () => {
       expect(errorFlipsFor(40)).toHaveLength(0);
       expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ imageId: 40, ingestion: ImageIngestionStatus.Scanned }),
+          data: expect.objectContaining({
+            imageId: 40,
+            ingestion: ImageIngestionStatus.Scanned,
+            nsfwLevel: 8,
+          }),
         })
       );
     });

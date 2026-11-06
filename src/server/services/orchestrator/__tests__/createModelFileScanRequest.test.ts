@@ -27,7 +27,7 @@ const {
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // surface enums consumed at module-load time
   WorkflowStatus: {},
@@ -376,6 +376,20 @@ describe('createModelFileScanRequest', () => {
 
       // Only the post-success update would write scanRequestedAt; verify it didn't run.
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+    });
+
+    it("carries a 429's Retry-After so the fallback job can wait for it", async () => {
+      mockSubmitWorkflow.mockResolvedValue({
+        data: null,
+        error: { status: 429, detail: 'Too many requests' },
+        response: new Response(null, { status: 429, headers: { 'Retry-After': '420' } }),
+      });
+
+      const err = await createModelFileScanRequest(baseInput).catch((e) => e);
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('transient');
+      expect(err.status).toBe(429);
+      expect(err.retryAfter).toBe(420);
     });
   });
 

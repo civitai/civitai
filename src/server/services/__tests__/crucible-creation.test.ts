@@ -17,8 +17,9 @@ import type * as CrucibleEligibilityService from '~/server/services/crucible-eli
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
 import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as NotificationService from '~/server/services/notification.service';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
-import { CrucibleSort } from '~/server/common/enums';
+import { CrucibleSort, NotificationCategory } from '~/server/common/enums';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -35,6 +36,12 @@ const assertCanCreateCrucible = vi.fn();
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
 const submitTextModeration = vi.fn();
+const createNotification = vi.fn();
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
@@ -492,25 +499,87 @@ describe('createCrucible — required models unsuitable for mature content', () 
 });
 
 describe('activateScheduledCrucibles', () => {
-  it('opens only Pending crucibles whose start has passed', async () => {
-    crucibleUpdateMany.mockResolvedValue({ count: 2 });
+  const crucibleFindMany = dbMock.dbWrite.crucible.findMany;
+  const follows = dbMock.dbWrite.crucibleEngagement.findMany;
+  const due = {
+    id: 7,
+    userId: 4,
+    name: 'Night Drive',
+    textNsfw: false,
+    ingestion: CrucibleIngestionStatus.Scanned,
+    image: { ingestion: ImageIngestionStatus.Scanned },
+  };
+  const startingSends = () =>
+    createNotification.mock.calls.map(([n]) => n).filter((n) => n.type === 'crucible-starting');
 
-    await expect(activateScheduledCrucibles()).resolves.toBe(2);
+  beforeEach(() => {
+    crucibleFindMany.mockResolvedValue([due]);
+    crucibleUpdateMany.mockResolvedValue({ count: 1 });
+    // The host follows their own crucible too.
+    follows.mockResolvedValue([{ userId: 4 }, { userId: 9 }]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+    createNotification.mockResolvedValue(undefined);
+  });
+
+  it('picks only Pending crucibles whose start has passed and whose scans passed', async () => {
+    await activateScheduledCrucibles();
+
+    const { where } = crucibleFindMany.mock.calls[0][0];
+    expect(where.status).toBe(CrucibleStatus.Pending);
+    expect(where.startAt.lte.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(where.ingestion).toBe(CrucibleIngestionStatus.Scanned);
+    expect(where.image).toEqual({ ingestion: ImageIngestionStatus.Scanned });
+  });
+
+  it('opens each one only if it is still ready when written, not just when read', async () => {
+    await expect(activateScheduledCrucibles()).resolves.toBe(1);
 
     const [{ where, data }] = crucibleUpdateMany.mock.calls[0];
-    expect(where.status).toBe(CrucibleStatus.Pending);
+    expect(where).toMatchObject({
+      id: 7,
+      status: CrucibleStatus.Pending,
+      ingestion: CrucibleIngestionStatus.Scanned,
+      image: { ingestion: ImageIngestionStatus.Scanned },
+    });
     expect(where.startAt.lte.getTime()).toBeLessThanOrEqual(Date.now());
     expect(data).toEqual({ status: CrucibleStatus.Active });
   });
 
-  it('keeps one whose text or cover has not passed its scan closed', async () => {
-    crucibleUpdateMany.mockResolvedValue({ count: 0 });
+  it('tells its followers, not the host, that it has started', async () => {
+    await activateScheduledCrucibles();
+
+    expect(startingSends()).toEqual([
+      {
+        type: 'crucible-starting',
+        category: NotificationCategory.Update,
+        key: 'crucible-starting:7',
+        userIds: [9],
+        details: { crucibleId: 7, crucibleName: 'Night Drive' },
+      },
+    ]);
+  });
+
+  it('leaves out a name that has not passed as safe for everyone', async () => {
+    crucibleFindMany.mockResolvedValue([{ ...due, textNsfw: true }]);
 
     await activateScheduledCrucibles();
 
-    const { where } = crucibleUpdateMany.mock.calls[0][0];
-    expect(where.ingestion).toBe(CrucibleIngestionStatus.Scanned);
-    expect(where.image).toEqual({ ingestion: ImageIngestionStatus.Scanned });
+    expect(startingSends()[0].details).toEqual({ crucibleId: 7, crucibleName: null });
+  });
+
+  it('sends nothing for one another run already opened', async () => {
+    crucibleUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(activateScheduledCrucibles()).resolves.toBe(0);
+
+    expect(startingSends()).toEqual([]);
+  });
+
+  it('still opens it when the notification fails', async () => {
+    createNotification.mockRejectedValue(new Error('notifications down'));
+    follows.mockRejectedValue(new Error('db hiccup'));
+
+    await expect(activateScheduledCrucibles()).resolves.toBe(1);
   });
 });
 

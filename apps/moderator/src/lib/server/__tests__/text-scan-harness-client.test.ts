@@ -439,39 +439,32 @@ describe('restErrorReason', () => {
 });
 
 describe('scanTexts — what a run sent', () => {
-  it('takes the system prompt and rule list from the first chunk that has them', async () => {
+  it('takes the system prompt from the first chunk that has one', async () => {
     call.mockImplementation(async (_path, body) => ({
       ok: true,
       body: {
-        results: (body.texts as Array<{ key: string }>).map(({ key }) => ({
-          ...scannedOk(key),
-          literalRuleIds: [3],
-        })),
+        results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)),
         system: 'SYSTEM',
-        rules: [{ id: 3, subject: 'Example' }],
       },
     }));
-    const run = await scanTexts('ModelRules', texts(10));
+    const run = await scanTexts('Model', texts(10));
     expect(run.system).toBe('SYSTEM');
-    expect(run.rules).toEqual([{ id: 3, subject: 'Example' }]);
-    expect(run.results[0]).toMatchObject({ ok: true, literalRuleIds: [3] });
+    expect(run.results[0]).toMatchObject({ ok: true });
   });
 
-  it('sends rule overrides only when there are some', async () => {
+  it('never sends rule overrides: they only exist for the literal Model rules try', async () => {
     call.mockImplementation(async (_path, body) => ({
       ok: true,
       body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
     }));
-    const rule = { id: -1, subject: 'New', description: '', aliases: [], enabled: true };
-    await scanTexts('ModelRules', texts(1), { rules: [rule] });
-    await scanTexts('ModelRules', texts(1), { rules: [] });
-    expect(call.mock.calls[0][1]).toMatchObject({ ruleOverrides: [rule] });
-    expect(call.mock.calls[1][1]).not.toHaveProperty('ruleOverrides');
+    await scanTexts('Model', texts(1), { prompts: { base: 'B' } });
+    expect(call.mock.calls[0][1]).toMatchObject({ promptOverrides: { base: 'B' } });
+    expect(call.mock.calls[0][1]).not.toHaveProperty('ruleOverrides');
   });
 
-  it('reads a run without the new fields as having none', async () => {
+  it('reads a run without a system prompt as having none', async () => {
     call.mockResolvedValue({ ok: true, body: { results: [scannedOk('t0')] } });
-    expect(await scanTexts('Model', texts(1))).toMatchObject({ system: null, rules: null });
+    expect(await scanTexts('Model', texts(1))).toMatchObject({ system: null });
   });
 });
 

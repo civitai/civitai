@@ -1,6 +1,8 @@
 import { Badge, Button, Container, Text, Title } from '@mantine/core';
 import { IconArrowLeft, IconSwords, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
+import Linkify from 'linkify-react';
+import type { Opts } from 'linkifyjs';
 import Link from 'next/link';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { CrucibleFollowToggle } from '~/components/Crucible/CrucibleFollowToggle';
@@ -36,6 +38,25 @@ type CrucibleHeaderImage = {
   height: number | null;
 };
 
+// Protocol required: bare hosts, emails and mailto: stay text. Credentials in the URL are refused.
+const descriptionLinkOptions: Opts = {
+  target: '_blank',
+  className: 'text-blue-6 underline dark:text-blue-4',
+  rel: 'nofollow ugc noopener noreferrer',
+  validate: {
+    email: () => false,
+    url: (value) => {
+      if (!/^https?:\/\//i.test(value)) return false;
+      try {
+        const { username, password } = new URL(value);
+        return !username && !password;
+      } catch {
+        return false;
+      }
+    },
+  },
+};
+
 export type CrucibleHeaderData = {
   id: number;
   name: string;
@@ -60,10 +81,16 @@ export type CrucibleHeaderData = {
 
 type CrucibleHeaderProps = {
   crucible: CrucibleHeaderData;
+  /** The entries the viewer can see listed; the raw `_count.entries` also counts hidden ones. */
+  entryCount?: number;
   className?: string;
 };
 
-export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
+export function CrucibleHeader({
+  crucible,
+  entryCount: listedCount,
+  className,
+}: CrucibleHeaderProps) {
   const {
     name,
     description,
@@ -82,7 +109,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     paidEntryCount,
     entrantCount,
   } = crucible;
-  const entryCount = _count.entries ?? 0;
+  const entryCount = listedCount ?? _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
   const browsingLevel = useBrowsingLevelDebounced();
   const currentUser = useCurrentUser();
@@ -186,8 +213,14 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             // Spoiler draws "Show More" in its bottom margin; a margin here would collapse into it.
             <div className="pb-4">
               <ContentClamp maxHeight={72}>
-                <Text size="sm" c="dimmed" lh={1.6} className="[overflow-wrap:anywhere]">
-                  {description}
+                <Text
+                  size="sm"
+                  c="dimmed"
+                  lh={1.6}
+                  className="[overflow-wrap:anywhere]"
+                  data-testid="crucible-description"
+                >
+                  <Linkify options={descriptionLinkOptions}>{description}</Linkify>
                 </Text>
               </ContentClamp>
             </div>

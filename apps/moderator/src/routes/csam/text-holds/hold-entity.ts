@@ -1,5 +1,13 @@
 import { shortAge } from '$lib/format';
-import { chatAuditChatUrl, commentV2Url, entityUrl, userLookupUrl, userUrl } from '$lib/entity-url';
+import {
+  chatAuditChatUrl,
+  commentV2Url,
+  commentV3Url,
+  entityUrl,
+  modelCommentUrl,
+  userLookupUrl,
+  userUrl,
+} from '$lib/entity-url';
 
 export const NOTE_MAX_LENGTH = 500;
 
@@ -11,6 +19,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
 ] as const;
 
@@ -23,6 +32,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   Comment: 'Model comment',
   CommentV2: 'Comment',
+  CommentV3: 'Comment (new)',
   UserProfile: 'Profile',
 };
 
@@ -55,7 +65,11 @@ export const CSAM_HOLD_OUTCOMES: Record<CsamHoldDecision, string> = {
   dismiss: 'Dismissed',
 };
 
+/** A duplicate pending hold the one-hold-per-entity migration closed; nobody ruled on it. */
+export const SUPERSEDED_OUTCOME = 'Superseded by a newer scan';
+
 export function decisionLabel(hold: { status: string; decision: string | null }): string {
+  if (hold.decision === 'superseded') return SUPERSEDED_OUTCOME;
   const outcome =
     hold.decision && hold.decision in CSAM_HOLD_OUTCOMES
       ? CSAM_HOLD_OUTCOMES[hold.decision as CsamHoldDecision]
@@ -68,6 +82,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'ChatMessage',
   'Comment',
   'CommentV2',
+  'CommentV3',
   'UserProfile',
   'Post',
   'Model',
@@ -136,29 +151,6 @@ export const CSAM_HOLD_CONFIRMS: Partial<
   },
 };
 
-const MIN_PHRASE = 2;
-// A quote that never closes would otherwise run on to the next quote mark and highlight the text between.
-const MAX_PHRASE = 120;
-const WORD = '\\p{L}\\p{N}';
-// A quote opens after a non-word character and closes before one, so an apostrophe inside a word
-// ("author's", "isn't") is not one.
-const QUOTED = [
-  `(?<![${WORD}])'([^'\\n]{1,${MAX_PHRASE}}?)'(?![${WORD}])`,
-  `"([^"\\n]{1,${MAX_PHRASE}}?)"`,
-  `“([^”\\n]{1,${MAX_PHRASE}}?)”`,
-  `(?<![${WORD}])‘([^’\\n]{1,${MAX_PHRASE}}?)’(?![${WORD}])`,
-];
-
-export function quotedPhrases(reason: string): string[] {
-  const found = new Set<string>();
-  for (const source of QUOTED)
-    for (const match of reason.matchAll(new RegExp(source, 'gu'))) {
-      const phrase = match[1].trim();
-      if (phrase.length >= MIN_PHRASE) found.add(phrase);
-    }
-  return [...found];
-}
-
 export function holdTitle(hold: {
   entityType: string;
   entityId: number;
@@ -171,6 +163,7 @@ export function holdTitle(hold: {
       return 'Chat';
     case 'Comment':
     case 'CommentV2':
+    case 'CommentV3':
       return 'Comment';
     case 'UserProfile':
       return hold.username ?? (hold.userId ? `user #${hold.userId}` : 'Profile');
@@ -179,13 +172,21 @@ export function holdTitle(hold: {
   }
 }
 
+/** A pending row shows the newest event: when its text was last replaced, else when it was held. */
 export function holdMeta(
-  hold: { status: string; createdAt: Date; decidedAt: Date | null },
+  hold: {
+    status: string;
+    createdAt: Date;
+    decidedAt: Date | null;
+    textUpdatedAt?: Date | string | null;
+  },
   now = Date.now()
 ): string {
-  return hold.status === 'Pending' || !hold.decidedAt
-    ? `held ${shortAge(hold.createdAt, now)}`
-    : `decided ${shortAge(hold.decidedAt, now)}`;
+  if (hold.status === 'Pending' || !hold.decidedAt)
+    return hold.textUpdatedAt
+      ? `text updated ${shortAge(hold.textUpdatedAt, now)}`
+      : `held ${shortAge(hold.createdAt, now)}`;
+  return `decided ${shortAge(hold.decidedAt, now)}`;
 }
 
 export function splitEmptyTypes<T extends string>(
@@ -204,14 +205,20 @@ type HoldRef = {
   userId: number | null;
   username: string | null;
   chatId: number | null;
+  commentModelId?: number | null;
 };
 
-/** Where the held text lives. Null for a legacy model `Comment`: its deep link needs the model id,
- *  which the hold does not record. */
+/** Where the held text lives. Null for a legacy model `Comment` whose model could not be read. */
 export function holdEntityHref(civitaiUrl: string, hold: HoldRef): string | null {
   switch (hold.entityType) {
     case 'CommentV2':
       return commentV2Url(civitaiUrl, hold.entityId);
+    case 'CommentV3':
+      return commentV3Url(civitaiUrl, hold.entityId);
+    case 'Comment':
+      return hold.commentModelId
+        ? modelCommentUrl(civitaiUrl, hold.commentModelId, hold.entityId)
+        : null;
     case 'ChatMessage':
       return hold.chatId ? chatAuditChatUrl(hold.chatId) : null;
     case 'UserProfile':

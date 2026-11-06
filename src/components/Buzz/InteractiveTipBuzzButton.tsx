@@ -1,5 +1,6 @@
 import type { UnstyledButtonProps } from '@mantine/core';
-import { Group, Popover, Stack, Text, UnstyledButton, Button } from '@mantine/core';
+import { Group, Stack, Text, UnstyledButton, Button } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { showErrorNotification } from '~/utils/notifications';

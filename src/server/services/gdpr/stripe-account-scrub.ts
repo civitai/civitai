@@ -192,7 +192,9 @@ export async function scrubStripeAccount({
       // `status: 'all'` so a subscription already canceled at Stripe is seen: our row for it is
       // cleaned up by the webhook only when its buzzType is green, so the other rows would
       // otherwise sit `active` forever against an account that stopped billing long ago.
-      if (subscription.status !== 'canceled') {
+      // `incomplete_expired` is as final as `canceled`, and Stripe refuses to cancel it: sending
+      // it through the cancel fails on every run and the account never finishes.
+      if (!['canceled', 'incomplete_expired'].includes(subscription.status)) {
         try {
           // Through the service, so the cancel, the row delete and the retry/timeout options have
           // ONE definition. Passing the id read from Stripe skips the service's own lookup, which

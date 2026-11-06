@@ -6,7 +6,6 @@ import type {
   LabEntityType,
   LabField,
   LabLabel,
-  LabRuleOverride,
   LabText,
   PromptChanges,
 } from '../../text-scan-lab/types';
@@ -16,7 +15,6 @@ import {
   promptIdsFor,
   promptKeyOf,
   type LiveState,
-  type RuleStateEntry,
 } from '../../text-scan-tests/baseline';
 import {
   ACTIVE_RUN_STATUSES,
@@ -25,7 +23,6 @@ import {
   type TestSet,
   type Workspace,
 } from '../../text-scan-tests/types';
-import { ruleStateHash } from './rule-state';
 import {
   TestSetError,
   getRun,
@@ -56,12 +53,11 @@ export type RunsDeps = {
     texts: LabText[],
     prompts?: Record<string, string>
   ) => Promise<LabQuote>;
-  liveRuleState: () => Promise<RuleStateEntry[]>;
   launch: (runId: number) => void;
   audit: RunAudit;
 };
 
-export type DraftInput = { prompts: PromptChanges; rules: LabRuleOverride[] };
+export type DraftInput = { prompts: PromptChanges };
 
 export type Quote = {
   cases: number;
@@ -101,9 +97,9 @@ export async function setLabels(db: Db, setId: number): Promise<LabLabel[]> {
 }
 
 export async function liveStateFor(
-  deps: Pick<RunsDeps, 'getPrompts' | 'liveRuleState'>,
+  deps: Pick<RunsDeps, 'getPrompts'>,
   labels: readonly LabLabel[]
-): Promise<{ live: LiveState; ruleState: RuleStateEntry[] | null; prompts: LabPrompts }> {
+): Promise<{ live: LiveState; prompts: LabPrompts }> {
   let prompts: LabPrompts;
   try {
     prompts = await deps.getPrompts();
@@ -117,16 +113,9 @@ export async function liveStateFor(
       `The ${promptIds} prompt has no saved version, so nothing can run.`,
       409
     );
-  const ruleState = labels.includes('modelRules') ? await deps.liveRuleState() : null;
   return {
     prompts,
-    ruleState,
-    live: {
-      promptIds,
-      model: prompts.config.model,
-      thinking: prompts.config.thinking,
-      ruleStateHash: ruleState && ruleStateHash(ruleState),
-    },
+    live: { promptIds, model: prompts.config.model, thinking: prompts.config.thinking },
   };
 }
 
@@ -147,7 +136,6 @@ export const asLive = (run: RunRow): LiveState => ({
   promptIds: run.prompt_ids as Record<string, number>,
   model: run.model,
   thinking: run.thinking,
-  ruleStateHash: run.rule_state_hash,
 });
 
 function effectiveDraft(draft: DraftInput | null, labels: readonly LabLabel[]): DraftInput | null {
@@ -156,8 +144,7 @@ function effectiveDraft(draft: DraftInput | null, labels: readonly LabLabel[]): 
   const prompts = Object.fromEntries(
     Object.entries(draft.prompts).filter(([key]) => used.has(key))
   ) as PromptChanges;
-  const rules = labels.includes('modelRules') ? draft.rules : [];
-  return Object.keys(prompts).length || rules.length ? { prompts, rules } : null;
+  return Object.keys(prompts).length ? { prompts } : null;
 }
 
 type Plan = {
@@ -166,7 +153,6 @@ type Plan = {
   maxCaseId: number;
   sample: { entityType: LabEntityType; texts: LabText[] };
   live: LiveState;
-  ruleState: RuleStateEntry[] | null;
   draft: (DraftInput & { promptIds: Record<string, number> }) | null;
   baselineId: number | null;
   mode: Quote['baseline'];
@@ -202,7 +188,7 @@ async function planRun(
   const maxCaseId = Number(last.max_id);
 
   const labels = await setLabels(deps.db, setId);
-  const { live, ruleState, prompts } = await liveStateFor(deps, labels);
+  const { live, prompts } = await liveStateFor(deps, labels);
   const draft = effectiveDraft(draftInput, labels);
   const draftIds = draft && promptIdsFor(labels, prompts.active, Object.keys(draft.prompts));
 
@@ -226,7 +212,7 @@ async function planRun(
     throw new TestSetError(
       state === 'running'
         ? 'A baseline run of the live prompts is already in progress.'
-        : 'The baseline already covers every case at the live versions. Edit a prompt or rule to run a draft.',
+        : 'The baseline already covers every case at the live versions. Edit a prompt to run a draft.',
       409
     );
 
@@ -253,11 +239,10 @@ async function planRun(
       maxCaseId,
       mode,
       missing,
-      draft && { prompts: sortedKeys(draft.prompts), rules: draft.rules },
+      draft && { prompts: sortedKeys(draft.prompts) },
       sortedKeys(live.promptIds),
       live.model,
       live.thinking,
-      live.ruleStateHash,
     ])
   );
   return {
@@ -266,7 +251,6 @@ async function planRun(
     maxCaseId,
     sample,
     live,
-    ruleState,
     draft:
       draft && typeof draftIds === 'object' && draftIds ? { ...draft, promptIds: draftIds } : null,
     baselineId: latest && mode !== 'new' ? Number(latest.id) : null,
@@ -368,8 +352,6 @@ export async function startRun(
       max_case_id: String(plan.maxCaseId),
       model: plan.live.model,
       thinking: plan.live.thinking,
-      rule_state: plan.ruleState && JSON.stringify(plan.ruleState),
-      rule_state_hash: plan.live.ruleStateHash,
       case_total: plan.runnable,
       run_by: userId,
     };
@@ -413,7 +395,6 @@ export async function startRun(
           baseline_run_id: baselineId === null ? null : String(baselineId),
           prompt_ids: JSON.stringify(plan.draft.promptIds),
           prompt_overrides: JSON.stringify(plan.draft.prompts),
-          rule_overrides: plan.draft.rules.length ? JSON.stringify(plan.draft.rules) : null,
           expires_at: sql`now() + ${TEST_SET_LIMITS.draftRetentionDays} * interval '1 day'`,
         })
         .returning('id')
@@ -506,8 +487,6 @@ export async function rerunErrors(
     .map(([key]) => `the ${promptKeyOf(key)} prompt`);
   if (run.model !== prompts.config.model) changed.push('the model');
   if (run.thinking !== prompts.config.thinking) changed.push('the thinking setting');
-  if (run.rule_state_hash && ruleStateHash(await deps.liveRuleState()) !== run.rule_state_hash)
-    changed.push('the model rules');
   if (changed.length) {
     const what = changed.join(', ');
     throw new TestSetError(

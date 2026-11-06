@@ -19,7 +19,6 @@ function makeDeps() {
     active: {
       base: { id: 1, key: 'base', content: 'synthetic base' },
       'label:scam': { id: 2, key: 'label:scam', content: 'synthetic scam' },
-      'label:modelRules': { id: 5, key: 'label:modelRules', content: 'synthetic rules' },
     },
     config: { model: 'model-a', maxInputChars: 1000, thinking: false },
   };
@@ -28,7 +27,6 @@ function makeDeps() {
     deps: {
       db,
       getPrompts: vi.fn(async () => prompts),
-      liveRuleState: vi.fn(async () => [{ id: 1, versionId: 10, enabled: true }]),
     },
   };
 }
@@ -214,27 +212,6 @@ describe('runReport', () => {
     ]);
     expect(report.counts.draft).toMatchObject({ scored: 3, error: 1, skipped: 1 });
     expect(report.baselineRun?.id).toBe(baseline);
-  });
-
-  it('keeps new rule hits apart from false flags in a Model rules draft', async () => {
-    const caseId = await seedCase(db, setId, {
-      entityType: 'ModelRules',
-      expected: { modelRules: { ruleIds: [] } },
-    });
-    const draft = await seedRun(db, setId, { kind: 'draft', status: 'done' });
-    await result(
-      draft,
-      caseId,
-      'ok',
-      JSON.stringify({ modelRules: { matched: [{ ruleId: -1, reason: 'synthetic' }] } })
-    );
-    const report = await runReport(db, setId, draft);
-    expect(report.summary[0].draft).toMatchObject({
-      label: 'modelRules',
-      falseFlags: 0,
-      newRuleHits: 1,
-      passed: 1,
-    });
   });
 
   it('reports a baseline alone, failing cases first', async () => {

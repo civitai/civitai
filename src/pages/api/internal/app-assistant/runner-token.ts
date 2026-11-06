@@ -1,16 +1,13 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import type { NextApiResponse } from 'next';
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
-import { env } from '~/env/server';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { verifyRunGrant } from '~/server/services/app-assistant/assistant-runner-tokens';
 import {
   getAppAssistantRefusalForUserId,
   mintAppAssistantToken,
 } from '~/server/services/app-assistant/app-assistant.service';
-import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 
 /**
  * POST /api/internal/app-assistant/runner-token
@@ -30,43 +27,29 @@ import { isConfiguredSecret } from '~/server/utils/configured-secret';
  *   200 `{ token, expiresAt }`
  *   401 the runner's secret is missing or wrong, or the grant is not a current run grant
  *   403 `refused` when a gate refuses the user; `consent_required` once they turned App Assistant off
+ *       `refused` also for a `chat` token asked with a preview grant (`use: 'preview'`), which mints
+ *       `sandbox` tokens only
  *   503 not configured, the mint failed, or the gates could not be judged just now (`unavailable`)
  *
  * Like `TokenSecuredEndpoint`, a blank configured secret answers 503. Mints are logged without the
- * token.
+ * token. The secret, method, body and grant checks are `readRunnerRequest`'s, shared with the
+ * runner's dev-tunnel endpoints.
  */
 const body = z.object({
   grant: z.string().min(1).max(4096),
   purpose: z.enum(['chat', 'sandbox']),
 });
 
-function digest(value: string): Buffer {
-  return createHash('sha256').update(value).digest();
-}
-
-/**
- * Constant-time: both sides are hashed to one length first. Both are trimmed, as the runner trims
- * its copy, so a value mounted from a file with a trailing newline still matches.
- */
-function presentedSecret(req: AxiomAPIRequest, secret: string): boolean {
-  const match = /^bearer\s+(.+)$/i.exec(req.headers.authorization ?? '');
-  return !!match && timingSafeEqual(digest(match[1]!.trim()), digest(secret.trim()));
-}
-
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-  res.setHeader('Cache-Control', 'no-store');
-  const secret = env.ASSISTANT_RUNNER_SECRET;
-  if (!isConfiguredSecret(secret))
-    return res.status(503).json({ error: 'Endpoint not configured' });
-  if (!presentedSecret(req, secret)) return res.status(401).json({ error: 'Unauthorized' });
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
-  const parsed = body.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'Expected { grant, purpose }' });
-  const grant = await verifyRunGrant(parsed.data.grant);
-  if (!grant)
-    return res.status(401).json({ error: 'Not a current run grant', code: 'invalid_grant' });
-  const { purpose } = parsed.data;
+  const request = await readRunnerRequest(req, res, body, 'Expected { grant, purpose }');
+  if (!request) return;
+  const { grant } = request;
+  const { purpose } = request.body;
+  // A preview grant opens one live preview: the sandbox's token, never one that spends Buzz.
+  if (grant.use === 'preview' && purpose !== 'sandbox')
+    return res
+      .status(403)
+      .json({ error: 'A preview grant mints sandbox tokens only', code: 'refused' });
 
   try {
     // The runner's own flag too: turning it off ends runs already holding a grant at their next mint.

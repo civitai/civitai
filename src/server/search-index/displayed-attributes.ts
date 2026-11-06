@@ -23,6 +23,10 @@
 export const modelsDisplayedAttributes = [
   'id',
   'name',
+  'sfwName',
+  'hasSfwFace',
+  'coverImageId',
+  'sfwCoverImageId',
   'type',
   'nsfw',
   'nsfwLevel',

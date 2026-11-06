@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest';
  * one allowlists rot without, and it is what keeps this list draining rather than growing.
  *
  * SCOPE. Only calls through the `~/server/services/orchestrator/workflows` wrapper that pass
- * `token`. A call passing `client:` is the generated `@civitai/client` used with
+ * `token`. A call passing `client:` is the generated `@civitai/orchestration-client` used with
  * `internalOrchestratorClient` — the system account, which legitimately owns what it submits.
  */
 
@@ -72,6 +72,13 @@ const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
       'estimateResourceLoad — the paid-model-loading price quote at `query: { whatif: true }`. ' +
       'No persisted workflow and no debit, so there is no attribution to check. The real load ' +
       'submit beside it IS guarded.',
+  },
+  'src/server/services/orchestrator/training/training-canary.ts': {
+    unguarded: 1,
+    reason:
+      "quoteEntry — the training canary's price check at `query: { whatif: true }`, made with " +
+      'the system token. No persisted workflow and no debit, so there is no attribution to ' +
+      'check. The live canary submit beside it IS guarded.',
   },
   'src/server/services/orchestrator/promptEnhancement.ts': {
     unguarded: 1,

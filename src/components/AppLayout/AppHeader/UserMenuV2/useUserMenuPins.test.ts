@@ -7,6 +7,7 @@ import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 import {
   DEFAULT_USER_MENU_PINS,
+  type UserMenuBadgeItemId,
   type UserMenuItemId,
 } from '~/shared/constants/user-menu.constants';
 
@@ -22,7 +23,7 @@ const loaded = (): DefaultsQuery => ({ data: DB_DEFAULTS, isSuccess: true, isErr
 const { settings, defaults, mutate, mutateOptions } = vi.hoisted(() => ({
   settings: {
     value: { settings: undefined, isResolved: true } as {
-      settings?: { userMenu?: { pinned: UserMenuItemId[] } };
+      settings?: { userMenu?: { pinned?: UserMenuItemId[]; mutedBadges?: UserMenuBadgeItemId[] } };
       isResolved: boolean;
     },
   },
@@ -103,7 +104,7 @@ describe('useUserMenuPins', () => {
     act(() => vi.advanceTimersByTime(1));
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate).toHaveBeenCalledWith({
-      userMenu: { pinned: ['downloads', 'vault', 'liked-models'] },
+      userMenu: { pinned: ['downloads', 'vault', 'liked-models'], mutedBadges: [] },
     });
   });
 
@@ -112,7 +113,7 @@ describe('useUserMenuPins', () => {
     act(() => latest.toggle('vault'));
 
     act(() => latest.flush());
-    expect(mutate).toHaveBeenCalledWith({ userMenu: { pinned: ['leaderboard'] } });
+    expect(mutate).toHaveBeenCalledWith({ userMenu: { pinned: ['leaderboard'], mutedBadges: [] } });
 
     act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS * 2));
     expect(mutate).toHaveBeenCalledTimes(1);
@@ -126,7 +127,7 @@ describe('useUserMenuPins', () => {
     root = createRoot(document.createElement('div'));
 
     expect(mutate).toHaveBeenCalledWith({
-      userMenu: { pinned: ['vault', 'leaderboard', 'downloads'] },
+      userMenu: { pinned: ['vault', 'leaderboard', 'downloads'], mutedBadges: [] },
     });
   });
 
@@ -156,7 +157,7 @@ describe('useUserMenuPins', () => {
     act(() => latest.toggle('downloads'));
     act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
     expect(mutate).toHaveBeenCalledWith({
-      userMenu: { pinned: ['vault', 'leaderboard', 'downloads'] },
+      userMenu: { pinned: ['vault', 'leaderboard', 'downloads'], mutedBadges: [] },
     });
   });
 
@@ -168,7 +169,9 @@ describe('useUserMenuPins', () => {
     act(() => latest.toggle('downloads'));
     act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
 
-    expect(mutate).toHaveBeenCalledWith({ userMenu: { pinned: ['vault', 'downloads'] } });
+    expect(mutate).toHaveBeenCalledWith({
+      userMenu: { pinned: ['vault', 'downloads'], mutedBadges: [] },
+    });
   });
 
   it('lets someone edit from the fallback when the database defaults cannot be read', () => {
@@ -179,7 +182,7 @@ describe('useUserMenuPins', () => {
     act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
 
     expect(mutate).toHaveBeenCalledWith({
-      userMenu: { pinned: [...DEFAULT_USER_MENU_PINS, 'downloads'] },
+      userMenu: { pinned: [...DEFAULT_USER_MENU_PINS, 'downloads'], mutedBadges: [] },
     });
   });
 
@@ -203,6 +206,138 @@ describe('useUserMenuPins', () => {
     act(() => latest.toggle('downloads'));
     act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
 
-    expect(mutate).toHaveBeenCalledWith({ userMenu: { pinned: ['vault', 'downloads'] } });
+    expect(mutate).toHaveBeenCalledWith({
+      userMenu: { pinned: ['vault', 'downloads'], mutedBadges: [] },
+    });
+  });
+
+  describe('muted counts', () => {
+    it('shows nothing muted to someone who never muted, and their saved list otherwise', () => {
+      settings.value = { settings: { userMenu: { pinned: ['vault'] } }, isResolved: true };
+      mount();
+      expect(latest.mutedBadges).toEqual([]);
+
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: ['collections'] } },
+        isResolved: true,
+      };
+      mount();
+      expect(latest.mutedBadges).toEqual(['collections']);
+    });
+
+    it('saves a mute together with the saved pins, once, after a quiet second', () => {
+      settings.value = { settings: { userMenu: { pinned: ['vault'] } }, isResolved: true };
+      mount();
+
+      act(() => latest.toggleBadgeMute('collections'));
+      act(() => latest.toggleBadgeMute('prizes'));
+      expect(latest.mutedBadges).toEqual(['collections', 'prizes']);
+      expect(mutate).not.toHaveBeenCalled();
+
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenCalledWith({
+        userMenu: { pinned: ['vault'], mutedBadges: ['collections', 'prizes'] },
+      });
+    });
+
+    it('unmutes a muted count', () => {
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: ['collections', 'prizes'] } },
+        isResolved: true,
+      };
+      mount();
+
+      act(() => latest.toggleBadgeMute('collections'));
+      expect(latest.mutedBadges).toEqual(['prizes']);
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledWith({
+        userMenu: { pinned: ['vault'], mutedBadges: ['prizes'] },
+      });
+    });
+
+    it('keeps the muted counts when the pins change, since userMenu is written whole', () => {
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: ['collections'] } },
+        isResolved: true,
+      };
+      mount();
+
+      act(() => latest.toggle('downloads'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledWith({
+        userMenu: { pinned: ['vault', 'downloads'], mutedBadges: ['collections'] },
+      });
+    });
+
+    it('does not freeze default pins when someone only mutes', () => {
+      mount();
+      act(() => latest.toggleBadgeMute('inventory'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledWith({
+        userMenu: { pinned: undefined, mutedBadges: ['inventory'] },
+      });
+      expect(latest.pins).toEqual(DB_DEFAULTS);
+    });
+
+    it('saves a pin edit and a mute made inside the same quiet second together, in either order', () => {
+      settings.value = { settings: { userMenu: { pinned: ['vault'] } }, isResolved: true };
+      mount();
+      act(() => latest.toggle('downloads'));
+      act(() => latest.toggleBadgeMute('prizes'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenLastCalledWith({
+        userMenu: { pinned: ['vault', 'downloads'], mutedBadges: ['prizes'] },
+      });
+
+      mutate.mockClear();
+      act(() => latest.toggleBadgeMute('collections'));
+      act(() => latest.toggle('liked-models'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledTimes(1);
+      expect(mutate).toHaveBeenLastCalledWith({
+        userMenu: {
+          pinned: ['vault', 'downloads', 'liked-models'],
+          mutedBadges: ['prizes', 'collections'],
+        },
+      });
+    });
+
+    it('falls back to the saved mutes when a save fails', () => {
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: ['prizes'] } },
+        isResolved: true,
+      };
+      mount();
+      act(() => latest.toggleBadgeMute('collections'));
+      expect(latest.mutedBadges).toEqual(['prizes', 'collections']);
+
+      act(() => mutateOptions.value?.onError?.(new Error('offline')));
+      expect(latest.mutedBadges).toEqual(['prizes']);
+    });
+
+    it('leaves out a saved mute the menu no longer knows, so the write is not rejected', () => {
+      const gone = 'retired-item' as UserMenuBadgeItemId;
+      settings.value = {
+        settings: { userMenu: { pinned: ['vault'], mutedBadges: [gone, 'prizes'] } },
+        isResolved: true,
+      };
+      mount();
+      act(() => latest.toggleBadgeMute('collections'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(mutate).toHaveBeenCalledWith({
+        userMenu: { pinned: ['vault'], mutedBadges: ['prizes', 'collections'] },
+      });
+    });
+
+    it('refuses a mute until settings resolve', () => {
+      settings.value = { settings: undefined, isResolved: false };
+      mount();
+      act(() => latest.toggleBadgeMute('collections'));
+      act(() => vi.advanceTimersByTime(PIN_SAVE_DELAY_MS));
+      expect(latest.mutedBadges).toEqual([]);
+      expect(mutate).not.toHaveBeenCalled();
+    });
   });
 });

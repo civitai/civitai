@@ -239,6 +239,10 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
  * `dev-tunnel` covers every frame on that surface, App Assistant's live preview
  * included. `IframeHost` does not read this record, so `model-slot` never emits
  * the field. Total, like the records above, so a new surface must decide.
+ *
+ * Read in ONE other place: `resolveUngrantableConsentNotice` (`requestConsentGate`),
+ * so that where storage is local a refused document-store scope does not prompt
+ * the viewer. The block still gets `CONSENT_UNAVAILABLE`, and nothing is granted.
  */
 export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean> = {
   'model-slot': false,

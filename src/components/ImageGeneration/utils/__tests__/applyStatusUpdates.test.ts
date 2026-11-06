@@ -3,7 +3,7 @@ import { COMPLETE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { applyStatusUpdates } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
 import { NSFW_CAPPED, WorkflowData } from '~/shared/orchestrator/workflow-data';
 
-// Taken from the production constant: `@civitai/client`'s `WorkflowStatus` members read as
+// Taken from the production constant: `@civitai/orchestration-client`'s `WorkflowStatus` members read as
 // `undefined` under Vitest, so a literal 'succeeded' would not be the value the code compares.
 const FINISHED = COMPLETE_STATUSES[0];
 const RUNNING = '__not_a_complete_status__';

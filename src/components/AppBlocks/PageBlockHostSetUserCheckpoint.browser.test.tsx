@@ -53,7 +53,10 @@ vi.mock('~/utils/trpc', () => ({
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // PageBlockHost wires the workflow + storage bridges at render; stub so it
     // mounts network-free. SET_USER_CHECKPOINT makes NO tRPC call on a page (it
     // NACKs in-host), so none of these are exercised here.

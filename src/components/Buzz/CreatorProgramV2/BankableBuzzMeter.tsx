@@ -1,4 +1,5 @@
-import { ColorSwatch, Progress, Tooltip } from '@mantine/core';
+import { ColorSwatch, Progress } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -47,7 +48,7 @@ export function BankableBuzzMeter({
       label: 'Not bankable',
       value: notBankable,
       color: 'gray.6',
-      description: `Generation compensation, rewards and bought Buzz since ${cutover}. It is still yours to spend.`,
+      description: `Generation compensation, rewards, bought Buzz, and Buzz matched by what you paid other users since ${cutover}. It is still yours to spend.`,
     },
   ].filter((segment) => segment.value > 0);
   const held = bankableNow + overCap + notBankable;

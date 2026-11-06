@@ -3,14 +3,7 @@ import { LabError } from './errors';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { chunk } from '$lib/text-scan-lab/chunk';
 import { HARNESS_LIMITS, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
-import type {
-  LabEntityType,
-  LabField,
-  LabRule,
-  LabRuleOverride,
-  LabScanResult,
-  LabText,
-} from '$lib/text-scan-lab/types';
+import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
 // A timed-out request still runs every workflow it submitted. One chunk is one wave of
 // SCAN_CONCURRENCY, which stays under the harness's 120s budget.
@@ -149,7 +142,6 @@ type HarnessScanResult =
       promptIds: Record<string, number>;
       parse: { ok: true; output: Record<string, unknown> } | { ok: false; reason: string };
       rawContent?: string;
-      literalRuleIds?: number[];
       elapsedMs: number;
       segments?: number;
     }
@@ -170,17 +162,15 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
     promptIds: r.promptIds,
     output: r.parse.ok ? r.parse.output : null,
     ...(r.parse.ok ? {} : { parseError: r.parse.reason, rawContent: r.rawContent }),
-    ...(r.literalRuleIds ? { literalRuleIds: r.literalRuleIds } : {}),
     elapsedMs: r.elapsedMs,
     ...(r.segments && r.segments > 1 ? { segments: r.segments } : {}),
   };
 }
 
-export type LabOverrides = { prompts?: Record<string, string>; rules?: LabRuleOverride[] };
+export type LabOverrides = { prompts?: Record<string, string> };
 export type LabRun = {
   results: LabScanResult[];
   system: string | null;
-  rules: LabRule[] | null;
   /** A request after the first was refused for the session; its texts carry that refusal as errors. */
   authRefused?: true;
 };
@@ -202,7 +192,6 @@ export async function scanTexts(
   const { fitting, oversize } = splitOversize(texts);
   const byKey = new Map(oversize.map((r) => [r.key, r]));
   let system: string | null = null;
-  let rules: LabRule[] | null = null;
   let sent = 0;
   let authRefused = false;
   for (const batch of chunkTexts(fitting, SCAN_CHUNK_SIZE)) {
@@ -212,7 +201,6 @@ export async function scanTexts(
         entityType,
         texts: batch,
         promptOverrides: overrides.prompts,
-        ...(overrides.rules?.length ? { ruleOverrides: overrides.rules } : {}),
         concurrency: SCAN_CONCURRENCY,
         wait: SCAN_WAIT_SECONDS,
       },
@@ -224,10 +212,8 @@ export async function scanTexts(
       const body = result.body as {
         results: HarnessScanResult[];
         system?: string | null;
-        rules?: LabRule[] | null;
       };
       system ??= body.system ?? null;
-      rules ??= body.rules ?? null;
       for (const r of body.results.map(toLabScanResult)) byKey.set(r.key, r);
       continue;
     }
@@ -243,7 +229,6 @@ export async function scanTexts(
       return r ? [r] : [];
     }),
     system,
-    rules,
     ...(authRefused ? { authRefused: true as const } : {}),
   };
 }

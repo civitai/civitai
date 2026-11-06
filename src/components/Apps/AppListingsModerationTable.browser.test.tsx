@@ -6,7 +6,7 @@ import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 post-approval mgmt (P2) — the unified moderator listings management table.
- * Browser-mode render test (report-only in Tekton): mixed-status/kind dataset →
+ * Browser-mode render test (`Component tests` in CI): mixed-status/kind dataset →
  * status sections; sort + server-side filter wiring; each inline action fires the
  * right mutation with the right args (reason forwarded, purge confirm-gated); the
  * kind-aware action visibility (off-site-only actions hidden on on-site rows); the
@@ -285,8 +285,28 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         // visibility. That is exactly the gap the `messageAppOwner` comment below
         // warns about: it reports as a render failure rather than as the mock gap it is.
         // 50 tests across 2 files were failing in CI this way, invisibly, because this
-        // tier is report-only AND cannot run on the dev host.
+        // tier was report-only AND could not run on the dev host.
         setListingVisibilityAsModerator: { useMutation: mutation('setVisibilityAsModerator') },
+        // The Official toggle's proc RESOLVES WITH A VALUE (`{ isOfficial }`) that its success
+        // handler reads, so — like `messageAppOwner` below — it cannot use the shared factory.
+        setListingOfficial: {
+          useMutation: (opts?: {
+            onSuccess?: (r: {
+              appListingId: string;
+              isOfficial: boolean;
+              changed: boolean;
+            }) => void;
+            onError?: (e: { message: string }) => void;
+          }) => ({
+            mutate: (vars: { appListingId: string; isOfficial: boolean }) => {
+              mocks.mutate('setListingOfficial', vars);
+              if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
+              else opts?.onSuccess?.({ ...vars, changed: true });
+            },
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
         // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
         // composer's success handler reads, so it cannot use the shared `mutation`
         // factory above — that one calls `onSuccess()` with no argument, which would
@@ -871,5 +891,139 @@ describe('🔴 F3 — the moderator table SHOWS the beta declaration', () => {
     );
     expect(cell?.textContent).toContain('[here](https://evil.example)');
     expect(cell?.querySelectorAll('a, strong, img')).toHaveLength(0);
+  });
+});
+
+describe('the moderator Official toggle', () => {
+  function officialSwitch(slug: string) {
+    return document.querySelector<HTMLInputElement>(`[data-testid="apps-mod-official-${slug}"]`);
+  }
+
+  test('reflects the row flag: ON for an official listing, OFF for one that is not', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_on',
+        slug: 'on-app',
+        name: 'On App',
+        status: 'approved',
+        isOfficial: true,
+      }),
+      offsite({
+        id: 'apl_off',
+        slug: 'off-app',
+        name: 'Off App',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect.element(page.getByTestId('apps-mod-official-on-app')).toBeInTheDocument();
+    expect(officialSwitch('on-app')?.checked).toBe(true);
+    expect(officialSwitch('off-app')?.checked).toBe(false);
+  });
+
+  test('turning it ON calls setListingOfficial with that listing and true', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_t',
+        slug: 'toggle-app',
+        name: 'Toggle',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('setListingOfficial', {
+      appListingId: 'apl_t',
+      isOfficial: true,
+    });
+    await vi.waitUntil(() => officialSwitch('toggle-app')?.checked === true, { timeout: 3000 });
+  });
+
+  test('turning it OFF calls setListingOfficial with false', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_u',
+        slug: 'untoggle-app',
+        name: 'Untoggle',
+        status: 'approved',
+        isOfficial: true,
+      }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith('setListingOfficial', {
+      appListingId: 'apl_u',
+      isOfficial: false,
+    });
+    await vi.waitUntil(() => officialSwitch('untoggle-app')?.checked === false, { timeout: 3000 });
+  });
+
+  test('🔴 on → off, then a replica-lagged refetch delivering the stale `true` → stays OFF', async () => {
+    mocks.rows = [
+      offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: false }),
+    ];
+    // A FRESH element per render: React skips re-rendering an identical element object, so
+    // passing the same one to `rerender` would deliver no refetch at all.
+    const ui = () => <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderWithProviders(ui());
+    await page.getByRole('switch', { name: 'Official' }).click();
+    await vi.waitUntil(() => officialSwitch('lag-app')?.checked === true, { timeout: 3000 });
+    await page.getByRole('switch', { name: 'Official' }).click();
+    await vi.waitUntil(() => officialSwitch('lag-app')?.checked === false, { timeout: 3000 });
+    expect(mocks.mutate.mock.calls.filter((c) => c[0] === 'setListingOfficial')).toEqual([
+      ['setListingOfficial', { appListingId: 'apl_l', isOfficial: true }],
+      ['setListingOfficial', { appListingId: 'apl_l', isOfficial: false }],
+    ]);
+    // The refetch: the replica still serves the value from between the two writes.
+    mocks.rows = [
+      offsite({ id: 'apl_l', slug: 'lag-app', name: 'Lag', status: 'approved', isOfficial: true }),
+    ];
+    await rerender(ui());
+    // That this re-render DOES deliver new rows to the switch is the next test's positive
+    // control: the same rerender flips an untouched row's switch.
+    await expect.element(page.getByText('lag-app')).toBeInTheDocument();
+    expect(officialSwitch('lag-app')?.checked).toBe(false);
+  });
+
+  test('a row the moderator has NOT toggled still follows a refetch', async () => {
+    mocks.rows = [
+      offsite({
+        id: 'apl_f',
+        slug: 'follow-app',
+        name: 'Follow',
+        status: 'approved',
+        isOfficial: false,
+      }),
+    ];
+    // A FRESH element per render: React skips re-rendering an identical element object, so
+    // passing the same one to `rerender` would deliver no refetch at all.
+    const ui = () => <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />;
+    const { rerender } = await renderWithProviders(ui());
+    await expect.element(page.getByTestId('apps-mod-official-follow-app')).toBeInTheDocument();
+    expect(officialSwitch('follow-app')?.checked).toBe(false);
+    mocks.rows = [
+      offsite({
+        id: 'apl_f',
+        slug: 'follow-app',
+        name: 'Follow',
+        status: 'approved',
+        isOfficial: true,
+      }),
+    ];
+    await rerender(ui());
+    await vi.waitUntil(() => officialSwitch('follow-app')?.checked === true, { timeout: 3000 });
+  });
+
+  test('a failed update leaves the switch where it was and reports the error', async () => {
+    mocks.errorMode = true;
+    mocks.rows = [
+      offsite({ id: 'apl_e', slug: 'err-app', name: 'Err', status: 'approved', isOfficial: false }),
+    ];
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByRole('switch', { name: 'Official' }).click();
+    expect(showError).toHaveBeenCalled();
+    expect(officialSwitch('err-app')?.checked).toBe(false);
   });
 });

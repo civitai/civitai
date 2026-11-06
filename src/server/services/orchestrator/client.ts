@@ -1,4 +1,4 @@
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import { env } from '~/env/server';
 
 export function createOrchestratorClient(token: string) {

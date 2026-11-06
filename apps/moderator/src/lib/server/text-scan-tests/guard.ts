@@ -8,6 +8,7 @@ import { isInt4Id } from '$lib/server/users.service';
 import {
   WORKSPACE_NAMES,
   WORKSPACE_PATHS,
+  WORKSPACES,
   type TestSet,
   type Workspace,
 } from '$lib/text-scan-tests/types';
@@ -19,10 +20,15 @@ export const idField = int4Id;
 const cannotOpen = (workspace: Workspace) =>
   `This set belongs to ${WORKSPACE_NAMES[workspace]}, which you cannot open.`;
 
+const isWorkspace = (value: string): value is Workspace =>
+  (WORKSPACES as readonly string[]).includes(value);
+
 export const canOpenWorkspace = (user: User, workspace: Workspace) =>
   canAccess(user, WORKSPACE_PATHS[workspace]);
 
+/** A set stored under a retired workspace (Model rules) is not found, not merely forbidden. */
 export function requireWorkspace(user: User, workspace: Workspace): void {
+  if (!isWorkspace(workspace)) throw new TestSetError('Test set not found.', 404);
   if (!canOpenWorkspace(user, workspace)) throw new TestSetError(cannotOpen(workspace), 403);
 }
 

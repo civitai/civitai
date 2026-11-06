@@ -6,6 +6,7 @@ import {
   filesByRound,
   finalsCopy,
   buyerRoundFinalsState,
+  deliverWait,
   filesPollMs,
   sellerFileStatus,
   sortPicked,
@@ -184,5 +185,28 @@ describe('the buyer and the final files', () => {
       expect(buyerRoundFinalsState(at(status), 1, pending)).toBeNull();
     expect(buyerRoundFinalsState(at('Disputed', new Date()), 1, pending)).toBe('checkingOwned');
     expect(buyerRoundFinalsState(at('Completed', new Date()), 1, pending)).toBe('checkingOwned');
+  });
+});
+
+describe('deliverWait', () => {
+  it('waits on a final still being scanned, then a preview still being built', () => {
+    expect(deliverWait([file({ scanStatus: 'Pending' })], 0)).toBe('Checking files…');
+    expect(deliverWait([file({ kind: 'Preview', status: 'Processing' })], 0)).toBe(
+      'Building preview…'
+    );
+    expect(
+      deliverWait(
+        [file({ kind: 'Preview', status: 'Processing' }), file({ scanStatus: 'Pending' })],
+        0
+      )
+    ).toBe('Checking files…');
+  });
+
+  it('lets Deliver through once files are cleared, failed, or from an earlier round', () => {
+    expect(deliverWait([file({ scanStatus: 'Passed' }), file({ kind: 'Preview' })], 0)).toBeNull();
+    expect(deliverWait([file({ scanStatus: 'Failed' })], 0)).toBeNull();
+    expect(deliverWait([file({ status: 'Failed', scanStatus: 'Pending' })], 0)).toBeNull();
+    expect(deliverWait([file({ round: 0, scanStatus: 'Pending' })], 1)).toBeNull();
+    expect(deliverWait([], 0)).toBeNull();
   });
 });

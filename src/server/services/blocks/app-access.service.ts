@@ -13,13 +13,17 @@ import {
   readLastModerationAction,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+import { readListingForkable } from '~/server/services/blocks/app-fork.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
-import { declaredListingRating } from '~/shared/utils/listing-rating-display';
+import {
+  computeListingProblems,
+  listingProblemInput,
+} from '~/server/services/blocks/listing-problems';
 import type {
   AppRole,
   ListingCapability,
+  ListingEditorRole,
   ListingKind,
 } from '~/shared/constants/app-capabilities.constants';
 import {
@@ -30,6 +34,7 @@ import {
   isAuthorableListingStatus,
   isPublishableListingStatus,
   LISTING_AUTHORING_ROUTE_STATUSES,
+  listingEditorRole,
   listingKindSupports,
   PUBLISHABLE_LISTING_STATUSES,
 } from '~/shared/constants/app-capabilities.constants';
@@ -128,7 +133,8 @@ import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility
  * bundle. There is still exactly one definition — see that file's header for why the
  * move was structural rather than cosmetic.
  */
-export type { AppRole, ListingKind, ListingCapability };
+export type { AppRole, ListingEditorRole, ListingKind, ListingCapability };
+export { listingEditorRole };
 export { CAPABILITIES_BY_KIND, capabilitiesForKind, listingKindSupports };
 export { AUTHORABLE_LISTING_STATUSES, isAuthorableListingStatus };
 export {
@@ -485,6 +491,15 @@ export async function resolveAppAccess(
   if (!appListingId) return { ...base, role: null };
   const editor = await hasAcceptedSeat(appListingId, userId, db);
   return { ...base, role: editor ? 'editor' : null };
+}
+
+/**
+ * Whether `userId` may queue a new version of the existing app `appBlockId` (`submitVersion`):
+ * its owner (`AppBlock.app.userId`) or an ACCEPTED editor, as the version-commit path allows.
+ * Moderators are decided by the caller.
+ */
+export async function mayShipAppVersion(appBlockId: string, userId: number): Promise<boolean> {
+  return !!(await resolveAppAccess(appBlockId, userId))?.role;
 }
 
 /**
@@ -1011,8 +1026,9 @@ export type MyAppListing = {
  */
 export type AppListingAuthoringContext = Omit<
   MyAppListing,
-  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems'
+  'iconUrl' | 'coverUrl' | 'updatedAt' | 'problems' | 'role'
 > & {
+  role: ListingEditorRole;
   /**
    * The listing's linked OAuth `client_id`, or `null`. PUBLIC, not a secret — the same
    * column the public listing-detail read already exposes (`ListingDetailKindData`).
@@ -1050,6 +1066,10 @@ export type AppListingAuthoringContext = Omit<
    * that refusal remains authoritative.
    */
   visibilityAvailable: boolean;
+  /** The author's fork opt-in ("Let others fork this app's source"), off the PARENT listing. */
+  forkable: boolean;
+  /** `false` ⇒ the fork migration is not applied here; the setting must not be offered. */
+  forkableAvailable: boolean;
   /**
    * ⚠️ THERE IS DELIBERATELY NO `maxVisibility` FIELD, AND ONE WAS SHIPPED AND REMOVED.
    *
@@ -1262,27 +1282,14 @@ async function hydrateMyAppListings(
         // `assetScans` comes from the ONE batched read above — see its note. Absent from
         // the map (which cannot happen for a row that was in `subjects`) degrades to `[]`,
         // i.e. the pre-scan-dimension behaviour, never to an invented problem.
-        problems: computeListingProblems({
-          // 🔴 The row's OWN kind, not a constant: `listMine` returns BOTH kinds, and the
-          // three empty-text problems give different (opposite) advice per kind. This is
-          // the same `kind` the row already reports, so the advisory and the capabilities
-          // can never disagree about what sort of listing this is.
-          kind,
-          iconId: r.iconId ?? null,
-          coverId: r.coverId ?? null,
-          screenshotCount: r._count?.screenshots ?? 0,
-          description: r.description ?? null,
-          tagline: r.tagline ?? null,
-          category: r.category ?? null,
-          assetScans: scansByListingId.get(r.id) ?? [],
-          status: r.status,
-          contentRating: r.contentRating ?? null,
-          declaredContentRating: declaredListingRating({
+        problems: computeListingProblems(
+          listingProblemInput(r, {
+            // The row's own kind: listMine returns both kinds and the empty-text advice differs per kind.
             kind,
             appRating: r.appBlock?.contentRating,
-            listingRating: r.contentRating,
-          }),
-        }).problems,
+            assetScans: scansByListingId.get(r.id) ?? [],
+          })
+        ).problems,
         // 🔴 Only a `removed` row can carry one — see the field's doc. A non-removed row
         // returning an action would let a stale event re-open Republish on a live listing.
         //
@@ -1307,11 +1314,11 @@ async function hydrateMyAppListings(
 /** The two booleans the `/apps/*` sub-nav needs in order to offer a route at all. */
 export type AppsNavAccess = {
   /**
-   * ≥1 listing OWNED or held via an ACCEPTED seat → the "My apps" route is non-empty.
+   * ≥1 listing OWNED or held via an ACCEPTED seat → the "My builds" route is non-empty.
    *
    * 🔴 A PENDING OWNERSHIP TRANSFER DELIBERATELY DOES **NOT** COUNT HERE. It confers ZERO
    * capability until accepted — the same consent principle as a pending seat invite, and
-   * `app-ownership-transfer.service` states it in as many words. Lighting "My apps" for an
+   * `app-ownership-transfer.service` states it in as many words. Lighting "My builds" for an
    * offer would advertise a page the recipient's every child query refuses.
    */
   hasEditableApps: boolean;
@@ -1453,12 +1460,14 @@ export async function listMyAppListings(opts: {
 export async function getAppListingAuthoringContext(opts: {
   appListingId: string;
   userId: number;
+  isModerator?: boolean;
 }): Promise<AppListingAuthoringContext> {
   const access = await resolveListingAccess(opts.appListingId, opts.userId);
   if (!access) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'App listing not found' });
   }
-  if (!access.role) {
+  const role = listingEditorRole(access.role, opts.isModerator);
+  if (!role) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this app' });
   }
   const row = await dbRead.appListing.findUnique({
@@ -1564,6 +1573,14 @@ export async function getAppListingAuthoringContext(opts: {
    * those would turn an outage into a silently wrong audience.
    */
   const visibilityRead = await readListingVisibility(access.seatListingId, dbRead);
+  /**
+   * The fork opt-in, for the Details tab's "Let others fork this app's source" setting. Keyed on
+   * the PARENT for the same reason the level is: the opt-in lives on the live listing only. Same
+   * offer-here/grant-there split — this only decides whether the box shows ticked, and whether it
+   * shows at all (`forkableAvailable: false` ⇒ the migration is not applied here, and the panel
+   * says so instead of offering a write the server would refuse). The write re-checks everything.
+   */
+  const forkRead = await readListingForkable(access.seatListingId, dbRead);
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
@@ -1576,10 +1593,12 @@ export async function getAppListingAuthoringContext(opts: {
     kind: access.kind,
     appBlockId: access.appBlockId,
     connectClientId: row.connectClientId,
-    role: access.role,
+    role,
     capabilities: capabilitiesForKind(access.kind),
     visibility: visibilityRead.visibility,
     visibilityAvailable: visibilityRead.available,
+    forkable: forkRead.forkable,
+    forkableAvailable: forkRead.available,
   };
 }
 

@@ -1,10 +1,18 @@
 import type { Prisma } from '@prisma/client';
 import type { SessionUser } from '~/types/session';
+import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { CacheTTL } from '~/server/common/constants';
-import { ImageSort, ModelSort } from '~/server/common/enums';
+import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  homeBlockByIdSelect,
+  readHomeBlockViaKysely,
+  readHomeBlockViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetHomeBlockByIdInputSchema,
@@ -22,6 +30,8 @@ import {
 } from '~/server/services/collection.service';
 import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 import { getAllImagesIndex } from '~/server/services/image.service';
+import { getCrucibles, withEntryCounts } from '~/server/services/crucible.service';
+import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import {
   bustSystemHomeBlockCaches,
   getHomeBlockCached,
@@ -52,13 +62,20 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   allBrowsingLevelsFlag,
-  hasSafeBrowsingLevel,
+  hasPublicBrowsingLevel,
+  isPublicOnlyBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
-import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import {
+  COSMETIC_SHOP_ROTATION_DEFAULTS,
+  rotateShopSectionItems,
+  shopBlockMaxItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
+import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
@@ -216,21 +233,25 @@ export const getHomeBlockById = async ({
   viewer: EventViewer;
 }) => {
   const homeBlockFindArgs = {
-    select: {
-      id: true,
-      metadata: true,
-      type: true,
-      userId: true,
-      sourceId: true,
-    },
+    select: homeBlockByIdSelect,
     where: {
       id,
     },
   } as const;
-  const homeBlock = await dbRead.homeBlock.findUniqueOrThrow(homeBlockFindArgs).catch(() => {
+  // A miss (a missing row, or any error) on the replica falls back to the primary, through Prisma,
+  // so its not-found throw is unchanged. A call with no `id` (the input allows it) stays on Prisma,
+  // which rejects it as before.
+  const fallback = () => {
     dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
     return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
-  });
+  };
+  const homeBlock =
+    id !== undefined
+      ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
+          (row) => row ?? fallback(),
+          fallback
+        )
+      : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
 
   if (!homeBlock) {
     return null;
@@ -240,7 +261,27 @@ export const getHomeBlockById = async ({
   const metadata = await resolveHomeBlockMetadata(row);
   if (!(await canViewHomeBlock({ type: row.type, metadata }, viewer))) return null;
 
-  return getHomeBlockCached(row, domain, metadata);
+  const block = await getHomeBlockCached(row, domain, metadata);
+  const rotation = metadata.cosmeticShopSection;
+  if (!block?.cosmeticShopSection || !rotation?.random) return block;
+
+  const visible = shopBlockMaxItems(rotation) ?? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems;
+  const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
+    sectionId: rotation.id,
+    rotateHours: rotation.rotateHours,
+    now: Date.now(),
+    visible,
+    getId: (item) => item.shopItem.id,
+  });
+  return {
+    ...block,
+    cosmeticShopSection: {
+      ...block.cosmeticShopSection,
+      // A rotating block shows a handful of a section that can hold over a hundred. Three times
+      // that is room for the client to drop blocked sellers and still fill the row.
+      items: rotated.slice(0, 3 * visible),
+    },
+  };
 };
 
 // `moreHref` is carried from the block's own metadata, not from the board row, so
@@ -257,7 +298,8 @@ type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>
 /** A Feed block's resolved slice. `entity` tells the renderer which card to use. */
 export type FeedBlockItems =
   | { entity: 'images'; items: AsyncReturnType<typeof getAllImagesIndex>['items'] }
-  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] };
+  | { entity: 'models'; items: GetModelsWithImagesAndModelVersions[] }
+  | { entity: 'crucibles'; items: AsyncReturnType<typeof getFeedCrucibles> };
 
 export type PickedFeaturedCollection = {
   collection: AsyncReturnType<typeof getCollectionById>;
@@ -360,6 +402,38 @@ const modelFeedDefaults = {
   hidden: false,
 } as const;
 
+const CRUCIBLE_FEED_LIMIT = 8;
+
+/**
+ * Running crucibles first, then upcoming, each by prize pool: `getCrucibles` under the PrizePool
+ * sort. No viewer, because the result is shared-cached; the client still applies the viewer's
+ * hidden users and browsing level.
+ */
+const getFeedCrucibles = async ({
+  eventTag,
+  limit,
+  browsingLevel,
+  domain,
+}: {
+  eventTag: string;
+  limit: number;
+  browsingLevel: number;
+  domain?: DomainColor;
+}) => {
+  const { items } = await getCrucibles({
+    input: {
+      limit: Math.min(limit, CRUCIBLE_FEED_LIMIT),
+      sort: CrucibleSort.PrizePool,
+      status: [CrucibleStatus.Active, CrucibleStatus.Pending],
+      browsingLevel,
+    },
+    select: crucibleListSelect,
+    isGreen: domain === 'green',
+    eventTag,
+  });
+  return withEntryCounts(items);
+};
+
 // PG only unless a block opts up. The rest of the site treats PG+PG13 as "SFW", but
 // nothing on the home page has passed human review before appearing there.
 const feedBrowsingLevel = (level?: 'public' | 'sfw') =>
@@ -429,6 +503,7 @@ export const getHomeBlockData = async ({
   user,
   input,
   homeBlock,
+  coverage,
 }: {
   homeBlock: {
     id: number;
@@ -457,6 +532,8 @@ export const getHomeBlockData = async ({
   // poisoning a shared cache entry and leaking one user's view to everyone else. If a
   // personalized variant is ever genuinely needed, it needs its own key, not this one.
   user?: SessionUser;
+  /** See `getModelsRaw`; the same never-from-the-shared-entry rule as `user`. */
+  coverage?: CoverageAudience;
 }): Promise<HomeBlockWithData | null> => {
   const metadata = await resolveHomeBlockMetadata(homeBlock);
 
@@ -542,6 +619,20 @@ export const getHomeBlockData = async ({
       // Metadata is cast rather than parsed and is hand-written, so `[]` is reachable.
       const baseModels = feed.baseModels?.length ? feed.baseModels : undefined;
 
+      if (feed.entity === 'crucibles') {
+        // Without a tag the block would list every running crucible on the site.
+        const eventTag = normalizeCrucibleEventTag(feed.eventTag ?? '');
+        if (!eventTag) return null;
+
+        const items = await getFeedCrucibles({
+          eventTag,
+          limit,
+          browsingLevel: feedBrowsingLevel(feed.browsingLevel),
+          domain: input.domain,
+        });
+        return { ...homeBlock, metadata, feedItems: { entity: 'crucibles' as const, items } };
+      }
+
       if (feed.entity === 'images') {
         const { items } = await getAllImagesIndex({
           ...imageFeedDefaults,
@@ -576,6 +667,7 @@ export const getHomeBlockData = async ({
           baseModels,
         },
         user,
+        coverage,
         domain: input.domain,
         ...slimModelImages,
       });
@@ -592,15 +684,24 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // No feature flags in this context — creator-listed items stay excluded
-      // from homepage shop blocks until the creatorShop flag goes GA.
+      // This body is shared by every viewer, so the creatorShop and stickers flags are resolved as
+      // they are for a signed-out one: on while the flag is public, off when it is pulled or Flipt
+      // can't answer. The per-viewer block filter the shop page applies can't live in a shared body
+      // either; the block applies it on the client.
+      const [creatorShopEnabled, stickersEnabled] = await Promise.all([
+        isFliptPublic('creator-shop'),
+        isFliptPublic('stickers'),
+      ]);
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
+        creatorShopEnabled,
+        stickersEnabled,
       });
 
       const [cosmeticShopSection] = data;
 
-      if (!cosmeticShopSection || cosmeticShopSection._count.items === 0) {
+      // `_count.items` counts placed items only; a section filled by its event tag has none.
+      if (!cosmeticShopSection || cosmeticShopSection.items.length === 0) {
         return null;
       }
 
@@ -686,6 +787,7 @@ export const getHomeBlockData = async ({
           ? (
               await getModelsWithImagesAndModelVersions({
                 user,
+                coverage,
                 input: {
                   ids: featured.map((f) => f.modelId),
                   limit: featured.length,
@@ -696,14 +798,30 @@ export const getHomeBlockData = async ({
                   periodMode: 'stats',
                   browsingLevel: allBrowsingLevelsFlag,
                 },
+                faceBrowsingLevel: sfwBrowsingLevelsFlag,
                 ...slimModelImages,
               })
             ).items
           : ([] as GetModelsWithImagesAndModelVersions[]);
 
-      const validModelData = modelData.filter(
-        (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi
-      );
+      // PG only, for every viewer, so the shared payload cannot carry PG-13 for the client to show.
+      // Filtering after the slim slice is safe: `biasImageSlice` keeps one image of every level.
+      const validModelData = modelData
+        .filter((m) => hasPublicBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi)
+        .map((m) => ({
+          ...m,
+          images: m.images.filter((image) => isPublicOnlyBrowsingLevel(image.nsfwLevel)),
+          user: {
+            ...m.user,
+            // Unrated; an avatar renderer falls back to it once the rated picture is dropped.
+            image: null,
+            profilePicture:
+              m.user.profilePicture && isPublicOnlyBrowsingLevel(m.user.profilePicture.nsfwLevel)
+                ? m.user.profilePicture
+                : null,
+          },
+        }))
+        .filter((m) => m.images.length > 0);
 
       const validModelDataSorted = validModelData.sort((a, b) => {
         const matchA = featured.find((f) => f.modelId === a.id);

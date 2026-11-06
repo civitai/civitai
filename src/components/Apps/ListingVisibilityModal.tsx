@@ -25,10 +25,9 @@ import { trpc } from '~/utils/trpc';
  * modal's own buttons land outside the container rather than assuming the portal does it.
  *
  * 🔴 EVERY COPY AND ENABLEMENT DECISION IS IMPORTED, NOT WRITTEN HERE. See
- * `listingVisibilityCopy.ts`: browser-mode suites are report-only in CI and unrunnable on
- * this workstation, so logic living in a `.tsx` branch is logic nothing blocking checks.
- * This component is deliberately a thin renderer over functions the blocking `unit`
- * project drives.
+ * `listingVisibilityCopy.ts`: logic in a `.tsx` branch is reachable only from browser-mode
+ * suites. This component is deliberately a
+ * thin renderer over functions the node `unit` project drives.
  *
  * ⚠️ IT IS OWNER-ONLY IN PRACTICE, AND THIS PARAGRAPH CLAIMED THE OPPOSITE AS THE REASON
  * FOR THE FILE EXISTING. `setListingVisibilityAsOwner` does refuse only a caller with no

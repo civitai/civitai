@@ -119,7 +119,7 @@ One pure function so client preview and server agree:
 // src/utils/post-batch-schedule.ts
 validateBatchSchedule({
   now, publishedAts, existingPublishedAts, dailyLimit,
-  minGapMinutes = POST_BATCH_MIN_GAP_MINUTES,     // 30
+  minGapMinutes = POST_BATCH_MIN_GAP_MINUTES,     // 5
   minLeadMinutes = POST_MINIMUM_SCHEDULE_MINUTES, // 10
   maxMonths = POST_MAXIMUM_SCHEDULE_MONTHS,           // 3
 }): { ok: boolean; issues: ScheduleIssue[]; perDay: PerDay[] }

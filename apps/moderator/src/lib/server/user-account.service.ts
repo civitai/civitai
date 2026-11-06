@@ -7,7 +7,7 @@ import { utcMs } from '$lib/format';
 import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
-import { usersByIds } from './users.service';
+import { MAX_INT4, usersByIds } from './users.service';
 import {
   RATING_ACTIVITIES,
   activityGroup,
@@ -21,6 +21,11 @@ import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
+import {
+  getPlacementParties,
+  placementIdOf,
+  type PlacementParties,
+} from './placement-flows.service';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -37,37 +42,166 @@ const capped = <T>(rows: T[], limit: number): Capped<T> => ({
   truncated: rows.length > limit,
 });
 
-// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments), read-only.
-//
-// Retool paired these lists with bulk delete / ToS actions. Those are NOT ported: they are destructive,
-// and the delete path carries side effects (search-index sync, cache busting) that the spoke does not own
-// yet — see the account-actions note in the migration tracker.
+// REVIEWS + COMMENTS (Retool's ReviewList / ComboComments). Reads only; the bulk actions are
+// `bulkReviewAction` / `bulkCommentAction` in user-actions.service.ts.
 export type UserReview = {
   id: number;
   createdAt: Date;
   rating: number | null;
   modelId: number | null;
+  modelName: string | null;
   tosViolation: boolean | null;
   exclude: boolean | null;
   nsfw: boolean | null;
   /** The review TEXT. Retool's pane searched it, and deleting a review on rating and date alone is
    *  deciding without reading it. */
   details: string | null;
+  modelCreatorId: number;
   modelCreator: string | null;
-  imageCount: number;
 };
 
-export async function getReviews(userId: number, limit = 100): Promise<Capped<UserReview>> {
-  // Retool's SubmittedReviewImageCount. This is the body of the `ResourceReviewHelper` VIEW, inlined and
-  // correlated to the row — NEVER join the view itself. It groups over all 71M reviews, and the qual does
-  // not push through, so both a join and a keyed `IN (…)` lookup run past 60s for a user with 51 reviews.
-  // (The main app hit the same wall and commented its copy out: resourceReview.service.ts.) Correlated
-  // per returned row: 0.9s.
-  return dbRead
+const REVIEWS_PER_PAGE = 50;
+
+/** The panel's page and filters. The filters run here rather than in the browser so they cover every
+ *  review, not just the page on screen — "every review on this owner's models" is the question. */
+export type ReviewQuery = {
+  page: number;
+  owner?: number;
+  rating?: number;
+  tos?: boolean;
+  nsfw?: boolean;
+  exclude?: boolean;
+  q?: string;
+};
+
+export type ReviewOwner = { id: number; username: string | null; count: number };
+
+export type ReviewPage = {
+  items: UserReview[];
+  perPage: number;
+  /** Matching the filters. */
+  total: number;
+  /** Every review this user wrote, unfiltered. */
+  all: number;
+  /** Most-reviewed first, across every review — the top entry is the boosting or bombing target. */
+  owners: ReviewOwner[];
+};
+
+const OWNER_OPTIONS = 200;
+
+const positiveInt = (raw: string | null) => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= MAX_INT4 ? n : undefined;
+};
+const yesNo = (raw: string | null) => (raw === 'yes' ? true : raw === 'no' ? false : undefined);
+
+/** A malformed value is no filter rather than a 400, which would render as a panel that never loads. */
+export function parseReviewQuery(params: URLSearchParams): ReviewQuery {
+  const rating = positiveInt(params.get('rating'));
+  return {
+    page: positiveInt(params.get('page')) ?? 1,
+    owner: positiveInt(params.get('owner')),
+    rating: rating && rating <= 5 ? rating : undefined,
+    tos: yesNo(params.get('tos')),
+    nsfw: yesNo(params.get('nsfw')),
+    exclude: yesNo(params.get('exclude')),
+    q: params.get('q')?.trim() || undefined,
+  };
+}
+
+// A null flag counts as "no", as the panel has always shown it.
+const flag = (column: 'tosViolation' | 'nsfw' | 'exclude', value: boolean) =>
+  sql<boolean>`coalesce(${sql.ref(`rr.${column}`)}, false) = ${value}`;
+
+// Shared by the list, its total and the image counts, so all three see the same rows.
+const filteredReviews = (userId: number, f: ReviewQuery) =>
+  dbRead
     .selectFrom('ResourceReview as rr')
     .innerJoin('Model as m', 'm.id', 'rr.modelId')
     .innerJoin('User as u', 'u.id', 'm.userId')
-    .select((eb) =>
+    .where('rr.userId', '=', userId)
+    .$if(f.owner !== undefined, (qb) => qb.where('m.userId', '=', f.owner!))
+    .$if(f.rating !== undefined, (qb) => qb.where('rr.rating', '=', f.rating!))
+    .$if(f.tos !== undefined, (qb) => qb.where(flag('tosViolation', f.tos!)))
+    .$if(f.nsfw !== undefined, (qb) => qb.where(flag('nsfw', f.nsfw!)))
+    .$if(f.exclude !== undefined, (qb) => qb.where(flag('exclude', f.exclude!)))
+    .$if(!!f.q, (qb) => qb.where(reviewPlainText, 'ilike', `%${escapeLike(f.q!)}%`));
+
+// `plainText` from `$lib/format`, step for step and in the same order, so a search matches the text
+// the panel shows. Change one, change both.
+const reviewPlainText = sql<string>`regexp_replace(
+  replace(replace(replace(replace(replace(replace(
+    regexp_replace(coalesce(rr.details, ''), '<[^>]*>', ' ', 'g'),
+  '&nbsp;', ' '), '&amp;', '&'), '&lt;', '<'), '&gt;', '>'), '&quot;', '"'), '&#39;', ''''),
+  '\\s+', ' ', 'g')`;
+
+// `id` breaks a `createdAt` tie, which the two page queries would otherwise resolve differently.
+const reviewPage = (userId: number, query: ReviewQuery) =>
+  filteredReviews(userId, query)
+    .orderBy('rr.createdAt', 'desc')
+    .orderBy('rr.id', 'desc')
+    .limit(REVIEWS_PER_PAGE)
+    .offset((query.page - 1) * REVIEWS_PER_PAGE);
+
+export async function getReviews(userId: number, query: ReviewQuery): Promise<ReviewPage> {
+  const [items, matched, owners] = await Promise.all([
+    reviewPage(userId, query)
+      .select([
+        'rr.id',
+        'rr.createdAt',
+        'rr.rating',
+        'rr.modelId',
+        'm.name as modelName',
+        'rr.tosViolation',
+        'rr.exclude',
+        'rr.nsfw',
+        'rr.details',
+        'm.userId as modelCreatorId',
+        'u.username as modelCreator',
+      ])
+      .execute(),
+    filteredReviews(userId, query)
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .executeTakeFirstOrThrow(),
+    dbRead
+      .selectFrom('ResourceReview as rr')
+      .innerJoin('Model as m', 'm.id', 'rr.modelId')
+      .leftJoin('User as u', 'u.id', 'm.userId')
+      .where('rr.userId', '=', userId)
+      .groupBy(['m.userId', 'u.username'])
+      .select((eb) => ['m.userId as id', 'u.username', eb.fn.countAll<string>().as('count')])
+      .orderBy('count', 'desc')
+      .execute(),
+  ]);
+  const counted = owners.map((o) => ({ ...o, count: Number(o.count) }));
+  return {
+    items,
+    perPage: REVIEWS_PER_PAGE,
+    total: Number(matched.n),
+    all: counted.reduce((sum, o) => sum + o.count, 0),
+    owners: counted.slice(0, OWNER_OPTIONS),
+  };
+}
+
+/**
+ * Review id → how many of the reviewer's own images use the reviewed version, for the page and filters
+ * in `query`. Retool's SubmittedReviewImageCount.
+ *
+ * Its own endpoint, not part of `/api/user-account`: per review it walks every image that uses the
+ * version, which is slow for reviewers of popular versions. Driving it from the reviewer's images
+ * instead is slower for prolific reviewers, so neither shape wins.
+ *
+ * The body of the `ResourceReviewHelper` VIEW, inlined and correlated to the row — NEVER join the view
+ * itself. It groups over every review and the qual does not push through, so both a join and a keyed
+ * `IN (…)` lookup time out. (The main app hit the same wall: resourceReview.service.ts.)
+ */
+export async function getReviewImageCounts(
+  userId: number,
+  query: ReviewQuery
+): Promise<Record<number, number>> {
+  const rows = await reviewPage(userId, query)
+    .select((eb) => [
+      'rr.id',
       eb
         .selectFrom('ImageResourceNew as ir')
         .innerJoin('Image as i', (join) =>
@@ -75,29 +209,10 @@ export async function getReviews(userId: number, limit = 100): Promise<Capped<Us
         )
         .select((agg) => agg.fn.count('i.id').distinct().as('count'))
         .whereRef('ir.modelVersionId', '=', 'rr.modelVersionId')
-        .as('imageCount')
-    )
-    .select([
-      'rr.id',
-      'rr.createdAt',
-      'rr.rating',
-      'rr.modelId',
-      'rr.tosViolation',
-      'rr.exclude',
-      'rr.nsfw',
-      'rr.details',
-      'u.username as modelCreator',
+        .as('imageCount'),
     ])
-    .where('rr.userId', '=', userId)
-    .orderBy('rr.createdAt', 'desc')
-    .limit(limit + 1)
-    .execute()
-    .then((rows) =>
-      capped(
-        rows.map((row) => ({ ...row, imageCount: Number(row.imageCount ?? 0) })),
-        limit
-      )
-    );
+    .execute();
+  return Object.fromEntries(rows.map((row) => [row.id, Number(row.imageCount ?? 0)]));
 }
 
 // Reviews RECEIVED on this user's models (Retool's ReceivedReviews, behind the tab that was never
@@ -218,89 +333,66 @@ export async function getBountyEntries(
 }
 
 export type UserComment = {
+  /** The old `Comment` id, which the bulk actions and the model page's dialog still address. */
   id: number;
   createdAt: Date;
   content: string;
-  nsfw: boolean | null;
   tosViolation: boolean | null;
   modelId: number | null;
 };
 
+/** Rows with an old `Comment` id. Tombstones keep their `userId`, so are excluded. */
 export async function getComments(userId: number, limit = 25): Promise<Capped<UserComment>> {
   return dbRead
-    .selectFrom('Comment')
-    .select(['id', 'createdAt', 'content', 'nsfw', 'tosViolation', 'modelId'])
+    .selectFrom('CommentV3')
+    .select([
+      sql<number>`"legacyV1Id"`.as('id'),
+      'createdAt',
+      'content',
+      'tosViolation',
+      'entityId as modelId',
+    ])
     .where('userId', '=', userId)
+    .where('legacyV1Id', 'is not', null)
+    .where('deletedAt', 'is', null)
     .orderBy('createdAt', 'desc')
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
 }
 
-// Retool's segmentedControl1 split comments into "Model Comments" (`Comment`) and "Other Comments"
-// (`CommentV2` — image, article, bounty and post threads). Only the first was ported; this is the
-// other half, and it is the larger table on most accounts.
+// Retool's "Other Comments": every comment not on the model page.
 export type UserCommentV2 = {
   id: number;
   createdAt: Date;
   content: string;
   tosViolation: boolean | null;
-  threadId: number;
-  /** What the comment is ON — resolved through the thread, and through its root thread for replies. */
+  /** What the comment is ON. A reply carries its entity on its own row. */
   entityType: string | null;
   entityId: number | null;
 };
 
-// `Thread` carries one nullable FK per commentable type, so resolving what a comment is attached to is
-// a coalesce across all of them — no builder equivalent. A reply's own thread points at the parent
-// comment, so the ROOT thread is what identifies the image or model it ultimately hangs off; Retool's
-// CommentsWithLinks coalesced root first for exactly that reason.
-//
-// (Its name promises a link filter that its SQL does not contain — the filtering was done in the
-// browser. What the query is actually for is this resolution, so that is what is ported.)
-const THREAD_TARGETS = [
-  'imageId',
-  'modelId',
-  'postId',
-  'articleId',
-  'bountyId',
-  'bountyEntryId',
-  'reviewId',
-  'questionId',
-  'answerId',
-] as const;
-
-const threadEntityId = sql<number | null>`coalesce(${sql.join(
-  THREAD_TARGETS.flatMap((c) => [sql`root.${sql.ref(c)}`, sql`t.${sql.ref(c)}`]),
-  sql`, `
-)})`;
-
-const threadEntityType = sql<string | null>`case ${sql.join(
-  THREAD_TARGETS.map(
-    (c) =>
-      sql`when coalesce(root.${sql.ref(c)}, t.${sql.ref(c)}) is not null then ${sql.lit(
-        c.replace(/Id$/, '')
-      )}`
-  ),
-  sql` `
-)} end`;
+/** What each comment hangs off, by id. A comment with no row has no entry. */
+export async function commentParents(
+  commentIds: number[]
+): Promise<Map<number, { type: string; id: number }>> {
+  if (!commentIds.length) return new Map();
+  const rows = await dbRead
+    .selectFrom('CommentV3')
+    .select(['id', 'entityType', 'entityId'])
+    .where('id', 'in', commentIds)
+    .execute();
+  return new Map(rows.map((r) => [r.id, { type: r.entityType, id: r.entityId }]));
+}
 
 export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<UserCommentV2>> {
   return dbRead
-    .selectFrom('CommentV2 as c')
-    .leftJoin('Thread as t', 't.id', 'c.threadId')
-    .leftJoin('Thread as root', 'root.id', 't.rootThreadId')
-    .select([
-      'c.id',
-      'c.createdAt',
-      'c.content',
-      'c.tosViolation',
-      'c.threadId',
-      threadEntityId.as('entityId'),
-      threadEntityType.as('entityType'),
-    ])
-    .where('c.userId', '=', userId)
-    .orderBy('c.createdAt', 'desc')
+    .selectFrom('CommentV3')
+    .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
+    .where('userId', '=', userId)
+    .where('legacyV1Id', 'is', null)
+    .where('deletedAt', 'is', null)
+    .orderBy('createdAt', 'desc')
     .limit(limit + 1)
     .execute()
     .then((rows) => capped(rows, limit));
@@ -1005,12 +1097,10 @@ export async function getRetoolActivity(userId: number, limit = 25): Promise<Ret
     .selectFrom('ReToolActions')
     .select(['id', 'Event as at', 'User as moderator', 'App as app', 'ActionType as action'])
     // 🔴 The id must follow a SUBJECT LABEL, not merely be a standalone number. `ActionType` is free
-    // text and 56% of rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
+    // text and many rows carry more than one — `ToS 5 images from <id>`, `Strike 2 on user <id>`,
     // `Banned 47 accounts` — so a bare word-boundary match attributed every image COUNT and strike
-    // number to whichever account shares that value. Measured against the moderator database: id 1
-    // matched 22,130 unrelated rows, id 2 matched 7,289, id 5 matched 2,331 (2,204 of them
-    // `ToS 5 images…`), and 101 accounts have an id under 100. Anchoring costs nothing — on real
-    // 6-7 digit subject ids both forms return identical rows.
+    // number to whichever account shares that value: a low id matched thousands of unrelated rows.
+    // Anchoring costs nothing — on real subject ids both forms return identical rows.
     //
     // `from ` requires digits immediately after, which is what excludes `ToS N images from modelId
     // <id>` — that number is a MODEL id, not this account.
@@ -1176,7 +1266,8 @@ export type TrainingRun = {
 
 export async function getTrainingRuns(
   userId: number,
-  limit = 25
+  limit = 25,
+  { charges = true }: { charges?: boolean } = {}
 ): Promise<{ runs: TrainingRun[]; truncated: boolean; charges: TrainingCharges | null }> {
   const rows = await dbRead
     .selectFrom('Model as m')
@@ -1277,7 +1368,7 @@ export async function getTrainingRuns(
     params: r.params,
   }));
 
-  return { runs, truncated, charges: await getTrainingCharges(userId, runs) };
+  return { runs, truncated, charges: charges ? await getTrainingCharges(userId, runs) : null };
 }
 
 export type TrainingChargeRow = {
@@ -1361,9 +1452,12 @@ async function getTrainingCharges(
         JSONExtractString(details, 'workflowId') AS workflowId
       FROM buzzTransactions
       WHERE type = 'training' AND fromAccountId = ${Math.trunc(userId)}
-      ORDER BY date DESC
     `);
     if (!rows.length) return null;
+    // Sorted here, not in the query: `ORDER BY date DESC` on this 1.5B-row table measured 13-30s+
+    // against 0.4-0.55s without it. There was no LIMIT, so only the order moves.
+    const at = (date: string) => utcMs(date) || 0;
+    rows.sort((a, b) => at(b.date) - at(a.date));
 
     // A retrain reuses the version, so one run can account for several charges — every `Submitted` in
     // its history is one. `submittedAt` covers the ~8% of files with no history array.
@@ -1492,6 +1586,21 @@ const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) =
   ORDER BY type
 `;
 
+const placementOf = (
+  p: PlacementParties | undefined,
+  users: Map<number, { username: string | null }>
+): BuzzTransaction['placement'] =>
+  p
+    ? {
+        id: p.placementId,
+        surface: p.surface,
+        placerId: p.placerId,
+        placerName: users.get(p.placerId)?.username ?? null,
+        ownerId: p.ownerId,
+        ownerName: users.get(p.ownerId)?.username ?? null,
+      }
+    : null;
+
 /**
  * ONE side of the ledger — payments (money out) or receipts (money in).
  *
@@ -1536,11 +1645,26 @@ export async function getBuzzLedgerSide(
   const page = rows.slice(0, limit);
 
   // A counterparty id is only a USER id when the counterparty is a user-held account. Other account
-  // types reuse the same integer space: `creatorProgramBank` transacts as account 202607/202608, and
-  // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
-  // creator as the counterparty of every Creator Program transfer.
+  // types reuse the same integer space: `creatorProgramBank`'s account ids are also real, unrelated
+  // user ids — resolving them would name an innocent creator as the counterparty of every Creator
+  // Program transfer.
   const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
-  const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
+  // A placement's legs run through the escrow account, so the counterparty on the row is account 0;
+  // the placement itself names who paid and who was paid. Only escrow rows are read as legs, so no
+  // other row's reference can borrow a placement's parties.
+  const escrowRef = (r: BuzzRow) =>
+    Number(r.counterpartyId) === 0 ? r.externalTransactionId : null;
+  // The labels are extra: if this read fails the rows still show, without them.
+  const placements = await getPlacementParties(page.map(escrowRef)).catch((e) => {
+    console.error('[user-lookup] placement parties unavailable', e);
+    return new Map<number, PlacementParties>();
+  });
+  const ids = [
+    ...new Set([
+      ...resolvable.map((r) => Number(r.counterpartyId)),
+      ...[...placements.values()].flatMap((p) => [p.placerId, p.ownerId]),
+    ]),
+  ].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
   const mapped: BuzzTransaction[] = page.map((r) => {
@@ -1561,6 +1685,7 @@ export async function getBuzzLedgerSide(
       counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
       counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
       externalTransactionId: r.externalTransactionId || null,
+      placement: placementOf(placements.get(placementIdOf(escrowRef(r)) ?? 0), byId),
     };
   });
 

@@ -136,14 +136,21 @@ export default function ChatAudit() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Text
-                        size="xs"
-                        c="blue"
-                        className="cursor-pointer"
-                        onClick={() => setOpenChat(row.chatId)}
-                      >
-                        #{row.chatId}
-                      </Text>
+                      {/* 0 is a read of one account's messages across chats, not a conversation. */}
+                      {row.chatId ? (
+                        <Text
+                          size="xs"
+                          c="blue"
+                          className="cursor-pointer"
+                          onClick={() => setOpenChat(row.chatId)}
+                        >
+                          #{row.chatId}
+                        </Text>
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          —
+                        </Text>
+                      )}
                       {!!row.messageId && (
                         <Text size="xs" c="dimmed">
                           msg #{row.messageId}

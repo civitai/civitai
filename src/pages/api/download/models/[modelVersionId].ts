@@ -1,13 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import {
+  constants,
+  isNonCommercialBaseModel,
+  notCommerciallyAvailableMessage,
+} from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { countsTowardDownloadLimit } from '~/server/utils/download-repeats';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
@@ -19,7 +23,7 @@ import {
   shouldResolveDirect,
 } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { resolveActorFor } from '~/utils/resolve-attribution';
+import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
@@ -145,7 +149,7 @@ export default PublicEndpoint(
       if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
       // Check if user is blacklisted
-      const session = await getServerAuthSession({ req, res });
+      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
       if (!!session?.user) {
         const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
         if (userBlacklist.includes(session.user.id.toString()))
@@ -229,6 +233,14 @@ export default PublicEndpoint(
         res.setHeader('Cache-Control', 'private, no-store');
         return errorResponse(404, 'File not found');
       }
+      if (fileResult.status === 'failed-scan') {
+        // Moderators are served this file, so the refusal must not be edge-cached for them.
+        res.setHeader('Cache-Control', 'private, no-store');
+        return errorResponse(
+          403,
+          'This file did not pass a security scan and is not available for download'
+        );
+      }
       if (fileResult.status === 'archived')
         return errorResponse(410, 'Model archived, not available for download');
       if (fileResult.status === 'early-access') {
@@ -236,7 +248,9 @@ export default PublicEndpoint(
           return res.status(403).json({
             error: 'Early Access',
             deadline: fileResult.details.deadline,
-            message: 'This asset is in Early Access. You can use Buzz access it now!',
+            message: isNonCommercialBaseModel(fileResult.details.baseModel)
+              ? notCommerciallyAvailableMessage(fileResult.details.baseModel)
+              : 'This asset is in Early Access. You can use Buzz access it now!',
           });
         else return res.redirect(`/model-versions/${modelVersionId}`);
       }
@@ -296,10 +310,10 @@ export default PublicEndpoint(
         const now = new Date();
 
         // An unpublished version is only reachable by its owner and by internal services — the scanner
-        // fetches the file minutes after upload, which was landing a Download event (userId -1,
-        // `civitai-spine` UA) and leaving every draft showing 1 download before it went live.
-        const tracker = new Tracker(req, res);
-        if (fileResult.published)
+        // fetches the file minutes after upload, which was landing a Download event and leaving every
+        // draft showing 1 download before it went live.
+        const tracker = new Tracker(req, res, session);
+        if (fileResult.published && countsAsPublicDownload(session?.user))
           await tracker.modelVersionEvent({
             type: 'Download',
             modelId: fileResult.modelId,

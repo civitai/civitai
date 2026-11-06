@@ -2,6 +2,7 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
@@ -133,6 +134,11 @@ import {
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  decidePayoutReview,
+  openPayoutHold,
+} from '~/server/services/creator-program-prepayout-review/hold';
+import { installPayoutReviewTable } from '~/server/services/creator-program-prepayout-review/__tests__/payout-review-fake';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -219,6 +225,18 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).not.toMatch(/'tip'/);
   });
 
+  it('counts user-paid tips and generation tips from the cutover', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      expect(sql).toMatch(/type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId/);
+      expect(sql).toMatch(/startsWith\(externalTransactionId, 'generation-tip-'\)/);
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
+  });
+
   it('counts license fees and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
@@ -239,7 +257,10 @@ describe('userCapCache peak-earning query', () => {
       const { sql, result } = await runLookup([userId]);
 
       expect(sql).toContain(`WHERE ${PEAK_EARNING_PREDICATE_SQL}\n`);
-      expect(sql).not.toContain('compensation');
+      // Only generation tips, never the generation price itself.
+      expect(sql).not.toMatch(
+        /'compensation'(?! AND fromAccountId = 0 AND startsWith\(externalTransactionId, 'generation-tip-'\))/
+      );
       expect(result[userId].countsCompensation).toBe(false);
     } finally {
       vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
@@ -547,8 +568,8 @@ describe('bankBuzz', () => {
     });
 
     function mockBankableLedger({ snapshot, earned }: { snapshot: number; earned: number }) {
-      mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-        const sql = parts.join('');
+      mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+        const sql = typeof parts === 'string' ? parts : parts.join('');
         if (sql.includes('AS balance')) return [{ balance: String(snapshot) }];
         if (sql.includes('AS consumed')) return [{ earned: String(earned), consumed: '0' }];
         return [{ balance: 35000 }];
@@ -585,17 +606,28 @@ describe('bankBuzz', () => {
       const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:creator-program:bank:${userId}`;
       const { set, eval: evalScript } = redisMock.redis;
       const acquire = set.mock.calls.findIndex(([key]: [string]) => key === lockKey);
-      const release = evalScript.mock.calls.findIndex(
-        ([script, opts]: [string, { keys: string[] }]) =>
-          script.includes('"del"') && opts.keys[0] === lockKey
-      );
+      // The release is the script on the lock's key that, run for real against a lock held with
+      // its own value, deletes it (a renewal on the same key leaves it).
+      let release = -1;
+      for (const [i, [script, opts]] of (
+        evalScript.mock.calls as [string, { keys: string[]; arguments: string[] }][]
+      ).entries()) {
+        if (opts.keys[0] !== lockKey) continue;
+        const lua = createLuaRedis(0);
+        lua.setString(lockKey, opts.arguments[0]!);
+        await lua.eval(script, opts);
+        if (lua.string(lockKey) === undefined) {
+          release = i;
+          break;
+        }
+      }
       expect(acquire, 'lock acquired under the per-user key').toBeGreaterThanOrEqual(0);
       expect(release, 'lock released under the per-user key').toBeGreaterThanOrEqual(0);
       const acquiredAt = set.mock.invocationCallOrder[acquire];
       const releasedAt = evalScript.mock.invocationCallOrder[release];
 
       const bankableReads = mockClickhouse.$query.mock.calls.flatMap(([parts], i) =>
-        (parts as string[]).join('').includes('AS consumed')
+        (typeof parts === 'string' ? parts : (parts as string[]).join('')).includes('AS consumed')
           ? [mockClickhouse.$query.mock.invocationCallOrder[i]]
           : []
       );
@@ -733,8 +765,9 @@ describe('after the bankable-amount cutover, with ClickHouse failing', () => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
     mockCapCache();
     mockGetUserBuzzAccount.mockResolvedValue([{ balance: 100000 }]);
-    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-      if (parts.join('').includes('AS consumed')) throw new Error('clickhouse down');
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
+      if (sql.includes('AS consumed')) throw new Error('clickhouse down');
       return [{ balance: 35000 }];
     });
   });
@@ -767,8 +800,8 @@ describe('getBanked after the bankable-amount cutover', () => {
   beforeEach(() => {
     vi.setSystemTime(new Date('2026-12-15T12:00:00Z'));
     mockCapCache();
-    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-      const sql = parts.join('');
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
       if (sql.includes('AS balance')) return [{ balance: '30000' }];
       return [{ earned: '10000', consumed: '0' }];
     });
@@ -785,6 +818,7 @@ describe('getBanked after the bankable-amount cutover', () => {
     expect(result.bankable).toEqual({
       snapshot: 30000,
       earned: 10000,
+      spent: 0,
       consumed: 0,
       remaining: 35000,
     });
@@ -1145,6 +1179,53 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('with a payout-review hold', () => {
+    let table: ReturnType<typeof installPayoutReviewTable>;
+    beforeEach(() => {
+      table = installPayoutReviewTable();
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: userId });
+      mockCachedObject.fetch.mockResolvedValue({
+        [userId]: {
+          id: userId,
+          status: 'ready',
+          ready: 100000,
+          pending: 0,
+          withdrawn: 0,
+          paymentMethod: 'ACH',
+        },
+      });
+      // WITHDRAWAL_FEES has no 'Wire' entry, so the success half needs a supported method.
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockPayToTipaltiAccount.mockResolvedValue({ paymentBatchId: 'b-1', paymentRefCode: 'r-1' });
+    });
+    afterEach(() => table.uninstall());
+
+    it('refuses while the hold is open and pays out once it is cleared', async () => {
+      const hold = await openPayoutHold(
+        { userId, ground: 'investigation', reason: 'test hold' },
+        'user:1'
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('on hold');
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+      expect(mockDbWrite.cashWithdrawal.create).not.toHaveBeenCalled();
+      expect(mockPayToTipaltiAccount).not.toHaveBeenCalled();
+
+      await decidePayoutReview(
+        { id: hold.id, userId, period: hold.period, action: 'clear', version: hold.version },
+        'user:1'
+      );
+
+      await withdrawCash(userId, 10000);
+      expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledTimes(1);
+      expect(mockPayToTipaltiAccount).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('when the Tipalti payment fails after the burn', () => {

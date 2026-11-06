@@ -71,7 +71,7 @@ the workflow readers and archive entries (`trainingRows.test.ts`), the submit wi
 required `checkText` hook (`train-core.test.ts`), the standalone server's call to the main app's text
 check (`src/lib/server/text-check.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`).
 `$env/dynamic/private` is aliased to `src/test/env.mock.ts` in `vitest.config.ts` (this config doesn't
-load the SvelteKit plugin), so modules importing it can run under test. `@civitai/client` is mocked by hand there — its dist imports a directory, which
+load the SvelteKit plugin), so modules importing it can run under test. `@civitai/orchestration-client` is mocked by hand there — its dist imports a directory, which
 Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 ## Previewing the UI without OAuth
@@ -86,6 +86,11 @@ Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
   `src/lib/server/auth.ts` requires only a resolved session (`(user) => !!user`) — NOT `isModerator`.
   `hooks.server.ts` sends an unauthenticated request to the hub login and a forbidden one to
   civitai.com.
+
+- **No form actions.** The flow UI also ships as a web component embedded in the main app, so every
+  read and write goes through the `StudioBackend` seam (`$lib/backend.ts`; the shell's `/api` routes
+  or the element host), never `use:enhance`. Flow code imports host concerns from `$lib/host.ts`, never
+  `$app/*` or `$env/*`. The three review agents know this delta.
 
 ## Non-negotiables
 

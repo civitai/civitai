@@ -109,17 +109,17 @@ vi.mock('~/components/generation_v2/inputs/ResourceDataProvider', async (orig) =
 }));
 
 // eslint-disable-next-line import/first
-import {
-  ConnectedBuzzTypeSelector,
-  SubmitButton,
-} from '~/components/form-graph/generation/FormFooter';
+import { ConnectedCostPicker, SubmitButton } from '~/components/form-graph/generation/FormFooter';
 
-const store = { getSnapshot: () => ({ state: {} }) } as unknown as GenerationStore;
+const store = {
+  getSnapshot: () => ({ state: {} }),
+  subscribe: () => () => undefined,
+} as unknown as GenerationStore;
 
 const footerUi = () => (
   <div>
     <SubmitButton store={store} />
-    <ConnectedBuzzTypeSelector store={store} />
+    <ConnectedCostPicker store={store} />
   </div>
 );
 

@@ -11,8 +11,8 @@ import { blockPreconnectHint, blockPreconnectOrigin } from '../blockPreconnect';
  * `next/head`, and `next/head` renders nothing into a DOM — it hands its
  * children to a head manager. Asserting on the returned React element's props
  * is therefore MORE direct than rendering, not less: it reads exactly the
- * attributes the browser will see, and it runs in the `unit` project, which is
- * the tier CI actually executes (the `component` project is not run in CI).
+ * attributes the browser will see, and it runs in the `unit` project without
+ * starting a browser.
  *
  * The three properties that make the hint work, all of which fail SILENTLY:
  *   - `rel="preconnect"` — a typo'd rel is simply ignored by the browser;
@@ -108,8 +108,7 @@ describe('blockPreconnectHint', () => {
  * such — it checks the SHAPE of the call site, so a refactor preserving neither
  * defeats it. It is used here for the same reason `launchSampleBound.test.ts`
  * uses one for the launch-mark seed: the behavioural alternative can only live
- * in the `component` project, which CI does not run, so it would report safety
- * from a tier nothing observes.
+ * in the `component` project, and this gate runs in `unit` as well.
  */
 describe('the hint is emitted from the run page SSR head', () => {
   const PAGE = path.resolve(__dirname, '../../../pages/apps/run/[slug]/[[...path]].tsx');

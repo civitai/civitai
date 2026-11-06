@@ -228,8 +228,11 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             }
             if (!data) return null;
             // A generated video's file carries the worker's ComfyUI graph, whose Model path and
-            // engine would override the generator's meta and fail the on-site check.
-            const isOnSiteVideo = data.type === 'video' && !!fileMeta?.civitaiResources;
+            // engine would override the generator's meta and fail the on-site check. The
+            // generator's meta drops empty arrays, so a job with no resources (e.g. an
+            // interpolated video) has no civitaiResources: the workflow id marks it as generated.
+            const isOnSiteVideo =
+              data.type === 'video' && (!!fileMeta?.civitaiResources || !!generationWorkflowId);
             const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
             // Merge civitaiResources arrays by modelVersionId instead of overwriting
             const mergedCivitaiResources = (() => {

@@ -5,6 +5,7 @@ import {
   FileButton,
   Group,
   Image,
+  Loader,
   Paper,
   SimpleGrid,
   Stack,
@@ -15,6 +16,8 @@ import { useRef, useState } from 'react';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
   buyerRoundFinalsState,
+  deliverNeeds,
+  deliverWait,
   filesByRound,
   filesPollMs,
   finalsCopy,
@@ -23,6 +26,7 @@ import {
   sortPicked,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ServiceDealFileKind } from '~/shared/utils/prisma/enums';
@@ -39,6 +43,7 @@ export function useServiceDealFiles(deal: ServiceDealView) {
     {
       enabled: deal.id > 0,
       retry: false,
+      ...DEAL_FRESHNESS,
       refetchInterval: (query) => filesPollMs(query.state.data ?? [], deal),
     }
   );
@@ -148,6 +153,8 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
   const previewSlots = uploadSlotsLeft('Preview', deal.previewKind, files, round);
   const finalSlots = uploadSlotsLeft('Final', deal.previewKind, files, round);
   const takesPreview = deal.previewKind !== 'None';
+  const waiting = deliverWait(files, round);
+  const needs = deliverNeeds(files, round, deal.previewKind);
 
   return (
     <Stack gap="sm">
@@ -191,12 +198,25 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
         <Button
           color="yellow"
           loading={deliver.isPending}
-          disabled={busy.length > 0}
+          disabled={busy.length > 0 || !!waiting || !!needs}
           onClick={() => deliver.mutate({ dealId: deal.id })}
         >
           Deliver
         </Button>
       </Group>
+      {waiting && busy.length === 0 && (
+        <Group gap="xs">
+          <Loader size="xs" />
+          <Text size="sm" c="dimmed">
+            {waiting} Deliver unlocks when they pass.
+          </Text>
+        </Group>
+      )}
+      {needs && !waiting && busy.length === 0 && (
+        <Text size="sm" c="dimmed">
+          {needs}
+        </Text>
+      )}
       {busy.length > 0 && (
         <Text size="sm" c="dimmed">
           Uploading {busy.map((item) => item.name).join(', ')}…

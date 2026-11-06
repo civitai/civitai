@@ -36,7 +36,7 @@ export type ComfyGraph = Record<string, ComfyGraphNode>;
 
 /**
  * The `$type:'customComfy'` step INPUT payload (`CustomComfyInput` in
- * @civitai/client): the AIR resource list + the raw graph + the trace mode. This
+ * @civitai/orchestration-client): the AIR resource list + the raw graph + the trace mode. This
  * is the reusable graph-construction output — a future prepaid `$type:'comfy'`
  * path would wrap the SAME input differently, so keep it free of any
  * customComfy-step envelope concern.

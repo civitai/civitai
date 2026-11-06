@@ -33,8 +33,8 @@ import { describe, expect, it } from 'vitest';
  * Gating the whole component, or the whole `Stack`, silently removes them.
  *
  * 🔴 Structural, not behavioural: it proves the gate is in the tree and the two
- * controls are outside it. `test:component` runs in no CI job, so a browser test
- * would pin this for whoever runs it by hand and nothing on `main`.
+ * controls are outside it. A browser test (`test:component`, `Component tests` in CI)
+ * could pin the behaviour; this pins the structure in the unit suite.
  */
 
 const FILE = path.resolve(__dirname, '../BrowsingMode.tsx');

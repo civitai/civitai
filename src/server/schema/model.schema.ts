@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { publishedDateSchema } from '~/shared/utils/published-range';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   AssociationType,
@@ -37,6 +38,13 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import type { MatureLockAttribution } from '~/shared/constants/mature-lock-reason.constants';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import {
+  SFW_DESCRIPTION_MAX_LENGTH,
+  SFW_DESCRIPTION_TOO_LONG_MESSAGE,
+  SFW_NAME_TOO_LONG_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -54,6 +62,8 @@ export type GetModelByIdSchema = z.infer<typeof getModelByIdSchema>;
 export const getModelByIdSchema = z.object({
   id: z.number(),
   excludeTrainingData: z.boolean().optional(),
+  /** The editor's read: owners and mods get the stored .red name/description, not the .com face. */
+  forEditor: z.boolean().optional(),
 });
 
 export const getAllModelsSchema = z.object({
@@ -94,6 +104,9 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
+  /** First and last day published, UTC `YYYY-MM-DD`, both inclusive. */
+  publishedFrom: publishedDateSchema.optional(),
+  publishedTo: publishedDateSchema.optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -140,13 +153,16 @@ export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
 /** Query contract for /api/v1/models, which parses it off `req.query` where every value is a string. */
-export const modelsEndpointSchema = getAllModelsSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
-  nsfw: booleanString().optional(),
-  primaryFileOnly: booleanString().optional(),
-  favorites: booleanString().optional().default(false),
-  hidden: booleanString().optional().default(false),
-});
+export const modelsEndpointSchema = getAllModelsSchema
+  // Not part of the documented public contract.
+  .omit({ publishedFrom: true, publishedTo: true })
+  .extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
+    nsfw: booleanString().optional(),
+    primaryFileOnly: booleanString().optional(),
+    favorites: booleanString().optional().default(false),
+    hidden: booleanString().optional().default(false),
+  });
 
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
@@ -212,11 +228,31 @@ export const modelGallerySettingsInput = z.object({
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
+export const checkSfwFaceSchema = z.object({
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH).optional(),
+  sfwDescription: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).optional(),
+  modelId: z.number().optional(),
+});
+export type CheckSfwFaceInput = z.infer<typeof checkSfwFaceSchema>;
+
+export const draftSfwFaceSchema = z.object({
+  // The .red name, which may predate its own cap.
+  name: z.string().trim().min(1).max(255),
+  description: z.string().max(SFW_DESCRIPTION_MAX_LENGTH).nullish(),
+  modelId: z.number().optional(),
+});
+
 export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
   description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
+  sfwName: z.string().trim().max(MODEL_NAME_MAX_LENGTH, SFW_NAME_TOO_LONG_MESSAGE).nullish(),
+  sfwDescription: getSanitizedStringSchema()
+    .pipe(z.string().max(SFW_DESCRIPTION_MAX_LENGTH, SFW_DESCRIPTION_TOO_LONG_MESSAGE))
+    .nullish(),
+  coverImageId: z.number().int().positive().nullish(),
+  sfwCoverImageId: z.number().int().positive().nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),
@@ -335,12 +371,60 @@ export type MinorFlagSnapshot = {
   confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
+  /** Absent on snapshots written before it was kept. */
+  prevMinor?: boolean;
   prevNsfw?: boolean;
   prevSfwOnly?: boolean;
   prevGalleryLevel?: number | null;
   prevLockedProperties?: string[];
   prevMinorImageIds?: number[];
+  /** When a lift ended this flag or a moderator ruled on the rating: a later lift restores nothing from it. */
+  supersededAt?: string;
 };
+
+/** Written when the hash match applies the real-person flag, so a revert can restore what it changed. */
+export type PoiFlagSnapshot = {
+  at: string;
+  source: 'auto' | 'manual';
+  confirmedFrom?: 'auto';
+  confirmedAt?: string;
+  confirmedBy?: number;
+  prevNsfw?: boolean;
+  prevSfwOnly?: boolean;
+  prevGalleryLevel?: number | null;
+  prevLockedProperties?: string[];
+};
+
+type RestrictedNsfwPrior = {
+  nsfw: boolean;
+  sfwOnly: boolean;
+  lockedProperties: string[];
+  systemNsfwLock: { source: string; at: string } | null;
+};
+
+export type RestrictedNsfwVerdict = {
+  source: string;
+  at: string;
+  restriction: 'minor' | 'poi' | 'sfwOnly';
+  /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
+  applied?: { at: string; prior: RestrictedNsfwPrior };
+  /** The flag was lifted other than by the owner's save; the lead waits for a moderator's ruling. */
+  liftedBy?: 'moderator' | 'appeal' | 'hashRevert';
+};
+
+/** One ruling on a restricted-verdict lead, with the values it replaced. `autoApply` is the scan's own
+ *  flip of an SFW-only model, by the system user; the others are a moderator's. */
+export type RestrictedNsfwVerdictRulingRecord = {
+  at: string;
+  by: number;
+  ruling: 'keep' | 'dismiss' | 'rateNsfw' | 'autoApply';
+  restriction: RestrictedNsfwVerdict['restriction'];
+  reason?: string | null;
+  verdict?: RestrictedNsfwVerdict;
+  prior: RestrictedNsfwPrior;
+};
+
+export type ComFaceRemovedReason = 'detected' | 'recheck-unverified';
 
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
@@ -359,6 +443,10 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
+  /** Written by a content wipe on a model it kept and hid; see model-removed-with-owner.service. */
+  removedWithOwner: boolean;
+  statusBeforeRemoval: string;
+  versionsUnpublishedByRemoval: { id: number; status: string }[];
   bountyId: number;
   unpublishedBy: number;
   declinedReason: string;
@@ -388,9 +476,41 @@ export type ModelMeta = Partial<{
     scannedAt: string;
   };
   minorFlagSnapshot: MinorFlagSnapshot;
+  /** What an owner's minor/POI declaration replaced when it cleared a locked nsfw. */
+  ownerFlagOverride: {
+    at: string;
+    flags: ('minor' | 'poi')[];
+    prevNsfw: boolean;
+    prevSfwOnly: boolean;
+    prevLockedProperties: string[];
+    /** Absent on records written before it was kept. */
+    prevGalleryLevel?: number | null;
+  };
+  /** Flags the owner declared, kept when a moderator's ruling drops `ownerFlagOverride`. Server-owned. */
+  ownerDeclaredFlags: { at: string; flags: ('minor' | 'poi')[] };
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
+  poiFlagSnapshot: PoiFlagSnapshot;
+  /** A file shared with a real-person model that nothing has been applied for: a moderator's lead. */
+  poiHashMatch: { at: string; hash: string };
+  /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
+  poiHashCleared: { at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. The save-time text
+   *  filter also records which field set it off, for the owner's explanation. */
+  systemNsfwLock: { source: string; at: string } & Partial<MatureLockAttribution>;
+  /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
+   *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
+   *  verdict. A save that sets a .com cover clears it. Server-owned. */
+  comFaceRemoved: { at: string; sfwCoverImageId: number; reason: ComFaceRemovedReason };
+  /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
+   *  in Needs review. Server-owned, moderator-only. */
+  restrictedNsfwVerdict: RestrictedNsfwVerdict;
+  /** Moderator rulings on past restricted-verdict leads, with the values each replaced. Moderator-only. */
+  restrictedNsfwVerdictRulings: RestrictedNsfwVerdictRulingRecord[];
+  /** A lead a moderator kept while the model was minor or POI: revived as a held lead when the owner
+   *  clears the flag. Server-owned, moderator-only. */
+  restrictedNsfwVerdictDormant: RestrictedNsfwVerdict;
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {
@@ -562,6 +682,15 @@ export const getResourceSelectSchema = z.object({
   excludedVersionIds: z.number().array().default([]),
   // recent → generation only: orchestrator history ids resolved client-side
   restrictToIds: z.number().array().optional(),
+  // A pasted model / version link: the same query scoped to that id, without the type and
+  // base-model scope so the picker can say which of them hid it.
+  lookup: z
+    .object({
+      modelId: z.number().int().positive().optional(),
+      modelVersionId: z.number().int().positive().optional(),
+    })
+    .refine((x) => x.modelId || x.modelVersionId)
+    .optional(),
 });
 
 export type MigrateResourceToCollectionInput = z.infer<typeof migrateResourceToCollectionSchema>;

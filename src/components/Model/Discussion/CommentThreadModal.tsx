@@ -9,8 +9,8 @@ import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/Commen
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useToggleCommentReaction } from '~/components/CommentSection/useToggleCommentReaction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
 
 export default function CommentThreadModal({
@@ -21,7 +21,6 @@ export default function CommentThreadModal({
   highlight?: number;
 }) {
   const dialog = useDialogContext();
-  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
   const { data: comment, isLoading: commentLoading } = trpc.comment.getById.useQuery({
@@ -41,39 +40,7 @@ export default function CommentThreadModal({
     { enabled: !!comment }
   );
 
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: id });
-
-      const previousReactions = queryUtils.comment.getReactions.getData({ commentId: id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
-    },
-    onError(_error, _variables, context) {
-      queryUtils.comment.getReactions.setData({ commentId }, context?.previousReactions);
-    },
-  });
+  const toggleCommentReaction = useToggleCommentReaction(commentId);
 
   const loading = commentLoading || commentsLoading;
 
@@ -119,7 +86,7 @@ export default function CommentThreadModal({
             <RenderHtml html={comment.content} withMentions withProfanityFilter allowStickers />
             <ReactionPicker
               reactions={reactions}
-              onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}
+              onSelect={(reaction) => toggleCommentReaction.toggle(reaction)}
             />
             <CommentSection
               comments={comments}

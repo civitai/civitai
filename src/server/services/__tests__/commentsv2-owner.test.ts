@@ -12,11 +12,12 @@ const OWNER_TABLES = [
   'bountyEntry',
   'resourceReview',
   'commentV2',
-  'question',
-  'answer',
   'challenge',
   'crucible',
+  'storyline',
   'comicChapter',
+  'model3D',
+  'appListing',
 ] as const;
 
 const lookup = (table: (typeof OWNER_TABLES)[number]) => dbMock.dbRead[table].findUnique;
@@ -42,6 +43,13 @@ describe('getThreadEntityOwnerId', () => {
     await expect(getThreadEntityOwnerId({ entityType: 'crucible', entityId: 5 })).resolves.toBe(31);
   });
 
+  it('resolves the storyline owner via userId', async () => {
+    lookup('storyline').mockResolvedValueOnce({ userId: 32 });
+    await expect(getThreadEntityOwnerId({ entityType: 'storyline', entityId: 5 })).resolves.toBe(
+      32
+    );
+  });
+
   it('resolves the comicChapter owner via the parent project', async () => {
     lookup('comicChapter').mockResolvedValueOnce({ project: { userId: 12 } });
     await expect(getThreadEntityOwnerId({ entityType: 'comicChapter', entityId: 1 })).resolves.toBe(
@@ -49,9 +57,25 @@ describe('getThreadEntityOwnerId', () => {
     );
   });
 
+  it('resolves the 3D model owner via userId', async () => {
+    lookup('model3D').mockResolvedValueOnce({ userId: 33 });
+    await expect(getThreadEntityOwnerId({ entityType: 'model3d', entityId: 5 })).resolves.toBe(33);
+  });
+
+  it('resolves the app listing owner by its serialId', async () => {
+    lookup('appListing').mockResolvedValueOnce({ userId: 34 });
+    await expect(getThreadEntityOwnerId({ entityType: 'appListing', entityId: 5 })).resolves.toBe(
+      34
+    );
+    expect(lookup('appListing')).toHaveBeenCalledWith({
+      where: { serialId: 5 },
+      select: { userId: true },
+    });
+  });
+
   it('returns null for entity types we cannot cheaply resolve', async () => {
     await expect(
-      getThreadEntityOwnerId({ entityType: 'model3d', entityId: 1 })
+      getThreadEntityOwnerId({ entityType: 'model3dReview', entityId: 1 })
     ).resolves.toBeNull();
     expect(anyLookupCalled()).toBe(false);
   });

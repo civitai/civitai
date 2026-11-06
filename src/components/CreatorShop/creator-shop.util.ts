@@ -299,7 +299,8 @@ export const useMutateCreatorShop = () => {
   });
 
   const reviewItem = trpc.creatorShop.reviewItem.useMutation({
-    async onSuccess() {
+    // Settled, not success: a verdict refused because the item changed needs the new version shown.
+    async onSettled() {
       await queryUtils.creatorShop.getReviewQueue.invalidate();
     },
     onError: onError('Failed to review item'),
@@ -313,7 +314,8 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getSettings.invalidate();
       await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
       await queryUtils.creatorShop.getPublicShopItems.invalidate();
-      const failed = result.failures.length;
+      const failed = result.failures.filter((f) => f.stage !== 'cdn').length;
+      const artworkFailed = result.failures.length - failed;
       showSuccessNotification({
         title: 'Cosmetic taken down',
         message: `Refunded ${result.refunded} of ${result.purchases} sale${
@@ -323,18 +325,22 @@ export const useMutateCreatorShop = () => {
         }% of those sales) from the seller and removed it from ${result.revokedFrom} account${
           result.revokedFrom === 1 ? '' : 's'
         }.${
-          failed
-            ? ` ${failed} Buzz transfer${failed === 1 ? '' : 's'} failed — finish by hand.`
+          result.boxesPulled || result.boxOpeningsRefunded
+            ? ` Pulled from ${result.boxesPulled} mystery box${
+                result.boxesPulled === 1 ? '' : 'es'
+              } and refunded ${result.boxOpeningsRefunded} box opener${
+                result.boxOpeningsRefunded === 1 ? '' : 's'
+              }.`
             : ''
         }${
-          // A pack's split can't be re-derived without a payout record, so the
-          // amount is only knowable here. Telling the moderator to finish by
-          // hand without telling them how much leaves them the one person who
-          // can act and can't see the number.
-          result.unrecoveredPackPool
-            ? ` ${numberWithCommas(
-                result.unrecoveredPackPool
-              )} Buzz of pack payouts could not be reversed.`
+          failed
+            ? ` ${failed} refund or box step${failed === 1 ? '' : 's'} failed — finish by hand.`
+            : ''
+        }${
+          artworkFailed
+            ? ' Recording its artwork for removal failed — take it down again to retry.'
+            : result.artworkLeftServing
+            ? ' Its artwork was not removed from the CDN and needs a manual check.'
             : ''
         }`,
       });

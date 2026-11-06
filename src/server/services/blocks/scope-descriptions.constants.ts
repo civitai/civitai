@@ -81,6 +81,9 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     // Not "under your username": the username is shown only on collections whose reviewed
     // declaration sets `showAuthor`, so the sentence claims authorship, not display.
     "Add and edit entries in this app's shared data as you — every user of the app can read them",
+  'apps:storage:import':
+    // The consent modal names each source app and its collections beside this line.
+    'Read — and, where it says so, change — your data in another app, as you',
   'collections:read:self':
     'Browse and read public Civitai collections, and your own public collections',
   'collections:write:self': 'Bookmark (follow) collections on your behalf',
@@ -95,6 +98,30 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   // sentence says so rather than implying a later prompt.
   'social:react:self':
     'React to images this app shows you, as you — reactions appear on Civitai like your own, without asking each time',
+};
+
+/** Short plain-language name per scope, shown as the row title on the viewer's permissions list. */
+export const SCOPE_PLAIN_TITLES: Record<string, string> = {
+  'user:read:self': 'See your username and account status',
+  'models:read:self': 'See the model it sits on',
+  'buzz:read:self': 'See your Buzz balance',
+  'ai:write:budgeted': 'Run AI work with your Buzz',
+  'social:tip:self': 'Tip on your behalf',
+  'apps:storage:read': 'Read its saved data for you',
+  'apps:storage:write': 'Save data for you',
+  'apps:storage:shared:read': 'Read community data',
+  'apps:storage:shared:write': 'Post to community data',
+  'apps:storage': 'Store your data and read shared entries',
+  'apps:storage:publish': 'Share entries with other users',
+  'apps:storage:import': 'Use your data from another app',
+  'collections:read:self': 'Browse collections',
+  'collections:write:self': 'Follow collections for you',
+  'collections:read:private': 'See your private collections',
+  'posts:write:self': 'Publish posts to your profile',
+  'goods:read:self': 'See items you own in the app',
+  'goods:purchase:self': 'Buy items with your Buzz',
+  'apps:store:items:write': 'List your items in the App Store',
+  'social:react:self': 'React to images for you',
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

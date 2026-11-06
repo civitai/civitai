@@ -2,6 +2,7 @@
   import '../global.css';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { page, navigating } from '$app/state';
+  import { toLinkBase } from '$lib/civitai-link';
   import { buildWordmarkSvg } from '@civitai/brand';
   import {
     IconLayoutDashboard,
@@ -14,6 +15,8 @@
     IconListSearch,
     IconScanLetterT,
     IconChartBar,
+    IconScale,
+    IconTicket,
     IconCircle,
     IconChevronRight,
     IconLogout,
@@ -44,10 +47,31 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navCount, navHref } from '$lib/nav-links';
-  import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
+  import {
+    isNavLinkActive,
+    isPathActive,
+    navBadge,
+    navCount,
+    navHref,
+    navPartial,
+    navWorstRank,
+  } from '$lib/nav-links';
+  import {
+    sidebarCounts,
+    sidebarLastActioned,
+    sidebarQueueOldest,
+    refreshSidebarCounts,
+  } from '$lib/sidebar-counts.svelte';
+  import {
+    queueWaitBadge,
+    severityClassForRank,
+  } from '$lib/queue-thresholds';
+  import ShortAge from '$lib/components/ShortAge.svelte';
+  import { minuteClock } from '$lib/minute-clock.svelte';
   import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
   import QuickSwitcher from '$lib/components/QuickSwitcher.svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { writeOpenNavGroups } from '$lib/nav-open-groups';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -61,10 +85,15 @@
     '/models': IconBox,
     '/audit': IconListSearch,
     '/text-scan': IconScanLetterT,
+    '/ratings': IconScale,
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto, Users: IconUsers };
+  const groupIcons: Record<string, typeof IconPhoto> = {
+    Images: IconPhoto,
+    Users: IconUsers,
+    Tickets: IconTicket,
+  };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
@@ -76,17 +105,57 @@
   const countFor = (key: string | undefined) =>
     key && counts.value ? (counts.value[key] ?? null) : null;
   const rollupFor = (item: NavLink) => (item.children ? navCount(item, countFor) || null : null);
-
-  // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
-  let openGroups = $state<Record<string, boolean>>({});
-  const holdsCurrentPage = (item: NavLink) =>
-    !!item.children?.some(
-      (child) => !child.external && !!child.path && isPathActive(child.path, page.url.pathname)
+  // A count the server could not read is marked, not left out: "423+" rather than a smaller total.
+  const badgeFor = (item: NavLink, cnt: number | null) =>
+    navBadge(
+      cnt,
+      navPartial(item, (key) => counts.unavailable.includes(key))
     );
-  const isOpen = (item: NavLink) => openGroups[item.label] ?? holdsCurrentPage(item);
+  const PARTIAL_TITLE = 'Some counts are unavailable';
+
+  const lastActioned = sidebarLastActioned();
+  const queueOldest = sidebarQueueOldest();
+  const clock = minuteClock();
+  const now = $derived(clock.now);
+  // Nothing until both lookups land: with one missing, the badge would time from the wrong event and
+  // jump when the other arrives.
+  const actionedFor = (link: NavLink, count: number | null) =>
+    link.countKey && lastActioned.value && queueOldest.value
+      ? queueWaitBadge(
+          link.countKey,
+          lastActioned.value[link.countKey]?.at,
+          queueOldest.value[link.countKey],
+          count,
+          now
+        )
+      : null;
+
+  // Threshold colour on top-level counts only; a group takes its worst queue's, so a collapsed group
+  // still says when something inside it is behind.
+  const severityFor = (link: NavLink) => severityClassForRank(navWorstRank(link, countFor));
+
+  // Collapsed until the moderator opens one; their open sections are remembered across visits.
+  const openGroups = $derived(new SvelteSet(data.openNavGroups));
+  const isOpen = (item: NavLink) => openGroups.has(item.label);
+  const setOpen = (item: NavLink, open: boolean) => {
+    if (open) openGroups.add(item.label);
+    else openGroups.delete(item.label);
+    writeOpenNavGroups([...openGroups]);
+  };
 
   const who = $derived(data.user?.username ?? `user #${data.user?.id}`);
+
+  // Stored absolute URLs (an appeal's link, pasted text) still name `.com`; every builder here already
+  // uses the link base. Rewritten on hover or focus, so the status bar, copy-link and middle-click agree.
+  const retarget = (event: Event) => {
+    const a = (event.target as Element | null)?.closest?.('a[href]');
+    if (!(a instanceof HTMLAnchorElement)) return;
+    const next = toLinkBase(a.href, data.civitaiUrl);
+    if (next !== a.href) a.href = next;
+  };
 </script>
+
+<svelte:document onpointerover={retarget} onfocusin={retarget} />
 
 <SidebarProvider>
   {#if navigating.to}
@@ -125,10 +194,10 @@
             {#each data.nav as item (item.path ?? item.label)}
                 {@const Icon = iconFor(item)}
                 {#if item.children}
-                  {@const rollup = rollupFor(item)}
+                  {@const rollup = badgeFor(item, rollupFor(item))}
                   <Collapsible
                     open={isOpen(item)}
-                    onOpenChange={(o) => (openGroups[item.label] = o)}
+                    onOpenChange={(o) => setOpen(item, o)}
                   >
                     <SidebarMenuItem>
                       <CollapsibleTrigger>
@@ -138,9 +207,12 @@
                             <span>{item.label}</span>
                             {#if rollup !== null}
                               <span
-                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sidebar-foreground/70"
+                                class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
+                                  item
+                                ) ?? 'text-sidebar-foreground/70'}"
+                                title={rollup.partial ? PARTIAL_TITLE : undefined}
                               >
-                                {rollup}
+                                {rollup.text}
                               </span>
                             {/if}
                             <IconChevronRight
@@ -161,7 +233,9 @@
                              top-level ones; only the left indent and rule stay as the hierarchy cue. -->
                         <SidebarMenuSub class="mr-0 pr-0">
                           {#each item.children as childLink (childLink.path ?? childLink.label)}
-                            {@const cnt = navCount(childLink, countFor)}
+                            {@const count = navCount(childLink, countFor)}
+                            {@const cnt = badgeFor(childLink, count)}
+                            {@const actioned = actionedFor(childLink, count)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
                                 isActive={isNavLinkActive(childLink, item.children, page.url)}
@@ -177,11 +251,22 @@
                                     {...props}
                                   >
                                     <span>{childLink.label}{childLink.external ? ' ↗' : ''}</span>
+                                    <!-- Beside the label, not the count: the counts stay one right-aligned column. -->
+                                    {#if actioned}
+                                      {@const badgeClass = `shrink-0 rounded bg-sidebar-foreground/10 px-1 text-[10px] font-semibold tabular-nums ${actioned.class}`}
+                                      <ShortAge
+                                        at={actioned.at}
+                                        {now}
+                                        title={actioned.title}
+                                        class={badgeClass}
+                                      />
+                                    {/if}
                                     {#if cnt !== null}
                                       <span
                                         class="ml-auto text-xs tabular-nums text-sidebar-foreground/50"
+                                        title={cnt.partial ? PARTIAL_TITLE : undefined}
                                       >
-                                        {cnt}
+                                        {cnt.text}
                                       </span>
                                     {/if}
                                   </a>
@@ -194,6 +279,7 @@
                     </SidebarMenuItem>
                   </Collapsible>
                 {:else}
+                  {@const cnt = badgeFor(item, navCount(item, countFor))}
                   <SidebarMenuItem>
                     <SidebarMenuButton
                       isActive={!!item.path && isPathActive(item.path, page.url.pathname)}
@@ -202,6 +288,16 @@
                         <a href={item.path} {...props}>
                           <Icon size={18} stroke={1.5} />
                           <span>{item.label}</span>
+                          {#if cnt !== null}
+                            <span
+                              class="ml-auto rounded-full bg-sidebar-foreground/10 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums {severityFor(
+                                item
+                              ) ?? 'text-sidebar-foreground/70'}"
+                              title={cnt.partial ? PARTIAL_TITLE : undefined}
+                            >
+                              {cnt.text}
+                            </span>
+                          {/if}
                         </a>
                       {/snippet}
                     </SidebarMenuButton>
@@ -228,6 +324,7 @@
         {#if data.logoutUrl}
           <a
             href={data.logoutUrl}
+            data-sveltekit-reload
             aria-label="Sign out"
             title="Sign out"
             class="rounded-md p-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"

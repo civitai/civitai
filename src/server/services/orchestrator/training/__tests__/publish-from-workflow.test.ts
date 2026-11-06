@@ -38,7 +38,7 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   updateWorkflow: mockUpdateWorkflow,
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { TrainingStep, Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import {
@@ -51,8 +51,10 @@ import {
   stampWorkflowPublished,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { trainingModelInfo } from '~/utils/training';
+import { trainingDetailsObj } from '~/server/schema/model-version.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 const mockFindFirst = dbMock.dbWrite.model.findFirst;
 
 const USER = { id: 5 } as SessionUser;
@@ -152,6 +154,40 @@ describe('mapTrainingBaseModelToBaseModel', () => {
     expect(mapTrainingBaseModelToBaseModel(wf).info.aiToolkit?.ecosystem).toBe('wan');
   });
 
+  // The exact step inputs Training Studio submits for its Studio-only bases.
+  it.each([
+    [
+      'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+      'mossImage',
+      'base',
+      'mossimage_base',
+      'MOSS Image',
+    ],
+    [
+      'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+      'mossImage',
+      'sft',
+      'mossimage_sft',
+      'MOSS Image',
+    ],
+    [
+      'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+      'flux3klein',
+      undefined,
+      'flux3klein',
+      'Flux.3 Klein-base',
+    ],
+  ])('resolves a Training Studio run on %s', (model, ecosystem, modelVariant, key, baseModel) => {
+    const wf = studioWorkflow({
+      steps: [
+        { $type: 'training', input: { engine: 'ai-toolkit', model, ecosystem, modelVariant } },
+      ],
+    });
+    const mapped = mapTrainingBaseModelToBaseModel(wf);
+    expect(mapped.trainingKey).toBe(key);
+    expect(mapped.baseModel).toBe(baseModel);
+  });
+
   it('throws for a base outside trainingModelInfo instead of writing a malformed version', () => {
     const wf = studioWorkflow({
       steps: [{ $type: 'training', input: { ecosystem: 'not-a-real-eco' } }],
@@ -245,6 +281,15 @@ describe('mapWorkflowToTrainingResultsV2', () => {
 });
 
 describe('createDraftModelFromWorkflow', () => {
+  it('cuts a run name over 150 characters to 150 instead of failing the publish', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow({ metadata: { name: 'x'.repeat(180), trigger: 'mychar' } }),
+      selectedEpochNumber: 1,
+    });
+    expect(mockUpsertModel.mock.calls[0][0].name).toBe('x'.repeat(150));
+  });
+
   it('scopes the idempotency lookup to the caller — the where clause carries userId + workflowId', async () => {
     await createDraftModelFromWorkflow({
       user: USER,
@@ -275,6 +320,59 @@ describe('createDraftModelFromWorkflow', () => {
     expect(mockUpsertModel).not.toHaveBeenCalled();
     expect(mockUpsertModelVersion).not.toHaveBeenCalled();
     expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  // Decision: the owner deleting the draft and pressing Publish again must start over, not reopen
+  // the deleted model; a moderator's delete (or one with no recorded actor) must not be routed
+  // around that way. Don't drop the filter or the orderBy to make "returns the existing draft"
+  // simpler.
+  describe('drafts for the run that were deleted or restored', () => {
+    type Row = { id: number; status: ModelStatus; deletedBy: number | null };
+    type Clause = { status?: { not: ModelStatus }; deletedBy?: { not: number } | null };
+    type Args = { where: { OR?: Clause[] }; orderBy?: { id: 'asc' | 'desc' } };
+    // SQL's rules, not JS's: `deletedBy <> x` is not true for a NULL deletedBy.
+    const passes = (r: Row, c: Clause) =>
+      c.status
+        ? r.status !== c.status.not
+        : c.deletedBy === null
+        ? r.deletedBy === null
+        : r.deletedBy !== null && r.deletedBy !== c.deletedBy?.not;
+    const draftsAre = (rows: Row[]) =>
+      mockFindFirst.mockImplementation((async ({ where, orderBy }: Args) => {
+        const kept = rows.filter((r) => !where.OR || where.OR.some((c) => passes(r, c)));
+        if (orderBy?.id === 'desc') kept.sort((a, b) => b.id - a.id);
+        const row = kept[0];
+        return row ? { id: row.id, modelVersions: [{ id: row.id + 1 }] } : null;
+      }) as never);
+    const publish = () =>
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: studioWorkflow(),
+        selectedEpochNumber: 1,
+      });
+
+    it('creates a fresh draft when the owner deleted the only one', async () => {
+      draftsAre([{ id: 77, status: ModelStatus.Deleted, deletedBy: USER.id }]);
+      expect((await publish()).modelId).toBe(100);
+      expect(mockUpsertModel).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['a moderator', 999],
+      ['no recorded actor', null],
+    ])('does not make a fresh draft past a delete by %s', async (_label, deletedBy) => {
+      draftsAre([{ id: 77, status: ModelStatus.Deleted, deletedBy }]);
+      expect((await publish()).modelId).toBe(77);
+      expect(mockUpsertModel).not.toHaveBeenCalled();
+    });
+
+    it('follows the newest draft when a restored one and its replacement both exist', async () => {
+      draftsAre([
+        { id: 77, status: ModelStatus.Draft, deletedBy: null },
+        { id: 90, status: ModelStatus.Draft, deletedBy: null },
+      ]);
+      expect((await publish()).modelId).toBe(90);
+    });
   });
 
   it('re-entry on an existing draft whose blobs expired resolves the ids with a null epoch instead of throwing', async () => {
@@ -356,6 +454,51 @@ describe('createDraftModelFromWorkflow', () => {
     expect(file.metadata.trainingResults.epochs).toHaveLength(2);
   });
 
+  it("records the run's hyperparameters in trainingDetails, defaulting or dropping any the schema rejects", async () => {
+    const workflow = studioWorkflow();
+    Object.assign((workflow.steps![0] as TrainingStep).input, {
+      batchSize: 0,
+      numRepeats: 4,
+      resolution: 1024,
+      lr: 0.0004,
+      textEncoderLr: 0.00005,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'not-an-optimizer',
+      networkDim: 16,
+      networkAlpha: 8,
+      noiseOffset: 0.1,
+      flipAugmentation: true,
+      keepTokens: 1,
+      shuffleTokens: true,
+      continueFrom: 'urn:air:sdxl:lora:civitai:1@2',
+    });
+    await createDraftModelFromWorkflow({ user: USER, workflow, selectedEpochNumber: 1 });
+
+    const { trainingDetails } = mockUpsertModelVersion.mock.calls[0][0];
+    expect(trainingDetails.params).toMatchObject({
+      steps: 2000,
+      epochs: 3,
+      numRepeats: 4,
+      resolution: 1024,
+      lr: 0.0004,
+      textEncoderLr: 0.00005,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'adamw',
+      networkDim: 16,
+      networkAlpha: 8,
+      noiseOffset: 0.1,
+      flipAugmentation: true,
+      keepTokens: 1,
+      shuffleTokens: true,
+      minSnrGamma: null,
+    });
+    expect(trainingDetails.params).not.toHaveProperty('batchSize');
+    expect(trainingDetails.params).not.toHaveProperty('continueFrom');
+    expect(trainingDetailsObj.safeParse(trainingDetails).success).toBe(true);
+  });
+
   // The placeholder's url is an orchestrator blob the scanner can't resolve; left exists=null,
   // the scan fallback job submits it and only tombstones it after a failed pre-flight. Stamping
   // virusScanResult Success instead would be a fake scan result, so the fix is exists=false.
@@ -404,6 +547,29 @@ describe('createDraftModelFromWorkflow', () => {
       selectedEpochNumber: 1,
     });
     expect(mockUpsertModelVersion.mock.calls[0][0].baseModel).toBe('ACE Audio');
+  });
+
+  it('writes a MOSS Image version whose trainingDetails base the schema accepts', async () => {
+    const base = studioWorkflow() as unknown as { steps: { input: Record<string, unknown> }[] };
+    base.steps[0].input = {
+      ...base.steps[0].input,
+      ecosystem: 'mossImage',
+      modelVariant: 'base',
+      model: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+    };
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: base as unknown as Workflow,
+      selectedEpochNumber: 1,
+    });
+    const version = mockUpsertModelVersion.mock.calls[0][0];
+    expect(version.baseModel).toBe('MOSS Image');
+    const { baseModel, baseModelType } = version.trainingDetails;
+    expect(
+      trainingDetailsObj
+        .pick({ baseModel: true, baseModelType: true })
+        .parse({ baseModel, baseModelType })
+    ).toEqual({ baseModel: 'mossimage_base', baseModelType: 'mossimage' });
   });
 
   it('falls back to the last available epoch when the selected number has no blob', async () => {
@@ -544,7 +710,10 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it('allows an approved run, reading it with the owner token, and backfills the stamp', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
     await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
       path: { workflowId: 'wf-studio-1' },
@@ -555,7 +724,10 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it('mints the owner token with the cache bypass when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
     await assertTrainingSourcePublishable({ ...args, callerId: 999 });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
   });
 
   it.each([...REFUSED_STATUSES, undefined])(
@@ -821,7 +993,10 @@ describe('stampWorkflowPublished', () => {
       workflowId: 'wf-studio-1',
       modelId: 42,
     });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
 
     mockGetToken.mockClear();
     await stampWorkflowPublished({
@@ -830,7 +1005,10 @@ describe('stampWorkflowPublished', () => {
       workflowId: 'wf-studio-1',
       modelId: 42,
     });
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
+      bypassCache: false,
+      allowRestricted: false,
+    });
   });
 
   it('never throws — an unreachable orchestrator must not fail the publish', async () => {

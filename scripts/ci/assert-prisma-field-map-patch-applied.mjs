@@ -7,7 +7,7 @@
  * method (`findUnique`, `findFirst`, `create`, `update`, `upsert`, `delete`, the `OrThrow`
  * variants) is looked up: O(fields^2) allocation per call, ~2.5 ms per `user.findUnique` with
  * the engine stubbed out. The unit test `src/server/db/__tests__/prisma-field-map-memo.test.ts`
- * is the behavioural guard, but the unit job does not fail pull requests, so this is the half
+ * is the behavioural guard, but the unit job does not run on pull requests, so this is the half
  * that can.
  *
  * - It reads the runtime file(s) named by the generated client's own `require(...)`, not a

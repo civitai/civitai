@@ -21,7 +21,11 @@ const communityTurbo = {
   baseModel: 'MOSS Image',
   model: { id: 9000000, type: 'LORA' },
   strength: 1,
-  turbo: { steps: { min: 2, max: 6, default: 4 }, cfgScale: { min: 1, max: 1, default: 1 } },
+  turbo: true,
+  recommendedSettings: {
+    steps: { min: 2, max: 6, default: 4 },
+    cfgScale: { min: 1, max: 1, default: 1 },
+  },
 };
 const otherLora = {
   id: 9000001,
@@ -107,15 +111,20 @@ describe('MOSS Image Turbo toggle', () => {
   it.each([
     ['SFT', 'sft', {}, SFT_TURBO],
     ['Base, not hydrated yet', 'base', {}, SFT_TURBO],
-    ['Base with its own', 'base', { turboLora: { id: BASE_TURBO } }, BASE_TURBO],
-    ['SFT with its own choice', 'sft', { turboLora: { id: communityTurbo.id } }, communityTurbo.id],
+    ['Base with its own', 'base', { settings: { turboLora: { id: BASE_TURBO } } }, BASE_TURBO],
+    [
+      'SFT with its own choice',
+      'sft',
+      { settings: { turboLora: { id: communityTurbo.id } } },
+      communityTurbo.id,
+    ],
   ] as const)('%s starts on the right turbo LoRA', (_, checkpoint, extra, expected) => {
     expect(turboLoraId(mossStore(undefined, checkpoint, extra))).toBe(expected);
   });
 
   it("the checkpoint's strength for its default LoRA rides the pick onto the request", () => {
     const store = mossStore(undefined, 'sft', {
-      turboLora: { id: communityTurbo.id, strength: 0.6 },
+      settings: { turboLora: { id: communityTurbo.id, strength: 0.6 } },
     });
     setTurbo(store, true);
     const added = (store.getField('resources')?.value as { id: number; strength?: number }[]).find(
@@ -172,7 +181,7 @@ describe('MOSS Image Turbo toggle', () => {
     store.set({ resources: [otherLora] });
     setTurbo(store, true);
 
-    store.set({ model: mossCheckpoint('base', { turboLora: { id: BASE_TURBO } }) });
+    store.set({ model: mossCheckpoint('base', { settings: { turboLora: { id: BASE_TURBO } } }) });
     expect(turboLoraId(store)).toBe(BASE_TURBO);
     expect(resourceIds(store)).toEqual([otherLora.id, BASE_TURBO]);
     expect(turboToggle(store).enabled).toBe(true);
@@ -195,7 +204,7 @@ describe('MOSS Image Turbo toggle', () => {
     store.set({ resources: [otherLora] });
     setTurbo(store, true);
     store.set({
-      model: mossCheckpoint('base', { turboLora: { id: BASE_TURBO } }),
+      model: mossCheckpoint('base', { settings: { turboLora: { id: BASE_TURBO } } }),
       resources: [communityTurbo],
     });
     expect(resourceIds(store)).toEqual([communityTurbo.id]);
@@ -205,7 +214,7 @@ describe('MOSS Image Turbo toggle', () => {
   it('the checkpoint swap does not add a default that is already in the list', () => {
     const store = mossStore();
     store.set({ resources: [otherLora, turboLoraValue(SFT_TURBO), turboLoraValue(BASE_TURBO)] });
-    store.set({ model: mossCheckpoint('base', { turboLora: { id: BASE_TURBO } }) });
+    store.set({ model: mossCheckpoint('base', { settings: { turboLora: { id: BASE_TURBO } } }) });
     expect(resourceIds(store)).toEqual([otherLora.id, BASE_TURBO]);
   });
 
@@ -215,7 +224,7 @@ describe('MOSS Image Turbo toggle', () => {
     store.set({ resources: [otherLora] });
     setTurbo(store, true);
     store.set({
-      model: mossCheckpoint('base', { turboLora: { id: BASE_TURBO } }),
+      model: mossCheckpoint('base', { settings: { turboLora: { id: BASE_TURBO } } }),
       resources: [otherLora, turboLoraValue(SFT_TURBO)],
     });
     expect(resourceIds(store)).toEqual([otherLora.id, SFT_TURBO]);
@@ -236,6 +245,17 @@ describe('MOSS Image Turbo toggle', () => {
     setTurbo(store, false);
     expect(resourceIds(store)).toEqual([otherLora.id]);
     expect(turboToggle(store).enabled).toBe(false);
+  });
+
+  // Form state saved before the flag carries the band where the flag now goes.
+  it('a turbo LoRA stored with the old band in place of the flag still counts and validates', () => {
+    const store = mossStore();
+    const { turbo: _flag, ...stored } = communityTurbo;
+    void _flag;
+    store.set({ resources: [{ ...stored, turbo: communityTurbo.recommendedSettings }] });
+    expect(turboToggle(store).enabled).toBe(true);
+    const request = store.validate();
+    expect(request.success && request.data.resources?.[0]?.turbo).toBe(true);
   });
 
   // The server parses the request through the same graph.
@@ -299,7 +319,7 @@ describe('MOSS Image Turbo toggle', () => {
     const storage = memoryStorage();
     const first = mossStore(storage);
     first.set({ turboLora: communityTurbo, resources: [communityTurbo], steps: 6 });
-    first.set({ model: mossCheckpoint('base', { turboLora: { id: BASE_TURBO } }) });
+    first.set({ model: mossCheckpoint('base', { settings: { turboLora: { id: BASE_TURBO } } }) });
     expect(turboLoraId(first)).toBe(BASE_TURBO);
 
     const second = mossStore(storage);

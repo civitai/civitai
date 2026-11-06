@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { readFile } from 'fs/promises';
 import { access } from 'fs/promises';
-import matter from 'gray-matter';
+import { parseFrontmatter } from '~/utils/frontmatter';
 import { join, resolve } from 'path';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -20,7 +20,7 @@ type StaticContentResult = {
   hash: string;
 };
 
-// Hash the rendered body, not the raw file or re-serialized doc — gray-matter
+// Hash the rendered body, not the raw file or re-serialized doc — parseFrontmatter
 // has already stripped the frontmatter, so `lastmod`/`title` never feed the hash.
 // Normalize line endings + trailing whitespace so cosmetic/EOL churn is inert.
 function hashContent(content: string) {
@@ -31,7 +31,7 @@ function hashContent(content: string) {
 // Static-content files are bundled into the image and read-only at runtime — they
 // change only on deploy (new deploy = new process = fresh cache). `getStaticContent`
 // is now on the SSR critical path (ToS metadata is resolved on every full render
-// via `getTosMeta`), so an uncached `readFile` + gray-matter
+// via `getTosMeta`), so an uncached `readFile` + frontmatter
 // parse per call is wasteful. Cache parsed results in-memory with a short TTL; keyed
 // by slug + domain so domain-specific variants (e.g. tos.green.md) don't collide. The
 // key set is bounded by the (small, fixed) number of static-content files × domains.
@@ -74,7 +74,7 @@ export async function getStaticContent({ slug, ctx }: { slug: string[]; ctx?: Co
       // Check if file exists
       await access(resolvedPath);
       const fileContent = await readFile(resolvedPath, 'utf-8');
-      const { data: frontmatter, content } = matter(fileContent);
+      const { data: frontmatter, content } = parseFrontmatter(fileContent);
       const value: StaticContentResult = {
         title: frontmatter.title as string,
         description: frontmatter.description as string,
@@ -119,7 +119,7 @@ export const tosHashFieldMap = {
 // tos.red.md, so it falls back to tos.md → same hash as blue.)
 //
 // IMPORTANT: these must equal `hashContent(<deployed body>)` for each domain at
-// rollout. Regenerate (gray-matter body → CRLF→LF → trimEnd → sha256) ONLY if you
+// rollout. Regenerate (parseFrontmatter body → CRLF→LF → trimEnd → sha256) ONLY if you
 // deliberately intend a body change to re-prompt the not-yet-hash-backed users.
 export const tosBaselineHashMap = {
   green: '8dd1cc867cdd5f320ca139243c4533871f0e5a1dbd8c23df3770f77020a6b293',
@@ -152,6 +152,14 @@ const tosHashOverrideMap: Record<string, string> = {
   // tos.green.md
   '906c25c702d4b89244b444fd2a050e9585ba0a92bf84c3918fd0ba09d4b3ae86':
     '978c839dea33653f13bce7440d91f4024e886e93557d4deb5718086c904ce0b5',
+  // 2026-10-22 §5.8 drops the right to delete an account over a failed renewal; §9.6(d) lead-in
+  // reworded (tos.md only). Neither asks anything new of users, so no re-accept.
+  // tos.md (blue/red)
+  '96c9f47c302edebe0aa4ad9d69ba9bad3879a851ed38e60af77af93faba62510':
+    '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  // tos.green.md
+  '2b505d7d9b293fd03785fa1c59911c4c54c0028ff075ac1312d86da7d7b29b99':
+    'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 /**
@@ -214,7 +222,7 @@ export async function getMarkdownContent({ key }: { key: string }) {
     );
     if (!content) throw throwNotFoundError('Content not found');
 
-    const { data: frontmatter, content: markdown } = matter(content);
+    const { data: frontmatter, content: markdown } = parseFrontmatter(content);
     return {
       title: frontmatter.title as string,
       description: frontmatter.description as string,

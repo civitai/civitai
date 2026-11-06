@@ -1,6 +1,6 @@
 /**
  * LTX handler (LTXV2 + LTXV23 + LTXV25). Converts `generationHub.parse().data`
- * into @civitai/client steps:
+ * into @civitai/orchestration-client steps:
  * - LTXV2 / txt2vid → ltx2 createVideo; img2vid → firstLastFrameToVideo
  * - LTXV23 / txt2vid (+ ref2vid) → ltx2.3 createVideo; img2vid →
  *   firstLastFrameToVideo; vid2vid:edit → editVideo; vid2vid:extend → extendVideo

@@ -23,7 +23,7 @@ import { BRIDGE_NACK_SNAPSHOT_REPLIES, nackReplyTypeFor } from './bridgeTelemetr
  *     dropped and the block hangs to its 120s timeout. Those route through
  *     `failureSnapshot`, which exists for exactly this and stamps the `'failed'`
  *     sentinel id the validator needs;
- *   - two types have no sendable failure variant at all — see `BRIDGE_NACK_EXEMPT`.
+ *   - the `BRIDGE_NACK_EXEMPT` types have no sendable failure variant at all.
  *
  * A reply built here is a best-effort UNBLOCK, not a promise that the block renders
  * a nice error: the picker replies (`CHECKPOINT_PICKER_RESULT`,

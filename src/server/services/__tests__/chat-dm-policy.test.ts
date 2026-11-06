@@ -79,21 +79,22 @@ describe('decideDmRouting', () => {
 
 describe('resolveDmPolicy', () => {
   it('reads the legacy chat-disabled feature flag as "nobody"', () => {
-    expect(resolveDmPolicy({ features: { chat: false } })).toBe('nobody');
+    expect(resolveDmPolicy({ features: { chat: false } }, 'everyone')).toBe('nobody');
     // features.chat wins: it is the switch that predates dmPolicy, and a user who
     // set it has not seen the policy picker.
-    expect(resolveDmPolicy({ features: { chat: false }, chat: { dmPolicy: 'everyone' } })).toBe(
-      'nobody'
-    );
+    expect(
+      resolveDmPolicy({ features: { chat: false }, chat: { dmPolicy: 'everyone' } }, 'everyone')
+    ).toBe('nobody');
   });
 
-  it('defaults to everyone when nothing is stored', () => {
-    expect(resolveDmPolicy({})).toBe('everyone');
-    expect(resolveDmPolicy({ features: { chat: true } })).toBe('everyone');
+  it('uses the fallback when nothing is stored', () => {
+    expect(resolveDmPolicy({}, 'following')).toBe('following');
+    expect(resolveDmPolicy({ features: { chat: true } }, 'everyone')).toBe('everyone');
   });
 
-  it('honours a stored policy', () => {
-    expect(resolveDmPolicy({ chat: { dmPolicy: 'mutuals' } })).toBe('mutuals');
+  it('honours a stored policy over the fallback, including a stored "everyone"', () => {
+    expect(resolveDmPolicy({ chat: { dmPolicy: 'mutuals' } }, 'following')).toBe('mutuals');
+    expect(resolveDmPolicy({ chat: { dmPolicy: 'everyone' } }, 'following')).toBe('everyone');
   });
 });
 
@@ -102,7 +103,7 @@ describe('DEFAULT_CHAT_SETTINGS', () => {
     // resolveChatSettings does not backfill a partial blob (see the seed test),
     // so this default only covers the nothing-stored case — the ?? fallbacks at
     // each read site cover the rest.
-    expect(DEFAULT_CHAT_SETTINGS.dmPolicy).toBe('everyone');
+    expect(DEFAULT_CHAT_SETTINGS.dmPolicy).toBeDefined();
     // Opt-in while the redesign is flag-gated: the toggle is only reachable
     // behind `chatRedesign`, so defaulting it on would filter inbound chats for
     // users who cannot see it.

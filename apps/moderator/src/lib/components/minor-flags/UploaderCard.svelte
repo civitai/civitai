@@ -8,9 +8,15 @@
   let {
     row,
     detail,
+    otherLabel = 'other flagged model',
+    otherLabelMany,
   }: {
     row: { userId: number; username: string | null; otherFlaggedModels: number };
     detail: Promise<ModelFlagDetail>;
+    /** What the count of `otherFlaggedModels` counts, when it is not flags. */
+    otherLabel?: string;
+    /** Plural of `otherLabel` when appending an s is wrong ("match"). */
+    otherLabelMany?: string;
   } = $props();
 </script>
 
@@ -34,7 +40,7 @@
       {@render loaded(
         (d) => `${d.uploaderPublished} published, ${d.uploaderModUnpublished} unpublished by mods`
       )}
-      · {plural(row.otherFlaggedModels, 'other flagged model')}
+      · {plural(row.otherFlaggedModels, otherLabel, otherLabelMany)}
     </FactRow>
     <FactRow label="Flags">{@render loaded((d) => flagsText(d.flagsReverted, d.strikes))}</FactRow>
     <FactRow label="Notes">

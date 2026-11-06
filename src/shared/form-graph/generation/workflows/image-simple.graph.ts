@@ -14,13 +14,14 @@ import { optionFallback, imagesDef, sliderDef } from '../defs';
  * self-contained panels — they exist so every workflow value has an arm.
  *
  * The preprocess kind list and per-kind param specs are imported from the shared
- * module: they mirror the @civitai/client `PreprocessImageInput` union, not
+ * module: they mirror the @civitai/orchestration-client `PreprocessImageInput` union, not
  * the graph engine, and duplicating 36 kinds' specs would only drift.
  */
 
 export const imageRemoveBackground = defineGraph<GenerationCtx>().field('images', imagesDef({}));
 
 const kindParamsSchema = z.record(z.string(), z.unknown());
+const kindParamsInput = kindParamsSchema.optional();
 
 export const imagePreprocess = defineGraph<GenerationCtx>()
   .field('images', imagesDef({ min: 1, max: 1 }))
@@ -33,7 +34,7 @@ export const imagePreprocess = defineGraph<GenerationCtx>()
   })
   .field('preprocessResolution', sliderDef({ min: 64, max: 2048, step: 8, default: 512 }))
   .field('kindParams', ({ preprocessKind }) => ({
-    input: kindParamsSchema.optional(),
+    input: kindParamsInput,
     output: kindParamsSchema,
     default: {} as Record<string, unknown>,
     meta: {

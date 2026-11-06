@@ -45,11 +45,11 @@ const row = {
   chatTitle: 'c',
 };
 
-const run = async () =>
+const run = async (grants: Record<string, true> = {}) =>
   (
     (await (load as unknown as (e: unknown) => Promise<unknown>)({
       url: new URL('https://moderator.example/assistant/audit'),
-      locals: {},
+      locals: { grants },
     })) as { turns: (typeof row)[] }
   ).turns[0];
 
@@ -68,5 +68,57 @@ describe('/assistant/audit', () => {
   it('shows the reasoning as written to a viewer who may see addresses', async () => {
     canSeeAddresses.mockReturnValue(true);
     expect((await run()).reasoning).toBe(row.reasoning);
+  });
+
+  describe('registration emails a pilot was shown', () => {
+    const EMAIL = 'b.o.t+7@gmail.com';
+    const quoting = {
+      ...row,
+      prompt: `is ${EMAIL} a bot?`,
+      answer: `Both accounts registered as ${EMAIL} on ${ADDRESS}.`,
+      reasoning: `- ${EMAIL} matches`,
+      toolCalls: [{ name: 'find_user', args: { query: EMAIL } }],
+    };
+
+    it('are redacted, every field, for an address viewer without assistant.emails', async () => {
+      listAuditTurns.mockResolvedValue([quoting]);
+      canSeeAddresses.mockReturnValue(true);
+      const turn = await run();
+      expect(turn.answer).toBe(`Both accounts registered as [email] on ${ADDRESS}.`);
+      expect(JSON.stringify(turn)).not.toContain('gmail');
+    });
+
+    it('are redacted inside nested and multi-line arguments, and the error, without breaking the page', async () => {
+      listAuditTurns.mockResolvedValue([
+        {
+          ...quoting,
+          error: `provider echoed ${EMAIL}`,
+          toolCalls: [
+            { name: 'request_tool', args: { need: `line one\n${EMAIL}`, list: [`\t${EMAIL}`] } },
+            { name: EMAIL, args: {}, error: `No tool named "${EMAIL}"` },
+          ],
+        },
+      ]);
+      canSeeAddresses.mockReturnValue(true);
+      const turn = await run();
+      expect(turn.toolCalls[0]).toMatchObject({
+        args: { need: 'line one\n[email]', list: ['\t[email]'] },
+      });
+      expect(JSON.stringify(turn)).not.toContain('gmail');
+    });
+
+    it('are shown to a viewer holding assistant.emails', async () => {
+      listAuditTurns.mockResolvedValue([quoting]);
+      canSeeAddresses.mockReturnValue(true);
+      expect((await run({ 'assistant.emails': true })).answer).toBe(quoting.answer);
+    });
+
+    it('are redacted with the grant when the viewer cannot see addresses either', async () => {
+      listAuditTurns.mockResolvedValue([quoting]);
+      canSeeAddresses.mockReturnValue(false);
+      expect((await run({ 'assistant.emails': true })).answer).toBe(
+        'Both accounts registered as [email] on [address].'
+      );
+    });
   });
 });

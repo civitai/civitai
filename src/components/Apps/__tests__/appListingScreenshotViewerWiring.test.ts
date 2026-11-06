@@ -16,10 +16,8 @@ import { describe, expect, it } from 'vitest';
  * test still passes and the page opens the wrong picture the moment a URL dangles.
  * The relationship is the checkable claim, so it is checked here.
  *
- * 🔴 AND WHY IN THE **node** PROJECT. The browser suite that measures this for real
- * runs only as the preview pipeline's `preview / component-tests` — report-only,
- * non-blocking, and not reported at all when the preview build fails. A guard that
- * lives only there cannot stop the regression coming back. This file is source TEXT,
+ * 🔴 AND WHY IN THE **node** PROJECT. The browser suite measures this for real; this
+ * file pins the relationship without a browser. It is source TEXT,
  * with the honesty that implies:
  *
  *   - CAUGHT: the viewer being dropped from the gallery; it being handed a different
@@ -330,10 +328,8 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
    *
    * `MyAppsBody` reuses this same viewer for a row's icon + cover. It is the same class
    * of seam as the gallery's, for the same reason, and it lives here for the reason
-   * this whole file exists: the browser suite that measures it for real
-   * (`MyAppsBody.browser.test.tsx`) runs only as the preview pipeline's report-only
-   * `preview / component-tests`. A guard that lives only there cannot block a
-   * regression.
+   * this whole file exists: the browser suite that measures it for real is
+   * `MyAppsBody.browser.test.tsx`, and this pins the relationship in the node tier.
    *
    * 🔴 THE RELATIONSHIP, not the components. `listingMediaShots` (in the blocking unit
    * project) decides the ORDER of `[cover, icon]`, and `listingMediaIndex` answers

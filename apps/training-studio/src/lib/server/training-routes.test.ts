@@ -6,12 +6,13 @@ const train = vi.hoisted(() => ({
   submitTrainingBatch: vi.fn(),
   continueTraining: vi.fn(),
   continueTrainingWhatIf: vi.fn(),
+  MatureAckRequiredError: class extends Error {},
 }));
 vi.mock('$lib/server/train', () => train);
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
 // The routes load train-core only for its error classes; the real client's dist cannot load under
 // Node's ESM loader (see train-core.test.ts).
-vi.mock('@civitai/client', () => ({}));
+vi.mock('@civitai/orchestration-client', () => ({}));
 
 import { POST as trainPost } from '../../routes/api/train/+server';
 import { POST as continuePost } from '../../routes/api/continue-training/+server';

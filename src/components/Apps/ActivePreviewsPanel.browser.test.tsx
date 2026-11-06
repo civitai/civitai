@@ -5,7 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 /**
  * Global "Active previews (N / cap)" panel — browser-mode render test
- * (report-only in Tekton). The panel was extracted from `src/pages/apps/review.tsx`
+ * (`Component tests` in CI). The panel was extracted from `src/pages/apps/review.tsx`
  * to `ActivePreviewsPanel.tsx` (mirrors the #3163 `OnsiteReviewModal` extraction)
  * so it is importable WITHOUT the page's `getServerSideProps` server graph — this
  * suite is the coverage that extraction unlocks. Asserts:

@@ -49,6 +49,8 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   // `cdn-access-sync`, every minute; a failed call keeps its row and retries next run. While the
   // `cdn-access-sync` flag is off nothing drains, so rows read overdue until it is turned on.
   CdnAccessSync: 15,
+  // `cdn-access-sync`, every minute; each row gets one attempt and is removed whatever happens.
+  ImageCdnPersistRetry: 15,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

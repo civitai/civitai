@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Box, Code, Stack, Text, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
 import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
+import { fetchDevTunnelEntryUrl } from '~/components/AppBlocks/devTunnelEntryUrl';
 import { Meta } from '~/components/Meta/Meta';
 import type { DevTunnelFrame } from '~/server/services/blocks/dev-tunnel-frame.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -35,7 +36,9 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
   useSession: true,
   resolver: async ({ features, ctx, session }) => {
-    // GATE FIRST, fail-closed. Author capability + the dev-tunnel kill-switch.
+    // GATE FIRST, fail-closed: a gated account is notFound even before sign-in is asked for. The
+    // full gate set (re-checking these) is `resolveDevTunnelPageFrame`, shared with the Retry's
+    // `/api/apps/dev/entry-url`.
     if (!features?.appBlocks || !features?.appBlocksAuthor) {
       return { notFound: true };
     }
@@ -48,21 +51,16 @@ export const getServerSideProps = createServerSideProps<DevTunnelFrame>({
         },
       };
     }
-    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
-    if (!(await isAppBlocksDevTunnelEnabled({ user }))) {
-      return { notFound: true };
-    }
 
     const rawBlockId = ctx.params?.blockId;
     const blockId =
       typeof rawBlockId === 'string' ? rawBlockId : Array.isArray(rawBlockId) ? rawBlockId[0] : '';
-    if (!blockId) return { notFound: true };
 
-    // null (foreign or absent app) → the same notFound, no oracle.
-    const { resolveDevTunnelFrame } = await import(
-      '~/server/services/blocks/dev-tunnel-frame.service'
+    // null (kill switch off, foreign or absent app) → the same notFound, no oracle.
+    const { resolveDevTunnelPageFrame } = await import(
+      '~/server/services/blocks/dev-tunnel-page-frame.service'
     );
-    const frame = await resolveDevTunnelFrame(user, blockId);
+    const frame = await resolveDevTunnelPageFrame(user, blockId ?? '', features);
     if (!frame) return { notFound: true };
     const { host } = frame;
 
@@ -127,6 +125,12 @@ function documentFrameHost(propsHost: string | null): string | null {
   return typeof host === 'string' ? host : null;
 }
 
+/**
+ * The scaffold's `dev:tunnel` script serves on the port `civitai app dev-tunnel` tunnels by default,
+ * and sends the headers this page needs to frame the app.
+ */
+const DEV_TUNNEL_COMMANDS = 'npm run dev:tunnel\ncivitai app dev-tunnel';
+
 export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: DevTunnelFrame) {
   const { appName, blockId } = app;
   const router = useRouter();
@@ -139,6 +143,18 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
   useEffect(() => {
     if (hostChanged) routerRef.current.reload();
   }, [hostChanged]);
+
+  // The frame's Retry: a freshly signed entry URL, swapped in by the host without a remount (so
+  // its auto-retry budget carries over). A URL on a host other than the framed one is never handed
+  // over — this document's CSP frames only that host — so the page reloads for a fresh document.
+  const refreshEntryUrl = useCallback(async () => {
+    const fresh = await fetchDevTunnelEntryUrl(blockId);
+    if (fresh.host !== host) {
+      routerRef.current.reload();
+      throw new Error('The dev tunnel moved to a new host');
+    }
+    return fresh.iframeSrc;
+  }, [blockId, host]);
 
   return (
     <>
@@ -157,10 +173,14 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
           <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
             <Title order={3}>No active dev tunnel</Title>
             <Text size="sm">
-              Start your local dev server and open a tunnel for <Code>{blockId}</Code>, then reload
-              this page:
+              In your app&apos;s folder, start the dev server in one terminal and open a tunnel for{' '}
+              <Code>{blockId}</Code> in another, then reload this page:
             </Text>
-            <Code block>civitai app dev:tunnel</Code>
+            <Code block>{DEV_TUNNEL_COMMANDS}</Code>
+            <Text size="sm">
+              Use <Code>npm run dev:tunnel</Code>, not <Code>npm run dev</Code>: it serves on the
+              port the tunnel uses and sends the headers this page needs to show your app.
+            </Text>
             <Alert color="yellow" variant="light">
               This page renders your LOCAL app inside the real Civitai host. Only you can see it —
               the tunnel is bound to your account.
@@ -168,9 +188,15 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
           </Stack>
         ) : (
           <DevTunnelBlockHost
+            // A freshly signed entry URL is a fresh mount, so the host re-runs its handshake.
+            key={iframeSrc}
             {...app}
             iframeSrc={iframeSrc}
             fit="viewport"
+            // The app reloaded itself (Vite live reload): re-run the server props in place,
+            // as the DNS gate does, for a freshly signed entry URL.
+            onGuestReloaded={() => void router.replace(router.asPath, undefined, { scroll: false })}
+            refreshEntryUrl={refreshEntryUrl}
             tokenErrorFallback={
               // Owner-specific copy: the public host's generic "Couldn't authenticate
               // this app" would mislead here.
@@ -181,8 +207,11 @@ export default function DevTunnelPage({ iframeSrc, host, dnsPending, ...app }: D
                   in the dev tunnel — it may be suspended, pending review, or not owned by your
                   account. If you just started the tunnel, reload the page.
                 </Alert>
-                <Text size="sm">Restart your tunnel and reload if the problem persists:</Text>
-                <Code block>civitai app dev:tunnel</Code>
+                <Text size="sm">
+                  Restart your tunnel (Ctrl-C, then run it again) and reload if the problem
+                  persists:
+                </Text>
+                <Code block>civitai app dev-tunnel</Code>
               </Stack>
             }
           />

@@ -161,7 +161,7 @@ async function renderOg(query: Record<string, string>) {
  * a hand-copied block list here would keep passing after Next changed it.
  */
 async function initializeNextImageOptimizerSharp() {
-  const { getSharp } = await import('next/dist/server/image-optimizer.js');
+  const { getSharp } = await import('next/dist/server/image-optimizer/transform.js');
   // (concurrency, operationCache) — both nullable; the server passes its config
   // values, and neither affects the block/unblock this test is about.
   const sharp = getSharp(undefined, undefined);
@@ -241,8 +241,8 @@ describe('/api/og — renders a PNG after the Next image optimizer initializes s
     const output = `${run.stdout ?? ''}${run.stderr ?? ''}`;
     expect(run.status, output).toBe(0);
     // Never let a silent no-op pass for a green: the script prints how many
-    // copies of image-optimizer.js it actually read, and zero is a vacuous OK.
-    expect(output).toMatch(/copies of image-optimizer\.js read: [1-9]/);
+    // copies of image-optimizer/transform.js it actually read, and zero is a vacuous OK.
+    expect(output).toMatch(/copies of image-optimizer\/transform\.js read: [1-9]/);
     expect(output).toContain('VipsForeignLoadSvg');
   });
 });

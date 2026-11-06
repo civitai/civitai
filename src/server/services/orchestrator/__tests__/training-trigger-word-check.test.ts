@@ -10,13 +10,19 @@ const classifyPromptExternally = vi.hoisted(() =>
 );
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ classifyPromptExternally }));
 
+const trainingMatchesModelRules = vi.hoisted(() => vi.fn(async (_run: unknown) => false));
+vi.mock('~/server/services/text-scan/model-rules-training', () => ({ trainingMatchesModelRules }));
+
 import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 
 const check = (triggerWord: string) =>
   assertTrainingTriggerWordAllowed({ triggerWord, log: { userId: 1, source: 'test' } });
 
 describe('assertTrainingTriggerWordAllowed', () => {
-  beforeEach(() => classifyPromptExternally.mockClear());
+  beforeEach(() => {
+    classifyPromptExternally.mockClear();
+    trainingMatchesModelRules.mockClear();
+  });
 
   it('lets a soft hit through when the classifier is clear', async () => {
     await expect(check('a dog peeing on a tree in the park')).resolves.toBeUndefined();
@@ -50,5 +56,40 @@ describe('assertTrainingTriggerWordAllowed', () => {
       externalError: { message: 'down' },
     });
     await expect(check('mystyle')).resolves.toBeUndefined();
+  });
+
+  describe('Model rules', () => {
+    const MODEL = { id: 7, versionId: 11, meta: null };
+
+    it('refuses a match with a message that names neither the rule nor the term', async () => {
+      trainingMatchesModelRules.mockResolvedValueOnce(true);
+      const error = await check('herotw').catch((e) => e);
+      expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+      expect(error.message).toContain("can't be started");
+      expect(error.message).not.toContain('herotw');
+    });
+
+    it('asks after the word list and before the classifier', async () => {
+      trainingMatchesModelRules.mockResolvedValueOnce(true);
+      await expect(check('mystyle')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(classifyPromptExternally).not.toHaveBeenCalled();
+
+      await expect(check('8 year old girl')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(trainingMatchesModelRules).toHaveBeenCalledTimes(1);
+    });
+
+    it('hands the draft model and the run to the check', async () => {
+      await assertTrainingTriggerWordAllowed({
+        triggerWord: 'mystyle',
+        log: { userId: 1, source: 'trainer' },
+        model: MODEL,
+      });
+      expect(trainingMatchesModelRules).toHaveBeenCalledWith({
+        triggerWord: 'mystyle',
+        userId: 1,
+        source: 'trainer',
+        model: MODEL,
+      });
+    });
   });
 });

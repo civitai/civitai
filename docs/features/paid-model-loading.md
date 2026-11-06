@@ -16,7 +16,7 @@ workflow, what it would change in the decisions below, and why `BOOST_NON_REFUND
 the day it ships.
 
 **Sources:** the 2026-08-18 lab call and the 2026-09-10 call (Justin, Koen, Briant), Koen's DMs
-(2026-09-04, 09-07, 09-10), the `@civitai/client` and `@civitai/orchestration-client` SDKs, and the
+(2026-09-04, 09-07, 09-10), the `@civitai/orchestration-client` and `@civitai/orchestration-client` SDKs, and the
 orchestrator source at `9306e7333`.
 
 > **History.** This file replaces four docs merged on 2026-09-11 — the boost model, the build plan,
@@ -219,7 +219,7 @@ moves with `maxBuzz`.
 
 Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` rather than trusting
 this section once it ages. The app's own orchestrator calls still go through the older
-`@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
+`@civitai/orchestration-client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
 The fleet-wide loaded list (`/v1/manager/resources/loaded`) is in neither client, so
 `getLoadedResourceAirs` (`src/server/http/orchestrator/loaded-resources.ts`) calls it through the
 orchestrator caller.
@@ -562,7 +562,7 @@ Everything here is the deploying engineer's, before this branch merges.
 | — | **Price shown ≠ price charged, structurally.** The charging `PUT` takes no expected price; we re-price immediately before charging and refuse on a mismatch. An expected-price field on the orchestrator would close the window properly. | Koen | such a field exists, or we accept the re-price |
 | — | **Does an unbounded generation still refund?** The site sends no step `timeout` and the queue card no longer promises an automatic refund. Whether the orchestrator expires a job on its own, after how long, and whether it refunds undelivered images, is unverified — and support has no line to give a user whose job sits in the free lane. | Koen | he states the orchestrator's own expiry and refund behaviour with no step `timeout` set, and it is written into the timeouts paragraph above |
 | K3 | **Does the orchestrator refund a failed prepare?** Never exercised, because no prepare has ever been charged. Matters for the moderator tool, not the boost. | Koen | he answers |
-| 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
+| 2.5 | **Settled: the rate-limit numbers are exact.** The shared `rateLimit()` comparison used to let 3/6/10 permit 4/7/11; it now admits exactly the limit, so 3/6/10 mean what they say. | — | closed by the usage-limits 429 change |
 | 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
 | 2.7 | **Diffusers checkpoints lose coverage** (174 of the 2,242) because the loader serves SafeTensor only. Accept as a loader constraint, or teach the loader Diffusers? | Justin | he answers, or it ships narrowed |
 | — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded` (readiness: the column, written by `/api/webhooks/resource-availability` as the orchestrator reports each change with `sync-generator-loaded-resources` as a 15-minute backstop, **or** an `ExternalGeneration` version); what is left is the display decision. | Justin | a decision |

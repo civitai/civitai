@@ -101,6 +101,8 @@ export const upsertArticleInput = z.object({
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
   coverImage: imageReferenceInputSchema.nullish(),
+  // Omitted leaves the banner as it is; null removes it.
+  bannerImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
@@ -150,6 +152,8 @@ export type ArticleMetadata = {
   customMessage?: string;
   unpublishedAt?: string;
   unpublishedBy?: number;
+  /** Set when a block moves a draft to UnpublishedViolation; a restore returns it here. */
+  statusBeforeViolation?: 'Draft' | 'Unpublished' | 'Published';
 };
 
 export const unpublishArticleSchema = z.object({
@@ -167,3 +171,17 @@ export const setArticleOfficialSchema = z.object({
   id: z.number(),
   isOfficial: z.boolean(),
 });
+
+export const articleShareExpiryDays = [1, 7, 30] as const;
+export const createArticleShareLinkSchema = z.object({
+  articleId: z.number(),
+  expiresInDays: z.union([z.literal(1), z.literal(7), z.literal(30)]).default(7),
+});
+export const getArticleShareLinksSchema = z.object({ articleId: z.number() });
+// 32 random bytes in base64url is 43 characters; anything else cannot be a token.
+export const shareTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const openShareLinkSchema = z.object({ shareToken: shareTokenSchema });
+export const getSharedArticleSchema = z.object({ articleId: z.number().int().positive() });
+export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
+// Each create submits the draft text for a scan, so this bounds scan load.
+export const articleShareCreateRateLimits: RateLimit[] = [{ limit: 10, period: CacheTTL.hour }];

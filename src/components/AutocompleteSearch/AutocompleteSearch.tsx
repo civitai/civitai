@@ -2,13 +2,13 @@ import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
   Code,
   Group,
-  HoverCard,
   Select,
   Stack,
   Text,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
@@ -26,7 +26,7 @@ import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
 import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
-import { createInstantMeiliSearch } from '~/components/Search/search-api-key';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -76,6 +76,8 @@ import { usePathname } from 'next/navigation';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -278,6 +280,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 ) {
   // const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const showSfwFace = useShowsSfwFace();
   const colorScheme = useComputedColorScheme('dark');
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const router = useRouter();
@@ -429,7 +432,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         'prompt' in hit
           ? truncate(hit.prompt, { length: 50 })
           : 'name' in hit
-          ? hit.name
+          ? searchHitName(hit, showSfwFace)
           : 'title' in hit
           ? hit.title
           : 'username' in hit
@@ -441,7 +444,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, searchErrorState, filtered, results?.nbHits, query, imageSearchMaintenance]);
+  }, [
+    status,
+    searchErrorState,
+    filtered,
+    results?.nbHits,
+    query,
+    imageSearchMaintenance,
+    showSfwFace,
+  ]);
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -620,7 +631,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         return `/comics/${hit.id as number}`;
       case 'models':
       default:
-        return `/${indexName}/${hit.id as number}/${slugit(hit.name)}`;
+        return `/${indexName}/${hit.id as number}/${slugit(
+          (showSfwFace && (hit.sfwName as string | null)) || (hit.name as string)
+        )}`;
     }
   };
 
@@ -653,7 +666,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         onBlur={handleBlur}
         onClear={handleClear}
         onKeyDown={getHotkeyHandler([
-          ['Escape', blurAndDiscardCarriedText],
+          ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
         ])}
         onOptionSubmit={handleItemClick}

@@ -1,22 +1,39 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { modelRuleCategoryLabel } from '@civitai/moderation/model-rules';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { TableCell, TableRow } from '@civitai/ui/components/ui/table/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import ConfirmButton from '$lib/components/ConfirmButton.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { dateTime } from '$lib/format';
-  import { parseAliases } from '$lib/model-rules';
+  import { dateTime, plural } from '$lib/format';
+  import {
+    DEFAULT_MODEL_RULE_HOLD_FILTERS,
+    MODEL_RULE_MATCHES_PATH,
+    modelRuleHoldFilterParams,
+  } from '$lib/model-rule-holds';
+  import {
+    BROAD_ALIAS_WARNING,
+    MODEL_RULE_CATEGORIES,
+    MODEL_RULE_LIMITS,
+    aliasBreadth,
+    appendAliases,
+    newReferenceRow,
+    parseAliases,
+  } from '$lib/model-rules';
   import type { ModelRuleView } from '$lib/server/model-rules.service';
   import { EMPTY, type RuleDraftsState, type RuleFields } from '$lib/text-scan-lab/rule-drafts';
   import { notifySaved } from './notify-saved';
+  import SuggestAliases from './SuggestAliases.svelte';
 
   let {
     rule,
+    dismissed,
     draftId,
     drafts,
     canEdit,
@@ -26,6 +43,8 @@
     reloaded,
   }: {
     rule: ModelRuleView | null;
+    /** Holds dismissed as "not this subject" that matched this rule. */
+    dismissed: number;
     draftId: number;
     drafts: RuleDraftsState;
     canEdit: boolean;
@@ -41,8 +60,28 @@
   const stale = $derived(rule ? drafts.isStale(rule) : false);
   const readonly = $derived(!!rule?.legacy);
   const aliasList = $derived(parseAliases(fields.aliases));
+  const broadAliases = $derived(aliasList.filter((alias) => aliasBreadth(alias) !== null));
+  const dismissedHref = $derived(
+    rule
+      ? `${MODEL_RULE_MATCHES_PATH}?${new URLSearchParams(
+          modelRuleHoldFilterParams({
+            ...DEFAULT_MODEL_RULE_HOLD_FILTERS,
+            status: 'dismissed',
+            rule: rule.id,
+          })
+        )}`
+      : null
+  );
   // Saving a flagged rule unchanged is how a person marks it reviewed.
   const canSave = $derived(!!draft || !!rule?.needsAttention);
+
+  const NO_CATEGORY = 'none';
+
+  function setReference(index: number, patch: Partial<RuleFields['references'][number]>) {
+    update({
+      references: fields.references.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    });
+  }
 
   function update(patch: Partial<RuleFields>) {
     const next = { ...fields, ...patch };
@@ -98,7 +137,17 @@
         <Badge variant="destructive">Needs attention — not scanned</Badge>
       {/if}
       {#if rule?.legacy}<Badge variant="outline">Regex</Badge>{/if}
+      {#if fields.category}<Badge variant="secondary">{modelRuleCategoryLabel(fields.category)}</Badge>{/if}
     </button>
+    {#if dismissed && dismissedHref}
+      <a
+        href={dismissedHref}
+        class="mt-1 inline-block"
+        title="Holds a moderator dismissed as “not this subject” that matched this rule. A rule that over-matches usually needs a fuller alias. The link lists every dismissal of this rule."
+      >
+        <Badge variant="outline">{plural(dismissed, 'dismissal')}</Badge>
+      </a>
+    {/if}
   </TableCell>
   <TableCell class="max-w-80 whitespace-normal break-words align-top text-dark-0">
     {aliasList.length ? aliasList.join(', ') : '—'}
@@ -190,6 +239,23 @@
                 class="mt-1"
                 bind:value={() => fields.aliases, (v) => update({ aliases: v })}
               />
+              {#if broadAliases.length}
+                <ul class="mt-1 space-y-0.5 text-xs text-amber-300" aria-label="Broad aliases">
+                  {#each broadAliases as alias (alias)}
+                    <li><span class="break-words font-medium">{alias}</span>: {BROAD_ALIAS_WARNING}</li>
+                  {/each}
+                </ul>
+              {/if}
+              {#if canEdit}
+                <SuggestAliases
+                  id={draftId}
+                  subject={fields.subject}
+                  description={fields.description}
+                  aliases={fields.aliases}
+                  {rule}
+                  onadd={(added) => update({ aliases: appendAliases(fields.aliases, added) })}
+                />
+              {/if}
             </div>
             <div class="sm:col-span-2">
               <Label for="rule-description-{draftId}" class="text-xs text-dark-2">
@@ -202,6 +268,84 @@
                 class="mt-1"
                 bind:value={() => fields.description, (v) => update({ description: v })}
               />
+            </div>
+            <div>
+              <Label for="rule-category-{draftId}" class="text-xs text-dark-2">
+                Category (shown to the moderator on a match)
+              </Label>
+              <Select.Root
+                type="single"
+                bind:value={
+                  () => fields.category || NO_CATEGORY,
+                  (v) => update({ category: v === NO_CATEGORY ? '' : v })
+                }
+              >
+                <Select.Trigger id="rule-category-{draftId}" class="mt-1 w-full">
+                  {modelRuleCategoryLabel(fields.category) || 'None'}
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value={NO_CATEGORY}>None</Select.Item>
+                  {#each MODEL_RULE_CATEGORIES as category (category.value)}
+                    <Select.Item value={category.value}>{category.label}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+            </div>
+            <div class="sm:col-span-2">
+              <Label id="rule-references-{draftId}" class="text-xs text-dark-2">
+                References (links shown on a match; not used for matching)
+              </Label>
+              <div
+                class="mt-1 space-y-2"
+                role="group"
+                aria-labelledby="rule-references-{draftId}"
+              >
+                {#each fields.references as reference, i (reference.key)}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Input
+                      aria-label="Reference link {i + 1}"
+                      type="url"
+                      inputmode="url"
+                      placeholder="https://"
+                      maxlength={MODEL_RULE_LIMITS.referenceUrlChars}
+                      class="min-w-48 flex-1"
+                      bind:value={() => reference.url, (v) => setReference(i, { url: v })}
+                    />
+                    <Input
+                      aria-label="Reference label {i + 1}"
+                      placeholder="Label (optional)"
+                      maxlength={MODEL_RULE_LIMITS.referenceLabelChars}
+                      class="w-48"
+                      bind:value={() => reference.label, (v) => setReference(i, { label: v })}
+                    />
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      aria-label="Remove reference {i + 1}"
+                      onclick={() =>
+                        update({ references: fields.references.filter((_, j) => j !== i) })}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                {/each}
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={fields.references.length >= MODEL_RULE_LIMITS.referencesPerRule}
+                  onclick={() =>
+                    update({ references: [...fields.references, newReferenceRow()] })}
+                >
+                  Add reference
+                </Button>
+                {#if fields.references.length >= MODEL_RULE_LIMITS.referencesPerRule}
+                  <span class="ml-2 text-xs text-dark-2">
+                    {fields.references.length} of {MODEL_RULE_LIMITS.referencesPerRule}
+                  </span>
+                {/if}
+              </div>
             </div>
             <div class="sm:col-span-2">
               <Label for="rule-note-{draftId}" class="text-xs text-dark-2">
@@ -230,6 +374,8 @@
               <input type="hidden" name="subject" value={fields.subject} />
               <input type="hidden" name="description" value={fields.description} />
               <input type="hidden" name="aliases" value={fields.aliases} />
+              <input type="hidden" name="category" value={fields.category} />
+              <input type="hidden" name="references" value={JSON.stringify(fields.references)} />
               <input type="hidden" name="note" value={fields.note} />
               <Button type="submit" size="sm" disabled={!canSave || stale || save.submitting}>
                 {save.submitting

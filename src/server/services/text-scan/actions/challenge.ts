@@ -21,7 +21,11 @@ async function applyChallengeTextVerdict(
   if (countScan) recordChallengeScanResult({ source: challenge.source, result: 'scanned' });
   // The detected level, not `raised`: after one escalation the declared level is R, so a
   // rescan of the same text never reads as raised.
-  await applyChallengeNsfwEscalation({ entityId, isNsfw: detectedLevel >= NsfwLevel.R });
+  await applyChallengeNsfwEscalation({
+    entityId,
+    isNsfw: detectedLevel >= NsfwLevel.R,
+    level: detectedLevel,
+  });
 }
 
 export async function applyChallengeTextScan({ entityId, outcome }: ApplyTextScanArgs) {

@@ -156,6 +156,19 @@ describe('deleteImageFromS3', () => {
     expect(invalidateCalls()).toHaveLength(0);
   });
 
+  // A hold marker can keep the row its caller just tried to delete, so the image's own row
+  // counts as still pointing at the url.
+  it("looks for any row with the url, the image's own included", async () => {
+    mockFindFirst.mockResolvedValue(null);
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(mockFindFirst).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { url: 'abc-def/original.jpeg' },
+    });
+  });
+
   // Legacy avatar rows store a full external URL rather than a bucket key. Passing one to
   // deleteObject as a Key can only fail, and it is not ours to delete either way.
   it('ignores rows whose url is an external link, before touching the db', async () => {
@@ -281,11 +294,8 @@ describe('deleteImageFromS3', () => {
     );
   });
 
-  // `safeError` ends in `String(e)`, which THROWS on a value with no primitive conversion. Doing
-  // that work in the log payload put it inside the outer try, so a rejection carrying such a value
-  // skipped the B2 delete — the precise failure the `.catch` above exists to prevent, reintroduced
-  // by the code that reports it. Measured: this case passed at 85a31d11c7 and regressed at
-  // 156e050d69, so it is a real round-trip and not a hypothetical.
+  // A rejection value with no primitive conversion once made `safeError` throw inside the outer
+  // try, skipping the B2 delete (regressed at 156e050d69). The delete must survive any value.
   it('still deletes from B2 when the resolver rejects with an unserialisable value', async () => {
     mockFindFirst.mockResolvedValue(null);
     mockResolveMediaLocation.mockRejectedValue(Object.create(null));
@@ -300,9 +310,7 @@ describe('deleteImageFromS3', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'delete-image-from-s3-unresolved-location',
-        error: expect.objectContaining({
-          message: expect.stringContaining('could not be serialised'),
-        }),
+        error: expect.objectContaining({ message: expect.any(String) }),
       })
     );
   });

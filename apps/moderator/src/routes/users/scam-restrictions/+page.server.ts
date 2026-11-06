@@ -1,7 +1,10 @@
 import type { Actions, PageServerLoad } from './$types';
-import { restrictionActions, restrictionQueueLoad } from '$lib/server/restriction-queue';
+import { scamBulkRule, scamReviewLoad } from '$lib/server/scam-review';
 
-export const load: PageServerLoad = ({ url }) =>
-  restrictionQueueLoad(url, { types: ['scam'], fallback: 'scam' });
+export const load: PageServerLoad = ({ url, locals }) =>
+  scamReviewLoad(url).then((data) => ({
+    ...data,
+    canBan: !!locals.grants['audit.ban.execute'],
+  }));
 
-export const actions: Actions = restrictionActions(['scam']);
+export const actions: Actions = { rule: scamBulkRule };

@@ -15,7 +15,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -46,10 +46,7 @@ export const getServerSideProps = createServerSideProps({
         redirect: { destination: `/user/${username}`, permanent: false },
       };
 
-    const user = await dbRead.user.findUnique({
-      where: { username },
-      select: { bannedAt: true },
-    });
+    const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt)
       return { redirect: { destination: `/user/${username}`, permanent: true } };
 

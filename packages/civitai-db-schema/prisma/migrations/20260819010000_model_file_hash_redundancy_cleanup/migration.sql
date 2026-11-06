@@ -31,7 +31,7 @@ DROP INDEX CONCURRENTLY IF EXISTS "modelfilehash_hash";
 -- 2. Drop the AutoV3 truncation trigger
 -- ---------------------------------------------------------------------------
 -- The orchestrator sends AutoV3 full-length ("SHA256 of the file with safetensors header
--- metadata stripped", per @civitai/client); we store 12 chars. This trigger did that rewrite.
+-- metadata stripped", per @civitai/orchestration-client); we store 12 chars. This trigger did that rewrite.
 -- normalizeScanHashes() now does it in the scan webhook path instead, so the trigger is a
 -- no-op — the two produce identical values, which is why they could coexist across the deploy.
 --

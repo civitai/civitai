@@ -381,7 +381,7 @@ describe('the moderator cosmetic-store pack edit route', () => {
     const txBlock = blockAfter(
       serviceSource,
       'return dbWrite.$transaction',
-      'acceptsBlueBuzz: nextAcceptsBlue'
+      'meta: (changes.length'
     );
     expect(
       txBlock,

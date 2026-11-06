@@ -1,6 +1,6 @@
 /**
  * The real config with the unit projects' `deps.inline` dropped, to test whether inlining
- * `@civitai/client` is still load-bearing. The comment on it says "ESM resolution issues";
+ * `@civitai/orchestration-client` is still load-bearing. The comment on it says "ESM resolution issues";
  * `src/__tests__/setup.ts` also mocks the package wholesale, so the inline may be redundant.
  *
  * Set `KEEP_INLINE_PREBUNDLE=1` to drop the inline AND pre-bundle the package instead, which is
@@ -19,7 +19,7 @@ for (const project of projects) {
   const deps: any = { ...project.test.deps };
   delete deps.inline;
   if (process.env.KEEP_INLINE_PREBUNDLE === '1') {
-    deps.optimizer = { ssr: { enabled: true, include: ['@civitai/client'] } };
+    deps.optimizer = { ssr: { enabled: true, include: ['@civitai/orchestration-client'] } };
   }
   project.test.deps = deps;
 }

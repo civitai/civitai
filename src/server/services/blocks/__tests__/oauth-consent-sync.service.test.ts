@@ -11,7 +11,7 @@ vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
   deleteAuthSubject: deleteSubjectMock,
 }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
-  invalidateCivitaiUser: invalidateMock,
+  revokeCivitaiUserTokens: invalidateMock,
 }));
 
 import { dbMock } from '~/__tests__/mocks';

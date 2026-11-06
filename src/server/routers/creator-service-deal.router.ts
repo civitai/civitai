@@ -50,6 +50,7 @@ export const creatorServiceDealRouter = router({
       expectedRevisionsIncluded: input.expectedRevisionsIncluded,
       expectedDeliveryDays: input.expectedDeliveryDays,
       requestText: input.requestText,
+      disclosureVersion: input.disclosureVersion,
       buyerId: ctx.user.id,
       // From the request's domain, never the input: yellow, or green on the green site.
       buzzType: domainSpendType(ctx.features),

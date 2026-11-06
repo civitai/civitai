@@ -25,7 +25,7 @@ describe('resolveChatSettings (chat.getUserSettings SSR-seed byte-equality)', ()
       muteSounds: false,
       replaceBadWords: false,
       acknowledged: false,
-      dmPolicy: 'everyone',
+      dmPolicy: 'following',
       holdNewAccounts: false,
     });
     expect(resolveChatSettings(undefined)).toBe(DEFAULT_CHAT_SETTINGS);

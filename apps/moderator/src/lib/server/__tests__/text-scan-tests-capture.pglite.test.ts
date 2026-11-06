@@ -109,18 +109,7 @@ describe('captureCase', () => {
     expect(await listSets(db, 'prompts')).toEqual([]);
   });
 
-  it('creates no set for an entity type the workspace does not score', async () => {
-    await expect(
-      captureCase(
-        { db, compose },
-        { ...base, entityType: 'ModelRules', expected: {}, newSetName: 'never', entityId: 71 },
-        MOD
-      )
-    ).rejects.toMatchObject({ status: 400 });
-    expect(await listSets(db, 'prompts')).toEqual([]);
-  });
-
-  it('refuses a set of the other workspace', async () => {
+  it('refuses a set stored under the retired Model rules workspace', async () => {
     const setId = await seedSet(db, { workspace: 'modelRules' });
     await expect(
       captureCase({ db, compose }, { ...base, setId, entityId: 71 }, MOD)

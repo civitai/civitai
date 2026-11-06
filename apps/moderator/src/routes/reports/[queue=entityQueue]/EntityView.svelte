@@ -187,36 +187,38 @@
 </script>
 
 {#if item && ev && header}
-  <header class="flex flex-col gap-1">
-    <h2 class="m-0 flex flex-wrap items-center gap-2 text-lg font-semibold wrap-break-word">
-      {header.title}
-    </h2>
-    {#if header.owner || header.links.length}
-      <p class="m-0 text-sm text-muted-foreground">
-        {#if header.owner}
-          by
-          <a href={userLookupUrl(header.owner.name ?? header.owner.id)} class={LINK_CLASS}>
-            {header.owner.name ?? `#${header.owner.id}`}
-          </a>
-          {#if header.owner.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
-        {/if}
-        {#each header.links as link, i (link.href)}
-          {#if header.owner || i > 0}·{/if}
-          <a
-            href={link.href}
-            class={LINK_CLASS}
-            target={link.external ? '_blank' : undefined}
-            rel={link.external ? 'noreferrer' : undefined}
-          >
-            {link.label}
-          </a>
-        {/each}
-      </p>
-    {/if}
-  </header>
-  <ReadOnlyNotice {can} images={ev?.kind !== 'chat'} owner={ownerId != null} />
+  {#snippet itemHeader()}
+    <header class="flex flex-col gap-1">
+      <h2 class="m-0 flex flex-wrap items-center gap-2 text-lg font-semibold wrap-break-word">
+        {header.title}
+      </h2>
+      {#if header.owner || header.links.length}
+        <p class="m-0 text-sm text-muted-foreground">
+          {#if header.owner}
+            by
+            <a href={userLookupUrl(header.owner.name ?? header.owner.id)} class={LINK_CLASS}>
+              {header.owner.name ?? `#${header.owner.id}`}
+            </a>
+            {#if header.owner.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
+          {/if}
+          {#each header.links as link, i (link.href)}
+            {#if header.owner || i > 0}·{/if}
+            <a
+              href={link.href}
+              class={LINK_CLASS}
+              target={link.external ? '_blank' : undefined}
+              rel={link.external ? 'noreferrer' : undefined}
+            >
+              {link.label}
+            </a>
+          {/each}
+        </p>
+      {/if}
+    </header>
+    <ReadOnlyNotice {can} images={ev?.kind !== 'chat'} owner={ownerId != null} />
+  {/snippet}
 
-  <ReportDetailColumns>
+  <ReportDetailColumns header={itemHeader}>
     {#snippet evidence()}
       {#if header.gone}
         <!-- A report outlives what it is about. Without this the column would be empty and read as a
@@ -272,6 +274,7 @@
           {#if ownerId != null}
             <OwnerActions
               userId={ownerId}
+              reportId={reports[0]?.id}
               heading={ev.kind === 'chat' ? 'Act on the reported member' : undefined}
             />
           {:else if ev.kind === 'chat' && chat && reports.length && !header.gone}

@@ -60,28 +60,12 @@ export function mergeTextScanOutputs(
       }
       case 'minor':
       case 'scam':
-      case 'csam': {
+      case 'csam':
+      case 'model-com-face-intent': {
         const { detecting, source } = firstDetecting(outputs.map((o) => o[label]));
         if (!source) break;
         output[label] = { detected: detecting.length > 0, reason: source.reason };
         if (detecting.length) flaggedSegments[label] = detecting;
-        break;
-      }
-      case 'modelRules': {
-        const seen = new Set<number>();
-        const matched: { ruleId: number; reason: string }[] = [];
-        const flagged: number[] = [];
-        outputs.forEach((o, i) => {
-          const own = o.modelRules?.matched ?? [];
-          if (own.length) flagged.push(i);
-          for (const m of own)
-            if (!seen.has(m.ruleId)) {
-              seen.add(m.ruleId);
-              matched.push(m);
-            }
-        });
-        output.modelRules = { matched };
-        if (flagged.length) flaggedSegments.modelRules = flagged;
         break;
       }
       default: {
@@ -111,12 +95,6 @@ export function stricterThanStored(
       const level = output.nsfw ? nsfwLevelFromName[output.nsfw.level] : NsfwLevel.PG;
       return level > NsfwLevel.PG && level > (stored.nsfwLevel ?? 0);
     }
-    if (label === 'modelRules')
-      return (
-        !!output.modelRules?.matched.length &&
-        !stored.triggeredLabels.includes(label) &&
-        !stored.labels?.modelRules?.matched.length
-      );
     return (
       !!output[label]?.detected &&
       !stored.triggeredLabels.includes(label) &&

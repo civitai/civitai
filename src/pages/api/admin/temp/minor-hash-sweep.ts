@@ -1,5 +1,5 @@
 /**
- * Backfill + rollback for hash-based repeat-uploader detection (ClickUp 868kfvpjc).
+ * Backfill + rollback for hash-based repeat-uploader detection.
  * =============================================================================
  *
  * Guarded by WEBHOOK_TOKEN via `?token=` query param.
@@ -13,7 +13,10 @@
  *             'sweep'    flags same-uploader hash matches (see sweepMinorHashMatches).
  *             'rollback' undoes prior flags using the snapshot setModelMinor records,
  *                        restoring nsfw/sfwOnly/gallery level/lockedProperties and
- *                        previously-minor images. Without `modelIds` it covers only
+ *                        previously-minor images. A model that was minor before the
+ *                        flag stays minor (counted in `keptMinor`), with its earlier
+ *                        state; one kept on an earlier minor lock also keeps the
+ *                        flag's locks. Without `modelIds` it covers only
  *                        AUTOMATED flags, and skips any a moderator has since
  *                        confirmed by hand (see rollbackMinorHashAutoFlags).
  *   modelIds - rollback only. Comma-separated model ids for a targeted undo, e.g.
@@ -48,6 +51,7 @@ import {
   rollbackMinorHashAutoFlags,
   sweepMinorHashMatches,
 } from '~/server/services/minor-hash.service';
+import { logToAxiom } from '~/server/logging/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
@@ -77,6 +81,18 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
   if (modelIds && action !== 'rollback')
     return res.status(400).json({ error: 'modelIds is only valid with action=rollback' });
+
+  if (action === 'rollback' && modelIds?.length && !dryRun)
+    await logToAxiom(
+      {
+        type: 'info',
+        name: 'minor-hash-rollback',
+        message: 'targeted rollback requested',
+        actor: 'webhook',
+        modelIds,
+      },
+      'webhooks'
+    ).catch(() => null);
 
   try {
     const report =

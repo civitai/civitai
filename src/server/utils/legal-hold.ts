@@ -1,7 +1,46 @@
+import type { ModelStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
 /** The owner `deleteUser` hands a kept model to. */
 export const PLACEHOLDER_OWNER_ID = -1;
+
+/** The meta keys of a content wipe's removal record on a model it kept. */
+export const REMOVED_WITH_OWNER_META_KEYS = [
+  'removedWithOwner',
+  'statusBeforeRemoval',
+  'versionsUnpublishedByRemoval',
+] as const;
+
+/** `meta` without a content wipe's removal record, for a moderator decision that ends it. */
+export function withoutRemovedWithOwner<T extends object>(meta: T): T {
+  return Object.fromEntries(
+    Object.entries(meta).filter(
+      ([key]) => !(REMOVED_WITH_OWNER_META_KEYS as readonly string[]).includes(key)
+    )
+  ) as T;
+}
+
+/** Whether `meta` carries a content wipe's removal record: only a moderator may publish the model. */
+export const isRemovedWithOwner = (meta: unknown) =>
+  !!meta && typeof meta === 'object' && (meta as Record<string, unknown>).removedWithOwner === true;
+
+/** SQL: the model whose meta is `metaColumn` carries no content wipe's removal record. */
+export const notRemovedWithOwnerSql = (metaColumn: string) =>
+  Prisma.raw(`(${metaColumn} ->> 'removedWithOwner') IS DISTINCT FROM 'true'`);
+
+/**
+ * The status a content wipe moves a published, scheduled or unpublished model it keeps to:
+ * moderator-only, so the owner cannot republish it. Any other kept model, a draft say, keeps its
+ * status.
+ */
+export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
+
+/** The statuses a content wipe keeps a model in where it found it. */
+export const KEPT_IN_PLACE_STATUSES = [
+  'Draft',
+  'Training',
+  'GatherInterest',
+] as const satisfies readonly `${ModelStatus}`[];
 
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */
 export const reportHolds = (hc: string) =>
@@ -38,29 +77,14 @@ export function userNamedOnHoldingReportSql(userId: Prisma.Sql): Prisma.Sql {
 /**
  * Whether a user is under a legal hold. The hold is user-level, so any report naming them holds
  * every one of their files, not only the files the report is about. The placeholder owner is always
- * held: who uploaded what it owns is no longer known.
+ * held: who uploaded what it owns is no longer known. So is an owner with an active hold marker.
+ * Names the `EvidenceHeldUser` view, so a database without its migration fails the whole query.
  */
 export function userUnderLegalHoldSql(userId: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`(
     ${userId} = ${Prisma.raw(String(PLACEHOLDER_OWNER_ID))}
     OR ${userNamedOnHoldingReportSql(userId)}
-  )`;
-}
-
-/**
- * Whether the owner of a model version is under a legal hold. A model whose owner deleted their
- * account and kept it public belongs to the placeholder owner, so its files are held too.
- */
-export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql): Prisma.Sql {
-  // Once the EvidenceHeldUser view is applied, OR in:
-  //   EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = hm."userId")
-  // Referencing it before its migration is applied fails the whole query.
-  return Prisma.sql`EXISTS (
-    SELECT 1
-    FROM "ModelVersion" hmv
-    JOIN "Model" hm ON hm.id = hmv."modelId"
-    WHERE hmv.id = ${modelVersionId}
-      AND ${userUnderLegalHoldSql(Prisma.raw('hm."userId"'))}
+    OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" ehu WHERE ehu."userId" = ${userId})
   )`;
 }
 

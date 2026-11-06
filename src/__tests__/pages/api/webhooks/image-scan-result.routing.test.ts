@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
-vi.mock('@civitai/client', () => ({ getWorkflow: mocks.getWorkflow }));
+vi.mock('@civitai/orchestration-client', () => ({ getWorkflow: mocks.getWorkflow }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsLazy: () => ({ articleImageScanning: true }),

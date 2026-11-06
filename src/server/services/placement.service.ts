@@ -1,6 +1,12 @@
 import { z } from 'zod';
+import {
+  countPendingPlacementsBySurface,
+  getUserPlacementScore,
+} from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
-import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readKeyValueViaKysely } from '~/server/services/hot-reads-5.reads';
+import { getCapTiers, getCapTierViaKysely } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
@@ -75,7 +81,8 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   let stored: z.infer<typeof placementConfigSchema> = {};
 
   try {
-    const row = await dbRead.keyValue.findUnique({ where: { key: PLACEMENT_CONFIG_KEY } });
+    const { kyselyRead } = await loadKyselyDb();
+    const row = await readKeyValueViaKysely(kyselyRead, PLACEMENT_CONFIG_KEY);
     const parsed = placementConfigSchema.safeParse(row?.value ?? {});
     if (parsed.success) stored = parsed.data;
   } catch {
@@ -142,17 +149,12 @@ export async function placementPriceRange(
   config?: PlacementConfig
 ): Promise<PlacementPriceRange> {
   const [scoreRow, capTier, resolvedConfig] = await Promise.all([
-    // Cast through `numeric`: `::int` raises on a fractional stored total rather
-    // than truncating it. Text that isn't a number at all still raises.
-    dbRead.$queryRaw<{ score: number | null }[]>`
-      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
-      FROM "User" WHERE id = ${userId}
-    `,
+    getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId),
     // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
-    getCapTier(userId),
+    getCapTierViaKysely(userId),
     config ?? getPlacementConfig(),
   ]);
 
@@ -261,16 +263,16 @@ const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
  * slot and still expires, so counting it is the honest answer.
  */
 export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
-  const rows = await dbRead.placement.groupBy({
-    by: ['surface'],
-    where: { ownerId, status: 'pending' },
-    _count: { _all: true },
-  });
-
-  const bySurface = new Map(rows.map((row) => [row.surface, row._count._all]));
+  const bySurface = new Map(await readPendingCounts(ownerId));
 
   return {
     sticker: bySurface.get('sticker') ?? 0,
     remix: bySurface.get('remixGallery') ?? 0,
   };
+}
+
+async function readPendingCounts(ownerId: number): Promise<[surface: string, count: number][]> {
+  return (await countPendingPlacementsBySurface((await loadKyselyDb()).kyselyRead, ownerId)).map(
+    (row) => [row.surface, row.count]
+  );
 }

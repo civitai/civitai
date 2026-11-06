@@ -46,7 +46,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
-vi.mock('~/server/services/text-scan/submit', () => ({ scanModelRules: mockScan }));
+vi.mock('~/server/services/text-scan/submit', () => ({ checkModelRulesInBackground: mockScan }));
 
 import {
   publishModelHandler,
@@ -151,7 +151,8 @@ describe('publishModelHandler — Model rules', () => {
 
     await publish();
 
-    expect(mockScan).toHaveBeenCalledExactlyOnceWith(MODEL_ID);
+    // The literal check ran inside the publish, before the model went public.
+    expect(mockScan).not.toHaveBeenCalled();
     expect(mockReindex).toHaveBeenCalledTimes(1);
     expect(mockRefresh).toHaveBeenCalledWith(MODEL_ID);
   });

@@ -25,8 +25,7 @@ const HITS = vi.hoisted(() => [
 
 // The transport. Nothing here talks to Meilisearch; `useHitsTransformed` is where results would
 // have arrived from, so it is the one seam that has to be faked.
-// `NEXT_PUBLIC_SEARCH_HOST` is unset in the component environment, and both this module and
-// `search.client` build a client from it at IMPORT time — which throws before any test runs.
+// Both this module and `search.client` build a client at IMPORT time; faked so none can send.
 vi.mock('@meilisearch/instant-meilisearch', () => ({
   instantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
 }));

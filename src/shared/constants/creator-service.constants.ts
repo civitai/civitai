@@ -8,6 +8,9 @@ import {
 /** Selling services unlocks at Beacon, the same rung (and the same aggregate score) as the Creator Program. */
 export const SERVICES_MIN_CREATOR_SCORE = CREATOR_PROGRAM_MIN_CREATOR_SCORE;
 
+/** `KeyValue` row overriding SERVICES_MIN_CREATOR_SCORE without a deploy, as a positive whole number. */
+export const SERVICES_MIN_CREATOR_SCORE_KEY = 'creator-services-min-creator-score';
+
 // Product defaults, not DB constraints: the DB only checks price > 0, days > 0, revisions >= 0.
 export const SERVICE_PRICE_MIN = 100;
 export const SERVICE_PRICE_MAX = 1_000_000;

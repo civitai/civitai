@@ -3,6 +3,7 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -11,7 +12,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * submit through the shared {@link ReasonGatedActionModal} (B3), so delist / relist /
  * claim / purge get the SAME live counter + inline error + disabled-with-Tooltip gate
  * the reject paths have (finding A). resolve / dismiss keep the OPTIONAL note (no gate).
- * Browser-mode (report-only in Tekton): the gate + the fired mutations.
+ * Browser-mode (`Component tests` in CI): the gate + the fired mutations.
  */
 
 const REPORT = {
@@ -48,7 +49,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
 // requested module '/src/utils/notifications.tsx' does not provide an export named
 // 'showWarningNotification'`. #5102
@@ -79,12 +80,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     });
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appListings: { listListingReports: { invalidate: mocks.invalidate } },
-      }),
-      appListings: {
-        listListingReports: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.listListingReports': {
           useQuery: () => ({
             data: { items: [REPORT], nextCursor: null },
             isLoading: false,
@@ -93,17 +91,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             refetch: vi.fn(),
           }),
         },
-        listModerationEvents: {
+        'appListings.listModerationEvents': {
           useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
         },
-        delistListing: { useMutation: mutation('delist') },
-        relistListing: { useMutation: mutation('relist') },
-        claimListing: { useMutation: mutation('claim') },
-        purgeListing: { useMutation: mutation('purge') },
-        resolveReport: { useMutation: mutation('resolve') },
-        dismissReport: { useMutation: mutation('dismiss') },
+        'appListings.delistListing': { useMutation: mutation('delist') },
+        'appListings.relistListing': { useMutation: mutation('relist') },
+        'appListings.claimListing': { useMutation: mutation('claim') },
+        'appListings.purgeListing': { useMutation: mutation('purge') },
+        'appListings.resolveReport': { useMutation: mutation('resolve') },
+        'appListings.dismissReport': { useMutation: mutation('dismiss') },
       },
-    },
+      // Stable, so assertions on `mocks.invalidate` read the spy the component called.
+      {
+        useUtils: () => ({
+          appListings: { listListingReports: { invalidate: mocks.invalidate } },
+        }),
+      }
+    ),
   };
 });
 

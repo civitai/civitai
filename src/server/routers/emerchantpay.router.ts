@@ -9,7 +9,10 @@ import { createBuzzChargeSchema } from '~/server/schema/emerchantpay.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const emerchantpayRouter = router({
-  getStatus: publicProcedure.meta({ requiredScope: TokenScope.Full }).query(() => getStatus()),
+  getStatus: publicProcedure
+    .meta({ requiredScope: TokenScope.Full })
+    .use(isFlagProtected('emerchantpayPayments'))
+    .query(() => getStatus()),
 
   createBuzzOrder: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
@@ -20,5 +23,6 @@ export const emerchantpayRouter = router({
   getTransactionStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(getByIdStringSchema)
+    .use(isFlagProtected('emerchantpayPayments'))
     .query(({ input, ctx }) => getTransactionStatusHandler({ input, ctx })),
 });

@@ -12,8 +12,8 @@ const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /**
- * 🔴 THE CALL SITE'S COMPOSITION, RENDERED — in the `unit` project, which is the
- * only one CI runs.
+ * 🔴 THE CALL SITE'S COMPOSITION, RENDERED — in the `unit` project, without a
+ * browser.
  *
  * WHY THIS FILE EXISTS. Three suites already cover audience targeting and none
  * of them could see the defect this one is for:
@@ -28,7 +28,7 @@ const act = (React as unknown as { act: typeof actType }).act;
  *   is then computed and thrown away, and every notice ships to every user who
  *   reaches the component.
  * - `notice-callsite.browser.test.tsx` does assert the rendered DOM, but it is
- *   in the `component` project, which CI does NOT run. It is corroboration.
+ *   in the `component` project (CI's `Component tests`). It is corroboration.
  *
  * The verified surviving mutant was exactly that: destructure kept, `&&
  * !isInAudience` removed from `RemixGalleryExplainer`'s render guard, whole

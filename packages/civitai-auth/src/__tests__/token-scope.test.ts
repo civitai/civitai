@@ -4,6 +4,7 @@ import {
   CLIENT_CREDENTIALS_MAX_SCOPE,
   CLIENT_CREDENTIALS_ONLY_SCOPES,
   consentableScopes,
+  NON_USER_SCOPES,
   TokenScope,
   TokenScopePresets,
   tokenScopeLabels,
@@ -47,13 +48,14 @@ describe('AppBlocksDevTunnel (opt-in scope — NOT part of Full)', () => {
 
   it('IS included in ALL_SCOPES (the computed upper bound)', () => {
     expect(ALL_SCOPES & TokenScope.AppBlocksDevTunnel).toBe(TokenScope.AppBlocksDevTunnel);
-    // Full is exactly ALL_SCOPES minus the four opt-in bits.
+    // Full is exactly ALL_SCOPES minus the five opt-in bits.
     expect(ALL_SCOPES).toBe(
       TokenScope.Full |
         TokenScope.AppBlocksSubmit |
         TokenScope.AppBlocksDevTunnel |
         TokenScope.LinkConnect |
-        TokenScope.AppStoreCatalogWrite
+        TokenScope.AppStoreCatalogWrite |
+        TokenScope.WorkerRegister
     );
   });
 
@@ -117,10 +119,8 @@ describe('AppStoreCatalogWrite (opt-in, client_credentials-only — NOT part of 
     }
   });
 
-  it('IS included in ALL_SCOPES, raising it to (1 << 29) - 1', () => {
+  it('IS included in ALL_SCOPES', () => {
     expect(ALL_SCOPES & TokenScope.AppStoreCatalogWrite).toBe(TokenScope.AppStoreCatalogWrite);
-    expect(ALL_SCOPES).toBe((1 << 29) - 1);
-    expect(ALL_SCOPES).toBe(536870911);
   });
 
   it('is the only client_credentials-only bit, and the client_credentials cap adds only UserRead', () => {
@@ -140,6 +140,37 @@ describe('AppStoreCatalogWrite (opt-in, client_credentials-only — NOT part of 
   it('has a label', () => {
     expect(tokenScopeLabels[TokenScope.AppStoreCatalogWrite]).toBe(
       "Publish items to the app's App Store listing"
+    );
+  });
+});
+
+describe('WorkerRegister (opt-in, worker token-exchange only — NOT part of Full)', () => {
+  it('is bit 29 = 536870912', () => {
+    expect(TokenScope.WorkerRegister).toBe(1 << 29);
+    expect(TokenScope.WorkerRegister).toBe(536870912);
+  });
+
+  it('is NOT part of Full', () => {
+    expect(TokenScope.Full & TokenScope.WorkerRegister).toBe(0);
+  });
+
+  it('IS included in ALL_SCOPES, raising it to (1 << 30) - 1, still inside a signed int4', () => {
+    expect(ALL_SCOPES).toBe((1 << 30) - 1);
+    expect(ALL_SCOPES).toBe(1073741823);
+    expect(ALL_SCOPES).toBeLessThan(2 ** 31);
+  });
+
+  it('is never consentable, and leaves the client_credentials cap alone', () => {
+    expect(NON_USER_SCOPES & TokenScope.WorkerRegister).toBe(TokenScope.WorkerRegister);
+    expect(consentableScopes(TokenScope.UserRead | TokenScope.WorkerRegister)).toBe(
+      TokenScope.UserRead
+    );
+    expect(CLIENT_CREDENTIALS_MAX_SCOPE & TokenScope.WorkerRegister).toBe(0);
+  });
+
+  it('has a label', () => {
+    expect(tokenScopeLabels[TokenScope.WorkerRegister]).toBe(
+      'Register a worker machine with the orchestrator'
     );
   });
 });

@@ -55,6 +55,8 @@ export const upsertServiceOfferingSchema = z.object({
     .optional(),
   // Saves as a draft unless set; publishing goes through the same sell gate as activating.
   publish: z.boolean().default(false),
+  // The seller-terms version the seller ticked; publishing is refused without the current one.
+  affirmedTermsVersion: z.string().optional(),
 });
 
 // Removed is a separate verb (`removeOffering`); Draft is never re-entered.
@@ -63,6 +65,7 @@ export type SetServiceOfferingStatusInput = z.infer<typeof setServiceOfferingSta
 export const setServiceOfferingStatusSchema = z.object({
   id: z.number().int().positive(),
   status: z.enum(serviceOfferingSettableStatuses),
+  affirmedTermsVersion: z.string().optional(),
 });
 
 export type GetShopServiceOfferingsInput = z.infer<typeof getShopServiceOfferingsSchema>;

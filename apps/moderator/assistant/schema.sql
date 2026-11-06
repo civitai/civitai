@@ -82,13 +82,13 @@ CREATE TABLE IF NOT EXISTS assistant_turn (
 ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS reasoning text;
 
 CREATE INDEX IF NOT EXISTS assistant_turn_chat_idx ON assistant_turn (chat_id, id);
--- One answer in flight per MODERATOR. The daily token cap is checked before a turn starts, so
+-- One answer in flight per MODERATOR. The daily caps are checked before a turn starts, so
 -- concurrent turns would each pass it; one at a time bounds the overshoot to one model call. (It also
 -- stops two questions in one chat each replaying a history missing the other.) The second is refused
 -- (23505) rather than run.
 CREATE UNIQUE INDEX IF NOT EXISTS assistant_turn_one_running_idx
   ON assistant_turn (moderator_id) WHERE status = 'running';
--- The daily token cap sums one moderator's turns since midnight; the audit lists newest first.
+-- The daily caps sum one moderator's turns since midnight; the audit lists newest first.
 CREATE INDEX IF NOT EXISTS assistant_turn_moderator_idx
   ON assistant_turn (moderator_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS assistant_turn_created_idx ON assistant_turn (created_at DESC);
@@ -155,3 +155,62 @@ CREATE TABLE IF NOT EXISTS assistant_tool_request (
 
 CREATE INDEX IF NOT EXISTS assistant_tool_request_created_idx
   ON assistant_tool_request (created_at DESC);
+
+-- What each finished turn cost, in USD, at the higher of OpenRouter's live price and the release's list
+-- price for its model (`price_source` says whether a live price was read). The daily dollar cap sums
+-- it. Null on turns from before it existed and on turns that never finished; the cap charges those
+-- their recorded tokens at the most expensive listed model's price.
+ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS cost_usd numeric;
+ALTER TABLE assistant_turn ADD COLUMN IF NOT EXISTS price_source text;
+
+-- 🔴 The daily dollar cap per role and per moderator, set on `/admin/spend-caps`. A moderator's cap is
+-- their own row if they have one (a $0 row turns the assistant off for them whatever their roles say),
+-- else the highest cap among their roles, else the default in the code. `subject` is a role name
+-- (`moderator:...`) or a user ID as text.
+CREATE TABLE IF NOT EXISTS assistant_spend_cap (
+  scope        text          NOT NULL,
+  subject      text          NOT NULL,
+  usd_per_day  numeric(8, 2) NOT NULL,
+  updated_by   integer       NOT NULL,
+  updated_at   timestamptz   NOT NULL DEFAULT now(),
+
+  PRIMARY KEY (scope, subject)
+);
+
+-- 🔴 APPEND-ONLY. One row per cap change, written in the same transaction as the change and before
+-- it, so a change that cannot be recorded does not happen. `before`/`after` null: no row.
+CREATE TABLE IF NOT EXISTS assistant_spend_cap_change (
+  id          bigserial     PRIMARY KEY,
+  actor_id    integer       NOT NULL,
+  scope       text          NOT NULL,
+  subject     text          NOT NULL,
+  usd_before  numeric(8, 2),
+  usd_after   numeric(8, 2),
+  reason      text,
+  at          timestamptz   NOT NULL DEFAULT now()
+);
+
+-- `ADD CONSTRAINT` has no `IF NOT EXISTS`, so each is guarded by name to keep the file re-runnable.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'assistant_turn'::regclass AND conname = 'assistant_turn_price_source_valid') THEN
+    ALTER TABLE assistant_turn ADD CONSTRAINT assistant_turn_price_source_valid
+      CHECK (price_source IN ('live', 'list'));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'assistant_spend_cap'::regclass AND conname = 'assistant_spend_cap_scope_valid') THEN
+    ALTER TABLE assistant_spend_cap ADD CONSTRAINT assistant_spend_cap_scope_valid
+      CHECK (scope IN ('role', 'user'));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'assistant_spend_cap'::regclass AND conname = 'assistant_spend_cap_usd_valid') THEN
+    ALTER TABLE assistant_spend_cap ADD CONSTRAINT assistant_spend_cap_usd_valid
+      CHECK (usd_per_day >= 0);
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'assistant_spend_cap_change'::regclass AND conname = 'assistant_spend_cap_change_scope_valid') THEN
+    ALTER TABLE assistant_spend_cap_change ADD CONSTRAINT assistant_spend_cap_change_scope_valid
+      CHECK (scope IN ('role', 'user'));
+  END IF;
+END
+$$;

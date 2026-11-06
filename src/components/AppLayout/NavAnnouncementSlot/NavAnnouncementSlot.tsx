@@ -4,6 +4,7 @@ import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { dismissHint } from '~/components/Events/event-promos';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { SiteAlertStrips } from '~/components/SiteAlerts/SiteAlertStrips';
 import {
   useNavBannersDismissed,
   visibleNavBanners,
@@ -16,13 +17,14 @@ import { trpc } from '~/utils/trpc';
 const DEFAULT_BACKGROUND = '#1a1b1e';
 
 /**
- * The strips at the top of the sub-nav: the Buzz Bonus notice, then the highest-priority event
- * banner. Event banners come from event definitions (`banner`), are seeded by the SSR settings
+ * The strips at the top of the sub-nav: site alerts for the current path, the Buzz Bonus notice,
+ * then the highest-priority event banner. Event banners come from event definitions (`banner`), are seeded by the SSR settings
  * bootstrap, and so are in the first paint.
  */
 export function NavAnnouncementSlot() {
   return (
     <>
+      <SiteAlertStrips />
       <RewardsBonusBanner />
       <EventNavBanners />
     </>

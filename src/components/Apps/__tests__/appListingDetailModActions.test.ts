@@ -22,8 +22,8 @@ import {
 /**
  * The moderator action set for the store listing DETAIL body's `⋮` menu.
  *
- * BLOCKING tier (node `unit`) — `AppListingDetailBody.browser.test.tsx` is report-only,
- * so the correctness of the derivation lives here and only the DOM wiring lives there.
+ * Node `unit` tier — `AppListingDetailBody.browser.test.tsx` is the browser tier, so the
+ * correctness of the derivation lives here and only the DOM wiring lives there.
  */
 
 const KINDS = ['onsite', 'offsite'] as const;
@@ -335,7 +335,7 @@ describe('the takedown pair', () => {
  * BLOCKING TIER — because every one of them was measured SURVIVING a mutant.
  *
  * These lived as module-private maps inside `ListingTakedownModal.tsx`, a `.tsx` no
- * blocking suite can import, so their only coverage was the report-only browser tier and
+ * node suite can import, so their only coverage was the browser tier and
  * there only on the `hide` arm. An adversarial audit measured two mutants green on BOTH
  * tiers:
  *

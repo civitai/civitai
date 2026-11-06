@@ -125,12 +125,54 @@
 }
 
 /* Reactions */
-.reactions {
-  border-radius: var(--mantine-radius-sm);
+/* The backing the creator pill shares with the reactions bar, so the two rows match. */
+.reactions,
+.creatorPill {
   background-color: rgba(0, 0, 0, 0.31);
   box-shadow: 0 -2px 6px 1px rgba(0, 0, 0, 0.16);
+}
+
+.reactions {
+  border-radius: var(--mantine-radius-sm);
   height: 28px;
   padding-right: 3px;
+}
+
+/* Grows out from under the avatar: the negative margin tucks the pill's left end behind it,
+   and the left padding puts the name 8px from the avatar's edge. */
+.creatorPill {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 24px;
+  margin-left: -20px;
+  padding: 0 12px 0 20px;
+  border-radius: 9999px;
+
+  /* A long unbroken username has to wrap for the line clamp to ellipsize it. */
+  & > * {
+    overflow-wrap: anywhere;
+  }
+
+  /* No avatar before it, so nothing to tuck under. */
+  &:first-child {
+    margin-left: 0;
+    padding-left: 12px;
+  }
+}
+
+/* A nameplate's gradient is clipped to the glyphs, so text-shadow can't reach it: a tight dark edge
+   plus a small offset keeps mid-tone plates readable on bright images without a heavier pill.
+   The name's own shadow (UserAvatarSimple.module.scss) is replaced; the extra class beats its
+   dark-scheme rule. */
+.creatorPill.creatorPillPlate > [class] {
+  filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.95))
+    drop-shadow(0 1px 0 rgba(0, 0, 0, 0.45));
+}
+
+.creatorAvatar {
+  z-index: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.5));
 }
 
 /* Stat chip */
@@ -269,4 +311,132 @@
     #6a2d06 81%,
     #451500 98%
   );
+}
+
+/* Must be the footer wrapper, not the row: a container can't size to its own content, and the
+   one-line form below needs the row to. */
+.footer {
+  container-type: inline-size;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.actionRow {
+  display: flex;
+}
+
+.actionRow .reactions,
+.tipRow > .reactions {
+  height: 22px;
+}
+
+.actionRow .reactions {
+  height: auto;
+  min-height: 22px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  padding-right: 0;
+  gap: 2px !important; /* beats the gap-1 utility on the bar */
+
+  & :global(.mantine-Button-root) {
+    --button-height: 22px;
+    --button-padding-x: 6px;
+    --button-fz: 12px;
+  }
+
+  & :global(.mantine-Button-label) {
+    gap: 2px !important; /* beats the gap-1 utility on the label */
+  }
+}
+
+/* The Buzz tip, sticker badge and info button. Hidden when
+   none of them rendered (a card with no tip and a sticker badge that returned null), so an empty
+   line takes no height. Its display is set here, not by a utility class: this module is in a
+   lower layer, so a utility's `display` would beat the `none` below. */
+.tipRow {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  min-height: 22px;
+
+  & .infoChip {
+    --ti-size: 22px;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+  }
+
+  & .tipEnd > button:not(.infoChip) {
+    height: 22px !important;
+    padding: 0 6px !important;
+  }
+
+  /* !important: Mantine's rules sit in a higher layer than this module. */
+  & .tipEnd > button:not(.infoChip) :global(.mantine-Text-root),
+  & > .reactions :global(.mantine-Badge-label) {
+    font-size: 12px !important;
+  }
+}
+
+.tipEnd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.tipRow:not(:has(> :not(:empty))) {
+  display: none;
+}
+
+/* A footer wide enough for everything (a 420px card has a 404px footer) puts it all on one line:
+   the two wrappers dissolve so reactions, tip and badges share one wrapping row, the badges pushed
+   right. Counts too long for the line wrap the badges to a second one. */
+@container (min-width: 404px) {
+  .actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .actionRow,
+  .tipRow {
+    display: contents;
+  }
+
+  .tipRow > .reactions {
+    margin-left: 1px;
+    border-radius: 0 var(--mantine-radius-sm) var(--mantine-radius-sm) 0;
+  }
+
+  .actions:has(.tipRow > .reactions) .actionRow .reactions {
+    border-radius: var(--mantine-radius-sm) 0 0 var(--mantine-radius-sm);
+  }
+
+  .tipEnd {
+    padding-left: 6px;
+  }
+}
+
+/* Footer in a card whose height the masonry fixed: reactions and tip flow as one wrapping line,
+   since a second stacked row would overflow into the picture. */
+.actions.oneLine {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+
+  & .actionRow,
+  & .tipRow {
+    display: contents;
+  }
+
+  & .tipEnd {
+    padding-left: 6px;
+  }
 }

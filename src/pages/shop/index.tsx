@@ -8,9 +8,9 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
   SimpleGrid,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconPencilMinus, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -42,6 +42,7 @@ import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-prof
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
 import { CommunityCosmeticsSection } from '~/components/CosmeticShop/CommunityCosmeticsSection';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
+import { useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { CosmeticShopSort } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -78,6 +79,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CosmeticShopMain() {
   const { query } = useCosmeticShopQueryParams();
+  const subnavBottom = useSubnavBottom();
   const [filters, setFilters] = useState<ShopFilters>({
     ...(query ?? {}),
   });
@@ -91,6 +93,14 @@ export default function CosmeticShopMain() {
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const { wishlistedIds } = useQueryWishlistedShopItems();
   const features = useFeatureFlags();
+
+  // The sections mount only after the owned-cosmetics query settles, past the browser's own
+  // hash scroll, so a /shop#shop-section-<id> link has to scroll once they exist.
+  const sectionsReady = !isLoading && !loadingOwnedCosmetics;
+  useEffect(() => {
+    if (!sectionsReady) return;
+    document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
+  }, [sectionsReady]);
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
@@ -170,7 +180,10 @@ export default function CosmeticShopMain() {
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>
           </Stack>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div
+            className="sticky z-40 -mx-2 flex flex-wrap items-center justify-end gap-2 bg-gray-0 p-2 dark:bg-dark-7"
+            style={{ top: subnavBottom }}
+          >
             <TextInput
               className="w-full sm:mr-auto sm:w-80"
               radius="xl"

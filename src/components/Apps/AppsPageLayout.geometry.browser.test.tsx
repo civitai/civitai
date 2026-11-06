@@ -20,13 +20,12 @@
  * no viewport-dependent defect is reachable — but the viewport coverage genuinely
  * narrowed and that is the trade. (b) 🔴 THE FILENAME LIES ABOUT THE TIER: this file ends
  * `.browser.test.tsx`, so it is collected by the `component` project, NOT by the
- * `geometry` one, despite "geometry" being in its name. `component` matches no project
- * selector in `.github/workflows/lint.yml`, so nothing here is run by CI outside the
- * preview pipeline's report-only status. Do not read the name as a tier.
+ * `geometry` one, despite "geometry" being in its name, and runs in CI as
+ * `Component tests`. Do not read the name as a tier.
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
- * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — REPORT-ONLY and non-blocking. ⚠️ AND THE
+ * Vitest browser-mode `component` project (`Component tests` in CI), and no check in
+ * this repo blocks a merge. ⚠️ AND THE
  * SENTENCE THAT FOLLOWED USED TO SAY "the enforceable half lives as source guards in the
  * BLOCKING `unit` project", WHICH IS FALSE: verified 2026-10-03 against the GitHub API,
  * `civitai/civitai` `main` carries `required_status_checks: null`, so no project in this
@@ -315,15 +314,15 @@ describe('/apps chrome vertical geometry', () => {
     ).toBe(SUBNAV_STICKY_GAP);
   });
 
-  test('no-header page: the body starts one band-gap below the chrome', async () => {
+  test('no-header page: the body starts at the top of the chrome, with no empty band above it', async () => {
     const g = await renderAndMeasure(<AppsPageLayout>{body}</AppsPageLayout>);
     expect(g.styleSheetLoaded).toBe(true);
     expect(g.hasTitle).toBe(false);
-    // The band renders but is EMPTY on a desktop viewport: its only child on a no-header
-    // page is the drawer trigger, which is `display: none` at ≥1300. So the whole chrome
-    // above the body is the root stack's own `xl` gap.
-    expect(g.topToBody).toBe(32);
-    expect(g.bandToBody).toBe(32);
+    // At ≥1300 a no-header page's band holds only the drawer trigger, which is `display: none`,
+    // so the band's wrapper is hidden too and takes the root stack's `xl` gap with it: the body
+    // starts level with the rail instead of one empty band lower (design review, recording 2582).
+    expect(g.topToBody).toBe(0);
+    expect(g.bandToBody).toBe(0);
   });
 
   test('hasHeader page: the 32px band→body gap survives unchanged', async () => {

@@ -16,6 +16,8 @@ vi.mock('~/utils/signal-client', () => ({
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn().mockResolvedValue({ transactionId: 't1' }),
+  getUserBuzzAccount: vi.fn().mockResolvedValue([{ balance: 1_000_000 }]),
+  getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn().mockResolvedValue(undefined),
@@ -409,10 +411,10 @@ describe('revokeForChargeback', () => {
     mockDbWrite.referralReward.findMany.mockResolvedValue([
       { id: 1, userId: 7, status: ReferralRewardStatus.Pending, buzzAmount: 0 },
     ]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
     await revokeForChargeback({ sourceEventId: 'pi_1', reason: 'refund' });
     expect(createBuzzTransaction).not.toHaveBeenCalled();
-    expect(mockDbWrite.referralReward.update).toHaveBeenCalledWith(
+    expect(mockDbWrite.referralReward.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: ReferralRewardStatus.Revoked }),
       })
@@ -423,7 +425,7 @@ describe('revokeForChargeback', () => {
     mockDbWrite.referralReward.findMany.mockResolvedValue([
       { id: 2, userId: 7, status: ReferralRewardStatus.Settled, buzzAmount: 500 },
     ]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
     await revokeForChargeback({ sourceEventId: 'pi_2', reason: 'refund' });
     expect(createBuzzTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -694,7 +696,7 @@ describe('revokeForChargeback', () => {
       },
     ]);
     (mockDbWrite.$queryRaw as any).mockResolvedValue([{ id: 1, paidMonthCount: 1 }]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
     mockDbWrite.userReferral.update.mockResolvedValue({});
 
     await revokeForChargeback({ sourceEventId: 'inv_x', reason: 'refunded' });
@@ -716,7 +718,7 @@ describe('revokeForChargeback', () => {
       },
     ]);
     (mockDbWrite.$queryRaw as any).mockResolvedValue([{ id: 1, paidMonthCount: 3 }]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
     mockDbWrite.userReferral.update.mockResolvedValue({});
 
     await revokeForChargeback({ sourceEventId: 'inv_y', reason: 'refunded' });
@@ -737,7 +739,7 @@ describe('revokeForChargeback', () => {
         buzzAmount: 2_500,
       },
     ]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
 
     await revokeForChargeback({ sourceEventId: 'inv_z', reason: 'refunded' });
 
@@ -756,7 +758,7 @@ describe('revokeForChargeback', () => {
       },
     ]);
     (mockDbWrite.$queryRaw as any).mockResolvedValue([{ id: 1, paidMonthCount: 2 }]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
     mockDbWrite.userReferral.update.mockResolvedValue({});
 
     await revokeForChargeback({ sourceEventId: 'inv_w', reason: 'refunded' });
@@ -872,7 +874,7 @@ describe('buzz account routing (central bank 0)', () => {
     mockDbWrite.referralReward.findMany.mockResolvedValue([
       { id: 2, userId: 7, status: ReferralRewardStatus.Settled, buzzAmount: 500 },
     ]);
-    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
 
     await revokeForChargeback({ sourceEventId: 'pi_bank', reason: 'refund' });
 

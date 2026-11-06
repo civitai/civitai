@@ -1,11 +1,11 @@
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { pluralize } from '~/shared/utils/pluralize';
 import type { RouterOutput } from '~/types/router';
 
 export type ServiceOffering = RouterOutput['creatorService']['getMine']['items'][number];
 
-export const pluralize = (count: number, word: string) =>
-  `${count} ${word}${count === 1 ? '' : 's'}`;
+export { pluralize };
 
 export function serviceTermsLine(
   offering: Pick<ServiceOffering, 'deliveryDays' | 'revisionsIncluded'>
@@ -21,8 +21,11 @@ export function useQueryShopServices(userId: number, enabled: boolean) {
   return { offerings: data ?? [], isLoading };
 }
 
-export function useQueryMyServices(enabled: boolean) {
-  const eligibility = trpc.creatorService.getSellEligibility.useQuery(undefined, { enabled });
+/** `canSell` false (the services flag is off) still lists the seller's services, to pause or remove. */
+export function useQueryMyServices(enabled: boolean, canSell = enabled) {
+  const eligibility = trpc.creatorService.getSellEligibility.useQuery(undefined, {
+    enabled: enabled && canSell,
+  });
   const mine = trpc.creatorService.getMine.useQuery(undefined, { enabled });
   return {
     eligibility: eligibility.data,

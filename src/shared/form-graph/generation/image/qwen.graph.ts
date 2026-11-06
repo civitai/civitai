@@ -38,6 +38,7 @@ const qwenImg2ImgVersionOptions = [
   { label: 'v2511', value: qwenVersionIds.img2img_v2511 },
 ];
 
+/** The `Qwen` ecosystem only; `Qwen2` and `Qwen3` have their own lists. */
 const qwenAspectRatios = [
   { label: '2:3', value: '2:3', width: 832, height: 1216 },
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },

@@ -5,7 +5,7 @@ import type { PlannerPost } from '../host';
 import { addDays, dayStart, localDayKey, snapToFiveMinutes } from './calendar';
 
 export const HOUR_HEIGHT_PX = 48;
-/** A chip spans the batch gap (30 minutes), so two compliant posts never overlap. */
+/** Half an hour tall; posts closer than that share the row in side-by-side lanes. */
 export const CHIP_HEIGHT_PX = HOUR_HEIGHT_PX / 2;
 
 /** `endHour` may exceed 24: those hours belong to the next local day. */

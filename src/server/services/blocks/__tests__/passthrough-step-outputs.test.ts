@@ -641,7 +641,7 @@ describe('the gated read over an Image row a pass-through publish would produce'
 //
 // 🔴 EVERY FORMAT IN THE FIXTURE IS DISTINCT from every other, and from every variant,
 // so a mutant that swaps a format between blobs, labels by key name, or hardcodes one
-// format cannot pass. The values are the `@civitai/client` `Model3dBlob` shape:
+// format cannot pass. The values are the `@civitai/orchestration-client` `Model3dBlob` shape:
 // `type: 'model3d'` plus `format`.
 describe('3D output labels (Model3dBlob format + variant)', () => {
   const u = (s: string) => `https://blobs.example/3d/${s}`;

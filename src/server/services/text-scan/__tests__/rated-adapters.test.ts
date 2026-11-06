@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Hand-listed: the real module pulls nsfwLevels.service, whose search-index graph builds clients at load.
 vi.mock('~/server/services/text-scan/rated-entities', () => ({
   applyRatingFloor: vi.fn(async () => ({ deferredRatingNotice: null })),
+  readRatedEntity: vi.fn(async () => null),
 }));
 // Hand-listed: the real action reaches rated-entities and bounty.service, whose graphs build clients at load.
 vi.mock('~/server/services/text-scan/actions/bounty-nsfw', () => ({
@@ -14,23 +15,19 @@ vi.mock('~/server/services/text-scan/actions/collection', () => ({
   applyCollectionTextScan: vi.fn(async () => undefined),
 }));
 
-// Hand-listed: the real action reaches model.service, whose graph builds clients at load.
-vi.mock('~/server/services/text-scan/actions/model-rules', () => ({
-  applyModelRulesTextScan: vi.fn(async () => undefined),
-}));
-
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-const { applyRatingFloor } = await import('~/server/services/text-scan/rated-entities');
+const { applyRatingFloor, readRatedEntity } = await import(
+  '~/server/services/text-scan/rated-entities'
+);
 const { applyBountyNsfwTextScan } = await import('~/server/services/text-scan/actions/bounty-nsfw');
 const { applyCollectionTextScan } = await import('~/server/services/text-scan/actions/collection');
-
-const { applyModelRulesTextScan } = await import('~/server/services/text-scan/actions/model-rules');
 
 const args = {
   entityId: 1,
   workflowId: 'wf',
   outcome: { triggeredLabels: [], nsfwLevel: 4 },
   subject: { fields: [], declared: {} },
+  ratingBefore: { nsfwLevel: 1, moderatorNsfwLevel: null, userId: 5, title: null, url: '/x' },
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -47,15 +44,40 @@ describe('rated-entity text-scan adapters', () => {
     expect(applyBountyNsfwTextScan).toHaveBeenCalledWith(args);
   });
 
+  it.each(['Article', 'Post', 'Bounty', 'BountyEntry'])(
+    '%s reads its own rating for the snapshot taken before the verdict write',
+    async (type) => {
+      await getModerationAdapter(type)!.readRating!(3);
+      expect(readRatedEntity).toHaveBeenCalledWith(type, 3);
+    }
+  );
+
   it('Collection is registered and runs the collection action', async () => {
     await getModerationAdapter('Collection')!.applyTextScan!(args as never);
     expect(applyCollectionTextScan).toHaveBeenCalledWith(args);
   });
 });
 
-describe('model-rules text-scan adapter', () => {
-  it('ModelRules is registered and runs the model-rules action', async () => {
-    await getModerationAdapter('ModelRules')!.applyTextScan!(args as never);
-    expect(applyModelRulesTextScan).toHaveBeenCalledWith(args);
-  });
+describe('retired model-rules text-scan adapter', () => {
+  it.each(['ModelRules', 'ModelRules:shadow'])(
+    '%s rows are neither retried nor acted on',
+    async (entityType) => {
+      const adapter = getModerationAdapter(entityType)!;
+      await expect(adapter.isEnabled!({ entityId: 1 })).resolves.toBe(false);
+      expect(adapter.applyTextScan).toBeUndefined();
+    }
+  );
+});
+
+describe('leftover ModelRules rows', () => {
+  it.each(['ModelRules', 'ModelRules:shadow'])(
+    '%s is registered but never enabled, so the retry cron skips it',
+    async (type) => {
+      const adapter = getModerationAdapter(type);
+      expect(adapter).toBeDefined();
+      expect(await adapter!.isEnabled!({ entityId: 1 })).toBe(false);
+      expect(adapter!.applyTextScan).toBeUndefined();
+      expect(adapter!.applyFailure).toBeUndefined();
+    }
+  );
 });

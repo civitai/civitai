@@ -1,6 +1,13 @@
 import { urlWith } from '$lib/url';
 
-type ChipTarget = { key: string; defaultValue: string; active: string; toggle?: boolean };
+type ChipTarget = {
+  key: string;
+  defaultValue: string;
+  active: string;
+  toggle?: boolean;
+  /** Params that only make sense for the old value (a sort that follows the status), cleared with it. */
+  resets?: readonly string[];
+};
 
 /** An active toggle chip switches itself off by returning to the default. Every filter change drops
  *  the page and the open item, which index the old result set. */
@@ -12,6 +19,7 @@ export function chipHref(
 ): string {
   const next = group.toggle && group.active === value ? group.defaultValue : value;
   return urlWith(url, {
+    ...Object.fromEntries((group.resets ?? []).map((key) => [key, null])),
     [group.key]: next === group.defaultValue ? null : next,
     page: null,
     [selectionParam]: null,
@@ -31,7 +39,7 @@ export function rowChips<G>(groups: readonly ChipRowGroup<G>[]) {
   return row;
 }
 
-const DROPPED_ON_SEARCH = ['q', 'page', 'item', 'hold', 'appeal', 'model'];
+const DROPPED_ON_SEARCH = ['q', 'page', 'item', 'hold', 'appeal', 'model', 'selected'];
 
 /** Params a search form carries over: the tab's filters and sort, not the search or the old result set. */
 export function carriedSearchParams(params: URLSearchParams): [string, string][] {

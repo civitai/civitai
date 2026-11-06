@@ -20,6 +20,7 @@ import {
   type HeldDetectionKind,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
+import { holdLeadAfterFlagLift } from '~/server/services/text-scan/actions/model-nsfw';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import {
   getTextScanLabelMode,
@@ -422,7 +423,7 @@ export async function flagModelPoi({
               )
             )
           )
-        )
+        ) #- '{restrictedNsfwVerdict,liftedBy}'
     WHERE m.id = ${modelId}
       AND NOT m.poi
       AND ${flagGuard('poi', kept ? textHash : null)}
@@ -594,7 +595,7 @@ async function notifyModelOwner({
   await createNotification({
     userId,
     type: 'model-text-scan-flagged',
-    category: NotificationCategory.System,
+    category: NotificationCategory.Moderation,
     key: `model-text-scan-flagged:${modelId}:${label}:${workflowId}`,
     details: { modelId, modelName, label },
   });
@@ -634,9 +635,10 @@ export async function grantModelTextScanPoi({
   });
   if (!before?.poi) return false;
 
-  const [after] = await writeTextScanRuling(
+  const [granted] = await writeTextScanRuling(
     { modelId, labels: ['poi'], decision: 'appealGranted', via, moderatorId: userId, reason, note },
-    (tx) => tx.$queryRaw<ModelFlagRow[]>`
+    async (tx) => {
+      const rows = await tx.$queryRaw<ModelFlagRow[]>`
     UPDATE "Model" m
     SET poi = FALSE,
         nsfw = CASE WHEN m.minor THEN m.nsfw
@@ -682,12 +684,22 @@ export async function grantModelTextScanPoi({
       }
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
-  `,
+  `;
+      if (rows.length)
+        await holdLeadAfterFlagLift(tx, modelId, via === 'appeal' ? 'appeal' : 'moderator');
+      return rows;
+    },
     (rows) => rows.length > 0
   );
-  if (!after) return false;
+  if (!granted) return false;
 
-  const { applyModelFlagSideEffects } = await loadModelService();
+  const { applyModelFlagSideEffects, clearPoiHashMeta, restoreOwnerFlagOverride } =
+    await loadModelService();
+  const after = {
+    ...granted,
+    ...(await restoreOwnerFlagOverride(modelId, { revertedFlag: 'poi' })),
+  };
+  await clearPoiHashMeta(modelId);
   await applyModelFlagSideEffects({ before, after });
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);

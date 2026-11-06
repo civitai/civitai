@@ -1,7 +1,16 @@
 import { z } from 'zod';
-import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
+import {
+  StorylineFollowScope,
+  StorylineStatus,
+  StorylineWhoCanContinue,
+} from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
-import { STORYLINE_CEILING_LEVELS, STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
+import { imageInputSchema } from '~/server/schema/image.schema';
+import {
+  STORYLINE_CAPTION_MAX_LENGTH,
+  STORYLINE_CEILING_LEVELS,
+  STORYLINE_PATH_LIMIT,
+} from '~/shared/utils/storyline';
 
 const ceilingSchema = z
   .number()
@@ -21,13 +30,21 @@ const picksSchema = {
 };
 
 export const createStorylineSchema = z.object({
-  postId: z.number().int().positive(),
+  /** Chapter 1, when the storyline starts from a post already published. Omitted, it starts empty. */
+  postId: z.number().int().positive().optional(),
+  /** Someone's image the storyline starts from, credited above chapter 1. Not a chapter. */
+  sparkImageId: z.number().int().positive().optional(),
   title: titleSchema,
   maxNsfwLevel: ceilingSchema,
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
   ...picksSchema,
 });
 export type CreateStorylineInput = z.infer<typeof createStorylineSchema>;
+
+// Must not accept an image id: an upload is always a new image.
+const storylineUploadSchema = imageInputSchema.extend({
+  type: z.literal('image').default('image'),
+});
 
 export const updateStorylineSchema = z.object({
   id: z.number().int().positive(),
@@ -36,8 +53,19 @@ export const updateStorylineSchema = z.object({
   maxNsfwLevel: ceilingSchema.optional(),
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
   ...picksSchema,
+  /** A still image the caller just uploaded, to make theirs and pick as the cover or banner. */
+  coverUpload: storylineUploadSchema.optional(),
+  heroUpload: storylineUploadSchema.optional(),
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
+
+/** Empty text deletes the caption. */
+export const setStorylineImageCaptionSchema = z.object({
+  imageId: z.number().int().positive(),
+  content: z.string().trim().max(STORYLINE_CAPTION_MAX_LENGTH),
+});
+
+export const storylinePostImageCaptionsSchema = z.object({ postId: z.number().int().positive() });
 
 export const storylineCollaboratorSchema = z.object({
   storylineId: z.number().int().positive(),
@@ -49,6 +77,11 @@ export const leaveStorylineSchema = z.object({ storylineId: z.number().int().pos
 
 export const addOwnerChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+});
+
+export const setFirstChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
   postId: z.number().int().positive(),
 });
 
@@ -70,9 +103,27 @@ export const setCanonChapterSchema = storylineChapterSchema.extend({
   parentChapterId: z.number().int().positive().optional(),
 });
 
+export const insertStorylineChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  parentChapterId: z.number().int().positive(),
+  childChapterId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+});
+
+export const moveStorylineChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  chapterId: z.number().int().positive(),
+  afterChapterId: z.number().int().positive(),
+});
+
+export const removeStorylineChapterSchema = z.object({
+  chapterId: z.number().int().positive(),
+});
+
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),
+  atEnd: z.boolean().optional(),
 });
 
 export const storylineLinkTargetsSchema = z.object({
@@ -81,13 +132,17 @@ export const storylineLinkTargetsSchema = z.object({
 
 export const storylineIdSchema = z.object({ id: z.number().int().positive() });
 
+export const storylinePendingForPostSchema = z.object({ postId: z.number().int().positive() });
+
 export const getStorylineSchema = z.object({
   id: z.number().int().positive(),
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export const STORYLINE_FOR_POSTS_MAX = 100;
+
 export const getStorylinesForPostsSchema = z.object({
-  postIds: z.array(z.number().int().positive()).max(100),
+  postIds: z.array(z.number().int().positive()).max(STORYLINE_FOR_POSTS_MAX),
   browsingLevel: z.number().int().min(0).optional(),
 });
 
@@ -101,12 +156,22 @@ export const joinStorylineEarlyAccessSchema = z
   .object({ storylineId: z.number().int().positive().optional() })
   .default({});
 
+export const followStorylineSchema = z.object({
+  storylineId: z.number().int().positive(),
+  scope: z.nativeEnum(StorylineFollowScope).default(StorylineFollowScope.Canon),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open']).default('all'),
-  sort: z.enum(['newest', 'mostChapters']).default('newest'),
+  filter: z
+    .enum(['all', 'ongoing', 'complete', 'open', 'mine', 'participated', 'following'])
+    .default('all'),
+  sort: z.enum(['newest', 'mostChapters', 'recentlyUpdated']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),
   browsingLevel: z.number().int().min(0).optional(),
+  /** One owner's storylines, as their profile lists them. */
+  userId: z.number().int().positive().optional(),
 });
 
 export const moderateStorylineTitleSchema = z

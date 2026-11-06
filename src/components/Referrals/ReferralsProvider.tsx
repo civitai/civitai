@@ -27,12 +27,15 @@ const schema = z.object({
 
 export const ReferralsProvider = ({
   children,
+  pending,
   ...referrals
 }: {
   children: React.ReactNode;
   code?: string;
   source?: string;
   landingPage?: string;
+  /** True while a shell boot has not read the cookies or the viewer yet; nothing is written. */
+  pending?: boolean;
 }) => {
   const user = useCurrentUser();
   const router = useRouter();
@@ -40,8 +43,18 @@ export const ReferralsProvider = ({
   const [code, setCode] = useState<string | undefined>(referrals.code);
   const [source, setSource] = useState<string | undefined>(referrals.source);
   const [landingPage, setLandingPage] = useState<string | undefined>(referrals.landingPage);
+  const [adopted, setAdopted] = useState(!pending);
 
   useEffect(() => {
+    if (pending || adopted) return;
+    setCode(referrals.code);
+    setSource(referrals.source);
+    setLandingPage(referrals.landingPage);
+    setAdopted(true);
+  }, [pending, adopted]);
+
+  useEffect(() => {
+    if (!adopted) return;
     if (result.success && !user?.referral) {
       const { ref_id, ref_source, ref_code } = result.data;
 
@@ -68,7 +81,7 @@ export const ReferralsProvider = ({
         setLandingPage(router.asPath);
       }
     }
-  }, [result.success, user]);
+  }, [result.success, user, adopted]);
 
   return (
     <ReferralsContext.Provider

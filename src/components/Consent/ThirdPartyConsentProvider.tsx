@@ -1,6 +1,7 @@
 import { useAppContext } from '~/providers/AppProvider';
 import { isConsentRequired, type ConsentDecision } from './consent.utils';
 import { CAConsentManager } from './CAConsentManager';
+import { ShellConsentGate } from './ShellConsentGate';
 
 // CAConsentManager must be a STATIC import, not next/dynamic. It wraps the whole
 // app (children), and under Turbopack dev a dynamically-imported wrapper loads
@@ -58,7 +59,19 @@ type Props = {
  *     `region` prop here, none passed by `_app`, and `useMaybeAppContext` not used.
  */
 export function ThirdPartyConsentProvider({ children, initialConsent, loggedIn }: Props) {
-  const { region } = useAppContext();
+  const { region, regionPending } = useAppContext();
+  // A shell boot learns the region after mount; `isConsentRequired` fails open on its absence.
+  if (regionPending !== undefined)
+    return (
+      <ShellConsentGate
+        pending={regionPending}
+        region={region}
+        initialConsent={initialConsent}
+        loggedIn={loggedIn}
+      >
+        {children}
+      </ShellConsentGate>
+    );
   if (!isConsentRequired(region)) return <>{children}</>;
   return (
     <CAConsentManager initialConsent={initialConsent} loggedIn={loggedIn}>

@@ -1,5 +1,16 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, List, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title, Group, Tooltip } from '@mantine/core';
+import {
+  Button,
+  List,
+  Paper,
+  SimpleGrid,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Group,
+} from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowRight,
   IconBarbell,

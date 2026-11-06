@@ -27,7 +27,7 @@ import type { DbCatalog } from '../types';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
 const cli = join(packageRoot, 'src/schema-drift/cli.ts');
-const snapshot = join(here, 'fixtures/catalog-production-2026-10-19.json');
+const snapshot = join(here, 'fixtures/catalog-production-2026-10-20.json');
 
 async function dump(args: string[]): Promise<CliRun> {
   return runTsxCli(cli, ['--dump-catalog', ...args], {

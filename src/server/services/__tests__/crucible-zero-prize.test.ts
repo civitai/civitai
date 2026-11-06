@@ -47,6 +47,7 @@ beforeEach(() => {
     if (sql.includes('"entryId"')) return placed;
     if (sql.includes('AS entrants')) return [];
     if (sql.includes('SELECT ce.id')) return [];
+    if (sql.includes('AS count')) return [{ count: 0 }];
     throw new Error('unexpected SQL: ' + sql);
   });
 });

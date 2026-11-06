@@ -13,10 +13,8 @@ import {
  * viewer's whole failure mode is arithmetic — open on the wrong shot, advance by the
  * wrong amount, prev and next swapped — and every one of those renders a completely
  * healthy modal showing the wrong picture. The browser suite
- * (`AppListingDetailBody.viewer.browser.test.tsx`) can see it, but it runs only as
- * the preview pipeline's report-only `preview / component-tests`, so a guard that
- * lives ONLY there cannot block the regression coming back. The arithmetic is pure,
- * so it is pinned here, where CI's `Unit tests` job runs it.
+ * (`AppListingDetailBody.viewer.browser.test.tsx`) can see it too. The arithmetic is
+ * pure, so it is pinned here as well, where CI's `Unit tests` job runs it.
  *
  * 🔴 WHAT THIS FILE CANNOT SEE, stated so nobody reads it as more than it is: it
  * proves the FUNCTIONS are right, never that the component CALLS them, never that a

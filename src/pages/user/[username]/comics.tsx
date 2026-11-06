@@ -21,7 +21,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { formatRelativeDate } from '~/utils/comic-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -32,7 +32,7 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.comicCreator) return { notFound: true };
 
     const username = ctx.query.username as string;
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt)
       return {
         redirect: { destination: `/user/${username}`, permanent: true },

@@ -3,7 +3,9 @@ import { tombstoneChaptersForPlacements } from '~/server/services/storyline-chap
 
 const txWith = (count: number) => {
   const updateMany = vi.fn(async () => ({ count }));
-  return { tx: { storylineChapter: { updateMany } } as never, updateMany };
+  // No chapters to walk up from: the walk itself is storyline-insert-chapter.sql.behavior.test.ts.
+  const findMany = vi.fn(async () => []);
+  return { tx: { storylineChapter: { updateMany, findMany } } as never, updateMany };
 };
 
 describe('tombstoneChaptersForPlacements', () => {

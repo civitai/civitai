@@ -24,6 +24,10 @@ import type { AppRole } from '~/shared/constants/app-capabilities.constants';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * The authoring page's **Publishing** tab — the owner's Unpublish / Republish pair.
@@ -113,6 +117,7 @@ export function ListingPublishingPanel({
     onChanged?.();
   }, [utils, onChanged]);
 
+  const termsAccepted = useAppDeveloperTermsAccepted();
   const republish = trpc.appListings.republishOwnListing.useMutation({
     // 🔴 The message is DERIVED from the server's answer, never assumed: a republish whose
     // assets changed since the last approval lands in `pending`, not live. See
@@ -216,7 +221,7 @@ export function ListingPublishingPanel({
          * `moderators` goes LIVE VISIBLE TO MODERATORS ONLY, and without this line the
          * owner's only clue is that nobody ever uses their app. The wording and the
          * fire/stay-silent arms are in `visibilityPostApprovalPrompt`, under the blocking
-         * unit project, because this branch itself is only reachable in report-only tests.
+         * unit project, because this branch itself is only reachable in browser tests.
          */
         <Alert
           color="yellow"
@@ -227,6 +232,8 @@ export function ListingPublishingPanel({
           {postApprovalPrompt}
         </Alert>
       ) : null}
+
+      {canRepublish && !termsAccepted && <AppDeveloperTermsCheckbox />}
 
       <Group gap="xs" data-testid={PUBLISHING_ACTIONS_TESTID}>
         {canUnpublish && (
@@ -246,7 +253,7 @@ export function ListingPublishingPanel({
             variant="default"
             color="green"
             leftSection={<IconEye size={14} />}
-            disabled={republish.isPending}
+            disabled={republish.isPending || !termsAccepted}
             loading={republish.isPending}
             onClick={() => republish.mutate({ appListingId })}
             data-testid="apps-publishing-republish"

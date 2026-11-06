@@ -83,6 +83,11 @@ export function getChainDisplayName(chain: string): string {
   return getChainConfig(chain)?.displayName ?? chain.toUpperCase();
 }
 
+/** Display name for a NowPayments network, or undefined when we have no mapping for it. */
+export function getKnownNetworkDisplayName(network: string): string | undefined {
+  return NETWORK_DISPLAY_NAMES[network.toLowerCase()];
+}
+
 /** Get a human-friendly display name for a NowPayments network (e.g., 'bsc' -> 'BSC'). */
 export function getNetworkDisplayName(network: string): string {
   return NETWORK_DISPLAY_NAMES[network.toLowerCase()] ?? network.toUpperCase();
@@ -98,6 +103,16 @@ export function outcomeAmountToBuzz(outcomeAmount: number): number {
 
 /** Deposit statuses that mean buzz has been credited. */
 const DEPOSIT_COMPLETED_STATUSES = new Set(['finished', 'partially_paid']);
+
+/**
+ * Deposits recorded from a signed IPN that NOWPayments has not confirmed. Their userId is only the
+ * IPN's claim, so nothing a user or support sees reads them until processDeposit re-owns them.
+ */
+export const UNVERIFIED_DEPOSIT_STATUSES = ['unverified', 'unverified_exhausted'];
+
+/** NOWPayments statuses of a payment still in flight: nothing credited yet, and nothing final. */
+export const OPEN_DEPOSIT_STATUSES = ['waiting', 'confirming', 'confirmed', 'sending'];
+export const OPEN_DEPOSIT_DIGEST_AFTER_DAYS = 3;
 
 /** Check if a deposit status means buzz has been credited. */
 export function isDepositComplete(status: string): boolean {

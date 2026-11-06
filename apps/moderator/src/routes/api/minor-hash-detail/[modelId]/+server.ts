@@ -16,7 +16,11 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // The Pending tab already knows which seed matched, so it passes it and skips re-deriving. The
   // other two tabs have no pointer to the seed and must resolve it from the hash.
   const minorModelId = Number(url.searchParams.get('minorModelId')) || null;
+  const label = url.searchParams.get('label') === 'poi' ? 'poi' : 'minor';
   if (minorModelId)
-    return json({ match: null, detail: await getMinorHashMatchDetail({ modelId, minorModelId }) });
-  return json(await getAutoFlaggedMinorDetail({ modelId }));
+    return json({
+      match: null,
+      detail: await getMinorHashMatchDetail({ modelId, minorModelId, label }),
+    });
+  return json(await getAutoFlaggedMinorDetail({ modelId, label }));
 };

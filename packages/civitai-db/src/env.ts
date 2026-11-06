@@ -13,7 +13,20 @@ const commaDelimitedStringArray = z.preprocess((val) => {
   return [];
 }, z.string().array());
 
-const schema = z.object({
+// Strict integer env values: digits only, so '', ' 3', '2.5' and '-1' are rejected instead of being
+// coerced (z.coerce turns '' into 0). Mirrored in src/env/server-schema.ts.
+const intString = (min: number, max = Number.MAX_SAFE_INTEGER) =>
+  z
+    .string()
+    .regex(/^\d+$/, 'expected a whole number')
+    .transform(Number)
+    .pipe(z.number().int().min(min).max(max));
+// A bare hostname or IPv4 address: no scheme, userinfo, port, path or IPv6 literal. The URL host
+// setter silently truncates at '/', ':' or '@', so these must be rejected rather than "applied".
+const HOSTNAME_PATTERN =
+  /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
+
+export const dbEnvSchema = z.object({
   DATABASE_URL: z.url(),
   DATABASE_REPLICA_URL: z.url(),
   DATABASE_REPLICA_LONG_URL: z.url().optional(),
@@ -26,6 +39,15 @@ const schema = z.object({
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   APPS_DATABASE_URL: z.url().optional(),
   APPDATA_DATABASE_URL: z.url().optional(),
+  // Document-store pool: sized on its own (not DATABASE_POOL_MAX) and optionally rerouted (e.g.
+  // through a connection pooler) by replacing only the host/port of APPDATA_DATABASE_URL.
+  APPDATA_POOL_MAX: intString(1).default(4),
+  APPDATA_POOL_IDLE_TIMEOUT: intString(0).optional(),
+  APPDATA_DATABASE_HOST: z
+    .string()
+    .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
+    .optional(),
+  APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
@@ -39,7 +61,7 @@ const schema = z.object({
 
 // Normalized, env-derived defaults. Factories accept a Partial<DbConfig> to override.
 function buildEnv() {
-  const parsed = schema.safeParse(process.env);
+  const parsed = dbEnvSchema.safeParse(process.env);
   if (!parsed.success) {
     throw new Error(
       '[@civitai/db] Invalid environment variables:\n' + z.prettifyError(parsed.error)
@@ -55,6 +77,10 @@ function buildEnv() {
     datapacketReadUrl: parsed.data.DATAPACKET_DATABASE_RO_URL,
     appsUrl: parsed.data.APPS_DATABASE_URL,
     appdataUrl: parsed.data.APPDATA_DATABASE_URL,
+    appdataPoolMax: parsed.data.APPDATA_POOL_MAX,
+    appdataPoolIdleTimeout: parsed.data.APPDATA_POOL_IDLE_TIMEOUT,
+    appdataHost: parsed.data.APPDATA_DATABASE_HOST,
+    appdataPort: parsed.data.APPDATA_DATABASE_PORT,
     connectionTimeout: parsed.data.DATABASE_CONNECTION_TIMEOUT,
     poolMax: parsed.data.DATABASE_POOL_MAX,
     notificationPoolMax: parsed.data.NOTIFICATION_POOL_MAX,

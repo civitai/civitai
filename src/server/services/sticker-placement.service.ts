@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
+import { listApprovedPlacementRows, listStickerPlacementRows } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { logToAxiom } from '~/server/logging/client';
 import { cosmeticCache } from '~/server/redis/caches';
 import {
@@ -55,6 +57,8 @@ import {
   STICKER_AUTO_SPACE_KEY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
+import { sampleStickerTrack, stickerTrackMaxScale } from '~/shared/utils/sticker-track';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
@@ -179,6 +183,11 @@ const stickerImageEligibilityColumns = (imageId: number) => Prisma.sql`
 const isKeptOffRow = (row: { flags: number; imageNsfwLevel: number }) =>
   isStickerKeptOffImage({ cosmeticFlags: row.flags, imageNsfwLevel: row.imageNsfwLevel });
 
+function trackStartPose(track: StickerTrack) {
+  const { x, y, scale, rotation } = sampleStickerTrack(track, 0);
+  return { x, y, scale, rotation };
+}
+
 export type CreateStickerPlacement = {
   /**
    * 🔴 From the session, never from the request body. Every free-tier rule —
@@ -190,6 +199,8 @@ export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  /** Movement over a video. Its pose at time zero replaces the one in `data`. */
+  track?: StickerTrack;
   /**
    * Which of the two offers the placer took. A choice, not a claim: it selects
    * the path, and the path re-decides every rule for itself under a lock. The
@@ -246,10 +257,14 @@ const commentFrom = (data: { comment?: string | null }) => normalizeStickerComme
 export async function createStickerPlacement({
   placerId,
   imageId,
-  data,
+  data: requested,
+  track,
   free = false,
   spendType,
 }: CreateStickerPlacement) {
+  // `data` stays the pose every reader draws, so a moving sticker is drawn where it starts by
+  // anything that does not know about tracks, and the size check below sees the real start.
+  const data = track ? { ...requested, ...trackStartPose(track) } : requested;
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -279,12 +294,16 @@ export async function createStickerPlacement({
   // they were accepted at, and a creator lowering their limit is not a licence
   // to take back something already paid for.
   const maxScale = stickerMaxScale(space.settings);
-  if (data.scale > maxScale)
+  if (data.scale > maxScale || (track && stickerTrackMaxScale(track) > maxScale))
     throw throwBadRequestError(
       `placement: this creator allows stickers up to ${Math.round(
         maxScale * 100
       )}% of the image width`
     );
+
+  // Only the resolved space knows the image's type, so this cannot sit in the schema.
+  if (track && space.mediaType !== 'video')
+    throw throwBadRequestError('placement: movement can only be recorded on a video');
 
   // Everything below is the paid path: the escrow, the price, and the two
   // refusals `createFreePlacement` makes for itself under its lock. Branching
@@ -292,7 +311,7 @@ export async function createStickerPlacement({
   // offer — the alternative is a paid path with free-shaped holes in it, which
   // is the guard-versus-filter shape this feature has already shipped five
   // times.
-  if (free) return placeFreeSticker({ placerId, imageId, data, space });
+  if (free) return placeFreeSticker({ placerId, imageId, data, track, space });
 
   // Below the branch rather than above it, and not a `!free` condition: a
   // creator can open free capacity on a space they have never priced, so an
@@ -337,6 +356,7 @@ export async function createStickerPlacement({
         ...(comment ? { comment } : {}),
         ...autoSpaceStamp(space),
       },
+      ...(track ? { track } : {}),
     },
     select: { id: true },
   });
@@ -407,11 +427,13 @@ async function placeFreeSticker({
   placerId,
   imageId,
   data,
+  track,
   space,
 }: {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  track?: StickerTrack;
   space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>>;
 }) {
   const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId, imageId });
@@ -434,6 +456,7 @@ async function placeFreeSticker({
       ...(comment ? { comment } : {}),
       ...autoSpaceStamp(space),
     },
+    track,
   });
 
   try {
@@ -730,6 +753,26 @@ async function keptOffPlacementIds(
   );
 }
 
+const stickerPlacementRowSelect = {
+  id: true,
+  targetId: true,
+  placerId: true,
+  ownerId: true,
+  status: true,
+  amount: true,
+  // Beside `amount` rather than derived from it. Zero is what a free row
+  // carries, but it is not what makes it free — and the owner controls the
+  // copy that depends on the answer, so an inference is a wrong sentence
+  // about money rather than a missing one.
+  free: true,
+  data: true,
+  createdAt: true,
+} satisfies Prisma.PlacementSelect;
+
+type StickerPlacementRow = Prisma.PlacementGetPayload<{
+  select: typeof stickerPlacementRowSelect;
+}>;
+
 /**
  * The rows behind the listing: approved placements on these images, plus the
  * pending ones the viewer is a party to.
@@ -746,46 +789,17 @@ async function readStickerPlacementRows({
 }: {
   imageIds: number[];
   viewerId?: number;
-}) {
-  return dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      OR: [
-        { status: 'approved' },
-        // A pending placement is visible to exactly two people: the one who paid
-        // for it, and the one being asked to accept it. Without both ids scoped
-        // this becomes "everyone sees every pending placement", which is the
-        // feature working in reverse.
-        ...(viewerId
-          ? [
-              { status: 'pending' as const, placerId: viewerId },
-              { status: 'pending' as const, ownerId: viewerId },
-            ]
-          : []),
-      ],
-    },
-    select: {
-      id: true,
-      targetId: true,
-      placerId: true,
-      ownerId: true,
-      status: true,
-      amount: true,
-      // Beside `amount` rather than derived from it. Zero is what a free row
-      // carries, but it is not what makes it free — and the owner controls the
-      // copy that depends on the answer, so an inference is a wrong sentence
-      // about money rather than a missing one.
-      free: true,
-      data: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: 'asc' },
-  });
+}): Promise<StickerPlacementRow[]> {
+  // A pending placement is visible to exactly two people: the one who paid for it, and the one
+  // being asked to accept it (`viewerId` as placer or owner). Without both scoped this becomes
+  // "everyone sees every pending placement", which is the feature working in reverse.
+  return (await listStickerPlacementRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetIds: imageIds,
+    viewerId,
+  })) as StickerPlacementRow[];
 }
-
-type StickerPlacementRow = Awaited<ReturnType<typeof readStickerPlacementRows>>[number];
 
 /** Each row with its `data` parsed ONCE, for both the kept-off check and the listing. */
 function parseRows<T extends { data: Prisma.JsonValue }>(rows: T[]) {
@@ -889,15 +903,11 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
 
   // Rows rather than a groupBy, so the count agrees with the listing about
   // placements kept off an image by a moderator flag.
-  const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      status: 'approved',
-    },
-    select: { id: true, targetId: true, status: true, data: true },
-  });
+  const rows = (await listApprovedPlacementRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetIds: imageIds,
+  })) as { id: number; targetId: number; status: string; data: Prisma.JsonValue }[];
 
   return countApprovedPlacements(rows, await keptOffPlacementIds(keptOffInputs(parseRows(rows))));
 }

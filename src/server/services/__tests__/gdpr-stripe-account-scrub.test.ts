@@ -16,7 +16,8 @@ import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 
 const { stripe, getServerStripe, invalidateSubscriptionCaches } = vi.hoisted(() => {
   const stripe = {
-    subscriptions: { list: vi.fn(), del: vi.fn() },
+    subscriptions: { list: vi.fn(), del: vi.fn(), retrieve: vi.fn() },
+    checkout: { sessions: { list: vi.fn(), expire: vi.fn() } },
     customers: { update: vi.fn() },
     paymentMethods: { list: vi.fn(), update: vi.fn(), detach: vi.fn() },
     charges: { list: vi.fn(), update: vi.fn() },
@@ -545,6 +546,51 @@ describe('scrubStripeAccount — metadata and subscriptions', () => {
     expect(stripe.customers.update).toHaveBeenCalled();
     expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
       where: { id: 'sub_gone' },
+    });
+  });
+
+  it('cancels an incomplete subscription whose first-payment checkout is still open', async () => {
+    // Stripe refuses that delete until the session is expired; the scrub used to record an error
+    // and leave the subscription, so the account could never finish.
+    stripe.subscriptions.list.mockResolvedValue(page([{ id: 'sub_inc', status: 'incomplete' }]));
+    stripe.subscriptions.del
+      .mockRejectedValueOnce(
+        stripeError({
+          rawType: 'invalid_request_error',
+          message: 'You cannot cancel a subscription with an active checkout session.',
+        })
+      )
+      .mockResolvedValue({});
+    stripe.checkout.sessions.list.mockResolvedValue(
+      page([{ id: 'cs_open', status: 'open', subscription: 'sub_inc' }])
+    );
+    stripe.checkout.sessions.expire.mockResolvedValue({});
+
+    const outcome = await scrub();
+
+    expect(stripe.checkout.sessions.expire).toHaveBeenCalledWith('cs_open', {}, OPTIONS);
+    expect(stripe.subscriptions.del).toHaveBeenLastCalledWith('sub_inc', {}, OPTIONS);
+    expect(outcome.canceledSubscriptions).toEqual(['sub_inc']);
+    expect(outcome.errors).toEqual([]);
+    expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'sub_inc' },
+    });
+  });
+
+  it('treats an incomplete_expired subscription as ended: drops our row, never cancels it', async () => {
+    // Stripe refuses to cancel it, so sending it through the cancel would error on every run and
+    // the account would never finish.
+    stripe.subscriptions.list.mockResolvedValue(
+      page([{ id: 'sub_exp', status: 'incomplete_expired' }])
+    );
+
+    const outcome = await scrub();
+
+    expect(stripe.subscriptions.del).not.toHaveBeenCalled();
+    expect(outcome.errors).toEqual([]);
+    expect(outcome.canceledSubscriptions).toEqual([]);
+    expect(dbMock.dbWrite.customerSubscription.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'sub_exp' },
     });
   });
 

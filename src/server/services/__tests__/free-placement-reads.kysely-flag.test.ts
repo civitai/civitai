@@ -1,0 +1,179 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
+import type * as PlacementQueries from '@civitai/db-queries/placement';
+import type * as PlacementModeration from '~/server/services/placement-moderation.service';
+import type * as PlacementSpaceService from '~/server/services/placement-space.service';
+import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
+
+vi.mock('@civitai/db-queries/placement', async (importOriginal) => {
+  const actual = await importOriginal<typeof PlacementQueries>();
+  return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
+});
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
+// `reservedFreeSlots` stays real: it is one of the in-transaction counts under test.
+const { resolveSpace } = vi.hoisted(() => ({ resolveSpace: vi.fn() }));
+vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PlacementSpaceService>()),
+  resolvePlacementSpaceFor: resolveSpace,
+}));
+vi.mock('~/server/services/placement-moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PlacementModeration>()),
+  assertCanPlace: vi.fn(async () => undefined),
+}));
+
+import * as queries from '@civitai/db-queries/placement';
+import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import {
+  createFreePlacement,
+  getFreePlacementAllowance,
+  hasUsedFreePlacementOn,
+} from '~/server/services/free-placement.service';
+import { FREE_PLACEMENTS_PER_DAY, freePlacementDayStart } from '~/shared/utils/placement';
+
+const q = vi.mocked(queries);
+const kyselyReads = () => Object.values(q).filter((fn) => vi.isMockFunction(fn));
+
+const OWNER = 6101;
+const PLACER = 6202;
+const TARGET = 6303;
+
+const SPACE = {
+  ownerId: OWNER,
+  ownerUsername: 'creator',
+  mode: 'review',
+  setPrice: 100,
+  price: 100,
+  cap: 500,
+  ownerShare: 1,
+  declineFee: 1,
+  declineFeeRate: 0.1,
+  hostDeclineFeePercent: null,
+  setFreeSlots: 4,
+  freeSlots: 4,
+  freeSlotCap: 4,
+  freeSlotsRemaining: 4,
+  settings: {},
+} satisfies ResolvedPlacementSpace;
+
+/**
+ * The claim's transaction client, distinct from `dbWrite`, so a count that moved off `tx` — onto
+ * Kysely or onto the global client — is visible as a count `tx` never received.
+ */
+const tx = {
+  $executeRaw: vi.fn(async () => 0),
+  $executeRawUnsafe: vi.fn(async () => 0),
+  placement: {
+    count: vi.fn(async (_args: { where: Record<string, unknown> }) => 0),
+    create: vi.fn(async () => ({ id: 1 })),
+  },
+};
+
+const claim = () =>
+  createFreePlacement({
+    surface: 'sticker',
+    targetType: 'image',
+    targetId: TARGET,
+    placerId: PLACER,
+    data: { cosmeticId: 5 },
+  });
+
+beforeEach(() => {
+  resetSharedMocks();
+  vi.clearAllMocks();
+  for (const fn of kyselyReads()) fn.mockReset();
+  resolveSpace.mockResolvedValue({ ...SPACE });
+  tx.placement.count.mockReset().mockResolvedValue(0);
+  tx.placement.create.mockReset().mockResolvedValue({ id: 1 });
+  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
+    fn(tx)
+  );
+});
+
+describe('the free-placement claim', () => {
+  // The three counts the claim decides on are taken under its advisory locks. Read on any other
+  // connection they would be outside the lock — a listing again — so they stay on `tx`, never on
+  // the Kysely display counts.
+  it('every count the claim decides on runs on the transaction client', async () => {
+    await claim();
+
+    const wheres = tx.placement.count.mock.calls.map(([args]) => args.where);
+    // The daily allowance, the pending cap, never-twice-here and the reserved slots.
+    expect(wheres).toEqual([
+      { placerId: PLACER, free: true, createdAt: { gte: freePlacementDayStart() } },
+      { surface: 'sticker', ownerId: OWNER, placerId: PLACER, status: 'pending' },
+      { placerId: PLACER, free: true, surface: 'sticker', targetType: 'image', targetId: TARGET },
+      {
+        surface: 'sticker',
+        targetType: 'image',
+        targetId: TARGET,
+        free: true,
+        status: { in: ['pending', 'approved'] },
+      },
+    ]);
+    expect(tx.placement.create).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.placement.count).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.placement.count).not.toHaveBeenCalled();
+    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
+  });
+
+  it('a placer who has used the day is refused on the in-lock count, whatever Kysely says', async () => {
+    // `data` is the team-waived share, read net of the day's count: none here.
+    tx.placement.count.mockImplementation(async ({ where }) =>
+      where.createdAt && !where.data ? FREE_PLACEMENTS_PER_DAY : 0
+    );
+    q.countPlacements.mockResolvedValue(0);
+
+    await expect(claim()).rejects.toThrow(/used your free placement for today/);
+    expect(tx.placement.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('the free-placement display counts', () => {
+  it('the allowance counts through Kysely on the replica, since UTC midnight', async () => {
+    q.countPlacements.mockImplementation(async (_db, where) => ('data' in where ? 0 : 1));
+
+    await expect(getFreePlacementAllowance({ placerId: PLACER })).resolves.toMatchObject({
+      used: 1,
+      remaining: Math.max(FREE_PLACEMENTS_PER_DAY - 1, 0),
+    });
+    expect(dbMock.dbRead.placement.count).not.toHaveBeenCalled();
+    // The day's free rows, then the team-waived share of them, both on the replica.
+    expect(q.countPlacements).toHaveBeenCalledTimes(2);
+    expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.countPlacements.mock.calls[1][0]).toBe(kyselyRead);
+    expect(kyselyRead).not.toBe(kyselyWrite);
+    // The daily predicate, the one the claim's in-lock count takes.
+    expect(q.countPlacements.mock.calls[0][1]).toEqual({
+      placerId: PLACER,
+      free: true,
+      createdAt: { gte: freePlacementDayStart() },
+    });
+  });
+
+  it.each([
+    [0, false],
+    [1, true],
+  ])('%i free rows here reads as used=%s', async (count, used) => {
+    const input = {
+      placerId: PLACER,
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+    } as const;
+    q.countPlacements.mockImplementation(async (_db, where) => ('data' in where ? 0 : count));
+
+    await expect(hasUsedFreePlacementOn(input)).resolves.toBe(used);
+    expect(dbMock.dbRead.placement.count).not.toHaveBeenCalled();
+    expect(q.countPlacements.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.countPlacements.mock.calls[0][1]).toEqual({ ...input, free: true });
+  });
+});

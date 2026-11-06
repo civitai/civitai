@@ -1,4 +1,5 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
+import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
@@ -19,8 +20,13 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
-// where there is no cookie). Everything else is gated.
-const PUBLIC_PATHS = new Set(['/favicon.svg']);
+// where there is no cookie) and the sign-in routes. Everything else is gated.
+const PUBLIC_PATHS = new Set([
+  '/favicon.svg',
+  '/logout',
+  '/api/auth/authorize',
+  '/api/auth/callback',
+]);
 
 /**
  * The `event` string every credential-attribution line carries. One constant so a soak query and the
@@ -113,11 +119,14 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
+  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
+    navigation: isNavigationRequest(event.request),
+  });
 
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }
+  if (result.status === 'reauth') return spokeReauthResponse(result.authorize);
   if (result.status === 'forbidden') {
     return new Response(null, { status: 303, headers: { location: NON_MODERATOR_REDIRECT } });
   }
@@ -129,7 +138,12 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.grants = resolvePermissions(result.user);
 
   const moved = movedViewTarget(event.url);
-  if (moved) return new Response(null, { status: 307, headers: { location: moved } });
+  if (moved) {
+    return withSetCookies(
+      new Response(null, { status: 307, headers: { location: moved } }),
+      result.setCookies
+    );
+  }
 
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
@@ -148,10 +162,13 @@ export const handle: Handle = async ({ event, resolve }) => {
     // grant for it, and there was nothing on screen that could have told them otherwise.
     // The query string rides along so the dashboard can link back to exactly what was asked for.
     const denied = `/?denied=${encodeURIComponent(event.url.pathname + event.url.search)}`;
-    return new Response(null, { status: 303, headers: { location: denied } });
+    return withSetCookies(
+      new Response(null, { status: 303, headers: { location: denied } }),
+      result.setCookies
+    );
   }
 
-  return resolve(event);
+  return withSetCookies(await resolve(event), result.setCookies);
 };
 
 // Without this, an uncaught throw anywhere in a load, action or endpoint is a 500 page and a stack on pod

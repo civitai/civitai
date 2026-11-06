@@ -92,6 +92,11 @@ export const TokenScope = {
   // every user-facing flow, the consent screen included.
   AppStoreCatalogWrite: 1 << 28, // 268435456
 
+  // Worker registration — a worker machine registering with the orchestrator. Opt-in and EXCLUDED
+  // from `Full`, carried only by `Worker` tokens from the hub's token-exchange grant (see
+  // `WORKER_ONLY_SCOPES`); every other grant refuses it.
+  WorkerRegister: 1 << 29, // 536870912
+
   // All scopes
   //
   // NOTE: `Full` is INTENTIONALLY frozen at (1 << 25) - 1 = 33554431 — it is the
@@ -108,8 +113,8 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
- * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect` and
- * `AppStoreCatalogWrite`). Use this as the
+ * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect`,
+ * `AppStoreCatalogWrite` and `WorkerRegister`). Use this as the
  * upper bound when validating a requested/stored scope value in the OAuth flow —
  * bounding against `Full` would reject any value carrying an opt-in bit. Computed
  * from the enum so it can never drift behind a newly-added bit.
@@ -150,6 +155,7 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.AppBlocksDevTunnel]: 'Open on-site dev tunnels',
   [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
   [TokenScope.AppStoreCatalogWrite]: "Publish items to the app's App Store listing",
+  [TokenScope.WorkerRegister]: 'Register a worker machine with the orchestrator',
 };
 
 /**
@@ -162,9 +168,15 @@ export const CLIENT_CREDENTIALS_ONLY_SCOPES: number = TokenScope.AppStoreCatalog
 export const CLIENT_CREDENTIALS_MAX_SCOPE: number =
   TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
 
+/** Scopes a token can carry only when minted through the hub's worker token-exchange grant. */
+export const WORKER_ONLY_SCOPES: number = TokenScope.WorkerRegister;
+
+/** Scopes no grant acting for a user may mint. */
+export const NON_USER_SCOPES: number = CLIENT_CREDENTIALS_ONLY_SCOPES | WORKER_ONLY_SCOPES;
+
 /** The part of a client's `allowedScopes` a user can be asked to consent to. */
 export function consentableScopes(allowedScopes: number): number {
-  return allowedScopes & ~CLIENT_CREDENTIALS_ONLY_SCOPES;
+  return allowedScopes & ~NON_USER_SCOPES;
 }
 
 /** Convenience presets for the API key creation UI */

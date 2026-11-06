@@ -7,7 +7,10 @@ const processor = notificationProcessors['storyline-title-moderated'];
 const render = (details: Record<string, unknown>) => processor.prepareMessage({ details } as never);
 
 describe('storyline-title-moderated', () => {
-  it('is registered and not toggleable', () => expect(processor.toggleable).toBe(false));
+  it('is registered as a toggleable Moderation notification', () => {
+    expect(processor.toggleable).not.toBe(false);
+    expect(processor.category).toBe('Moderation');
+  });
 
   it('names the rating and how to have the title checked again', () => {
     expect(render({ storylineId: 10, title: 'Dark Road', level: NsfwLevel.R })).toEqual({

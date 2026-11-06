@@ -1,4 +1,4 @@
-import { applyPatch, JsonPatchFactory } from '@civitai/client';
+import { applyPatch, JsonPatchFactory } from '@civitai/orchestration-client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -45,7 +45,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
-import { scheduleUnratedRefetch } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
+import { watchUnratedOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows2>
@@ -148,10 +148,10 @@ export function useGetTextToImageRequests(
     [data, nsfwEnabled, domain, markerTags]
   );
 
-  // Unconditional: the scheduler reads the raw cache, which includes outputs `flatData` hides
+  // Unconditional: the watcher reads the raw cache, which includes outputs `flatData` hides
   // (a 3D workflow's suppressed preview render, whose rating its mesh inherits).
   useEffect(() => {
-    scheduleUnratedRefetch();
+    watchUnratedOutputs();
   }, [flatData]);
 
   return { data: flatData, markerTags, ...rest };
@@ -218,6 +218,14 @@ function updateCachedWorkflow(
         }
       }
     },
+  });
+}
+
+/** Adds or removes a tag on a workflow in every cached queue list, as a tag patch would. */
+export function setCachedWorkflowTag(workflowId: string, tag: string, op: 'add' | 'remove') {
+  updateCachedWorkflow(workflowId, (items, index) => {
+    const tags = items[index].tags ?? [];
+    items[index].tags = op === 'add' ? [...new Set([...tags, tag])] : tags.filter((t) => t !== tag);
   });
 }
 

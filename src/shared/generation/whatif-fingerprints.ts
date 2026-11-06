@@ -19,6 +19,7 @@
 import type {
   ControlNetsNodeValue,
   ControlVideoNodeValue,
+  ImageObjectValue,
   ResourceData,
 } from '~/shared/generation/values';
 
@@ -53,6 +54,12 @@ export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
   controlVideo: (value) => {
     const entry = value as ControlVideoNodeValue | undefined;
     return entry ? { preprocessor: entry.preprocessor, videoUrl: entry.video?.url } : undefined;
+  },
+
+  // Where a keyframe lands doesn't affect cost; only which images are attached does.
+  keyframes: (value) => {
+    const entries = value as { image?: ImageObjectValue }[] | undefined;
+    return entries?.map((entry) => entry.image?.url) ?? [];
   },
 
   // Content fields don't affect cost (site identity determines buzz type;

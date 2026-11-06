@@ -14,7 +14,11 @@ import { int4Id } from '$lib/server/query';
 
 const LIMIT = 25;
 
-export type DisputeCardRow = DisputeRow & { files: DealFile[] | null; filesError: string | null };
+export type DisputeCardRow = DisputeRow & {
+  files: DealFile[] | null;
+  filesError: string | null;
+  accessRecordedSince: string | null;
+};
 
 const querySchema = z.object({ cursor: z.string().min(1).max(64).optional().catch(undefined) });
 
@@ -36,6 +40,7 @@ export const load: PageServerLoad = async ({ url }) => {
     ...row,
     files: files.ok ? files.files.filter((file) => file.dealId === row.id) : null,
     filesError: files.ok ? null : files.error,
+    accessRecordedSince: files.ok ? files.accessRecordedSince : null,
   }));
   return {
     items: withFiles,

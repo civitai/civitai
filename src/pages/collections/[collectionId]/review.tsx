@@ -1,5 +1,6 @@
 import {
   Badge,
+  Button,
   Center,
   Checkbox,
   Chip,
@@ -64,6 +65,8 @@ import { CollectionItemNSFWLevelSelector } from '~/components/Collections/compon
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
 import { ContestCommunityScore } from '~/components/Collections/components/ContestCollections/ContestCommunityScore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useServerDomains } from '~/providers/AppProvider';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -142,7 +145,14 @@ const ReviewCollection = () => {
     [collectionId, statuses, sort, collectionTagId, awaitingHumanReview]
   );
 
-  const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
+  const {
+    collection,
+    permissions,
+    redPendingReviewCount = 0,
+    isLoading: loadingCollection,
+  } = useCollection(collectionId);
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   const { data, isLoading, isFetching, fetchNextPage, hasNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
@@ -255,7 +265,22 @@ const ReviewCollection = () => {
         <div className="relative">
           <MasonryGrid
             data={collectionItems}
-            empty={<NoContent mt="lg" message="There are no images that need review" />}
+            empty={
+              <NoContent mt="lg" message="There are no images that need review">
+                {redPendingReviewCount > 0 && (
+                  <Button
+                    component="a"
+                    href={syncAccount(`//${redDomain}${router.asPath}`)}
+                    variant="light"
+                    color="red"
+                    rightSection={<IconExternalLink size={16} />}
+                  >
+                    {redPendingReviewCount} {redPendingReviewCount === 1 ? 'item' : 'items'} to
+                    review on civitai.red
+                  </Button>
+                )}
+              </NoContent>
+            }
             render={CollectionItemGridItem}
             withAds={false}
           />

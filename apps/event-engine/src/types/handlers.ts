@@ -26,7 +26,7 @@ export type FeedUpdateType = 'update' | 'delete' | 'metricUpdate'
 export interface HandlerActions {
   addMetricEvent: (event: MetricEvent) => void
   incMetricCache: (update: CacheUpdate | CacheUpdate[]) => Promise<void>
-  forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId']) => MetricBuilder
+  forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId'], timestamp?: Date) => MetricBuilder
   feedUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId'], type?: FeedUpdateType) => void
   feedDelete: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) => void
   feedMetricUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) => void
@@ -41,6 +41,7 @@ export interface HandlerContext<T = any> extends DatabaseProxies {
   current: T | null | undefined   // Only populated for Debezium
   record: T                       // Either after/before (Debezium) or raw payload (topic-based)
   operation: Operation            // Debezium operation or 'create' for non-Debezium
+  eventTimestamp: Date            // Source commit time; what metric events are stamped with
   actions: HandlerActions
 }
 

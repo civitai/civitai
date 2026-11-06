@@ -60,6 +60,24 @@ export const PERMISSIONS = [
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
   { id: 'user.membership.code', label: 'Mint membership codes for a customer' },
+  // Money: cancels a gifter's payment or refunds it, and ends the recipient's gifted membership.
+  // Checked by this literal in the main app's `/api/mod/membership-gift/*` (`ModeratorGrantId`).
+  {
+    id: 'user.membership.gift',
+    label: 'Revoke or refund a membership gift whose payment did not clear',
+  },
+  // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
+  // literal (`ModeratorGrantId`), so rename the two together.
+  {
+    id: 'user.membership.extend',
+    label: 'Extend a member’s Stripe membership by free days, or re-sync it from Stripe',
+  },
+  // Undoing a cancel arms the next renewal charge, so it is granted apart from extend. Also checked by
+  // literal in the main app (`ModeratorGrantId`).
+  {
+    id: 'user.membership.cancel',
+    label: 'Set or undo cancel-at-period-end on a member’s Stripe membership',
+  },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.
@@ -80,14 +98,16 @@ export const PERMISSIONS = [
   // from User Lookup, every report queue, Image Lookup and Bulk Image Manager, and a gate on one of
   // those pages alone would leave the others as a way round it. Granted by hand on `/admin` at launch.
   { id: 'user.strike', label: 'Strike or notify an account' },
+  // Its own grant, not part of user.strike: it opens a two-way thread the user can answer.
+  { id: 'user.message.asCivitai', label: 'Message a user as Civitai Moderation' },
   { id: 'image.moderate', label: 'Remove, restore or flag images' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
   // apart so a role can be given the Audit queues without the account-ending half of them.
   { id: 'audit.ban.execute', label: 'Ban an account from an audit queue' },
   // Also checked by the main app's `/api/mod/text-scan/csam-hold/resolve` by this literal (`ModeratorGrantId`
-  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds page load refuses without it too,
-  // so rename the two together.
+  // in `src/server/services/moderator-grants.ts`); the /csam/text-holds and /evidence-holds page
+  // loads refuse without it too, so rename them together.
   { id: 'csam.report.file', label: 'File a CSAM report' },
   // A removal that repeats the reason an approved appeal overturned is held until someone with this
   // confirms it on /images/re-removals; a holder's own such removals apply directly.
@@ -124,13 +144,27 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
+  // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
+  // its own call; reading a ticket view is the page grant.
+  { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
+  // Hands a moderation ticket to support, naming the moderator who did it.
+  { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
+  // Submits a real scan with the site's system account; the page shows signals only.
+  { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },
   // Moves held Buzz: a Refund returns it to the buyer, a Release pays the seller. Checked again by the
   // main app's `/api/mod/creator-services/resolve-dispute` by this literal (`ModeratorGrantId`), so
   // rename the two together. Reading the queue is the page grant.
   {
     id: 'creatorServices.resolveDispute',
     label: 'Resolve a Creator Services dispute (refund or release Buzz)',
+  },
+  // Moves no Buzz, so a shadow agent can hold it without `resolveDispute`. Checked by this literal
+  // in the main app's `/api/mod/creator-services/dispute-review` and `dispute-evidence`
+  // (`ModeratorGrantId`); rename together.
+  {
+    id: 'creatorServices.reviewDispute',
+    label: 'Write Creator Services dispute reviews (no refund or release)',
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
@@ -145,6 +179,9 @@ export const PERMISSIONS = [
   // Page access is `/assistant`; this is the right to run turns (model spend), so a role can see the
   // page and audit without running them.
   { id: 'assistant.use', label: 'Ask the mod assistant and edit its playbooks' },
+  // Sends account registration emails to the model provider, a separate call from running turns. Also
+  // needs User Lookup, where a moderator reads emails today.
+  { id: 'assistant.emails', label: 'Let the mod assistant read account registration emails' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

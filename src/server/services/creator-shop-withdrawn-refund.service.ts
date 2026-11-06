@@ -50,8 +50,9 @@ type LedgerRow = {
 /**
  * A purchase's ledger rows: the buyer's debit per colour (`<P>-<accountType>`) and each payout
  * (`<P>:sell:<userId>:<colour>`). Sales before payouts were recorded under the prefix stored the
- * buyer charge's own id, with the single payout keyed by that id. Anything else is `other`, and
- * stops the purchase: only these shapes are reversed.
+ * buyer charge's own id, so they have no debit under it, and paid from the bank keyed by that id,
+ * or by it and the recipient (`<P>:<userId>`) when the pool was split. Anything else is `other`,
+ * and stops the purchase: only these shapes are reversed.
  */
 export function classifyPurchaseLedger(
   purchase: { buzzTransactionId: string; userId: number; unitAmount: number },
@@ -65,7 +66,8 @@ export function classifyPurchaseLedger(
     const ext = row.externalTransactionId ?? '';
     if (ext.startsWith(`${P}:sell:`)) payouts.push(row);
     else if (ext.startsWith(`${P}-`) && row.accountId === purchase.userId) debits.push(row);
-    else if (ext === P && row.accountId === 0 && GUID.test(P)) payouts.push(row);
+    else if (row.accountId === 0 && GUID.test(P) && (ext === P || ext.startsWith(`${P}:`)))
+      payouts.push(row);
     else other.push(row);
   }
   if (!debits.length && GUID.test(P))
@@ -73,7 +75,20 @@ export function classifyPurchaseLedger(
   return { debits, payouts, other };
 }
 
-type PayoutFailure = { transactionId: string; amount: number; error: string };
+/** Who a payout paid, where its key names them; one keyed by the purchase id alone names no one. */
+function payoutRecipient(purchaseId: string, payout: LedgerRow) {
+  const match = (payout.externalTransactionId ?? '')
+    .slice(purchaseId.length)
+    .match(/^:(?:sell:)?(\d+)(?::|$)/);
+  return match ? Number(match[1]) : undefined;
+}
+
+type PayoutFailure = {
+  transactionId: string;
+  recipientId?: number;
+  amount: number;
+  error: string;
+};
 type PurchaseOutcome =
   | {
       status: 'refunded';
@@ -81,7 +96,8 @@ type PurchaseOutcome =
       clawedBack: number;
       payoutFailures: PayoutFailure[];
     }
-  | { status: 'failed'; error: string };
+  /** `refunded`: what of the buyer's debits is already back, so a hand refund pays only the rest. */
+  | { status: 'failed'; error: string; refunded?: number };
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -117,11 +133,19 @@ async function readPurchaseLedger(purchase: {
   return { debits, payouts, paid };
 }
 
-async function reversePurchase(
+/**
+ * Reverses one purchase from its ledger. Every leg is refunded by its own transaction id, at most
+ * once, so a run that dies partway is finished by running it again. A takedown passes its own
+ * `description`.
+ */
+export async function reversePurchase(
   purchase: { buzzTransactionId: string; userId: number; unitAmount: number },
-  { clawback, trigger }: Pick<RefundTerms, 'clawback' | 'trigger'>
+  {
+    clawback,
+    trigger,
+    description = DESCRIPTIONS[trigger],
+  }: Pick<RefundTerms, 'clawback' | 'trigger'> & { description?: string }
 ): Promise<PurchaseOutcome> {
-  const description = DESCRIPTIONS[trigger];
   const ledger = await readPurchaseLedger(purchase);
   if (ledger.error !== undefined) return { status: 'failed', error: ledger.error };
   const { debits, payouts, paid } = ledger;
@@ -140,11 +164,13 @@ async function reversePurchase(
   }
 
   // The buyer first: until every debit is back the purchase stays owed and the job retries it.
+  let refunded = 0;
   for (const t of debits) {
     try {
       await refundOnce(t.transactionId, description);
+      refunded += t.amount;
     } catch (error) {
-      return { status: 'failed', error: messageOf(error) };
+      return { status: 'failed', error: messageOf(error), refunded };
     }
   }
   // A payout that won't come back does not hold the buyer's refund: it is logged for a person to
@@ -158,6 +184,7 @@ async function reversePurchase(
     } catch (error) {
       payoutFailures.push({
         transactionId: t.transactionId,
+        recipientId: payoutRecipient(purchase.buzzTransactionId, t),
         amount: t.amount,
         error: messageOf(error),
       });

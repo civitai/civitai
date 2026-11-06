@@ -69,7 +69,6 @@
         {#snippet tryPanel()}
           <TryPanel
             prompts={changes.json}
-            rules="[]"
             editedKeys={changes.keys}
             draftsError={changes.blankError}
             onedit={(key) => goto(promptsHref(key), { noScroll: true, keepFocus: true })}
@@ -82,7 +81,6 @@
             workspace="prompts"
             {visible}
             prompts={changes.json}
-            rules="[]"
             hasDraft={changes.keys.length > 0}
             draftsError={changes.blankError}
             canEdit={canCapture}

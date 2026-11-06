@@ -13,9 +13,12 @@ export function isCreatorTipEligible({
   ownerId: number;
   ownerFlags: number | null | undefined;
 }) {
-  // The compensation payout never pays the system user.
+  // The compensation payout never pays the system user, and a tip is for community creators, so
+  // Civitai's own official account never takes one either.
   return (
-    ownerId !== constants.system.user.id && !Flags.hasFlag(ownerFlags ?? 0, UserFlag.DisablePayout)
+    ownerId !== constants.system.user.id &&
+    ownerId !== constants.system.officialUserId &&
+    !Flags.hasFlag(ownerFlags ?? 0, UserFlag.DisablePayout)
   );
 }
 

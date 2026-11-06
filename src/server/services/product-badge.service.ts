@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { submitWorkflow } from '@civitai/client';
-import type { ConvertImageStepTemplate, ResizeTransform } from '@civitai/client';
+import { submitWorkflow } from '@civitai/orchestration-client';
+import type { ConvertImageStepTemplate, ResizeTransform } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import type {
@@ -19,7 +19,7 @@ import {
   normalizeImageScanUrl,
 } from '~/server/utils/image-scan-url';
 import { getImageUploadBackend } from '~/utils/s3-utils';
-import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticSource, CosmeticType, PaymentProvider } from '~/shared/utils/prisma/enums';
 
 const BADGE_TARGET_SIZE = 200;
 
@@ -376,16 +376,43 @@ export const syncActiveBadgeMetadata = async ({
         select: { id: true, metadata: true },
       })
     : [];
-  const metadataByProductId = new Map(products.map((p) => [p.id, p.metadata]));
+
+  // The Buzz catalog owns no badge cosmetics: its plan card shows the badge of the cash
+  // product it was seeded from (civitai-<tier>, see seed-buzz-membership-products.sql), so
+  // it follows that product's sync.
+  const tierOf = (metadata: unknown) => (metadata as { tier?: string } | null)?.tier;
+  const sourceTierOf = (p: (typeof products)[number]) => {
+    const tier = tierOf(p.metadata);
+    return p.id === `civitai-${tier}` ? tier : undefined;
+  };
+  const buzzVariants = products.some(sourceTierOf)
+    ? (
+        await dbRead.product.findMany({
+          where: { provider: PaymentProvider.Civitai },
+          select: { id: true, metadata: true },
+        })
+      ).filter((p) => {
+        // Read inline: ~/shared/utils/buzz-membership pulls Buzz constants into this graph.
+        const buzzPurchase = (p.metadata as { buzzPurchase?: unknown } | null)?.buzzPurchase;
+        return buzzPurchase === true || buzzPurchase === 'true';
+      })
+    : [];
+
+  const targets = products.flatMap((product) => {
+    const badge = byProduct.get(product.id);
+    if (!badge) return [];
+    const tier = sourceTierOf(product);
+    const variants = tier ? buzzVariants.filter((v) => tierOf(v.metadata) === tier) : [];
+    return [product, ...variants].map((target) => ({ target, badge }));
+  });
 
   let synced = 0;
-  for (const [productId, badge] of byProduct.entries()) {
+  for (const { target, badge } of targets) {
+    const productId = target.id;
     const badgeData = badge.data as { url?: string; animated?: boolean } | null;
     if (!badgeData?.url) continue;
 
-    if (!metadataByProductId.has(productId)) continue;
-
-    const existingMeta = (metadataByProductId.get(productId) as Record<string, unknown>) ?? {};
+    const existingMeta = (target.metadata as Record<string, unknown>) ?? {};
     const nextBadgeType = badgeData.animated ? 'animated' : 'static';
 
     if (existingMeta.badge === badgeData.url && existingMeta.badgeType === nextBadgeType) {

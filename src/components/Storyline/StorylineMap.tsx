@@ -4,11 +4,11 @@ import {
   CloseButton,
   Drawer,
   Loader,
-  Popover,
   Progress,
   Text,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import {
   IconArrowRight,
   IconBook2,
@@ -168,6 +168,8 @@ function StorylineMap({
   const line = useMemo(() => stops.map((stop) => stop.chapter), [stops]);
   const currentIndex = stops.findIndex((s) => s.chapter.chapterId === currentChapterId);
   const current = stops[currentIndex];
+  const currentPost = path.chapters.find((c) => c.chapterId === currentChapterId)?.post;
+  const postHref = currentPost && `/posts/${currentPost.id}`;
   const next = currentIndex >= 0 ? stops[currentIndex + 1] : undefined;
   // The line's length once it is known: the path then the chapters ahead of its end, counted from
   // chapter 1 like a chapter's number, since a long path is read from a window that starts deeper.
@@ -358,7 +360,7 @@ function StorylineMap({
         )}
       </div>
 
-      <div className="flex gap-2 border-t border-solid border-gray-3 p-2.5 px-3.5 dark:border-dark-4">
+      <div className="flex shrink-0 gap-2 border-t border-solid border-gray-3 p-2.5 px-3.5 dark:border-dark-4">
         {next && (
           <Button
             size="sm"
@@ -390,18 +392,42 @@ function StorylineMap({
           Story page
         </Button>
       </div>
-      <Button
-        variant="subtle"
-        color="gray"
-        size="compact-sm"
-        fullWidth
-        radius={0}
-        className="mb-2"
-        onClick={leave}
-        data-testid="storyline-leave"
-      >
-        Leave the storyline · browse this post&apos;s images
-      </Button>
+      {postHref ? (
+        <Button
+          variant="subtle"
+          color="gray"
+          size="compact-sm"
+          fullWidth
+          radius={0}
+          className="mb-2 shrink-0"
+          component={Link}
+          href={postHref}
+          onClick={(e: MouseEvent<HTMLElement>) => {
+            // Opened over that post's own page: close the reader rather than stack the page.
+            if (isModifiedClick(e)) return;
+            const at = Router.asPath.split('?')[0];
+            if (at !== postHref && !at.startsWith(`${postHref}/`)) return;
+            e.preventDefault();
+            dialog.onClose();
+          }}
+          data-testid="storyline-leave"
+        >
+          Leave the storyline · browse this post&apos;s images
+        </Button>
+      ) : (
+        <Button
+          variant="subtle"
+          color="gray"
+          size="compact-sm"
+          fullWidth
+          radius={0}
+          className="mb-2 shrink-0"
+          onClick={leave}
+          data-testid="storyline-leave"
+        >
+          Leave the storyline
+        </Button>
+      )}
     </div>
   );
 }

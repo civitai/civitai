@@ -68,12 +68,9 @@ export function evaluateTextScan(
         if (output.csam.detected) outcome.triggeredLabels.push('csam');
         break;
       }
-      case 'modelRules': {
-        if (!output.modelRules) break;
-        outcome.modelRules = { matched: output.modelRules.matched };
-        if (output.modelRules.matched.length) outcome.triggeredLabels.push('modelRules');
+      // Only previewed (the .com face gate); no profile scans for it, so it has no stored outcome.
+      case 'model-com-face-intent':
         break;
-      }
     }
   }
   return outcome;

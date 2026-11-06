@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as HatSync from '~/server/events/points/sync';
 
 /**
@@ -25,6 +26,11 @@ const {
   mockCacheRefresh: vi.fn(async () => undefined),
   mockSettingsBust: vi.fn(async () => undefined),
   mockSendModerationEmail: vi.fn(async (..._a: unknown[]) => undefined),
+}));
+const v3Tos = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
+vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  setUserCommentsV3Tos: v3Tos,
 }));
 
 vi.mock('~/server/email/templates', async (importOriginal) => {
@@ -69,7 +75,7 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
 const roster = vi.hoisted(() => ({ member: vi.fn() }));
 vi.mock('~/server/events/points/roster-sync', () => ({ syncEventRosterMember: roster.member }));
 
-const { toggleBan } = await import('~/server/services/user.service');
+const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
 const USER_ID = 5501;
@@ -86,7 +92,13 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
 const commentUpdateMany = dbMock.dbWrite.comment.updateMany;
-const commentV2UpdateMany = dbMock.dbWrite.commentV2.updateMany;
+const commentV2Updates = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) => ({
+      sql: (strings as unknown as string[]).join('?').replace(/\s+/g, ' '),
+      values,
+    }))
+    .filter((c) => c.sql.includes('UPDATE "CommentV2"'));
 
 const call = () =>
   toggleBan({
@@ -103,7 +115,6 @@ beforeEach(() => {
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
   imageUpdateMany.mockResolvedValue({ count: 0 });
   commentUpdateMany.mockResolvedValue({ count: 0 });
-  commentV2UpdateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('toggleBan -> user search index', () => {
@@ -196,19 +207,38 @@ describe('toggleBan -> removeComments', () => {
   it('flags both comment tables when asked, and does not touch the author-owned hide', async () => {
     await ban(true);
 
-    for (const updateMany of [commentUpdateMany, commentV2UpdateMany]) {
-      expect(updateMany).toHaveBeenCalledWith({
-        where: { userId: USER_ID, tosViolation: false },
-        data: { tosViolation: true },
-      });
-    }
+    expect(commentUpdateMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID, tosViolation: false },
+      data: { tosViolation: true },
+    });
+    const [v2] = commentV2Updates();
+    expect(v2.sql).toContain('SET "tosViolation" = true');
+    expect(v2.sql).not.toContain('hidden');
+    expect(v2.values[0]).toBe(USER_ID);
+    // A comment on a CommentV3-write surface is left to the CommentV3 pass, which locks that table
+    // first as every write there does.
+    expect(v2.sql).toContain('AND NOT ?');
+    expect(v3Tos.mock.calls).toEqual([[USER_ID]]);
+    expect((v2.values[1] as { sql: string }).sql).toContain(
+      'EXISTS (SELECT 1 FROM "CommentV3" v WHERE v.id = c2.id'
+    );
+  });
+
+  it('finishes the ban and logs it when flagging the CommentV3 comments fails', async () => {
+    v3Tos.mockRejectedValueOnce(new Error('lock timeout'));
+
+    await expect(ban(true)).resolves.toBeDefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-remove-comments', message: 'lock timeout' })
+    );
   });
 
   it('leaves comments alone otherwise — it is opt-in, like removeMedia', async () => {
     await ban();
 
     expect(commentUpdateMany).not.toHaveBeenCalled();
-    expect(commentV2UpdateMany).not.toHaveBeenCalled();
+    expect(commentV2Updates()).toEqual([]);
+    expect(v3Tos).not.toHaveBeenCalled();
   });
 });
 
@@ -326,5 +356,130 @@ describe('toggleBan -> removeMedia', () => {
       imageUpdateMany.mock.calls.some(([args]) => args?.data?.blockedFor === 'CSAM'),
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
+  });
+});
+
+describe('toggleBan -> profile links', () => {
+  beforeEach(() => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+  });
+
+  it('deletes the profile links of a banned account', async () => {
+    await call();
+
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+  });
+
+  it('keeps them when the caller asks to', async () => {
+    await toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Chargeback,
+      userId: ACTOR_ID,
+      keepProfileLinks: true,
+    } as Parameters<typeof toggleBan>[0]);
+
+    expect(userUpdate).toHaveBeenCalled();
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
+// The ban has committed by then: a sign-out failure must neither undo it nor skip what follows.
+describe('toggleBan with a failing session store', () => {
+  it('keeps a moderator ban and runs the rest of it, logging the user', async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: 'someone@example.com',
+    });
+    mockInvalidateSession.mockRejectedValueOnce(new Error('session store unavailable'));
+
+    await expect(call()).resolves.toBeDefined();
+
+    expect(userUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bannedAt: expect.any(Date) }) })
+    );
+    expect(mockRemoveContent).toHaveBeenCalledTimes(1);
+    expect(mockSendModerationEmail).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-invalidate-session', userId: USER_ID })
+    );
+  });
+});
+
+describe('toggleBan onlyBan', () => {
+  const banOnly = (banActivity?: string) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Chargeback,
+      userId: ACTOR_ID,
+      onlyBan: true,
+      banActivity,
+    } as Parameters<typeof toggleBan>[0]);
+  const primaryFindUnique = dbMock.dbWrite.user.findUnique;
+  const userUpdateMany = dbMock.dbWrite.user.updateMany;
+  const modActivityCreate = dbMock.dbWrite.modActivity.create;
+  const unbanned = { bannedAt: null, meta: {}, username: 'someone', email: null };
+
+  beforeEach(() => {
+    primaryFindUnique.mockResolvedValue(unbanned);
+    userUpdateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.user.findUniqueOrThrow.mockResolvedValue({ id: USER_ID });
+  });
+
+  it('bans from the primary even while the replica still shows a lifted ban', async () => {
+    userFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
+
+    await banOnly('chargeback:dp_1:banned');
+
+    expect(userUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: USER_ID, bannedAt: null },
+        data: expect.objectContaining({ bannedAt: expect.any(Date) }),
+      })
+    );
+    expect(modActivityCreate).toHaveBeenCalledWith({
+      data: {
+        userId: ACTOR_ID,
+        entityType: 'user',
+        entityId: USER_ID,
+        activity: 'chargeback:dp_1:banned',
+      },
+    });
+  });
+
+  it('refuses, and writes nothing, on an account the primary shows banned', async () => {
+    primaryFindUnique.mockResolvedValue({ ...unbanned, bannedAt: ALREADY_BANNED_AT });
+
+    await expect(banOnly()).rejects.toBeInstanceOf(AlreadyBannedError);
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(userUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and records nothing, when a ban lands between the read and the write', async () => {
+    userUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(banOnly('chargeback:dp_1:banned')).rejects.toBeInstanceOf(AlreadyBannedError);
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(modActivityCreate).not.toHaveBeenCalled();
+    expect(mockSendModerationEmail).not.toHaveBeenCalled();
+  });
+
+  // The banned row goes back to the moderator's client; the legacy billing pointer stays server-side.
+  it('returns the banned row without its subscription id', async () => {
+    const row = { id: USER_ID, bannedAt: new Date(), subscriptionId: 'sub_zzfixture' };
+    dbMock.dbWrite.user.findUniqueOrThrow.mockImplementation((async (args: {
+      omit?: Record<string, boolean>;
+    }) => Object.fromEntries(Object.entries(row).filter(([key]) => !args.omit?.[key]))) as never);
+
+    const user = await banOnly();
+
+    expect(user).toMatchObject({ id: USER_ID });
+    expect(user).not.toHaveProperty('subscriptionId');
   });
 });

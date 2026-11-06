@@ -1,19 +1,32 @@
+import { APP_ASSISTANT_DEFAULT_MODEL, isAppAssistantModel } from '@civitai/app-assistant';
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
+import { CivitaiAppActivity } from './app-assistant/app-activity';
+import { CivitaiAppFeedback } from './app-assistant/app-feedback';
+import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
+import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
-import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
+import { OrchestrationConversationStore } from './conversation-store';
+import { AdvisoryLock } from './core/advisory-lock';
 import { RunCredentials } from './credentials';
 import { RunGrants } from './grants';
-import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './interfaces';
+import { PgModelCalls } from './model-calls';
+import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './core/interfaces';
 import { TokenMinter } from './minter';
 import { OrchestrationClient } from './orchestration';
 import { OrchestrationModels } from './orchestration-model';
-import { createPool } from './pg-pool';
-import { Runner } from './runner';
+import { createPool } from './core/pg-pool';
+import { Runner } from './core/runner';
 import { createTokenVerifier, viewerAuthenticator } from './tokens';
-import { noTools, unconfiguredModel, unconfiguredStore, unconfiguredTools } from './unconfigured';
+import {
+  noTools,
+  unconfiguredModel,
+  unconfiguredStore,
+  unconfiguredTools,
+} from './core/unconfigured';
 
 const config = loadConfig();
 /** Why a start is refused when the runner has no sandbox service (`SANDBOX_URL`). */
@@ -36,6 +49,8 @@ const pool = createPool(
   'runner-grants'
 );
 const grants = new RunGrants(pool, log);
+/** Which orchestration workflow each model request was sent as: on the same pool, ids only. */
+const modelCalls = new PgModelCalls(pool);
 /**
  * Conversation locks on a pool of their own: a lock holds its connection while the write it guards
  * looks up grants on the pool above, so sharing one pool could leave every connection held by a
@@ -57,6 +72,7 @@ const lockPool = createPool(
 let models: ModelProvider = unconfiguredModel;
 let store: ConversationStore = unconfiguredStore;
 let tools: ToolProvider = unconfiguredTools;
+let previews: PreviewRestarter | undefined;
 const civitai = config.civitai;
 if (civitai) {
   const credentials = new RunCredentials(
@@ -68,6 +84,8 @@ if (civitai) {
     baseUrl: civitai.orchestrationUrl,
     orchestration,
     tokens: (runId) => credentials.forRun(runId),
+    calls: modelCalls,
+    log,
   });
   store = new OrchestrationConversationStore({
     orchestration,
@@ -75,14 +93,53 @@ if (civitai) {
     lock: new AdvisoryLock(lockPool),
     log,
   });
+  // The live preview's tunnels, which civitai opens for a run's user: each call reads the run's
+  // grant from the grants table inside its own fetch, as a mint does.
+  const devTunnels = new CivitaiDevTunnels({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
+  // The store cover's listing read, which civitai makes as a run's user, by its grant.
+  const covers = new CivitaiCovers({ civitaiUrl: civitai.civitaiUrl, secret: civitai.secret, log });
+  // The open app's review and user feedback, which civitai reads as a run's user: each call reads
+  // the run's grant inside its own fetch, as the dev tunnel's do.
+  const appFeedback = new CivitaiAppFeedback({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
+  // What the open app did while it ran, which civitai reads as a run's user, by its grant.
+  const appActivity = new CivitaiAppActivity({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
         sandboxUrl: civitai.sandboxUrl,
         tokens: (runId) => credentials.forRun(runId),
+        devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
+        covers: (runId) => ({
+          listings: covers.forRun(() => grants.forRun(runId)),
+          estimator: runnerCoverEstimator(orchestration, credentials.forRun(runId)),
+        }),
+        appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
+        appActivity: (runId, signal) => appActivity.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;
+  // The page's Restart preview: the request's own preview grant, for that request only.
+  if (civitai.sandboxUrl)
+    previews = new PreviewRestarter({
+      sandboxUrl: civitai.sandboxUrl,
+      forGrant: (grant) => ({
+        tokens: credentials.forGrant(grant),
+        tunnels: devTunnels.forRun(async () => grant),
+      }),
+      log,
+    });
 }
 
 const runner = new Runner({
@@ -90,11 +147,13 @@ const runner = new Runner({
   tools,
   store,
   grants,
+  modelCalls,
   log,
   wallClockMs: config.wallClockMs,
   stopGraceMs: config.stopGraceMs,
   // Serving viewers without the sandbox service would answer App Assistant with no tools at all.
   ...(civitai && !civitai.sandboxUrl ? { startRefusal: TOOLS_NOT_SET_UP } : {}),
+  defaultModel: APP_ASSISTANT_DEFAULT_MODEL,
 });
 
 // Without civitai's public key every run-API request is refused (401), so nothing reaches the
@@ -102,7 +161,10 @@ const runner = new Runner({
 const verifier = civitai ? createTokenVerifier(civitai.publicKey) : undefined;
 const app = buildApp({
   service: runner,
+  // Only the models App Assistant's page offers: any other id is refused (400).
+  acceptsModel: isAppAssistantModel,
   ...(verifier ? { authenticator: viewerAuthenticator(verifier), grants: verifier } : {}),
+  ...(previews ? { previews } : {}),
   basePath: config.basePath,
   logger: loggerOptions(config.logLevel),
 });
@@ -111,6 +173,7 @@ async function main(): Promise<void> {
   runner.register();
   // Before DBOS launches: the runs it recovers read their grants at once.
   await grants.init();
+  await modelCalls.init();
   await runner.launch({
     databaseUrl: config.databaseUrl,
     executorId: config.executorId,

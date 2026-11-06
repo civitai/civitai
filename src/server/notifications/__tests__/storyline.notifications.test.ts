@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { notBlockedBetween } from '~/server/notifications/base.notifications';
-import { storylineNotifications } from '~/server/notifications/storyline.notifications';
+import {
+  storylineNotifications,
+  storylineOwnerNotifications,
+} from '~/server/notifications/storyline.notifications';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 
 type Def = (typeof storylineNotifications)['storyline-continuation-submitted'];
@@ -61,6 +64,24 @@ describe('storyline continuation notifications', () => {
   it('registers exactly the three types with the notification job', () => {
     expect(CASES.map((c) => c.type).sort()).toEqual([...TYPES].sort());
     for (const type of TYPES) expect(notificationProcessors[type]).toBe(defs[type]);
+  });
+
+  it('tells the owner the rating their storyline was raised to', () => {
+    const def = storylineOwnerNotifications['storyline-ceiling-raised'];
+    expect(notificationProcessors['storyline-ceiling-raised']).toBe(def);
+    expect(
+      def.prepareMessage({
+        type: 'storyline-ceiling-raised',
+        details: {
+          storylineId: 7,
+          storylineTitle: 'The Patch',
+          maxNsfwLevel: 4,
+        },
+      } as Parameters<typeof def.prepareMessage>[0])
+    ).toEqual({
+      message: '"The Patch" now allows up to R, the rating of its first chapter',
+      url: '/storylines/7',
+    });
   });
 
   it.each(CASES)('$type names the right people', async (c) => {

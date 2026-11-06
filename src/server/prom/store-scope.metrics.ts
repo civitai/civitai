@@ -153,8 +153,20 @@ export type StoreScopeEntrypoint =
   | 'trpc-reviews'
   | 'trpc-review-write'
   | 'trpc-my-review'
+  // The fork list on a parent's store page (`appListings.listForks`) — a store read with its own
+  // label so a scope mix on it is distinguishable from the detail read beside it.
+  | 'trpc-forks'
+  // Starting a fork (`appListings.startFork`): the parent must be a store listing the viewer could
+  // open, under this scope.
+  | 'trpc-fork-start'
+  // The signed-in "My apps" home (`appListings.listMyApps`): a store read keyed on the
+  // viewer's own rows, gated like the grid.
+  | 'trpc-my-apps'
   | 'rest-list'
   | 'rest-detail'
+  // The registry adapter's catalog read (`src/server/registry-adapter`), a separate process that
+  // publishes the public catalog to registries. Anonymous by construction, like `rest-list`.
+  | 'registry-adapter'
   // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail
   // "Published with <app>" chip branches on this same scope to decide whether an
   // on-site app may be named on a public post page, so it belongs in the pair —
@@ -166,7 +178,12 @@ export type StoreScopeEntrypoint =
   // side, which is precisely the "scope lost in transit" signature the two
   // counters exist to distinguish. Slice by this label before reading either as
   // a statement about the store.
-  | 'post-detail';
+  | 'post-detail'
+  // The same "Published with <app>" chip on the IMAGE detail page
+  // (`image.getPublishedWithApp`). A separate label from `post-detail` for the same
+  // reason that one is separate from `trpc-detail`: two non-store surfaces folded
+  // into one label could not show a scope lost on only one of them.
+  | 'image-detail';
 
 /**
  * Record the scope an entry point actually branched on.

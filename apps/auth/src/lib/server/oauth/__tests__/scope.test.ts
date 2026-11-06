@@ -144,6 +144,14 @@ describe('isScopeGrantable', () => {
     expect(isScopeGrantable(CEILING, CATALOG | TokenScope.UserRead, 'user')).toBe(false);
   });
 
+  it('never lets a user or client_credentials grant carry WorkerRegister, even within the ceiling', () => {
+    const worker = TokenScope.WorkerRegister;
+    expect(isScopeGrantable(CEILING | worker, worker, 'user')).toBe(false);
+    expect(isScopeGrantable(CEILING | worker, worker | TokenScope.UserRead, 'user')).toBe(false);
+    expect(isScopeGrantable(CEILING | worker, worker, 'client_credentials')).toBe(false);
+    expect(isScopeGrantable(CEILING | worker, CATALOG, 'client_credentials')).toBe(true);
+  });
+
   it('leaves user grants within the ceiling unchanged (positive control)', () => {
     expect(
       isScopeGrantable(CEILING, TokenScope.AIServicesWrite | TokenScope.UserRead, 'user')

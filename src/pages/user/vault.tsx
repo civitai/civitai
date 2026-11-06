@@ -23,11 +23,10 @@ import {
   Anchor,
   Image,
   Alert,
-  Tooltip,
   Grid,
   AspectRatio,
-  Menu,
 } from '@mantine/core';
+import { Tooltip, Menu } from '~/components/MantineOverlays';
 import {
   IconCloudCheck,
   IconCloudOff,
@@ -468,7 +467,7 @@ const MobileVault = () => {
     <Container size="xl">
       <Stack mb="xl">
         <Group gap="xs">
-          <Title order={1}>Civitai Vault</Title>
+          <Title order={1}>Vault</Title>
           {vaultHelp}
         </Group>
         <Alert color="yellow">
@@ -572,11 +571,11 @@ export default function CivitaiVault() {
 
   return (
     <>
-      <Meta title="Civitai Vault" deIndex />
+      <Meta title="Vault" deIndex />
       <Container fluid>
         <Stack mb="xl">
           <Group justify="space-between" align="flex-end">
-            <Title order={1}>Civitai Vault</Title>
+            <Title order={1}>Vault</Title>
             {vaultHelp}
             <Group ml="auto" align="start">
               {vault && vault.storageKb > 0 && (

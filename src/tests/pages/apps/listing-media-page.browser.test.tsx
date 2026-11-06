@@ -8,7 +8,7 @@ import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * On-site listing-media OWNER editor (`ListingMediaEditor`, the "Listing media" tab of
- * `/apps/<appBlockId>/edit`) — render test (browser mode, report-only in Tekton).
+ * `/apps/<appBlockId>/edit`) — render test (browser mode, `Component tests` in CI).
  *
  * Asserts the client wiring: it resolves `appBlockId` → `appListingId`
  * (`getMyListingForApp`), re-hosts the reused `ListingAssetStep` against the
@@ -64,6 +64,12 @@ const state = vi.hoisted(() => ({
   // without a CivitaiSessionProvider (which `renderWithProviders` deliberately does
   // not mount), so it is mocked rather than provided.
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
+}));
+
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({

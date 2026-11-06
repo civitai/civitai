@@ -44,7 +44,7 @@ vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 vi.mock('~/components/Signals/signals-registry.store', () => ({ registerSignalGroup: vi.fn() }));
 vi.mock('~/components/ImageGeneration/utils/unratedOutputRefetch', () => ({
-  scheduleUnratedRefetch: vi.fn(),
+  watchUnratedOutputs: vi.fn(),
 }));
 
 const { useGenerateFromGraph, useGetTextToImageRequests } = (await import(

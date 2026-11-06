@@ -318,10 +318,10 @@ month grid, week and day hour rows, post chip, drag layer, drawer. See the eleme
 **Helper**: `Nothing is posted until you confirm on the next screen.` · `We nudge each time by a few minutes so your posts never all land on the hour.` · `All times are in your local time zone ({tz}).` · `Your limit is {cap} posts per day. Scheduled posts count on the day they go live.` · `Tokens: {n} post number, {total}, {model}, {version}, {date}.`
 **Validation (inline, red, specific)**:
 
-- `Post 14 goes live 10 minutes after post 13. Posts need at least 30 minutes between them.`
+- `Post 14 goes live 3 minutes after post 13. Posts need at least 5 minutes between them.`
 - `Wed Oct 7 has 7 posts; your daily limit is 6. Move one or let us fix the spacing.`
 - `Post 1 must be at least 10 minutes from now.` / `Post 200 is more than 3 months out. Shorten the gap or the range.`
-- `Too close to "Halloween set — part 1" at 6:00 PM. Move it 30 minutes or more.`
+- `Too close to "Halloween set — part 1" at 6:00 PM. Move it 5 minutes or more.`
 - `2 images were blocked and won't be posted. Hover for details.` · `3 uploads failed. Retry or remove them to continue.`
 - `You can add up to 500 files per batch. {k} were skipped.`
   **Server errors mapped**: cap → `Your schedule hit the daily limit on {date}. Nothing was created — adjust and try again.`; gap → `Two posts would be too close together on {date}. Nothing was created.`; window → `Some dates fell outside the 10-minute to 3-month window. Nothing was created.`

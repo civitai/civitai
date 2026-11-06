@@ -1,6 +1,6 @@
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import type { XGuardLabelOverride } from '~/server/services/orchestrator/orchestrator.service';
-import type { Priority } from '@civitai/client';
+import type { Priority } from '@civitai/orchestration-client';
 
 // EntityModeration upsert is owned by `createXGuardModerationRequest` —
 // it persists a Pending row on success and a Failed row on submit failure

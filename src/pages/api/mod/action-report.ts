@@ -5,9 +5,9 @@ import { bulkSetReportStatus } from '~/server/services/report.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
-  reportId: z.coerce.number(),
+  reportId: z.coerce.number().int(),
   status: z.enum(ReportStatus),
-  userId: z.coerce.number(),
+  userId: z.coerce.number().int(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {

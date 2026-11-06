@@ -1,4 +1,4 @@
-import { BuzzClientAccount } from '@civitai/client';
+import { BuzzClientAccount } from '@civitai/orchestration-client';
 import {
   buzzApiAccountTypes,
   clientToApiAccountType,

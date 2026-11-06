@@ -6,9 +6,9 @@ import { describe, expect, it } from 'vitest';
  * The app-block host chrome reads `appListings.getAppDetail` from exactly ONE place.
  * Node `unit` project — the tier that EXECUTES this assertion (report-only on a pull
  * request, an honest verdict on a push to `main`). `ChromeReviewEntry.browser.test.tsx`
- * proves the same property behaviourally against real React Query, in the REPORT-ONLY
- * browser tier. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in
- * this repo, so this is a signal a reviewer must read, not a door that stays shut.
+ * proves the same property behaviourally against real React Query, in the
+ * browser tier (`Component tests`). NEITHER TIER BLOCKS A MERGE: `main` requires no status check at
+ * all in this repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
  * WHY IT EXISTS. F2 gave the chrome one consumer of that listing row (the app-name
  * crumb's store popover). F4 added a second (the ⋮ menu's review item, which needs
@@ -115,8 +115,8 @@ describe('the chrome reads the listing from one place', () => {
   });
 
   it('the "Recently run" menu renders each row icon through the gated ChromeRecentAppIcon, keyed by blockId', () => {
-    // 🔴 THE ONLY EXECUTED PIN OF THE MENU WIRING. The behavioural proof lives in
-    // `AppBlockChrome.browser.test.tsx`, in a tier CI does not run, so without this a row
+    // 🔴 THE NODE-TIER PIN OF THE MENU WIRING. The behavioural proof lives in
+    // `AppBlockChrome.browser.test.tsx`, in the browser tier; without this a row
     // reverted to the generic glyph, or keyed by the AppBlock `id` instead of the listing
     // slug (`blockId`) — no icon ever, and a 404 per row per open — passes every executed
     // test. It also forbids reading `.iconUrl` anywhere in the host: that url is the

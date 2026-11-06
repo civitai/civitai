@@ -9,8 +9,8 @@ The standard pre-completion review for the main Next.js app. **A segment is not 
 and its findings are resolved.**
 
 The conventions being enforced are the root [`CLAUDE.md`](../../../CLAUDE.md) and the docs it points at.
-For work in `apps/moderator`, `apps/auth` or `apps/creator-studio`, use `svelte-review` instead — these
-agents do not cover SvelteKit and will produce noise there.
+For work in `apps/moderator`, `apps/auth`, `apps/creator-studio` or `apps/training-studio`, use
+`svelte-review` instead — these agents do not cover SvelteKit and will produce noise there.
 
 **These five lanes are pre-authorised. They do not count against a standing instruction not to spawn
 subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
@@ -146,6 +146,25 @@ which you skipped and why. Typical shapes:
 | reuse | adds new components, services, hooks or helpers, rather than editing existing ones |
 | intent | is a feature with an intent doc or a stated request to measure against |
 
+### When a review-record store is configured, each lane also returns a structured result
+
+If your own instructions (or the primary checkout's `CLAUDE.local.md`) name a **review-record store**
+for PR reviews, the lanes' work is recorded there so a later reviewer of the same PR can see it and not
+redo it (step 3a). A recorded lane is identified by **its definition file in `.claude/agents/`, as it is
+on the default branch**: its version is taken from that file's raw bytes, and its model is that file's
+`model:` value exactly as written (`opus`, `sonnet`), not a resolved model id. The store's instructions
+say how the version is computed.
+
+So when a store is configured, run step 0's `git checkout origin/main -- .claude` even for a `main`-based
+head, and note the `origin/main` commit you took it from: the lanes then run under the default-branch
+definitions, and a PR that edits a lane cannot review itself under its own edit. Spawn the lanes as usual,
+with the usual inputs, and ask each to end its report with the structured result the store's
+instructions define. A lane run under any other copy of its definition, or with a model override,
+cannot claim that version or model, and a result recorded under a version or model it did not run is
+worse than no record.
+
+No store configured: nothing here changes, and step 3a does not apply.
+
 ### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
 🔴 **This is normal, not exceptional. Expect it every round.** Measured across one project's four review
@@ -197,8 +216,26 @@ what the whole section is worth.
 - Deduplicate — the same defect commonly surfaces as reuse *and* perf (a rewritten query that the
   cached-by-id-array helper already answers), or safety *and* test (an unguarded path with a vacuous
   test over it).
+- **Severity comes from each finding's facts, not the lane's word.** Every lane reports `impact`,
+  `reach` and `evidence` per finding (defined in each lane's Report section); its own severity is
+  advisory. A finding missing a fact goes back to its lane like a missing `checks` block. Intent findings carry the facts too, for
+  the hosted gate; section A keeps them unranked and computes no severity for them. Compute:
+  - `money`, `access`, `data-loss` or `privacy`: `normal-use` is **high** when the evidence is
+    `traced` or `reproduced` and **medium** when only `inferred`; `unusual-state` is **medium**;
+    `theoretical` is **low**.
+  - `wrong-for-user`: `normal-use` is **medium**, otherwise **low**.
+  - `internal` and `maintainability`: **low**.
+  - Floor: `money` or `access` in a file whose path names auth, session, permission, Buzz, payment,
+    Stripe, Paddle, billing, purchase, payout, withdraw, subscription, email, PII, NSFW, browsing level
+    or moderation is at least **medium**.
 - Rank by consequence: money moving wrongly and content crossing a gate first, then production cost,
   then false confidence from a bad test, then reuse.
+- **Read each lane's `checks` block.** The test, reuse and correctness lanes end every report with one
+  (`assertions`; `searches`; `writes` and `siblings`; the shape is in each definition's Report section).
+  A missing block, or a missing key, means the lane skipped its method: re-ping it as you would a silent
+  lane. A `"none"` clear or a `passes`/`hangs` assertion with neither a finding nor a `reason` is the
+  same gap. The block lists sibling paths but cannot show which were checked: read that from the lane's
+  prose and each entry's `reason`, and treat a sibling neither one accounts for as the same gap.
 
 **C. Map contribution, not for this PR** — `civitai-reuse-review`'s "Pre-existing service duplication".
 
@@ -209,7 +246,32 @@ Across all three sections:
 
 🔴 **Security findings stay out of the repo.** Do not paste an open safety finding into a PR body, a
 commit message, or a file under `docs/`, `claudedocs/` or `.claude/` — this repo is public and
-permanent. They live in the conversation until they are fixed.
+permanent. They live in the conversation, and in the review-record store if one is configured (step 3a),
+until they are fixed.
+
+## 3a. Record the review (only when a review-record store is configured)
+
+The store's own instructions say where and how to write; this step says **when** and **what**.
+
+1. **When you spawn the lanes**, record a run for each lane at the head SHA under review, marked running,
+   with its start time. On a pre-PR review, do this before the PR is opened or leaves draft: the running
+   run is what tells a later reviewer the PR is being reviewed locally.
+2. **When each lane has delivered** (after the step 2 chase), mark its run complete with its prompt
+   version, model, finish time and findings count, and record its findings and its `checks` block in the
+   structured form the lane returned. A lane still silent after the chase, or one that failed, is marked failed, never
+   complete with no findings.
+
+The record is what lets a later reviewer skip a lane you already ran, so it is only worth anything if it
+is exact: same head SHA, same prompt version and model, every finding as the lane wrote it. Record a
+lane's findings as it wrote them, including ones you drop at step 3; consolidation is a separate
+judgement. A push after the review is a new head, and nothing recorded at the old head covers it: each
+fix-loop or re-targeted re-run is a new run at the new head, recorded as in 1 and 2.
+
+The correctness lane is also re-run independently by a hosted reviewer, whatever you record. Record it
+anyway: the overlap between the two is what the record measures.
+
+Step 3's rule covers the record too: never copy an open safety finding from it into a PR body, commit
+message or file in this repo.
 
 ## 4. The fix loop
 
@@ -291,8 +353,8 @@ pnpm run test:unit:run      # queued on this machine; targeted files are not
 If `schema.full.prisma` changed: `pnpm run db:check-generated`, and surface that the migration must be
 **applied manually** — this repo never runs `prisma migrate deploy`.
 
-⚠️ `pnpm run typecheck` is blind to `__tests__` files, so a green typecheck does not clear the test
-changes. ⚠️ If a queued unit run returns suspiciously fast or empty, check the dev-server daemon is
+⚠️ `pnpm run typecheck` is blind to every test file, so a green typecheck does not clear the test
+changes: run `pnpm run typecheck:tests` (`.claude/rules/testing.md`). ⚠️ If a queued unit run returns suspiciously fast or empty, check the dev-server daemon is
 alive before believing it.
 
 Then **look at the page** in a browser. Typecheck passes on plenty of pages that render blank.

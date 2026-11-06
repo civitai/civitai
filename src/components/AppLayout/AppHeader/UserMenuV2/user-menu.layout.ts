@@ -1,5 +1,11 @@
 import type { Icon, IconProps } from '@tabler/icons-react';
-import { IconBookmark, IconChartHistogram, IconCrown, IconLifebuoy } from '@tabler/icons-react';
+import {
+  IconBookmark,
+  IconBrush,
+  IconChartHistogram,
+  IconCrown,
+  IconLifebuoy,
+} from '@tabler/icons-react';
 import type { ForwardRefExoticComponent, RefAttributes } from 'react';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import type { UserMenuGroupId } from '~/shared/constants/user-menu-groups.constants';
@@ -29,42 +35,46 @@ const group = (
 ): UserMenuGroupNode => ({ kind: 'group', id, label, icon, children });
 
 const getHelp = group('help', 'Get help', IconLifebuoy, [
+  item('getting-started'),
   item('support-report-bug'),
   item('support-education'),
   item('support-faq'),
   item('support-discord'),
   item('support-assistant'),
   item('support-portal'),
-  item('getting-started'),
-  item('link-app'),
-  item('civitai-link'),
 ]);
 
 export const USER_MENU_LAYOUT: UserMenuNode[] = [
-  group('your-stuff', 'Your stuff', IconBookmark, [
+  group('your-stuff', 'Your Stuff', IconBookmark, [
     item('collections'),
     item('liked-models'),
     item('bookmarked-articles'),
     item('following'),
     item('downloads'),
+    item('service-requests'),
     item('vault'),
+    item('inventory'),
     item('bounties'),
     item('challenges'),
   ]),
   group('creator-tools', 'Creator tools', IconChartHistogram, [
+    item('buzz-dashboard'),
     item('creator-studio'),
     item('creator-journey'),
     item('training'),
     item('placements'),
     item('my-shop'),
     item('apps'),
+    item('auctions'),
+    item('civitai-link'),
+    item('link-app'),
   ]),
   group('rewards', 'Rewards and play', IconCrown, [
-    item('inventory'),
     item('prizes'),
     item('referrals'),
     item('leaderboard'),
-    item('auctions'),
+    item('crucibles'),
+    item('browse-challenges'),
     item('knights-of-new'),
   ]),
   getHelp,
@@ -73,9 +83,29 @@ export const USER_MENU_LAYOUT: UserMenuNode[] = [
 export const USER_MENU_SIGNED_OUT_LAYOUT: UserMenuNode[] = [
   item('leaderboard'),
   item('auctions'),
+  item('link-app'),
   getHelp,
   item('sign-in'),
 ];
+
+// The header's Create dropdown is desktop-only, so phones reach these through the menu.
+const create = group('create', 'Create', IconBrush, [
+  item('create-generate'),
+  item('create-post-images'),
+  item('create-post-videos'),
+  item('create-model'),
+  item('create-model3d'),
+  item('create-train'),
+  item('create-article'),
+  item('create-comic'),
+  item('create-bounty'),
+  item('create-challenge'),
+]);
+
+export function getUserMenuLayout({ signedIn, mobile }: { signedIn: boolean; mobile: boolean }) {
+  const layout = signedIn ? USER_MENU_LAYOUT : USER_MENU_SIGNED_OUT_LAYOUT;
+  return mobile ? [create, ...layout] : layout;
+}
 
 /** The innermost group holding `id` in `layout`: null for a top-level item, undefined if absent. */
 export function findUserMenuGroup(

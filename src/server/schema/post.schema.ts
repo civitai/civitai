@@ -4,7 +4,13 @@ import {
   POST_BATCH_CHUNK_POSTS,
   POST_BATCH_MAX_POSTS,
 } from '@civitai/shared/post-scheduling';
-import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/common/constants';
+import {
+  CacheTTL,
+  constants,
+  POST_IMAGE_LIMIT,
+  POST_TAG_LIMIT,
+  POST_TITLE_MAX_LENGTH,
+} from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
@@ -98,11 +104,16 @@ export function getDailyPostLimit(user: SessionUser): number {
   return isPaidMember(user) ? tier.limit * MEMBER_DAILY_POST_MULTIPLIER : tier.limit;
 }
 
+/** The one bucket every post-creating procedure counts against, and the usage-limits read reads. */
+export const POST_CREATE_RATE_LIMIT_KEY = 'post:create';
+
 export const postRateLimits: RateLimit[] = [
   // Newly created accounts: tight hourly clamp for the rest of the calendar day
   // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
   // Not overridden because no other rule uses the hour period.
   {
+    id: 'posts.hourly',
+    kind: 'product',
     limit: 2,
     period: CacheTTL.hour,
     userReq: (user) => !!user.createdAt && isBetweenToday(user.createdAt),
@@ -112,12 +123,16 @@ export const postRateLimits: RateLimit[] = [
   // no daily limit at all.
   ...dailyPostTiers.flatMap(({ minScore, limit }): RateLimit[] => [
     {
+      id: 'posts.daily',
+      kind: 'product',
       limit,
       period: CacheTTL.day,
       userReq: minScore > 0 ? (user) => hasReputation(user, minScore) : undefined,
       errorMessage: dailyPostLimitMessage({ minScore, limit, member: false }),
     },
     {
+      id: 'posts.daily',
+      kind: 'product',
       limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
       period: CacheTTL.day,
       userReq: (user) => isPaidMember(user) && hasReputation(user, minScore),
@@ -162,6 +177,9 @@ export const postsQuerySchema = baseQuerySchema.merge(
       .string()
       .transform((data) => postgresSlugify(data))
       .nullish(),
+    // Scopes to this account and wins over `username`: some older usernames hold characters the
+    // slug above strips, so their profile can only name them by id.
+    userId: z.number().int().positive().max(2147483647).optional(),
     modelVersionId: z.number().optional(),
     ids: z.array(z.number()).optional(),
     collectionId: z.number().optional(),
@@ -183,6 +201,11 @@ export const postCreateSchema = z.object({
   // so the Post is bound to the draft Model3D on create. Validated server-side
   // (must be owner or moderator) inside `createPost`.
   model3dId: z.number().int().positive().nullish(),
+  // Set by the storyline flow so the draft is linked to its storyline on create: `storylineId`
+  // alone starts the owner's storyline, `parentChapterId` continues that chapter. Validated in
+  // `createPost`'s transaction (`linkPendingChapter`).
+  storylineId: z.number().int().positive().optional(),
+  parentChapterId: z.number().int().positive().optional(),
   title: z.string().trim().nullish(),
   detail: z.string().nullish(),
   tag: z.number().nullish(),
@@ -199,6 +222,11 @@ export const postUpdateSchema = z.object({
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
   collectionTagId: z.number().nullish(),
+  /**
+   * Publishing a post drafted as a continuation of someone else's storyline submits it: the price
+   * the contributor was shown, refused if it has changed (`createStorylinePlacement`).
+   */
+  expectedPrice: z.number().int().min(0).optional(),
 });
 
 // Composite create-with-images input for headless/agent (MCP) use. Each image
@@ -321,6 +349,12 @@ export const postEditQuerySchema = z.object({
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().nullish(),
   model3dId: z.coerce.number().optional(),
+  /** The empty storyline this post is chapter 1 of, set by the storyline start flow. */
+  storyline: z.coerce.number().int().positive().optional(),
+  /** The chapter this post continues, set by the storyline continue flow. */
+  continues: z.coerce.number().int().positive().optional(),
+  /** Display only: the number of the chapter being written. */
+  n: z.coerce.number().int().positive().optional(),
   tag: z.coerce.number().optional(),
   video: z.coerce.boolean().optional(),
   returnUrl: z.string().optional(),
@@ -407,9 +441,15 @@ export const scheduleBatchImageSchema = addPostImageSchema
 export const scheduleBatchPostSchema = z.object({
   /** Stable for one post across every attempt to create it, so a retry is recognised. */
   clientKey: z.string().uuid().optional(),
-  title: z.string().trim().max(255).nullish(),
+  title: z.string().trim().max(POST_TITLE_MAX_LENGTH).nullish(),
   publishedAt: z.coerce.date(),
   images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
+});
+
+/** The upload keys a restored batch draft holds; at most the key-check cap (`MAX_KEYS`) at once. */
+export const BATCH_DRAFT_KEYS_PER_CHECK = 64;
+export const checkBatchDraftKeysSchema = z.object({
+  keys: z.array(z.string().uuid()).min(1).max(BATCH_DRAFT_KEYS_PER_CHECK),
 });
 
 export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;

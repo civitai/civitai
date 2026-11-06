@@ -52,6 +52,7 @@ import {
   updateCreatorShopItem,
 } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { shopItemReviewVersion } from '../creator-shop.data';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
@@ -389,6 +390,18 @@ describe('the owner can change an item’s resale terms after publishing', () =>
 
     expect(mocks.shopItemUpdate.mock.calls[0][0].data.status).toBe('Published');
     expect(mocks.cosmeticUpdate).not.toHaveBeenCalled();
+  });
+
+  // The share is a money term a moderator's verdict must not approve unseen: recording it moves the
+  // version the verdict is pinned to (`shopItemReviewVersion`).
+  it('records a share-only edit in the history, with the exact before and after', async () => {
+    const before = ownedItem({ sellableByOthers: true, sellerShare: 50, purchases: 4 }).meta;
+    await update({ sellerShare: 10 });
+
+    expect(savedMeta().history?.at(-1)?.changes).toEqual([
+      { field: 'sellerShare', from: 50, to: 10 },
+    ]);
+    expect(shopItemReviewVersion(savedMeta())).not.toBe(shopItemReviewVersion(before));
   });
 
   it('refuses a cross-lister editing the original creator’s terms', async () => {

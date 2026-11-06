@@ -1,8 +1,11 @@
 # Storylines
 
 A storyline is a branching visual story told in posts. Each chapter is an ordinary post. The person
-who starts the storyline writes the main path; other creators can continue it from the end of any
+who starts the storyline writes chapter 1; other creators can continue it from the end of any
 chapter, so a story grows into a tree of alternatives that readers walk through and choose between.
+A chapter added or joined after one that has no main way on yet (the creator's own, a
+collaborator's, or a continuation the creator approved) becomes its main way on; the rest are other
+paths until the creator makes one the main way.
 
 **Status:** behind the `storylines` feature flag. Flipt decides who sees it; if Flipt is unreachable or
 the flag is missing there, it falls back to moderators and users granted the `storylines` permission.
@@ -13,6 +16,12 @@ section).
 
 - **Finding one.** An image that belongs to a storyline carries a storyline pill in the images feed and
   in image detail. Opening it enters storyline mode.
+- **Browsing /storylines.** Sorted newest, recently updated (by when a storyline last gained a chapter
+  readers are shown) or most chapters. "Participated" lists the storylines you wrote a chapter in or
+  collaborate on; "Following" the ones you follow.
+- **Following.** Follow on a storyline's page tells you about its new chapters: canon only (the main
+  path, the default), also those by its creator and collaborators, or everything. Several chapters in
+  the same hour send one notification. Chapters that join the main path later are not announced.
 - **Reading.** In storyline mode, left and right in image detail walk the chapter's images and then
   move on to the next chapter, instead of paging the feed. A chip on the image says which storyline
   and chapter you are in and opens the map; Leave the storyline at the bottom of the map returns you
@@ -25,6 +34,8 @@ section).
   its first image and its share of readers. The main path is shown first and largest, with Read as
   the main action, then continuations by the storyline's endorsed collaborators, then everyone
   else's, ordered by how many readers took them. Writing a continuation sits below.
+  On a desktop, a chapter with exactly one way on also continues down it on →, and the Read button
+  shows the key; with several paths → does nothing here.
 - **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
   numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
   the chip's map marks a chapter where another branch joins (the page's chapters list draws it too).
@@ -33,11 +44,15 @@ section).
   band where the story forks and where a branch joins back. Any chapter opens in storyline mode over
   the page, along the route the list draws to it. It shows the first 300 chapters, nearest the start;
   a chapter the reader cannot see is a placeholder that does not open.
-- **Continuing it.** At the end of a chapter a reader can submit a post they already made as the next
-  chapter ("Use a post you made"), for the storyline's price in Buzz or free. It goes to the creator's
-  review unless the reader is an endorsed collaborator. A storyline that is closed or open only to
-  collaborators says so instead. The in-app tool for making the next section is not built yet:
-  "Create the next section" joins an early-access list.
+- **Continuing it.** At the end of a chapter "Write the next chapter" opens the post editor already
+  knowing which chapter it continues (`/posts/create?continues=<chapter>`). Publishing that draft
+  submits it as the next chapter at the price the writer was shown (Free or N Buzz); it goes to the
+  creator's review unless the writer is an endorsed collaborator, and the creator's own draft is
+  added as soon as it is published. "or use a post you already made" submits an existing post
+  instead. A storyline that is closed or open only to collaborators says so instead. A small
+  "Story tool coming soon · get early access" link joins a waitlist for a future story-creation
+  tool; it is not a way to write a chapter. Moderators read the sign-ups in the moderator app under
+  Storylines.
 - **Content level.** Every storyline has a maximum content level set by its creator. A chapter above
   it is shown only as a placeholder, without its images, so the chapters after it stay reachable.
   The same goes for a chapter whose post was removed or whose author was banned. Each reader's own
@@ -46,16 +61,57 @@ section).
   take it down. A storyline flagged for a minor stays up but can only hold safe-for-work chapters,
   forks included: anything above is a placeholder, and new chapters above it are refused. Editing the
   title has it checked again.
+- **Captions.** Each image of a chapter can carry its author's caption, shown as a note at
+  the bottom of the image; tapping it opens the rest. Once its text check is rolled out, a caption is
+  checked like a title: one the check refuses is not shown, and one rated above the storyline's
+  maximum or the reader's browsing level is hidden for that reader.
 - **Reporting.** The menu on a storyline's page reports the storyline itself, such as its title, to
-  moderators. A chapter is reported as its post or image.
+  moderators. "Report chapter", in a chapter's menu on that page and in the image menu while
+  reading, reports the chapter's post: taking a chapter down acts on its post. Moderators see which
+  storyline and chapter a reported post is, with the storyline's flags, in the post report queue.
 
 ## For creators
 
-- **Starting one.** A published post becomes the first chapter of a new storyline.
+- **Starting one.** "Start a storyline" on /storylines names it and sets its terms, then opens the post
+  editor with the storyline already attached. The post that is published from there becomes chapter 1.
+  Until then the storyline is empty and only its creator sees it.
+- **Starting from a published post.** An empty storyline's creator can pick a post they have already
+  published as its chapter 1 ("Use a post you've published"). A published post's menu also offers
+  "Make this chapter 1 of a storyline", which starts a new storyline from it, and "Add to a
+  storyline", which adds it to one of the creator's own: as chapter 1 of an empty one, else after
+  the end of its main path. A chapter 1 rated above an empty storyline's maximum content level
+  raises the maximum to fit it.
+- **Finding your own.** The "My storylines" filter on /storylines lists the storylines you started,
+  empty ones included.
+- **Followed from the start.** A creator follows their storyline from the moment they start it, and a
+  collaborator from accepting the invitation, at canon only; either can change the scope or unfollow.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
-  review and are listed ahead of other contributors' at the end of a chapter.
+  review and are listed ahead of other contributors' at the end of a chapter. Endorsing someone
+  invites them: they get a notification, and the storyline's page asks them to accept or decline.
+  Until they accept they are not shown on the storyline and have no collaborator rights; the creator
+  sees them as invited and can cancel the invitation. A collaborator can leave at any time.
+- **Moderators.** A moderator can manage any storyline as its creator does: title, status, who may
+  continue, content level, covers, removing collaborators, and inserting, reordering, joining and
+  choosing the main route of chapters. Setting the price, endorsing collaborators and answering
+  continuations stay the creator's. Each such edit is recorded in the moderator activity log.
+- **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
+  post stays published; the storyline, its chapter order and its comments go, and the creator sees
+  the same result whatever else is true of it. Reports on it stay in the moderator queue under its
+  title, and a copy may be kept for moderators' records. It is refused while a paid continuation is
+  pending or its Buzz has not settled. Only a moderator can delete one that has approved a paid
+  continuation or was taken down (and not while the creator's appeal is open).
+- **Removing a chapter.** The creator, the chapter's author or a moderator removes a chapter from the
+  storyline, from its menu on the storyline page or in the image menu while reading; its post stays
+  published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a
+  continuation of it waits for review or its own payment has not settled. The creator cannot remove
+  a chapter someone paid to add, and their menu shows it disabled with the reason; its author can,
+  and their Buzz is not returned. A taken-down
+  storyline's chapters are left to moderators. A moderator's removal leaves a removed placeholder,
+  as a takedown does, so the post cannot be submitted again; a removed chapter cannot be removed.
+  A creator's or author's removal during an open report is removed as usual and recorded for
+  moderators, who see it on the post's report and on the storyline's report.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is
@@ -85,8 +141,8 @@ section).
 
 ## Not in the first version
 
-An in-app tool for making the next section, and deleting a storyline: its creator
-marks it complete instead, and moderators take down one that breaks the rules.
+An in-app tool for making the next section, and a way for authors to write image captions (the
+server side is built).
 
 ## Trying it locally
 

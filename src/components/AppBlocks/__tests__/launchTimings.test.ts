@@ -16,10 +16,9 @@ import {
 /**
  * App Block LAUNCH-LATENCY math.
  *
- * These live in the node `unit` project deliberately: the browser (`component`)
- * project is NOT run in CI, and every rule here fails by producing a *plausible
- * wrong number* rather than an error — a zero that reads as an instant leg, a
- * clamped outlier that reads as a 60-second launch, a background-tab sample that
+ * These live in the node `unit` project deliberately, as fast exhaustive tests: every rule
+ * here fails by producing a *plausible wrong number* rather than an error — a zero that reads as an
+ * instant leg, a clamped outlier that reads as a 60-second launch, a background-tab sample that
  * reads as a slow app, a t0 quietly reset a few milliseconds late. None of those
  * would ever surface as a red test elsewhere.
  */

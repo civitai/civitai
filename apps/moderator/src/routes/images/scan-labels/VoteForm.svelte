@@ -11,10 +11,10 @@
   } from '$lib/scan-labels';
 
   let {
-    itemId,
+    token,
     submitting,
     onsubmit,
-  }: { itemId: number; submitting: boolean; onsubmit: SubmitFunction } = $props();
+  }: { token: string; submitting: boolean; onsubmit: SubmitFunction } = $props();
 
   // Mounted per item (the parent keys it), so none of this carries over to the next image.
   let picking = $state(false);
@@ -57,7 +57,7 @@
 <svelte:window onkeydown={onKeydown} />
 
 <form method="POST" action="?/vote" use:enhance={onsubmit} bind:this={form} class="flex flex-col gap-3">
-  <input type="hidden" name="itemId" value={itemId} />
+  <input type="hidden" name="token" value={token} />
   {#if !picking}
     <div class="grid grid-cols-2 gap-3">
       <Button

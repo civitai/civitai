@@ -113,7 +113,7 @@ describe('geometry harness — positive controls', () => {
       evidence.layerOrder.declaredOrder,
       'the cascade-layer order statement is missing or does not match production — layer ' +
         'priority here is not the priority the app ships'
-    ).toEqual(['tailwind-preflight', 'theme', 'mantine', 'modules']);
+    ).toEqual(['tailwind-preflight', 'theme', 'mantine', 'civitai.components', 'modules']);
     expect(
       evidence.layerOrder.declaredBeforeAnyLayerBlock,
       'a layered stylesheet was parsed BEFORE the order statement, so layer priority is being ' +

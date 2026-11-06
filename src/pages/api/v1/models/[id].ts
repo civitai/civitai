@@ -17,13 +17,9 @@ import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -188,9 +184,7 @@ const baseHandler = PublicEndpoint(async function handler(
       error: z.prettifyError(parsedParams.error) ?? `Invalid id`,
     });
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const browsingLevel = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const browsingLevel = apiBrowsingLevel(req);
   const { id } = parsedParams.data;
 
   // Bypass the origin cache when this request is taking the block-scoped path

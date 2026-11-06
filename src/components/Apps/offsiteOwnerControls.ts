@@ -17,8 +17,7 @@
  *                      owner takedown affordance.
  *
  * Extracted so this load-bearing owner-hidden-vs-mod-removed distinction (which
- * gates the Republish button) is covered by the BLOCKING node `unit` project — the
- * civitai browser-mode component suites are report-only. The republish eligibility
+ * gates the Republish button) is covered by the node `unit` project. The republish eligibility
  * here is the CLIENT mirror of the server guard in
  * `offsite-moderation.service.ts#republishOwnListing` (last event must be
  * `owner-unpublish`); the server remains authoritative (a race still 403s, surfaced

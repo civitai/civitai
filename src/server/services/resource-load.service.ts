@@ -145,6 +145,12 @@ export async function getResourceLoadState(
   return results;
 }
 
+/** The orchestrator's `ProblemDetails.detail`; its 503 variant carries no shape at all. */
+const problemDetail = (error: unknown) =>
+  error && typeof error === 'object' && 'detail' in error && typeof error.detail === 'string'
+    ? error.detail
+    : undefined;
+
 /**
  * The orchestrator's ranking is the render order — do not re-sort.
  *
@@ -156,7 +162,8 @@ export async function getResourceLoadQueue({ cursor, take }: GetResourceLoadQueu
     token: env.ORCHESTRATOR_ACCESS_TOKEN,
     query: { view: 'queue', cursor, take },
   });
-  if (!data) throw throwBadRequestError(error?.detail ?? 'Could not read the resource queue');
+  if (!data)
+    throw throwBadRequestError(problemDetail(error) ?? 'Could not read the resource queue');
 
   // Rows whose AIR resolves to no version on this site are loaded outside our catalogue; drop them.
   const parsed = data.items.flatMap((item) => {

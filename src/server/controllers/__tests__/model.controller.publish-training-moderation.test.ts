@@ -56,7 +56,7 @@ vi.mock('~/server/events', () => ({
   eventEngine: { processEngagement: vi.fn() },
 }));
 
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import {
   privateModelFromTrainingHandler,
@@ -140,7 +140,10 @@ describe('publishModelHandler — training moderation gate', () => {
     await expect(publish({ id: MODERATOR_ID, isModerator: true })).rejects.toThrow(
       /dataset has not been approved/
     );
-    expect(mockGetToken).toHaveBeenCalledWith(OWNER_ID, undefined, { bypassCache: true });
+    expect(mockGetToken).toHaveBeenCalledWith(OWNER_ID, undefined, {
+      bypassCache: true,
+      allowRestricted: true,
+    });
     expect(mockGetToken.mock.calls.map((call) => call[0])).toEqual([OWNER_ID]);
     expect(mockPublishModelById).not.toHaveBeenCalled();
   });
@@ -257,6 +260,8 @@ describe('publishPrivateModelHandler — training moderation gate', () => {
   it('reads with the OWNER token when a moderator makes it public', async () => {
     mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
     await expect(run({ id: MODERATOR_ID, isModerator: true })).rejects.toThrow(NOT_APPROVED);
-    expect(mockGetToken.mock.calls).toEqual([[OWNER_ID, undefined, { bypassCache: true }]]);
+    expect(mockGetToken.mock.calls).toEqual([
+      [OWNER_ID, undefined, { bypassCache: true, allowRestricted: true }],
+    ]);
   });
 });

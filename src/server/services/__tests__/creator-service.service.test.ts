@@ -13,6 +13,10 @@ import {
   SERVICES_MIN_CREATOR_SCORE,
 } from '~/shared/constants/creator-service.constants';
 import { upsertServiceOfferingSchema } from '~/server/schema/creator-service.schema';
+import {
+  SELLER_AFFIRMATION_STATEMENT,
+  SERVICES_TERMS_VERSION,
+} from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
@@ -128,7 +132,10 @@ describe('writes', () => {
   it('creates a draft unless published, owned by the caller', async () => {
     seller();
     await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
-    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: true } });
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
     const statuses = dbMock.dbWrite.serviceOffering.create.mock.calls.map(
       ([args]) => (args as { data: { status: string; sellerId: number } }).data
     );
@@ -143,7 +150,10 @@ describe('writes', () => {
     dbMock.dbWrite.serviceOffering.count.mockResolvedValue(SERVICE_MAX_ACTIVE_OFFERINGS as never);
     expect(
       await rejects(
-        upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: true } })
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+        })
       )
     ).toMatch(/at most/);
     expect(dbMock.dbWrite.serviceOffering.create).not.toHaveBeenCalled();
@@ -171,6 +181,150 @@ describe('writes', () => {
       where: { id: 4, sellerId: SELLER, status: { not: ServiceOfferingStatus.Removed } },
       data: { status: ServiceOfferingStatus.Removed },
     });
+  });
+});
+
+describe('seller affirmation', () => {
+  const NOT_AFFIRMED = /Confirm the seller terms/;
+
+  it('refuses to publish a new service without the affirmation, and creates nothing', async () => {
+    seller();
+    expect(
+      await rejects(
+        upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: true } })
+      )
+    ).toMatch(NOT_AFFIRMED);
+    expect(
+      await rejects(
+        upsertServiceOffering({
+          sellerId: SELLER,
+          input: { ...fields, publish: true, affirmedTermsVersion: 'services-terms-1999-01-01' },
+        })
+      )
+    ).toMatch(NOT_AFFIRMED);
+    expect(dbMock.dbWrite.serviceOffering.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to publish a saved draft without it, and writes nothing', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Draft,
+      sellerAffirmation: null,
+    } as never);
+    expect(
+      await rejects(
+        upsertServiceOffering({ sellerId: SELLER, input: { ...fields, id: 5, publish: true } })
+      )
+    ).toMatch(NOT_AFFIRMED);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses to activate through setStatus without it, and writes nothing', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: null,
+    } as never);
+    expect(
+      await rejects(
+        setServiceOfferingStatus({ sellerId: SELLER, input: { id: 3, status: 'Active' } })
+      )
+    ).toMatch(NOT_AFFIRMED);
+    expect(dbMock.dbWrite.serviceOffering.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('records the agreement against the real id when a saved offering is published with the tick', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Paused,
+      sellerAffirmation: null,
+    } as never);
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 8, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
+    expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: ServiceOfferingStatus.Active,
+          sellerAffirmation: expect.objectContaining({ userId: SELLER, offeringId: 8 }),
+        }),
+      })
+    );
+  });
+
+  it('publishes a saved offering with the current terms on file without a tick, writing no new record', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      status: ServiceOfferingStatus.Paused,
+      sellerAffirmation: { version: SERVICES_TERMS_VERSION },
+    } as never);
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, id: 8, publish: true } });
+    const [args] = dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1) as [
+      { data: object }
+    ];
+    expect(args.data).not.toHaveProperty('sellerAffirmation');
+  });
+
+  it('answers not found, not a crash, when setStatus meets a missing offering', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue(null as never);
+    expect(
+      await rejects(
+        setServiceOfferingStatus({ sellerId: SELLER, input: { id: 3, status: 'Active' } })
+      )
+    ).toMatch(/not found/i);
+  });
+
+  it('records who agreed to what, and when, against the new offering', async () => {
+    seller();
+    dbMock.dbWrite.serviceOffering.create.mockResolvedValue({ id: 42 } as never);
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, publish: true, affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
+    expect(dbMock.dbWrite.serviceOffering.update).toHaveBeenCalledWith({
+      where: { id: 42 },
+      data: {
+        sellerAffirmation: {
+          userId: SELLER,
+          offeringId: 42,
+          affirmedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+          version: SERVICES_TERMS_VERSION,
+          statement: SELLER_AFFIRMATION_STATEMENT,
+        },
+      },
+    });
+  });
+
+  it('records it on a re-publish with a new tick, but not when the current one is on file', async () => {
+    seller();
+    const onFile = { version: SERVICES_TERMS_VERSION };
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: onFile,
+    } as never);
+    await setServiceOfferingStatus({
+      sellerId: SELLER,
+      input: { id: 3, status: 'Active', affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
+    expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: { status: ServiceOfferingStatus.Active } })
+    );
+
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      sellerAffirmation: { version: 'services-terms-1999-01-01' },
+    } as never);
+    await setServiceOfferingStatus({
+      sellerId: SELLER,
+      input: { id: 3, status: 'Active', affirmedTermsVersion: SERVICES_TERMS_VERSION },
+    });
+    expect(dbMock.dbWrite.serviceOffering.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: {
+          status: ServiceOfferingStatus.Active,
+          sellerAffirmation: expect.objectContaining({ userId: SELLER, offeringId: 3 }),
+        },
+      })
+    );
   });
 });
 
@@ -281,7 +435,12 @@ describe('storefront read', () => {
 // default of false; nothing a client sends can set it. Remove this only when Blue ships with a fee.
 it('drops a client-sent acceptsBlue before it reaches the write', async () => {
   seller();
-  const input = upsertServiceOfferingSchema.parse({ ...fields, acceptsBlue: true, publish: true });
+  const input = upsertServiceOfferingSchema.parse({
+    ...fields,
+    acceptsBlue: true,
+    publish: true,
+    affirmedTermsVersion: SERVICES_TERMS_VERSION,
+  });
   expect(input).not.toHaveProperty('acceptsBlue');
   await upsertServiceOffering({ sellerId: SELLER, input });
   const [args] = dbMock.dbWrite.serviceOffering.create.mock.calls[0] as [{ data: object }];
@@ -394,6 +553,22 @@ describe('storefront ratings', () => {
 });
 
 describe("a seller's own offerings", () => {
+  it('tells which offerings have the current terms on file, and never sends the record itself', async () => {
+    const row = (id: number, sellerAffirmation: unknown) =>
+      ({ id, sellerAffirmation, maxNsfwLevel: NsfwLevel.PG13 } as never);
+    dbMock.dbRead.serviceOffering.findMany.mockResolvedValue([
+      row(1, { userId: SELLER, version: SERVICES_TERMS_VERSION }),
+      row(2, null),
+      row(3, { userId: SELLER, version: 'services-terms-1999-01-01' }),
+    ] as never);
+    const { items } = await getMyServiceOfferings({
+      sellerId: SELLER,
+      servable: allBrowsingLevelsFlag,
+    });
+    expect(items.map((i) => i.termsAffirmed)).toEqual([true, false, false]);
+    for (const item of items) expect(item).not.toHaveProperty('sellerAffirmation');
+  });
+
   const ratingsIn = (call: unknown) =>
     (call as { where: { maxNsfwLevel: { in?: number[]; notIn?: number[] } } }).where.maxNsfwLevel;
 

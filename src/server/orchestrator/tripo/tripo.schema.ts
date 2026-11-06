@@ -12,7 +12,7 @@
  *   the graph handler when building the `polyGen` step.
  */
 
-import type { TripoFalPolyGenInput } from '@civitai/client';
+import type { TripoFalPolyGenInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 
@@ -68,6 +68,7 @@ export function toTripoPolyGenInput(data: TripoGenerationSchema): TripoFalPolyGe
   return dropUndefined({
     engine: 'fal' as const,
     model: 'tripo' as const,
+    version: 'v2.5' as const,
     imageUrl: data.sourceImage.url,
     texture: data.texture,
     pbr: data.pbr,

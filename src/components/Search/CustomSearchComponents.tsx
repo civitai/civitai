@@ -13,7 +13,7 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
-import type { ButtonProps } from '@mantine/core';
+import type { ButtonProps, MultiSelectProps } from '@mantine/core';
 import {
   Accordion,
   Box,
@@ -21,7 +21,6 @@ import {
   Chip,
   Code,
   Group,
-  HoverCard,
   MultiSelect,
   Select,
   Text,
@@ -29,6 +28,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import React, {
   forwardRef,
   useEffect,
@@ -113,8 +113,19 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
 
 export function SearchableMultiSelectRefinementList({
   title,
+  renderOption,
+  remoteSearch = true,
   ...props
-}: RefinementListProps & { title: string }) {
+}: RefinementListProps & {
+  title: string;
+  renderOption?: MultiSelectProps['renderOption'];
+  /**
+   * Query the facet index as the user types. Turn off for a short facet whose full list is already
+   * loaded: the remote result replaces `items`, so an empty or failed one hides options the
+   * MultiSelect's own client-side filter would still match.
+   */
+  remoteSearch?: boolean;
+}) {
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -123,12 +134,22 @@ export function SearchableMultiSelectRefinementList({
     (items ?? []).filter((item) => item.isRefined) ?? []
   );
 
+  // The facet index matches word prefixes only; keep the idle list so a remote miss doesn't hide
+  // substring matches the MultiSelect would show.
+  const [loadedItems, setLoadedItems] = useState<typeof items>([]);
+  const isSearching = searchValue !== '' || debouncedSearchValue !== '';
+  useEffect(() => {
+    if (remoteSearch && !isSearching) setLoadedItems(items);
+  }, [items, isSearching, remoteSearch]);
+
+  const selectableItems = uniqBy([...refinedItems, ...loadedItems, ...items], 'value');
+
   const onUpdateSelection = (updatedSelectedItems: string[]) => {
     const addedItems = updatedSelectedItems.length > refinedItems.length;
     if (addedItems) {
       // Get the last item:
       const lastAddedValue = updatedSelectedItems[updatedSelectedItems.length - 1];
-      const item = items.find((item) => item.value === lastAddedValue);
+      const item = selectableItems.find((item) => item.value === lastAddedValue);
 
       if (!item) {
         return;
@@ -152,7 +173,7 @@ export function SearchableMultiSelectRefinementList({
   };
 
   useEffect(() => {
-    if (props.searchable) {
+    if (props.searchable && remoteSearch) {
       searchForItems(debouncedSearchValue);
     }
   }, [debouncedSearchValue]);
@@ -169,7 +190,7 @@ export function SearchableMultiSelectRefinementList({
     }
   }, [items, refinedItems]);
 
-  const data = uniqBy([...refinedItems, ...items], 'value').map((item) => ({
+  const data = selectableItems.map((item) => ({
     label: item.label,
     value: item.value,
   }));
@@ -194,6 +215,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
+            renderOption={renderOption}
             nothingFoundMessage={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>
@@ -340,7 +362,7 @@ export const CustomSearchBox = forwardRef<
       onBlur={onSearchDone}
       onSubmit={onSearchDone}
       ref={inputRef}
-      onKeyDown={getHotkeyHandler([['Escape', blurInput]])}
+      onKeyDown={getHotkeyHandler([['esc', blurInput]])}
       rightSection={
         !isMobile && (
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>

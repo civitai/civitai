@@ -21,6 +21,7 @@ import {
 } from '~/store/post-image-transmitter.store';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { downloadGeneratorImages } from '~/utils/generator-import';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { isPickSnapshot } from '~/utils/unreadable-pick';
@@ -43,7 +44,7 @@ export function PostImageDropzone({
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
   const showCreatePostError = useShowCreatePostError();
-  const { src, modelVersionId, model3dId, tag, collectionId } = params;
+  const { src, modelVersionId, model3dId, storyline, continues, tag, collectionId } = params;
   // #endregion
 
   // #region [mutations]
@@ -135,7 +136,14 @@ export function PostImageDropzone({
     if (post) upload(fileData);
     else {
       createPostMutation.mutate(
-        { modelVersionId, model3dId, tag, collectionId },
+        {
+          modelVersionId,
+          model3dId,
+          storylineId: storyline,
+          parentChapterId: continues,
+          tag,
+          collectionId,
+        },
         {
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
@@ -151,7 +159,7 @@ export function PostImageDropzone({
             upload(fileData, { postId: data.id });
           },
           onError(error) {
-            showCreatePostError(error.message);
+            showCreatePostError(error);
           },
         }
       );
@@ -214,8 +222,16 @@ export function PostImageDropzone({
   useEffect(() => {
     async function handleSrc() {
       if (!src) return;
-      const files = await orchestratorMediaTransmitter.getFiles(src);
+      const { files, failedCount } = await orchestratorMediaTransmitter.getFiles(src);
       if (files.length) handleUpload([...files]);
+      if (failedCount)
+        showErrorNotification({
+          title: `${failedCount} file${
+            failedCount !== 1 ? 's' : ''
+          } from the generator didn't load`,
+          error: { message: 'Add them with Import from Generator below.' },
+          autoClose: false,
+        });
     }
     handleSrc();
   }, [orchestratorTransferredMedia]); // eslint-disable-line

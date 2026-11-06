@@ -41,7 +41,7 @@
 
 **Feature flags**: `model3d-feed` (browse/comment/review) and `model3d-generator` (create) — both Flipt-managed, mod-only at launch, broadened independently.
 
-**Unblocked** — `@civitai/client@0.2.0-beta.67` (installed) exports `submitWorkflow`, `PolyGenStep`/`PolyGenStepTemplate`, and the Meshy input types. Phase 1 can start in full; integration uses the async workflow pattern (same as Sora/Wan), not the sync template endpoint.
+**Unblocked** — `@civitai/orchestration-client@0.2.0-beta.67` (installed) exports `submitWorkflow`, `PolyGenStep`/`PolyGenStepTemplate`, and the Meshy input types. Phase 1 can start in full; integration uses the async workflow pattern (same as Sora/Wan), not the sync template endpoint.
 
 ## Content policy (decided)
 

@@ -11,15 +11,9 @@ import {
   type StoredResult,
 } from './score';
 
-const ok = (output: unknown, literalRuleIds: number[] | null = null): StoredResult => ({
-  status: 'ok',
-  output,
-  literalRuleIds,
-});
+const ok = (output: unknown): StoredResult => ({ status: 'ok', output });
 const rated = (level: string) => ok({ nsfw: { level, reason: 'synthetic' } });
 const flagged = (label: string, detected: boolean) => ok({ [label]: { detected } });
-const matched = (ids: number[], literal: number[] = []) =>
-  ok({ modelRules: { matched: ids.map((ruleId) => ({ ruleId, reason: 'synthetic' })) } }, literal);
 
 describe('verdictOf', () => {
   it('passes an unsegmented output through', () => {
@@ -91,48 +85,18 @@ describe('scoreCase — flags and any labels', () => {
   });
 
   it('never scores an error, a skip, a missing result or an empty expectation', () => {
-    expect(
-      scoreCase({ scam: true }, { status: 'error', output: null, literalRuleIds: null })
-    ).toEqual({ state: 'error' });
-    expect(
-      scoreCase({ scam: true }, { status: 'skipped', output: null, literalRuleIds: null })
-    ).toEqual({ state: 'skipped' });
+    expect(scoreCase({ scam: true }, { status: 'error', output: null })).toEqual({
+      state: 'error',
+    });
+    expect(scoreCase({ scam: true }, { status: 'skipped', output: null })).toEqual({
+      state: 'skipped',
+    });
     expect(scoreCase({ scam: true }, undefined)).toEqual({ state: 'missing' });
     expect(scoreCase({}, flagged('scam', true))).toEqual({ state: 'unscored' });
   });
 
   it('never scores an ok result whose verdict was wiped with its text', () => {
     expect(scoreCase({ scam: true }, ok(null))).toEqual({ state: 'missing' });
-  });
-});
-
-describe('scoreCase — modelRules on the combined result', () => {
-  it('counts a literal hit as a match, as production does', () => {
-    expect(scoreCase({ modelRules: { ruleIds: [4] } }, matched([], [4]))).toMatchObject({
-      pass: true,
-      labels: [{ caught: [4], llm: [], literal: [4] }],
-    });
-  });
-
-  it('splits caught, missed and false flags', () => {
-    expect(scoreCase({ modelRules: { ruleIds: [1, 2] } }, matched([2, 3]))).toMatchObject({
-      pass: false,
-      labels: [{ caught: [2], missed: [1], falseFlags: [3] }],
-    });
-  });
-
-  it('keeps new (negative-id) rule hits apart and never calls them false flags', () => {
-    expect(scoreCase({ modelRules: { ruleIds: [] } }, matched([-1]))).toMatchObject({
-      pass: true,
-      labels: [{ falseFlags: [], newRuleHits: [-1] }],
-    });
-  });
-
-  it('fails an answer with no rules list and no literal hit', () => {
-    expect(scoreCase({ modelRules: { ruleIds: [] } }, ok({}))).toMatchObject({
-      pass: false,
-      labels: [{ answered: false }],
-    });
   });
 });
 
@@ -151,33 +115,10 @@ describe('summarise', () => {
       scoreCase({ scam: true }, flagged('scam', false)),
       scoreCase({ scam: false }, flagged('scam', true)),
       scoreCase({ scam: false }, flagged('scam', false)),
-      scoreCase({ scam: true }, { status: 'error', output: null, literalRuleIds: null }),
+      scoreCase({ scam: true }, { status: 'error', output: null }),
     ];
     expect(summarise(scores)).toEqual([
       { label: 'scam', scored: 4, passed: 2, caught: 1, missed: 1, falseFlags: 1, unanswered: 0 },
-    ]);
-  });
-
-  it('tallies model rules per rule, with new rule hits counted apart', () => {
-    const scores = [
-      scoreCase({ modelRules: { ruleIds: [1] } }, matched([1, -2])),
-      scoreCase({ modelRules: { ruleIds: [1] } }, matched([3])),
-    ];
-    expect(summarise(scores)).toEqual([
-      {
-        label: 'modelRules',
-        scored: 2,
-        passed: 1,
-        caught: 1,
-        missed: 1,
-        falseFlags: 1,
-        newRuleHits: 1,
-        unanswered: 0,
-        perRule: {
-          1: { caught: 1, missed: 1, falseFlags: 0 },
-          3: { caught: 0, missed: 0, falseFlags: 1 },
-        },
-      },
     ]);
   });
 

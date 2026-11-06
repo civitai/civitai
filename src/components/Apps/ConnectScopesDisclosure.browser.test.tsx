@@ -14,9 +14,9 @@ import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosu
  * pending set was already approved. Twenty CI checks were green throughout. The server
  * projection was well covered; "the client half has no tests" was the actual gap.
  *
- * Browser tier is REPORT-ONLY in CI, so this cannot gate a merge — the stranded-client
- * case is *also* pinned at the node tier in `__tests__/appListingConnectScopes.test.ts`,
- * which is blocking. What only this tier can assert is what a viewer SEES.
+ * No check in this repo blocks a merge, and the stranded-client case is *also* pinned
+ * at the node tier in `__tests__/appListingConnectScopes.test.ts`. What only this tier can assert
+ * is what a viewer SEES.
  */
 describe('ConnectScopesDisclosure', () => {
   test('renders nothing at all when there are no scopes — not an empty box', async () => {
@@ -44,18 +44,32 @@ describe('ConnectScopesDisclosure', () => {
 
     // `BuzzRead` is sensitive (money), `ModelsRead` is not. Asserting the SPLIT, not just
     // that both render — a component that dropped the grouping would still show both.
+    // The group ids are the SHARED renderer's (`ListingPermissionsDisclosure`), the same
+    // ones an on-site app's permission list carries.
     await expect
-      .element(within.getByTestId('connect-scopes-disclosure-sensitive-group'))
+      .element(within.getByTestId('listing-permissions-sensitive-group'))
       .toBeInTheDocument();
-    await expect
-      .element(within.getByTestId('connect-scopes-disclosure-normal-group'))
-      .toBeInTheDocument();
+    await expect.element(within.getByTestId('listing-permissions-other-group')).toBeInTheDocument();
 
     const sensitive = container.querySelector(
-      '[data-testid="connect-scopes-disclosure-sensitive-group"]'
+      '[data-testid="listing-permissions-sensitive-group"]'
     );
-    expect(sensitive?.textContent).toContain('BuzzRead');
-    expect(sensitive?.textContent).not.toContain('ModelsRead');
+    expect(sensitive?.textContent).toContain('View buzz balance & history');
+    expect(sensitive?.textContent).not.toContain('Browse & download models');
+  });
+
+  test('speaks plain language: the scope LABEL, never the TokenScope key', async () => {
+    const { container } = await renderWithProviders(
+      <ConnectScopesDisclosure scopes={['ModelsRead', 'BuzzRead']} />
+    );
+    const section = container.querySelector('[data-testid="connect-scopes-disclosure"]');
+    expect(section, 'the section must render').not.toBeNull();
+    // Positive control first: the labels ARE there, so the absences below are not an
+    // empty section passing vacuously.
+    expect(section!.textContent).toContain('Browse & download models');
+    expect(section!.textContent).toContain('View buzz balance & history');
+    expect(section!.textContent).not.toContain('ModelsRead');
+    expect(section!.textContent).not.toContain('BuzzRead');
   });
 
   test('a lone non-sensitive scope renders without a sensitive group', async () => {
@@ -63,14 +77,16 @@ describe('ConnectScopesDisclosure', () => {
       <ConnectScopesDisclosure scopes={['ModelsRead']} />
     );
     expect(
-      container.querySelector('[data-testid="connect-scopes-disclosure-sensitive-group"]')
+      container.querySelector('[data-testid="listing-permissions-sensitive-group"]')
     ).toBeNull();
-    expect(container.textContent).toContain('ModelsRead');
+    expect(container.textContent).toContain('Browse & download models');
+    // No "Other permissions" heading when there is nothing to tell the group apart from.
+    expect(container.textContent).not.toContain('Other permissions');
   });
 
   test('NEVER renders developer-authored justification text', async () => {
     // Structural, not conventional: the component takes no justifications prop and the
-    // shared row cannot render the text without children. This asserts the OUTCOME, so
+    // shared row model has no field for the text. This asserts the OUTCOME, so
     // it still fails if someone later threads a prop through.
     const { container } = await renderWithProviders(
       <ConnectScopesDisclosure scopes={['BuzzRead']} />

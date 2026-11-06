@@ -2,8 +2,8 @@
  * App Store Listings — WHICH SURFACE the shared `⋮` menu is being rendered on, and
  * the one thing that answer is allowed to change.
  *
- * Pure + React-free so the correctness gate lives in the blocking node `unit` project
- * (the `.browser.test.tsx` component suites are report-only), mirroring its siblings
+ * Pure + React-free so the correctness gate lives in the node `unit` project,
+ * mirroring its siblings
  * `appListingDetailModActions` / `appListingCardView`.
  *
  * 🔴 WHY THIS EXISTS AT ALL, GIVEN THAT `AppListingActionsMenu` WAS WRITTEN TO MAKE

@@ -31,7 +31,7 @@ export type AppReactionState = {
 type ToggleHandler = (args: {
   ctx: ProtectedContext;
   input: { entityType: 'image'; entityId: number; reaction: ReviewReactions };
-}) => Promise<'created' | 'removed' | 'noop'>;
+}) => Promise<'created' | 'removed' | 'noop' | 'ignored'>;
 
 /**
  * Does the viewer hold this reaction right now? Read on the PRIMARY, so a reaction the viewer
@@ -116,7 +116,7 @@ export async function setImageReactionFromApp(opts: {
   toggle: ToggleHandler;
 }): Promise<SetImageReactionOutcome> {
   const held = await viewerHoldsReaction(opts.userId, opts.imageId, opts.reaction);
-  let result: 'created' | 'removed' | 'noop' | null = null;
+  let result: 'created' | 'removed' | 'noop' | 'ignored' | null = null;
   let failure: { error: unknown } | null = null;
   // Already in the requested state: no toggle — so no reward, no metric move, no audit row.
   if (held !== opts.reacted) {

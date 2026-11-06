@@ -56,7 +56,7 @@ export async function getTrainingWorkflowOverlay({
   refs?: TrainingWorkflowRef[];
 }): Promise<TrainingWorkflowOverlay> {
   try {
-    const token = await getOrchestratorToken(userId, ctx);
+    const token = await getOrchestratorToken(userId, ctx, { allowRestricted: true });
     const fromDate = new Date(Date.now() - TRAINING_WORKFLOW_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     const { items } = await queryWorkflows({
@@ -262,7 +262,7 @@ async function getTrainingWorkflowOverlayById({
   ctx: { req: NextApiRequest; res: NextApiResponse };
 }): Promise<TrainingWorkflowOverlay> {
   try {
-    const token = await getOrchestratorToken(userId, ctx);
+    const token = await getOrchestratorToken(userId, ctx, { allowRestricted: true });
     const workflow = await getWorkflow({ token, path: { workflowId } });
     if (!workflow.status) return emptyTrainingOverlay();
 

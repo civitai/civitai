@@ -1,14 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
-import { BanReasonCode } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { handBanReasonSchema } from '~/server/schema/user.schema';
 import { toggleBan } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-const schema = z.object({
+export const banUserQuerySchema = z.object({
   userId: z.coerce.number(),
-  reasonCode: z.enum(BanReasonCode).optional(),
+  reasonCode: handBanReasonSchema.optional(),
   detailsExternal: z.string().optional(),
   detailsInternal: z.string().optional(),
   // Explicit 'true'/'false' string enum, NOT z.coerce.boolean() — coercion
@@ -36,7 +36,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     removeMedia,
     removeModels,
     removeComments,
-  } = schema.parse(req.query);
+  } = banUserQuerySchema.parse(req.query);
 
   res.status(200).json({
     userId,

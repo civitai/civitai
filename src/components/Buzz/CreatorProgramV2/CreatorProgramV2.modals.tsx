@@ -254,9 +254,11 @@ const BankableBuzzInfo = ({
   bankedThisMonth: number;
 }) => {
   const cutover = formatDate(BANKABLE_CUTOVER, 'MMMM D, YYYY', true);
+  const paid = bankable.spent ?? 0;
   const rows = [
     { label: `Your Yellow and Green Buzz on ${cutover}`, amount: bankable.snapshot, sign: '' },
     { label: `Bankable Buzz earned since ${cutover}`, amount: bankable.earned, sign: '+' },
+    { label: `Paid to other users since ${cutover}`, amount: paid, sign: '−' },
     {
       label: 'Banked in earlier months, less what you extracted',
       amount: bankable.consumed,
@@ -270,7 +272,9 @@ const BankableBuzzInfo = ({
       <p className="font-bold">Bankable Buzz</p>
       <p>
         Each month you can bank the lower of your Cap and your bankable Buzz. Generation
-        compensation is still paid to you but is not bankable.
+        compensation is still paid to you but is not bankable. What you pay other users (tips, Early
+        Access, shop items, bounties and donations) is subtracted from what you earn, then from your
+        unbanked Buzz from {cutover}.
       </p>
 
       <Table className="table-auto">
@@ -291,6 +295,13 @@ const BankableBuzzInfo = ({
           </Table.Tr>
         </Table.Tbody>
       </Table>
+      {paid > bankable.earned && (
+        <p className="text-xs">
+          You&apos;ve paid other users <BuzzAmount amount={paid - bankable.earned} /> more than
+          you&apos;ve earned since {cutover}. That comes out of your unbanked Buzz from {cutover},
+          and anything beyond it out of what you earn next.
+        </p>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
@@ -311,6 +322,7 @@ const BankableBuzzInfo = ({
             <li>Generation compensation</li>
             <li>Buzz you bought</li>
             <li>Rewards and credits from Civitai</li>
+            <li>Buzz matched by what you paid other users</li>
           </ul>
         </div>
       </div>

@@ -1,7 +1,11 @@
 import { env } from '~/env/server';
+import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   CURSOR_UNPARSED,
   DEEP_OFFSET,
@@ -19,6 +23,18 @@ const requestCounter = registerCounterWithLabels({
   help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
   labelNames: ['outcome', 'reason', 'route'] as const,
 });
+
+const meiliOffCounter = registerCounterWithLabels({
+  name: 'feed_primary_meili_off_total',
+  help: 'Image-feed requests the feed service did not serve, answered without Meilisearch',
+  labelNames: ['answer', 'reason', 'route'] as const,
+});
+/** `answer`: empty (an empty page), unavailable (a retryable 503) or refused (a 400). */
+export const countMeiliOff = (
+  answer: 'empty' | 'unavailable' | 'refused',
+  reason: string,
+  route: FeedPrimaryRoute
+) => meiliOffCounter.inc({ answer, reason: reasonLabel(reason), route });
 
 /** Which caller asked: the site's image feed or the public REST images endpoint. */
 export type FeedPrimaryRoute = 'website' | 'rest';
@@ -96,6 +112,26 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   timeoutMs?: number;
   route?: FeedPrimaryRoute;
 };
+
+export type DatapacketRescue = 'rescued' | 'still-empty';
+
+/**
+ * Loads the feed's ids. A DataPacket read that finds none of them is retried once on the read
+ * replica: DataPacket answers no rows for images the primary has (on 22 Oct 08:30 UTC, 21 of the
+ * 23 ids in a burst of empty gallery pages were on the read replica, published and scanned), and
+ * the search index fallback would hydrate from DataPacket again. Only an empty page pays for it.
+ */
+export async function hydrateWithReadRescue<T, Q extends { dbTarget?: string }>(
+  query: Q,
+  load: (query: Q) => Promise<T[]>,
+  onRescue?: (outcome: DatapacketRescue) => void
+): Promise<T[]> {
+  const rows = await load(query);
+  if (rows.length || query.dbTarget !== 'datapacket') return rows;
+  const rescued = await load({ ...query, dbTarget: 'read' });
+  onRescue?.(rescued.length ? 'rescued' : 'still-empty');
+  return rescued;
+}
 
 /** The image query for hydrating exactly `ids`: the request's filters without its paging,
  *  period or jump, all applied by the feed (getAllImages would cut the period on createdAt). */
@@ -188,6 +224,12 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }
   const mapping = mapSearchInputToFeedQuery(input, 'primary', deps.route);
+  // An inclusion list of only impossible ids (prod sends `tags: [0]`) matches nothing on the
+  // search index either.
+  if (!mapping.ok && (mapping.reason === 'tags:none' || mapping.reason === 'ids:none')) {
+    count('served');
+    return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
+  }
   if (!mapping.ok) {
     const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
     count(rejected ? 'rejected' : 'unmapped', mapping.reason);
@@ -246,6 +288,26 @@ export async function serveFromFeed<T extends { id: number }>(
 
 export function feedPrimaryAvailable() {
   return !!env.FEED_SERVICE_URL;
+}
+
+/**
+ * FEED_SERVICE_MEILI_OFF for this viewer: the image feed never reads Meilisearch. Only with a feed
+ * service configured, since without one there is nothing else to answer from.
+ *
+ * Once the feeds index is retired this is true without reading the flag: a flag read that fails
+ * returns false, and false would send the request to an index nothing writes any more. Without a
+ * feed service the readers of that index answer empty instead (see refuseRetiredIndexRead).
+ */
+export async function isMeiliOff(input: { currentUserId?: number; isModerator?: boolean }) {
+  if (!feedPrimaryAvailable()) return false;
+  if (isRetiredSearchIndex(METRICS_IMAGES_SEARCH_INDEX)) return true;
+  return withSpan('image:flipt:meiliOff', () =>
+    getFliptBoolean(
+      FLIPT_FEATURE_FLAGS.FEED_SERVICE_MEILI_OFF,
+      input.currentUserId?.toString() || 'anonymous',
+      feedFliptContext(input)
+    )
+  );
 }
 
 export function fetchFeedPrimary(query: string, timeoutMs: number) {

@@ -5,8 +5,8 @@ import { jsonField } from '$lib/server/query';
 import type { LabComposedEntity } from '$lib/server/text-scan-lab/harness-client';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { LAB_ENTITY_TYPES, type LabEntityType, type LabField } from '$lib/text-scan-lab/types';
-import { parseExpected, workspaceOf } from '$lib/text-scan-tests/expected';
-import { TEST_SET_LIMITS, WORKSPACE_NAMES, WORKSPACES } from '$lib/text-scan-tests/types';
+import { parseExpected } from '$lib/text-scan-tests/expected';
+import { TEST_SET_LIMITS, WORKSPACES } from '$lib/text-scan-tests/types';
 import { idField as id } from './guard';
 import { TestSetError, createSet, requireOpenSet, upsertCase } from './store';
 const optionalText = (max: number, message: string) =>
@@ -54,11 +54,6 @@ export async function captureCase(
   setCreated: boolean;
   rescore: boolean;
 }> {
-  if (workspaceOf(input.entityType) !== input.workspace)
-    throw new TestSetError(
-      `${WORKSPACE_NAMES[input.workspace]} sets do not score ${input.entityType} cases.`,
-      400
-    );
   const expected = parseExpected(input.expected, input.entityType);
   if (typeof expected === 'string') throw new TestSetError(expected, 400);
 

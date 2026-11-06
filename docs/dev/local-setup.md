@@ -2,14 +2,14 @@
 
 ## Toolchain
 
-Use node `24.19.0` and pnpm 10.x. `.nvmrc` is the authority (CI reads it via `node-version-file:`, the Dockerfile base image tracks it); `package.json` declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake derives its node major from `.nvmrc`, and `nix flake check` fails if they disagree.
+Use node `24.22.1` and pnpm 10.x. `.nvmrc` is the authority (CI reads it via `node-version-file:`, the Dockerfile base image tracks it); `package.json` declares `engines.node: ">=24.0.0 <25"`. On NixOS the flake derives its node major from `.nvmrc`, and `nix flake check` fails if they disagree.
 
 ## From nothing to a running app
 
 Default path, no Nix:
 
 ```bash
-nvm use                                        # .nvmrc -> 24.19.0
+nvm use                                        # .nvmrc -> 24.22.1
 corepack enable
 git submodule update --init event-engine-common
 cp .env-example .env.development
@@ -33,11 +33,15 @@ Required environment: database connection strings, authentication providers, S3/
 1. `pnpm install`
 2. `pnpm run db:generate`
 3. `make start` if the services are down.
-4. Start the dev server with the `/dev-server` skill. The daemon keeps whichever node first ran a CLI verb (`process.execPath`) until shutdown, so start it under the node from `.nvmrc`. On NixOS, `nix run .#dev-server` does this.
+4. Start the dev server with the `/dev-server` skill. The daemon keeps whichever node first ran a CLI verb (`process.execPath`) until shutdown, so start it under the node from `.nvmrc`. On NixOS, `nix run .#dev-server` does this, except while nixpkgs lags `.nvmrc` (it gives 24.19.0 until nixpkgs ships 24.22.1; see the note in `flake.nix`).
 
 ## Email
 
 Local dev never uses real mail credentials. Every email goes to the Mailpit catcher in `docker-compose.base.yml` (`docker compose -f docker-compose.base.yml up -d mailpit`): SMTP on `localhost:1025`, inbox UI and API at http://localhost:1080. The dev-server daemon forces the catcher's `EMAIL_*` values into every app it starts, whatever the `.env` chain says, and `wt new` and `wt env --refresh` write them into each `.env` they copy. Commented-out mail lines left in an older local `.env` are dead values; delete them. With Mailpit down a send fails with a connection error; nothing falls back to a real server.
+
+## Analytics and ads on a local origin
+
+A local build (including `next build` + `next start`) can send tracker, Google Analytics and ad requests; they are off by default when `NEXT_PUBLIC_CIVITAI_LINK` is a loopback origin (or unset outside production). Set `NEXT_PUBLIC_LOCAL_TRACKER_ENABLED=true` (tracker and Google Analytics) or `NEXT_PUBLIC_LOCAL_ADS_ENABLED=true` (ads) to opt in.
 
 ## Traps that cost hours
 

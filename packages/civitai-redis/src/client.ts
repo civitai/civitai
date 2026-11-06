@@ -2193,6 +2193,11 @@ export const REDIS_SYS_KEYS = {
     // Single-use marker for redeemed cross-domain swap tokens — `swap:used:${jti}` (TTL = swap max age).
     USED: 'swap:used',
   },
+  IMAGE_UPLOAD: {
+    // Chunked upload-relay session — hash `system:image-upload:relay-session:${sessionId}` holding
+    // the owning userId, the server-minted key, the multipart uploadId and one ETag per part.
+    RELAY_SESSION: 'system:image-upload:relay-session',
+  },
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
@@ -2319,6 +2324,20 @@ export const REDIS_SYS_KEYS = {
      */
     APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
     /**
+     * FORKABLE APPS — one server-side fork session per fork slug, keyed
+     * `system:blocks:fork-session:${forkSlug}`. JSON: who forked, the parent block and the
+     * approved parent commit, the parent listing, and the seed handed to the sandbox service.
+     * Written `SET NX` (the write is also the slug's reservation), TTL 30 days. The ONLY
+     * source `submitVersion` reads a fork's provenance from (`app-fork-start.service.ts`).
+     */
+    FORK_SESSION: 'system:blocks:fork-session',
+    /**
+     * FORKABLE APPS — per-user fork-start counters, keyed
+     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
+     * MULTI (always created with its TTL); fail-closed on a redis error.
+     */
+    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -2347,6 +2366,14 @@ export const REDIS_SYS_KEYS = {
      * the approved/owned path is unaffected (only the ephemeral branch increments).
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
+    /**
+     * APP DEV PREVIEW ERRORS — the uncaught errors (and console errors) an app's own code reported
+     * in its LIVE DEV PREVIEW (`BLOCK_ERROR {fatal:false}` from a dev-tunnel host only), keyed
+     * `${DEV_PREVIEW_ERRORS}:<userId>:<blockId>`. A capped LIST (newest first, last 200), hard-TTL
+     * EX 2h, written only while the user has a live dev tunnel of that app; read back by App
+     * Assistant's app-activity read for that same user (preview-errors.service.ts). On `sysRedis`.
+     */
+    DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
     /**
      * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
      * post-paid customComfy job's terminal poll/cancel can refund the
@@ -2492,10 +2519,21 @@ export const REDIS_SYS_KEYS = {
     // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
     // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
+    // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
+    STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
   },
   CLIENT: 'client',
+  SITE_ALERTS: {
+    // Hash of alert id → JSON alert. The alerts version is a field of CLIENT, not of this hash.
+    ALERTS: 'system:site-alerts',
+    SEQ: 'system:site-alerts:seq',
+  },
   SYSTEM: {
     FEATURES: 'system:features',
+    /** Per-user daily notification-email counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    NOTIFICATION_EMAIL_USER_QUOTA: 'system:notification-email-user-quota',
+    /** Per-type hourly notification-email counters: `<prefix>:<type>:<YYYY-MM-DDTHH>`. */
+    NOTIFICATION_EMAIL_TYPE_QUOTA: 'system:notification-email-type-quota',
     PERMISSIONS: 'system:permissions',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
@@ -2521,6 +2559,11 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
+    // `<prefix>:<YYYY-MM-DD>:<caller>:<host bucket>` = a HyperLogLog of the users who sent a
+    // generation input url on that external host bucket that UTC day (TTL 2 days).
+    GENERATION_INPUT_EXTERNAL_HOST_USERS: 'system:generation-input-external-host-users',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
@@ -2529,10 +2572,19 @@ export const REDIS_SYS_KEYS = {
     // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
     // voted on this judging session, and how long idle ends that session. Missing = defaults.
     CRUCIBLE_JUDGING: 'system:crucible-judging',
+    // JSON { crucibles: { [crucibleId]: { theme, themeElements, judgeId, mode, reviewPrompt? } } }:
+    // the crucibles whose entries the AI theme review checks. Missing or invalid = none.
+    CRUCIBLE_THEME_REVIEW: 'system:crucible-theme-review',
+    // Prefix for `:<crucibleId>`, a hash of entryId -> JSON { at, userId } of its acceptance.
+    CRUCIBLE_ENTRY_ACCEPTED: 'system:crucible-entry-accepted',
     // Prefix for `:<version>`, a JSON snapshot of the image-ingestion gauges computed by one
     // process per TTL for all of them; `:<version>:lock` elects that process. See
     // src/server/prom/ingestion-gauge-store.ts.
     IMAGE_INGESTION_GAUGES: 'system:image-ingestion-gauges',
+    // Sorted set of imageIds whose upload prompt scan had no verdict, scored by when to scan them
+    // again; `:attempts` is a hash of imageId -> the attempt that entry is. See
+    // src/server/services/upload-prompt-retry.service.ts.
+    UPLOAD_PROMPT_SCAN_RETRY: 'system:upload-prompt-scan-retry',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2546,6 +2598,9 @@ export const REDIS_SYS_KEYS = {
   NOTICES: {
     // Hash of userId → sent-at ISO time; a field is claimed before its email goes out.
     BANKING_CHANGE_SENT: 'notices:banking-change-sent',
+    KLEIN9B_SENT: 'notices:klein9b-sent',
+    NC_RECENT_SENT: 'notices:nc-recent-sent',
+    NC_OLDER_SENT: 'notices:nc-older-sent',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
@@ -2582,7 +2637,20 @@ export const REDIS_SYS_KEYS = {
   SESSION: {
     ALL: 'session:all',
     TOKEN_STATE: 'session:token-state',
+    // Hash `familyId → 'invalid'`: every token of a sign-in lineage ends together.
+    FAMILY_STATE: 'session:family-state',
+    // `session:user-cut:${userId}` → epoch ms; tokens of that user signed before it are revoked.
+    USER_CUT: 'session:user-cut',
+    // Hash `familyId → last seen (epoch ms)`, a 30-day sliding window per field.
+    FAMILY_LIVE: 'session:family-live',
+    // `session:device-families:${deviceId}` → set of the family ids signed in on that browser.
+    DEVICE_FAMILIES: 'session:device-families',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
+    // `session:hub-upgrade:${sha256(jti)}` → the host-only hub session minted for a shared-slot hub token, so
+    // concurrent requests carrying that token get the same one. Short TTL, started by the minting request.
+    HUB_UPGRADE: 'session:hub-upgrade',
+    // `session:hub-upgrade-lock:${sha256(jti)}` → held (SET NX, short TTL) by the one request minting that session.
+    HUB_UPGRADE_LOCK: 'session:hub-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once
     // spent. Carries the just-authenticated user from the login callback to /api/auth/oauth/authorize
@@ -2612,16 +2680,32 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
+    // Hash: field = creator userId, value = JSON { through, spent }: Buzz the creator paid other
+    // users from the bankable cutover up to `through`, a settled UTC day boundary. Only later days
+    // are read from ClickHouse. No TTL: rename the key if what counts as paid changes.
+    BANKABLE_SPENT: 'creator-program:bankable-spent',
     // String, Buzz. The smallest two-way amount between a creator and one user that the
-    // counterparty review files. Ops-owned and deliberately without a default in code: the review
-    // skips, and logs that it skipped, until it is set.
+    // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
+    // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
     // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
+    // String. How many other users the review follows Buzz through before it reaches the creator
+    // again; the review clamps it to what it supports (`runCounterpartyReview`).
+    COUNTERPARTY_REVIEW_MAX_HOPS: 'creator-program:counterparty-review-max-hops',
+    // Hash: field = creator userId, value = JSON { [path joined by '>']: amount when last filed }.
+    // Indirect transfers already filed, so only new paths or new volume are filed again. No TTL.
+    COUNTERPARTY_REVIEW_INDIRECT: 'creator-program:counterparty-review-indirect',
     // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
     PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
+  },
+  LINKED_ACCOUNT_REVIEW: {
+    // JSON `LinkedAccountReviewConfig`. Ops-owned; deliberately no default in code.
+    CONFIG: 'linked-account-review:config',
+    // Hash: field = group signature, value = ISO time it was last filed.
+    FILED: 'linked-account-review:filed',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2796,6 +2880,10 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Delivery ids already handled by the HQ task webhook — `webhooks:hq:processed:${webhookId}`.
+    HQ_PROCESSED: 'webhooks:hq:processed',
+    // Civitai AIR checkouts already sent to AIR — `webhooks:stripe:air-notified:${checkoutSessionId}`.
+    STRIPE_AIR_NOTIFIED: 'webhooks:stripe:air-notified',
     MODEL_FILE_SCAN_FAILURE_BUST: 'webhooks:model-file-scan:failure-bust',
     // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
     // callbacks so the terminal workflow event can classify the failure. Short TTL.
@@ -2804,14 +2892,45 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  MEMBERSHIP_EXTEND: {
+    // Per-member lock around a moderator's Stripe membership extension (guards + write + checks).
+    LOCK: 'membership-extend:lock',
+  },
+  HEADLESS_POST: {
+    IDEMPOTENCY: 'headless-post:idempotency',
+  },
+  REMIX_APP: {
+    // A choice ask's per-option prices, per run, segment and step, while that ask is open.
+    OPTION_PRICES: 'remix-app:option-prices',
+    // Bumped after every mod write; the registry cache key carries it.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
+  },
+  MESSAGE_AS_CIVITAI: {
+    IDEMPOTENCY: 'message-as-civitai:idempotency',
+    SEND_LOCK: 'message-as-civitai:send-lock',
+  },
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
+    // Per judge: `winner>loser` for each vote, so pairs implied by their own votes can be skipped.
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
+    // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
+    ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 
@@ -2823,6 +2942,9 @@ export const REDIS_SYS_KEYS = {
 // `RedisKeyStringsCache` / `RedisKeyTemplateCache` are derived from these literals and are
 // unchanged by the prefixing.
 const REDIS_KEYS_UNPREFIXED = {
+  POST_INTENT: {
+    RATE_LIMIT: 'post-intent:rate-limit',
+  },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
@@ -2935,9 +3057,15 @@ const REDIS_KEYS_UNPREFIXED = {
     // suggestions — omitting it let one prompt's entry be reused across limits.
     JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
+    // `<prefix>:<userId>:<type|all>` — the ranked ids behind /api/v1/creator/engagement?sort=engagement.
+    CREATOR_ENGAGEMENT_RANKING: 'packed:caches:creator-engagement-ranking:v1',
+    // `<prefix>:<userId>` — the 30-day reacted-image candidates, shared by every ranking type.
+    CREATOR_ENGAGEMENT_CANDIDATES: 'packed:caches:creator-engagement-candidates:v1',
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',
+    // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
+    ACCOUNT_STANDING: 'packed:caches:account-standing',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -3014,6 +3142,10 @@ const REDIS_KEYS_UNPREFIXED = {
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
+    // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
+    REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
+    // The remix app rows (`app_blocks` with a remix status): `getRemixAppRegistry`, busted on every mod edit.
+    REMIX_APP_REGISTRY: 'packed:caches:remix-app-registry',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3073,6 +3205,8 @@ const REDIS_KEYS_UNPREFIXED = {
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.
     USER_CREATOR: 'packed:caches:user-creator',
+    // userId -> the event hat their avatar shows during the event (src/server/events/showcase-hat.ts).
+    SHOWCASE_HAT: 'packed:caches:showcase-hat',
     // Bearer-credential lookup: `<prefix>:<hash of the key>` -> the ApiKey row the bearer path
     // reads. Personal and system keys only, positive results only, short TTL, tombstoned on
     // revocation. See src/server/auth/api-key-principal-cache.ts.
@@ -3149,6 +3283,9 @@ const REDIS_KEYS_UNPREFIXED = {
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value:v2',
     EARNED: 'buzz:earned:v2',
   },
+  CREATOR_SERVICES: {
+    ACCESS_RECORDED_SINCE: 'packed:caches:creator-services:access-recorded-since',
+  },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
@@ -3168,6 +3305,14 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+  },
+  REACTION: {
+    /*
+      Use: marks a reaction toggle arriving, so a reverse toggle on the same user, entity and
+      reaction inside the window is ignored as a client double-fire.
+      Structure: string '1' set NX PX, key = `reaction:toggle-guard:${userId}:${entityType}:${entityId}:${reaction}`.
+     */
+    TOGGLE_GUARD: 'reaction:toggle-guard',
   },
   RATING_REVIEW: {
     /*
@@ -3194,6 +3339,21 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+  },
+  BOT_CACHE: {
+    /*
+      Use: a verified crawler's page HTML, so a repeat request for the URL is not rendered again.
+      Structure: packed { pattern, headers, body (brotli HTML) }, key =
+      `botcache:v1:${buildId}:${host}:${path}?${sortedQuery}`, TTL 300s.
+     */
+    HTML: 'botcache:v1',
+  },
+  SEMANTIC_SEARCH: {
+    /*
+      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
+      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
+     */
+    QUERY_VECTOR: 'semantic-search:query-vector',
   },
 } as const;
 
@@ -3234,3 +3394,9 @@ export const REDIS_SUB_KEYS = {
     MERGING: 'merging', // sys
   },
 } as const;
+
+/**
+ * How long after a mute or unmute the account-standing cache is busted again: past the 10 s refill
+ * lock, so a refill that read the row before the change cannot leave the old standing behind.
+ */
+export const ACCOUNT_STANDING_REBUST_MS = 11_000;

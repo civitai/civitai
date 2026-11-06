@@ -42,6 +42,7 @@ function makeReport(overrides: Partial<CsamReportProps>) {
 
 describe('CyberTipline report contact person', () => {
   beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('generated'));
     submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
     dbMock.dbRead.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
       where.id === 10
@@ -51,12 +52,20 @@ describe('CyberTipline report contact person', () => {
   });
 
   it.each([
-    ['in-app report', makeReport({ type: 'GeneratedImage', details: { generatedImages: [] } })],
+    [
+      'in-app report',
+      makeReport({
+        type: 'GeneratedImage',
+        details: { generatedImages: [{ jobId: 'job-1', blobs: [{ url: 'blob-1' }] }] },
+      }),
+    ],
     [
       'external-link report',
       makeReport({ type: 'ExternalLink', details: { email: 'x@example.invalid' } }),
     ],
   ])('names the compliance address on a submitted %s', async (_, report) => {
+    dbMock.dbWrite.csamReport.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.csamReport.findFirst.mockResolvedValue(report);
     await processCsamReport(report);
 
     expect(submitReport).toHaveBeenCalledTimes(1);

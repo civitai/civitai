@@ -1,4 +1,5 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
+import type { CombinedDataTransformer } from '@trpc/server';
 import type {
   GetServerSidePropsContext,
   GetServerSidePropsResult,
@@ -21,19 +22,88 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { trpcViewer } from '~/server/auth/api-auth-session';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
+import type { ShellRouteName } from '~/server/shell/shell-mode';
+import { shellRouteByName } from '~/server/shell/shell-mode';
+import {
+  applyShellBounceHeaders,
+  applyShellPrivateHeaders,
+  syncShellRouteCookie,
+} from '~/server/shell/shell-response';
+import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
+import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import {
+  BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
+  BOT_CACHE_REQ_KEY,
+} from '~/shared/constants/bot-cache.constants';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
+
+/**
+ * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
+ * pre-serialisation dehydrated state from on the server render. A symbol key, so JSON — the
+ * page's `__NEXT_DATA__` and `/_next/data` responses — never carries it.
+ */
+export const SSR_DEHYDRATED_STATE = Symbol.for('civitai.trpc.ssrDehydratedState');
+
+/** Anonymous requests spread over this many entities, so a percentage rollout splits them too. */
+const ANONYMOUS_ROLLOUT_BUCKETS = 64;
+
+function skipsTrpcStateReparse(session: Session | null) {
+  const entityId = session?.user
+    ? String(session.user.id)
+    : `anonymous-${Math.floor(Math.random() * ANONYMOUS_ROLLOUT_BUCKETS)}`;
+  return isFliptSync(FLIPT_FEATURE_FLAGS.SSR_SKIP_TRPCSTATE_REPARSE, entityId) === true;
+}
+
+/** One request's slot for the value its helpers' dehydrate handed the transformer. */
+export type DehydratedStateCapture = { state?: unknown };
+
+function capturingTransformer(
+  base: CombinedDataTransformer,
+  capture: DehydratedStateCapture
+): CombinedDataTransformer {
+  return {
+    input: base.input,
+    output: {
+      deserialize: base.output.deserialize,
+      serialize: (value) => {
+        capture.state = value;
+        return base.output.serialize(value);
+      },
+    },
+  };
+}
+
+/**
+ * Hand the server render the state `trpcState` was serialised from, so it does not parse what this
+ * request just wrote. Only a devalue `trpcState` (a string): devalue.stringify accepted the whole
+ * value, so the browser's parse rebuilds the same structure. A superjson write (the fallback for a
+ * value devalue rejects) can pass class instances through, so the server keeps parsing it.
+ */
+function attachSsrDehydratedState(pageProps: unknown, capture: DehydratedStateCapture | undefined) {
+  const props = pageProps as Record<PropertyKey, unknown>;
+  if (!capture || capture.state === undefined || typeof props.trpcState !== 'string') return;
+  // The render then holds the resolvers' own objects, which a cache may share across requests.
+  props[SSR_DEHYDRATED_STATE] = shouldFreezeRenderState()
+    ? freezeRenderState(capture.state)
+    : capture.state;
+}
 
 export const getServerProxySSGHelpers = async (
-  ctx: GetServerSidePropsContext,
+  // A page's gSSP context, or an API route's request/response (`/api/page-data/*`).
+  ctx: { req: GetServerSidePropsContext['req']; res: GetServerSidePropsContext['res'] },
   session: Session | null,
-  features: FeatureAccess
+  features: FeatureAccess,
+  capture?: DehydratedStateCapture
 ) => {
   const domain = getRequestDomainColor(ctx.req) ?? 'blue';
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      user: session?.user,
+      ...trpcViewer(session?.user),
       acceptableOrigin: true,
       features,
       track: new Tracker(),
@@ -60,10 +130,45 @@ export const getServerProxySSGHelpers = async (
     // bundle (a stale tab's `/_next/data` fetch is a buildId mismatch, which Next
     // turns into a full reload), so the client check would only switch SSR to
     // superjson without protecting anyone.
-    transformer: unionTransformer,
+    transformer: capture ? capturingTransformer(unionTransformer, capture) : unionTransformer,
   });
   return ssg;
 };
+
+type SsgHelpers = Awaited<ReturnType<typeof getServerProxySSGHelpers>>;
+
+/**
+ * `adsGated` from a resolver's declared rating. `.red` is exempt from the rating check — it serves
+ * direct ads, no GAM auction, no policy center.
+ */
+export function resolveAdsGated(
+  result: { gating?: AdGatingDeclaration; suppressAds?: boolean },
+  features: FeatureAccess
+) {
+  return (
+    !!result.suppressAds ||
+    (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating))
+  );
+}
+
+/**
+ * The `trpcState` a page hands the client.
+ *
+ * Success-only: an errored prefetch would put a TRPCError instance in the dehydrated state, and
+ * the devalue write (TRPC_WRITE_DEVALUE) throws on non-POJOs — turning one failed prefetch into a
+ * page-wide SSR 500. Dropping errored queries lets the client refetch instead.
+ *
+ * Seed the serialize-attribution ctx (kill-switch-independent — this is the once-per-render SSR
+ * path, not the hot tRPC batch path) with the route so a devalue-write fallback during dehydrate
+ * attributes to it (`ssr:dehydrate:<route>`) instead of `unknown`.
+ */
+export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
+  return runWithSerializeCtxAlways({ path: ssrDehydrateSerializePath(url), type: 'ssr' }, () =>
+    ssg.dehydrate({
+      shouldDehydrateQuery: (query) => query.state.status === 'success',
+    })
+  );
+}
 
 export function createServerSideProps<P>({
   resolver,
@@ -71,10 +176,33 @@ export function createServerSideProps<P>({
   useSession = false,
   prefetch = 'once',
   requireModerator = false,
+  shell,
 }: CreateServerSidePropsProps<P>) {
   return async function (
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
+    // A static shell render (`_app` decided it and marked the request): nothing per viewer is read
+    // or returned — no session, no flags, no prefetch. Ads stay gated until the page data's verdict.
+    const shellReq = context.req as {
+      [SHELL_REQ_KEY]?: string;
+      [SHELL_RENDERED_REQ_KEY]?: string;
+    };
+    if (shell && shellReq[SHELL_REQ_KEY] === shell) {
+      shellReq[SHELL_RENDERED_REQ_KEY] = shell;
+      applyShellPrivateHeaders(context.res);
+      return { props: { adsGated: true } as unknown as NonNullable<P> };
+    }
+    // 🔴 The route's canonical path (`~/server/shell/shell-canonical`) is never rendered: whatever
+    // reached it without the shell — refused, no valid original URL, a data request — is sent back
+    // to the URL it came from with `?civ-shell=0`, before this reads a session or prefetches. `_app`
+    // ran its full path first; the bounce headers drop any cookie or edge header it left.
+    if (shell && isCanonicalShellPath(shell, context.resolvedUrl)) {
+      applyShellBounceHeaders(context.res);
+      return {
+        redirect: { destination: shellBounceLocation(shell, context.req), permanent: false },
+      };
+    }
+
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     // `_app` seeds `req.session` from its own request, which carries this request's headers but not
     // its URL. With an Authorization header the seed holds that token's user but not its
@@ -106,11 +234,30 @@ export function createServerSideProps<P>({
       };
     }
 
-    const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
+    // A bot-cache candidate (`_app` marked it) is evaluated as in `_app`: the host (part of the
+    // cache key) but not the request, so its region cannot reach a render the cache may store.
+    // 🔴 Never drop `host` too: with no host the domain restrictions are skipped.
+    const botCacheCandidate = !!(context.req as { [BOT_CACHE_REQ_KEY]?: string })[
+      BOT_CACHE_REQ_KEY
+    ];
+    const features = await getFeatureFlagsAsync(
+      botCacheCandidate
+        ? { user: session?.user, host: context.req.headers.host, req: undefined }
+        : { user: session?.user, req: context.req }
+    );
+    // This response is private, so it is where the viewer's shell rollout is read: the route cookie
+    // follows the flag, and only a request carrying it is ever considered for the shell.
+    if (shell) {
+      const enabled = !!session?.user && !!features[shellRouteByName(shell).flag];
+      syncShellRouteCookie(context.req, context.res, shell, enabled);
+    }
 
+    // Only a full page load renders on the server; a `/_next/data` response is JSON alone.
+    const capture: DehydratedStateCapture | undefined =
+      useSSG && !isClient && skipsTrpcStateReparse(session) ? {} : undefined;
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
-        ? await getServerProxySSGHelpers(context, session, features)
+        ? await getServerProxySSGHelpers(context, session, features, capture)
         : undefined;
 
     const result = ((await resolver?.({
@@ -130,39 +277,32 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
-    // `.red` is exempt from the rating check — it serves direct ads, no GAM auction, no
-    // policy center.
-    const adsGated =
-      !!result.suppressAds ||
-      (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating));
-
-    return {
-      props: {
-        ...(props ?? {}),
-        adsGated,
-        // Success-only: an errored prefetch would put a TRPCError instance in the
-        // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
-        // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
-        // errored queries lets the client refetch instead.
-        //
-        // Seed the serialize-attribution ctx (kill-switch-independent — this is the
-        // once-per-render SSR path, not the hot tRPC batch path) with the page
-        // route so a devalue-write fallback during dehydrate attributes to the
-        // page (`ssr:dehydrate:<route>`) instead of `unknown`.
-        ...(ssg
-          ? {
-              trpcState: runWithSerializeCtxAlways(
-                { path: ssrDehydrateSerializePath(context.resolvedUrl), type: 'ssr' },
-                () =>
-                  ssg.dehydrate({
-                    shouldDehydrateQuery: (query) => query.state.status === 'success',
-                  })
-              ),
-            }
-          : {}),
-        session: jsonSafeSession(session),
-      } as NonNullable<P>,
+    // A fail-soft prefetch renders the page without that data; a cached copy would keep it so.
+    const botCacheReq = context.req as {
+      [BOT_CACHE_REQ_KEY]?: string;
+      [BOT_CACHE_PREFETCH_FAILED_REQ_KEY]?: boolean;
     };
+    if (
+      ssg &&
+      botCacheReq[BOT_CACHE_REQ_KEY] &&
+      ssg.queryClient
+        .getQueryCache()
+        .getAll()
+        .some((query) => query.state.status === 'error')
+    ) {
+      botCacheReq[BOT_CACHE_PREFETCH_FAILED_REQ_KEY] = true;
+    }
+
+    const adsGated = resolveAdsGated(result, features);
+
+    const pageProps = {
+      ...(props ?? {}),
+      adsGated,
+      ...(ssg ? { trpcState: dehydrateSsgState(ssg, context.resolvedUrl) } : {}),
+      session: jsonSafeSession(session),
+    } as NonNullable<P>;
+    attachSsrDehydratedState(pageProps, capture);
+    return { props: pageProps };
   };
 }
 
@@ -190,6 +330,10 @@ type CreateServerSidePropsProps<P> = {
   /** Gate the page to moderators on a browser session or a full-scope personal API key sent in the
    *  Authorization header. Redirects everyone else before the resolver runs. */
   requireModerator?: boolean;
+  /** The page has a static shell (`~/server/shell/shell-mode`): answer a request `_app` marked for
+   *  it with the shell's props and headers, and keep the route's cookie in step with its flag on
+   *  every other response. */
+  shell?: ShellRouteName;
   resolver?: (context: CustomGetServerSidePropsContext) => Promise<
     | (GetServerSidePropsResult<P> & {
         gating?: AdGatingDeclaration;

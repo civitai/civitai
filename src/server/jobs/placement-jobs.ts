@@ -17,6 +17,7 @@ import {
   settleStaleUnfundedContinuations,
   startReadyStorylineContinuations,
 } from '~/server/services/storyline-placement.service';
+import { promoteReadyPendingChapters } from '~/server/services/storyline-publish.service';
 
 const BATCH = 100;
 
@@ -114,12 +115,25 @@ export const startReadyStorylineContinuationsJob = createJob(
       // see `startReadyRemixSubmissionClocksJob`.
       (result) => result.started + result.refunded
     );
+    // The owner's drafts wait for the same readiness, and are written as chapters here.
+    const owner = await drain(
+      'storyline-pending-chapters',
+      jobContext,
+      () => promoteReadyPendingChapters({ limit: BATCH }),
+      (result) => result.promoted + result.dropped
+    );
 
     return {
       considered: sum(runs, (run) => run.considered),
       started: sum(runs, (run) => run.started),
       refunded: sum(runs, (run) => run.refunded),
       hitCap,
+      ownerChapters: {
+        considered: sum(owner.runs, (run) => run.considered),
+        promoted: sum(owner.runs, (run) => run.promoted),
+        dropped: sum(owner.runs, (run) => run.dropped),
+        hitCap: owner.hitCap,
+      },
     };
   },
   { lockExpiration: 10 * 60 }

@@ -1,18 +1,8 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import {
-  Alert,
-  Anchor,
-  Button,
-  Group,
-  Input,
-  Paper,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
-import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
+import { IconLink, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -20,6 +10,7 @@ import * as z from 'zod';
 import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
 import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
 import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -65,6 +56,7 @@ import { trpc } from '~/utils/trpc';
 const schema = upsertArticleInput
   .omit({
     coverImage: true,
+    bannerImage: true,
     userNsfwLevel: true,
     moderatorNsfwLevel: true,
     lockedProperties: true,
@@ -72,6 +64,7 @@ const schema = upsertArticleInput
   .extend({
     categoryId: z.number().min(0, 'Please select a valid category'),
     coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
+    bannerImage: imageSchema.nullish(),
     userNsfwLevel: z.string().optional(),
     moderatorNsfwLevel: z.string().optional(),
     lockedProperties: z.string().array().optional(),
@@ -129,6 +122,7 @@ export function ArticleUpsertForm({ article }: Props) {
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
+      bannerImage: article?.bannerImage ?? null,
       lockedProperties: article?.lockedProperties ?? [],
       isOfficial: article?.isOfficial ?? false,
     } as any,
@@ -138,9 +132,10 @@ export function ArticleUpsertForm({ article }: Props) {
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, coverImage, categoryId, tags, title }) => ({
+    watch: ({ content, coverImage, bannerImage, categoryId, tags, title }) => ({
       content,
       coverImage,
+      bannerImage,
       categoryId,
       tags,
       title,
@@ -150,7 +145,8 @@ export function ArticleUpsertForm({ article }: Props) {
     // treat an image it already has a row for as brand new. Keep the loaded value when the
     // persisted one is the same object minus its id; a genuinely different url still wins.
     shouldRestoreField: ({ name, storedValue, currentValue }) =>
-      name !== 'coverImage' || !persistedValueLostIdentity(storedValue, currentValue),
+      (name !== 'coverImage' && name !== 'bannerImage') ||
+      !persistedValueLostIdentity(storedValue, currentValue),
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
   useEffect(() => {
@@ -186,6 +182,7 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId,
     tags: selectedTags,
     coverImage,
+    bannerImage,
     userNsfwLevel,
     moderatorNsfwLevel,
     lockedProperties,
@@ -226,6 +223,8 @@ export function ArticleUpsertForm({ article }: Props) {
           status: args?.status ? args.status : publishNow ? ArticleStatus.Published : undefined,
           scheduledAt,
           coverImage,
+          // Only flagged editors see the banner field; the server drops it for everyone else too.
+          bannerImage: features.articleTypography ? bannerImage ?? null : undefined,
           lockedProperties: lockedPropertiesRef.current,
           // Same shape as moderatorNsfwLevel above, and for a stronger reason: the server
           // DROPS this field for a non-moderator rather than refusing the save, so a
@@ -380,6 +379,9 @@ export function ArticleUpsertForm({ article }: Props) {
                 'colors',
                 'timestamp',
                 'blurb',
+                'imageSize',
+                'align',
+                'civitaiEmbed',
               ]}
               withAsterisk
               stickyToolbar
@@ -519,6 +521,16 @@ export function ArticleUpsertForm({ article }: Props) {
               description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
               withAsterisk
             />
+            {features.articleTypography && (
+              <InputSimpleImageUpload
+                name="bannerImage"
+                label="Banner Image"
+                description={`Optional. Shown across the full width of the top of your article; the cover image is still used on cards. Use a wide 4:1 image, ${constants.article.bannerImageWidth} x ${constants.article.bannerImageHeight} suggested.`}
+                aspectRatio={
+                  constants.article.bannerImageHeight / constants.article.bannerImageWidth
+                }
+              />
+            )}
             <InputSelect
               name="categoryId"
               label={
@@ -754,6 +766,19 @@ function ActionButtons({
           )}
         </>
       )}
+      {article?.id &&
+        (article.status === ArticleStatus.Draft ||
+          article.status === ArticleStatus.Unpublished) && (
+          <Button
+            variant="default"
+            type="button"
+            fullWidth
+            leftSection={<IconLink size={16} />}
+            onClick={() => openArticleShareDraftModal(article.id)}
+          >
+            Share draft
+          </Button>
+        )}
       {article?.publishedAt ? (
         <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}

@@ -96,15 +96,7 @@ export function chunkPosts<T extends { images: unknown[] }>(
   return chunks;
 }
 
-/** Fisher–Yates with the supplied rng so a test can pin the order. */
-export function shuffle<T>(items: T[], rng: Rng = Math.random): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
+export { shuffle } from '@civitai/shared/post-scheduling';
 
 export type EveryUnit = 'minutes' | 'hours' | 'days';
 export const EVERY_UNIT_MINUTES: Record<EveryUnit, number> = { minutes: 1, hours: 60, days: 1440 };
@@ -465,4 +457,36 @@ export function isEmptyDraft(draft: ComposerDraft): boolean {
     !draft.shared.techniques.length &&
     !draft.shared.tags.length
   );
+}
+
+const UPLOAD_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The draft without the uploads the server says must be uploaded again, and how many those were.
+ * `check` takes at most `perCheck` keys, one call at a time. If any call fails or the checks take
+ * longer than `timeoutMs` the draft is kept whole, since the save decides again anyway.
+ */
+export async function withoutReuploads(
+  draft: ComposerDraft,
+  check: (keys: string[]) => Promise<string[]>,
+  perCheck: number,
+  timeoutMs = 10_000
+): Promise<{ draft: ComposerDraft; dropped: number }> {
+  const keys = draft.media.map((item) => item.url).filter((url) => UPLOAD_KEY.test(url));
+  const reupload = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timed out')), timeoutMs);
+  });
+  try {
+    for (let i = 0; i < keys.length; i += perCheck)
+      for (const key of await Promise.race([check(keys.slice(i, i + perCheck)), timedOut]))
+        reupload.add(key);
+  } catch {
+    return { draft, dropped: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+  const media = draft.media.filter((item) => !reupload.has(item.url));
+  return { draft: { ...draft, media }, dropped: draft.media.length - media.length };
 }

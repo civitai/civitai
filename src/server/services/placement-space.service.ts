@@ -1,5 +1,17 @@
 import type { Prisma } from '@prisma/client';
+import {
+  countPlacements,
+  getChapterPlacementTarget,
+  getImagePlacementTarget,
+  getModelPlacementTarget,
+  listPlacementSpacesFor,
+} from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  countFreeTier,
+  reservedFreeSlotsWhere,
+} from '~/server/services/placement-count-predicates';
 import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
@@ -21,7 +33,6 @@ import {
   isDeclineFeeHostAdjustable,
   resolveHostDeclineFeePercent,
   effectivePlacementPrice,
-  FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
   placementSurfaceLabel,
   resolvePlacementSpace,
@@ -36,39 +47,24 @@ import {
  * would let a placement through against a decision already made.
  */
 async function resolveImageTarget(imageId: number) {
-  const image = await dbWrite.image.findUnique({
-    where: { id: imageId },
-    // The username rides along on the lookup that was already happening. It is
-    // shown to the placer, so the alternative — a second query keyed on the id
-    // this one just returned — would be a round trip for a string this row can
-    // reach in the same hop.
-    select: {
-      id: true,
-      userId: true,
-      postId: true,
-      type: true,
-      user: { select: { username: true } },
-    },
-  });
-  if (!image) throw throwBadRequestError('placement: that image no longer exists');
-
+  // The username rides along on the lookup that was already happening. It is shown to the placer,
+  // so a second query keyed on the id this one returns would be a round trip for a string this row
+  // can reach in the same hop.
+  const row = await getImagePlacementTarget((await loadKyselyDb()).kyselyWrite, imageId);
+  if (!row) throw throwBadRequestError('placement: that image no longer exists');
   return {
-    ownerId: image.userId,
-    postId: image.postId,
-    mediaType: stickerMediaTypeOf(image.type),
-    ownerUsername: image.user?.username ?? null,
+    ownerId: row.userId,
+    postId: row.postId,
+    mediaType: stickerMediaTypeOf(row.type),
+    ownerUsername: row.username ?? null,
   };
 }
 
 /** A model's space is configured on its owner's account only; there is no model or post level. */
 async function resolveModelTarget(modelId: number) {
-  const model = await dbWrite.model.findUnique({
-    where: { id: modelId },
-    select: { userId: true, user: { select: { username: true } } },
-  });
-  if (!model) throw throwBadRequestError('placement: that model no longer exists');
-
-  return { ownerId: model.userId, postId: null, ownerUsername: model.user?.username ?? null };
+  const row = await getModelPlacementTarget((await loadKyselyDb()).kyselyWrite, modelId);
+  if (!row) throw throwBadRequestError('placement: that model no longer exists');
+  return { ownerId: row.userId, postId: null, ownerUsername: row.username ?? null };
 }
 
 /**
@@ -83,22 +79,24 @@ async function resolveModelTarget(modelId: number) {
  * Its space cascades storyline -> the creator's account -> surface default,
  * with no post or image level.
  */
-async function resolveChapterTarget(postId: number) {
-  const chapter = await dbWrite.storylineChapter.findUnique({
-    where: { postId },
-    select: {
-      removedAt: true,
-      storyline: {
-        select: {
-          id: true,
-          userId: true,
-          status: true,
-          tosViolation: true,
-          user: { select: { username: true } },
+async function readChapterTarget(postId: number) {
+  const row = await getChapterPlacementTarget((await loadKyselyDb()).kyselyWrite, postId);
+  return row
+    ? {
+        removedAt: row.removedAt,
+        storyline: {
+          id: row.storylineId,
+          userId: row.storylineUserId,
+          status: row.storylineStatus,
+          tosViolation: row.storylineTosViolation,
+          user: { username: row.username },
         },
-      },
-    },
-  });
+      }
+    : null;
+}
+
+async function resolveChapterTarget(postId: number) {
+  const chapter = await readChapterTarget(postId);
   // A taken-down storyline or a removed chapter is not a target at all:
   // refusing here, where the space is resolved, keeps every read of it (the
   // contributor's price, the submit) from showing it as open.
@@ -145,6 +143,8 @@ export type ResolvedPlacementSpace = {
    * blank.
    */
   ownerUsername: string | null;
+  /** Whether an image target is a still or a video; absent for other targets. */
+  mediaType?: StickerMediaType;
   mode: PlacementSpaceMode;
   /** What the owner asks. `null` when they have never set one. */
   setPrice: number | null;
@@ -211,6 +211,9 @@ export type ResolvedPlacementSpace = {
  *
  * Paid placements are not counted. The two counters are independent, so a
  * fully-booked paid image still shows its free slots as available.
+ *
+ * The predicate is `reservedFreeSlotsWhere`, which the display path's Kysely count
+ * reads too, so the two cannot disagree. Team-waived rows hold no slot.
  */
 export const reservedFreeSlots = (
   /**
@@ -219,21 +222,19 @@ export const reservedFreeSlots = (
    * outside the lock it just took, and the count would be a listing again.
    */
   client: Pick<typeof dbWrite, 'placement'>,
-  {
-    surface,
-    targetType,
-    targetId,
-  }: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
-) =>
-  client.placement.count({
-    where: {
-      surface,
-      targetType,
-      targetId,
-      free: true,
-      status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
-    },
-  });
+  target: SpaceTarget
+) => countFreeTier((where) => client.placement.count({ where }), reservedFreeSlotsWhere(target));
+
+type SpaceTarget = { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number };
+
+/**
+ * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on
+ * `reservedFreeSlots(tx, …)` under its lock.
+ */
+const displayedReservedFreeSlots = async (target: SpaceTarget) => {
+  const db = (await loadKyselyDb()).kyselyRead;
+  return countFreeTier((where) => countPlacements(db, where), reservedFreeSlotsWhere(target));
+};
 
 /**
  * The space that governs one target, with the cascade already applied.
@@ -254,22 +255,21 @@ export async function resolvePlacementSpaceFor({
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
+  const target = { surface, targetType, targetId };
   const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await resolveTarget(
     targetType,
     targetId
   );
 
-  const rows = await dbWrite.placementSpace.findMany({
-    where: {
-      surface,
-      OR: [
-        ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
-        ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
-        ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
-        { entityType: 'user', entityId: ownerId },
-      ],
-    },
-    select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },
+  const levels = [
+    ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
+    ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
+    ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
+    { entityType: 'user', entityId: ownerId },
+  ];
+  const rows = await listPlacementSpacesFor((await loadKyselyDb()).kyselyWrite, {
+    surface,
+    levels,
   });
 
   const at = (entityType: PlacementSpaceEntity): PlacementSpaceSetting | undefined => {
@@ -316,7 +316,7 @@ export async function resolvePlacementSpaceFor({
   // directly above.
   const setFreeSlots = resolved.freeSlots;
   const freeSlots = effectiveFreeSlots(setFreeSlots, freeSlotCap);
-  // `dbRead`, unlike everything above it. The rest of this function decides
+  // The replica, unlike everything above it. The rest of this function decides
   // whether a mutation is allowed and what it charges, which a lagging replica
   // must not answer; `freeSlotsRemaining` is display-only by construction — the
   // claim re-counts under its own lock — and this read is on a public query
@@ -325,12 +325,12 @@ export async function resolvePlacementSpaceFor({
   // Skipped when there is no capacity to reserve against. That is rarer than it
   // looks: the default and the bottom band are both 1, so it fires only for a
   // creator who has explicitly closed their slots.
-  const reserved =
-    freeSlots > 0 ? await reservedFreeSlots(dbRead, { surface, targetType, targetId }) : 0;
+  const reserved = freeSlots > 0 ? await displayedReservedFreeSlots(target) : 0;
 
   return {
     ownerId,
     ...(storylineId ? { storylineId } : {}),
+    ...(mediaType ? { mediaType } : {}),
     ownerUsername,
     // A completed storyline takes no continuations, whatever its space says.
     // Read from the storyline itself rather than trusting Complete to have

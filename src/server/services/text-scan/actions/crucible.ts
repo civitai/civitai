@@ -9,7 +9,12 @@ import {
 // The detected level, not `raised`: after one escalation the declared level is R, so a rescan of
 // the same text never reads as raised.
 const escalate = (entityId: number, level: number) =>
-  applyCrucibleNsfwEscalation({ entityId, isNsfw: level >= NsfwLevel.R, greenCancels: false });
+  applyCrucibleNsfwEscalation({
+    entityId,
+    isNsfw: level >= NsfwLevel.R,
+    level,
+    greenCancels: false,
+  });
 
 export async function applyCrucibleTextScan({ entityId, outcome }: ApplyTextScanArgs) {
   if (!outcome.nsfw) return;

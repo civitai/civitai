@@ -22,6 +22,13 @@ describe('chipHref', () => {
     expect(chipHref(url('?sort=old'), sort, 'old', 'item')).toBe('/models/flags/auto?sort=old');
   });
 
+  it('clears the params a change makes stale, such as a sort tied to the status', () => {
+    const status = { key: 'status', defaultValue: 'Pending', active: 'Pending', resets: ['sort'] };
+    expect(chipHref(url('?sort=newest&page=2&item=9'), status, 'Upheld', 'item')).toBe(
+      '/models/flags/auto?status=Upheld'
+    );
+  });
+
   it('drops the param when the value is the default', () => {
     const sort = { key: 'sort', defaultValue: 'new', active: 'old' };
     expect(chipHref(url('?sort=old&page=2'), sort, 'new', 'item')).toBe('/models/flags/auto');
@@ -37,6 +44,12 @@ describe('carriedSearchParams', () => {
       ['label', 'poi'],
       ['sort', 'new'],
       ['label', 'minor'],
+    ]);
+  });
+
+  it('drops the open item of a queue that names it `selected`', () => {
+    expect(carriedSearchParams(new URLSearchParams('status=Upheld&selected=7&q=cat'))).toEqual([
+      ['status', 'Upheld'],
     ]);
   });
 });

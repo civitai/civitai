@@ -8,7 +8,7 @@
  * activity" was untestable because nothing observable carried the selection.
  *
  * Extracted here (pure, React-free, no Mantine/tRPC) so the resolution rules run in
- * the node-env `unit` project rather than only in the report-only browser tier. Same
+ * the node-env `unit` project rather than only in the browser tier. Same
  * precedent as `resolveAppsPageAccess.ts` / `appsStoreQueryParams.ts`.
  */
 

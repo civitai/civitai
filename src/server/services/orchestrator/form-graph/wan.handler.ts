@@ -1,6 +1,6 @@
 /**
  * Wan handler for the form-graph lane. Converts `generationHub.parse().data`
- * into @civitai/client steps. Video only — WanImage27 routes to
+ * into @civitai/orchestration-client steps. Video only — WanImage27 routes to
  * wan-image.handler.ts in the dispatcher, so `data.ecosystem` here is always
  * a Wan VIDEO backend key (the derived value the family's `backendEcosystem`
  * emits).
@@ -48,7 +48,7 @@ type WanSteps =
 
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5' | 'v2.7' | 'v3.0';
 
-// Supported aspect ratios per version (from @civitai/client types)
+// Supported aspect ratios per version (from @civitai/orchestration-client types)
 const v21AspectRatiosByResolution: Record<
   string,
   { value: string; width: number; height: number }[]
@@ -155,6 +155,8 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
           input: removeEmpty({
             ...baseInput,
             provider: 'civitai' as const,
+            // Unnamed, the orchestrator runs its own default build, which may not be enabled.
+            diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
             width: dims?.width,
             height: dims?.height,
             images: hasImages ? data.images?.map((x) => x.url) : undefined,

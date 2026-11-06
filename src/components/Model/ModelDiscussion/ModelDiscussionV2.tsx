@@ -10,16 +10,14 @@ import type { CommentGetAllItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function ModelDiscussionV2({
-  modelId,
-  modelUserId,
-  limit: initialLimit = 8,
-  onlyHidden,
-}: Props) {
+export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 8 }: Props) {
   const isMobile = useContainerSmallerThan('sm');
+  const features = useFeatureFlags();
+  const singleCall = !!features.commentCountsSingleCall;
   const limit = isMobile ? initialLimit / 2 : initialLimit;
-  const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
+  const filters = { modelId, limit, sort: ReviewSort.Newest };
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, isRefetching } =
     trpc.comment.getAll.useInfiniteQuery(filters, {
@@ -34,19 +32,34 @@ export function ModelDiscussionV2({
   }, [data?.pages]);
   const hasItems = comments.length > 0;
 
-  const { data: hiddenCommentsCount = 0 } = trpc.comment.getVisibleCountByModel.useQuery(
-    {
-      modelId,
-      hidden: true,
-    },
-    { enabled: !onlyHidden }
+  // `commentCountsSingleCall` off: the plain and the hidden view's counts as two calls, as before.
+  const { data: singleHiddenCount = 0 } = trpc.comment.getVisibleCountByModel.useQuery(
+    { modelId, hidden: true },
+    { enabled: !singleCall }
   );
-  const hasHiddenComments = hiddenCommentsCount > 0;
+  const { data: singleVisibleCount } = trpc.comment.getVisibleCountByModel.useQuery(
+    { modelId },
+    { enabled: !singleCall }
+  );
 
-  const { data: loadedTotal } = trpc.comment.getVisibleCountByModel.useQuery({
-    modelId,
-    hidden: onlyHidden,
-  });
+  // On: one call, once the first page is in, and only when there is a list to label (both counts
+  // render inside it). When the first page has no next page it holds every comment the visible
+  // count counts (the whole unpinned list and the pinned block, same viewer filter), so that count
+  // is the loaded total and is not asked for.
+  const firstPage = data?.pages[0];
+  const firstPageHoldsAll = !!firstPage && firstPage.nextCursor === undefined;
+  const { data: counts } = trpc.comment.getVisibleCountsByModel.useQuery(
+    { modelId, includeVisible: !firstPageHoldsAll },
+    { enabled: singleCall && hasItems }
+  );
+
+  const hiddenCommentsCount = singleCall ? counts?.hidden ?? 0 : singleHiddenCount;
+  const hasHiddenComments = hiddenCommentsCount > 0;
+  const loadedTotal = singleCall
+    ? firstPageHoldsAll
+      ? comments.length
+      : counts?.visible ?? undefined
+    : singleVisibleCount;
   const totalCount = Math.max(loadedTotal ?? 0, comments.length);
   // Without the total, the loaded count alone would read as the full count beside Load more.
   const countLabel =
@@ -78,7 +91,7 @@ export function ModelDiscussionV2({
                 </Text>
               )}
             </Stack>
-            {hasHiddenComments && !onlyHidden && (
+            {hasHiddenComments && (
               <RoutedDialogLink
                 name="hiddenComments"
                 state={{ entityId: modelId, entityType: 'model' }}
@@ -122,5 +135,4 @@ type Props = {
   modelId: number;
   modelUserId?: number;
   limit?: number;
-  onlyHidden?: boolean;
 };

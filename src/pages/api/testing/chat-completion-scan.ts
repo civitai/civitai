@@ -102,8 +102,8 @@
  * `systemPrompt` at call time.
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { ChatCompletionStepTemplate } from '@civitai/client';
-import { getWorkflow, submitWorkflow } from '@civitai/client';
+import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
+import { getWorkflow, submitWorkflow } from '@civitai/orchestration-client';
 import pLimit from 'p-limit';
 import * as z from 'zod';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';

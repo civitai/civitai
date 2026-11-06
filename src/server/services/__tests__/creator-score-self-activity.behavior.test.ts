@@ -36,18 +36,18 @@ const react = (imageId: number, userId: number, reaction = 'Like', createdAt = E
     `INSERT INTO "ImageReaction" ("imageId", "userId", reaction, "createdAt") VALUES ($1, $2, $3, $4)`,
     [imageId, userId, reaction, createdAt]
   );
-async function comment(imageId: number, userId: number, createdAt = EARLY) {
-  const thread = await q(`SELECT id FROM "Thread" WHERE "imageId" = $1`, [imageId]);
-  let threadId = (thread.rows[0] as { id: number } | undefined)?.id;
-  if (!threadId) {
-    threadId = nextId++;
-    await q(`INSERT INTO "Thread" (id, "imageId") VALUES ($1, $2)`, [threadId, imageId]);
-  }
-  await q(`INSERT INTO "CommentV2" ("threadId", "userId", "createdAt") VALUES ($1, $2, $3)`, [
-    threadId,
-    userId,
-    createdAt,
-  ]);
+async function comment(
+  imageId: number,
+  userId: number,
+  createdAt = EARLY,
+  extra: { parentId?: number; deletedAt?: string } = {}
+) {
+  const { rows } = await q(
+    `INSERT INTO "CommentV3" ("entityType", "entityId", "userId", "createdAt", "parentId", "deletedAt")
+     VALUES ('image', $1, $2, $3, $4, $5) RETURNING id`,
+    [imageId, userId, createdAt, extra.parentId ?? null, extra.deletedAt ?? null]
+  );
+  return (rows[0] as { id: number }).id;
 }
 
 beforeAll(async () => {
@@ -56,14 +56,14 @@ beforeAll(async () => {
   await q(`CREATE TABLE "ImageReaction" (
     "imageId" int NOT NULL, "userId" int NOT NULL, reaction text NOT NULL, "createdAt" timestamp(3) NOT NULL
   )`);
-  await q(`CREATE TABLE "Thread" (id int PRIMARY KEY, "imageId" int, "commentId" int)`);
-  await q(`CREATE TABLE "CommentV2" (
-    id serial PRIMARY KEY, "threadId" int NOT NULL, "userId" int NOT NULL, "createdAt" timestamp(3) NOT NULL
+  await q(`CREATE TABLE "CommentV3" (
+    id serial PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, "parentId" int,
+    "userId" int NOT NULL, "createdAt" timestamptz NOT NULL, "deletedAt" timestamptz
   )`);
 });
 
 beforeEach(async () => {
-  await q(`TRUNCATE "Image", "ImageReaction", "Thread", "CommentV2"`);
+  await q(`TRUNCATE "Image", "ImageReaction", "CommentV3"`);
 });
 
 describe('countSelfImageEngagement', () => {
@@ -91,16 +91,18 @@ describe('countSelfImageEngagement', () => {
   it("counts the owner's own top-level comments on their images only", async () => {
     const own = await image(OWNER);
     const theirs = await image(FAN);
-    await comment(own, OWNER);
+    const first = await comment(own, OWNER);
     await comment(own, OWNER);
     await comment(own, FAN);
     await comment(theirs, OWNER);
-    // A reply lives in a thread hung off the comment, not the image, and is not image engagement.
-    await q(`INSERT INTO "Thread" (id, "commentId") VALUES (999, 1)`);
-    await q(`INSERT INTO "CommentV2" ("threadId", "userId", "createdAt") VALUES (999, $1, $2)`, [
-      OWNER,
-      EARLY,
-    ]);
+    // A reply is conversation under a comment, not image engagement, and a deleted comment is gone.
+    await comment(own, OWNER, EARLY, { parentId: first });
+    await comment(own, OWNER, EARLY, { deletedAt: EARLY });
+    // Same id on another entity type: not a comment on the image.
+    await q(
+      `INSERT INTO "CommentV3" ("entityType", "entityId", "userId", "createdAt") VALUES ('post', $1, $2, $3)`,
+      [own, OWNER, EARLY]
+    );
     const counts = await countSelfImageEngagement(pg, [OWNER, FAN], CUTOFF);
     expect(counts.get(OWNER)).toEqual({ reactions: 0, comments: 2 });
     expect(counts.has(FAN)).toBe(false);

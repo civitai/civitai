@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as NextRouterModule from 'next/router';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
@@ -64,6 +65,16 @@ const mutation = (proc: string) => ({
   }),
 });
 
+// The continued chapter is a chapter of storyline 3; so are `chapterPostIds`.
+const forPosts = (input: { postIds: number[] }) => ({
+  data: Object.fromEntries(
+    input.postIds
+      .filter((id) => id === 200 || server.chapterPostIds.includes(id))
+      .map((id) => [id, { chapterId: id, depth: 4, storylineId: 3, title: 'The Patch' }])
+  ),
+  isLoading: false,
+});
+
 const utilsLeaf = (path: string) => ({
   invalidate: async (input?: unknown) => {
     spies.invalidate.push({ path, input });
@@ -71,6 +82,11 @@ const utilsLeaf = (path: string) => ({
   setData: (input: unknown, data: unknown) => spies.setData.push({ path, input, data }),
 });
 
+// The queue keeps its received/sent tab in the URL; these render it with no Next router mounted.
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouterModule>()),
+  useRouter: () => ({ query: {}, replace: vi.fn() }),
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy(
@@ -92,17 +108,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'placement.submitStorylineContinuation': mutation('submitStorylineContinuation'),
       'placement.actOnStorylineContinuation': mutation('actOnStorylineContinuation'),
       'storyline.addCollaborator': mutation('addCollaborator'),
-      // The continued chapter is a chapter of storyline 3; so are `chapterPostIds`.
-      'storyline.getForPosts': {
-        useQuery: (input: { postIds: number[] }) => ({
-          data: Object.fromEntries(
-            input.postIds
-              .filter((id) => id === 200 || server.chapterPostIds.includes(id))
-              .map((id) => [id, { chapterId: id, depth: 4, storylineId: 3, title: 'The Patch' }])
-          ),
-          isLoading: false,
-        }),
-      },
+      'storyline.getForPosts': { useQuery: forPosts },
       // The server's sort filters, from post-sort.ts: a "most" sort lists only posts with at least
       // one of what it counts, and no sort means the default (most reactions).
       'post.getInfinite': {
@@ -143,6 +149,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       },
     },
     {
+      useQueries: (build: (t: unknown) => unknown[]) =>
+        build({ storyline: { getForPosts: forPosts } }),
       useUtils: () => ({
         placement: {
           invalidate: spies.broadInvalidate,

@@ -1,4 +1,5 @@
-import { Anchor, Popover, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconEyeOff, IconShare3 } from '@tabler/icons-react';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

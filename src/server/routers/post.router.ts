@@ -37,6 +37,7 @@ import {
   plannerUnscheduleSchema,
   postAddImageInput,
   postCreateSchema,
+  POST_CREATE_RATE_LIMIT_KEY,
   postRateLimits,
   postsQuerySchema,
   postUpdateSchema,
@@ -44,6 +45,7 @@ import {
   removeResourceFromPostImageInput,
   reorderPostImagesSchema,
   scheduleBatchSchema,
+  checkBatchDraftKeysSchema,
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
   validateBatchScheduleSchema,
@@ -58,10 +60,13 @@ import {
   unschedulePlannerPosts,
 } from './../services/post-planner.service';
 import { scheduleBatch, validateBatchSchedule } from './../services/post-batch.service';
+import { clientKeysToReupload } from '~/server/services/image-url-ownership';
 import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { STORYLINE_SUBMIT_RATE_LIMIT } from '~/shared/utils/storyline-placement';
+import type { PostUpdateInput } from '~/server/schema/post.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -131,17 +136,30 @@ export const postRouter = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(createPostHandler),
   createWithImages: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createPostWithImagesSchema)
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(createPostWithImagesHandler),
   update: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postUpdateSchema)
     .use(isOwnerOrModerator)
+    // A publish that submits a drafted continuation counts against the submit quota. Every one
+    // carries `expectedPrice`: without it the price check refuses the submission.
+    .use(
+      rateLimit(
+        {
+          limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+          period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+          errorMessage: STORYLINE_SUBMIT_RATE_LIMIT.errorMessage,
+        },
+        (input: PostUpdateInput) => input.expectedPrice !== undefined,
+        { sharedKey: STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey }
+      )
+    )
     .mutation(updatePostHandler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaDelete })
@@ -261,6 +279,15 @@ export const postRouter = router({
     .input(validateBatchScheduleSchema)
     .use(isFlagProtected('batchPostScheduling'))
     .query(({ ctx, input }) => validateBatchSchedule({ input, user: ctx.user })),
+  /** The keys of a restored batch draft that must be uploaded again; nothing else about them. */
+  checkBatchDraftKeys: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(checkBatchDraftKeysSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .use(rateLimit({ limit: 60, period: CacheTTL.hour }))
+    .mutation(async ({ ctx, input }) => ({
+      reupload: await clientKeysToReupload({ keys: input.keys, userId: ctx.user.id }),
+    })),
   scheduleBatch: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(scheduleBatchSchema)

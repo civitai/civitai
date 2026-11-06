@@ -1,9 +1,13 @@
 import type { Prisma } from '@prisma/client';
+import { isEqual } from 'lodash-es';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type {
+  CosmeticShopItemHistoryChange,
+  CosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import type {
   SubmitCreatorShopPackInput,
   UpdateCreatorShopPackInput,
@@ -23,14 +27,24 @@ import {
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
+import { lockShopItem } from '~/server/services/creator-shop-lock';
 import {
   REJECTED_IS_FINAL,
+  appendItemHistory,
   shopItemDisplayMeta,
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import {
+  assertClientImageUrlsUsable,
+  assertShopArtworkKeysIssued,
+} from '~/server/services/image-url-ownership';
 
 type ResolvedMember = PackMemberPricing & {
   name: string;
@@ -207,6 +221,10 @@ export const submitCreatorShopPack = async ({
   // supplied — the members were each affirmed when they were submitted.
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+  if (imageUrl) {
+    await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
+    await assertShopArtworkKeysIssued({ urls: [imageUrl], userId });
+  }
 
   const members = withOwnership(await resolvePackMembers(memberCosmeticIds), userId);
   assertMembersBundlable(memberCosmeticIds, members);
@@ -309,7 +327,8 @@ export const updateCreatorShopPack = async ({
   isModerator?: boolean;
   stickersEnabled?: boolean;
 }) => {
-  const existing = await dbRead.cosmeticShopItem.findUnique({
+  // Primary, not the replica: the edit is refused below if the row moved since this read.
+  const existing = await dbWrite.cosmeticShopItem.findUnique({
     where: { id },
     select: {
       id: true,
@@ -319,6 +338,10 @@ export const updateCreatorShopPack = async ({
       status: true,
       meta: true,
       unitAmount: true,
+      // Prior values, so the edit can record what it moved from.
+      title: true,
+      description: true,
+      availableQuantity: true,
       members: { select: { cosmeticId: true }, orderBy: { index: 'asc' } },
     },
   });
@@ -338,6 +361,18 @@ export const updateCreatorShopPack = async ({
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
   const packOwnerId = existing.addedById ?? userId;
+  if (imageUrl && imageUrl !== meta.coverUrl) {
+    await assertClientImageUrlsUsable({
+      urls: [imageUrl],
+      userId: packOwnerId,
+      shopRow: { shopItemId: existing.id },
+    });
+    await assertShopArtworkKeysIssued({
+      urls: [imageUrl],
+      userId,
+      alsoIssuedTo: isModerator ? packOwnerId : undefined,
+    });
+  }
   const membershipSupplied = memberCosmeticIds !== undefined;
   const repriced = price !== undefined;
   // Re-snapshot whenever the price moves, not only when the contents do. The
@@ -395,7 +430,67 @@ export const updateCreatorShopPack = async ({
       );
   }
 
+  // Recorded like an item's edits, so moderators see them and a verdict pinned to the version they
+  // reviewed (`shopItemReviewVersion`) is refused once the pack has moved.
+  const changes: CosmeticShopItemHistoryChange[] = [];
+  const recordChange = (
+    field: string,
+    from: string | number | null | undefined,
+    to: string | number | null | undefined
+  ) => {
+    if ((from ?? null) !== (to ?? null)) changes.push({ field, from, to });
+  };
+  if (name !== undefined) recordChange('name', existing.title, name);
+  if (description !== undefined) recordChange('description', existing.description, description);
+  if (price !== undefined) recordChange('price', existing.unitAmount, price);
+  if (availableQuantity !== undefined)
+    recordChange('quantity', existing.availableQuantity, availableQuantity);
+  if (imageUrl !== undefined) recordChange('cover', meta.coverUrl, imageUrl);
+  if (membershipSupplied)
+    recordChange(
+      'members',
+      existing.members.map((m) => m.cosmeticId).join(', '),
+      memberIds.join(', ')
+    );
+  if (acceptsBlueBuzz !== undefined)
+    recordChange(
+      'acceptsBlueBuzz',
+      meta.acceptsBlueBuzz ? 'yes' : 'no',
+      nextAcceptsBlue ? 'yes' : 'no'
+    );
+
   return dbWrite.$transaction(async (tx) => {
+    const current = await lockShopItem(tx, id);
+    if (current.status === CosmeticShopItemStatus.Rejected)
+      throw throwBadRequestError(REJECTED_IS_FINAL);
+    if (current.status === CosmeticShopItemStatus.Archived)
+      throw throwBadRequestError('Archived items cannot be edited');
+    // `changes` were measured against `existing`; recorded against a row that has moved since, an
+    // edit could change what a moderator reviewed without moving its version. A sale's `purchases`
+    // bump is carried, not compared, as on an item edit.
+    const { purchases: _purchases, ...currentMeta } = (current.meta ?? {}) as CosmeticShopItemMeta;
+    const { purchases: _readPurchases, ...readMeta } = meta;
+    if (
+      current.status !== existing.status ||
+      current.unitAmount !== existing.unitAmount ||
+      !isEqual(currentMeta, readMeta)
+    )
+      throw throwConflictError(
+        'This pack changed while you were editing it. Reload and try again.'
+      );
+    const nextMeta: CosmeticShopItemMeta = {
+      ...((current.meta ?? {}) as CosmeticShopItemMeta),
+      // `null` clears, `undefined` leaves alone — without the distinction
+      // the clear button emptied the form and saved nothing.
+      ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
+      ...(membershipSupplied ? { coverTiles: coverTilesFrom(members) } : {}),
+      // Only re-baselined when the contents were actually chosen. A member
+      // Cosmetic being deleted cascades its join row away, so rewriting this
+      // on a price-only edit would quietly ratify the shrunken pack.
+      ...(membershipSupplied ? { packMemberCount: members.length } : {}),
+      acceptsBlueBuzz: nextAcceptsBlue,
+    };
+
     if (reSnapshot) {
       await tx.cosmeticShopItemCosmetic.deleteMany({ where: { shopItemId: id } });
       await tx.cosmeticShopItemCosmetic.createMany({
@@ -420,18 +515,15 @@ export const updateCreatorShopPack = async ({
         // Contents or price changing sends the pack back through review, the
         // same way an item's content edit does.
         ...(reSnapshot ? { status: CosmeticShopItemStatus.PendingReview } : {}),
-        meta: {
-          ...meta,
-          // `null` clears, `undefined` leaves alone — without the distinction
-          // the clear button emptied the form and saved nothing.
-          ...(imageUrl === undefined ? {} : { coverUrl: imageUrl ?? undefined }),
-          ...(membershipSupplied ? { coverTiles: coverTilesFrom(members) } : {}),
-          // Only re-baselined when the contents were actually chosen. A member
-          // Cosmetic being deleted cascades its join row away, so rewriting this
-          // on a price-only edit would quietly ratify the shrunken pack.
-          ...(membershipSupplied ? { packMemberCount: members.length } : {}),
-          acceptsBlueBuzz: nextAcceptsBlue,
-        } as Prisma.InputJsonValue,
+        meta: (changes.length
+          ? appendItemHistory(nextMeta, {
+              at: new Date().toISOString(),
+              userId,
+              kind: 'edited',
+              status: reSnapshot ? CosmeticShopItemStatus.PendingReview : current.status,
+              changes,
+            })
+          : nextMeta) as Prisma.InputJsonValue,
       },
     });
   });

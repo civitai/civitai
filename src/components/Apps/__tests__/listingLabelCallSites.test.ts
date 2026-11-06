@@ -28,17 +28,16 @@ import { describe, expect, it } from 'vitest';
  * test can reach.
  *
  * 🔴 WHY STRUCTURAL, AND WHAT THAT BUYS THAT BEHAVIOURAL COVER CANNOT. The browser
- * `component` project is REPORT-ONLY here — it runs as `preview / component-tests`,
- * off the blocking path — and three of the raw sites live where no component test
- * exists at all:
+ * `component` project runs in CI as `Component tests`, but three of the raw sites live where no
+ * component test exists at all:
  *   - `pages/apps/[appBlockId]/index.tsx` — a Next page with `getServerSideProps` +
  *     `dbRead`, never import-testable; its sibling ledger already names it a known
  *     blind spot.
  *   - `components/Apps/RelatedListings.tsx` — its only test covers the pure
  *     selection helper and never mounts the component.
  *   - `components/Apps/AppListingDetailBody.tsx`'s meta-line badge, whose
- *     assertion lives in the report-only tier.
- * This file blocks. That is the whole point of it.
+ *     assertion lives in the browser tier.
+ * This file covers all of them. That is the whole point of it.
  *
  * 🔴 AND WHAT IT DOES NOT DO. A structural check proves a site does not render the
  * RAW field; it cannot prove the helper was passed the right argument, and it would

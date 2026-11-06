@@ -54,36 +54,6 @@ describe('mergeTextScanOutputs', () => {
     });
   });
 
-  it('unions matched model rules across segments, one entry per rule id', () => {
-    expect(
-      mergeTextScanOutputs(
-        [
-          { modelRules: { matched: [{ ruleId: 1, reason: 'first' }] } },
-          { modelRules: { matched: [] } },
-          {
-            modelRules: {
-              matched: [
-                { ruleId: 1, reason: 'again' },
-                { ruleId: 2, reason: 'second' },
-              ],
-            },
-          },
-        ],
-        ['modelRules']
-      )
-    ).toEqual({
-      output: {
-        modelRules: {
-          matched: [
-            { ruleId: 1, reason: 'first' },
-            { ruleId: 2, reason: 'second' },
-          ],
-        },
-      },
-      flaggedSegments: { modelRules: [0, 2] },
-    });
-  });
-
   it('an overlap seen twice yields one scam reason, never two joined', () => {
     const merged = mergeTextScanOutputs(
       [
@@ -173,18 +143,6 @@ describe('stricterThanStored', () => {
       'poi',
       'scam',
     ]);
-  });
-
-  it('raises modelRules only when it matched and was not already raised', () => {
-    const matched = { modelRules: { matched: [{ ruleId: 1, reason: 'r' }] } };
-    const none = { modelRules: { matched: [] } };
-    const stored = { nsfwLevel: null, triggeredLabels: [] as string[] };
-    expect(stricterThanStored(stored, matched, ['modelRules'])).toEqual(['modelRules']);
-    expect(stricterThanStored(stored, none, ['modelRules'])).toEqual([]);
-    expect(
-      stricterThanStored({ ...stored, triggeredLabels: ['modelRules'] }, matched, ['modelRules'])
-    ).toEqual([]);
-    expect(stricterThanStored({ ...stored, labels: matched }, matched, ['modelRules'])).toEqual([]);
   });
 
   it('raises a detected csam unless it is already stored', () => {

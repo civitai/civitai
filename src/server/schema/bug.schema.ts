@@ -54,6 +54,11 @@ export const getBugReportStatsInput = z.object({
   bugIds: z.number().int().positive().array().min(1).max(200),
 });
 
+// HQ webhook envelope. `data` is only narrowed for `task.closed`, so an event type we ignore can
+// never be refused (a 4xx would make the sender retry it and count it against the endpoint).
+export const hqWebhookSchema = z.object({ type: z.string(), data: z.unknown() });
+export const hqTaskClosedSchema = z.object({ task_id: z.string().min(1), status: z.string() });
+
 // ClickUp fires this at us on every task event we subscribe to. `after` is
 // deliberately `unknown`: it carries an array for tag/watcher edits and a number
 // for priority, and a union that rejected those would fail the WHOLE delivery —

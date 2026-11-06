@@ -199,8 +199,16 @@ describe('generateEverySchedule', () => {
   });
 
   it('refuses an interval the jitter could collapse below the gap', () => {
-    const result = generateEverySchedule({ start, everyMinutes: 35, count: 3, rng: seededRng(1) });
-    expect(result).toEqual({ ok: false, issue: expect.stringMatching(/at least 40 minutes/) });
+    const result = generateEverySchedule({
+      start,
+      everyMinutes: POST_BATCH_MIN_EVERY_MINUTES - 1,
+      count: 3,
+      rng: seededRng(1),
+    });
+    expect(result).toEqual({
+      ok: false,
+      issue: expect.stringMatching(`at least ${POST_BATCH_MIN_EVERY_MINUTES} minutes`),
+    });
   });
 
   it('refuses an empty batch', () => {
@@ -302,20 +310,21 @@ describe('validateBatchSchedule', () => {
   });
 
   it('enforces the gap between incoming posts, reporting the later one', () => {
+    const first = at('2026-10-07T15:07:00Z');
     const result = validateBatchSchedule({
       ...base,
-      publishedAts: [at('2026-10-07T15:07:00Z'), at('2026-10-07T15:36:00Z')],
+      publishedAts: [first, inMinutes(POST_BATCH_MIN_GAP_MINUTES - 1, first)],
     });
     expect(result.issues).toEqual([
       expect.objectContaining({
         code: 'gap',
         index: 1,
-        message: expect.stringMatching(/29 minutes/),
+        message: expect.stringMatching(`${POST_BATCH_MIN_GAP_MINUTES - 1} minutes`),
       }),
     ]);
     const okResult = validateBatchSchedule({
       ...base,
-      publishedAts: [at('2026-10-07T15:07:00Z'), at('2026-10-07T15:37:00Z')],
+      publishedAts: [first, inMinutes(POST_BATCH_MIN_GAP_MINUTES, first)],
     });
     expect(okResult.ok).toBe(true);
   });
@@ -325,7 +334,7 @@ describe('validateBatchSchedule', () => {
     const tooClose = validateBatchSchedule({
       ...base,
       existingPublishedAts: [existing],
-      publishedAts: [inMinutes(29, existing)],
+      publishedAts: [inMinutes(POST_BATCH_MIN_GAP_MINUTES - 1, existing)],
     });
     expect(tooClose.issues).toEqual([
       expect.objectContaining({
@@ -337,7 +346,7 @@ describe('validateBatchSchedule', () => {
     const farEnough = validateBatchSchedule({
       ...base,
       existingPublishedAts: [existing],
-      publishedAts: [inMinutes(30, existing)],
+      publishedAts: [inMinutes(POST_BATCH_MIN_GAP_MINUTES, existing)],
     });
     expect(farEnough.ok).toBe(true);
   });

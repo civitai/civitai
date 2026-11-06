@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HarnessClient from '$lib/server/text-scan-lab/harness-client';
 import type * as UsersService from '$lib/server/users.service';
+import type { Reader } from '$lib/server/chat-read-audit';
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
@@ -17,13 +18,19 @@ vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
   ...harness,
 }));
 
+const reads = vi.hoisted(() => ({
+  recordChatMessageReads: vi.fn(async (_reader: number, _ids: number[]) => {}),
+}));
+vi.mock('$lib/server/chat-read-audit', () => reads);
+
 const { runTry } = await import('../try');
 const { LabHarnessError } = await import('$lib/server/text-scan-lab/harness-client');
 
-const tryWith = (fields: Record<string, string>, opts?: { only?: 'ModelRules' }) => {
+const READER = 77 as Reader;
+const tryWith = (fields: Record<string, string>) => {
   const data = new FormData();
   for (const [k, v] of Object.entries(fields)) data.append(k, v);
-  return runTry(data, opts) as Promise<Record<string, unknown>>;
+  return runTry(READER, data) as Promise<Record<string, unknown>>;
 };
 
 const ok = (key: string, scam: boolean) => ({
@@ -34,11 +41,7 @@ const ok = (key: string, scam: boolean) => ({
   output: { scam: { detected: scam, reason: '' } },
   elapsedMs: 5,
 });
-const run = (results: unknown[], system: string | null = 'SYS', rules: unknown = null) => ({
-  results,
-  system,
-  rules,
-});
+const run = (results: unknown[], system: string | null = 'SYS') => ({ results, system });
 const echoScan = (_type: string, texts: { key: string }[]) =>
   Promise.resolve(run(texts.map((t) => ok(t.key, false))));
 const composeAll = () =>
@@ -57,13 +60,6 @@ const nothingCalled = () => {
   expect(harness.scanTexts).not.toHaveBeenCalled();
   expect(harness.composeEntities).not.toHaveBeenCalled();
 };
-const rule = (id: number, subject = 'Example') => ({
-  id,
-  subject,
-  description: '',
-  aliases: [],
-  enabled: true,
-});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -96,21 +92,12 @@ describe('runTry — refusals before any scan', () => {
     nothingCalled();
   });
 
-  it('refuses rule drafts that share an id, and id 0', async () => {
-    for (const rules of [[rule(-1), rule(-1, 'Other')], [rule(0)]])
-      expect(await tryWith({ input: 'x', rules: JSON.stringify(rules) })).toMatchObject({
-        status: 400,
-      });
-    nothingCalled();
-  });
-
-  it('refuses a profile link on the Model rules page', async () => {
-    const res = await tryWith(
-      { input: 'https://civitai.com/user/someone' },
-      { only: 'ModelRules' }
-    );
-    expect(res).toMatchObject({ status: 400 });
-    nothingCalled();
+  it('ignores a rules field: rule edits belong to the Model rules page', async () => {
+    harness.scanTexts.mockImplementation(echoScan);
+    const res = await tryWith({ input: 'buy now', rules: '[{"id":-1}]' });
+    expect(res).toMatchObject({ tried: true, edited: null });
+    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
+    expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
   });
 });
 
@@ -177,7 +164,7 @@ describe('runTry — what gets scanned', () => {
       entityType: 'Comment',
       labels: ['scam'],
       items: [{ key: 'text', current: { ok: true }, edited: null }],
-      current: { system: 'SYS', rules: null },
+      current: { system: 'SYS' },
       edited: null,
     });
   });
@@ -199,14 +186,6 @@ describe('runTry — what gets scanned', () => {
     expect(harness.composeEntities).toHaveBeenCalledWith('Post', [9]);
   });
 
-  it('judges a model link by its rules scan on the Model rules page', async () => {
-    composeAll();
-    harness.scanTexts.mockImplementation(echoScan);
-    await tryWith({ input: 'https://civitai.com/models/7' }, { only: 'ModelRules' });
-    expect(harness.composeEntities).toHaveBeenCalledWith('ModelRules', [7]);
-    expect(harness.scanTexts.mock.calls[0][0]).toBe('ModelRules');
-  });
-
   it('resolves a profile link to its account', async () => {
     users.userIdByUsername.mockResolvedValue(42);
     composeAll();
@@ -220,6 +199,18 @@ describe('runTry — what gets scanned', () => {
     const res = await tryWith({ input: 'https://example.com/x' });
     expect(harness.scanTexts).toHaveBeenCalledWith('CommentV2', expect.any(Array));
     expect((res as { notice: string }).notice).toBeTruthy();
+  });
+
+  it('records looking chat messages up as a read of them, and nothing else as one', async () => {
+    composeAll();
+    harness.scanTexts.mockImplementation(echoScan);
+    reads.recordChatMessageReads.mockClear();
+    await tryWith({ input: '7, 8', lookupAs: 'ChatMessage' });
+    expect(reads.recordChatMessageReads).toHaveBeenCalledWith(READER, [7, 8]);
+
+    reads.recordChatMessageReads.mockClear();
+    await tryWith({ input: '7, 8', lookupAs: 'Article' });
+    expect(reads.recordChatMessageReads).not.toHaveBeenCalled();
   });
 
   it('looks bare ids up as the chosen type', async () => {
@@ -270,48 +261,29 @@ describe('runTry — what gets scanned', () => {
 });
 
 describe('runTry — with drafts', () => {
-  it('ignores rule drafts unless the judged type is ModelRules', async () => {
-    composeAll();
-    harness.scanTexts.mockImplementation(echoScan);
-    const res = await tryWith({
-      input: '7',
-      lookupAs: 'Article',
-      rules: JSON.stringify([rule(-1)]),
-    });
-    expect(res).toMatchObject({ entityType: 'Article', edited: null });
-    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
-    expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
-  });
-
-  it('sends both kinds of draft to the edited run only', async () => {
+  it('sends the prompt drafts to the edited run only', async () => {
     composeAll();
     harness.scanTexts.mockImplementation(
       (_type: string, texts: { key: string }[], overrides?: unknown) =>
         Promise.resolve(
           run(
             texts.map((t) => ok(t.key, overrides !== undefined)),
-            overrides ? 'EDITED SYS' : 'SYS',
-            overrides ? [{ id: -1, subject: 'New' }] : null
+            overrides ? 'EDITED SYS' : 'SYS'
           )
         )
     );
-    const res = await tryWith(
-      {
-        input: 'https://civitai.com/models/7',
-        prompts: JSON.stringify({ 'label:modelRules': 'POLICY' }),
-        rules: JSON.stringify([rule(-1, 'New')]),
-      },
-      { only: 'ModelRules' }
-    );
+    const res = await tryWith({
+      input: 'https://civitai.com/models/7',
+      prompts: JSON.stringify({ 'label:nsfw': 'RATING DEF' }),
+    });
     expect(harness.scanTexts).toHaveBeenCalledTimes(2);
     expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
     expect(harness.scanTexts.mock.calls[1][2]).toEqual({
-      prompts: { 'label:modelRules': 'POLICY' },
-      rules: [rule(-1, 'New')],
+      prompts: { 'label:nsfw': 'RATING DEF' },
     });
     expect(res).toMatchObject({
-      current: { system: 'SYS', rules: null },
-      edited: { system: 'EDITED SYS', rules: [{ id: -1, subject: 'New' }] },
+      current: { system: 'SYS' },
+      edited: { system: 'EDITED SYS' },
       items: [{ current: { ok: true }, edited: { ok: true } }],
     });
   });
@@ -326,7 +298,7 @@ describe('runTry — with drafts', () => {
     const res = await tryWith({ input: 'buy now', prompts: JSON.stringify({ base: 'BASE' }) });
     expect(res).toMatchObject({
       items: [{ current: { ok: true }, edited: { ok: false, error: 'override too long' } }],
-      edited: { system: null, rules: null },
+      edited: { system: null },
     });
   });
 });

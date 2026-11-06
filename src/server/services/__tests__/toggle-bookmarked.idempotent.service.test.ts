@@ -22,8 +22,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // aliased dbRead and dbWrite to one object, which could not have told the two apart.
 const mockDb = dbMock.dbWrite;
 
-const { queueUpdate } = vi.hoisted(() => ({
+const { queueUpdate, modelCollectionQueue } = vi.hoisted(() => ({
   queueUpdate: vi.fn(() => undefined),
+  modelCollectionQueue: vi.fn(() => undefined),
 }));
 
 // `toggleBookmarked` calls metricsEngine.queueUpdate on the delete path. Stub the metrics module
@@ -32,6 +33,7 @@ vi.mock('~/server/metrics', () => ({
   articleMetrics: { queueUpdate },
   imageMetrics: { queueUpdate },
   modelMetrics: { queueUpdate },
+  modelCollectionMetrics: { queueUpdate: modelCollectionQueue },
   postMetrics: { queueUpdate },
   userMetrics: { queueUpdate },
 }));
@@ -81,7 +83,9 @@ describe('toggleBookmarked — race #3: delete path is idempotent (deleteMany, n
     expect(mockDb.collectionItem.deleteMany).toHaveBeenCalledTimes(1);
     expect(mockDb.collectionItem.deleteMany).toHaveBeenCalledWith({ where: { id: 555 } });
     expect(mockDb.collectionItem.delete).not.toHaveBeenCalled();
-    expect(queueUpdate).toHaveBeenCalledWith(10);
+    // Model collectedCount is the model-collection job's; modelMetrics' queue never reached it.
+    expect(modelCollectionQueue).toHaveBeenCalledWith(10);
+    expect(queueUpdate).not.toHaveBeenCalled();
   });
 
   it('does NOT throw when the row is already gone (concurrent un-bookmark, count: 0)', async () => {
@@ -90,7 +94,7 @@ describe('toggleBookmarked — race #3: delete path is idempotent (deleteMany, n
 
     await expect(toggleBookmarked(args)).resolves.toBe(false);
     // metrics side-effect still runs on the idempotent delete path
-    expect(queueUpdate).toHaveBeenCalledWith(10);
+    expect(modelCollectionQueue).toHaveBeenCalledWith(10);
   });
 });
 
@@ -101,10 +105,26 @@ describe('toggleBookmarked — race #2: create path uses createMany({ skipDuplic
     expect(result).toBe(true); // did not exist → now added
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledTimes(1);
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
-      data: [{ collectionId: 999, modelId: 10 }],
+      data: [{ collectionId: 999, modelId: 10, addedById: 42 }],
       skipDuplicates: true,
     });
     expect(mockDb.collectionItem.create).not.toHaveBeenCalled();
+  });
+});
+
+// The event-engine CDC handler attributes collectedCount to `addedById` and drops events with no
+// user, so a bookmark row without it never moves the Article/Model bookmark count.
+describe('toggleBookmarked — bookmark rows carry addedById so they count', () => {
+  it.each([
+    [CollectionType.Article, 'articleId'],
+    [CollectionType.Model, 'modelId'],
+  ])('%s bookmark is written with addedById = the bookmarking user', async (type, entityProp) => {
+    await toggleBookmarked({ ...args, type });
+
+    expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
+      data: [{ collectionId: 999, [entityProp]: 10, addedById: 42 }],
+      skipDuplicates: true,
+    });
   });
 });
 
@@ -122,7 +142,7 @@ describe('toggleBookmarked — race #1: collection.create P2002 is caught and re
     expect(result).toBe(true);
     // item op proceeds against the RE-FETCHED collection id (777), not undefined → no NPE
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
-      data: [{ collectionId: 777, modelId: 10 }],
+      data: [{ collectionId: 777, modelId: 10, addedById: 42 }],
       skipDuplicates: true,
     });
   });
@@ -136,7 +156,7 @@ describe('toggleBookmarked — race #1: collection.create P2002 is caught and re
     expect(result).toBe(true);
     expect(mockDb.collection.create).toHaveBeenCalledTimes(1);
     expect(mockDb.collectionItem.createMany).toHaveBeenCalledWith({
-      data: [{ collectionId: 888, modelId: 10 }],
+      data: [{ collectionId: 888, modelId: 10, addedById: 42 }],
       skipDuplicates: true,
     });
   });

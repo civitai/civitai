@@ -292,7 +292,7 @@ function GlobalChatSettings({
           </Stack>
         </Radio.Group>
         <Text component="div" className={classes.previewStrip}>
-          {dmPolicyPreview[settings.dmPolicy ?? 'everyone']} Changing this does not move
+          {dmPolicyPreview[settings.dmPolicy ?? 'following']} Changing this does not move
           conversations you already have.
         </Text>
       </SettingsGroup>

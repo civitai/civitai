@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
+import type { Workspace } from '$lib/text-scan-tests/types';
 import {
   TestSetError,
   archiveSet,
@@ -45,8 +46,8 @@ const input = (setId: number, over: Partial<CaseInput> = {}): CaseInput => ({
   ...over,
 });
 
-const newSet = (name = 'synthetic set', workspace: 'prompts' | 'modelRules' = 'prompts') =>
-  createSet(db, { name, description: null, workspace }, MOD);
+const newSet = (name = 'synthetic set', workspace = 'prompts') =>
+  createSet(db, { name, description: null, workspace: workspace as Workspace }, MOD);
 
 describe('the schema', () => {
   it('is re-runnable', async () => {
@@ -71,7 +72,7 @@ describe('sets', () => {
     await expect(newSet()).rejects.toMatchObject({ status: 409 });
   });
 
-  it('lists only open sets of the workspace, with their case counts', async () => {
+  it('lists only open sets of the workspace, with their case counts, and hides a retired Model rules set', async () => {
     const a = await newSet('a');
     await newSet('b', 'modelRules');
     const c = await newSet('c');
@@ -224,23 +225,7 @@ describe('re-adding a case', () => {
   });
 });
 
-describe('upsertCase workspace and uniqueness', () => {
-  it('takes only ModelRules cases into a Model rules set, and none into a Prompts set', async () => {
-    const prompts = await newSet('p');
-    const rules = await newSet('r', 'modelRules');
-    const ruleCase = {
-      entityType: 'ModelRules' as const,
-      expected: { modelRules: { ruleIds: [] } },
-    };
-    await expect(upsertCase(db, input(rules.id), MOD)).rejects.toMatchObject({ status: 400 });
-    await expect(upsertCase(db, input(prompts.id, ruleCase), MOD)).rejects.toMatchObject({
-      status: 400,
-    });
-    await expect(upsertCase(db, input(rules.id, ruleCase), MOD)).resolves.toMatchObject({
-      created: true,
-    });
-  });
-
+describe('upsertCase uniqueness', () => {
   it('keeps one row per free text even when two captures race', async () => {
     const set = await newSet();
     const free = { entityId: null, authorId: null };

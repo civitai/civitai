@@ -25,12 +25,14 @@
 
   let {
     rules,
+    dismissals,
     drafts,
     query,
     canEdit,
     url,
   }: {
     rules: ModelRuleView[];
+    dismissals: Record<number, number>;
     drafts: RuleDraftsState;
     query: PageData['query'];
     canEdit: boolean;
@@ -137,6 +139,7 @@
         {#each newIds as id (id)}
           <RuleRow
             rule={null}
+            dismissed={0}
             draftId={id}
             {drafts}
             {canEdit}
@@ -149,6 +152,7 @@
         {#each shown as rule (rule.id)}
           <RuleRow
             {rule}
+            dismissed={dismissals[rule.id] ?? 0}
             draftId={rule.id}
             {drafts}
             {canEdit}

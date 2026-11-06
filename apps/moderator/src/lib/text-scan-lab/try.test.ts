@@ -36,13 +36,11 @@ describe('judgeCandidates', () => {
       'User',
       'UserProfile',
     ]);
-    expect(judgeCandidates(null, ['label:modelRules'])).toEqual(['ModelRules']);
   });
 
-  it('lets a model be judged by its rules scan when the rules prompt is edited', () => {
-    expect(judgeCandidates('Model', ['label:modelRules'])).toEqual(['ModelRules']);
+  it('judges a link as its own type', () => {
     expect(judgeCandidates('Model', ['label:nsfw'])).toEqual(['Model']);
-    expect(judgeCandidates('Model', [])).toEqual(['Model', 'ModelRules']);
+    expect(judgeCandidates('Model', [])).toEqual(['Model']);
   });
 
   it('keeps a link type that uses none of the edited labels rather than offering nothing', () => {
@@ -51,11 +49,10 @@ describe('judgeCandidates', () => {
 });
 
 describe('editedPromptKeys', () => {
-  it('counts rule edits as an edit of the Model rules prompt', () => {
-    const rule = { id: -1, subject: 'X', description: '', aliases: [], enabled: true };
-    expect(editedPromptKeys({ base: 'B' }, [])).toEqual(['base']);
-    expect(editedPromptKeys({}, [rule])).toEqual(['label:modelRules']);
-    expect(editedPromptKeys({ 'label:modelRules': 'P' }, [rule])).toEqual(['label:modelRules']);
+  it('lists the prompt keys the drafts touch, in key order', () => {
+    expect(editedPromptKeys({ base: 'B' })).toEqual(['base']);
+    expect(editedPromptKeys({ 'label:scam': 'S', base: 'B' })).toEqual(['base', 'label:scam']);
+    expect(editedPromptKeys({})).toEqual([]);
   });
 });
 

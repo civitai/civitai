@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { cachedFactory, defineGraph, rootScope, type Scope } from 'form-graph';
+import { cachedFactory, defFamily, defineGraph, rootScope, type Scope } from 'form-graph';
 import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
-import { resolveCompatibleEcosystem } from './ecosystem-gates';
+import { ecosystemRefusal, resolveCompatibleEcosystem } from './ecosystem-gates';
 
 import type { GenerationCtx } from '~/shared/generation/context';
 import {
@@ -111,6 +111,19 @@ export function makeTextBlock(
     hasNegative(ext) && negativePromptRegistersTarget
       ? (['prompt', 'negativePrompt'] as const)
       : (['prompt'] as const);
+  // One input schema per editor set, so the store sees a stable identity across passes.
+  const snippetsInputFor = defFamily((withNegative: boolean) =>
+    snippetsSchema
+      .optional()
+      .transform((v) =>
+        v
+          ? withTargets(
+              v,
+              withNegative ? (['prompt', 'negativePrompt'] as const) : (['prompt'] as const)
+            )
+          : v
+      )
+  );
 
   return (
     // The text block is stored globally — detach from whatever family
@@ -126,9 +139,7 @@ export function makeTextBlock(
           ? {
               ...SNIPPETS,
               default: withTargets(SNIPPETS.default as SnippetsValue, editorsFor(_ext)),
-              input: snippetsSchema
-                .optional()
-                .transform((v) => (v ? withTargets(v, editorsFor(_ext)) : v)),
+              input: snippetsInputFor(editorsFor(_ext).length === 2),
               coerce: (raw: unknown) => withTargets(raw as SnippetsValue, editorsFor(_ext)),
             }
           : null
@@ -273,7 +284,7 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
   usableEcosystems: readonly string[]
 ) {
   const hiddenSet = new Set(hiddenEcosystems);
-  const disabledSet = new Set(disabledKeys);
+  const isRefused = ecosystemRefusal(hiddenEcosystems, disabledKeys);
   return {
     input: z
       .string()
@@ -288,8 +299,8 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
         return v;
       }),
     output:
-      hiddenSet.size || disabledSet.size
-        ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
+      hiddenSet.size || disabledKeys.length
+        ? z.string().refine((v) => !isRefused(v), {
             message: 'Ecosystem is currently unavailable',
           })
         : z.string(),

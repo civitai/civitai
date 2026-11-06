@@ -115,19 +115,18 @@
     {/if}
   </form>
   <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
-    <span>{num(data.allowance.used)} / {num(data.allowance.cap)} tokens today</span>
+    <span>{usd(data.allowance.spentUsd)} of {usd(data.allowance.capUsd)} today</span>
     {#if data.spend.byModel.length}
       <!-- A popover, not a title: the per-model split must reach a phone and a keyboard too. -->
       <Popover.Root>
         <Popover.Trigger class="underline decoration-dotted underline-offset-2">
-          ≈ {usd(data.spend.usd)}{data.spend.unpricedTokens ? '+' : ''} today ({data.spend.current
-            ? 'est.'
-            : 'est., prices not current'})
+          By model
         </Popover.Trigger>
         <Popover.Content align="end" class="w-64 text-xs">
           <p class="mt-0 mb-2 text-dark-2">
             Estimated at OpenRouter's list prices. The router picks the provider per call, so the real
-            cost can differ.
+            cost can differ. Your daily allowance counts each answer at the higher of today's price and
+            the price this release shipped with.
           </p>
           {#if !data.spend.current}
             <p class="mt-0 mb-2 text-amber-300">

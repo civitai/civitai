@@ -53,7 +53,9 @@ export async function getTakedownHashCandidates(
     FROM "Model" m
     JOIN "ModelVersion" mv ON mv."modelId" = m.id
     JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id
-    WHERE (m.status = 'UnpublishedViolation' OR m."deletedAt" IS NOT NULL)
+    -- A model a content wipe kept is in the violation status without having been taken down.
+    WHERE ((m.status = 'UnpublishedViolation' AND m.meta ->> 'removedWithOwner' IS DISTINCT FROM 'true')
+           OR m."deletedAt" IS NOT NULL)
       AND mf."rawScanResult" -> 'hashes' ->> 'SHA256' IS NOT NULL
       ${before ? sql`AND mv.id < ${before}` : sql``}
     ORDER BY mv.id DESC

@@ -1,4 +1,10 @@
-import { parseAliases } from '$lib/model-rules';
+import { isModelRuleCategory, type ModelRuleReference } from '@civitai/moderation/model-rules';
+import {
+  cleanReferenceRows,
+  newReferenceRow,
+  parseAliases,
+  type ReferenceRow,
+} from '$lib/model-rules';
 import type { LabRuleOverride } from './types';
 
 /** Rule edits live only in this browser, one entry per moderator, keyed by rule id (negative: new). */
@@ -6,7 +12,15 @@ export const ruleDraftsStorageKey = (moderatorId: number) =>
   `text-scan-lab:rule-drafts:${moderatorId}`;
 
 /** A rule as the form edits it: aliases one per line, as typed. */
-export type RuleFields = { subject: string; description: string; aliases: string; note: string };
+export type RuleFields = {
+  subject: string;
+  description: string;
+  aliases: string;
+  /** Empty for none. */
+  category: string;
+  references: ReferenceRow[];
+  note: string;
+};
 /** `baseUpdatedAt`: the saved rule's `updatedAt` when the edit started; null for a new rule. */
 export type RuleDraft = RuleFields & { baseUpdatedAt: string | null };
 export type SavedRule = {
@@ -15,37 +29,70 @@ export type SavedRule = {
   subject: string;
   description: string;
   aliases: string[];
+  category?: string;
+  references?: ModelRuleReference[];
   note: string;
   enabled: boolean;
   updatedAt: Date | string;
 };
-export type SaveAllEntry = RuleFields & { draftId: number; id?: number; baseUpdatedAt?: string };
+export type SaveAllEntry = Omit<RuleFields, 'references'> & {
+  references: ModelRuleReference[];
+  draftId: number;
+  id?: number;
+  baseUpdatedAt?: string;
+};
 
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 type Drafts = Record<string, RuleDraft>;
 export type RuleDraftsFields = { drafts: Drafts };
 
-const FIELD_KEYS = ['subject', 'description', 'aliases', 'note'] as const;
-export const EMPTY: RuleFields = { subject: '', description: '', aliases: '', note: '' };
+const TEXT_KEYS = ['subject', 'description', 'aliases', 'note'] as const;
+export const EMPTY: RuleFields = {
+  subject: '',
+  description: '',
+  aliases: '',
+  category: '',
+  references: [],
+  note: '',
+};
 
 export const fieldsOf = (rule: SavedRule): RuleFields => ({
   subject: rule.subject,
   description: rule.description,
   aliases: rule.aliases.join('\n'),
+  category: rule.category ?? '',
+  references: (rule.references ?? []).map((r) => newReferenceRow(r.url, r.label ?? '')),
   note: rule.note,
 });
-const sameFields = (a: RuleFields, b: RuleFields) => FIELD_KEYS.every((k) => a[k] === b[k]);
-const isEmpty = (f: RuleFields) => FIELD_KEYS.every((k) => !f[k].trim());
+const sameReferences = (a: ReferenceRow[], b: ReferenceRow[]) =>
+  a.length === b.length && a.every((r, i) => r.url === b[i].url && r.label === b[i].label);
+const sameFields = (a: RuleFields, b: RuleFields) =>
+  TEXT_KEYS.every((k) => a[k] === b[k]) &&
+  a.category === b.category &&
+  sameReferences(a.references, b.references);
+const isEmpty = (f: RuleFields) =>
+  TEXT_KEYS.every((k) => !f[k].trim()) && !f.category && !f.references.some((r) => r.url.trim());
 const isoOf = (value: Date | string) => new Date(value).toISOString();
 
 const isDraft = (v: unknown): v is RuleDraft => {
   if (typeof v !== 'object' || v === null) return false;
   const d = v as Record<string, unknown>;
   return (
-    FIELD_KEYS.every((k) => typeof d[k] === 'string') &&
+    TEXT_KEYS.every((k) => typeof d[k] === 'string') &&
     (d.baseUpdatedAt === null || typeof d.baseUpdatedAt === 'string')
   );
 };
+
+// Drafts stored before category and references existed have neither.
+const knownCategory = (value: unknown) => (isModelRuleCategory(value) ? value : '');
+const storedReferences = (value: unknown): ReferenceRow[] =>
+  Array.isArray(value)
+    ? value.flatMap((r) =>
+        r && typeof r.url === 'string'
+          ? [newReferenceRow(r.url, typeof r.label === 'string' ? r.label : '')]
+          : []
+      )
+    : [];
 
 /** Null when storage cannot be read at all, as opposed to holding nothing. */
 function readStored(store: Store | null, key: string): Drafts | null {
@@ -71,6 +118,8 @@ function readStored(store: Store | null, key: string): Drafts | null {
         subject: v.subject,
         description: v.description,
         aliases: v.aliases,
+        category: knownCategory(v.category),
+        references: storedReferences(v.references),
         note: v.note,
         baseUpdatedAt: v.baseUpdatedAt,
       };
@@ -196,6 +245,7 @@ export class RuleDraftsState {
           draftId: id,
           ...(id > 0 ? { id } : {}),
           ...fields,
+          references: cleanReferenceRows(fields.references),
           ...(baseUpdatedAt ? { baseUpdatedAt } : {}),
         },
       ];

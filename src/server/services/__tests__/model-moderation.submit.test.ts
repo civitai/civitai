@@ -11,7 +11,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof SubmitModule>()),
-  scanModelRules: vi.fn(),
+  checkModelRulesInBackground: vi.fn(),
 }));
 // Hand-listed, as in challenge-moderation-adapter.test.ts: the text-scan notify path imports it.
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
@@ -29,7 +29,7 @@ const { submitModelTextModeration, MODEL_MODERATION_SCAN_LABELS } = await import
 );
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { isFlipt } = await import('~/server/flipt/client');
-const { scanModelRules } = await import('~/server/services/text-scan/submit');
+const { checkModelRulesInBackground } = await import('~/server/services/text-scan/submit');
 
 describe('submitModelTextModeration', () => {
   beforeEach(() => {
@@ -123,7 +123,7 @@ describe('submitModelTextModeration', () => {
     expect(submitTextModeration).not.toHaveBeenCalled();
   });
 
-  describe('the ModelRules scan', () => {
+  describe('the Model rules check', () => {
     beforeEach(() => {
       vi.mocked(isFlipt).mockResolvedValue(false);
     });
@@ -132,22 +132,22 @@ describe('submitModelTextModeration', () => {
       ['unset', undefined, 1],
       ['true', true, 1],
       ['false', false, 0],
-    ])('rules %s queues %i scan(s)', async (_label, rules, times) => {
+    ])('rules %s queues %i check(s)', async (_label, rules, times) => {
       await submitModelTextModeration({ id: 7, name: 'My LoRA', rules });
-      expect(scanModelRules).toHaveBeenCalledTimes(times);
-      if (times) expect(scanModelRules).toHaveBeenCalledWith(7);
+      expect(checkModelRulesInBackground).toHaveBeenCalledTimes(times);
+      if (times) expect(checkModelRulesInBackground).toHaveBeenCalledWith(7);
     });
 
     it('queues none for a moderator-authored save, whatever rules says', async () => {
       await submitModelTextModeration({ id: 7, name: 'My LoRA', isModerator: true });
       await submitModelTextModeration({ id: 7, name: 'My LoRA', isModerator: true, rules: true });
-      expect(scanModelRules).not.toHaveBeenCalled();
+      expect(checkModelRulesInBackground).not.toHaveBeenCalled();
     });
 
-    it('queues the scan before the public check, so a not-yet-public model is left to the profile', async () => {
+    it('queues the check before the public check, which skips a model that is not public yet', async () => {
       dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
       await submitModelTextModeration({ id: 7, name: 'My LoRA' });
-      expect(scanModelRules).toHaveBeenCalledTimes(1);
+      expect(checkModelRulesInBackground).toHaveBeenCalledTimes(1);
     });
   });
 });

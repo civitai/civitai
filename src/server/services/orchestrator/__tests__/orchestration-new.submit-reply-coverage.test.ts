@@ -12,7 +12,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `coveredForUser`, so what the fake answers depends only on the user it is handed.
  */
 
-vi.mock('@civitai/client', async () => (await import('./civitai-client.stub')).civitaiClientStub());
+vi.mock('@civitai/orchestration-client', async () =>
+  (await import('./civitai-client.stub')).civitaiClientStub()
+);
 
 const { submitWorkflow } = vi.hoisted(() => ({
   submitWorkflow: vi.fn(async ({ body }: { body: Record<string, unknown> }) => ({

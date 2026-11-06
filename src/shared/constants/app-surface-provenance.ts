@@ -16,7 +16,7 @@
  * 🔴 DEPENDENCY-FREE LEAF, DELIBERATELY. No React, no Mantine, no tRPC, no Prisma — so the
  * SERVER service can take the `ScopeGrantOrigin` type from here, both CLIENT consumers can take
  * the copy from here, and the behaviour runs in the node-env `unit` project instead of only in
- * the report-only browser tier. Same precedent as `src/shared/constants/block-effective-scopes.ts`
+ * the browser tier. Same precedent as `src/shared/constants/block-effective-scopes.ts`
  * (the shared effective-scope rule) and `src/components/Apps/appsActivityTabs.ts` (the pure tab
  * resolver). `blocks.router.ts` reaches `user-app-surface.service` exclusively through
  * `await import(...)`; a shared helper placed in that SERVICE rather than in a leaf would make
@@ -134,10 +134,10 @@ export function buildScopeGrantSurfaceLine(surfaces: {
 }
 
 /**
- * What `BlockScopeList` must say for a row whose `scopes` array is EMPTY, per row class.
+ * What `ScopeConsentList` must say for a row whose `scopes` array is EMPTY, per row class.
  *
  * 🔴 THE DEFAULT IS FALSE FOR AN ACTIVITY-ONLY ROW, AND THIS CHANGE MAKES THAT DEFAULT
- * REACHABLE. `BlockScopeList`'s own fallback is "This app doesn't request any permissions — it
+ * REACHABLE. The scope list's own default is "This app doesn't request any permissions — it
  * only consumes data from the host-bridge postMessage protocol." For an app that made
  * scope-gated API calls against this account, that is flatly wrong in the one direction a
  * permissions page must never be wrong in: it tells the viewer an app has no access, on the

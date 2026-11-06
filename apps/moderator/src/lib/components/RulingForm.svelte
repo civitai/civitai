@@ -53,6 +53,7 @@
     choiceDisabled,
     hidden,
     extra,
+    confirm = false,
     draft = $bindable(emptyRulingDraft<Verdict>()),
   }: {
     subject: S;
@@ -76,6 +77,8 @@
     hidden: Snippet;
     /** Extra fields inside the form, after the reason. */
     extra?: Snippet;
+    /** Submitting takes a second click ("Rule…" then "Yes, rule"), for rulings that notify the user and cannot be taken back. */
+    confirm?: boolean;
     /** Bindable so a caller whose form unmounts on submit can keep the moderator's input. */
     draft?: RulingDraft<Verdict>;
   } = $props();
@@ -90,6 +93,27 @@
   const large = $derived(size === 'lg');
 
   const choose = (verdict: Verdict) => (draft = chooseVerdict(draft, verdict));
+
+  let confirming = $state(false);
+  // A confirmation belongs to the verdict it was asked for. Tracked through a derived value so editing
+  // the reason or note, which replaces `draft`, does not cancel it.
+  const verdict = $derived(draft.verdict);
+  $effect(() => {
+    void verdict;
+    confirming = false;
+  });
+
+  // Enter in a text field submits without the confirm button; only that button's submit may go through.
+  const submitEnhancer: SubmitFunction = (input) => {
+    if (!confirm) return enhancer(input);
+    if (!confirming) return input.cancel();
+    const settle = enhancer(input);
+    return async (opts) => {
+      confirming = false;
+      const after = await settle;
+      await after?.(opts);
+    };
+  };
 </script>
 
 <div class={cn('grid gap-2', large && 'w-full')}>
@@ -104,6 +128,7 @@
         disabled={disabled || !!unavailable}
         title={unavailable ?? undefined}
         onclick={() => choose(c.verdict)}
+        data-touch-target
       >
         {c.label}
         {#if kbd}<Kbd>{i + 1}</Kbd>{/if}
@@ -114,7 +139,7 @@
     <form
       method="POST"
       {action}
-      use:enhance={enhancer}
+      use:enhance={submitEnhancer}
       class="grid gap-2 rounded-md border border-dark-4 bg-dark-7 p-3"
     >
       {@render hidden()}
@@ -128,17 +153,47 @@
         bind:note={() => draft.note, (note) => (draft = { ...draft, note })}
       />
       {@render extra?.()}
-      <div>
-        <Button
-          type="submit"
-          {size}
-          class={large ? 'h-11 px-5 text-base' : undefined}
-          variant={chosen.variant}
-          disabled={disabled || !!unrecordable}
-        >
-          {busy ? chosen.pendingLabel : chosen.confirmLabel}
-        </Button>
-      </div>
+      {#if confirm && !confirming}
+        <div>
+          <Button
+            type="button"
+            {size}
+            class={large ? 'h-11 px-5 text-base' : undefined}
+            variant="outline"
+            disabled={disabled || !!unrecordable}
+            onclick={() => (confirming = true)}
+            data-touch-target
+          >
+            Rule…
+          </Button>
+        </div>
+      {:else}
+        <div class="flex flex-wrap items-center gap-1.5">
+          <Button
+            type="submit"
+            {size}
+            class={large ? 'h-11 px-5 text-base' : undefined}
+            variant={chosen.variant}
+            disabled={disabled || !!unrecordable}
+            data-touch-target
+          >
+            {confirm && !busy ? 'Yes, rule' : busy ? chosen.pendingLabel : chosen.confirmLabel}
+          </Button>
+          {#if confirm}
+            <Button
+              type="button"
+              {size}
+              class={large ? 'h-11 px-5 text-base' : undefined}
+              variant="outline"
+              disabled={disabled}
+              onclick={() => (confirming = false)}
+              data-touch-target
+            >
+              Cancel
+            </Button>
+          {/if}
+        </div>
+      {/if}
     </form>
   {/if}
 </div>

@@ -10,6 +10,7 @@
 // /api/metrics), same as trpc_procedure_duration etc. Cardinality-safe: only bounded `leg` / `outcome` labels,
 // NEVER per-user. The package emits the raw timings via injected callbacks (it stays infra-dep-free); this
 // module owns the prom-client wiring.
+import type { RefreshFailure } from '@civitai/auth';
 import {
   registerCounter,
   registerCounterWithLabels,
@@ -170,4 +171,19 @@ export function observeSessionStateUpdate(
 ): void {
   sessionStateDuration.observe({ caller, type }, durationSeconds);
   sessionStateTokens.observe({ caller, type }, tokenCount);
+}
+
+// --- Hub calls on the user's behalf ------------------------------------------------------------------------
+
+const rollFailedCounter = registerCounterWithLabels({
+  name: 'session_roll_failed_total',
+  help:
+    'Rolling session refreshes that did not return a fresh token: declined (the hub refused) or unreachable. ' +
+    'The user keeps the current token, so nothing else shows these.',
+  labelNames: ['reason'] as const,
+});
+for (const reason of ['declined', 'unreachable'] as const) rollFailedCounter.inc({ reason }, 0);
+
+export function observeSessionRollFailed(reason: RefreshFailure): void {
+  rollFailedCounter.inc({ reason });
 }

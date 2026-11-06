@@ -26,7 +26,7 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOrigina
 }));
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
-  invalidateCivitaiUser: invalidateMock,
+  revokeCivitaiUserTokens: invalidateMock,
 }));
 
 const { oauthClientRouter } = await import('~/server/routers/oauth-client.router');

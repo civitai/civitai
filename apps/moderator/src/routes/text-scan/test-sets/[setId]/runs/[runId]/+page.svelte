@@ -62,7 +62,6 @@
     {#if report.run.finishedAt && !active}· finished {dateTime(report.run.finishedAt)}{/if}
     · versions <span class="font-mono">{versions}</span>
     {#if report.run.overriddenKeys.length}· draft of {report.run.overriddenKeys.join(', ')}{/if}
-    {#if report.run.ruleOverrides}· {plural(report.run.ruleOverrides, 'edited rule')}{/if}
   </p>
   {#if report.baselineRun}
     <p class="text-xs text-dark-2">
@@ -126,7 +125,6 @@
         <CaseOutcomeRow
           {row}
           canEdit={data.canEdit && open}
-          ruleSubjects={data.ruleSubjects}
           setId={report.set.id}
         />
       {:else}

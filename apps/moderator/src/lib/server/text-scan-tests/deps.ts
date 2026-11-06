@@ -1,14 +1,13 @@
 import { hostname } from 'node:os';
 import type { canAccess } from '$lib/server/access';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
-import { dbRead, dbWrite } from '$lib/server/db';
+import { dbRead } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
 import { getPrompts, quoteTexts, scanTexts } from '$lib/server/text-scan-lab/harness-client';
 import { recordModActivity } from '$lib/server/mod-activity';
 import { requestCookie } from '$lib/server/user-actions.service';
 import { WORKSPACES } from '$lib/text-scan-tests/types';
 import { canOpenWorkspace } from './guard';
-import { liveModelRuleState, liveRuleStateHash } from './rule-state';
 import type { RunAuditEvent, RunsDeps } from './runs';
 import { TestSetError } from './store';
 import {
@@ -28,7 +27,6 @@ export const workerDeps = (credential: string): WorkerDeps => ({
   main: dbRead,
   scanTexts: (entityType, texts, overrides) => scanTexts(entityType, texts, overrides, credential),
   workerId: WORKER_ID,
-  liveRuleStateHash: () => liveRuleStateHash(dbWrite),
   log: (event, data, level = 'error') =>
     void logToAxiom({ type: level, name: 'text-scan', event, ...data }).catch(() => {}),
 });
@@ -67,7 +65,6 @@ export function runsDeps(credential: string | null): RunsDeps {
     db: getModeratorDb(),
     getPrompts: () => getPrompts(),
     quoteTexts: (entityType, texts, prompts) => quoteTexts(entityType, texts, prompts, credential),
-    liveRuleState: () => liveModelRuleState(dbWrite),
     launch: (runId) => void launchRun(runId),
     audit: auditRun,
   };

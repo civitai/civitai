@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { canAccess } from './access';
+import { readerOf } from './chat-read-audit';
 import { getArticle } from './article-lookup.service';
 import {
   chatMessageCounts,
@@ -241,12 +242,12 @@ async function articleItem(id: number) {
     return { kind: 'article' as const, article: null, body: null, images: null, ownerId: null };
   const [content, images] = await Promise.all([
     dbRead.selectFrom('Article').select('content').where('id', '=', id).executeTakeFirst(),
-    // The cover is a column, not a connection, and is what decides the article's rating.
+    // The cover and banner are columns, not connections, and they decide the article's rating.
     getImagesForConnection(
       'Article',
       id,
       { limit: IMAGE_LIMIT },
-      article.coverId ? [article.coverId] : []
+      [article.coverId, article.bannerId].filter((x): x is number => x != null)
     ),
   ]);
   return {
@@ -281,7 +282,7 @@ async function chatItem(id: number, locals: App.Locals) {
   const canRead = canAccess(locals.user, '/retool/chat-audit');
   const [members, transcript] = await Promise.all([
     getChatMembers(id),
-    canRead ? getTranscript(id) : null,
+    canRead ? getTranscript(readerOf(locals.user), id) : null,
   ]);
   // Who the reports are about is worked out on the page (`chatSubject`), over the reports it lists —
   // resolved ones a status filter or a `?report=` link put on screen included, which this read's

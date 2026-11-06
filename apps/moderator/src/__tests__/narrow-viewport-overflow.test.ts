@@ -51,10 +51,14 @@ describe('390px: user text and labels cannot widen the page', () => {
   });
 
   it('/ratings: every pre-wrapped user or moderator text also breaks long tokens', () => {
-    const texts = find('routes/ratings/+page.svelte', (t) =>
-      has(classOf(t), 'whitespace-pre-wrap')
+    const texts = [
+      'routes/ratings/RatingDisputeDetail.svelte',
+      'routes/ratings/ScannedTextCard.svelte',
+    ].flatMap((file) =>
+      // HighlightedText renders the pre-wrapped text; its breaking class is passed in from here.
+      find(file, (t) => has(classOf(t), 'whitespace-pre-wrap') || t.name === 'HighlightedText')
     );
-    expect(texts.length).toBe(3);
+    expect(texts.length).toBe(4);
     for (const { tag } of texts) expect(breaks(classOf(tag)), tag.raw).toBe(true);
   });
 

@@ -34,8 +34,7 @@
  * DTO that is a person.
  *
  * Pure so the coverage lives in the node `unit` project — the fast,
- * deterministic suite CI runs on every PR (the browser-mode component suites
- * are not run in CI at all).
+ * deterministic suite CI runs on every PR.
  */
 
 import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';

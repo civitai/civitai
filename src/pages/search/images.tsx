@@ -30,7 +30,9 @@ import { isDefined } from '~/utils/type-guards';
 import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 export default function ImageSearch() {
@@ -125,8 +127,10 @@ function RenderFilters() {
         title="Filter by Base Model"
         sortBy={['name']}
         attribute="baseModel"
-        limit={100}
+        limit={SEARCH_FACET_LIMIT}
         searchable
+        remoteSearch={false}
+        renderOption={renderBaseModelOption}
       />
     </>
   );

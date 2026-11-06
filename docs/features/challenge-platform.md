@@ -100,6 +100,8 @@ Transitions are date/job-driven and enforced at the application layer only (no D
 
 **Moderator quick actions** (replace manual status edits): Scheduled → *Cancel*; Active → *End & Pick Winners* / *Void*; terminal states → none. End/void/pick-winners is **moderator-only for all sources**, including user challenges ("mods own ending").
 
+**Re-judge Entries** (Active, before `endsAt`; `challenge.rejudge`) deletes the judge's comments, reactions, tags and scores on every judged entry, clears the ladder, and adds those entries to `Challenge.metadata.pendingReview`; the next `daily-challenge-process-entries` runs judge them again.
+
 ---
 
 ## 4. Entries, scoring & winner selection
@@ -110,6 +112,8 @@ Transitions are date/job-driven and enforced at the application layer only (no D
 3. **Recency** — image `createdAt` ≥ challenge `startsAt`.
 
 **AI scoring** — each accepted entry is scored 0–10 per judging dimension. The LLM also returns a `reaction`, a `comment` (posted to the image), and a `summary`. Score/summary are stored on `CollectionItem.note`.
+
+**Owed reviews** — an entry whose review fails goes into `Challenge.metadata.pendingReview` and is retried on later ticks regardless of sampling, the `reviewedAt` window or the per-user cap. A failure counts as an attempt only on a tick where some other review succeeded, so a provider outage retries until it recovers; after 3 counted attempts the entry is dropped and logged. Winner picking waits while a challenge still owes reviews, up to 2 hours past `endsAt` (`OWED_REVIEW_GRACE_HOURS`); the challenge stays Active meanwhile, so the review job keeps working through the list.
 
 **Ranking**
 - `System`/`Mod` (fixed rubric): `Rating = average(theme, wittiness, humor, aesthetic)`.
@@ -243,7 +247,7 @@ Creators can **view / edit their own `User` challenges only while `Scheduled` wi
 
 ## 8. Configuration & flags
 
-**Config** (sysRedis `DAILY_CHALLENGE.CONFIG`, code-default fallback): `challengeType`, `userCooldown`, `resourceCooldown`, `prizes[]`, `entryPrizeRequirement`, `entryPrize`, `reviewAmount {min,max}`, `maxScoredPerUser`, `finalReviewAmount`. LLM prompt text is per-type in `ChallengeType`.
+**Config** (sysRedis `DAILY_CHALLENGE.CONFIG`, code-default fallback): `challengeType`, `userCooldown`, `resourceCooldown`, `prizes[]`, `entryPrizeRequirement`, `entryPrize`, `reviewAmount {min,max}`, `maxScoredPerUser`, `finalReviewAmount`, `reviewShadow` (`{model, sampleRate} | null`; shadow-reviews a sample of entries on a candidate model and logs both to Axiom, see `civitai-llm-client.md`). LLM prompt text is per-type in `ChallengeType`.
 
 **Flipt flags**
 
@@ -291,7 +295,7 @@ FROM "ChallengeJudge" WHERE name IN ('CivBot','CivChan','GigaBot');
 
 ## 10. Database tables
 
-- **`Challenge`** — `startsAt`/`endsAt`/`visibleAt`; `title`/`description`/`theme`/`coverImageId`; `nsfwLevel`/`allowedNsfwLevel` (bitwise); `modelVersionIds Int[]` (OR-match); `collectionId`; `maxEntriesPerUser`; `prizes`/`entryPrize`/`entryPrizeRequirement`/`prizePool`; `judgingCategories Json?`; `createdById` (nullable), `judgeId`, `source`, `status`, `scanStatus`; `metadata Json` (`completionSummary`, `challengeType`).
+- **`Challenge`** — `startsAt`/`endsAt`/`visibleAt`; `title`/`description`/`theme`/`coverImageId`; `nsfwLevel`/`allowedNsfwLevel` (bitwise); `modelVersionIds Int[]` (OR-match); `collectionId`; `maxEntriesPerUser`; `prizes`/`entryPrize`/`entryPrizeRequirement`/`prizePool`; `judgingCategories Json?`; `createdById` (nullable), `judgeId`, `source`, `status`, `scanStatus`; `metadata Json` (`completionSummary`, `challengeType`, `reviewedAt` — the review window, `pendingReview` — owed reviews, imageId → attempts).
 - **`ChallengeType`** — LLM prompts (`promptSystemMessage`, `promptCollection`, `promptArticle`, `promptReview`, `promptWinner`).
 - **`ChallengeJudge`** — persona prompts/bios, incl. `reviewPrompt` (carries the sentinel post-migration), `active`.
 - **`ChallengeCategory`** — the judging-category library (§5).

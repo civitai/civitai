@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS deps
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -174,7 +174,7 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runner
+FROM node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -196,6 +196,13 @@ COPY --from=builder /app/bundle-budget.json ./bundle-budget.json
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# The standalone tRPC server (`node -- trpc-server/server.cjs`): plain CommonJS that serves the
+# tRPC, probe and metrics routes from the compiled route modules above, without the Next router.
+# Only the three runtime files; its tests and parity harness stay out of the image. The default
+# CMD below is unchanged — this is only used where something runs that command instead.
+# `served-pages.cjs` is required by server.cjs at module scope, so the boot-graph gate below
+# fails the build if it is missing here.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/served-pages.cjs ./trpc-server/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
@@ -220,8 +227,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 #
 # Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
 # The script is removed in the same layer chain so it is not part of the served image.
+#
+# The standalone tRPC server's files are checked the same way: they require Next internals by
+# deep path (`next/dist/server/...`), which nothing else here loads at build time, so a trace
+# that dropped one would otherwise surface as a crash-looping container. `served-pages.cjs` is
+# loaded through server.cjs's own require of it.
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
-RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000

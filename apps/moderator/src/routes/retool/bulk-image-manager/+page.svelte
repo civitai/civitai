@@ -28,6 +28,7 @@
   import { DEFAULT_LIMIT, LIMIT_OPTIONS, MAX_SELECTION } from './limits';
   import { batchKey } from './selection';
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
+  import NumberedPager from '$lib/components/NumberedPager.svelte';
   import ListFilterBar, { type FilterField } from '$lib/components/ListFilterBar.svelte';
   import { NsfwLevel } from '@civitai/shared';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -405,6 +406,14 @@
       ? `No images in this batch match "${REMOVED_FILTER_LABELS[data.removed]}".`
       : 'No images in this batch.'}
     endLabel={batch.truncated ? null : 'End of batch.'}
+  />
+
+  <NumberedPager
+    page={pageNumber}
+    total={batch.total}
+    perPage={data.limit}
+    label="images"
+    onPageChange={(p) => paginate((p - 1) * data.limit)}
   />
 
   {#if data.canAct && data.subjectUserId != null}

@@ -20,6 +20,7 @@ import {
   searchChats,
 } from '$lib/server/chat-audit.service';
 import { TABS } from '../tabs';
+import { readerOf } from '$lib/server/chat-read-audit';
 
 // `q` is the search, `chat` is the opened transcript, `rpage` pages the report queue — all in the URL
 // so a moderator can link a colleague straight to a conversation, and so back/forward works through an
@@ -49,7 +50,7 @@ const querySchema = z.object({
 // are deliberately not ported. Every username here links to User Lookup, which owns enforcement with
 // the surrounding context, the confirmation step and the audit trail — duplicating it on a second page
 // would mean two gates and two places to get a ban wrong.
-export const load: PageServerLoad = async ({ url, params }) => {
+export const load: PageServerLoad = async ({ url, params, locals }) => {
   const tab = params.tab;
   if (!(TABS as readonly string[]).includes(tab)) error(404, 'Unknown tab');
 
@@ -80,16 +81,18 @@ export const load: PageServerLoad = async ({ url, params }) => {
   // Stats and Newest are one client-fetched endpoint; nothing to load here.
   if (tab !== 'chats') return { tab, chatId: chat ?? null };
 
+  const reader = readerOf(locals.user);
+
   const [search, exists, transcript, members, userMessages] = await Promise.all([
-    searchChats(q),
+    searchChats(reader, q),
     chat ? chatExists(chat) : false,
-    chat ? getTranscript(chat) : null,
+    chat ? getTranscript(reader, chat) : null,
     chat ? getChatMembers(chat) : null,
     // Retool's UserDetails: what the account actually SAID, across every chat. The chat list answers
     // who they talked to; this answers what they said, which is the question when the term was a name.
     // `getUserMessages` returns null for a non-existent username, which is the same fall-through
     // `searchChats` applies — so a spam term that looks like a username still lands on content search.
-    q && classifySearch(q.trim()) !== 'chat' ? getUserMessages(q.trim()) : null,
+    q && classifySearch(q.trim()) !== 'chat' ? getUserMessages(reader, q.trim()) : null,
   ]);
 
   return {

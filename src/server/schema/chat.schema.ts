@@ -1,7 +1,7 @@
 import { ChatMemberStatus, ChatMessageType, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
+import { MAX_CHAT_MEMBERS, MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
 import { chatLayoutSlugs } from '~/shared/constants/chat-layout';
 import { chatThemeSlugs } from '~/shared/constants/chat-theme';
 
@@ -9,7 +9,7 @@ export const MAX_CHAT_NAME_LENGTH = 60;
 
 export type CreateChatInput = z.infer<typeof createChatInput>;
 export const createChatInput = z.object({
-  userIds: z.array(z.number()),
+  userIds: z.array(z.number()).max(MAX_CHAT_MEMBERS),
   // Omitted means "infer from the member count". Passing it lets a caller start
   // a group with two people, which is the only way to have two threads with the
   // same person.
@@ -27,7 +27,7 @@ export const updateChatInput = z.object({
 export type AddUsersInput = z.infer<typeof addUsersInput>;
 export const addUsersInput = z.object({
   chatId: z.number(),
-  userIds: z.array(z.number()).min(1),
+  userIds: z.array(z.number()).min(1).max(MAX_CHAT_MEMBERS),
 });
 
 export type ModifyUserInput = z.infer<typeof modifyUserInput>;
@@ -135,7 +135,7 @@ export const DEFAULT_CHAT_SETTINGS: UserSettingsChat = {
   muteSounds: false,
   replaceBadWords: false,
   acknowledged: false,
-  dmPolicy: 'everyone',
+  dmPolicy: 'following',
   // Opt-in, not opt-out: the setting is only reachable behind `chatRedesign`, so
   // defaulting it on would filter inbound chats for users with no way to see or
   // change it. Revisit when the flag ramps.
@@ -157,12 +157,16 @@ export function resolveChatSettings(chat: UserSettingsChat | undefined): UserSet
  * The recipient-side DM policy, reconciling the two places a user can express
  * "don't message me". `features.chat` predates `dmPolicy` and gates the whole
  * chat UI, not just inbound requests, so it is read as `nobody` here and left
- * alone otherwise.
+ * alone otherwise. `fallback` applies only when no policy is stored, so a saved
+ * choice always wins.
  */
-export function resolveDmPolicy(settings: {
-  chat?: UserSettingsChat;
-  features?: Record<string, boolean>;
-}): ChatDmPolicy {
+export function resolveDmPolicy(
+  settings: {
+    chat?: UserSettingsChat;
+    features?: Record<string, boolean>;
+  },
+  fallback: ChatDmPolicy
+): ChatDmPolicy {
   if (settings.features?.chat === false) return 'nobody';
-  return settings.chat?.dmPolicy ?? DEFAULT_CHAT_SETTINGS.dmPolicy ?? 'everyone';
+  return settings.chat?.dmPolicy ?? fallback;
 }

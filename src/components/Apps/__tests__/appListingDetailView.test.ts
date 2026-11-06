@@ -13,9 +13,9 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 
 /**
  * App Store Listings (W13) — P2c detail view-model unit tests (node `unit`
- * project — the fast, deterministic suite; CI runs it `continue-on-error`, and
- * the browser component suites are not run by CI at all, so this is where the
- * correctness coverage belongs even though nothing here BLOCKS a merge).
+ * project — the fast, deterministic suite; CI runs it `continue-on-error`, so
+ * this is where the correctness coverage belongs even though nothing here BLOCKS a
+ * merge).
  * Pin the kind × hasPage × destination primary-action matrix incl.
  * the appBlocksPages gate, https guard, and slug encoding, so a regression in
  * the detail action routing FAILS here.
@@ -533,9 +533,8 @@ describe('getDetailPrimaryAction — off-site', () => {
  *
  * The type guard (`DetailActionMode` has no `'connect'`) already makes the
  * VIEW-MODEL unable to emit it. This closes the other half: a hand-rolled button
- * in the JSX, which no type would catch, and which the browser suite — run only
- * by the PR preview pipeline, report-only and not a required check — would not
- * block either. Same technique and same positive-control discipline as the
+ * in the JSX, which no type would catch, and which the browser suite would only
+ * report after the fact. Same technique and same positive-control discipline as the
  * disclosure gate below.
  *
  * 🔴 NEW-BEHAVIOUR GUARD, not regression coverage.
@@ -615,7 +614,7 @@ describe('🔴 the removed Connect CTA cannot silently return', () => {
  * permissions." That is a SECURITY CLAIM, and it is FALSE of a listing with an
  * OAuth app connected. Until this PR the condition lived inline in
  * `AppListingDetailBody`'s JSX, where the blocking `unit` project could not see
- * it and the report-only browser suite asserted it NOWHERE — so removing the
+ * it and the browser suite asserted it NOWHERE — so removing the
  * condition, and printing "no account access" over every off-site listing
  * including the OAuth-connected ones, was a change no test could catch.
  *
@@ -986,10 +985,8 @@ describe('🔴 the disclosure and the connect indicator, as a relationship', () 
  *
  * `AppListingDetailBody`'s docstring states this in 🔴 terms, and the ONLY other
  * check on it is an absence assertion in `AppListingDetailBody.browser.test.tsx`
- * — which lives in the browser `component` project, **run only by the PR preview
- * pipeline, report-only and not a required check** (see this file's header and
- * `recentAppsRail.test.ts`). Without the check below, re-adding
- * `<iframe src={liveUrl}>` would pass every gate that actually blocks.
+ * — which lives in the browser `component` project (`Component tests` in CI). The
+ * check below catches re-adding `<iframe src={liveUrl}>` in the node tier as well.
  *
  * This replaces the equivalent gate that lived in the now-deleted
  * `appListingPreview.test.ts` — that one pinned the frame's hardening

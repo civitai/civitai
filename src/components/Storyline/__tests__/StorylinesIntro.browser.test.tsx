@@ -3,14 +3,25 @@ import { page } from 'vitest/browser';
 import { MantineProvider } from '@mantine/core';
 import { renderToString } from 'react-dom/server';
 import { renderWithProviders } from '../../../../test/component-setup';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
+import { StartStorylineModal } from '~/components/Storyline/StartStorylineModal';
 import {
   STORYLINES_INTRO_DISMISSED_KEY,
-  StorylinesIntro,
+  STORYLINES_INTRO_VIDEO,
+  StorylinesIntro as StorylinesIntroCard,
 } from '~/components/Storyline/StorylinesIntro';
+import { useIntroDismissed } from '~/hooks/useIntroDismissed';
+
+/** The page owns the dismissed state, so the card is rendered the way the page does. */
+function StorylinesIntro() {
+  const [dismissed, dismiss] = useIntroDismissed(STORYLINES_INTRO_DISMISSED_KEY);
+  return <StorylinesIntroCard dismissed={dismissed} onDismiss={dismiss} />;
+}
 
 /**
- * The welcome card on /storylines. The "start one" link shows only when signed in: it goes to the
- * reader's own posts (see StorylinesIntro.tsx).
+ * The welcome card on /storylines. Its "start one" button opens the start sheet when signed in, and
+ * asks them to sign in otherwise (see StartStorylineButton.tsx).
  */
 
 const mocks = vi.hoisted(() => ({ user: null as { username: string } | null }));
@@ -102,7 +113,7 @@ describe('StorylinesIntro', () => {
     expect(localStorage.getItem(STORYLINES_INTRO_DISMISSED_KEY)).toBe('1');
   });
 
-  test('signed out, "Start a storyline" asks them to sign in instead of linking anywhere', async () => {
+  test('signed out, "Start a storyline" asks them to sign in instead of opening the sheet', async () => {
     renderWithProviders(<StorylinesIntro />);
 
     await expect
@@ -113,22 +124,49 @@ describe('StorylinesIntro', () => {
     expect(page.getByRole('link', { name: 'Start a storyline' }).elements()).toHaveLength(0);
   });
 
-  test('signed in, "Start a storyline" goes to their own posts, where a storyline starts', async () => {
+  test('signed in, "Start a storyline" opens the start sheet', async () => {
     mocks.user = { username: 'civbot' };
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
     renderWithProviders(<StorylinesIntro />);
 
-    await expect
-      .element(page.getByRole('link', { name: 'Start a storyline' }))
-      .toHaveAttribute('href', '/user/civbot/posts');
+    await page.getByRole('button', { name: 'Start a storyline' }).click();
+    expect(trigger).toHaveBeenCalledWith({
+      component: StartStorylineModal,
+      props: { post: undefined },
+    });
     expect(page.getByTestId('login-redirect').elements()).toHaveLength(0);
+    // A button that opens the sheet, not a link that leaves the page.
+    expect(page.getByRole('link', { name: 'Start a storyline' }).elements()).toHaveLength(0);
   });
 
-  test('the button is described by where a storyline starts: a published post', async () => {
+  test('the podium play button (desktop) and "Watch the video" (phone) both open the film in a modal', async () => {
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
+    renderWithProviders(<StorylinesIntro />);
+    await expect
+      .element(page.getByRole('heading', { name: 'Welcome to Storylines' }))
+      .toBeVisible();
+
+    // Each is hidden at the other's width, so they are found in the DOM rather than by role.
+    const buttons = [...document.querySelectorAll('button')].filter((b) =>
+      /^Watch the/.test(b.getAttribute('aria-label') ?? b.textContent ?? '')
+    );
+    expect(buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+      'Watch the video',
+      'Watch the Storylines video',
+    ]);
+    for (const button of buttons) button.click();
+    expect(trigger.mock.calls).toEqual([
+      [{ component: EventVideoModal, props: { video: STORYLINES_INTRO_VIDEO } }],
+      [{ component: EventVideoModal, props: { video: STORYLINES_INTRO_VIDEO } }],
+    ]);
+  });
+
+  test('the old hint about the post menu and the editor switch is gone', async () => {
     mocks.user = { username: 'civbot' };
     renderWithProviders(<StorylinesIntro />);
 
-    await expect
-      .element(page.getByRole('link', { name: 'Start a storyline' }))
-      .toHaveAccessibleDescription(/published post.*Make this chapter 1 of a storyline/);
+    await expect.element(page.getByRole('button', { name: 'Start a storyline' })).toBeVisible();
+    expect(document.body.textContent).not.toContain('Make this chapter 1');
+    expect(document.body.textContent).not.toContain('three-dot menu');
   });
 });

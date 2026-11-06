@@ -189,7 +189,7 @@ describe('publishPrivateModel — H3 attestation', () => {
   const goPublic = () => publishPrivateModel({ modelId: MODEL_ID, publishVersions: true });
 
   it('refuses an unattested H3 LoRA going public, though its private publish set publishedAt', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([
       versionRow({ status: ModelStatus.Published, publishedAt: new Date('2026-09-01') }),
     ]);
 
@@ -198,7 +198,7 @@ describe('publishPrivateModel — H3 attestation', () => {
   });
 
   it('lets an attested one through', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([
       versionRow({ status: ModelStatus.Published, meta: attestedMeta() }),
     ]);
 
@@ -206,7 +206,7 @@ describe('publishPrivateModel — H3 attestation', () => {
   });
 
   it('lets a non-H3 model through (control)', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([
       versionRow({ status: ModelStatus.Published, baseModel: 'SDXL 1.0' }),
     ]);
 

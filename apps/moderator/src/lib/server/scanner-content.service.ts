@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
-import { getWorkflow, type XGuardModerationStep } from '@civitai/client';
+import { getWorkflow, type XGuardModerationStep } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from './db';
 import { getOrchestratorClient } from './orchestrator';
 import type { ScanContent } from '$lib/scanner-audit';

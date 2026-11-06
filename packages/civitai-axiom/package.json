@@ -6,7 +6,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@axiomhq/axiom-node": "^0.12.0",
-    "zod": "^4.0.17"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "vitest": "^4.1.11"

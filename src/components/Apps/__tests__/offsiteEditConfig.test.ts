@@ -619,11 +619,10 @@ describe('🔴 scope drift — the save dead end, and the copy that denies it', 
     // civitai/civitai#4431. The claim came from enumerating `.github/workflows/`, which is a
     // complete population of GitHub ACTIONS and silent about Tekton.
     //
-    // What is true, and why this duplicate still earns its place: NEITHER tier BLOCKS. The
-    // component check is report-only, the `unit` job is `continue-on-error` on pull
-    // requests, and the preview tier only exists when the preview pipeline runs at all
-    // (opt-in for non-maintainers) and registers ~40 min after the Actions rollup goes
-    // green. Two independent report-only paths to the same fact is the point.
+    // What is true, and why this duplicate still earns its place: NEITHER tier BLOCKS a
+    // merge (`main` requires no status check). The `component` project now also runs in
+    // GitHub Actions as `Component tests`. Two independent paths to the same fact is the
+    // point.
     const form = editContextToForm(driftedCtx());
 
     // The prefill carries the drifted mask…

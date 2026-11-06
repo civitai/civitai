@@ -36,6 +36,8 @@ const PRESENT = new Set([
   'img2vid:first-last/images',
   'img2vid:first-last/model',
   'img2vid:first-last/prompt',
+  'img2vid:keyframes/model',
+  'img2vid:keyframes/prompt',
   'img2vid:ref2vid/images',
   'img2vid:ref2vid/model',
   'img2vid:ref2vid/prompt',

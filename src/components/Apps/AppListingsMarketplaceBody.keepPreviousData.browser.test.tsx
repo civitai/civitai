@@ -34,9 +34,8 @@
  * `AppListingsMarketplaceBody.urlState.browser.test.tsx`. What this file owns is
  * what the QUERY does once the filters have moved.
  *
- * ⚠️ AND: the `component` tier never gates anything (`preview / component-tests` is
- * report-only), so this catches a regression when someone runs it, not at merge. The
- * canonical tier note is in `appListingCardGeometry.ts`.
+ * The `component` tier runs in CI as `Component tests`, so a regression here turns
+ * that check red; like every check here it does not block a merge.
  */
 import { describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../test/component-setup';

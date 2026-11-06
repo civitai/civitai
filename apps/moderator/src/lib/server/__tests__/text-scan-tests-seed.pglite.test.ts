@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
+import type { Workspace } from '$lib/text-scan-tests/types';
 import { importSeed, parseBench, parseLabSeed, parseTruthMap } from '../text-scan-tests/seed';
 import { listCases, listSets } from '../text-scan-tests/store';
 import { useTestSetsDb } from './text-scan-tests-pglite.harness';
@@ -201,7 +202,7 @@ describe('importSeed', () => {
   it('refuses a set that belongs to the other workspace', async () => {
     await importSeed(db, BENCH, { ...opts, write: true });
     await expect(
-      importSeed(db, BENCH, { ...opts, workspace: 'modelRules', write: true })
+      importSeed(db, BENCH, { ...opts, workspace: 'modelRules' as Workspace, write: true })
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -210,15 +211,15 @@ describe('importSeed', () => {
       cases: [
         { entityType: 'Model', fields: [{ heading: 'Name', text: `${SECRET} m` }], expected: {} },
         {
-          entityType: 'ModelRules',
+          entityType: 'Model',
           fields: [{ heading: 'Name', text: `${SECRET} r` }],
-          expected: {},
+          expected: { scam: true },
         },
       ],
     };
     const summary = await importSeed(db, mixed, { ...opts, format: 'lab-seed', write: true });
     expect(summary.written).toEqual({ created: 1, updated: 0 });
-    expect(summary.refused).toEqual({ 'rejected by validation': 1 });
+    expect(summary.refused).toEqual({ 'bad expectation': 1 });
     const [set] = await listSets(db, 'prompts');
     expect(await listCases(db, set.id)).toHaveLength(1);
     const printed = JSON.stringify(summary);

@@ -4,8 +4,8 @@ import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * The app-block chrome's "Recently run" icon — node `unit` tier (the browser suites, which
- * render the whole menu, do not run in CI).
+ * The app-block chrome's "Recently run" icon — node `unit` tier (the browser suites render
+ * the whole menu).
  *
  * The rule under test: a row draws the `iconUrl` the live, server-gated listing read returned
  * for its slug, and the generic glyph whenever that read is loading, failed, has no row, or the

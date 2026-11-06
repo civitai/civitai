@@ -7,7 +7,7 @@ import { getDossier } from '../dossier.service';
 import {
   DEFAULT_REACTION_DAYS,
   MAX_REACTION_DAYS,
-  getAccountsOnAddress,
+  getAccountsOnAddresses,
   getLinkedAccounts,
   getReactionBreadth,
   getSetLinks,
@@ -21,6 +21,7 @@ import {
   type SharedIpAccount,
 } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
+import { getPlacementFlows } from '../placement-flows.service';
 import {
   getReportsOnUser,
   getReportsReceived,
@@ -32,16 +33,20 @@ import { resolveUserId } from '../user-lookup.service';
 import { MAX_INT4 } from '../users.service';
 import { redactAddresses } from '../redact-addresses';
 import {
+  type AccountRow,
   getAccounts,
   getOpenUserReports,
   HUMAN_REPORT_REASONS,
   MAX_ACCOUNTS,
   searchAccounts,
 } from './reads';
+import { getRegistrationEmails, normalizeEmail, redactEmails } from './email';
 import { addPlaybookVersion, fileToolRequest, getPlaybook, listPlaybooks } from './store';
+import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
 
-// The assistant's tools. Every one but the last two is a READ: no tool bans, mutes, strikes, removes,
-// rules on a report or messages anyone. The two writes touch only the assistant's own tables.
+// The assistant's tools. Every one but `propose_playbook` and `request_tool` is a READ: no tool bans,
+// mutes, strikes, removes, extends or changes a membership, rules on a report or messages anyone. Those two
+// writes touch only the assistant's own tables.
 //
 // A moderator is offered only the tools whose `requires` pages they hold, so the assistant is never a
 // way round a page grant. Addresses are shown only to a moderator who could read them in User Lookup.
@@ -73,7 +78,11 @@ type Tool<S extends z.ZodType> = {
   input: S;
   /** Any one of these pages opens the data. `null`: every assistant user. */
   requires: string[] | null;
+  /** A permission the moderator must also hold for the tool to be offered at all. */
+  grant?: PermissionId;
   run: (args: z.output<S>, ctx: ToolContext) => Promise<ToolResult>;
+  timeoutMs?: number;
+  onTimeout?: (args: z.output<S>) => Record<string, unknown>;
 };
 
 const tool = <S extends z.ZodType>(t: Tool<S>) => t;
@@ -88,6 +97,46 @@ const shownText = (ctx: ToolContext, text: string) =>
   showAddresses(ctx) ? text : redactAddresses(text);
 const shownAddress = (ctx: ToolContext) => (cluster: string) =>
   showAddresses(ctx) ? cluster : ctx.mask(cluster);
+
+const showEmails = (ctx: ToolContext) => showAddresses(ctx) && ctx.hasGrant('assistant.emails');
+/** Each account's registration email and the inbox it delivers to; nothing when this moderator may not
+ *  see them. */
+async function emailFields(ctx: ToolContext, userIds: number[]) {
+  const emails = showEmails(ctx) && userIds.length ? await getRegistrationEmails(userIds) : null;
+  return (userId: number) => {
+    if (!emails) return {};
+    const email = emails.get(userId) ?? null;
+    return { email, normalizedEmail: email && normalizeEmail(email) };
+  };
+}
+async function withEmails<T extends { userId: number }>(ctx: ToolContext, rows: T[]) {
+  const fields = await emailFields(
+    ctx,
+    rows.map((r) => r.userId)
+  );
+  return rows.map((r) => ({ ...r, ...fields(r.userId) }));
+}
+const ACCOUNT_FIELDS = [
+  'username',
+  'createdAt',
+  'bannedAt',
+  'banReason',
+  'deletedAt',
+  'muted',
+  'strikes',
+  'email',
+  'normalizedEmail',
+] as const satisfies readonly (Exclude<keyof AccountRow, 'userId'> | 'email' | 'normalizedEmail')[];
+
+/** Addresses per accounts_on_address call: the most measured on prod (25 took 13.8 s on 2026-10-26,
+ *  flat from 1 address up), within half of `ACCOUNTS_ON_ADDRESS_TIMEOUT_MS`. Past 50, raise
+ *  `groupUniqArray(50)` in ip-links.service.ts too, or an account's address list is cut short. */
+const MAX_BATCH_ADDRESSES = 25;
+/** Each call scans the reaction and login tables by address: 10-45 s on prod, so the default is short. */
+const ACCOUNTS_ON_ADDRESS_TIMEOUT_MS = 90_000;
+
+const EMAILS_NOTE =
+  'With the registration-email grant each account also carries `email` and `normalizedEmail` (Gmail dots and +tags removed, lower-cased). Several accounts on one normalizedEmail are one inbox; many accounts on one rare or throwaway domain, or rotating through a few such domains, is a mass-registration tell. Quote an email only as evidence; playbooks and tool requests drop them.';
 
 const userSource = (id: number, username: string | null = null): TurnSource => ({
   ref: `user:${id}`,
@@ -146,7 +195,11 @@ const reactionDays = z
     `Days of reactions to search, 1-${MAX_REACTION_DAYS}. Logins are always searched in full.`
   );
 
-function linkedOut(linked: LinkedAccounts, ctx: ToolContext, subject: number | null): ToolResult {
+async function linkedOut(
+  linked: LinkedAccounts,
+  ctx: ToolContext,
+  subject: number | null
+): Promise<ToolResult> {
   const shown = showAddresses(ctx) ? linked : maskLinkedAddresses(linked, ctx.mask);
   return {
     data: {
@@ -155,7 +208,7 @@ function linkedOut(linked: LinkedAccounts, ctx: ToolContext, subject: number | n
       matched: shown.matched,
       truncated: shown.truncated,
       addresses: shown.addresses.filter((a) => a.accounts > 0),
-      accounts: shown.accounts.map((a) => ({
+      accounts: (await withEmails(ctx, shown.accounts)).map((a) => ({
         ...a,
         accountsOnNarrowestAddress: a.narrowest,
         narrowest: undefined,
@@ -276,6 +329,10 @@ const SHOWN_ACTORS = 20;
 /** Narrowest first, so these are the identifying ones. */
 const ADDRESSES_SHOWN = 3;
 
+/** Refusal text names Stripe objects (`sub_…`, `in_…`); the model provider gets the words only. */
+export const withoutStripeIds = (text: string) =>
+  text.replace(/\b(?:sub_sched|sub|cus|in|pi|ch|price|prod)_[A-Za-z0-9]+/g, '[Stripe id]');
+
 export const TOOLS = [
   tool({
     name: 'find_user',
@@ -296,7 +353,7 @@ export const TOOLS = [
       const id = await resolveUserId(term);
       if (!id) return { data: { found: false }, rows: 0, truncated: false, sources: [] };
       const { accounts } = await getAccounts([id]);
-      const account = accounts[0];
+      const [account] = await withEmails(ctx, accounts);
       return {
         data: { found: true, account },
         rows: 1,
@@ -309,7 +366,8 @@ export const TOOLS = [
   tool({
     name: 'get_user_dossier',
     description:
-      'Everything at a glance about one account: age, content counts, image rating mix, removed/blocked images, prior reports and how many were actioned, strikes/mutes/bans, detector findings, accounts sharing its login or reaction addresses (top 25), and how widely spread its received reactions are (distinct reactors, top-10/top-20 share). Start most investigations here.',
+      'Everything at a glance about one account: age, content counts, image rating mix, removed/blocked images, prior reports and how many were actioned, strikes/mutes/bans, detector findings, accounts sharing its login or reaction addresses (top 25), and how widely spread its received reactions are (distinct reactors, top-10/top-20 share). Start most investigations here. ' +
+      EMAILS_NOTE,
     input: z.object({ userId }),
     requires: [LOOKUP, USER_REPORTS],
     run: async ({ userId: id }, ctx) => {
@@ -318,15 +376,18 @@ export const TOOLS = [
       const linked =
         d.linked && (showAddresses(ctx) ? d.linked : maskLinkedAddresses(d.linked, ctx.mask));
       const abuse = ctx.canAccess('/abuse') ? d.abuse : null;
+      const emails = await emailFields(ctx, [id, ...(linked?.accounts ?? []).map((a) => a.userId)]);
       return {
         data: {
           ...d,
+          ...emails(id),
           linked: linked && {
             totals: linked.totals,
             matched: linked.matched,
             truncated: linked.truncated,
             accounts: linked.accounts.map(({ login, reaction, ...a }) => ({
               ...a,
+              ...emails(a.userId),
               sharedLoginAddresses: login.length,
               sharedReactionAddresses: reaction.length,
             })),
@@ -347,13 +408,32 @@ export const TOOLS = [
 
   tool({
     name: 'get_accounts',
-    description: `Look up a list of account ids (up to ${MAX_ACCOUNTS}) at once: username, signup date, ban/mute state, ban reason code, strikes. For checking a list the moderator collected or a list another tool produced.`,
-    input: z.object({ userIds: userIdList(MAX_ACCOUNTS) }),
+    description: `Look up a list of account ids (up to ${MAX_ACCOUNTS}) at once: username, signup date, ban/mute state, ban reason code, strikes. For checking a list the moderator collected or a list another tool produced. Pass \`fields\` to get only the columns the question needs (e.g. ["normalizedEmail"] to group a list by inbox): every column costs tokens on every later step. ${EMAILS_NOTE}`,
+    input: z.object({
+      userIds: userIdList(MAX_ACCOUNTS),
+      fields: z.array(z.enum(ACCOUNT_FIELDS)).min(1).optional(),
+    }),
     requires: [LOOKUP, USER_REPORTS],
-    run: async ({ userIds }) => {
+    run: async ({ userIds, fields }, ctx) => {
       const { accounts, missing } = await getAccounts(userIds);
+      const wanted = fields && new Set<string>(fields);
+      const askedForEmails = !wanted || wanted.has('email') || wanted.has('normalizedEmail');
+      // Not fetched at all unless asked for: a column nobody needs should not be read, least of all an
+      // address.
+      const rows = askedForEmails ? await withEmails(ctx, accounts) : accounts;
       return {
-        data: { accounts, missing },
+        data: {
+          accounts: wanted
+            ? rows.map((row) =>
+                Object.fromEntries(
+                  Object.entries(row).filter(([key]) => key === 'userId' || wanted.has(key))
+                )
+              )
+            : rows,
+          missing,
+          // Said outright: rows without an address otherwise read as accounts that share none.
+          ...(fields && askedForEmails && !showEmails(ctx) ? { emailsWithheld: true } : {}),
+        },
         rows: accounts.length,
         truncated: false,
         sources: accounts.map((a) => userSource(a.userId, a.username)),
@@ -364,7 +444,8 @@ export const TOOLS = [
   tool({
     name: 'find_linked_accounts',
     description:
-      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist; page with offset.',
+      'Every account that shares an address with this one, by LOGIN (all time) or by REACTION (the window). Sorted strongest link first: an address only these two accounts use beats one hundreds use (a VPN or carrier exit). No cap on how many accounts exist; page with offset. ' +
+      EMAILS_NOTE,
     input: z.object({
       userId,
       days: reactionDays,
@@ -379,19 +460,42 @@ export const TOOLS = [
   tool({
     name: 'accounts_on_address',
     description:
-      'Every account seen on one IP address (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Page with offset; totals are exact.',
+      `Every account seen on IP addresses (an IPv6 address covers its /64), by login (all time) and by reaction (the window), with ban state. Give one \`address\`, or up to ${MAX_BATCH_ADDRESSES} as \`addresses\` to check a list in one call: an account on several of them is listed once, with each address it was seen on, and \`addresses\` in the result gives the count per address. Page with offset; totals are exact. ` +
+      EMAILS_NOTE,
     input: z.object({
-      address: z.string().min(3).max(60),
+      address: z.string().min(3).max(60).optional(),
+      addresses: z.array(z.string().min(3).max(60)).min(1).max(MAX_BATCH_ADDRESSES).optional(),
       days: reactionDays,
       offset: z.number().int().min(0).max(10_000).default(0),
       limit: z.number().int().min(1).max(MAX_ACCOUNTS).default(100),
     }),
     requires: [LOOKUP],
-    run: async ({ address, days, offset, limit }, ctx) => {
-      const linked = await getAccountsOnAddress(address, { days, offset, limit });
+    timeoutMs: ACCOUNTS_ON_ADDRESS_TIMEOUT_MS,
+    onTimeout: ({ address, addresses }) => ({
+      notChecked: [...(addresses ?? []), ...(address ? [address] : [])],
+      note: 'None of these addresses were checked: the lookup ran out of time. Say so in your answer, naming them, and offer to try again later.',
+    }),
+    run: async ({ address, addresses, days, offset, limit }, ctx) => {
+      const asked = [...(addresses ?? []), ...(address ? [address] : [])];
+      const refuse = (error: string) => ({
+        data: { error },
+        rows: 0,
+        truncated: false,
+        sources: [],
+      });
+      if (!asked.length) return refuse('Give an address, or a list as addresses.');
+      if (asked.length > MAX_BATCH_ADDRESSES)
+        return refuse(`At most ${MAX_BATCH_ADDRESSES} addresses in one call.`);
+      const { linked, invalid } = await getAccountsOnAddresses(asked, { days, offset, limit });
       if (!linked)
-        return { data: { error: 'Not an IP address.' }, rows: 0, truncated: false, sources: [] };
-      return linkedOut(linked, ctx, null);
+        return refuse(
+          asked.length === 1 ? 'Not an IP address.' : 'None of these is an IP address.'
+        );
+      const out = await linkedOut(linked, ctx, null);
+      // Named back, so a skipped entry is never read as an address with no accounts on it.
+      return invalid.length
+        ? { ...out, data: { ...(out.data as object), notAddresses: invalid } }
+        : out;
     },
   }),
 
@@ -514,7 +618,7 @@ export const TOOLS = [
   tool({
     name: 'buzz_flows',
     description:
-      "Where a set of accounts' Buzz came from and went (1-100 accounts): blue Buzz each was rewarded, Buzz sent to and received from other accounts by account type (blue = reward Buzz), trainings and how many were paid with blue Buzz, and the account-to-account flows (tips, model purchases with the model version ids) with withinSet marking flows between two listed accounts. For alts pooling Buzz into a main and burners farming free trainings.",
+      "Where a set of accounts' Buzz came from and went (1-100 accounts): blue Buzz each was rewarded, Buzz sent to and received from other accounts by account type (blue = reward Buzz), trainings and how many were paid with blue Buzz, Buzz paid to the platform by type and account type (generation, training, purchases, bids, fees) Buzz the platform refunded, and Buzz the platform paid out as compensation (creator compensation, and generation tips, which the platform pays out so the tipper is not named), and the account-to-account flows (tips, model purchases with the model version ids) with withinSet marking flows between two listed accounts. For alts pooling Buzz into a main and burners farming free trainings. Before calling an account one that accumulates rather than spends, read platformSpend net of platformRefunds (platformEarnings is income, not a refund; a chargeBack row is a clawback, not spend): most blue Buzz is spent on generation, which never shows as a flow to another account.",
     input: z.object({
       userIds: userIdList(100),
       days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(90),
@@ -530,6 +634,30 @@ export const TOOLS = [
         rows: flows.flows.length,
         truncated: flows.truncated,
         sources: [...new Set([...userIds, ...counterparties])].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'placement_flows',
+    description:
+      'Paid placements (stickers, remixes, gallery promotions) made by or on a set of accounts (1-100 accounts), with both ends named. These payments go through an escrow account, so buzz_flows never shows who paid whom for them; when buzz_flows or Buzz history shows placement debits or credits with no counterparty, this tool names it. Per account: placements made and received by currency, Buzz held, refunded and forfeited as placer, Buzz earned as owner. Per placer-owner pair: count, free count, statuses, Buzz held, refunded, paid out to the owner, seller and platform, or forfeited on a moderator removal, the stickers used, and withinSet when both are listed. A listed account that was only the seller is not matched.',
+    input: z.object({
+      userIds: userIdList(100),
+      days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(90),
+    }),
+    requires: [LOOKUP],
+    run: async ({ userIds, days }) => {
+      const flows = await getPlacementFlows(userIds, days);
+      const named = flows.pairs.flatMap((p) => [
+        userSource(p.placerId, p.placerName),
+        userSource(p.ownerId, p.ownerName),
+      ]);
+      return {
+        data: flows,
+        rows: flows.pairs.length,
+        truncated: flows.truncated,
+        sources: [...flows.accounts.map((a) => userSource(a.userId, a.username)), ...named],
       };
     },
   }),
@@ -727,9 +855,16 @@ export const TOOLS = [
     }),
     requires: null,
     run: async ({ slug, title, summary, body, note }, ctx) => {
+      // A playbook is read by every assistant user and goes into every moderator's prompt, so an
+      // email from this chat must not ride along; the method never needs one.
       const { version } = await addPlaybookVersion({
         slug,
-        draft: { title, summary, body, note: note ?? null },
+        draft: {
+          title: redactEmails(title),
+          summary: redactEmails(summary),
+          body: redactEmails(body),
+          note: note ? redactEmails(note) : null,
+        },
         authorId: ctx.moderatorId,
         byAssistant: true,
         sourceTurnId: ctx.turnId,
@@ -739,6 +874,195 @@ export const TOOLS = [
         rows: 1,
         truncated: false,
         sources: [],
+      };
+    },
+  }),
+
+  // Membership extension: read the verdict and prefill the panel, nothing more. Do not add a tool that
+  // calls the extend endpoint: it is a money write, and text in a member's profile or a report could
+  // talk the model into one. A person previews and confirms it on the panel.
+  tool({
+    name: 'preview_membership_extension',
+    description: `What extending one account's Stripe membership by N free days (1-${MEMBERSHIP_EXTEND_MAX_DAYS}) would do: the subscription's status and period end, the new end, and the problems that would refuse it. Read-only.`,
+    input: z.object({ userId, days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS) }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    // The preview request itself may take 60 s; the loop's default would give up first.
+    timeoutMs: 65_000,
+    run: async ({ userId: id, days }) => {
+      // Lazy: user-actions.service needs the request context (`$app/server`), which a tool module
+      // loaded outside SvelteKit (the pglite suites) does not have.
+      const { previewMembershipExtension } = await import('../user-actions.service');
+      const r = await previewMembershipExtension({ userId: id, days });
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      // Status, dates and the verdict only: no Stripe ids for the model provider.
+      const { subscription: sub, trialEndIso, mode } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
+      const data = {
+        days,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        newEnd: trialEndIso,
+        mode,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_extension',
+    description:
+      "Hand the moderator a link to this account's Extend membership panel with the days and reason filled in. Nothing is extended: the moderator previews and confirms it there. Only when the moderator asked for an extension.",
+    input: z.object({
+      userId,
+      days: z.number().int().min(1).max(MEMBERSHIP_EXTEND_MAX_DAYS),
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    run: async ({ userId: id, days, reason }) => {
+      const params = new URLSearchParams({ extendDays: String(days), extendReason: reason });
+      return {
+        data: {
+          proposed: true,
+          extended: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-extend`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
+  tool({
+    name: 'preview_membership_cancel',
+    description:
+      "What setting (true) or undoing (false) cancel-at-period-end on one account's Stripe membership would do: its status, period end and cancel state, and the problems that would refuse it. Read-only.",
+    input: z.object({ userId, cancelAtPeriodEnd: z.boolean() }),
+    requires: [LOOKUP],
+    grant: 'user.membership.cancel',
+    timeoutMs: 65_000,
+    run: async ({ userId: id, cancelAtPeriodEnd }) => {
+      const { previewMembershipCancel } = await import('../user-actions.service');
+      const r = await previewMembershipCancel({ userId: id, cancelAtPeriodEnd });
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      const { subscription: sub, changed } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
+      const data = {
+        cancelAtPeriodEnd,
+        subscription: sub && {
+          status: sub.status,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        },
+        problems,
+        alreadySo: changed === false,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_cancel',
+    description:
+      "Hand the moderator a link to this account's Cancel at period end panel with the choice and reason filled in. Nothing is changed: the moderator previews and confirms it there. Only when the moderator asked for it.",
+    input: z.object({
+      userId,
+      cancelAtPeriodEnd: z.boolean(),
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.cancel',
+    run: async ({ userId: id, cancelAtPeriodEnd, reason }) => {
+      const params = new URLSearchParams({
+        cancelAtPeriodEnd: String(cancelAtPeriodEnd),
+        cancelReason: reason,
+      });
+      return {
+        data: {
+          proposed: true,
+          changed: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-cancel`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
+      };
+    },
+  }),
+
+  tool({
+    name: 'preview_membership_resync',
+    description:
+      "Whether one account's membership record differs from its Stripe subscription, field by field, any Buzz-bought membership a re-sync would end, and the problems that would refuse it. Read-only.",
+    input: z.object({ userId }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    timeoutMs: 65_000,
+    run: async ({ userId: id }) => {
+      const { previewMembershipResync } = await import('../user-actions.service');
+      const r = await previewMembershipResync({ userId: id });
+      if (!r.ok)
+        return {
+          data: { error: withoutStripeIds(r.error) },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      // Leave out endsBuzzMembership.confirm: only the moderator's checkbox may send it.
+      const { changes, endsBuzzMembership } = r.preview;
+      const problems = r.preview.problems.map(withoutStripeIds);
+      const data = {
+        changes: changes.filter((c) => c.field !== 'id' && c.field !== 'priceId'),
+        idOrPlanDiffers: changes.some((c) => c.field === 'id' || c.field === 'priceId'),
+        endsBuzzMembership: endsBuzzMembership && {
+          status: endsBuzzMembership.status,
+          currentPeriodEnd: endsBuzzMembership.currentPeriodEnd,
+        },
+        problems,
+      };
+      return { data, rows: 1, truncated: false, sources: [userSource(id)] };
+    },
+  }),
+
+  tool({
+    name: 'propose_membership_resync',
+    description:
+      "Hand the moderator a link to this account's Re-sync from Stripe panel with the reason filled in. Nothing is re-synced: the moderator previews and confirms it there. Only when the moderator asked for it.",
+    input: z.object({
+      userId,
+      reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+    }),
+    requires: [LOOKUP],
+    grant: 'user.membership.extend',
+    run: async ({ userId: id, reason }) => {
+      const params = new URLSearchParams({ resyncReason: reason });
+      return {
+        data: {
+          proposed: true,
+          resynced: false,
+          confirmAt: `${userLookupUrl(id, 'basic')}&${params}#membership-resync`,
+        },
+        rows: 1,
+        truncated: false,
+        sources: [userSource(id)],
       };
     },
   }),
@@ -754,14 +1078,19 @@ export const TOOLS = [
     }),
     requires: null,
     run: async ({ need, reason, example }, ctx) => {
+      // Read by every assistant user (the conversation by every auditor), none of whom need an email
+      // to build a tool.
       const id = await fileToolRequest({
         chatId: ctx.chatId,
         turnId: ctx.turnId,
         moderatorId: ctx.moderatorId,
-        need,
-        reason,
-        example: example ?? null,
-        conversation: ctx.conversation(),
+        need: redactEmails(need),
+        reason: redactEmails(reason),
+        example: example ? redactEmails(example) : null,
+        conversation: ctx.conversation().map((c) => ({
+          prompt: redactEmails(c.prompt),
+          answer: c.answer && redactEmails(c.answer),
+        })),
       });
       return { data: { filed: true, requestId: id }, rows: 1, truncated: false, sources: [] };
     },
@@ -770,8 +1099,12 @@ export const TOOLS = [
 
 export type ToolName = (typeof TOOLS)[number]['name'];
 
-export const toolsFor = (ctx: Pick<ToolContext, 'canAccess'>) =>
-  TOOLS.filter((t) => !t.requires || t.requires.some((path) => ctx.canAccess(path)));
+export const toolsFor = (ctx: Pick<ToolContext, 'canAccess' | 'hasGrant'>) =>
+  TOOLS.filter(
+    (t) =>
+      (!t.requires || t.requires.some((path) => ctx.canAccess(path))) &&
+      (!t.grant || ctx.hasGrant(t.grant))
+  );
 
 /**
  * Every tool a playbook may name, with its inputs and the pages that unlock it, for the playbook editor.

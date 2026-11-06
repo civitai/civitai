@@ -16,12 +16,11 @@ import {
 
 /**
  * 🔴 WHY THESE LIVE IN THE BLOCKING `unit` PROJECT. The panel that renders them is covered
- * only by browser-mode, which is REPORT-ONLY in CI and cannot run on this workstation at
- * all (the nix `playwright-browsers` layout does not match the npm package's expected
- * revision, so `browserType.launch` fails outright). A copy claim asserted only in a
- * `.tsx` branch is therefore a claim nothing blocking ever checks — and two of the claims
- * below are the ones the design round called out explicitly: `private` must not promise
- * access control, and a level above the ceiling must say WHY.
+ * only by browser-mode, which cannot run on this workstation at all (the nix `playwright-browsers`
+ * layout does not match the npm package's expected revision, so `browserType.launch` fails
+ * outright). A copy claim asserted only in a `.tsx` branch is therefore a claim nothing blocking
+ * ever checks — and two of the claims below are the ones the design round called out explicitly:
+ * `private` must not promise access control, and a level above the ceiling must say WHY.
  */
 
 const ELIGIBLE = ['draft', 'pending', 'approved'];

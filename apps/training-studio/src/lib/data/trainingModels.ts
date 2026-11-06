@@ -37,8 +37,9 @@ import type {
  * (`disabled: true`) are intentionally omitted; the Flux.2 Edit entry is
  * commented out upstream. AIRs for AI-Toolkit-only ecosystems that upstream
  * flags as placeholders (boogu, ideogram4, ltx25, minimaxh3) are copied as-is.
- * `flux3klein` (2026-10-15) is the one card with NO source entry — Flux.3 Klein
- * trains in the Training Studio only. `mossimage` (2026-10-16) likewise.
+ * `flux3klein` (2026-10-15) and `mossimage` (2026-10-16) train in the Training Studio
+ * only: their source entries are `disabled: true`, there so the main app can publish
+ * their runs, so a re-mirror must keep them here.
  */
 
 export type LabelType = 'tag' | 'caption';
@@ -106,6 +107,11 @@ export interface ModelCard {
   /** Why the card is no longer offered. A retired card stays in the catalog so past runs still resolve
    *  (`cardByType`, `findByAir`), but no offer surface lists it and a submit naming its base is refused. */
   retired?: string;
+  /** The dataset is before/after PAIRS with one edit instruction each (an edit LoRA), not a flat set of
+   *  labeled images: the flow swaps in the pair-based Data step and submits blob items placed by
+   *  `control_1/`/`main/` path, with `isEditTraining`. Only ecosystems in `PAIR_TRAINING_ECOSYSTEMS`
+   *  can carry it. */
+  pairs?: true;
   /** Newest / preferred first — `versions[0]` is the default selection. */
   versions: ModelVersionInfo[];
 }
@@ -183,6 +189,39 @@ export const MODEL_CARDS: ModelCard[] = [
     ],
   },
   {
+    type: 'flux2klein-edit',
+    name: 'Flux.2 Klein Edit',
+    code: 'KE',
+    media: 'image',
+    label: 'caption',
+    description: 'Teach an edit from before and after image pairs.',
+    released: '2026-01-15',
+    flag: 'new',
+    flagKey: 'flux2-klein-edit-training',
+    pairs: true,
+    // Same checkpoints as the Flux.2 Klein card: run rows tell them apart by `meta.cardType`.
+    versions: [
+      {
+        key: 'flux2klein_9b_edit',
+        label: '9B Base',
+        note: 'higher quality',
+        air: 'urn:air:flux2klein:checkpoint:civitai:2322332@2612548',
+        baseModel: 'Flux.2 Klein 9B-base',
+        ecosystem: 'flux2klein',
+        modelVariant: '9b',
+      },
+      {
+        key: 'flux2klein_4b_edit',
+        label: '4B Base',
+        note: 'efficient',
+        air: 'urn:air:flux2klein:checkpoint:civitai:2322332@2612552',
+        baseModel: 'Flux.2 Klein 4B-base',
+        ecosystem: 'flux2klein',
+        modelVariant: '4b',
+      },
+    ],
+  },
+  {
     type: 'mossimage',
     name: 'MOSS Image',
     code: 'MO',
@@ -228,7 +267,7 @@ export const MODEL_CARDS: ModelCard[] = [
       {
         key: 'flux3klein',
         label: 'Base',
-        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/client` ships no
+        // Studio-only: the in-app trainer has no Flux.3 entry. `@civitai/orchestration-client` ships no
         // Flux3Klein training input yet, so the ecosystem literal is unchecked.
         air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
         baseModel: 'Flux.3 Klein-base',
@@ -425,6 +464,7 @@ export const MODEL_CARDS: ModelCard[] = [
     label: 'caption',
     description: 'Design work: logos, signage, layered typography.',
     released: '2026-06-03',
+    retired: 'Not licensed for on-site training.',
     versions: [
       {
         key: 'ideogram4',
@@ -796,6 +836,17 @@ export const LORA_TYPES: LoraType[] = [
     seen: { image: 50, video: 150, audio: 150 },
     minImg: 15,
   },
+  // The "Image edit" section's only type. Listed for no media, so the Character/Style/Concept rows
+  // never offer it; the Select step sets it when that section is picked.
+  {
+    id: 'edit',
+    name: 'Edit',
+    icon: '🪄',
+    medias: [],
+    recommended: { image: 'flux2klein-edit' },
+    seen: { image: 35 },
+    minImg: 15,
+  },
   {
     id: 'effect',
     name: 'Effect',
@@ -835,15 +886,40 @@ export const catalogFlagKeys = (): string[] => [
   ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
 ];
 
+/** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see
+ *  one. Null when a pair card is ungated, so nothing gates them. */
+export const pairCardFlagKeys = (): string[] | null => {
+  const cards = MODEL_CARDS.filter((c) => c.pairs && !c.retired);
+  return cards.every((c) => c.flagKey) ? cards.map((c) => c.flagKey!) : null;
+};
+
 /** Cards for a media, minus any gated card the viewer can't see. `enabledFlags` omitted → no gating applied
- *  (server-rendered surfaces always pass the resolved set; leaving it off would leak a gated card). */
+ *  (server-rendered surfaces always pass the resolved set; leaving it off would leak a gated card). Edit
+ *  (pair) cards are never among them: they are their own section (`editCards`), not image models. */
 export const cardsForMedia = (media: Media, enabledFlags?: ReadonlySet<string>): ModelCard[] =>
   MODEL_CARDS.filter(
-    (c) => c.media === media && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
+    (c) =>
+      c.media === media &&
+      !c.pairs &&
+      !c.retired &&
+      (!enabledFlags || isCardVisible(c, enabledFlags))
+  );
+
+/** The edit (pair) cards the viewer can see — the Select step's "Image edit" section. */
+export const editCards = (enabledFlags?: ReadonlySet<string>): ModelCard[] =>
+  MODEL_CARDS.filter(
+    (c) => c.pairs && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
   );
 
 /** True when this AIR is the base of a retired card. */
 export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
+
+/** True when every card training on this ecosystem is retired. A run that names no model trains on the
+ *  ecosystem's default base, so a retired-only ecosystem must be refused by ecosystem, not by AIR. */
+export const isRetiredEcosystem = (ecosystem: string): boolean => {
+  const cards = MODEL_CARDS.filter((c) => c.versions.some((v) => v.ecosystem === ecosystem));
+  return cards.length > 0 && cards.every((c) => c.retired);
+};
 
 /**
  * The version label to show beside a card's name, blank when it only repeats it. A single-version card
@@ -1111,6 +1187,31 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 2,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  // Batch 1 for both variants: each sample is a before/after pair.
+  flux2klein_9b_edit: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    noiseOffset: 0,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  flux2klein_4b_edit: {
+    epochs: 10,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
     noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
@@ -1469,6 +1570,26 @@ export const ecosystemAllowsCustomBase = (ecosystem: string): boolean =>
  *  decides: the same ecosystem the submit check sees. */
 export const allowsCustomBase = (card: ModelCard): boolean =>
   ecosystemAllowsCustomBase(card.versions[0]!.ecosystem);
+
+/** Ecosystems whose training samples can be rendered from an input image (`samples.sourceImages`).
+ *  Add one only after a real run shows its samples follow the input — otherwise uploads are ignored. */
+const SAMPLE_SOURCE_IMAGE_ECOSYSTEMS: ReadonlySet<string> = new Set(['flux2klein']);
+
+/** Ecosystems whose ai-toolkit input takes `isEditTraining` with a path-placed pair dataset. */
+const PAIR_TRAINING_ECOSYSTEMS: ReadonlySet<string> = new Set(['flux2klein']);
+
+export const ecosystemTrainsPairs = (ecosystem: string): boolean =>
+  PAIR_TRAINING_ECOSYSTEMS.has(ecosystem);
+
+export const ecosystemTakesSampleImages = (ecosystem: string): boolean =>
+  SAMPLE_SOURCE_IMAGE_ECOSYSTEMS.has(ecosystem);
+
+// Mirrors the orchestrator's training schema: lr >= 0.1 is refused unless the optimizer is a Prodigy,
+// which finds its own step size and expects lr 1.
+const PRODIGY_OPTIMIZERS = ['prodigy', 'prodigy8bit'];
+export const MAX_NON_PRODIGY_LR = 0.1;
+export const isProdigy = (optimizer: string): boolean =>
+  PRODIGY_OPTIMIZERS.includes(optimizer.toLowerCase());
 
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =

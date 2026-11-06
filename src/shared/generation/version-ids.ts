@@ -16,6 +16,7 @@ export const klingVersionIds = {
   v2: 2623817,
   v2_5_turbo: 2623821,
   v3: 2698632,
+  v4: 3437688,
 } as const;
 
 export const nanoBananaVersionIds = {
@@ -54,6 +55,7 @@ export const happyHorseVersionIds = {
 
 export const flux3VideoVersionIds = {
   'v3.0': 3204701,
+  'v3.0-max': 3420850,
 } as const;
 
 export const grokVersionIds = {

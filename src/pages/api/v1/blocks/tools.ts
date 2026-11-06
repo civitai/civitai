@@ -299,6 +299,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
             limit: sortedQuery ? TOOL_SORTED_QUERY_CANDIDATES : effectiveLimit,
             browsingLevel,
             types,
+            baseModels,
+            supportsGeneration,
           });
           searchIds = meili.searchIds;
         }

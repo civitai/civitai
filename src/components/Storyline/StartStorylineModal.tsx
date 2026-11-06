@@ -1,66 +1,82 @@
-import { Alert, Button, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Button, Drawer, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useQueryImages } from '~/components/Image/image.utils';
 import { StorylineContinueModeInput } from '~/components/Storyline/settings/StorylineContinueModeInput';
+import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
+import { StorylineSparkCreditText } from '~/components/Storyline/StorylineSparkCredit';
+import type { StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
+import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import {
   StorylineClosedChip,
   StorylineOpenToAnyoneChip,
   StorylinePriceChip,
 } from '~/components/Storyline/StorylineChips';
-import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
-import { StorylineRatingInput } from '~/components/Storyline/settings/StorylineRatingInput';
+import { storylineUrl, storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import type { StorylineWhoCanContinue } from '~/components/Storyline/storyline-ui';
 import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
-import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { NsfwLevel } from '~/server/common/enums';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
+import { isStorylineVerdictLevel, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function openStartStorylineModal(post: StorylineSourcePost) {
-  dialogStore.trigger({
-    component: StartStorylineModal,
-    props: { postId: post.id, postTitle: post.title, postNsfwLevel: post.nsfwLevel },
-  });
+export function openStartStorylineModal(post?: StorylineSourcePost) {
+  dialogStore.trigger({ component: StartStorylineModal, props: { post } });
 }
 
+/** Someone's image a storyline starts from: credited above chapter 1, and its rating is the floor. */
+export type StorylineSparkImage = StorylineThumbImage & {
+  /** Null when the image source carried only `userId`; it is then looked up. */
+  username: string | null;
+};
+
+export function openStartStorylineFromImageModal(sparkImage: StorylineSparkImage) {
+  dialogStore.trigger({ component: StartStorylineModal, props: { sparkImage } });
+}
+
+/**
+ * Starts a storyline. Without `post` it starts empty and hands the author to the post editor to
+ * write chapter 1; with one, that published post is chapter 1. With `sparkImage` it starts empty,
+ * credited to that image. A bottom sheet on a phone.
+ */
 export function StartStorylineModal({
-  postId,
-  postTitle,
-  postNsfwLevel,
+  post,
+  sparkImage,
 }: {
-  postId: number;
-  postTitle?: string | null;
-  postNsfwLevel: number;
+  post?: StorylineSourcePost;
+  sparkImage?: StorylineSparkImage;
 }) {
   const dialog = useDialogContext();
   const router = useRouter();
   const utils = trpc.useUtils();
-  const allowed = STORYLINE_CEILING_LEVELS.filter((level) =>
-    storylineLevelAllowed({ postLevel: postNsfwLevel, maxNsfwLevel: level })
+  const mobile = useIsMobile({ type: 'media' });
+  // Chapter 1 and the spark are already rated, so only the ceilings both fit are offered.
+  const floors = [post?.nsfwLevel, sparkImage?.nsfwLevel].filter(
+    (level): level is number => level !== undefined
   );
+  const allowed = STORYLINE_CEILING_LEVELS.filter((level) =>
+    floors.every((postLevel) => storylineLevelAllowed({ postLevel, maxNsfwLevel: level }))
+  );
+  const rated = post ?? sparkImage;
   const canStart = allowed.length > 0;
-  const [title, setTitle] = useState(postTitle ?? '');
+  const [title, setTitle] = useState(post?.title ?? '');
   const [maxNsfwLevel, setMaxNsfwLevel] = useState<number>(
     allowed.find((level) => level >= NsfwLevel.PG13) ?? allowed[0] ?? NsfwLevel.PG13
   );
   const [whoCanContinue, setWhoCanContinue] = useState<StorylineWhoCanContinue>('Anyone');
-  // No storyline exists yet to carry a cover, so the post's first image is read as the page would.
-  const { images, isLoading: coverLoading } = useQueryImages(
-    { postId, limit: 1, withMeta: false, include: [] },
-    { enabled: canStart }
-  );
-  const cover = coverLoading ? undefined : (images[0] as StorylineThumbImage | undefined) ?? null;
 
   const create = trpc.storyline.create.useMutation({
     onSuccess: async ({ id }) => {
-      await utils.storyline.getForPosts.invalidate();
+      await Promise.all([
+        utils.storyline.getInfinite.invalidate(),
+        post && utils.storyline.getForPosts.invalidate(),
+      ]);
       dialog.onClose();
-      await router.push(storylineUrl(id));
+      await router.push(post ? storylineUrl(id) : storylineWriteChapterUrl(id));
     },
     onError: (error) =>
       showErrorNotification({
@@ -71,86 +87,116 @@ export function StartStorylineModal({
 
   const trimmed = title.trim();
 
-  return (
-    <Modal {...dialog} title="Start a storyline" size="md">
-      <Stack gap="md">
-        <Text size="sm" c="dimmed">
-          This post becomes chapter 1. Its first image is the storyline&apos;s cover.
+  const sparkUserId = sparkImage?.userId;
+  const { data: sparkUser } = trpc.user.getById.useQuery(
+    { id: sparkUserId as number },
+    {
+      enabled: !!sparkImage && !sparkImage.username && !!sparkUserId && sparkUserId > -1,
+      gcTime: Infinity,
+      staleTime: Infinity,
+    }
+  );
+  const sparkUsername = sparkImage?.username ?? sparkUser?.username ?? null;
+
+  const credit = sparkImage && (
+    <div className="flex items-center gap-3" data-testid="storyline-spark-credit">
+      <StorylineThumb image={sparkImage} width={48} className="shrink-0 rounded" />
+      <StorylineSparkCreditText username={sparkUsername} />
+    </div>
+  );
+
+  const form = !canStart ? (
+    floors.some(isStorylineVerdictLevel) ? (
+      <Alert color="red" icon={<IconAlertTriangle />}>
+        {STORYLINE_REFUSALS.cannotSubmit}.
+      </Alert>
+    ) : (
+      <Alert color="yellow" icon={<IconAlertTriangle />}>
+        {post
+          ? "This post hasn't been rated yet. Try again once its images have been scanned."
+          : "This image hasn't been rated yet. Try again once it has been scanned."}
+      </Alert>
+    )
+  ) : (
+    <Stack gap="md">
+      {credit}
+      <Text size="sm" c="dimmed">
+        {post
+          ? 'This post becomes chapter 1. Name the storyline and set the terms.'
+          : "Name it and set the terms, then you'll write chapter 1 as a post."}
+      </Text>
+      <TextInput
+        label="Title"
+        value={title}
+        onChange={(e) => setTitle(e.currentTarget.value)}
+        maxLength={255}
+        required
+        data-autofocus
+      />
+      <Stack gap={4}>
+        <Text size="sm" fw={500}>
+          Max rating
         </Text>
-        {!canStart ? (
-          <Alert color="yellow" icon={<IconAlertTriangle />}>
-            This post hasn&apos;t been rated yet. Try again once its images have been scanned.
-          </Alert>
-        ) : (
-          <>
-            <div className="flex items-start gap-3.5">
-              <figure className="m-0 w-[120px] shrink-0" data-testid="storyline-start-cover">
-                <StorylineThumb
-                  image={cover}
-                  width={120}
-                  ratio="4/5"
-                  fluid
-                  className="rounded-lg"
-                />
-                <Text component="figcaption" size="xs" c="dimmed" mt={4} lh={1.3}>
-                  Chapter 1 and the cover
-                </Text>
-              </figure>
-              <TextInput
-                label="Title"
-                value={title}
-                onChange={(e) => setTitle(e.currentTarget.value)}
-                maxLength={255}
-                required
-                className="min-w-0 flex-1"
-              />
-            </div>
-            <Stack gap={4}>
-              <Text size="sm" fw={500}>
-                Max rating
-              </Text>
-              <StorylineRatingInput
-                value={maxNsfwLevel}
-                onChange={setMaxNsfwLevel}
-                isAllowed={(level) => allowed.includes(level)}
-              />
-              <Text size="xs" c="dimmed">
-                Continuations rated above this can&apos;t be added. It can&apos;t be lower than
-                chapter 1&apos;s rating.
-              </Text>
-            </Stack>
-            <Stack gap={2}>
-              <Text size="sm" fw={500}>
-                Who can continue
-              </Text>
-              <StorylineContinueModeInput value={whoCanContinue} onChange={setWhoCanContinue} />
-              <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="storyline-start-terms">
-                <StorylinePriceChip price={0} />
-                {whoCanContinue === 'Anyone' ? (
-                  <StorylineOpenToAnyoneChip />
-                ) : (
-                  <StorylineClosedChip label="Collaborators only" />
-                )}
-              </div>
-              <Text size="xs" c="dimmed">
-                You can set a price from Manage on the storyline&apos;s page.
-              </Text>
-            </Stack>
-          </>
-        )}
-        <Group justify="flex-end">
-          <Button variant="default" onClick={dialog.onClose}>
-            Cancel
-          </Button>
-          <Button
-            disabled={!canStart || !trimmed}
-            loading={create.isPending}
-            onClick={() => create.mutate({ postId, title: trimmed, maxNsfwLevel, whoCanContinue })}
-          >
-            Start storyline
-          </Button>
-        </Group>
+        <StorylineRatingInput
+          value={maxNsfwLevel}
+          onChange={setMaxNsfwLevel}
+          isAllowed={rated ? (level) => allowed.includes(level) : undefined}
+        />
+        <Text size="xs" c="dimmed">
+          {post
+            ? "Continuations rated above this can't be added. It can't be lower than chapter 1's rating."
+            : sparkImage
+            ? "Continuations rated above this can't be added. It can't be lower than the image's rating."
+            : "Continuations rated above this can't be added. If chapter 1 needs a higher rating, the maximum is raised to fit it."}
+        </Text>
       </Stack>
+      <Stack gap={2}>
+        <Text size="sm" fw={500}>
+          Who can continue
+        </Text>
+        <StorylineContinueModeInput value={whoCanContinue} onChange={setWhoCanContinue} />
+        <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="storyline-start-terms">
+          <StorylinePriceChip price={0} />
+          {whoCanContinue === 'Anyone' ? (
+            <StorylineOpenToAnyoneChip />
+          ) : (
+            <StorylineClosedChip label="Collaborators only" />
+          )}
+        </div>
+        <Text size="xs" c="dimmed">
+          You can set a price from Manage on the storyline&apos;s page.
+        </Text>
+      </Stack>
+      <Group justify="flex-end">
+        <Button variant="default" onClick={dialog.onClose}>
+          Cancel
+        </Button>
+        <Button
+          disabled={!trimmed}
+          loading={create.isPending}
+          onClick={() =>
+            create.mutate({
+              postId: post?.id,
+              sparkImageId: sparkImage?.id,
+              title: trimmed,
+              maxNsfwLevel,
+              whoCanContinue,
+            })
+          }
+        >
+          Start storyline
+        </Button>
+      </Group>
+    </Stack>
+  );
+
+  return mobile ? (
+    <Drawer {...dialog} position="bottom" title="Start a storyline" size="32rem" radius="lg">
+      {form}
+    </Drawer>
+  ) : (
+    <Modal {...dialog} title="Start a storyline" size="md">
+      {form}
     </Modal>
   );
 }

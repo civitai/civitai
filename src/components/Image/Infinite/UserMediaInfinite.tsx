@@ -2,9 +2,12 @@ import type { SegmentedControlProps } from '@mantine/core';
 import { Box, Center, Chip, Group, Loader, SegmentedControl, Stack } from '@mantine/core';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { useRouter } from 'next/router';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
+import { resolveFeedSort } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-keys';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
@@ -17,7 +20,8 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
-import { postgresSlugify, titleCase } from '~/utils/string-helpers';
+import { isViewer } from '~/utils/is-viewer';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { jumpToEmptyMessage } from '~/shared/utils/jump-to-month';
 import classes from './UserMediaInfinite.module.css';
@@ -38,7 +42,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
     replace,
     query: {
       period = MetricTimeframe.AllTime,
-      sort = ImageSort.Newest,
+      sort: requestedSort = ImageSort.Newest,
       username = '',
       reactions,
       types = [type],
@@ -54,17 +58,27 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       ...query
     },
   } = useImageQueryParams();
+  const availability = useSortAvailability();
+  // The same sort every other image feed runs on: one this viewer may not have is
+  // served as Most Reactions, and the menu label and the query both read it. The
+  // URL keeps what was asked for.
+  const sort = resolveFeedSort(
+    { type: type === MediaType.video ? 'videos' : 'images', value: requestedSort },
+    availability
+  );
 
+  // By the name as stored, not the slugified `username` param: some older usernames hold
+  // characters the slug strips, and their slug names no account.
+  const profileUsername = (useRouter().query.username as string) ?? '';
   const { data: user, isLoading: userLoading } = trpc.userProfile.get.useQuery(
-    { username },
-    { enabled: username !== constants.system.user.username }
+    { username: profileUsername },
+    { enabled: !!profileUsername && profileUsername !== constants.system.user.username }
   );
 
   // currently not showing any content if the username is undefined
-  if (!username) return <NotFound />;
+  if (!profileUsername) return <NotFound />;
 
-  const isSameUser =
-    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+  const isSameUser = isViewer(currentUser, user?.id);
   const isModerator = currentUser?.isModerator ?? false;
   const section = isSameUser ? query.section ?? 'images' : 'images';
   const viewingReactions = section === 'reactions';
@@ -187,6 +201,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
             ) : (
               <ImagesInfinite
                 filterType={isVideo ? 'videos' : 'images'}
+                landscapeSpan
                 // The store merge keeps any key these overrides don't mention, and
                 // every one of them ANDs against this tab's single user.
                 disableStoreFilters

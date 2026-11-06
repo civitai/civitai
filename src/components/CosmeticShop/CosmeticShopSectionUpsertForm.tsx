@@ -110,6 +110,13 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
             stickyToolbar
           />
           {!communityHub && (
+            <InputText
+              name="meta.eventTag"
+              label="Event tag"
+              description="Optional, e.g. halloween. Every published shop item a moderator gives this tag joins the section after the items below, without being added by hand"
+            />
+          )}
+          {!communityHub && (
             <InputSectionItems
               name="items"
               label="Items in section"

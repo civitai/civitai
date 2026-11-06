@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 // Unit tests for setModelPoi — the moderator app's POI toggle. Same mock scaffold as
 // set-model-sfw-only.service.test.ts (model.service.ts has a very large import graph).
@@ -106,9 +107,15 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
+const { mockUpdateModelNsfwLevels } = vi.hoisted(() => ({ mockUpdateModelNsfwLevels: vi.fn() }));
+vi.mock('~/server/services/nsfwLevels.service', () => ({
+  updateModelNsfwLevels: mockUpdateModelNsfwLevels,
+}));
+
 import { MINOR_LOCKED_PROPERTIES, setModelPoi } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { rowChangesBeforeLock } from './model-row-lock.fake';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -126,8 +133,10 @@ const baseModelRow = {
   gallerySettings: { level: 31, users: [] as number[], tags: [] as number[] },
   lockedProperties: [] as string[],
 };
-const mockBefore = (overrides: Partial<typeof baseModelRow>) =>
+const mockBefore = (overrides: Partial<typeof baseModelRow> & { meta?: unknown }) => {
   mockDbRead.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
+};
 const written = () => mockDbWrite.model.update.mock.calls[0][0].data;
 
 beforeEach(() => {
@@ -222,6 +231,89 @@ describe('setModelPoi — lift', () => {
     });
   });
 
+  const ownerFlagOverride = {
+    at: '2026-10-01T00:00:00.000Z',
+    flags: ['poi'],
+    prevNsfw: true,
+    prevSfwOnly: false,
+    prevLockedProperties: ['nsfw'],
+  };
+  const overrideWrites = () =>
+    rawWriteValues().filter((values) => values.includes('ownerFlagOverride'));
+
+  it('after an owner override, puts back the rating, the SFW-only setting and the locks it replaced', async () => {
+    mockBefore({
+      poi: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride },
+    });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(written()).toEqual({
+      poi: false,
+      nsfw: true,
+      sfwOnly: false,
+      lockedProperties: ['nsfw'],
+    });
+    expect(mockUpdateModelNsfwLevels).toHaveBeenCalledWith([MODEL_ID]);
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).not.toContainEqual(expect.stringContaining('flags'));
+  });
+
+  it('restores nothing from a minor flag snapshot, which only a minor lift reads', async () => {
+    mockBefore({
+      poi: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: {
+        minorFlagSnapshot: {
+          at: '2026-10-01T00:00:00.000Z',
+          source: 'manual',
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(written()).toEqual({ poi: false, lockedProperties: [] });
+  });
+
+  it('restores nothing on a hash revert, which puts back its own snapshot', async () => {
+    mockBefore({
+      poi: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride },
+    });
+    await setModelPoi({
+      id: MODEL_ID,
+      poi: false,
+      userId: MODERATOR_ID,
+      activity: 'revertPoiAutoHash',
+    });
+    expect(written()).toEqual({ poi: false, lockedProperties: [] });
+    expect(overrideWrites()).toHaveLength(0);
+  });
+
+  it('keeps the restrictions and the override while a minor flag stays on', async () => {
+    mockBefore({
+      poi: true,
+      minor: true,
+      nsfw: false,
+      sfwOnly: true,
+      lockedProperties: ['poi', 'minor', 'nsfw', 'sfwOnly'],
+      meta: { ownerFlagOverride: { ...ownerFlagOverride, flags: ['minor', 'poi'] } },
+    });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(written()).not.toHaveProperty('nsfw');
+    expect(overrideWrites()).toHaveLength(1);
+    expect(overrideWrites()[0]).toContainEqual(expect.stringContaining('"flags":["minor"]'));
+  });
+
   it('records no ruling when the model was not POI to begin with', async () => {
     mockBefore({ poi: false });
     await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
@@ -230,8 +322,217 @@ describe('setModelPoi — lift', () => {
   });
 });
 
+/** The values of every raw write, so a meta key the write sets or removes can be named. */
+const rawWriteValues = () =>
+  mockDbWrite.$executeRaw.mock.calls.map(
+    ([strings, ...values]) =>
+      Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).values
+  );
+const wroteKey = (key: string) => rawWriteValues().some((values) => values.includes(key));
+
+describe('setModelPoi — the real-person hash match', () => {
+  it('snapshots the pre-flag state before an automated flag', async () => {
+    mockBefore({});
+    mockDbWrite.$executeRaw.mockResolvedValue(1);
+    await setModelPoi({ id: MODEL_ID, poi: true, userId: 1, activity: 'setPoiAutoHash' });
+
+    expect(wroteKey('poiFlagSnapshot')).toBe(true);
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ activity: 'setPoiAutoHash' })
+    );
+  });
+
+  // Without a snapshot the flag could neither be reverted nor appealed.
+  it('applies no automated flag when the snapshot was not recorded', async () => {
+    mockBefore({});
+    mockDbWrite.$executeRaw.mockResolvedValue(0);
+    await expect(
+      setModelPoi({ id: MODEL_ID, poi: true, userId: 1, activity: 'setPoiAutoHash' })
+    ).rejects.toThrow();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  // A snapshot left by an automated attempt that never applied would make this flag read as automated.
+  it('a moderator set drops any snapshot rather than taking one', async () => {
+    mockBefore({});
+    await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID });
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const sql = Prisma.sql(
+      ...(mockDbWrite.$executeRaw.mock.calls[0] as [TemplateStringsArray, ...never[]])
+    );
+    expect(sql.text).not.toContain('jsonb_build_object');
+    expect(sql.values).toEqual(expect.arrayContaining(['poiHashMatch', 'poiFlagSnapshot']));
+  });
+
+  it('a lift stamps the model cleared, so the hash match does not put the flag back', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+    expect(wroteKey('poiHashCleared')).toBe(true);
+  });
+
+  it('a lift for an appeal leaves the ruling and the appeal to the resolver', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, fromAppeal: true });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+    expect(wroteKey('poiHashCleared')).toBe(true);
+  });
+});
+
+// The queue's flag and revert decide on the row they lock, not on what an earlier read saw: another
+// moderator may have ruled the model in between.
+describe('setModelPoi — onlyIf', () => {
+  it('decides on the locked row, not the read before it', async () => {
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...baseModelRow, poi: false })
+      .mockResolvedValueOnce({ ...baseModelRow, poi: true });
+    const onlyIf = vi.fn((row: { poi: boolean }) => !row.poi);
+
+    expect(await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID, onlyIf })).toBeNull();
+    expect(onlyIf).toHaveBeenCalledWith(expect.objectContaining({ poi: true }));
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockTrackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('writes as usual when the locked row passes', async () => {
+    mockBefore({});
+    expect(
+      await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID, onlyIf: () => true })
+    ).toMatchObject({ poi: true });
+    expect(written()).toMatchObject({ poi: true, sfwOnly: true });
+  });
+
+  // Decided: a guarded lift records its ruling after the write, not before. Before it would leave a
+  // false "moderator lifted" ruling on a revert the lock refused. Don't move it back ahead.
+  it('a refused revert records no ruling', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => false });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+    expect(mockSettleAppeals).not.toHaveBeenCalled();
+  });
+
+  it('a guarded lift that lands records its ruling after the write', async () => {
+    mockBefore({ poi: true });
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID, onlyIf: () => true });
+    expect(mockStampRuling).toHaveBeenCalledTimes(1);
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+});
+
 it('refuses an unknown model', async () => {
-  mockDbRead.model.findUnique.mockResolvedValue(null);
+  mockDbWrite.model.findUnique.mockResolvedValue(null);
   await expect(setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID })).rejects.toThrow();
   expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+});
+
+// A flag or lock another moderator or a job sets after an earlier read of the model is in the row
+// the setter locks, and the write is built from that row.
+describe('setModelPoi — decides from the row it locks', () => {
+  it('keeps the minor locks when a minor flag landed since an earlier read', async () => {
+    const { written } = rowChangesBeforeLock(
+      { ...baseModelRow, poi: true, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] },
+      {
+        ...baseModelRow,
+        poi: true,
+        minor: true,
+        lockedProperties: ['poi', 'nsfw', 'sfwOnly', 'minor'],
+      }
+    );
+
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+
+    expect([...(written().lockedProperties as string[])].sort()).toEqual(
+      [...MINOR_LOCKED_PROPERTIES].sort()
+    );
+  });
+
+  it('keeps a lock set since an earlier read when flagging', async () => {
+    const { written } = rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      lockedProperties: ['minor'],
+    });
+
+    await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID });
+
+    expect([...(written().lockedProperties as string[])].sort()).toEqual([
+      'minor',
+      'nsfw',
+      'poi',
+      'sfwOnly',
+    ]);
+  });
+
+  // The flag landed after the read that decides whether to record the ruling ahead of the write.
+  it('still records the ruling, after the write, when lifting a flag set since that read', async () => {
+    const { tx } = rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      poi: true,
+      lockedProperties: ['poi'],
+    });
+
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+
+    expect(mockStampRuling).toHaveBeenCalledTimes(1);
+    expect(mockStampRuling).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL_ID, label: 'poi' })
+    );
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.model.update.mock.invocationCallOrder[0]
+    );
+    expect(mockSettleAppeals).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL_ID, liftedLabels: ['poi'] })
+    );
+  });
+
+  // The lift has committed by then, so its follow-up must still run.
+  it('finishes the lift when that late ruling fails', async () => {
+    rowChangesBeforeLock(baseModelRow, { ...baseModelRow, poi: true, lockedProperties: ['poi'] });
+    mockStampRuling.mockRejectedValueOnce(new Error('db exploded'));
+
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      MODERATOR_ID,
+      expect.objectContaining({ activity: 'unsetPoi' })
+    );
+    expect(mockModelsQueueUpdate).toHaveBeenCalled();
+    expect(mockSettleAppeals).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', modelId: MODEL_ID })
+    );
+  });
+
+  it('records the ruling once, ahead of the write, when nothing changed since the read', async () => {
+    const row = { ...baseModelRow, poi: true, lockedProperties: ['poi'] };
+    const { tx } = rowChangesBeforeLock(row, row);
+
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+
+    expect(mockStampRuling).toHaveBeenCalledTimes(1);
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  // On its own connection the snapshot would wait on the row lock the flag's transaction holds, and an
+  // automated flag is not applied without its snapshot.
+  it('takes the automated flag snapshot on the transaction that holds the row lock', async () => {
+    const { tx, written } = rowChangesBeforeLock(baseModelRow, baseModelRow);
+
+    await setModelPoi({ id: MODEL_ID, poi: true, userId: 1, activity: 'setPoiAutoHash' });
+
+    const snapshotValues = tx.$executeRaw.mock.calls.map(
+      ([strings, ...values]) =>
+        Prisma.sql(strings as TemplateStringsArray, ...(values as never[])).values
+    );
+    expect(snapshotValues.some((values) => values.includes('poiFlagSnapshot'))).toBe(true);
+    expect(written()).toMatchObject({ poi: true });
+  });
 });

@@ -2,7 +2,7 @@ import type { ImageGetInfinite } from '~/types/router';
 import { ImageSort } from '~/server/common/enums';
 import { ownContentPickerFilters } from '~/components/Image/image.utils';
 import { SHARED_ALLOWANCE_NOTE } from '~/shared/utils/placement';
-import { REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
+import { paidSubmissionOpen, REMIX_GALLERY_ROW_WIDTH } from '~/shared/utils/remix-gallery';
 
 /**
  * A full feed image rather than a projection: entries are handed straight to
@@ -361,4 +361,94 @@ export function remixGalleryModerating({
   if (!isModerator) return false;
   if (!ownerKnown) return false;
   return !isOwner || asModerator;
+}
+
+export type TeamWaiverStanding = { team: string; remaining: number; resetsAt: Date } | null;
+
+/**
+ * What the submit card says about an event's team waiver for the selected remix.
+ *
+ * `available` replaces the free/paid choice: a waived submission costs neither
+ * Buzz nor the daily free placement, so there is nothing left to choose. A waiver
+ * whose daily limit is spent says so and leaves the ordinary choice in place.
+ * Nothing is said for an unverified remix: the waiver, like free, needs one, and
+ * the free option's own note already explains that.
+ */
+export function teamWaiverOffer({
+  verified,
+  open,
+  standing,
+}: {
+  verified: boolean;
+  open: boolean;
+  standing: TeamWaiverStanding | undefined;
+}): { available: boolean; note: string | null } {
+  if (!standing || !verified || !open) return { available: false, note: null };
+  if (standing.remaining <= 0)
+    return {
+      available: false,
+      note: `You've used today's free team remixes. They come back at ${standing.resetsAt.toLocaleTimeString(
+        [],
+        { hour: 'numeric', minute: '2-digit' }
+      )}.`,
+    };
+  return {
+    available: true,
+    note: `Free for Team ${
+      standing.team
+    }: you and this creator are teammates and the image is wearing a team hat. ${
+      standing.remaining === 1 ? '1 free team remix' : `${standing.remaining} free team remixes`
+    } left today. The creator still reviews it.`,
+  };
+}
+
+/**
+ * How a finished remix run's result can go to its source's Remix gallery, for the switch beside
+ * Post: the team waiver, then free, then the owner's price; null when it cannot go at all.
+ *
+ * The output is a remix of the host by construction (the run signed its source), so it is offered
+ * as verified. The server checks that again on the posted image and refuses free or team if it
+ * does not hold; the post is kept either way.
+ */
+export function remixResultGalleryOffer({
+  visibility,
+  eligibility,
+  viewerId,
+}: {
+  visibility?: {
+    open: boolean;
+    price: number | null;
+    ownerId: number | null;
+    freeSlots: number;
+    freeSlotsRemaining: number | null;
+  };
+  eligibility?: {
+    allowance: { remaining: number; resetsAt: Date };
+    usedHere: boolean;
+    teamWaiver: TeamWaiverStanding;
+  };
+  viewerId?: number;
+}):
+  | { method: 'team'; team: string }
+  | { method: 'free' }
+  | { method: 'paid'; price: number }
+  | null {
+  if (!visibility?.open || !eligibility || viewerId == null || visibility.ownerId === viewerId)
+    return null;
+  const paidOpen = paidSubmissionOpen(visibility.price);
+  const { teamWaiver } = eligibility;
+  if (teamWaiver && teamWaiverOffer({ verified: true, open: true, standing: teamWaiver }).available)
+    return { method: 'team', team: teamWaiver.team };
+  const free = freeSubmissionOffer({
+    verified: true,
+    freeSlots: visibility.freeSlots,
+    freeSlotsRemaining: visibility.freeSlotsRemaining ?? 0,
+    allowanceRemaining: eligibility.allowance.remaining,
+    usedHere: eligibility.usedHere,
+    resetsAt: eligibility.allowance.resetsAt,
+    paidOpen,
+  });
+  if (free.available && visibility.freeSlotsRemaining != null) return { method: 'free' };
+  if (paidOpen && visibility.price != null) return { method: 'paid', price: visibility.price };
+  return null;
 }

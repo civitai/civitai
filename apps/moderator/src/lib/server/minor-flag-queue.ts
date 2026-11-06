@@ -14,18 +14,22 @@ import {
   flagRuling,
   parseKeptIds,
   planDecision,
+  appealRuling,
+  routesThroughAppeal,
   type FlagRef,
   withRuling,
 } from '$lib/minor-flags/flagged-decision';
 import {
+  bustMinorQueueCounts,
   getHeldDetectionModelCount,
   getMinorFlagAppealGroups,
   getMinorFlagAppealsForReview,
   getMinorQueueCounts,
   getFlaggedModels,
   getFlaggedSourceCounts,
+  getModelAppealState,
   getModelFlagDetail,
-  getModelMinor,
+  getModelFlagState,
   getNeedsReviewCount,
   getNeedsReviewModels,
   type MinorSearch,
@@ -44,7 +48,9 @@ import {
   type NeedsReviewSources,
 } from '$lib/minor-flags/needs-review';
 import { denied, type PermissionSet } from '$lib/permissions';
-import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
+import { canAccess } from '$lib/server/access';
+import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
+import type { FlaggedLabel, FlaggedSource } from '$lib/minor-flags/flagged-decision';
 import {
   APPEAL_FLAGS,
   APPEAL_SORTS,
@@ -60,17 +66,29 @@ import {
   FLAGGED_SOURCES,
   type FlaggedFilters,
 } from '$lib/minor-flags/flagged-filters';
+import { ruleFlagAppeal, type FlagAppealDecision } from '$lib/server/minor-flag-appeal-ruling';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { bounded } from '$lib/server/bounded';
 import {
+  getRestrictedVerdictCount,
+  getRestrictedVerdicts,
+} from '$lib/server/restricted-nsfw-verdicts';
+import { RESTRICTED_VERDICT_RULINGS } from '$lib/minor-flags/restricted-verdicts';
+import {
   confirmMinorFlag,
+  confirmPoiFlag,
   dismissMinorHashMatch,
+  dismissPoiHashMatch,
   resolveMinorFlagAppeal,
+  resolveLockReview,
   resolveMinorFlagAppealPerLabel,
   resolveRedetection,
   revertMinorFlag,
+  revertPoiFlag,
+  ruleRestrictedVerdict,
   ruleTextScanFlag,
   setModelMinorFlag,
+  setModelPoiFlag,
 } from '$lib/server/minor-flag.service';
 
 const querySchema = z.object({
@@ -164,10 +182,14 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
   const needsReviewFilters: NeedsReviewFilters = parseQuery(url, needsReviewFilterSchema);
   const sources = needsReviewSources(grants);
   const use = needsReviewBranches(sources, needsReviewFilters);
-  const [queue, { total, chipCounts }] = await Promise.all([
-    getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
-    needsReviewCounts(sources, use, search, needsReviewFilters),
-  ]);
+  const [queue, { total, chipCounts }, restrictedVerdicts, restrictedVerdictTotal] =
+    await Promise.all([
+      getNeedsReviewModels({ limit, offset, search, filters: needsReviewFilters, sources }),
+      needsReviewCounts(sources, use, search, needsReviewFilters),
+      // Ruled under the detections permission; listed apart from the merged leads, minor first.
+      sources.detections ? getRestrictedVerdicts() : [],
+      sources.detections ? getRestrictedVerdictCount() : 0,
+    ]);
   return {
     limit,
     page,
@@ -177,6 +199,8 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
     sources,
     total,
     chipCounts,
+    restrictedVerdicts,
+    restrictedVerdictTotal,
     ...queue,
     fullBleed: true,
   };
@@ -261,10 +285,26 @@ const modelSubject = (modelId: number) => `Model #${modelId}`;
 
 type RulingReason = { resolvedReason: string; internalNotes: string | undefined };
 
+/** The keep and lift of each label's hash flag and file match (no reason yet). */
+const hashRuling = (source: 'hash' | 'file-match', label: FlaggedLabel, keep: boolean) => {
+  // Only the picked endpoint is read: reading every import, as a table would, breaks the hand-listed
+  // mocks of minor-flag.service in the route tests.
+  if (source === 'hash')
+    return label === 'poi'
+      ? keep
+        ? confirmPoiFlag
+        : revertPoiFlag
+      : keep
+      ? confirmMinorFlag
+      : revertMinorFlag;
+  if (label === 'poi') return keep ? setModelPoiFlag : dismissPoiHashMatch;
+  return keep ? setModelMinorFlag : dismissMinorHashMatch;
+};
+
 /** Rules one flag through the path its source owns: hash flags through the main app's confirm and
- *  revert endpoints (no reason yet), text-scan flags through `ruleTextScanFlag`, re-detections through
- *  `resolveRedetection`, file matches through set-minor and dismiss (no reason yet). The caller has
- *  checked the label, text hash and reason. */
+ *  revert endpoints, text-scan flags through `ruleTextScanFlag`, re-detections through
+ *  `resolveRedetection`, file matches through the label's set and dismiss (`hashRuling`). The caller
+ *  has checked the label, text hash and reason. */
 async function ruleFlag(
   modelId: number,
   flag: FlagRef,
@@ -272,13 +312,9 @@ async function ruleFlag(
   reason: RulingReason | null
 ): Promise<{ ok: true; resolved: string } | { ok: false; error: string }> {
   if (flag.source === 'hash' || flag.source === 'file-match') {
-    const [onKeep, onLift] =
-      flag.source === 'hash'
-        ? [confirmMinorFlag, revertMinorFlag]
-        : [setModelMinorFlag, dismissMinorHashMatch];
-    const result = await (keep ? onKeep : onLift)(modelId);
+    const result = await hashRuling(flag.source, flag.label, keep)(modelId);
     return result.ok
-      ? { ok: true, resolved: keep ? 'kept' : 'dismissed' }
+      ? { ok: true, resolved: keep ? 'kept' : result.keptMinor ? 'keptMinor' : 'dismissed' }
       : { ok: false, error: result.error ?? 'Action failed.' };
   }
   const textHash = flag.textHash!;
@@ -311,9 +347,10 @@ const flaggedAction =
       fail(400, { error, modelId, subject: modelSubject(modelId) });
 
     if (source.data === 'hash') {
-      // Hash flags are minor flags; a poi label here would still lift or keep the minor flag.
+      // Minor only, as before real-person hash flags existed: this action skips the open-appeal
+      // routing `decideFlags` applies, so a real-person hash flag is ruled only through that.
       if (posted !== null && !(label.success && label.data === 'minor'))
-        return refusal('A hash flag can only be ruled as minor.');
+        return refusal('A hash flag can only be ruled as minor here.');
       // The main app's confirm and revert endpoints take no reason yet, so none is read or recorded.
       const result = await ruleFlag(
         modelId,
@@ -366,7 +403,8 @@ const flagName = (flag: FlagRef) => {
 const decideAction =
   (
     sources: readonly FlaggedSource[],
-    refuse: (event: RequestEvent, flag: FlagRef) => string | null = () => null
+    refuse: (event: RequestEvent, flag: FlagRef) => string | null = () => null,
+    appealAware = false
   ): Actions[string] =>
   async (event) => {
     const form = await event.request.formData();
@@ -396,16 +434,23 @@ const decideAction =
     }
     const keep = parseKeptIds(form.get('keep'), flags);
     if (!keep) return refusal('Pick a decision.');
-    for (const flag of flags) {
-      if ((flag.source === 'hash' || flag.source === 'file-match') && flag.label !== 'minor')
-        return refusal(`A ${SOURCE_NAMES[flag.source]} can only be ruled as minor.`);
+    for (const flag of flags)
       if ((flag.source === 'text-scan' || flag.source === 'redetected') && !flag.textHash)
         return refusal('Missing text hash.');
-    }
 
     const plan = planDecision(flags, keep);
     const input = parseForm(z.object(resolutionReasonFields), form);
     if (typeof input === 'string') return refusal(input);
+    if (appealAware && routesThroughAppeal(flags, true)) {
+      const state = await getModelAppealState(modelId);
+      if (state.pendingAppeal !== (form.get('hasPendingAppeal') === 'true'))
+        return refusal("The owner's appeal changed since you loaded this row — reload.");
+      if (state.pendingAppeal) {
+        if (!canAccess(event.locals.user, MODEL_FLAGS_APPEALS_PATH))
+          return refusal('Rule this from Appeals — you need access to the Appeals tab.');
+        return decideThroughAppeal(modelId, plan, state, input, refusal);
+      }
+    }
     const reasons: (RulingReason | null)[] = [];
     for (const flag of plan) {
       const ruling = flagRuling(flag);
@@ -428,11 +473,11 @@ const decideAction =
     // One at a time, in the row's order: each is its own main-app ruling, and a failure must not
     // stop the moderator from seeing which ones landed. A throw counts as that flag's failure: letting
     // it escape would hide the flags already ruled. A Needs review row lists its held detections before
-    // its file match, so a kept minor detection lands first and settles the match (`flagFileMatch`).
+    // its file matches, so a kept detection lands first and settles its label's match (`flagFileMatch`).
     const outcomes: { flag: PlannedFlagRef; result: RuleResult }[] = [];
     for (const [i, flag] of plan.entries()) {
       const result = await (flag.source === 'file-match' && flag.keep
-        ? flagFileMatch(modelId, outcomes)
+        ? flagFileMatch(modelId, flag.label, outcomes)
         : ruleFlag(modelId, flag, flag.keep, reasons[i])
       ).catch((err: unknown): { ok: false; error: string } => {
         console.error('Flagged decision failed', { modelId, flag: flagRefId(flag) }, err);
@@ -465,6 +510,58 @@ const decideAction =
     };
   };
 
+type AppealState = Awaited<ReturnType<typeof getModelAppealState>>;
+
+/** Syncs with `ruleModelTextScanFlag` (main app), whose per-flag path this decision replaces under an
+ *  appeal; the appeal resolver grants against the last-scanned text and checks neither. */
+const staleTextScanFlag = (plan: readonly PlannedFlagRef[], state: AppealState) => {
+  for (const flag of plan) {
+    if (flag.source !== 'text-scan') continue;
+    const entry = state.textScan[flag.label];
+    if (entry.textHash !== flag.textHash)
+      return 'The text changed since this flag. Reload and review it again.';
+    if (entry.redetectedTextHash && entry.redetectedTextHash !== flag.textHash)
+      return 'Newer text is held for review on this flag. Rule it from the re-detection queue.';
+  }
+  return null;
+};
+
+/** An Auto-flagged decision while the owner's appeal is open resolves that appeal, as the Appeals tab
+ *  does: the main app refuses a per-flag keep past an open appeal. The resolver also rules a label the
+ *  row does not list, so a model flagged beyond the row is refused rather than ruled unseen. */
+async function decideThroughAppeal(
+  modelId: number,
+  plan: readonly PlannedFlagRef[],
+  state: AppealState,
+  input: { resolvedReason?: string; internalNotes?: string },
+  refusal: (error: string) => ReturnType<typeof fail>
+) {
+  const stale = staleTextScanFlag(plan, state);
+  if (stale) return refusal(stale);
+  const listed = new Set(plan.map((f) => f.label));
+  for (const label of ['minor', 'poi'] as const)
+    if (state[label] && !listed.has(label))
+      return refusal(
+        `This model is also flagged as ${FLAG_LABEL_NAMES[label]}, which this row does not list. Rule it from Appeals.`
+      );
+  const ruling = appealRuling(plan);
+  if ('error' in ruling) return refusal(ruling.error);
+  const reason = checkedResolutionReason(
+    'flagAppeal',
+    ruling.verdict,
+    input,
+    ruling.lifted.length ? ruling.lifted : undefined
+  );
+  if (typeof reason === 'string') return refusal(reason);
+
+  const result = ruling.perLabel
+    ? await resolveMinorFlagAppealPerLabel(modelId, ruling.perLabel, reason)
+    : await resolveMinorFlagAppeal(modelId, ruling.verdict === 'Rejected', reason);
+  if (!result.ok) return refusal(result.error);
+  const resolved = ruling.perLabel ? 'split' : ruling.verdict === 'Rejected' ? 'kept' : 'dismissed';
+  return { success: true, modelId, resolved };
+}
+
 /** What happened to a ruled flag: an applied flag is kept or reverted; a Needs review lead, which had
  *  nothing applied, is flagged or dismissed. */
 const doneVerb = (flag: PlannedFlagRef) =>
@@ -478,29 +575,34 @@ const doneVerb = (flag: PlannedFlagRef) =>
 
 type PlannedFlagRef = FlagRef & { keep: boolean };
 type RuleResult = { ok: true; resolved: string } | { ok: false; error: string };
-const MATCH_KEPT: FlagRef = { label: 'minor', source: 'file-match', textHash: null };
-
 /**
- * Flags a file match as minor, unless the model is minor already. A minor detection kept earlier in this
- * decision applied the flag (and its snapshot) itself, so it settles the match, which leaves the queue
- * with it (the queue lists only models that are not minor); set-minor again would not rewrite the
- * snapshot but would re-run its side effects as a second, moderator-sourced flag. A model minor for any
- * other reason is refused.
+ * Flags a file match with its label, unless the model carries that flag already. A detection of the
+ * label kept earlier in this decision applied the flag itself, so it settles the match, which leaves the
+ * queue with it (the queue lists only models without the flag); setting it again would re-run its side
+ * effects as a second, moderator-sourced flag. A model flagged for any other reason is refused.
  */
 async function flagFileMatch(
   modelId: number,
+  label: FlaggedLabel,
   earlier: readonly { flag: PlannedFlagRef; result: RuleResult }[]
 ): Promise<RuleResult> {
-  if (!(await getModelMinor(modelId))) return ruleFlag(modelId, MATCH_KEPT, true, null);
+  const state = await getModelFlagState(modelId);
+  // flag-match re-checks this under the row lock; refusing here keeps the message specific.
+  if (label === 'poi' && !state.poi && !state.poiMatchQueued)
+    return {
+      ok: false,
+      error: 'This real-person match is no longer waiting: someone ruled it. Reload the queue.',
+    };
+  if (!state[label])
+    return ruleFlag(modelId, { label, source: 'file-match', textHash: null }, true, null);
   const appliedHere = earlier.some(
-    (o) => o.result.ok && o.flag.keep && o.flag.source === 'redetected' && o.flag.label === 'minor'
+    (o) => o.result.ok && o.flag.keep && o.flag.source === 'redetected' && o.flag.label === label
   );
   return appliedHere
     ? { ok: true, resolved: 'kept' }
     : {
         ok: false,
-        error:
-          'This model is already flagged minor, so the match needs no flag. Dismiss it or reload the queue.',
+        error: `This model is already flagged as ${FLAG_LABEL_NAMES[label]}, so the match needs no flag. Dismiss it or reload the queue.`,
       };
 }
 
@@ -508,7 +610,7 @@ async function flagFileMatch(
 export const flaggedActions: Actions = {
   keepFlag: flaggedAction(true),
   liftFlag: flaggedAction(false),
-  decideFlags: decideAction(['hash', 'text-scan']),
+  decideFlags: decideAction(['hash', 'text-scan'], undefined, true),
 };
 
 /** The permission each kind of Needs review lead is ruled under (`NEEDS_REVIEW_PERMISSIONS`). */
@@ -524,7 +626,44 @@ export const needsReviewActions: Actions = {
     const id = NEEDS_REVIEW_PERMISSION_OF[flag.source as keyof typeof NEEDS_REVIEW_PERMISSION_OF];
     return event.locals.grants[id] ? null : denied(id);
   }),
+  ruleRestrictedVerdict: async (event) => {
+    const id = NEEDS_REVIEW_PERMISSIONS.detections;
+    if (!event.locals.grants[id]) return fail(403, { error: denied(id) });
+    const form = await event.request.formData();
+    const parsed = restrictedVerdictForm.safeParse({
+      modelId: form.get('modelId'),
+      ruling: form.get('ruling'),
+      reason: form.get('reason') ?? undefined,
+    });
+    if (!parsed.success) return fail(400, { error: 'Missing model or ruling.' });
+    const { modelId, ruling, reason } = parsed.data;
+    const result = await ruleRestrictedVerdict(modelId, ruling, reason || undefined);
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
+    await bustMinorQueueCounts();
+    return { success: true, modelId, restrictedRuling: ruling };
+  },
 };
+
+const restrictedVerdictForm = z.object({
+  modelId: z.coerce.number().int().positive().max(MAX_INT4),
+  ruling: z.enum(RESTRICTED_VERDICT_RULINGS),
+  reason: z.string().trim().max(1000).optional(),
+});
+
+const reasonFields = z.object(resolutionReasonFields);
+
+/** Rules the appeal for the posted model and answers as the Appeals queue does. */
+async function ruleAppealFrom(form: FormData, modelId: number, decision: FlagAppealDecision) {
+  const fields = parseForm(reasonFields, form);
+  const ruling =
+    typeof fields === 'string'
+      ? ({ ok: false, error: fields } as const)
+      : await ruleFlagAppeal({ modelId, decision, reason: fields });
+  if (!ruling.ok)
+    return fail(400, { error: ruling.error, modelId, subject: modelSubject(modelId) });
+  return { success: true, modelId, rescanQueued: ruling.rescanQueued };
+}
 
 const wholeAppealAction =
   (uphold: boolean): Actions[string] =>
@@ -532,19 +671,32 @@ const wholeAppealAction =
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
     if (!(modelId > 0)) return fail(400, { error: 'Missing model id.' });
-    const reason = rulingReasonFromForm('flagAppeal', uphold ? 'Rejected' : 'Approved', form);
+    return ruleAppealFrom(form, modelId, uphold ? 'uphold' : 'overturn');
+  };
+
+const lockReviewAction =
+  (approve: boolean): Actions[string] =>
+  async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    const appealId = Number(form.get('appealId'));
+    if (!(modelId > 0) || !(appealId > 0))
+      return fail(400, { error: 'Missing model or appeal id.' });
+    const reason = rulingReasonFromForm('lockReview', approve ? 'Approved' : 'Rejected', form);
     if (typeof reason === 'string')
       return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
 
-    const result = await resolveMinorFlagAppeal(modelId, uphold, reason);
+    const result = await resolveLockReview(appealId, modelId, approve, reason);
     if (!result.ok)
       return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
-    return { success: true, modelId, rescanQueued: result.rescanQueued === true };
+    return { success: true, modelId, unlocked: result.unlocked };
   };
 
 export const appealActions: Actions = {
   upholdAppeal: wholeAppealAction(true),
   overturnAppeal: wholeAppealAction(false),
+  approveLockReview: lockReviewAction(true),
+  rejectLockReview: lockReviewAction(false),
   splitAppeal: async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
@@ -553,26 +705,6 @@ export const appealActions: Actions = {
     const poi = decision.safeParse(form.get('poi'));
     if (!(modelId > 0) || !minor.success || !poi.success)
       return fail(400, { error: 'Missing model id or decision.' });
-    // The verdict rule from `RULINGS` in AppealDetail.svelte.
-    const lifted = (['minor', 'poi'] as const).filter(
-      (label) => ({ minor, poi }[label].data === 'overturn')
-    );
-    const reason = rulingReasonFromForm(
-      'flagAppeal',
-      lifted.length ? 'Approved' : 'Rejected',
-      form,
-      lifted.length ? lifted : undefined
-    );
-    if (typeof reason === 'string')
-      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
-
-    const result = await resolveMinorFlagAppealPerLabel(
-      modelId,
-      { minor: minor.data, poi: poi.data },
-      reason
-    );
-    if (!result.ok)
-      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
-    return { success: true, modelId, rescanQueued: result.rescanQueued };
+    return ruleAppealFrom(form, modelId, { minor: minor.data, poi: poi.data });
   },
 };

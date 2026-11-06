@@ -27,8 +27,8 @@ export type ImageScanFailureClass =
   (typeof ImageScanFailureClass)[keyof typeof ImageScanFailureClass];
 
 // Retry ceilings by class. The cron ALWAYS increments `scanJobs.retryCount` on every
-// failed attempt (see markImageScanError) — these are the absolute backstops applied
-// against that ever-incrementing count.
+// failed attempt (see markImageScanError; a 429 is not one) — these are the absolute
+// backstops applied against that ever-incrementing count.
 export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30; // bounded, but well above the old 9-cap
 export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection cap
 // Give up on the first failure: markImageScanError already bumped retryCount to 1, so

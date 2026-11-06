@@ -1,4 +1,4 @@
-import type { BlobArchiveEntry } from '@civitai/client';
+import type { BlobArchiveEntry } from '@civitai/orchestration-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { TrainingResults } from '~/server/schema/model-file.schema';
 import {

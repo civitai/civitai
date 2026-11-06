@@ -16,6 +16,7 @@ import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/type
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 
 function queueBountyIndex(id: number, action: SearchIndexUpdateQueueAction) {
   return SearchIndexUpdate.queueUpdate({
@@ -77,7 +78,7 @@ export async function applyBountyPoi({
     await createNotification({
       userId: flagged.userId!,
       type: 'bounty-text-scan-flagged',
-      category: NotificationCategory.System,
+      category: NotificationCategory.Moderation,
       key: `bounty-text-scan-flagged:${entityId}:${workflowId}`,
       details: { bountyId: entityId, bountyName: flagged.name },
     });
@@ -132,7 +133,10 @@ export async function resolveBountyPoiAppeal({
     const restored = await dbWrite.$executeRaw`
       UPDATE "Bounty" b
       SET poi = FALSE,
-          availability = COALESCE((b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability"),
+          -- Don't republish a bounty a content wipe is holding for its payout.
+          availability = CASE WHEN ${notRemovedWithOwnerSql('b.meta')}
+            THEN COALESCE((b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability")
+            ELSE b.availability END,
           "lockedProperties" = ARRAY(
             SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['poi']::text[])
           ),

@@ -1,12 +1,16 @@
 <script lang="ts">
+  import { cn } from '@civitai/ui/utils.js';
+
   let {
     text,
     highlight,
+    class: className,
   }: {
     text: string;
     /** Highlighted by LITERAL, case-insensitive search. Never compiled to a regex — on these pages it
      *  originates from user-supplied prompt text. */
     highlight?: string | string[] | null;
+    class?: string;
   } = $props();
 
   type Part = { text: string; hit: boolean };
@@ -46,7 +50,7 @@
 </script>
 
 <p
-  class="text-sm leading-relaxed break-words whitespace-pre-wrap"
+  class={cn('text-sm leading-relaxed break-words whitespace-pre-wrap', className)}
 >{#each parts as part, i (`${i}:${part.text}`)}{#if part.hit}<mark
       class="rounded-sm bg-amber-500/30 px-0.5 text-amber-100">{part.text}</mark
     >{:else}{part.text}{/if}{/each}</p>

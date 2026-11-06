@@ -3,15 +3,15 @@ import {
   Badge,
   Button,
   Divider,
-  Popover,
   Text,
-  Tooltip,
   UnstyledButton,
   useComputedColorScheme,
   useMantineTheme,
   getPrimaryShade,
   useMantineColorScheme,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
+import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -31,7 +31,15 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
-import React, { createContext, forwardRef, useContext, useState } from 'react';
+import React, {
+  createContext,
+  forwardRef,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import {
@@ -43,6 +51,7 @@ import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { Burger } from '~/components/Burger/Burger';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import {
   type CivitaiAccount,
   useAccountContext,
@@ -61,6 +70,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -85,11 +95,11 @@ export function UserMenu() {
   return features.userMenuV2 ? <UserMenuV2 /> : <LegacyUserMenu />;
 }
 
-/** `indicator` is positioned by the caller, who must pass a `relative` className. */
+/** `badge` is the count label (e.g. "5", "99+"); it is drawn exactly like the bell's and chat's. */
 export const UserMenuTrigger = forwardRef<
   HTMLButtonElement,
-  { open: boolean; indicator?: React.ReactNode; className?: string; onClick?: () => void }
->(function UserMenuTrigger({ open, indicator, className, ...props }, ref) {
+  { open: boolean; badge?: string; className?: string; onClick?: () => void }
+>(function UserMenuTrigger({ open, badge, className, ...props }, ref) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const creator = useGetCreator();
@@ -97,9 +107,9 @@ export const UserMenuTrigger = forwardRef<
   return (
     <UnstyledButton
       ref={ref}
-      aria-label={currentUser ? 'Account menu' : 'Menu'}
+      aria-label={currentUser ? `Account menu${badge ? `, ${badge} waiting for you` : ''}` : 'Menu'}
       className={clsx(
-        'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
+        'flex items-center rounded-[var(--mantine-radius-default)] hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
         { ['bg-gray-1 dark:bg-dark-5']: open },
         className
       )}
@@ -113,12 +123,17 @@ export const UserMenuTrigger = forwardRef<
         })}
       >
         <div className="@max-md:hidden">
-          <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+          <CountIndicator label={badge} disabled={!badge}>
+            <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+          </CountIndicator>
         </div>
         {features.buzz && currentUser && <HeaderUserBuzz />}
       </div>
-      <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
-      {indicator}
+      <div className={clsx({ ['@md:hidden']: !!currentUser })}>
+        <CountIndicator label={badge} disabled={!badge}>
+          <Burger opened={open} />
+        </CountIndicator>
+      </div>
     </UnstyledButton>
   );
 });
@@ -169,7 +184,7 @@ function PopoverContent() {
   function handleToggleAccountSwitching() {
     setAccountSwitching((o) => !o);
   }
-  useHotkeys([['Escape', handleClose]]);
+  useHotkeys([['esc', handleClose]]);
 
   return (
     <div
@@ -575,7 +590,6 @@ export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
   const isMobile = useIsMobile({ breakpoint: 'md' });
   const onBuyBuzz = useBuyBuzz();
   const { handleClose } = useUserMenuContext();
-  const [mainBuzzColor] = useAvailableBuzz();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
@@ -590,21 +604,12 @@ export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
       }}
     >
       <div className="flex items-center gap-1" onClick={handleClose}>
-        <UserBuzz
+        <BuzzBalances
           animated={features.buzzSpendPop}
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountTypes={['blue']}
-        />
-        <UserBuzz
-          animated={features.buzzSpendPop}
-          iconSize={16}
-          textSize={isMobile ? 'sm' : 'md'}
-          withAbbreviation={!isMobile}
-          withTooltip={!isMobile}
-          accountTypes={[mainBuzzColor]}
         />
       </div>
       <Button
@@ -622,5 +627,127 @@ export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
         Buy Buzz
       </Button>
     </MenuItemLink>
+  );
+}
+
+type BuzzBalanceProps = Pick<
+  React.ComponentProps<typeof UserBuzz>,
+  'animated' | 'iconSize' | 'textSize' | 'withAbbreviation' | 'withTooltip'
+>;
+
+/**
+ * Blue Buzz and the domain's own Buzz as separate balances, never summed. `labelled` draws them as one
+ * strip on a single row, with an optional `action` at its end. When the row does not fit, the "Blue" and
+ * "Yellow" labels go first, then the amounts abbreviate.
+ */
+export function BuzzBalances({
+  labelled = false,
+  href,
+  onOpen,
+  action,
+  ...buzzProps
+}: BuzzBalanceProps & {
+  labelled?: boolean;
+  /** `labelled` only: the balances open this page. */
+  href?: string;
+  onOpen?: () => void;
+  /** `labelled` only: a control at the strip's end, outside the link. */
+  action?: React.ReactNode;
+}) {
+  const [mainBuzzColor] = useAvailableBuzz();
+  const types: BuzzSpendType[] = ['blue', mainBuzzColor];
+  const stripRef = useRef<HTMLDivElement>(null);
+  // 0: labels and full amounts, 1: no labels, 2: no labels and abbreviated amounts.
+  const [fit, setFit] = useState(0);
+
+  // Start over from the roomiest layout whenever the strip's width changes.
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!strip || typeof ResizeObserver === 'undefined') return;
+    let width = strip.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (strip.clientWidth === width) return;
+      width = strip.clientWidth;
+      setFit(0);
+    });
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, []);
+  // A layout that overflows steps down to the next one; runs after every render so a growing balance
+  // is caught too.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- bounded: it only steps down while fit < 2
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (strip && strip.scrollWidth > strip.clientWidth && fit < 2) setFit(fit + 1);
+  });
+
+  if (!labelled)
+    return (
+      <>
+        {types.map((type) => (
+          <UserBuzz key={type} accountTypes={[type]} {...buzzProps} />
+        ))}
+      </>
+    );
+
+  const balances = (
+    <>
+      {types.map((type) => (
+        <BuzzBalanceSegment
+          key={type}
+          type={type}
+          showLabel={fit === 0}
+          buzzProps={{ ...buzzProps, withAbbreviation: fit === 2 }}
+        />
+      ))}
+    </>
+  );
+
+  return (
+    <div
+      ref={stripRef}
+      className="flex flex-nowrap items-stretch overflow-hidden rounded-lg bg-gray-2 dark:bg-dark-7/60"
+    >
+      {href ? (
+        <NextLink href={href} onClick={onOpen} className="flex min-w-0 flex-1">
+          {balances}
+        </NextLink>
+      ) : (
+        <div className="flex min-w-0 flex-1">{balances}</div>
+      )}
+      {action && <div className="flex shrink-0 items-center pr-2">{action}</div>}
+    </div>
+  );
+}
+
+function BuzzBalanceSegment({
+  type,
+  showLabel,
+  buzzProps,
+}: {
+  type: BuzzSpendType;
+  showLabel: boolean;
+  buzzProps: BuzzBalanceProps;
+}) {
+  const {
+    data: { total },
+  } = useQueryBuzz([type]);
+  const name = `${type} Buzz ${total.toLocaleString()}`;
+
+  return (
+    <div
+      role="group"
+      aria-label={name}
+      title={name}
+      data-buzz-balance={type}
+      className="flex flex-[1_0_auto] items-center justify-between gap-3 whitespace-nowrap border-l border-gray-3 px-3 py-2 first:border-l-0 dark:border-dark-4"
+    >
+      {showLabel && (
+        <Text size="xs" c="dimmed" tt="capitalize">
+          {type}
+        </Text>
+      )}
+      <UserBuzz accountTypes={[type]} {...buzzProps} />
+    </div>
   );
 }

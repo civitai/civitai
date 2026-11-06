@@ -16,18 +16,22 @@ import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
+import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
 import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-counterparty-review';
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
+import { postIntentClaimSweep } from '~/server/jobs/post-intent-claim-sweep';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
+import { trainingCanaryJob } from '~/server/jobs/training-canary';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
@@ -46,9 +50,13 @@ import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
+import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
+import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
+import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { reconcileSubscriptionHistoryJob } from '~/server/jobs/reconcile-subscription-history';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
+import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
@@ -56,11 +64,14 @@ import { challengeActivationJob } from '~/server/jobs/challenge-activation';
 import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
+import { evidenceHoldExpiryAlertJob } from '~/server/jobs/evidence-hold-expiry-alert';
+import { revokeUserTokensJob } from '~/server/jobs/revoke-user-tokens';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import { purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
+import { purgeReleasedHeldCopiesJob } from '~/server/jobs/purge-released-held-copies';
 import {
   advanceReferralSubs,
   expireReferralTokens,
@@ -78,6 +89,7 @@ import {
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
 } from '~/server/jobs/event-engine-work';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
@@ -106,6 +118,7 @@ import {
 } from '~/server/jobs/build-resource-intent-cooc';
 import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-training-datasets';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -121,16 +134,20 @@ import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
 import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
+import { commentV3ParityJob } from '~/server/jobs/comment-v3-parity';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
+import { birthday2026IdleHatNudge } from '~/server/jobs/birthday2026-idle-hat-nudge';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { minorHashSweep } from '~/server/jobs/minor-hash-sweep';
+import { poiHashSweep } from '~/server/jobs/poi-hash-sweep';
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
+import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -142,6 +159,7 @@ import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
+import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
@@ -151,11 +169,13 @@ import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { retryUploadPromptScansJob } from '~/server/jobs/retry-upload-prompt-scans';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
 import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
 import { crucibleSyncJobs } from '~/server/jobs/sync-crucible-scores';
+import { crucibleEntryAcceptedJob } from '~/server/jobs/crucible-entry-accepted';
 import { prizeAutoPayJob } from '~/server/jobs/prize-autopay';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -165,6 +185,7 @@ export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,
   storageUsageMediaJob,
   sendNotificationsJob,
@@ -174,11 +195,13 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
+  birthday2026IdleHatNudge,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,
   resetToDraftWithoutRequirements,
   applyContestTags,
+  postIntentClaimSweep,
   ...applyDiscordRoles,
   userDeletedCleanup,
   removeDeletedUserImages,
@@ -190,20 +213,24 @@ export const jobs: Job[] = [
   cdnAccessReconcile,
   removeReplacedImages,
   retryImageStorageDeletes,
+  retryUploadPromptScansJob,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
   purgeReplacedFilesJob,
+  purgeReleasedHeldCopiesJob,
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
   autoFeatureHealthCheckJob,
+  commentV3ParityJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
+  comFaceRecheckJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
@@ -211,6 +238,7 @@ export const jobs: Job[] = [
   eventEngineLeaderboardUpdate,
   eventPointsHatReconcile,
   eventRosterReconcile,
+  eventTurfReconcile,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
@@ -245,8 +273,10 @@ export const jobs: Job[] = [
   settleBlockAuthorFeesJob,
   confirmMutes,
   botAccountDetection,
+  linkedAccountReview,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  bluePaidAccessDetection,
   creatorProgramCounterpartyReview,
   creatorProgramPrepayoutReview,
   giftMembershipArming,
@@ -256,22 +286,29 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   sweepReviewStorageJob,
+  runStorageMigrationsJob,
+  reapDeletedAppStorageJob,
+  removeDeletedAccountAppDataJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
   collectionGameProcessing,
   sendCollectionNotifications,
   checkProcessingResourceTrainingV2,
+  trainingCanaryJob,
   ...dailyChallengeJobs,
   challengeActivationJob,
   challengeCompletionJob,
   challengeAutoQueueJob,
   challengeHealthCheckJob,
+  evidenceHoldExpiryAlertJob,
+  revokeUserTokensJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,
   retroactiveHashBlocking,
   minorHashSweep,
+  poiHashSweep,
   ...creatorProgramJobs,
   handleAuctions,
   refreshAuctionCache,
@@ -293,10 +330,12 @@ export const jobs: Job[] = [
   textScanChatWindowsJob,
   textScanNewUsersJob,
   articleIngestionReconcile,
+  articleContentLinkHold,
   expireStrikesJob,
   processTimedUnmutesJob,
   reconcileNowpaymentsJob,
   notifyStuckCryptoDepositsJob,
+  watchOpenNowpaymentsJob,
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
@@ -311,6 +350,7 @@ export const jobs: Job[] = [
   blurbFanoutJob,
   ...crucibleJobs,
   ...crucibleSyncJobs,
+  crucibleEntryAcceptedJob,
   prizeAutoPayJob,
   pushSubscriptionCleanupJob,
 ];

@@ -13,20 +13,23 @@ const defaultVotable: Partial<VotableTagModel> = {
   downVotes: 0,
 };
 
-export const useVoteForTags = ({
-  entityId,
-  entityType,
-}: {
+type TagVoteTarget = {
   entityId: number;
   entityType: 'image' | 'model';
-}) => {
+};
+
+type TagVote = {
+  tags: string[];
+  vote: number;
+  tagType?: TagType;
+};
+
+/** Shows tag votes in the client caches without sending them; for votes the server already has. */
+export const useApplyTagVotes = ({ entityId, entityType }: TagVoteTarget) => {
   const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = useUpdateHiddenPreferences();
   const { hiddenTags } = useHiddenPreferencesData();
   const setVote = useVotableTagStore((state) => state.setVote);
-
-  const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation();
-  const { mutate: removeVotes } = trpc.tag.removeTagVotes.useMutation();
 
   const handleTagMutation = (changedTags: string[], vote: number, tagType: TagType) => {
     const preppedTags = changedTags.map(
@@ -62,17 +65,7 @@ export const useVoteForTags = ({
     );
   };
 
-  const handleVote = ({
-    tags,
-    vote,
-    tagType = 'UserGenerated',
-  }: {
-    tags: string[];
-    vote: number;
-    tagType?: TagType;
-  }) => {
-    if (vote === 0) removeVotes({ tags, type: entityType, id: entityId });
-    else addVotes({ tags, vote, type: entityType, id: entityId });
+  const applyVote = ({ tags, vote, tagType = 'UserGenerated' }: TagVote) => {
     handleTagMutation(tags, vote, tagType);
     if (
       entityType === 'image' &&
@@ -80,6 +73,21 @@ export const useVoteForTags = ({
     ) {
       updateHiddenPreferences({ kind: entityType, data: [{ id: entityId }], hidden: vote > 0 });
     }
+  };
+
+  return applyVote;
+};
+
+export const useVoteForTags = ({ entityId, entityType }: TagVoteTarget) => {
+  const applyVote = useApplyTagVotes({ entityId, entityType });
+  const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation();
+  const { mutate: removeVotes } = trpc.tag.removeTagVotes.useMutation();
+
+  const handleVote = (tagVote: TagVote) => {
+    const { tags, vote } = tagVote;
+    if (vote === 0) removeVotes({ tags, type: entityType, id: entityId });
+    else addVotes({ tags, vote, type: entityType, id: entityId });
+    applyVote(tagVote);
   };
 
   return handleVote;

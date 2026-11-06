@@ -1,6 +1,7 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
+import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -62,16 +63,20 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
+import { v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
   APPEAL_ALREADY_PENDING,
+  getAppealRefusal,
   IMAGE_NOT_APPEALABLE,
+  isAppealableImage,
   OrphanedAppealReason,
   type OrphanedAppealOutcome,
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -196,16 +201,24 @@ export const findReportToFoldInto = ({
   entityReportId,
   reason,
   details,
+  pendingOnly,
   tx,
 }: {
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
+  /** Fold only into a report still waiting for a moderator. */
+  pendingOnly?: boolean;
   tx?: Prisma.TransactionClient;
 }) => {
   const db = tx ?? dbWrite;
-  const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
+  const entityIdField =
+    reportType === ReportEntity.User
+      ? 'userId'
+      : reportType === ReportEntity.CommentV3
+      ? 'commentId'
+      : `${reportType}Id`;
   // A sticker report names one placement, and an image can carry several.
   // Deduping on (reason, image) alone folds a report about placement 2 into
   // an existing one about placement 1 and drops the new details, so a
@@ -223,6 +236,7 @@ export const findReportToFoldInto = ({
     where: {
       reason,
       [reportType]: { [entityIdField]: entityReportId },
+      ...(pendingOnly ? { status: ReportStatus.Pending } : {}),
       ...(narrowing.length ? { AND: narrowing } : {}),
     },
     orderBy: { id: 'desc' },
@@ -235,6 +249,7 @@ const validateReportCreation = async ({
   entityReportId,
   reason,
   details,
+  pendingOnly,
   tx,
 }: {
   userId: number;
@@ -242,6 +257,7 @@ const validateReportCreation = async ({
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
+  pendingOnly?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -250,6 +266,7 @@ const validateReportCreation = async ({
     entityReportId,
     reason,
     details,
+    pendingOnly,
     tx,
   });
 
@@ -293,6 +310,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Model]: 'model',
   [ReportEntity.Comment]: 'comment',
   [ReportEntity.CommentV2]: 'comment',
+  [ReportEntity.CommentV3]: 'comment',
   [ReportEntity.Image]: 'image',
   [ReportEntity.ResourceReview]: 'review',
   [ReportEntity.Article]: 'article',
@@ -317,6 +335,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Model]: 'modelId',
   [ReportEntity.Comment]: 'commentId',
   [ReportEntity.CommentV2]: 'commentV2Id',
+  [ReportEntity.CommentV3]: 'commentId',
   [ReportEntity.Image]: 'imageId',
   [ReportEntity.ResourceReview]: 'resourceReviewId',
   [ReportEntity.Article]: 'articleId',
@@ -344,11 +363,18 @@ type CreateReportProps = CreateReportInput & {
   userId: number;
   isModerator?: boolean;
   /**
+   * The reporter may not vote on tags yet (see `requiresEmailVerification`), so an NSFW report
+   * records no tag votes or rating request and waits for a moderator.
+   */
+  emailVerificationRequired?: boolean;
+  /**
    * Fold and create on the caller's transaction instead of opening one. The Game Frame endpoint
    * needs its idempotency receipt committed atomically with the report, or a resend after a crash
    * re-appends the reporter to `alsoReportedBy` and pays them twice.
    */
   tx?: Prisma.TransactionClient;
+  /** Fold only into a report still waiting for a moderator, never one already closed. */
+  foldIntoPendingOnly?: boolean;
 };
 /**
  * A sticker report names the placement it is about, and the placement has to be
@@ -391,8 +417,10 @@ export const createReport = async ({
   userId,
   id,
   isModerator,
+  emailVerificationRequired,
   type,
   tx: callerTx,
+  foldIntoPendingOnly,
   ...data
 }: CreateReportProps) => {
   // Add report type to details for notifications
@@ -444,17 +472,34 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
-
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
-  // Nothing automated acts on a crucible's, game's, storyline's or service's mature-content report,
-  // unlike an image's or a model's tag votes, so it goes to a moderator like any other reason:
-  // deduped, and left Pending.
+  // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
+  // on tags yet. Without them nothing automated acts on it, so, like a crucible's, game's,
+  // storyline's or service's, it goes to a moderator like any other reason: deduped, and left Pending.
+  // It joins only a report still waiting for one, never an earlier report that was already actioned.
+  const castsNoTagVotes =
+    !!emailVerificationRequired &&
+    data.reason === ReportReason.NSFW &&
+    (type === ReportEntity.Image || type === ReportEntity.Model);
+  // Filed Actioned, a post's mature-content report only flags the post; a chapter's must reach the
+  // queue, where a moderator sees the storyline around it.
+  const reportsStorylineChapter =
+    type === ReportEntity.Post &&
+    data.reason === ReportReason.NSFW &&
+    !!(await dbWrite.storylineChapter.findUnique({ where: { postId: id }, select: { id: true } }));
   const awaitsModerator =
+    reportsStorylineChapter ||
     type === ReportEntity.Crucible ||
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
-    type === ReportEntity.ServiceOffering;
+    type === ReportEntity.ServiceOffering ||
+    castsNoTagVotes;
+  // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
+  // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
+  const details = data.details as MixedObject;
+  if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
+  else delete details[NO_REPORT_REWARD_KEY];
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -462,7 +507,9 @@ export const createReport = async ({
           reportType: type,
           entityReportId: id,
           reason: data.reason,
-          details: data.details as MixedObject,
+          details,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
+          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
           tx: callerTx,
         })
       : null;
@@ -490,6 +537,21 @@ export const createReport = async ({
   let recomputeArticleNsfwLevelId: number | null = null;
 
   const writeReport = async (tx: Prisma.TransactionClient) => {
+    // A deleted comment's placeholder keeps its row, so the link below would take it; its old
+    // reports were dropped with it. Held `FOR SHARE` until commit, so a delete waits for this report
+    // and drops its link too. A comment on another surface is reported through its old table, whose
+    // removal is what actions and rewards its reports.
+    if (type === ReportEntity.CommentV3) {
+      const [comment] = await tx.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "CommentV3"
+        WHERE id = ${id} AND "deletedAt" IS NULL AND ${Prisma.raw(
+        v3WriteSurfaceSql('"entityType"')
+      )}
+        FOR SHARE
+      `;
+      if (!comment) throw throwNotFoundError('That comment no longer exists.');
+    }
+
     // create the report
     const createdReport = await tx.report.create({
       data: {
@@ -543,17 +605,19 @@ export const createReport = async ({
             }
           }
 
-          await Promise.all([
-            createImageRatingRequest(),
-            addTagVotes({
-              userId,
-              type: type,
-              id,
-              tags: data.details.tags ?? [],
-              isModerator,
-              vote: 1,
-            }),
-          ]);
+          if (!castsNoTagVotes) {
+            await Promise.all([
+              type === ReportEntity.Image && createImageRatingRequest(),
+              addTagVotes({
+                userId,
+                type: type,
+                id,
+                tags: data.details.tags ?? [],
+                isModerator,
+                vote: 1,
+              }),
+            ]);
+          }
 
           break;
         case ReportEntity.Article:
@@ -598,12 +662,15 @@ export const createReport = async ({
       }
 
     if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
+      // `userId` is a moderator: only moderators can file CSAM. Already-actioned reports are left
+      // alone so their `statusSetAt` (which drives reporter notifications) is not moved.
       await dbWrite.report.updateMany({
         where: {
           reason: { not: ReportReason.CSAM },
+          status: { not: ReportStatus.Actioned },
           image: { imageId: id },
         },
-        data: { status: ReportStatus.Actioned },
+        data: { status: ReportStatus.Actioned, statusSetAt: new Date(), statusSetBy: userId },
       });
       await dbWrite.image.update({
         where: { id },
@@ -678,29 +745,26 @@ export async function bulkSetReportStatus({
   rewardRemovedReporters?: boolean;
 }) {
   if (!ids.length) return;
-  const statusSetAt = new Date();
 
-  const reports = await dbRead.report.findMany({
-    where: { id: { in: ids }, status: { not: status } },
-    select: { id: true, userId: true, alsoReportedBy: true },
-  });
-
-  if (!reports) return;
-
-  await dbWrite.$transaction(
-    reports.map((report) =>
-      dbWrite.report.update({
-        where: { id: report.id },
-        data: {
-          status,
-          statusSetAt,
-          statusSetBy: userId,
-          previouslyReviewedCount:
-            status === ReportStatus.Actioned ? report.alsoReportedBy.length + 1 : undefined,
-        },
-      })
-    )
-  );
+  // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
+  // report another path has already moved to `status` matches nothing, so it is not rewritten and
+  // its reporters are not paid a second time. Who is paid comes from the rows this changed.
+  const reports = await dbWrite.$queryRaw<
+    { id: number; userId: number; alsoReportedBy: number[]; details: Prisma.JsonValue }[]
+  >`
+    UPDATE "Report"
+    SET
+      status = ${status}::"ReportStatus",
+      "statusSetAt" = ${new Date()},
+      "statusSetBy" = ${userId},
+      "previouslyReviewedCount" = ${
+        status === ReportStatus.Actioned
+          ? Prisma.sql`coalesce(array_length("alsoReportedBy", 1), 0) + 1`
+          : Prisma.sql`"previouslyReviewedCount"`
+      }
+    WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
+    RETURNING id, "userId", "alsoReportedBy", details
+  `;
 
   // Track mod activity in the background
   trackModReports({ ids, userId: userId });
@@ -720,7 +784,7 @@ export async function bulkSetReportStatus({
         });
     const removedIds = new Set(removed.map((user) => user.id));
     const prepReports = reports.map((report) => {
-      const excluded = noRewardFor(report.id);
+      const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
         id: report.id,
         userIds: [report.userId, ...report.alsoReportedBy].filter(
@@ -779,27 +843,46 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenAppeal({ id, message }: { id: number; message: string }) {
-  return dbWrite.appeal.update({
-    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
-    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
-    where: { id, entityType: { not: EntityType.Image }, category: null },
-    data: {
-      status: AppealStatus.Pending,
-      appealMessage: message,
-      // The moderator queue sorts and displays on createdAt, so leaving the
-      // original request's stamp puts a months-old row ahead of fresh ones under
-      // a date that describes a request nobody is being asked to review.
-      createdAt: new Date(),
-      resolvedAt: null,
-      resolvedBy: null,
-      resolvedMessage: null,
-      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
-      resolvedReason: null,
-      internalNotes: null,
-    },
-  });
+export async function reopenAppeal({
+  id,
+  message,
+  context,
+}: {
+  id: number;
+  message: string;
+  /** null clears the stored context; omitted leaves it. */
+  context?: LockReviewContext | null;
+}) {
+  try {
+    return await dbWrite.appeal.update({
+      // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+      // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+      where: { id, entityType: { not: EntityType.Image }, category: null },
+      data: {
+        status: AppealStatus.Pending,
+        appealMessage: message,
+        // Restamp: the moderator queue sorts on createdAt, so the old stamp would rank a stale row first.
+        createdAt: new Date(),
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedMessage: null,
+        // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+        resolvedReason: null,
+        internalNotes: null,
+        ...(context !== undefined && { context: context ?? Prisma.DbNull }),
+      },
+    });
+  } catch (error) {
+    // Another of the owner's rows went Pending meanwhile: one may be pending at a time.
+    if (isPrismaUniqueViolation(error))
+      throw throwBadRequestError('Your request is already under review.');
+    throw error;
+  }
 }
+
+const lockReviewWhere = {
+  context: { path: ['kind'], equals: LOCK_REVIEW_KIND },
+} satisfies Prisma.AppealWhereInput;
 
 export function getAppealCount({
   userId,
@@ -819,6 +902,8 @@ export function getAppealCount({
       category: null,
       // Waiting on review because the content was removed first is not the user's doing.
       NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
+      // A request to unlock a setting is not a dispute of a removal.
+      AND: [{ OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewWhere }] }],
     },
   });
 }
@@ -894,7 +979,13 @@ export async function createEntityAppeal({
   userId,
   buzzType,
   skipFee,
-}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType; skipFee?: boolean }) {
+  context,
+}: Omit<CreateEntityAppealInput, 'locks'> & {
+  userId: number;
+  buzzType: BuzzSpendType;
+  skipFee?: boolean;
+  context?: LockReviewContext;
+}) {
   let buzzTransactionId: string | null = null;
 
   if (!skipFee) {
@@ -946,7 +1037,7 @@ export async function createEntityAppeal({
       }
 
       return tx.appeal.create({
-        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId },
+        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId, context },
       });
     });
 
@@ -1101,7 +1192,7 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Keep in step with the moderator app's exclusion lookup.
+// Keep in step with `appealExcluded` in the moderator app's removed-appeals.service.ts.
 export async function getAppealExcludedIds({
   imageIds,
   userIds,
@@ -1127,27 +1218,91 @@ export async function getAppealExcludedIds({
           WHERE ur."userId" = c.id AND r.reason = 'CSAM'
         )
         OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = c.id AND o."blockedFor" = 'CSAM')
+        -- A hold marker's kept image reads as a moderator block, so an appeal would tip them off.
+        OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = c.id)
     `,
   ]);
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
 }
 
-async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
-  const imageIds = candidates
-    .filter((a) => a.entityType === EntityType.Image)
-    .map((a) => a.entityId);
-  const userIds = [...new Set(candidates.map((a) => a.userId))];
-  if (!userIds.length) return new Set<number>();
+/**
+ * The images whose appeal a hold marker refuses: all of them while the owner is under one, else
+ * those a hold kept. An image the check cannot read counts as refused.
+ */
+export async function getHoldMarkerBlockedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  if (!imageIds.length) return new Set<number>();
+  const rows = await dbWrite.$queryRaw<{ id: number; blocked: unknown }[]>`
+    SELECT c.id,
+      EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId})
+        OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" h WHERE h."imageId" = c.id) AS blocked
+    FROM unnest(${imageIds}::int[]) AS c(id)
+  `;
+  const allowed = new Set(rows.filter((r) => r.blocked === false).map((r) => Number(r.id)));
+  return new Set(imageIds.filter((id) => !allowed.has(id)));
+}
 
-  const { images: imageSet, users: userSet } = await getAppealExcludedIds({ imageIds, userIds });
-  return new Set(
-    candidates
-      .filter(
-        (a) =>
-          userSet.has(a.userId) || (a.entityType === EntityType.Image && imageSet.has(a.entityId))
-      )
-      .map((a) => a.id)
-  );
+/** Whether the owner is under a hold marker or the image is one it kept. Unreadable counts as yes. */
+export async function isAppealBlockedByHoldMarker({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  return (await getHoldMarkerBlockedImageIds({ imageIds: [imageId], userId })).has(imageId);
+}
+
+/**
+ * The images whose appealable-looking block is refused anyway: a hold marker keeps them, or the
+ * appeal flow excludes the image or its owner. The endpoint, the owner's image page and the
+ * removed-images list all read this. The owner query runs even with no images.
+ */
+export async function getAppealRefusedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  const [held, excluded] = await Promise.all([
+    getHoldMarkerBlockedImageIds({ imageIds, userId }),
+    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+  ]);
+  if (excluded.users.has(userId)) return new Set(imageIds);
+  return new Set(imageIds.filter((id) => held.has(id) || excluded.images.has(id)));
+}
+
+export async function isImageAppealRefused({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  return (await getAppealRefusedImageIds({ imageIds: [imageId], userId })).has(imageId);
+}
+
+/**
+ * Whether the owner's page shows the appeal prompt. An image with a pending or decided appeal shows
+ * it; the prompt then says the appeal is under review or the decision stands, as the endpoint's
+ * refusal does. Anyone else's image reads as no.
+ */
+export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
+  const [image] = await dbWrite.$queryRaw<
+    { blockedFor: string | null; needsReview: string | null }[]
+  >`
+    SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
+  `;
+  if (!image || !isAppealableImage(image)) return false;
+  const latest = await getLatestAppeal({ entityType: EntityType.Image, entityId: imageId, userId });
+  if (getAppealRefusal(EntityType.Image, latest)) return true;
+  return !(await isImageAppealRefused({ imageId, userId }));
 }
 
 // Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
@@ -1159,6 +1314,30 @@ function closeOrphans(ids: number[], reason: string | null) {
       "resolvedAt" = now(), "updatedAt" = now()
     WHERE id = ANY(${ids})
       AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+  `;
+}
+
+/** How long an appeal routed for review waits for a moderator before it is closed and refunded. */
+export const ROUTED_APPEAL_REVIEW_DAYS = 30;
+
+function closeUnreviewedAppeals(limit: number) {
+  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
+      OrphanedAppealReason.RemovedBeforeReview
+    },
+      "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id IN (
+      SELECT id FROM "Appeal"
+      WHERE status = 'Pending'::"AppealStatus"
+        -- Only images are routed for review; another type routed later needs its own decision here.
+        AND "entityType" = 'Image'::"EntityType"
+        AND "entityRemovedAt" <= now() - make_interval(days => ${Prisma.raw(
+          String(ROUTED_APPEAL_REVIEW_DAYS)
+        )})
+      LIMIT ${limit}
+    ) AND status = 'Pending'::"AppealStatus"
     RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
   `;
 }
@@ -1204,7 +1383,7 @@ export function notifyOrphanedAppeal(
   return createNotification({
     userId: appeal.userId,
     type: 'entity-appeal-content-removed',
-    category: NotificationCategory.Other,
+    category: NotificationCategory.Moderation,
     // The worker drops a repeated key, so the outcome is part of it: a closing notice after
     // "under-review" would never arrive.
     key: `entity-appeal-content-removed:${appeal.id}:${outcome}`,
@@ -1258,23 +1437,13 @@ export async function closeAppealsDeletedByOwner({
   // Claimed and Void now, so never swept again: the refunds must not wait on anything that can fail.
   const refunded = new Map<number, boolean>();
   for (const appeal of closed) refunded.set(appeal.id, (await refundOrphan(appeal)).refunded);
-
-  let quiet: Set<number>;
-  try {
-    quiet = await getDefensiveCloseIds(closed);
-  } catch (e) {
-    // Unclassified, so no one is told.
-    logFailure(e, { appealIds: closed.map((a) => a.id) });
-    return;
-  }
   for (const appeal of closed)
-    if (!quiet.has(appeal.id))
-      await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
+    await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
 }
 
 /**
  * Closes and refunds a deleted model's pending appeals without a notice: the owner is already told
- * about the removal. A flag dispute or an unpublish appeal (site form) alike has nothing left to
+ * about the removal. A flag dispute, a lock review or an unpublish appeal (site form) has nothing left to
  * rule on once the model is gone. Best-effort: the delete already happened, so failures are logged, not thrown. The sweep
  * stays the safety net.
  */
@@ -1306,8 +1475,9 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
  * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
- * stamped `entityRemovedAt`, for review, and its owner is told. Some appeals are closed
- * defensively without a notice.
+ * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
+ * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. Two cases close quietly, with no
+ * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1327,8 +1497,9 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     LIMIT ${limit}
   `;
 
-  const defensiveIds = await getDefensiveCloseIds(candidates);
-  const isQuiet = (a: OrphanCandidate) => a.userDeleted || defensiveIds.has(a.id);
+  // A deleted account's appeals close without a notice; so, below, does a deleted model's appeal
+  // whose owner did not delete it.
+  const isQuiet = (a: OrphanCandidate) => a.userDeleted;
   const quiet = candidates.filter(isQuiet);
   const rest = candidates.filter((a) => !isQuiet(a));
   // A soft-deleted model records its deleter, so only images and hard-deleted models need ClickHouse.
@@ -1340,8 +1511,8 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     ...rest.filter((a) => a.modelDeletedByAppellant === true).map((a) => a.id),
   ]);
 
-  // Model appeals are flag disputes, so a deleted model leaves nothing to rule on. Only images,
-  // where the removal itself can be what is appealed, are routed for review.
+  // A deleted model leaves nothing to rule on, whether its appeal disputes a flag or a lock. Only
+  // images, where the removal itself can be what is appealed, are routed for review.
   const notOwnerDeleted = rest.filter((a) => !ownerDeletedIds.has(a.id));
   const closeQuietIds = [
     ...quiet.map((a) => a.id),
@@ -1373,10 +1544,17 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   }
   for (const appeal of routed) await notifyOrphanedAppeal(appeal, 'under-review');
 
+  const closedUnreviewed = await closeUnreviewedAppeals(limit);
+  for (const appeal of closedUnreviewed) {
+    const wasRefunded = await refund(appeal);
+    await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
+  }
+
   return {
     closedQuietly: closedQuietly.length,
     closedOwnerDeleted: closedOwnerDeleted.length,
     routedForReview: routed.length,
+    closedUnreviewed: closedUnreviewed.length,
     refunded,
     refundFailed,
   };
@@ -1391,7 +1569,12 @@ export async function resolveEntityAppeal({
   resolvedReason,
   refundBuzz,
   userId,
-}: ResolveAppealInput & { userId?: number }) {
+  modelAppealKind,
+}: ResolveAppealInput & {
+  userId?: number;
+  /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
+  modelAppealKind?: 'flag';
+}) {
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({
@@ -1401,6 +1584,10 @@ export async function resolveEntityAppeal({
       entityType,
       entityRemovedAt: null,
       category: null,
+      // A JSON path NOT alone also drops the rows whose context is NULL, which every flag appeal's is.
+      ...(modelAppealKind === 'flag' && {
+        OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewWhere }],
+      }),
     },
     data: {
       status,
@@ -1423,6 +1610,31 @@ export async function resolveEntityAppeal({
   });
   if (appeals.length === 0) return [];
 
+  await settleResolvedAppeals(appeals, { status, resolvedMessage, refundBuzz });
+  return appeals;
+}
+
+export type ResolvedAppeal = {
+  id: number;
+  entityId: number;
+  entityType: EntityType;
+  resolvedAt: Date | null;
+  buzzTransactionId: string | null;
+  status: AppealStatus;
+  userId: number;
+  createdAt: Date;
+};
+
+/** What follows a ruling on appeals already closed: the entity's own change, any refund, and the
+ *  owner's notification and email. For a caller that closes the row itself, under its own lock. */
+export async function settleResolvedAppeals(
+  appeals: ResolvedAppeal[],
+  {
+    status,
+    resolvedMessage,
+    refundBuzz,
+  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'>
+) {
   const approved = status === AppealStatus.Approved;
 
   // Batch-fetch recipients once to avoid N+1 lookups inside the loop.
@@ -1502,7 +1714,7 @@ export async function resolveEntityAppeal({
     await createNotification({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
+      category: NotificationCategory.Moderation,
       // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
       // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
       key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${

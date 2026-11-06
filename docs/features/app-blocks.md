@@ -183,6 +183,48 @@ block-token-authed routes also live under `/api/v1/blocks/*` (the catalog reads
 noted above, among others) and the set moves. `src/pages/api/v1/` is the
 authority.
 
+### Document store: collection schemas
+
+A collection declared under `storage.collections` (route `/api/v1/blocks/storage/*`)
+may also declare `schema`: a JSON Schema subset that every document's `data` must
+match. It is opt-in; a collection without one is not checked.
+
+- **Keywords:** `type` (`object`, `array`, `string`, `number`, `integer`, `boolean`,
+  `null`, or a list of them), `properties`, `required`, `additionalProperties`
+  (boolean or a schema), `items` (one schema), `enum`, `const`, `minLength`,
+  `maxLength`, `pattern`, `minimum`, `maximum`, `minItems`, `maxItems`,
+  `description`. Submit refuses any other keyword and names it.
+- **Bounds:** at most 16 nested schemas, 16384 bytes of JSON and 16 patterns per
+  collection schema, and 32 patterns across all of a manifest's collection schemas
+  (`APP_STORAGE_MANIFEST_MAX_PATTERNS`: each analysis blocks the event loop at
+  submit). A `pattern` is at most 256 characters, needs a `maxLength` of at most
+  1000 on the same schema, and is refused at submit if recheck finds it can
+  backtrack catastrophically (`validateSubmission`). recheck analyses it with the
+  `u` flag the store compiles it with (`APP_STORAGE_SCHEMA_PATTERN_FLAGS`; a setting's
+  pattern has no flags), and each distinct pattern once. Not allowed on a
+  `write: "none"` collection, which has no document bodies.
+- **Enforcement:** the store checks every create and put (`writeDoc` in
+  `doc-store.ts`), and the REST layer checks again before the ownership check, the
+  trust gate, the write budget and moderation, so a refused write spends none of
+  them. A put replaces the whole body, so the check always sees the resulting
+  document. Counters and marks are not checked. A refusal is 400
+  `schema_violation`, and its message and `details.pointer` name the first failing
+  JSON pointer into `data`.
+- **Semantics** (any other evaluator, the CLI's included, must match them):
+  keywords for another type are ignored, `integer` is a number with no fraction,
+  lengths count code points, `pattern` is an unanchored JavaScript regex with the
+  `u` flag, and `enum`/`const` compare JSON values. Order of "first": `type`,
+  `const`, `enum`, the string/number/array keywords (`maxLength` before
+  `pattern`), `required` in declared order, then own keys in ascending order.
+- **Changing a schema** does not re-check stored documents; each is checked the
+  next time it is written.
+
+Code: `src/shared/constants/block-storage.constants.ts` (`parseCollectionSchema`),
+`src/server/services/apps/doc-store-schema.ts`
+(`validateDocAgainstCollectionSchema`, compiled validators cached per app,
+collection and schema text). The published shape is the `storage.collections.*.schema`
+property of `public/schemas/app-block/v1.json` (`$defs.storageCollectionSchema`).
+
 ## Feature flag
 
 `appBlocks` (Flipt key: `app-blocks-enabled`) gates the BlockSlot mount
@@ -491,6 +533,40 @@ read that file. As of this writing the families are:
   answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
   `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
+- **Model file contents** (page host only, no scope, session-authed): the host
+  resolves the file as the signed-in viewer through the site's download gate,
+  fetches it in the viewer's tab and posts back only parsed content; the app never
+  sees the signed URL. No download is counted. Review preview refuses both with
+  `forbidden`. The model slot has no handler, so a request there waits for the
+  SDK timeout.
+  - `GET_WILDCARD_PACK { requestId, modelVersionId }` (→ `WILDCARD_PACK_RESULT`):
+    a `Wildcards` version's prompt lists.
+  - `GET_RESOURCE_FILE { requestId, modelVersionId, fileId? }`
+    (→ `RESOURCE_FILE_RESULT`): a `Workflows` / `ComfyWorkflows` version's graph
+    file. Without `fileId` the server picks a `.json` `Config` file, then a `.zip`
+    `Archive`, then the lowest file id. The answer is
+    `{ requestId, file: { meta, entries, truncated } }` with
+    `meta { modelId, modelVersionId, fileId, fileName, modelName, versionName, creatorUsername }`
+    and `entries [{ path, format, graph }]`, or `{ requestId, error }` with `error` one
+    of `not-found`, `forbidden`, `unauthorized`, `too-large`, `parse-failed`, `busy`,
+    `rate-limited`. A `.json` file is one entry; a `.zip` gives one entry per `.json`
+    inside it, at most 20 (`truncated` is then true, and also when an entry was too
+    large or not valid JSON). `format` is `api` when every top-level value has
+    `class_type` and `inputs`, `ui` when there is a `nodes` array, else `unknown`.
+    Caps: 32 MB before download (counted as the body streams), 4 MB per JSON entry,
+    16 MB inflated in total; 30 requests a minute per user (moderators are not
+    limited) and 3 at once per tab (`busy`). The whole request (resolve, fetch,
+    parse) answers within 110 s, inside the SDK's 120 s timeout; past that it
+    replies `parse-failed` and frees its slot. The bridge is narrower than the
+    download gate: drafts are refused to everyone (owner included), and a version
+    under any active paid-access gate (early access or permanent paid access) or
+    with downloads disabled is refused to everyone but the owner (buyers and
+    moderators included), all as `not-found`. A non-owner, moderators and
+    Private-access grant holders included, gets only public files of an
+    open-access (`Public` or `Unsearchable`), non-POI version. A transient storage
+    failure is `parse-failed`, so the block can retry. `forbidden` is the viewer's maturity ceiling, checked after the
+    download gate. Logic: `src/server/services/resource-file.service.ts`,
+    `src/components/AppBlocks/resourceFileParse.ts` and `resourceFileHost.ts`.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does

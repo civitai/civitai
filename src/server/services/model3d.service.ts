@@ -3,6 +3,8 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readPostModel3dViaKysely } from '~/server/services/hot-reads-5.reads';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
@@ -62,9 +64,13 @@ import type {
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
-import { isMature, maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
-import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import {
+  getPolyGenPostBlock,
+  getPolyGenPrimaryModel,
+} from '~/server/orchestrator/polygen/polygen-output';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {
@@ -320,7 +326,10 @@ export const ensureModel3DFromWorkflow = async ({
     const polyGenStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'polyGen') as
       | PolyGenStep
       | undefined;
-    if (!polyGenStep?.output?.model) {
+    const primaryModel = polyGenStep?.output
+      ? getPolyGenPrimaryModel(polyGenStep.output)
+      : undefined;
+    if (!polyGenStep?.output || !primaryModel) {
       throw throwBadRequestError('Workflow has no PolyGen output to materialize a 3D model from');
     }
 
@@ -339,15 +348,16 @@ export const ensureModel3DFromWorkflow = async ({
     // must be unlocked (yellow Buzz → allowMatureContent) before it can be
     // materialized into a postable draft.
     const effectiveNsfwLevel = maxNsfwLevel([
-      polyGenStep.output.model.nsfwLevel,
+      primaryModel.nsfwLevel,
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    if (workflow.allowMatureContent === false && isMature(effectiveNsfwLevel)) {
-      throw throwBadRequestError(
-        'This 3D model was rated mature. Unlock it with Yellow Buzz before posting.'
-      );
-    }
+    const postBlock = getPolyGenPostBlock({
+      primaryModel,
+      effectiveNsfwLevel,
+      allowMatureContent: workflow.allowMatureContent,
+    });
+    if (postBlock) throw throwBadRequestError(postBlock);
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
@@ -1239,12 +1249,7 @@ export const getVisibleModel3DIdForPost = async ({
   userId?: number;
   isModerator?: boolean;
 }): Promise<number | null> => {
-  const post = await dbRead.post.findUnique({
-    where: { id: postId },
-    select: {
-      model3d: { select: { id: true, userId: true, status: true, deletedAt: true } },
-    },
-  });
+  const post = await readPostModel3dViaKysely((await loadKyselyDb()).kyselyRead, postId);
   const model3d = post?.model3d;
   if (!model3d) return null;
   if (

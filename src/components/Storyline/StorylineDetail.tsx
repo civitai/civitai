@@ -1,6 +1,10 @@
 import { Button } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { StorylineAuthorEdit } from '~/components/Storyline/StorylineAuthorEdit';
+import { StorylineCaptionNote } from '~/components/Storyline/StorylineCaptionNote';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
 import type { ActiveStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
@@ -14,7 +18,7 @@ import { trpc } from '~/utils/trpc';
 function chapterPosition(storyline: ActiveStorylineMode, imageId: number) {
   const chapterId = storyline.chapterIdOfImage(imageId);
   const chapter = storyline.path.chapters.find((c) => c.chapterId === chapterId);
-  return { chapterId, depth: chapter?.depth };
+  return { chapterId, depth: chapter?.depth, post: chapter?.post };
 }
 
 /**
@@ -36,7 +40,8 @@ export function StorylineToolbarChip({
   // A viewport check at sm leaves a band of widths with neither chip.
   const narrowStage = useIsMobile({ breakpoint: 'md' });
   if (narrowStage !== (placement === 'mobile')) return null;
-  if (!storyline.active) return <StorylineEntryPill postId={postId} />;
+  if (!storyline.active)
+    return <StorylineEntryPill postId={postId} compact={placement === 'mobile'} />;
   const { chapterId, depth } = chapterPosition(storyline, imageId);
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
   return (
@@ -48,28 +53,76 @@ export function StorylineToolbarChip({
   );
 }
 
-/** Rendered over the carousel: the way on past the last image, and the fork point. */
-export function StorylineStageOverlay({ isLastImage }: { isLastImage: boolean }) {
+/** The description of the image's chapter post, rendered as the post page does, clamped. */
+export function StorylineChapterDescription({ imageId }: { imageId: number | undefined }) {
+  const storyline = useStorylineMode();
+  const postId =
+    storyline.active && imageId ? chapterPosition(storyline, imageId).post?.id : undefined;
+  const { data: post } = trpc.post.get.useQuery({ id: postId ?? 0 }, { enabled: !!postId });
+  if (!postId || post?.id !== postId || !post.detail) return null;
+
+  return (
+    // Expanded, it scrolls instead of shrinking the image.
+    <div className="max-h-[40vh] overflow-y-auto px-1" data-testid="storyline-chapter-description">
+      <ContentClamp key={postId} maxHeight={72}>
+        <RenderHtml html={post.detail} withMentions />
+      </ContentClamp>
+    </div>
+  );
+}
+
+/**
+ * Rendered over the carousel: the image's caption, the way on past the last image, and the fork
+ * point.
+ */
+export function StorylineStageOverlay({
+  isLastImage,
+  imageId,
+}: {
+  isLastImage: boolean;
+  imageId: number | undefined;
+}) {
   const storyline = useStorylineMode();
   const currentUser = useCurrentUser();
   if (!storyline.active) return null;
 
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
+  const caption = imageId ? storyline.path.captions[imageId] : undefined;
+  const showNext = isLastImage && !storyline.endOpen;
+  const post = imageId ? chapterPosition(storyline, imageId).post : undefined;
+  const isAuthor = !!currentUser && !!post && currentUser.id === post.userId;
+  const captionNote = caption && <StorylineCaptionNote key={imageId} caption={caption} hideable />;
 
   return (
     <>
-      {isLastImage && !storyline.endOpen && (
-        <div className="absolute bottom-4 right-4 z-10">
-          <Button
-            radius="xl"
-            variant="gradient"
-            gradient={{ from: 'violet', to: 'blue', deg: 90 }}
-            rightSection={<IconArrowRight size={16} />}
-            onClick={() => storyline.setEndOpen(true)}
-            data-testid="storyline-next"
-          >
-            What happens next
-          </Button>
+      {(showNext || caption || isAuthor) && !storyline.endOpen && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-col items-end gap-2.5 @md:inset-x-4 @md:bottom-4 @md:items-center [&>*]:pointer-events-auto">
+          {showNext && (
+            <Button
+              className="@md:self-end"
+              radius="xl"
+              variant="gradient"
+              gradient={{ from: 'violet', to: 'blue', deg: 90 }}
+              rightSection={<IconArrowRight size={16} />}
+              onClick={() => storyline.setEndOpen(true)}
+              data-testid="storyline-next"
+            >
+              What happens next
+            </Button>
+          )}
+          {isAuthor && imageId ? (
+            <StorylineAuthorEdit
+              key={imageId}
+              postId={post.id}
+              title={post.title}
+              imageId={imageId}
+              caption={caption}
+            >
+              {captionNote}
+            </StorylineAuthorEdit>
+          ) : (
+            captionNote
+          )}
         </div>
       )}
       {storyline.endOpen && (
@@ -80,6 +133,7 @@ export function StorylineStageOverlay({ isLastImage }: { isLastImage: boolean })
           chapterTombstone={end.tombstone}
           parentPostId={end.post?.id}
           isOwner={!!currentUser && currentUser.id === storyline.path.storyline.userId}
+          onMain={end.onMain}
           onContinue={storyline.continueTo}
           onClose={() => storyline.setEndOpen(false)}
         />
@@ -88,7 +142,7 @@ export function StorylineStageOverlay({ isLastImage }: { isLastImage: boolean })
   );
 }
 
-function StorylineEntryPill({ postId }: { postId: number | null }) {
+function StorylineEntryPill({ postId, compact }: { postId: number | null; compact: boolean }) {
   const enabled = useStorylinesEnabled();
   const storyline = useStorylineMode();
   const browsingLevel = useViewerBrowsingLevelDebounced();
@@ -104,6 +158,7 @@ function StorylineEntryPill({ postId }: { postId: number | null }) {
       title={entry.title}
       depth={entry.depth}
       onEnter={() => storyline.enter(entry.chapterId)}
+      compact={compact}
     />
   );
 }

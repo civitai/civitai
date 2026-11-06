@@ -144,6 +144,12 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     expect(mockResolveModelSearchIds.mock.calls[0][0].types).toEqual(['Wildcards']);
   });
 
+  it('query path forwards baseModels and supportsGeneration to the Meili pre-step', async () => {
+    await invoke({ query: 'fantasy', baseModels: 'SD 3.5 Large', supportsGeneration: 'true' });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].baseModels).toEqual(['SD 3.5 Large']);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].supportsGeneration).toBe(true);
+  });
+
   it('401s on favorites/hidden without a user (authed-only options gate preserved)', async () => {
     const res = await invoke({ favorites: 'true' });
     expect(res.statusCode).toBe(401);

@@ -1,5 +1,4 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Runs the real statement against a Postgres stand-in: a $queryRaw fake returning a fixture row
@@ -11,6 +10,7 @@ import { getCachedImageDeliveryMetadata } from '~/server/services/image-delivery
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { statementOf } from '~/test-utils/queryRawProjection';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
@@ -19,8 +19,10 @@ const STATES = Object.values(ImageIngestionStatus);
 const urlFor = (state: string, hideMeta: boolean) =>
   `${state.toLowerCase()}-${hideMeta ? 'hidden' : 'shown'}/img.jpeg`;
 
-const runAgainstPglite = async (strings: TemplateStringsArray, ...values: unknown[]) => {
-  const flat = Prisma.sql(strings, ...(values as never[]));
+const SHARED_URL = 'shared-copy/img.jpeg';
+
+const runAgainstPglite = async (...call: unknown[]) => {
+  const flat = statementOf(call);
   return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
 };
 
@@ -37,6 +39,13 @@ beforeAll(async () => {
       "mimeType" text,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending'
     );
+  `);
+
+  // Two rows sharing one url, the shown one inserted first so it is the scan-order winner.
+  await holder.db.exec(`
+    INSERT INTO "Image" (id, url, "hideMeta", ingestion) VALUES
+      (300, '${SHARED_URL}', false, 'Scanned'),
+      (301, '${SHARED_URL}', true, 'Scanned');
   `);
 
   const rows = STATES.flatMap((state, i) => [
@@ -100,5 +109,24 @@ describe('image delivery lookup — source known missing', () => {
       type: 'image',
       mimeType: null,
     });
+  });
+});
+
+describe('image delivery lookup — rows sharing a url', () => {
+  it('serves the url as hidden when any row with it hides its metadata', async () => {
+    expect(await getCachedImageDeliveryMetadata(SHARED_URL)).toMatchObject({
+      id: 301,
+      hideMeta: true,
+    });
+  });
+
+  it('prefers the hidden row on the primary fallback too', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockRejectedValueOnce(new Error('replica error'));
+
+    expect(await getCachedImageDeliveryMetadata(SHARED_URL)).toMatchObject({
+      id: 301,
+      hideMeta: true,
+    });
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
   });
 });

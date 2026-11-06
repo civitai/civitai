@@ -5,7 +5,11 @@
  * Used by both client and server code.
  */
 
-import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
+import {
+  allInjectableResourceIds,
+  DEFAULT_STRENGTH_RANGE,
+} from '~/shared/constants/generation.constants';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 
 // =============================================================================
 // Types
@@ -36,6 +40,29 @@ export type StepMetadataFormat<T extends ResourceLike> = {
  */
 export const RESOURCE_NODE_KEYS = ['model', 'upscaler', 'resources', 'vae'] as const;
 export type ResourceNodeKey = (typeof RESOURCE_NODE_KEYS)[number];
+
+/** The weight a resource starts at: the version's default, or 1 for a value saved before the settings shape. */
+export const defaultStrength = (resource: { settings?: { strength?: { default: number } } }) =>
+  resource.settings?.strength?.default ?? DEFAULT_STRENGTH_RANGE.default;
+
+const carriedStrength = (resource: GenerationResource | GenerationResourceValue) =>
+  'strength' in resource ? resource.strength : undefined;
+
+/** A substitute is weighted against its own default, never the original version's. */
+export function asResourceValue<T extends GenerationResource | GenerationResourceValue>(
+  resource: T,
+  strength?: number | null
+): T & { strength: number } {
+  const substitute = resource.substitute && {
+    ...resource.substitute,
+    strength: strength ?? resource.substitute.strength ?? defaultStrength(resource.substitute),
+  };
+  return {
+    ...resource,
+    strength: strength ?? carriedStrength(resource) ?? defaultStrength(resource),
+    ...(substitute && { substitute }),
+  };
+}
 
 /**
  * Maps a resource's `model.type` to the singleton slot key it occupies.

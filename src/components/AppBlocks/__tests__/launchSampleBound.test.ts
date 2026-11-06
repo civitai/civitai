@@ -217,9 +217,8 @@ describe('init-post cap vs the re-post schedule', () => {
  *
  * WHY A SOURCE GATE RATHER THAN A BROWSER SPY. A spy asserting `resetLaunchMarks`
  * is not called on first mount would be deterministic and magnitude-free, and it
- * would be the more direct test. But it can only live in the `component` project,
- * and that project IS NOT RUN IN CI — so it would be a guard that reports safety
- * in a tier which never observes it. This gate runs in `unit`, which CI does run.
+ * would be the more direct test. But it can only live in the `component` project;
+ * this gate runs in `unit` as well.
  * The trade is real and worth naming: this checks the SHAPE of the source, not
  * the behaviour, so it can be defeated by a refactor that preserves neither.
  */

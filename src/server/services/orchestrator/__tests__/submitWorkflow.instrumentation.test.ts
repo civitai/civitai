@@ -46,7 +46,7 @@ import {
 
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),

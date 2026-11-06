@@ -1,13 +1,18 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import {
+  FlaggedConsumerFetchError,
+  reviewConsumerStrikes,
+} from '~/server/http/orchestrator/flagged-consumers';
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
 } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
+import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
@@ -28,10 +33,12 @@ export async function createCsamReportHandler({
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
-  const { userId, imageIds = [], details, type, reportedById } = input;
+  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = input;
   let denyFailed = false;
   let denyBookkeepingFailed = false;
-  await createCsamReport(input);
+  let strikesReviewFailed = false;
+  if (supplementalOf) await createSupplementalCsamReport({ ...input, supplementalOf });
+  else await createCsamReport(input);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
@@ -98,19 +105,47 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
         }).catch(() => undefined);
       }
     }
-  } else if (type === 'GeneratedImage') {
-    await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
   }
 
-  if (userId !== -1) {
+  // A supplemental report follows one that removed the account for this; one restored or banned for
+  // something else since is removed again.
+  const removed = !!supplementalOf && (await removedForCsam(userId));
+  if (userId !== -1 && !removed) {
     await softDeleteUser({ id: userId, userId: reportedById });
+  }
+
+  if (type === 'GeneratedImage') {
+    // After the removal, so a slow or failing orchestrator can never hold it up. A 404 is the retired
+    // route, which leaves nothing to review.
+    try {
+      await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
+    } catch (e) {
+      if (e instanceof FlaggedConsumerFetchError && e.status === 404) {
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          message: 'strikes review not found at the orchestrator; nothing to review',
+        }).catch(() => undefined);
+      } else {
+        strikesReviewFailed = true;
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          important: true,
+          message: 'strikes review failed after the report was filed and the account removed',
+          userId,
+          reportedById,
+          error: (e as Error)?.message,
+        }).catch(() => undefined);
+      }
+    }
   }
 
   // Last, so the images are already blocked and the report row committed when the flag comes off.
   if (type === 'Image' && imageIds.length) await releaseReviewFlagsToReportHold(imageIds);
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
-  return { denyFailed, denyBookkeepingFailed };
+  return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };
 }
 
 export async function createExternalCsamReportHandler({
@@ -124,4 +159,14 @@ export async function createExternalCsamReportHandler({
   // banned, and there is no on-Civitai content to remove. The report row is
   // picked up and sent to NCMEC by the hourly send-csam-reports job.
   await createExternalCsamReport({ ...input, reportedById: ctx.user.id });
+}
+
+async function removedForCsam(userId: number) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, meta: true },
+  });
+  const reasonCode = (user?.meta as { banDetails?: { reasonCode?: string } } | null)?.banDetails
+    ?.reasonCode;
+  return !!user?.bannedAt && reasonCode === BanReasonCode.SexualMinor;
 }

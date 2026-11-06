@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ALIAS_KINDS,
   MODEL_RULE_LIMITS,
+  aliasKindField,
+  aliasWorkflowIdField,
+  isModelRuleCategory,
   isSemanticDefinition,
-  parseModelRulesStoredResult,
+  modelRuleCategoryLabel,
+  readModelRuleExtras,
+  parseModelRulesHoldMeta,
   semanticModelRuleSchema,
   storedModelRuleSchema,
 } from './model-rules';
@@ -16,7 +22,59 @@ describe('semanticModelRuleSchema', () => {
       subject: 'Jane Doe',
       description: '',
       aliases: [],
+      references: [],
     });
+  });
+
+  it('accepts a category and trimmed http(s) references, dropping an empty label', () => {
+    expect(
+      semanticModelRuleSchema.parse({
+        type: 'semantic',
+        subject: 'Jane',
+        category: 'artist',
+        references: [
+          { url: ' https://example.com/a ', label: ' Portfolio ' },
+          { url: 'http://example.com/b', label: '  ' },
+        ],
+      })
+    ).toMatchObject({
+      category: 'artist',
+      references: [
+        { url: 'https://example.com/a', label: 'Portfolio' },
+        { url: 'http://example.com/b' },
+      ],
+    });
+  });
+
+  it.each([
+    ['an unknown category', { category: 'celebrity' }],
+    ['a non-http link', { references: [{ url: 'javascript:alert(1)' }] }],
+    ['a link that is not a URL', { references: [{ url: 'example' }] }],
+    ['a link over the cap', { references: [{ url: `https://example.com/${'a'.repeat(500)}` }] }],
+    ['a label over the cap', { references: [{ url: 'https://example.com', label: 'a'.repeat(101) }] }],
+    [
+      'too many references',
+      {
+        references: Array.from({ length: MODEL_RULE_LIMITS.referencesPerRule + 1 }, (_, i) => ({
+          url: `https://example.com/${i}`,
+        })),
+      },
+    ],
+  ])('rejects %s', (_name, extra) => {
+    expect(
+      semanticModelRuleSchema.safeParse({ type: 'semantic', subject: 'Jane', ...extra }).success
+    ).toBe(false);
+  });
+
+  it('lets the matcher read a stored rule whose new fields are malformed', () => {
+    const parsed = storedModelRuleSchema.parse({
+      type: 'semantic',
+      subject: 'Jane',
+      category: 'celebrity',
+      references: [{ url: 'https://example.com/ok' }, { url: 'ftp://example.com' }, 'nope'],
+    });
+    expect(parsed.category).toBeUndefined();
+    expect(parsed.references).toEqual([{ url: 'https://example.com/ok' }]);
   });
 
   it('rejects empty-string aliases', () => {
@@ -75,34 +133,130 @@ describe('term word cap', () => {
   });
 });
 
-describe('parseModelRulesStoredResult', () => {
-  it('reads matches, snapshot, literal ids and the hold flag', () => {
-    expect(
-      parseModelRulesStoredResult({
-        labels: { modelRules: { matched: [{ ruleId: 1, reason: ' r ' }, 'x', { ruleId: 'y' }] } },
-        modelRules: {
-          snapshot: [{ id: 1, subject: 'A' }, { id: 'b' }],
-          literalRuleIds: [7, 'x', 5],
+describe('parseModelRulesHoldMeta', () => {
+  it('reads a full hold meta back', () => {
+    const meta = {
+      mode: 'active',
+      fields: [{ heading: 'Name', text: 'Hero One LoRA' }],
+      matches: [{ ruleId: 3, term: 'Hero One', field: 'Name', fieldIndex: 0, start: 0, end: 8 }],
+      rules: [
+        {
+          id: 3,
+          subject: 'Example Franchise',
+          description: 'd',
+          aliases: ['Hero One'],
+          category: 'ip',
+          references: [{ url: 'https://example.com/ref', label: 'Official art' }],
         },
-        meta: { heldAtPublish: true },
-      })
-    ).toEqual({
-      matched: [{ ruleId: 1, reason: ' r ' }],
-      snapshot: [{ id: 1, subject: 'A' }],
-      literalRuleIds: [7, 5],
-      heldAtPublish: true,
-    });
+      ],
+      applied: true,
+      kind: 'redetected',
+      priorHoldId: 9,
+    };
+    expect(parseModelRulesHoldMeta(meta)).toEqual(meta);
   });
 
-  it('degrades to empty for anything else', () => {
-    const empty = { matched: [], snapshot: [], literalRuleIds: [], heldAtPublish: false };
-    expect(parseModelRulesStoredResult(null)).toEqual(empty);
-    expect(parseModelRulesStoredResult({ labels: { modelRules: { matched: 'x' } } })).toEqual(
-      empty
-    );
-    expect(parseModelRulesStoredResult({ modelRules: { literalRuleIds: [3] } })).toEqual({
-      ...empty,
-      literalRuleIds: [3],
+  it('keeps the category and references of a snapshot, and tolerates a snapshot without them', () => {
+    const parsed = parseModelRulesHoldMeta({
+      rules: [
+        {
+          id: 1,
+          subject: 'A',
+          category: 'ip',
+          references: [{ url: 'https://example.com/x', label: 'X' }, { url: 'bad' }],
+        },
+        { id: 2, subject: 'B', category: 'nope', references: 'nope' },
+        { id: 3, subject: 'C' },
+      ],
     });
+    expect(parsed.rules).toMatchObject([
+      { id: 1, category: 'ip', references: [{ url: 'https://example.com/x', label: 'X' }] },
+      { id: 2, references: [] },
+      { id: 3, references: [] },
+    ]);
+    expect(parsed.rules[1].category).toBeUndefined();
+    expect(parsed.rules[2].category).toBeUndefined();
+  });
+
+  it('keeps the source of a hold a training run recorded, and drops one it does not know', () => {
+    expect(parseModelRulesHoldMeta({ source: 'training' })).toMatchObject({ source: 'training' });
+    expect(parseModelRulesHoldMeta({ source: 'elsewhere' })).not.toHaveProperty('source');
+  });
+
+  it('keeps the entries that parse and tolerates an empty or missing meta', () => {
+    expect(
+      parseModelRulesHoldMeta({
+        fields: [{ heading: 'Name', text: 'x' }, { heading: 4 }],
+        matches: 'nope',
+        rules: [{ id: 1, subject: 'S' }],
+      })
+    ).toEqual({
+      mode: 'shadow',
+      fields: [{ heading: 'Name', text: 'x' }],
+      matches: [],
+      rules: [{ id: 1, subject: 'S', description: '', aliases: [], references: [] }],
+    });
+    for (const meta of [null, undefined, 'x', []])
+      expect(parseModelRulesHoldMeta(meta)).toMatchObject({ fields: [], matches: [], rules: [] });
+  });
+});
+
+describe('aliasKindField', () => {
+  it('accepts every known kind', () => {
+    for (const kind of ALIAS_KINDS) expect(aliasKindField.parse(kind)).toBe(kind);
+  });
+
+  it.each(['nickname', '', 5, null, undefined])('files %j under other', (value) => {
+    expect(aliasKindField.parse(value)).toBe('other');
+  });
+});
+
+describe('aliasWorkflowIdField', () => {
+  it('accepts an opaque token', () => {
+    expect(aliasWorkflowIdField.parse('wf_0123456789-AB')).toBe('wf_0123456789-AB');
+  });
+
+  it.each(['', 'short', '../etc/passwd', 'has space 1234', 'a'.repeat(129), 5, null])(
+    'rejects %j',
+    (value) => {
+      expect(aliasWorkflowIdField.safeParse(value).success).toBe(false);
+    }
+  );
+});
+
+describe('reference uniqueness', () => {
+  it('rejects the same link twice, after trimming', () => {
+    const result = semanticModelRuleSchema.safeParse({
+      type: 'semantic',
+      subject: 'Jane',
+      references: [{ url: 'https://example.com/a' }, { url: ' https://example.com/a ', label: 'x' }],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('Each reference link can only be listed once.');
+  });
+});
+
+describe('category helpers', () => {
+  it('guards and labels a category, tolerating empty and unknown values', () => {
+    expect(isModelRuleCategory('ip')).toBe(true);
+    expect(isModelRuleCategory('nope')).toBe(false);
+    expect(isModelRuleCategory('')).toBe(false);
+    expect(modelRuleCategoryLabel('likeness')).toBe('Real person');
+    expect(modelRuleCategoryLabel('')).toBe('');
+    expect(modelRuleCategoryLabel(undefined)).toBe('');
+    expect(modelRuleCategoryLabel('legacy')).toBe('legacy');
+  });
+});
+
+describe('readModelRuleExtras', () => {
+  it('keeps what parses from a stored definition and drops the rest', () => {
+    expect(
+      readModelRuleExtras({
+        category: 'artist',
+        references: [{ url: 'https://example.com/a' }, { url: 'javascript:x' }, 7],
+      })
+    ).toMatchObject({ category: 'artist', references: [{ url: 'https://example.com/a' }] });
+    expect(readModelRuleExtras({ category: 'bogus', references: 'x' })).toEqual({ references: [] });
+    expect(readModelRuleExtras(null)).toEqual({ references: [] });
   });
 });

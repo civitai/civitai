@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 
 /**
  * `expr` when it is a JSON object, otherwise `{}`. Use it as the left side of a `||` merge.
@@ -16,4 +17,14 @@ export function asJsonbObject(expr: string) {
 /** {@link asJsonbObject} for a `Prisma.sql` template, where an interpolated string is bound as a value. */
 export function asJsonbObjectSql(expr: string): Prisma.Sql {
   return Prisma.raw(asJsonbObject(expr));
+}
+
+/**
+ * `expr` without the `systemNsfwLock` marker, for a write that changes a model's nsfw lock on a
+ * moderator's behalf. A non-object `expr` is returned as is: `-` raises on a JSON scalar.
+ */
+export function withoutSystemNsfwLockSql(expr: string): Prisma.Sql {
+  return Prisma.sql`(CASE WHEN jsonb_typeof(${Prisma.raw(expr)}) = 'object' THEN ${Prisma.raw(
+    expr
+  )} - ${SYSTEM_NSFW_LOCK_META_KEY}::text ELSE ${Prisma.raw(expr)} END)`;
 }

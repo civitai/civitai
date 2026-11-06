@@ -12,8 +12,8 @@ import { env } from '~/env/server';
  * Behaviour is deliberately unchanged from the copies this replaces, timeout included. Only the
  * return value is new.
  *
- * `new-order-jobs.ts` posts this same title/description shape and differs only in `color`, so it is
- * one optional parameter from being the third caller — take it when a third one arrives. The other
+ * `postDiscordAlert` is the same delivery to any webhook with a chosen `color`; the training canary
+ * posts to its own channel through it, and `new-order-jobs.ts` could adopt it unchanged. The other
  * three (`git-push.ts`, `publish-request.service.ts`, `apps-shared.router.ts`) build `fields[]`
  * embeds with `url`/`footer` and are a genuinely different shape; the latter two also resolve `env`
  * through `await import`, so they would not adopt this unchanged even if the shape matched.
@@ -28,13 +28,21 @@ export type ModAlertOutcome = 'delivered' | 'rejected' | 'unconfigured';
  * alerted someone long after the webhook is revoked.
  */
 export async function notifyModAlert(title: string, description: string): Promise<ModAlertOutcome> {
-  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return 'unconfigured';
+  return postDiscordAlert(env.DISCORD_WEBHOOK_MOD_ALERTS, { title, description });
+}
 
-  return fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+/** Same delivery as `notifyModAlert`, to any Discord webhook and with a chosen embed colour. */
+export async function postDiscordAlert(
+  webhookUrl: string | undefined,
+  { title, description, color = 0xf44336 }: { title: string; description: string; color?: number }
+): Promise<ModAlertOutcome> {
+  if (!webhookUrl) return 'unconfigured';
+
+  return fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      embeds: [{ title, description, color: 0xf44336, timestamp: new Date().toISOString() }],
+      embeds: [{ title, description, color, timestamp: new Date().toISOString() }],
     }),
   })
     .then((res) => (res.ok ? ('delivered' as const) : ('rejected' as const)))

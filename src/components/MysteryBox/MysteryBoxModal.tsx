@@ -388,83 +388,88 @@ function OpenStage({
 
   return (
     <div
-      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 rounded-[inherit] p-6"
+      className="absolute inset-0 z-10 rounded-[inherit]"
       style={{ background: 'radial-gradient(circle at 50% 45%, #2a1220, #0e0e10 70%)' }}
       data-testid="box-stage"
       data-phase={phase}
       aria-live="polite"
     >
       <div
-        className={styles.glow}
-        style={{ '--glow': glow } as CSSProperties}
-        data-on={phase === 'glowing' || phase === 'lidOff' || revealed}
-      />
-      {!revealed && (
-        <>
-          <MysteryBoxArt
-            art={view.art}
-            color={color}
-            size={160}
-            shaking={phase === 'shaking' || phase === 'glowing'}
-            lidOff={phase === 'lidOff'}
-            open={phase === 'lidOff'}
-          />
-          <Text c="white" fw={600} mih={22}>
-            {PHASE_MESSAGE[phase] ?? ''}
-          </Text>
-        </>
-      )}
-      {revealed && result && (
-        <Stack align="center" gap="sm" className={clsx('relative', styles.reveal)}>
-          {tier && (
-            <Badge
-              size="lg"
-              variant="filled"
-              style={{ background: `${tierColor(tier)}33`, color: tierColor(tier) }}
-            >
-              {tier.name} · {formatChance(revealChance(result.odds))} chance
-            </Badge>
-          )}
-          <div className="w-44">
-            {reward?.url && (
-              <HatArt
-                url={reward.url}
-                fit={reward.fit as EventDecorationFit | undefined}
-                color={glow}
-                width={256}
-                className="!bg-transparent"
-              />
+        className={clsx(styles.stageView, 'flex flex-col items-center justify-center gap-4 p-6')}
+        data-testid="box-stage-view"
+      >
+        <div
+          className={styles.glow}
+          style={{ '--glow': glow } as CSSProperties}
+          data-on={phase === 'glowing' || phase === 'lidOff' || revealed}
+        />
+        {!revealed && (
+          <>
+            <MysteryBoxArt
+              art={view.art}
+              color={color}
+              size={160}
+              shaking={phase === 'shaking' || phase === 'glowing'}
+              lidOff={phase === 'lidOff'}
+              open={phase === 'lidOff'}
+            />
+            <Text c="white" fw={600} mih={22}>
+              {PHASE_MESSAGE[phase] ?? ''}
+            </Text>
+          </>
+        )}
+        {revealed && result && (
+          <Stack align="center" gap="sm" className={clsx('relative', styles.reveal)}>
+            {tier && (
+              <Badge
+                size="lg"
+                variant="filled"
+                style={{ background: `${tierColor(tier)}33`, color: tierColor(tier) }}
+              >
+                {tier.name} · {formatChance(revealChance(result.odds))} chance
+              </Badge>
             )}
-          </div>
-          <Text c="white" fw={800} size="xl" ta="center">
-            {reward?.name ?? 'A new hat'}
-          </Text>
-          <Text size="sm" c="dimmed">
-            {shelfPrice
-              ? `Also on the shelf at ${numberWithCommas(shelfPrice)} Buzz`
-              : 'Only in the Mystery Box'}
-          </Text>
-          <Group gap="xs" justify="center">
-            {onPlace && (
-              <Button onClick={onPlace} data-testid="box-place">
-                Put it on a post
+            <div className="w-44">
+              {reward?.url && (
+                <HatArt
+                  url={reward.url}
+                  fit={reward.fit as EventDecorationFit | undefined}
+                  color={glow}
+                  width={256}
+                  className="!bg-transparent"
+                />
+              )}
+            </div>
+            <Text c="white" fw={800} size="xl" ta="center">
+              {reward?.name ?? 'A new hat'}
+            </Text>
+            <Text size="sm" c="dimmed">
+              {shelfPrice
+                ? `Also on the shelf at ${numberWithCommas(shelfPrice)} Buzz`
+                : 'Only in the Mystery Box'}
+            </Text>
+            <Group gap="xs" justify="center">
+              {onPlace && (
+                <Button onClick={onPlace} data-testid="box-place">
+                  Put it on a post
+                </Button>
+              )}
+              {actions.canBuy && view.listing && (
+                <Button color="yellow" onClick={onAgain} loading={busy} data-testid="box-again">
+                  Open another · {numberWithCommas(view.listing.unitAmount)}
+                </Button>
+              )}
+              <Button variant="default" onClick={onDone}>
+                Done
               </Button>
-            )}
-            {actions.canBuy && view.listing && (
-              <Button color="yellow" onClick={onAgain} loading={busy} data-testid="box-again">
-                Open another · {numberWithCommas(view.listing.unitAmount)}
-              </Button>
-            )}
-            <Button variant="default" onClick={onDone}>
-              Done
-            </Button>
-          </Group>
-          <Text size="sm" c="white">
-            <b>{collected}</b> / {total} {view.team ? `Team ${view.team} ` : ''}hats collected
-          </Text>
-        </Stack>
-      )}
-      {revealed && result && <Confetti color={glow} />}
+            </Group>
+            <Text size="sm" c="white">
+              <b>{collected}</b> / {total} {view.team ? `Team ${view.team} ` : ''}hats collected
+            </Text>
+          </Stack>
+        )}
+        {revealed && result && <Confetti color={glow} />}
+      </div>
     </div>
   );
 }

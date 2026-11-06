@@ -53,13 +53,13 @@ const versionIdToVariant = new Map<number, OpenAIVariant>([
   [openaiVersionIds['v2.5-sunburst'], 'gpt2'],
 ]);
 
-const openaiGpt1AspectRatios = [
+export const openaiGpt1AspectRatios = [
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
   { label: '3:2', value: '3:2', width: 1536, height: 1024 },
   { label: '2:3', value: '2:3', width: 1024, height: 1536 },
 ];
 
-const openaiGpt2AspectRatios = [
+export const openaiGpt2AspectRatios = [
   { label: '21:9', value: '21:9', width: 1680, height: 720 },
   { label: '16:9', value: '16:9', width: 1536, height: 864 },
   { label: '3:2', value: '3:2', width: 1536, height: 1024 },

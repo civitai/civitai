@@ -44,7 +44,7 @@
 // 🔴 THIS IS A MIRRORED CONTRACT, NOT A SHARED IMPORT. civitai consumes the
 // PUBLISHED `@civitai/app-sdk` dist, and when this landed the decoder was in a
 // version not yet published, so the encoder could not import it. (The installed
-// dist, 0.65.1, exports `parseBlockInitFragment`; the mirror has not been
+// dist, 0.80.0, exports `parseBlockInitFragment`; the mirror has not been
 // replaced or bound to it.) `__tests__/blockIframeUrl.test.ts`
 // pins the exact literal output string — change the format on one side and that
 // literal must be changed here AND in the SDK's `initFragment.test.ts`, which

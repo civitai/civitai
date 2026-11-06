@@ -13,7 +13,7 @@ import {
  * The CORRECTNESS CORE of the unified /apps/review queues: the pure adapters that
  * map each proc's row → a unified row + the merge/sort/dedup. A mis-routed, dropped,
  * or duplicated row here means a moderator reviews/approves the wrong thing, so this
- * is the BLOCKING unit gate (the list's browser suite is report-only). Pins:
+ * is the node-tier gate. Pins:
  *  - globally-unique, kind-namespaced keys (on-site + off-site never collide);
  *  - correct field mapping + the manifest-name / listing-name → slug fallbacks;
  *  - `onReview` routes to the CORRECT modal opener with the CORRECT payload;

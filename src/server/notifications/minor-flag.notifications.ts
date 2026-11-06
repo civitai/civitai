@@ -6,8 +6,7 @@ import { slugit } from '~/utils/string-helpers';
 export const minorFlagNotifications = createNotificationProcessor({
   'model-flagged-minor': {
     displayName: 'Model marked as minor',
-    category: NotificationCategory.System,
-    toggleable: false,
+    category: NotificationCategory.Moderation,
     prepareMessage: ({ details }) =>
       details && !isEmpty(details)
         ? {
@@ -47,7 +46,8 @@ export const minorFlagNotifications = createNotificationProcessor({
         "userId",
         'model-flagged-minor' "type",
         details
-      FROM flagged;
+      FROM flagged
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" uns WHERE uns."userId" = flagged."userId" AND uns.type = 'model-flagged-minor');
     `,
   },
 });

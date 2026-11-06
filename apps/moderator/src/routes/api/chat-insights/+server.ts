@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireAccess } from '$lib/server/access';
 import { getChatStats, getNewestMessages, getSpamGroups } from '$lib/server/chat-insights.service';
+import { readerOf } from '$lib/server/chat-read-audit';
 
 // Platform-wide aggregates and spam detection, off the page load: every query here scans the 4.2M-row
 // ChatMessage table (~500-700ms each, run together).
@@ -16,8 +17,8 @@ export const GET: RequestHandler = async ({ locals }) => {
   // must not take the live message feed down with it. Each section reports its own failure.
   const [stats, spam, newest] = await Promise.allSettled([
     getChatStats(),
-    getSpamGroups(),
-    getNewestMessages(),
+    getSpamGroups(readerOf(locals.user)),
+    getNewestMessages(readerOf(locals.user)),
   ]);
   const value = <T>(r: PromiseSettledResult<T>) => (r.status === 'fulfilled' ? r.value : null);
   return json({ stats: value(stats), spam: value(spam), newest: value(newest) });

@@ -9,15 +9,14 @@ import {
   Collapse,
   Divider,
   Group,
-  HoverCard,
   Loader,
   LoadingOverlay,
   Paper,
   Stack,
   Switch,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {

@@ -7,7 +7,8 @@
  */
 
 /** Mirrors the main app's `BanReasonCode`, which `/api/mod/ban-user` parses strictly — a code added
- *  there and not here is missing from the dropdown; one added only here 500s the ban. */
+ *  there and not here is missing from the dropdown; one added only here 500s the ban. Leaves out the
+ *  main app's `systemOnly` codes, which no moderator sets by hand. */
 export const BAN_REASONS = [
   'SexualMinor',
   'SexualMinorGenerator',

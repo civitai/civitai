@@ -5,6 +5,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -16,6 +20,8 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
@@ -63,6 +69,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
+import { requestServableLevels } from '~/server/utils/browsing-level';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { countUnclaimedPrizes } from '~/server/services/prize.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
@@ -147,6 +154,7 @@ import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.servi
 import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
+import { isSystemAccountMeta } from '@civitai/auth';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
@@ -326,10 +334,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
-      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
-        total: 0,
-        byCollection: {},
-      })),
+      getPendingCollectionReviewCounts({ userId: id, levels: requestServableLevels(ctx) }).catch(
+        () => ({
+          total: 0,
+          byCollection: {},
+        })
+      ),
     ]);
 
     // `pendingPlacements` rides along here rather than getting its own query:
@@ -544,6 +554,11 @@ export const completeOnboardingHandler = async ({
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
+        // No "already onboarded" gate: a resubmit is how a failed payment is retried, and the
+        // externalTransactionId below keeps that from paying twice.
+        const current = await dbWrite.user.findUnique({ where: { id }, select: { meta: true } });
+        const bonusOwed = !isSystemAccountMeta(current?.meta);
+
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {
           await createUserReferral({
@@ -554,17 +569,18 @@ export const completeOnboardingHandler = async ({
           });
         }
 
-        await withRetries(() =>
-          createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: ctx.user.id,
-            amount: getUserBuzzBonusAmount(),
-            description: 'Onboarding bonus',
-            type: TransactionType.Reward,
-            externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
-            toAccountType: 'blue',
-          })
-        ).catch(handleLogError);
+        if (bonusOwed)
+          await withRetries(() =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: ctx.user.id,
+              amount: getUserBuzzBonusAmount(),
+              description: 'Onboarding bonus',
+              type: TransactionType.Reward,
+              externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
+              toAccountType: 'blue',
+            })
+          ).catch(handleLogError);
         break;
       }
     }
@@ -643,7 +659,12 @@ export const updateUserHandler = async ({
   try {
     const user = await getUserById({
       id,
-      select: { profilePictureId: true, profilePicture: { select: { userId: true } } },
+      select: {
+        username: true,
+        image: true,
+        profilePictureId: true,
+        profilePicture: { select: { userId: true } },
+      },
     });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
@@ -653,6 +674,9 @@ export const updateUserHandler = async ({
       profilePicture && profilePicture.id !== user.profilePictureId
         ? { ...profilePicture, id: undefined }
         : undefined;
+    const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
+    await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
+    await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -763,7 +787,8 @@ export const updateUserHandler = async ({
       usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
     );
 
-    await bustUserCreator(id);
+    // The name before this save, so a rename also purges responses cached under the old name.
+    await bustUserCreator(id, { usernames: user.username ? [user.username] : [] });
 
     // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
     // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
@@ -875,10 +900,7 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { modelId: input.id },
-    select: { id: true },
-  });
+  const versions = await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id);
   const modelVersionIds = versions.map((x) => x.id);
 
   try {
@@ -1181,7 +1203,6 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             downloadCountAllTime: true,
             thumbsUpCountAllTime: true,
             uploadCountAllTime: true,
-            answerCountAllTime: true,
           },
         },
         cosmetics: {

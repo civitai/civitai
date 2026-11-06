@@ -1,26 +1,28 @@
 import {
   storedModelRuleSchema,
-  type StoredModelRuleSnapshot,
+  type ModelRuleCategory,
+  type ModelRuleReference,
 } from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { hashContent } from '~/server/services/entity-moderation.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
-export type ModelRuleForPrompt = {
+export type EnabledModelRule = {
   id: number;
   subject: string;
   description: string;
   aliases: string[];
-  /** Epoch ms; part of the rule-set fingerprint, so an edited rule changes the dedup hash. */
+  /** Absent on an entry cached before these fields existed. */
+  category?: ModelRuleCategory;
+  references?: ModelRuleReference[];
   updatedAt: number;
 };
 
-export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
+export async function getEnabledModelRules(): Promise<EnabledModelRule[]> {
   return fetchThroughCache(
     REDIS_KEYS.CACHES.MOD_RULES.MODELS,
     async () => {
@@ -32,74 +34,28 @@ export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
         orderBy: [{ order: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
       });
       return rows.flatMap((row) => {
-        // A regex definition, or a converted rule a person has not reviewed yet, never reaches the scan.
+        // A regex definition, or a converted rule a person has not reviewed yet, never reaches the matcher.
         const parsed = storedModelRuleSchema.safeParse(row.definition);
         if (!parsed.success || parsed.data.needsAttention) return [];
-        const { subject, description, aliases } = parsed.data;
-        return [{ id: row.id, subject, description, aliases, updatedAt: row.updatedAt.getTime() }];
+        const { subject, description, aliases, category, references } = parsed.data;
+        return [
+          {
+            id: row.id,
+            subject,
+            description,
+            aliases,
+            category,
+            references,
+            updatedAt: row.updatedAt.getTime(),
+          },
+        ];
       });
     },
     { ttl: CacheTTL.day }
   );
 }
 
-export function renderModelRulesBlock(rules: ModelRuleForPrompt[]) {
-  const lines = rules.map((rule) => {
-    const description = rule.description.replace(/\.+$/, '');
-    const parts = [`[${rule.id}] ${rule.subject}${description ? ` — ${description}` : ''}`];
-    if (rule.aliases.length) parts.push(`Also known as: ${rule.aliases.join(', ')}.`);
-    return parts.join('. ');
-  });
-  return `### Rules\n${lines.join('\n')}`;
-}
-
-export function modelRulesFingerprint(rules: ModelRuleForPrompt[]) {
-  return hashContent(rules.map((rule) => `${rule.id}:${rule.updatedAt}`).join(','));
-}
-
-export type ModelRuleSnapshot = StoredModelRuleSnapshot;
-
-/**
- * Read by id from the primary, not from the cache, and enabled only: a rule disabled after the
- * submit must stop acting at once, and a match on it is dropped.
- */
-export async function getModelRuleSnapshots(ids: number[]): Promise<ModelRuleSnapshot[]> {
-  if (!ids.length) return [];
-  const rows = await dbWrite.moderationRule.findMany({
-    where: { id: { in: ids }, entityType: EntityType.Model, enabled: true },
-    select: { id: true, definition: true },
-  });
-  return rows.flatMap((row) => {
-    const parsed = storedModelRuleSchema.safeParse(row.definition);
-    if (!parsed.success) return [];
-    const { subject, description, aliases } = parsed.data;
-    return [{ id: row.id, subject, description, aliases }];
-  });
-}
-
-/**
- * Keeps one match per rule, and only rules the prompt actually listed: a model can name an id it
- * invented, and acting on one would unpublish a model for a rule nobody wrote.
- */
-export function filterModelRuleMatches<T extends { ruleId: number }>(
-  matched: T[],
-  promptRuleIds: number[] | undefined
-): { kept: T[]; dropped: number[] } {
-  const allowed = new Set(promptRuleIds ?? []);
-  const seen = new Set<number>();
-  const kept: T[] = [];
-  const dropped: number[] = [];
-  for (const match of matched) {
-    if (!allowed.has(match.ruleId)) dropped.push(match.ruleId);
-    else if (!seen.has(match.ruleId)) {
-      seen.add(match.ruleId);
-      kept.push(match);
-    }
-  }
-  return { kept, dropped };
-}
-
-/** A lab-only edit of a rule: a positive id replaces that rule, a negative id is a new, unsaved one. */
+/** A moderator's unsaved edit of a rule, tried before it is saved: a positive id replaces that rule, a negative id is a new, unsaved one. */
 export type ModelRuleOverride = {
   id: number;
   subject: string;
@@ -109,16 +65,11 @@ export type ModelRuleOverride = {
 };
 
 export function applyModelRuleOverrides(
-  live: ModelRuleForPrompt[],
+  live: EnabledModelRule[],
   overrides: ModelRuleOverride[] | undefined
-): ModelRuleForPrompt[] {
+): EnabledModelRule[] {
   if (!overrides?.length) return live;
-  const toRule = ({
-    id,
-    subject,
-    description,
-    aliases,
-  }: ModelRuleOverride): ModelRuleForPrompt => ({
+  const toRule = ({ id, subject, description, aliases }: ModelRuleOverride): EnabledModelRule => ({
     id,
     subject,
     description,

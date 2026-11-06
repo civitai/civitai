@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS page_access_change (
   outcome      text        NOT NULL DEFAULT 'pending'
 );
 
+-- What a `/admin` save did to roles it does not edit: stored roles from outside its catalogue it kept
+-- (`roles_carried`), and retired ones of its own it dropped (`roles_dropped`). Both are also in
+-- `roles_before`; kept apart so "who removed X" is answerable without the catalogue as it stood then.
+-- Written by `/admin` only: an API change names its one role and leaves both empty, as do older rows.
+ALTER TABLE page_access_change ADD COLUMN IF NOT EXISTS roles_carried text[] NOT NULL DEFAULT '{}';
+ALTER TABLE page_access_change ADD COLUMN IF NOT EXISTS roles_dropped text[] NOT NULL DEFAULT '{}';
+
 -- `ADD CONSTRAINT` has no `IF NOT EXISTS`, so each is guarded by name to keep the file re-runnable.
 DO $$
 BEGIN

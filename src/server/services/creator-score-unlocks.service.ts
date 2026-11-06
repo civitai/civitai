@@ -19,8 +19,11 @@ import {
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
+import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
+import { isHatTurfLive } from '~/server/events/turf/live';
+import { TURF_SCORE_TIER_KEY } from '~/server/events/turf/config';
 import { SERVICES_MIN_CREATOR_SCORE } from '~/shared/constants/creator-service.constants';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
@@ -48,6 +51,11 @@ export type CreatorScoreUnlockInputs = {
   placementFreeSlotTiers: (surface: PlacementSurface) => PlacementPriceTier[];
   /** Kept out of the list, including tier-reached notifications, until the flag is on for everyone. */
   servicesEnabled: boolean;
+  servicesMinScore: number;
+  /** Listed only while Hat Turf is open to everyone. */
+  hatTurfLive: boolean;
+  /** The Spark tier's threshold, from its CreatorMilestone row; 0 (not listed) when unread. */
+  turfMinScore: number;
 };
 
 export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
@@ -56,6 +64,9 @@ export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
   placementPriceCapTiers: () => PLACEMENT_PRICE_CAP_TIERS,
   placementFreeSlotTiers: () => PLACEMENT_FREE_SLOT_CAP_TIERS,
   servicesEnabled: false,
+  servicesMinScore: SERVICES_MIN_CREATOR_SCORE,
+  hatTurfLive: false,
+  turfMinScore: 0,
 };
 
 /** Every privilege a Creator Score unlocks, lowest first. A threshold of 0 is not an unlock. */
@@ -196,10 +207,22 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       ? [
           {
             key: 'creator-services',
-            minScore: SERVICES_MIN_CREATOR_SCORE,
+            minScore: inputs.servicesMinScore,
             label: 'Offer services in your Creator Shop',
             surface: 'creatorServices',
             scoreKind: 'aggregate',
+            source: 'compiled',
+          } satisfies CreatorScoreUnlock,
+        ]
+      : []),
+    ...(inputs.hatTurfLive
+      ? [
+          {
+            key: 'hat-turf-team-stickers',
+            minScore: inputs.turfMinScore,
+            label: 'Hat Turf: your stickers count for your team (accounts made since Nov 1)',
+            surface: 'events',
+            scoreKind: 'total',
             source: 'compiled',
           } satisfies CreatorScoreUnlock,
         ]
@@ -232,11 +255,22 @@ async function getSaleMinScore() {
 
 /** The unlocks as the gates enforce them right now, KeyValue overrides included. */
 export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
-  const [saleMinScore, announcementMinScore, placementConfig, servicesEnabled] = await Promise.all([
+  const [
+    saleMinScore,
+    announcementMinScore,
+    placementConfig,
+    servicesEnabled,
+    servicesMinScore,
+    hatTurfLive,
+    turfMinScore,
+  ] = await Promise.all([
     getSaleMinScore(),
     getAnnouncementMinScore(),
     getPlacementConfig(),
     isServicesPublic(),
+    getServicesMinCreatorScore(),
+    isHatTurfLive(),
+    getTurfMinScore(),
   ]);
 
   return buildCreatorScoreUnlocks({
@@ -245,5 +279,20 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     placementPriceCapTiers: placementConfig.priceCapTiers,
     placementFreeSlotTiers: placementConfig.freeSlotTiers,
     servicesEnabled,
+    servicesMinScore,
+    hatTurfLive,
+    turfMinScore,
   });
+}
+
+async function getTurfMinScore() {
+  try {
+    const row = await dbRead.creatorMilestone.findUnique({
+      where: { key: TURF_SCORE_TIER_KEY },
+      select: { threshold: true },
+    });
+    return row?.threshold ?? 0;
+  } catch {
+    return 0;
+  }
 }

@@ -6,7 +6,7 @@ import type * as TrpcMod from '~/utils/trpc';
 
 /**
  * W13 P3b — the off-site listing REPORT modal. Browser-mode surface test
- * (report-only in Tekton): the modal renders the 6 schema reasons + submits the
+ * (`Component tests` in CI): the modal renders the 6 schema reasons + submits the
  * picked reason via `appListings.reportListing`.
  *
  * 🔴 THIS FILE USED TO DRIVE `ReportListingButton`, a self-contained button that

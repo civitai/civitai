@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Positive control for the `preview / component-tests` tier.
+ * Positive control for the browser `component` tier (`Component tests` in CI).
  *
  * 🔴 WHY: THE BROWSER SUITE HAS A FAILURE MODE THAT COLLECTS ZERO TESTS AND IS
  * INDISTINGUISHABLE, TO EVERY CONSUMER, FROM A SUITE THAT RAN.
@@ -31,8 +31,10 @@
  * suite. The floor guards the CI invocation, which passes no filters.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { QUARANTINED_COMPONENT_FILES } from './component-quarantine.mjs';
 
 /**
  * The floor, and the reason it is a floor rather than an exact count.
@@ -160,6 +162,9 @@ export function browserTestFilesOnDisk(root) {
         if (entry.name === 'node_modules' || entry.name === '.next') continue;
         walk(p);
       } else if (entry.name.endsWith('.browser.test.tsx')) {
+        // Quarantined files are run by the separate quarantine step, not by this run, so the
+        // ledger must not demand them from it.
+        if (QUARANTINED_COMPONENT_FILES.includes(relative(root, p).replace(/\\/g, '/'))) continue;
         out.push(p);
       }
     }

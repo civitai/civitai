@@ -29,7 +29,7 @@ const future = () => new Date(Date.now() + HOUR);
 const SCOPE = 0b1011;
 
 // An OAuth access/refresh pair minted together (same client, same scope), a personal key, a system
-// key, an expired access token and a row of a type the code does not list. Ids, keys and owners are
+// key, an expired access token, a row of a type the code does not list and a worker token. Ids, keys and owners are
 // pairwise distinct, so a result names its row.
 const ROWS: Row[] = [
   {
@@ -96,6 +96,17 @@ const ROWS: Row[] = [
     buzzLimit: null,
     clientId: null,
     type: 'Unlisted',
+    expiresAt: future(),
+  },
+  {
+    id: 17,
+    key: 'worker-token',
+    userId: 107,
+    tokenScope: 1 << 29,
+    lastUsedAt: null,
+    buzzLimit: null,
+    clientId: 'workers-pool',
+    type: 'Worker',
     expiresAt: future(),
   },
 ];
@@ -186,6 +197,13 @@ describe('getSessionFromBearerToken credential type', () => {
 
   it('does not accept a key type that is not allowlisted', async () => {
     expect(await getSessionFromBearerToken('unlisted-type')).toBeNull();
+  });
+
+  // Worker keys are worker-registration credentials, not civitai.com API keys: keep `Worker` off the
+  // bearer allowlist.
+  it('does not accept a Worker token', async () => {
+    expect(await getSessionFromBearerToken('worker-token')).toBeNull();
+    expect(dbMock.dbWrite.apiKey.update).not.toHaveBeenCalled();
   });
 
   it('does not accept an expired access token', async () => {

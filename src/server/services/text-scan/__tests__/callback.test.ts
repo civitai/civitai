@@ -4,7 +4,7 @@ import type * as Adapters from '~/server/services/moderation-adapters';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
-// @civitai/client is mocked globally in src/__tests__/setup.ts (getWorkflow is a vi.fn()).
+// @civitai/orchestration-client is mocked globally in src/__tests__/setup.ts (getWorkflow is a vi.fn()).
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
@@ -19,7 +19,7 @@ vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
-const { getWorkflow } = await import('@civitai/client');
+const { getWorkflow } = await import('@civitai/orchestration-client');
 const { getTextScanMode, getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
 await import('~/server/services/text-scan/profiles/chat-message.profile');
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
@@ -918,6 +918,44 @@ describe('a chat window verdict in csam review', () => {
     );
     expect(adapter.applyTextScan).toHaveBeenCalledWith(
       expect.objectContaining({ entityId: 30, promptIds: { base: 1, csam: 7 } })
+    );
+  });
+});
+
+describe('a callback for the retired ModelRules LLM scan', () => {
+  const retired = (mode: 'active' | 'shadow') => ({
+    ...metadata,
+    entityType: 'ModelRules',
+    entityId: 9,
+    emEntityType: mode === 'shadow' ? 'ModelRules:shadow' : 'ModelRules',
+    mode,
+    labels: ['modelRules'],
+  });
+
+  it.each([
+    ['active', 'succeeded'],
+    ['shadow', 'succeeded'],
+    ['active', 'failed'],
+    ['shadow', 'expired'],
+  ] as const)('drops a %s %s workflow without recording or acting', async (mode, status) => {
+    const body = { modelRules: { matches: [], reason: 'No match.' } };
+    vi.mocked(getWorkflow).mockResolvedValue(
+      (status === 'succeeded'
+        ? workflow(body, undefined, retired(mode))
+        : failed(retired(mode))) as any
+    );
+
+    await expect(handleTextScanCallback({ workflowId: 'wf-old', status })).resolves.toBeUndefined();
+
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(adapter.applyFailure).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        message: 'callback for the retired ModelRules scan dropped',
+        workflowId: 'wf-old',
+      })
     );
   });
 });

@@ -37,6 +37,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { AuctionType, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
@@ -603,6 +604,9 @@ export const createBid = async ({
 
     if (mv.model.poi) throw throwBadRequestError('Invalid model version.');
 
+    if (stopsCreatorEarnings(mv.baseModel))
+      throw throwBadRequestError(notCommerciallyAvailableMessage(mv.baseModel));
+
     const allowedTypeData = getModelTypesForAuction(auctionData.auctionBase);
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) throw throwBadRequestError('Invalid model type for this auction.');
@@ -859,15 +863,19 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
   // Loaded here so the refund helper stays out of this service's import cycle.
-  const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
+  const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
+    '~/server/services/buzz-prefix-refund'
+  );
   for (const transactionId of bid.transactionIds) {
     await withRetries(async () => {
       if (isAuctionTransactionPrefix(transactionId)) {
-        await refundMultiAccountTransaction({
+        const refund = await refundAllLegsByPrefix({
           externalTransactionIdPrefix: transactionId,
           description: 'Deleted bid.',
         });
-
+        // A bid holds this id only after its charge went through, so no legs is a fault.
+        if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
+          throw new Error(`No transactions found under ${transactionId}`);
         return;
       } else {
         await refundTransactionOnce(transactionId, 'Deleted bid.');
@@ -1150,6 +1158,7 @@ export const moveRecurringBidToLatest = async ({
     if (mv.model.status !== ModelStatus.Published) return false;
     if ((mv.model.meta as ModelMeta | null)?.cannotPromote === true) return false;
     if (mv.model.poi) return false;
+    if (stopsCreatorEarnings(mv.baseModel)) return false;
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) return false;
     if (!!bid.auctionBase.ecosystem && bid.auctionBase.ecosystem !== miscAuctionName) {

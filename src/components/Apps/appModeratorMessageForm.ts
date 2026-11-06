@@ -3,11 +3,10 @@
  * React-free).
  *
  * Extracted from `MessageAppOwnerModal` for the same reason
- * `appListingModerationTableView` was extracted from the mgmt table: the browser-mode
- * suites are REPORT-ONLY in this repo's CI, so a correctness gate that lives only in a
- * `.browser.test.tsx` blocks nothing. The submit gate on a moderator-authored message —
- * the thing that decides whether a half-typed message can be sent to a developer — is
- * pinned in the blocking node `unit` project instead.
+ * `appListingModerationTableView` was extracted from the mgmt table: logic in a pure
+ * module can be pinned in the node project without a browser. The submit gate on a
+ * moderator-authored message — the thing that decides whether a half-typed message can be sent to a
+ * developer — is pinned in the node `unit` project instead.
  *
  * 🔴 EVERY BOUND HERE IS IMPORTED FROM THE SERVER SCHEMA, NEVER RETYPED. The floors and
  * ceilings are `messageAppOwnerSchema`'s, and zod re-checks them (as does

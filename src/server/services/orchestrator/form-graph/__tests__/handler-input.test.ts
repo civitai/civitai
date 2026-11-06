@@ -13,6 +13,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
+import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
+import { createFlux3VideoInput } from '../flux3-video.handler';
 import { createFormGraphStepInput } from '../index';
 import { createOpenAIInput } from '../openai.handler';
 
@@ -139,6 +141,131 @@ describe('flux3.handler', () => {
   });
 });
 
+describe('flux3-video.handler', () => {
+  const V3 = flux3VideoVersionIds['v3.0'];
+  const MAX = flux3VideoVersionIds['v3.0-max'];
+
+  it('v3.0 still sends first/last frames as firstLastFrameToVideo', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:first-last',
+      ecosystem: 'Flux3Video',
+      model: { id: V3 },
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'flux',
+      version: 'v3.0',
+      operation: 'firstLastFrameToVideo',
+      startImage: IMAGE.url,
+      endImage: IMAGE2.url,
+      aspectRatio: 'auto',
+    });
+    expect(firstInput(steps)).not.toHaveProperty('reasoningLevel');
+  });
+
+  it('Max text-to-video carries the ratio, reasoning level and audio default', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'Flux3Video',
+      model: { id: MAX },
+      prompt: 'a cat',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 8,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'flux',
+      version: 'v3.0-max',
+      operation: 'textToVideo',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 8,
+      reasoningLevel: 'high',
+      generateAudio: true,
+    });
+    expect(firstInput(steps)).not.toHaveProperty('draft');
+  });
+
+  it('Max image-to-video takes the end frame on the same operation', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:first-last',
+      ecosystem: 'Flux3Video',
+      model: { id: MAX },
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+      reasoningLevel: 'low',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      version: 'v3.0-max',
+      operation: 'imageToVideo',
+      image: IMAGE.url,
+      endImage: IMAGE2.url,
+      aspectRatio: 'auto',
+      reasoningLevel: 'low',
+    });
+  });
+
+  it('Max image-to-video with one image sends no end frame, and passes audio off and the seed', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'Flux3Video',
+      model: { id: MAX },
+      prompt: 'a cat',
+      images: [IMAGE],
+      generateAudio: false,
+      seed: 42,
+    });
+    expect(firstInput(steps)).toMatchObject({
+      operation: 'imageToVideo',
+      image: IMAGE.url,
+      generateAudio: false,
+      seed: 42,
+    });
+    expect(firstInput(steps)).not.toHaveProperty('endImage');
+  });
+
+  it('refuses keyframes when the picker has swapped Max away, rather than sending a v3.0 text-to-video', () => {
+    const data = {
+      workflow: 'img2vid:keyframes',
+      ecosystem: 'Flux3Video',
+      flux3VideoVersion: 'v3',
+      model: { id: V3, model: { type: 'Checkpoint' } },
+      prompt: 'a cat',
+      duration: 5,
+      resolution: '720p',
+      generateAudio: false,
+      draft: false,
+    } as never;
+
+    expect(() => createFlux3VideoInput(data, ctx)).toThrow(/Max/);
+  });
+
+  it('keyframes picked with v3.0 selected go out on Max, in frame order as url + frameIndex pairs', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:keyframes',
+      ecosystem: 'Flux3Video',
+      model: { id: V3 },
+      prompt: 'a cat',
+      duration: 5,
+      keyframes: [
+        { image: IMAGE, frameIndex: 96 },
+        { image: IMAGE2, frameIndex: 0 },
+      ],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      version: 'v3.0-max',
+      operation: 'keyframesToVideo',
+      aspectRatio: 'auto',
+      keyframes: [
+        { image: IMAGE2.url, frameIndex: 0 },
+        { image: IMAGE.url, frameIndex: 96 },
+      ],
+    });
+    expect(firstInput(steps)).not.toHaveProperty('images');
+  });
+});
+
 describe('krea3.handler', () => {
   it('create sends ratio, resolution and thinking mode with no images', async () => {
     const create = await dispatch({
@@ -236,8 +363,7 @@ describe('krea3.handler', () => {
 });
 
 describe('ideogram.handler', () => {
-  // The fork is on the version id, so these two cases are the contract: 4.5 is a fal API
-  // model, 4.0 runs on our own comfy. Getting it backwards bills the wrong provider.
+  // The fork is on the version id: 4.5 is a fal API model.
   it('4.5 routes to fal with its own resolution and quality', async () => {
     const v45 = await dispatch({
       workflow: 'txt2img',
@@ -259,14 +385,17 @@ describe('ideogram.handler', () => {
     });
   });
 
-  it('4.0 stays on comfy', async () => {
+  // 4.0 generation is off and out of the locked version list, so a 4.0 request (a remix) is moved
+  // to 4.5 rather than sent to comfy.
+  it('moves a 4.0 request to 4.5 on fal', async () => {
     const v40 = await dispatch({
       workflow: 'txt2img',
       ecosystem: 'Ideogram',
       prompt: 'a cat',
       seed: 42,
+      model: 3246186,
     });
-    expect(firstInput(v40)).toMatchObject({ engine: 'comfy', ecosystem: 'ideogram4' });
+    expect(firstInput(v40)).toMatchObject({ engine: 'fal', model: 'ideogram45' });
   });
 
   it('edit sends imageSize auto and keeps image order', async () => {
@@ -305,6 +434,45 @@ describe('hunyuan.handler', () => {
       model: 1314512,
     });
     expect(firstInput(steps)).toMatchObject({ checkpointModel: 'urn:air:test:1313562' });
+  });
+});
+
+describe('wan.handler v2.1', () => {
+  // Unnamed, text-to-video ran the orchestrator's 1.3B default, which is not enabled, so every
+  // submit was refused; image-to-video's unnamed default only happened to be enabled.
+  it('names the 14B text-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'WanVideo14B_T2V',
+      prompt: 'a cat',
+    });
+    expect(firstInput(steps)).toMatchObject({
+      engine: 'wan',
+      version: 'v2.1',
+      diffusionModel: 'urn:air:test:1707796',
+    });
+  });
+
+  it('names the 720p image-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'WanVideo14B_I2V_720p',
+      prompt: 'a cat',
+      resolution: '720p',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({ diffusionModel: 'urn:air:test:1501344' });
+  });
+
+  it('names the 480p image-to-video model', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'WanVideo14B_I2V_480p',
+      prompt: 'a cat',
+      resolution: '480p',
+      images: [IMAGE],
+    });
+    expect(firstInput(steps)).toMatchObject({ diffusionModel: 'urn:air:test:1501125' });
   });
 });
 

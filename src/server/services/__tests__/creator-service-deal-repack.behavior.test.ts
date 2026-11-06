@@ -4,6 +4,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -40,6 +41,10 @@ const buzz = vi.hoisted(() => ({
   getMultiAccountTransactionsByPrefix: vi.fn(),
   getTransactionByExternalId: vi.fn(),
   refundTransaction: vi.fn(),
+}));
+// The deal flows notify buyer and seller; accept the call without asserting on it.
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -194,6 +199,7 @@ const MIGRATIONS = [
   '20261028160000_creator_service_deal_file_entries',
   '20261028170000_creator_service_offering_takedown',
   '20261029140000_creator_service_deal_file_delivery',
+  '20261128150000_creator_service_final_malware_scan',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -240,6 +246,7 @@ async function accepted() {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
+    disclosureVersion: SERVICES_TERMS_VERSION,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -280,7 +287,7 @@ const SCAN_COPY = (n: number) => Buffer.from(`scan-copy-${n}`);
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);

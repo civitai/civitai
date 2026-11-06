@@ -4,6 +4,11 @@ import path from 'path';
 
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
+
+// CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
+// every worker inherits it on any machine.
+process.env.TZ = 'UTC';
 
 // Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
@@ -79,7 +84,7 @@ const nativePoolPlugin = {
 // 🔴 The fs module cache key does not cover the dependency optimizer, yet a cached transform embeds
 // optimizer-versioned URLs (`…/index.js?v=<browserHash>`). Without this, switching between two
 // `deps.optimizer.{ssr,client}.include` lists serves the other list's transforms: 148 of 150 files failed
-// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/client` until the cache was deleted.
+// with `ERR_UNSUPPORTED_DIR_IMPORT … @civitai/orchestration-client` until the cache was deleted.
 const optimizerCacheKeyPlugin = {
   name: 'civitai:fs-cache-optimizer-key',
   configureVitest({
@@ -189,6 +194,7 @@ const componentAlias = [
 // EXPERIMENT with `threads` (`--pool=threads`) no longer has to fight it as well.
 const sharpExecutingTestFiles = [
   'src/server/services/blocks/__tests__/block-image-upload.persist.test.ts',
+  'src/server/services/blocks/__tests__/block-image-upload.service.test.ts',
   'src/server/services/blocks/__tests__/listing-asset-upload-integrity.test.ts',
   'src/server/services/blocks/__tests__/listing-meta.datauri-raster.integration.test.ts',
   'src/server/services/blocks/__tests__/offsite-listing.service.test.ts',
@@ -196,6 +202,7 @@ const sharpExecutingTestFiles = [
   'src/server/utils/__tests__/stored-image-probe.test.ts',
   'src/server/utils/__tests__/service-deal-preview.test.ts',
   'src/server/utils/__tests__/og-image-helpers.test.ts',
+  'src/server/utils/__tests__/image-blurhash.test.ts',
   'src/tests/api/og.milestone.test.ts',
 ];
 
@@ -241,7 +248,6 @@ const prebundledDeps = [
   'zustand',
   'immer',
   'clsx',
-  'uuid',
   'prom-client',
   '@tanstack/react-query',
   '@paddle/paddle-node-sdk',
@@ -294,11 +300,15 @@ const unitTestConfig = {
   globals: true,
   environment: 'node' as const,
   exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
+  // Stands in for a shell exporting real notifications credentials, so the guard on setup.ts
+  // deleting them (notifications-client-stub.test.ts) can fail in CI too.
+  env: { NOTIFICATIONS_ENDPOINT: 'http://127.0.0.1:9', NOTIFICATIONS_TOKEN: 'unit-test-sentinel' },
   // The fs tracker records which files each test reads, for the result cache. It is loaded only
   // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
   // Tracker FIRST, so reads made while the main setup file loads are recorded too.
   setupFiles: [
     ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'src/__tests__/network-guard.ts',
     'src/__tests__/setup.ts',
   ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
@@ -471,6 +481,7 @@ const browserOptimizeDeps = {
 // `|component (chromium)|`, which is a run report naming the wrong tier — the
 // most expensive kind of wrong, because it points every reader at the wrong
 // setup file. Each project gets its own object.
+const isFirefoxRun = process.env.GEOMETRY_BROWSER === 'firefox';
 const browserModeOptions = () => ({
   enabled: true as const,
   // `--no-sandbox` + `--disable-dev-shm-usage`: required to launch
@@ -489,20 +500,28 @@ const browserModeOptions = () => ({
   // tests on NixOS". A mismatch does not say "no browser" — it collects every file
   // and executes none, which reads as a broken suite.
   provider: playwright({
+    // Opt-in, local only: `GEOMETRY_DPR=2.25` runs at a fractional device pixel ratio (CI is DPR 1).
+    ...(process.env.GEOMETRY_DPR
+      ? { contextOptions: { deviceScaleFactor: Number(process.env.GEOMETRY_DPR) } }
+      : {}),
     launchOptions: {
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      args: isFirefoxRun ? [] : ['--no-sandbox', '--disable-dev-shm-usage'],
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
         ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
         : {}),
     },
   }),
   headless: true as const,
-  instances: [{ browser: 'chromium' }],
+  // Opt-in, local only: `GEOMETRY_BROWSER=firefox` runs the browser projects in Firefox. CI stays
+  // on Chromium (no Firefox in the runner image). A Firefox run needs
+  // `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pointed at the Firefox binary if the bundle isn't installed.
+  instances: [{ browser: isFirefoxRun ? ('firefox' as const) : ('chromium' as const) }],
 });
 
 /** Everything a browser project needs outside its own `test` block. */
 const browserProjectShell = () => ({
   resolve: { ...browserResolve },
+  css: { postcss: path.resolve(__dirname, 'test/browser-postcss') },
   plugins: [componentGroupOrderPlugin],
   optimizeDeps: { ...browserOptimizeDeps },
 });
@@ -519,6 +538,7 @@ const browserProjectShell = () => ({
  */
 const browserTestShell = () => ({
   maxWorkers: componentMaxWorkers,
+  globalSetup: ['test/browser-global-setup.mjs'],
   // See componentGroupOrderPlugin — this is the static half. Costs only a bare `vitest run`,
   // which serialises the browser projects against the node ones instead of interleaving
   // them; CI and every script select one project at a time.
@@ -625,9 +645,25 @@ export default defineConfig({
           ...browserTestShell(),
           name: 'component',
           include: ['src/**/*.browser.test.tsx'],
+          // Held out of the blocking run, see scripts/ci/component-quarantine.mjs.
+          exclude: ['**/node_modules/**', ...QUARANTINED_COMPONENT_FILES],
           // process-shim MUST come first (no imports) so it runs before any
           // component's module graph reads `process.env` at import time.
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
+        },
+      },
+      {
+        // Exactly the files `component` excludes, same setup, run by the quarantine step of
+        // the `component` CI job (push to `main` and dispatch only). `provide.quarantineRun` lets those files un-skip
+        // the groups that are skipped for the blocking run. Disjoint from `component` by
+        // construction: the same list is its `include` and `component`'s `exclude`.
+        ...browserProjectShell(),
+        test: {
+          ...browserTestShell(),
+          name: 'component-quarantine',
+          include: QUARANTINED_COMPONENT_FILES,
+          setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
+          provide: { quarantineRun: true },
         },
       },
       {

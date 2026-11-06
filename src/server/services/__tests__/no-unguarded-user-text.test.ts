@@ -56,7 +56,6 @@ const SURFACES: Record<string, number> = {
   'src/server/routers/blocks.router.ts': 1,
   'src/server/routers/comics.router.ts': 7,
   'src/server/routers/oauth-client.router.ts': 2,
-  'src/server/services/answer.service.ts': 1,
   'src/server/services/apps/shared-content-safety.ts': 1,
   'src/server/services/article.service.ts': 3,
   'src/server/services/blocks/app-listing-assets.service.ts': 2,
@@ -87,17 +86,17 @@ const SURFACES: Record<string, number> = {
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
   'src/server/services/post.service.ts': 3,
-  'src/server/services/question.service.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
   'src/server/services/sticker-placement.service.ts': 1,
+  'src/server/services/storyline-caption.service.ts': 1,
   'src/server/services/storyline.service.ts': 2,
   'src/server/services/tag.service.ts': 1,
   // 4: the two writers below, plus the template path's alias scan — a batch call and
   // a per-alias one, which runs only to find which alias the batch refused.
   'src/server/services/user-hub.service.ts': 4,
   'src/server/services/user-link.service.ts': 2,
-  'src/server/services/user-profile.service.ts': 1,
+  'src/server/services/user-profile.service.ts': 2,
 };
 
 /**
@@ -141,7 +140,6 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateReference: 1,
   },
   'src/server/routers/oauth-client.router.ts': { create: 1, update: 1 },
-  'src/server/services/answer.service.ts': { upsertAnswer: 1 },
   'src/server/services/apps/shared-content-safety.ts': { assertSharedTextSafe: 1 },
   'src/server/services/article.service.ts': {
     applyArticleContentChange: 1,
@@ -198,7 +196,6 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
   'src/server/services/post.service.ts': { addPostTag: 1, createPost: 1, updatePost: 1 },
-  'src/server/services/question.service.ts': { upsertQuestion: 1 },
   'src/server/services/rating-review.service.ts': { createRatingReview: 1 },
   'src/server/services/resourceReview.service.ts': {
     createResourceReview: 1,
@@ -206,6 +203,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     upsertResourceReview: 1,
   },
   'src/server/services/sticker-placement.service.ts': { createStickerPlacement: 1 },
+  'src/server/services/storyline-caption.service.ts': { setStorylineImageCaption: 1 },
   'src/server/services/storyline.service.ts': { createStoryline: 1, updateStoryline: 1 },
   'src/server/services/tag.service.ts': { findOrCreateTagsByName: 1 },
   'src/server/services/user-hub.service.ts': {
@@ -214,7 +212,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     withoutBlockedAliases: 2,
   },
   'src/server/services/user-link.service.ts': { upsertManyUserLinks: 1, upsertUserLink: 1 },
-  'src/server/services/user-profile.service.ts': { updateUserProfile: 1 },
+  'src/server/services/user-profile.service.ts': { updateUserProfile: 1, setShowcaseSections: 1 },
 };
 
 function read(rel: string) {

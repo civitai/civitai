@@ -7,6 +7,8 @@ import {
   laneColor,
   LANE_COLORS,
   storylineMayBranch,
+  storylineMoveRuns,
+  storylineMoveTargets,
 } from '~/components/Storyline/storyline-lane-map.utils';
 import { parseIdListParam, STORYLINE_VIA_PARAM } from '~/components/Storyline/storyline-mode.utils';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
@@ -398,5 +400,92 @@ describe('laneColor', () => {
       'var(--mantine-color-blue-6)',
       'var(--mantine-color-grape-6)',
     ]);
+  });
+});
+
+describe('the runs the owner may reorder', () => {
+  const OWNER = 10;
+  const chapter = (chapterId: number, userId = OWNER, viaPlacement = false) => ({
+    chapterId,
+    viaPlacement,
+    post: { userId },
+  });
+  const edges = (list: [number, number][]) =>
+    list.map(([parentChapterId, chapterId]) => ({ parentChapterId, chapterId }));
+  const graph = (
+    chapters: ReturnType<typeof chapter>[],
+    pairs: [number, number][],
+    truncated = false
+  ) => ({
+    chapters,
+    edges: edges(pairs),
+    truncated,
+  });
+
+  it('is a straight line of the owner’s chapters, and nothing at a fork', () => {
+    const line = storylineMoveRuns(
+      graph(
+        [chapter(1), chapter(2), chapter(3), chapter(4)],
+        [
+          [1, 2],
+          [2, 3],
+          [3, 4],
+        ]
+      ),
+      OWNER
+    );
+    expect(line.get(3)?.ids).toEqual([1, 2, 3, 4]);
+    expect(line.get(3)?.tailOpen).toBe(true);
+
+    // 2 forks to 3 and 5: chapters 2, 3 and 5 are not a single way on from one another.
+    const forked = storylineMoveRuns(
+      graph(
+        [chapter(1), chapter(2), chapter(3), chapter(5)],
+        [
+          [1, 2],
+          [2, 3],
+          [2, 5],
+        ]
+      ),
+      OWNER
+    );
+    expect(forked.get(1)?.ids).toEqual([1, 2]);
+    expect(forked.get(1)?.tailOpen).toBe(false);
+    expect(forked.has(3)).toBe(false);
+  });
+
+  it("breaks at a contributor's chapter or a placement, and yields nothing for a cut graph", () => {
+    const pairs: [number, number][] = [
+      [1, 2],
+      [2, 3],
+      [3, 4],
+    ];
+    expect(
+      storylineMoveRuns(
+        graph([chapter(1), chapter(2), chapter(3, 12), chapter(4)], pairs),
+        OWNER
+      ).has(3)
+    ).toBe(false);
+    expect(
+      storylineMoveRuns(
+        graph([chapter(1), chapter(2), chapter(3, OWNER, true), chapter(4)], pairs),
+        OWNER
+      ).has(3)
+    ).toBe(false);
+    expect(
+      storylineMoveRuns(graph([chapter(1), chapter(2), chapter(3), chapter(4)], pairs, true), OWNER)
+        .size
+    ).toBe(0);
+  });
+
+  it('puts a chapter after any chapter of its run but its own place, and never first', () => {
+    const run = { ids: [1, 2, 3, 4], tailOpen: true };
+    expect(storylineMoveTargets(run, 2)).toEqual([3, 4]);
+    expect(storylineMoveTargets(run, 4)).toEqual([1, 2]);
+    expect(storylineMoveTargets(run, 1)).toEqual([]);
+    // A tail with a fork after it cannot move, or be moved after.
+    const closed = { ids: [1, 2, 3, 4], tailOpen: false };
+    expect(storylineMoveTargets(closed, 4)).toEqual([]);
+    expect(storylineMoveTargets(closed, 2)).toEqual([3]);
   });
 });

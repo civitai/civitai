@@ -1,10 +1,10 @@
 /**
  * The embedded Training Studio's `checkTrainingText` host hook: asks this app's trigger word check
- * about one run. Only an explicit `{ ok: true }` passes; a 400 is a refusal carrying its reason, and
+ * about one run, or its prompt check about an edit the Studio is about to generate. Only an explicit `{ ok: true }` passes; a 400 is a refusal carrying its reason, and
  * anything else rejects, so the element submits nothing.
  */
 export async function checkStudioTriggerWord(
-  input: { triggerWord: string },
+  input: { triggerWord: string } | { editPrompt: string; inputImages?: string[] },
   fetchImpl: typeof fetch = fetch
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const r = await fetchImpl('/api/training-studio/check-text', {

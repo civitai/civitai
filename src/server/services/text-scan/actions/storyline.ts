@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { onStorySparked, onStorySparkLost } from '~/server/events/points/hooks';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -30,6 +31,7 @@ export async function liftScanTakedown(
       data: { ...extra.data, tosViolationByScan: false },
     }),
   ]);
+  if (alone.count) void onStorySparked(id);
   return alone.count + underModerator.count;
 }
 
@@ -70,7 +72,7 @@ export const notifyStorylineTitleModerated = (
 ) =>
   createNotification({
     userId: storyline.userId,
-    category: NotificationCategory.System,
+    category: NotificationCategory.Moderation,
     type: STORYLINE_TITLE_MODERATED,
     // Per verdict: a redelivered callback is the same notice, a later scan is a new one.
     key: `${STORYLINE_TITLE_MODERATED}-${details.storylineId}-${
@@ -162,6 +164,7 @@ export async function applyStorylineTextScan({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (count) void onStorySparkLost(entityId);
     if (count)
       await notifyStorylineTitleModerated(
         before,

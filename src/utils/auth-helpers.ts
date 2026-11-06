@@ -74,7 +74,21 @@ export function openLoginPopup(callbackUrl: string, reason?: string) {
     } catch {
       /* may already be closed */
     }
-    window.location.assign(callbackUrl); // back to where they started, now signed in
+    // Back to where they started, now signed in. Callers pass pathname+search+hash, and assigning this page's
+    // URL with a #fragment is a same-document fragment navigation (no reload) — the page would stay signed
+    // out. So for the current document, move to the target fragment (if it differs) and reload instead.
+    const here = new URL(window.location.href);
+    const dest = new URL(callbackUrl, here);
+    if (
+      dest.origin === here.origin &&
+      dest.pathname === here.pathname &&
+      dest.search === here.search
+    ) {
+      if (dest.hash !== here.hash) window.history.replaceState(window.history.state, '', dest.href);
+      window.location.reload();
+    } else {
+      window.location.assign(callbackUrl);
+    }
   };
 }
 

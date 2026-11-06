@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { cn } from '@civitai/ui/utils.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { RESOLUTION_NOTE_MAX_LENGTH, reasonRequiresNote } from '@civitai/shared/resolution-reasons';
   import type { DecisionReasons } from '$lib/triage/decision-reasons';
@@ -16,6 +17,7 @@
     select = $bindable(null),
     noteInput = $bindable(null),
     onenter,
+    compact = false,
   }: {
     /** Every decision's reasons, grouped by decision. */
     options: DecisionReasons;
@@ -27,6 +29,8 @@
     noteInput?: HTMLInputElement | null;
     /** Enter in the note field, once a reason has asked for a note. */
     onenter?: () => void;
+    /** Reason and note share one line, as a sidebar has room for (`TriageDecisionBar`'s `compact`). */
+    compact?: boolean;
   } = $props();
 
   const noteRequired = $derived(reasonRequiresNote(reason));
@@ -40,10 +44,13 @@
   <Select.Trigger
     bind:ref={select}
     aria-label="Reason"
-    title={picked?.description}
-    class="h-[30px] w-[260px] max-w-full shrink-0 justify-between border-dark-4 bg-dark-7 text-[13px] text-dark-0 dark:bg-dark-7 dark:hover:bg-dark-6"
+    title={picked?.description ?? picked?.label}
+    class={cn(
+      'h-[30px] justify-between border-dark-4 bg-dark-7 text-[13px] text-dark-0 dark:bg-dark-7 dark:hover:bg-dark-6',
+      compact ? 'w-auto min-w-0 flex-1 basis-0' : 'w-[260px] max-w-full shrink-0'
+    )}
   >
-    <span class="truncate">Reason: {picked?.label ?? 'choose one'}</span>
+    <span class="truncate">{compact ? '' : 'Reason: '}{picked?.label ?? (compact ? 'Reason…' : 'choose one')}</span>
   </Select.Trigger>
   <Select.Content>
     {#each options.groups as group (group.label)}
@@ -77,7 +84,14 @@
     }
   }}
   placeholder={noteRequired
-    ? 'Say why (required for Other). Never shown to the user.'
-    : 'Note for the record (optional)'}
-  class="h-[30px] min-w-0 flex-1 border-dark-4 bg-dark-7 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
+    ? compact
+      ? 'Say why (required)'
+      : 'Say why (required for Other). Never shown to the user.'
+    : compact
+      ? 'Note (optional)'
+      : 'Note for the record (optional)'}
+  class={cn(
+    'h-[30px] flex-1 border-dark-4 bg-dark-7 text-[13px] placeholder:text-dark-2 dark:bg-dark-7',
+    compact ? 'min-w-0 basis-0' : 'min-w-40'
+  )}
 />

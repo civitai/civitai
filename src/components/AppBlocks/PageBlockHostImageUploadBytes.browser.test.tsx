@@ -138,6 +138,17 @@ async function driveToReady() {
   });
 }
 
+/**
+ * Starts the frame's requests once the host has committed ready. Before that a gated request gets
+ * the pre-handshake refusal, a bare `{ requestId }`, and the frame cannot see when that ends.
+ */
+async function goWhenHostReady(el: HTMLIFrameElement) {
+  await vi.waitFor(() => {
+    if (el.getAttribute('data-block-ready') !== 'true') throw new Error('host not ready yet');
+  });
+  el.contentWindow?.postMessage({ __go: true }, '*');
+}
+
 /** Lets any reply that WOULD follow a settled request arrive before asserting there is none. */
 const settle = () => new Promise((r) => setTimeout(r, 150));
 
@@ -171,22 +182,19 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       // The `blockToken` in the first payload is a decoy: the host must use its own.
       el.srcdoc =
         `<script>
-        var sent = false;
         function go() {
-          if (sent) return;
-          sent = true;
           var png = new Uint8Array([${PNG.join(',')}]);
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'fixed meta.png', blockToken: 'tok_evil' } }, '*');
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_u8', bytes: new Uint8Array(png) } }, '*');
         }
         window.addEventListener('message', function (e) {
           if (e.source !== parent) return;
+          if (e.data && e.data.__go) return go();
           parent.postMessage({ __xfEcho: e.data }, '*');
-          if (e.data && e.data.type === 'BLOCK_INIT') go();
         });
         parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
-        setTimeout(go, 300);
       </` + `script>`;
+      await goWhenHostReady(el);
 
       const uploadReplies = () =>
         echoes.filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT').map((m) => m.data.payload);
@@ -378,15 +386,13 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     try {
       el.srcdoc =
         `<script>
-        var sent = false;
         var png = new Uint8Array([${PNG.join(',')}]);
         function go() {
-          if (sent) return;
-          sent = true;
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: png.buffer.slice(0) } }, '*');
         }
         window.addEventListener('message', function (e) {
           if (e.source !== parent) return;
+          if (e.data && e.data.__go) return go();
           if (e.data && e.data.__resend) {
             parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: new Uint8Array(png) } }, '*');
             // Sentinel: same invalid payload on a FRESH id, sent after the re-send. Its reply
@@ -395,11 +401,10 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
             return;
           }
           parent.postMessage({ __xfEcho: e.data }, '*');
-          if (e.data && e.data.type === 'BLOCK_INIT') go();
         });
         parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
-        setTimeout(go, 300);
       </` + `script>`;
+      await goWhenHostReady(el);
 
       const repliesTo = (id: string) =>
         echoes
@@ -456,15 +461,13 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     try {
       el.srcdoc =
         `<script>
-        var sent = false;
         var png = new Uint8Array([${PNG.join(',')}]);
         function go() {
-          if (sent) return;
-          sent = true;
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse', bytes: png.buffer.slice(0) } }, '*');
         }
         window.addEventListener('message', function (e) {
           if (e.source !== parent) return;
+          if (e.data && e.data.__go) return go();
           if (e.data && e.data.__resend) {
             // A PICKER request (no bytes) reusing the in-flight bytes id.
             parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse' } }, '*');
@@ -474,11 +477,10 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
             return;
           }
           parent.postMessage({ __xfEcho: e.data }, '*');
-          if (e.data && e.data.type === 'BLOCK_INIT') go();
         });
         parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
-        setTimeout(go, 300);
       </` + `script>`;
+      await goWhenHostReady(el);
 
       const repliesTo = (id: string) =>
         echoes

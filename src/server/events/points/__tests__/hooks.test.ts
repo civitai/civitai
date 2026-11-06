@@ -1,3 +1,4 @@
+import type * as KyselyDb from '~/server/db/kyselyDb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Award from '~/server/events/points/award';
@@ -9,6 +10,31 @@ const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
   hatted: new Set<string>(),
 }));
 
+const kysely = vi.hoisted(() => {
+  const state = {
+    calls: [] as { table: string; where: unknown[][] }[],
+    answers: [] as unknown[],
+  };
+  const selectFrom = (table: string) => {
+    const call = { table, where: [] as unknown[][] };
+    state.calls.push(call);
+    const query = {
+      select: () => query,
+      where: (...a: unknown[]) => {
+        call.where.push(a);
+        return query;
+      },
+      executeTakeFirst: async () =>
+        state.answers.length > 1 ? state.answers.shift() : state.answers[0],
+    };
+    return query;
+  };
+  return { state, selectFrom };
+});
+vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
+  ...(await importOriginal<typeof KyselyDb>()),
+  kyselyWrite: { selectFrom: kysely.selectFrom },
+}));
 // The engine's kill switch is on here; enabled.test.ts covers it off.
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => true,
@@ -31,6 +57,7 @@ import {
   hattedImpressionEntities,
   onCommentCreated,
   onCommentsRemoved,
+  onTopicCommentsRemoved,
   onModelReviewsChanged,
   onPlacementApproved,
   onPlacementsTakenDown,
@@ -40,6 +67,11 @@ import {
 
 const db = dbMock.dbWrite;
 const ACTOR = 5;
+
+beforeEach(() => {
+  kysely.state.calls.length = 0;
+  kysely.state.answers = [{ n: '0' }];
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -165,10 +197,9 @@ describe('reactions', () => {
 });
 
 describe('comments', () => {
-  it('awards a top-level comment on a hatted image without a thread lookup', async () => {
+  it('awards a comment on a hatted image', async () => {
     hatted.add('Image:7');
-    await onCommentCreated({ userId: ACTOR, entityType: 'image', entityId: 7, threadId: 70 });
-    expect(db.thread.findMany).not.toHaveBeenCalled();
+    await onCommentCreated({ userId: ACTOR, entityType: 'image', entityId: 7 });
     expect(awardEventPoints).toHaveBeenCalledWith([
       {
         type: 'comment',
@@ -181,32 +212,9 @@ describe('comments', () => {
     ]);
   });
 
-  it("credits a reply to its root thread's article", async () => {
-    hatted.add('Article:3');
-    db.thread.findMany.mockResolvedValueOnce([
-      {
-        id: 71,
-        rootThreadId: 30,
-        imageId: null,
-        articleId: null,
-        rootThread: { imageId: null, articleId: 3 },
-      },
-    ]);
-    await onCommentCreated({ userId: ACTOR, entityType: 'comment', entityId: 99, threadId: 71 });
-    expect(awardEventPoints).toHaveBeenCalledWith([
-      expect.objectContaining({
-        type: 'comment',
-        entityType: 'Article',
-        entityId: 3,
-        time: expect.any(Date),
-        sourceId: `CommentV2:Article:3:${ACTOR}`,
-      }),
-    ]);
-  });
-
   it('ignores comments on other entity types', async () => {
     hatted.add('Model:7');
-    await onCommentCreated({ userId: ACTOR, entityType: 'model', entityId: 7, threadId: 70 });
+    await onCommentCreated({ userId: ACTOR, entityType: 'model', entityId: 7 });
     expect(awardEventPoints).not.toHaveBeenCalled();
   });
 
@@ -215,7 +223,7 @@ describe('comments', () => {
     db.thread.findMany.mockResolvedValue([
       { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
     ]);
-    db.commentV2.count.mockResolvedValueOnce(2).mockResolvedValueOnce(0);
+    kysely.state.answers = [{ n: '2' }, { n: '0' }];
 
     await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
     expect(removeEventPoints).not.toHaveBeenCalled();
@@ -224,9 +232,27 @@ describe('comments', () => {
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ sourceId: `CommentV2:Image:7:${ACTOR}` }),
     ]);
-    expect(db.commentV2.count).toHaveBeenLastCalledWith({
-      where: { userId: ACTOR, thread: { OR: [{ id: 70 }, { rootThreadId: 70 }] } },
-    });
+  });
+
+  // A CommentV3 comment names its section, so no thread is read; the source id is the one the award
+  // was made under, so a comment written before its surface flipped is still settled.
+  it('settles a CommentV3 comment by its section, once the actor has none left there', async () => {
+    hatted.add('Article:8');
+    kysely.state.answers = [{ n: '1' }, { n: '0' }];
+    await onTopicCommentsRemoved([{ userId: ACTOR, entityType: 'article', entityId: 8 }]);
+    expect(removeEventPoints).not.toHaveBeenCalled();
+    kysely.state.calls.length = 0;
+
+    await onTopicCommentsRemoved([
+      { userId: ACTOR, entityType: 'article', entityId: 8 },
+      { userId: ACTOR, entityType: 'article', entityId: 8 },
+    ]);
+
+    expect(db.thread.findMany).not.toHaveBeenCalled();
+    expect(kysely.state.calls).toHaveLength(1);
+    expect(removeEventPoints).toHaveBeenCalledWith([
+      expect.objectContaining({ sourceId: `CommentV2:Article:8:${ACTOR}` }),
+    ]);
   });
 });
 
@@ -347,7 +373,7 @@ describe('round 1', () => {
       { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
       { id: 71, rootThreadId: 70, imageId: null, articleId: null, rootThread: { imageId: 7 } },
     ]);
-    db.commentV2.count.mockResolvedValue(0);
+    kysely.state.answers = [{ n: '0' }];
 
     await onCommentsRemoved([
       { userId: ACTOR, threadId: 70 },
@@ -357,7 +383,7 @@ describe('round 1', () => {
 
     expect(db.thread.findMany).toHaveBeenCalledTimes(1);
     expect(db.thread.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: [70, 71] } } });
-    expect(db.commentV2.count).toHaveBeenCalledTimes(1);
+    expect(kysely.state.calls).toHaveLength(1);
     expect(removeEventPoints).toHaveBeenCalledTimes(1);
   });
 
@@ -366,7 +392,7 @@ describe('round 1', () => {
       { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
     ]);
     await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
-    expect(db.commentV2.count).not.toHaveBeenCalled();
+    expect(kysely.state.calls).toHaveLength(0);
     expect(removeEventPoints).not.toHaveBeenCalled();
   });
 

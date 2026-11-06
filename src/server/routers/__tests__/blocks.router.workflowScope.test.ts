@@ -898,3 +898,219 @@ describe('blocks.publishGenerationOutputs — bound to the signed-in session', (
     );
   });
 });
+
+describe('blocks.publishGenerationOutputs — dev-token ownership proof', () => {
+  // A brand-new App Assistant / dev-tunnel app runs on a `dev: true` page token whose app ids are
+  // the synthetic `ephemeral-<slug>`. Every generation submit site skips the `block_workflows`
+  // write for `claims.dev === true` (and the row's `app_block_id` FK to `app_blocks` could not
+  // hold an ephemeral id anyway), so the read-model row can NEVER exist for such a workflow. Guard
+  // (a) therefore refused EVERY dev-token publish with 'workflow is not in this app subqueue',
+  // after the host had already shown — and the viewer had accepted — the publish consent dialog.
+  //
+  // For a dev token with no row, ownership is proven from the same three facts the row encodes,
+  // read from places a block cannot write: the workflow id names the viewer (the orchestrator
+  // mints it), and the orchestrator record carries BOTH the server-stamped app tag and the
+  // server-stamped per-instance tag of the calling token. Literal tag strings below on purpose —
+  // the expectation is not derived from the helper under test.
+  const DEV_APP = 'ephemeral-pixel-poet';
+  const DEV_INSTANCE = `page_${DEV_APP}`;
+  const DEV_APP_TAG = 'app-block:ephemeral-pixel-poet';
+  const DEV_INSTANCE_TAG = 'app-block:instance:page_ephemeral-pixel-poet';
+
+  function devClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      dev: true,
+      appId: DEV_APP,
+      appBlockId: DEV_APP,
+      blockInstanceId: DEV_INSTANCE,
+      ...over,
+    });
+  }
+
+  /** A finished dev workflow with ONE publishable output, tagged as a dev submit stamps it. */
+  function devWorkflow(over: Record<string, unknown> = {}) {
+    return workflowFixture({
+      status: 'succeeded',
+      cost: { total: 97 },
+      tags: ['civitai', 'app-block', DEV_APP_TAG, DEV_INSTANCE_TAG],
+      steps: [
+        {
+          $type: 'customComfy',
+          output: { blobs: [{ url: 'https://blobs.example.test/dev.png', available: true }] },
+        },
+      ],
+      ...over,
+    });
+  }
+
+  beforeEach(() => {
+    mockVerifyBlockToken.mockResolvedValue(devClaims());
+    // The production state for every dev-token workflow: no read-model row.
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(false);
+    mockGetWorkflow.mockResolvedValue(devWorkflow());
+    mockPersistBlockWorkflowOutputImage.mockResolvedValue({ imageId: 6301 });
+  });
+
+  it('PUBLISHES the viewer’s own dev-tunnel workflow, which never has a read-model row', async () => {
+    // REGRESSION: at base this refused with 'workflow is not in this app subqueue'.
+    const result = await caller(viewerSession).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+    });
+
+    expect(result).toEqual({ imageIds: [6301] });
+    expect(mockPersistBlockWorkflowOutputImage).toHaveBeenCalledTimes(1);
+    expect(mockPersistBlockWorkflowOutputImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageUrl: 'https://blobs.example.test/dev.png',
+        userId: VIEWER,
+        appId: DEV_APP,
+      })
+    );
+  });
+
+  it("REFUSES another viewer's workflow on a dev token, before the orchestrator read", async () => {
+    mockGetWorkflow.mockResolvedValue(devWorkflow({ id: STRANGERS_ID }));
+
+    for (const id of [STRANGERS_ID, PREFIX_NEAR_MISS_ID, SYSTEM_ID, ...COERCION_IDS]) {
+      await expect(
+        caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: id })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'workflow does not belong to this viewer',
+      });
+    }
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES a dev-token workflow submitted from a DIFFERENT block instance of the same app', async () => {
+    // The row bound (viewer, app BLOCK); the app tag alone binds only (viewer, app). The instance
+    // tag is what keeps the dev proof as narrow as the row it stands in for.
+    mockGetWorkflow.mockResolvedValue(
+      devWorkflow({
+        tags: ['civitai', 'app-block', DEV_APP_TAG, 'app-block:instance:page_ephemeral-other'],
+      })
+    );
+
+    await expect(
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'workflow is not tagged for this app instance',
+    });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES a near-miss instance tag (prefix of the real one)', async () => {
+    mockGetWorkflow.mockResolvedValue(
+      devWorkflow({ tags: ['civitai', 'app-block', DEV_APP_TAG, `${DEV_INSTANCE_TAG}X`] })
+    );
+
+    await expect(
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'workflow is not tagged for this app instance',
+    });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES a dev-token workflow carrying the instance tag but ANOTHER app’s tag', async () => {
+    mockGetWorkflow.mockResolvedValue(
+      devWorkflow({ tags: ['civitai', 'app-block', `app-block:${OTHER_APP_ID}`, DEV_INSTANCE_TAG] })
+    );
+
+    await expect(
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('a NON-dev token with no row is still refused at guard (a), however well-tagged', async () => {
+    // INVARIANT GUARD (passes at base too): the fallback is for dev tokens ONLY. A deployed app's
+    // submit writes the row, so its absence there still means "not this app block's workflow".
+    for (const dev of [false, undefined]) {
+      mockVerifyBlockToken.mockResolvedValue(devClaims({ dev }));
+
+      await expect(
+        caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'workflow is not in this app subqueue',
+      });
+    }
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a dev token OUTSIDE the ephemeral dev-tunnel class with no row is still refused at guard (a)', async () => {
+    // `dev: true` covers six mint paths. Only the ephemeral dev-tunnel one (both ids
+    // `ephemeral-…`) gets the stand-in. Each case below is otherwise perfectly tagged for its own
+    // instance, so the ONLY thing that can refuse it is the class check.
+    const cases: Array<Record<string, unknown>> = [
+      // A moderator's review run-for-real token for someone else's pending app.
+      {
+        appId: 'pending-01JQ8XG7YV2K4M6P8R0T2W4Y6R',
+        appBlockId: 'pubreq_01JQ8XG7YV2K4M6P8R0T2W4Y6R',
+        blockInstanceId: 'page_pubreq_01JQ8XG7YV2K4M6P8R0T2W4Y6R',
+        reviewRunForReal: true,
+      },
+      // An approved app's `dev:live` token (real ids).
+      {
+        appId: APP_ID,
+        appBlockId: 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+        blockInstanceId: 'page_apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+      },
+      // Half-ephemeral: only ONE of the two ids in the namespace.
+      {
+        appId: DEV_APP,
+        appBlockId: 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+        blockInstanceId: 'page_apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A',
+      },
+      {
+        appId: APP_ID,
+        appBlockId: DEV_APP,
+        blockInstanceId: DEV_INSTANCE,
+      },
+    ];
+    for (const over of cases) {
+      const claims = devClaims(over);
+      mockVerifyBlockToken.mockResolvedValue(claims);
+      mockGetWorkflow.mockResolvedValue(
+        devWorkflow({
+          tags: [
+            'civitai',
+            'app-block',
+            `app-block:${claims.appId}`,
+            `app-block:instance:${claims.blockInstanceId}`,
+          ],
+        })
+      );
+
+      await expect(
+        caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'workflow is not in this app subqueue',
+      });
+    }
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('a dev token WITH a row keeps the row path (no instance tag required)', async () => {
+    // INVARIANT GUARD (passes at base too): approved-mode dev tokens sign the app's REAL ids and
+    // can match rows the same viewer's ordinary submits wrote; those publishes must not regress.
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue(
+      devWorkflow({ tags: ['civitai', 'app-block', DEV_APP_TAG, 'app-block:instance:bki_x'] })
+    );
+
+    const result = await caller(viewerSession).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+    });
+    expect(result).toEqual({ imageIds: [6301] });
+  });
+});

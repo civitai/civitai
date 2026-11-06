@@ -23,8 +23,7 @@ import { describe, expect, it } from 'vitest';
  * its close transition, and the modal is portalled and opens synchronously, so
  * `expect.element(...).toBeInTheDocument()` resolves inside that window and cannot tell the
  * two placements apart. That is a real property of the rendering, so no rewrite of the
- * assertion in the browser tier is obviously going to fix it — and the browser tier is
- * report-only in CI regardless.
+ * assertion in the browser tier is obviously going to fix it.
  *
  * So the rule is pinned STRUCTURALLY, in the blocking node project, where it is exactly a
  * claim about where a tag appears in the source. That is a weaker kind of evidence than a

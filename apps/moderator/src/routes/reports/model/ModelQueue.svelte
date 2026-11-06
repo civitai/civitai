@@ -1,6 +1,6 @@
 <script lang="ts">
   import { dateTime } from '$lib/format';
-  import { reportEntityLabels, getReportItemUrl } from '$lib/reports';
+  import { getReportItemUrl } from '$lib/reports';
   import OwnerFlaggedMinorBadge from '$lib/components/minor-flags/OwnerFlaggedMinorBadge.svelte';
   import ReportQueueColumn from '$lib/components/report-queue/ReportQueueColumn.svelte';
   import ReportRowMeta from '$lib/components/report-queue/ReportRowMeta.svelte';
@@ -27,7 +27,6 @@
 </script>
 
 <ReportQueueColumn
-  title="{reportEntityLabels[data.type]} reports"
   basePath="/reports/model"
   queue={data}
   items={data.items}

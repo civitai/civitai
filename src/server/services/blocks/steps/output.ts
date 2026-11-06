@@ -210,7 +210,7 @@ export function splitPassThroughStepOutput(output: unknown): {
  * facts the flattening drops, ADDITIVELY — `media` and its order are untouched:
  *   - `format` — the orchestrator `Model3dBlob.format` (`'glb'`, `'fbx'`, …), read off
  *     the blob itself. The blob is recognised by its own discriminator,
- *     `type: 'model3d'` (`@civitai/client` `Model3dBlob`), never by sniffing a url or
+ *     `type: 'model3d'` (`@civitai/orchestration-client` `Model3dBlob`), never by sniffing a url or
  *     guessing from a key name.
  *   - `variant` — the output key path the blob sat at, dot-joined (`'model'`,
  *     `'riggedFbxModel'`, `'basicAnimations.walkingModel'`; an array index is a
@@ -221,7 +221,7 @@ export function splitPassThroughStepOutput(output: unknown): {
  */
 export type Model3dOutputLabel = { url: string; format: string; variant: string };
 
-/** The `Model3dBlob` discriminator, from `@civitai/client`'s generated types. */
+/** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
 const MODEL3D_BLOB_TYPE = 'model3d';
 
 type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };

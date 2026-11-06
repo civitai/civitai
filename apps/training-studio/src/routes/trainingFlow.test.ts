@@ -4,22 +4,31 @@ import {
   MAX_SAMPLE_PROMPTS,
   addSamplePrompt,
   buildTrainingRuns,
+  stampMature,
   captionTriggerHit,
   compareFileNames,
   defaultRunParams,
+  networkDimSizeHint,
   newRun,
   nextImgId,
+  optimizerLrParams,
   paramDeviations,
+  paramHelpText,
   promptHasTrigger,
   runExtraCapabilities,
+  sampleImagesProblem,
   seedPrompts,
   startLabelPass,
+  withTags,
   withTrigger,
   versionOptions,
   CUSTOM_VERSION_KEY,
   type Img,
   type Run,
+  type SamplePrompt,
 } from './trainingFlow';
+
+const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
 
 const run = (cardType: string, versionKey?: string): Run => {
   const card = cardByType(cardType);
@@ -178,7 +187,7 @@ describe('buildTrainingRuns extra fields', () => {
       'ohwx',
       'test',
       [{ run: r, params: { ...defaultRunParams(r), ...overrides } }],
-      ['ohwx, a photo'],
+      rows(['ohwx, a photo']),
       ['blue'],
       labelMode
     )[0]!;
@@ -242,7 +251,7 @@ describe('sample prompts', () => {
       'ohwx',
       'test',
       [{ run: r, params: defaultRunParams(r) }],
-      prompts,
+      rows(prompts),
       ['blue'],
       'tag'
     )[0]!.prompts;
@@ -318,5 +327,165 @@ describe('retired cards', () => {
 
   it('still resolves a past Hunyuan run to its card', () => {
     expect(cardByType('hunyuan')?.name).toBe('Hunyuan');
+  });
+
+  it('offers no Ideogram 4 card to anyone, but still resolves past runs', () => {
+    const everyFlag = new Set(MODEL_CARDS.flatMap((c) => (c.flagKey ? [c.flagKey] : [])));
+    expect(cardsForMedia('image', everyFlag).map((c) => c.type)).not.toContain('ideogram4');
+    expect(cardByType('ideogram4')?.name).toBe('Ideogram 4');
+  });
+});
+
+describe('sample input images', () => {
+  const img = (name: string) => ({ url: `https://orch.example/blobs/${name}`, name });
+  const prompts = (...entries: [string, string?][]): SamplePrompt[] =>
+    entries.map(([text, image], id) => ({ id, text, ...(image ? { image: img(image) } : {}) }));
+
+  const submit = (cardTypes: string[], sample: SamplePrompt[]) => {
+    const runs = cardTypes.map((t) => run(t));
+    return buildTrainingRuns(
+      { media: 'image', loraType: 'concept', runs },
+      [image(1, [], 'ohwx, a photo')],
+      'ohwx',
+      'test',
+      runs.map((r) => ({ run: r, params: defaultRunParams(r) })),
+      sample,
+      ['blue'],
+      'caption'
+    );
+  };
+
+  it('pairs each submitted prompt with its own image, skipping blank rows', () => {
+    const [out] = submit(
+      ['flux2klein'],
+      prompts(['ohwx, make it night', 'a.png'], ['  '], ['ohwx, add snow', 'b.png'])
+    );
+    expect(out!.prompts).toEqual(['ohwx, make it night', 'ohwx, add snow']);
+    expect(out!.sourceImages).toEqual([img('a.png').url, img('b.png').url]);
+  });
+
+  it('keeps a sweep run whose model takes no images text-only', () => {
+    const [klein, sdxl] = submit(['flux2klein', 'sdxl'], prompts(['ohwx, make it night', 'a.png']));
+    expect(klein!.sourceImages).toEqual([img('a.png').url]);
+    expect(sdxl!.sourceImages).toBeUndefined();
+    expect(sdxl!.prompts).toEqual(['ohwx, make it night']);
+  });
+
+  it('sends no images when no row has one', () => {
+    expect(submit(['flux2klein'], prompts(['ohwx, a photo']))[0]!.sourceImages).toBeUndefined();
+  });
+
+  it('refuses a half-imaged list rather than submitting it text-only', () => {
+    const half = prompts(['ohwx, make it night', 'a.png'], ['ohwx, add snow']);
+    expect(sampleImagesProblem(half)).toMatch(/every sample prompt/);
+    expect(() => submit(['flux2klein'], half)).toThrow(/every sample prompt/);
+  });
+
+  it('flags an image on a row with no prompt, which would be dropped with the row', () => {
+    expect(sampleImagesProblem(prompts(['ohwx, make it night', 'a.png'], ['', 'b.png']))).toMatch(
+      /needs a prompt/
+    );
+  });
+
+  it('has nothing to flag when every prompt or none has an image', () => {
+    expect(sampleImagesProblem(prompts(['a', 'a.png'], ['b', 'b.png'], ['']))).toBeNull();
+    expect(sampleImagesProblem(prompts(['a'], ['b']))).toBeNull();
+  });
+});
+
+describe('optimizer learning-rate coupling', () => {
+  it('puts both rates at 1 when Prodigy is picked', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Prodigy' };
+    expect(optimizerLrParams(r, params)).toEqual({ unetLr: '1', textEncoderLr: '1' });
+  });
+
+  it('leaves a locked text-encoder rate at 0 under Prodigy', () => {
+    const krea = run('krea2');
+    const params = { ...defaultRunParams(krea), optimizer: 'Prodigy' };
+    expect(optimizerLrParams(krea, params)).toMatchObject({ unetLr: '1' });
+    expect(Number(optimizerLrParams(krea, params).textEncoderLr)).toBe(0);
+  });
+
+  it('resets Prodigy-level rates to the model defaults when switching away', () => {
+    const r = run('sdxl');
+    const d = defaultRunParams(r);
+    const params = { ...d, optimizer: 'AdamW8Bit', unetLr: '1', textEncoderLr: '1' };
+    expect(optimizerLrParams(r, params)).toEqual({
+      unetLr: d.unetLr,
+      textEncoderLr: d.textEncoderLr,
+    });
+  });
+
+  it('keeps a rate the user picked below the Prodigy level', () => {
+    const r = run('sdxl');
+    const params = { ...defaultRunParams(r), optimizer: 'Adafactor', unetLr: '0.0002' };
+    expect(optimizerLrParams(r, params).unetLr).toBe('0.0002');
+  });
+});
+
+describe('network dim size hint', () => {
+  it('names the file size for measured cards, which must still exist', () => {
+    for (const type of ['sdxl', 'illustrious', 'pony', 'flux', 'sd15']) {
+      expect(cardByType(type), type).toBeDefined();
+      expect(networkDimSizeHint(type, 32), type).toMatch(/about \d+MB/);
+    }
+    expect(networkDimSizeHint('illustrious', 8)).toBe(
+      ' At dim 8 the file is about 54MB (≈6.8MB per dim).'
+    );
+    expect(networkDimSizeHint('flux', 32)).toBe(
+      ' At dim 32 the file is about 328MB (≈10.3MB per dim).'
+    );
+  });
+
+  it('says nothing for unmeasured cards or a cleared field', () => {
+    expect(networkDimSizeHint('wan', 32)).toBe('');
+    expect(networkDimSizeHint('sdxl', '')).toBe('');
+    expect(networkDimSizeHint('sdxl', 0)).toBe('');
+    expect(networkDimSizeHint('sdxl', -8)).toBe('');
+  });
+
+  it('sizes the help text for the dim the user entered, not the recommended one', () => {
+    const run = newRun(cardByType('sdxl')!);
+    const defaults = defaultRunParams(run, '');
+    const help = paramHelpText('networkDim', 'sdxl', defaults, { ...defaults, networkDim: 128 });
+    expect(help).toContain('Recommended for this model: 32.');
+    expect(help).toContain('At dim 128 the file is about 870MB');
+    expect(paramHelpText('networkAlpha', 'sdxl', defaults, defaults)).not.toContain('MB');
+  });
+});
+
+describe('stampMature', () => {
+  const run = { meta: { name: 'a' }, currencies: ['blue'] } as unknown as Parameters<
+    typeof stampMature
+  >[0][number];
+
+  it('puts one confirm and the mature count on every run of a sweep', () => {
+    const out = stampMature([run, { ...run, meta: { name: 'b' } }], true, 3);
+    expect(out.map((r) => [r.matureAck, r.meta.matureCount, r.meta.name])).toEqual([
+      [true, 3, 'a'],
+      [true, 3, 'b'],
+    ]);
+  });
+
+  it('sends no confirm when the user gave none, but still stamps the count', () => {
+    const [out] = stampMature([run], false, 2);
+    expect('matureAck' in out!).toBe(false);
+    expect(out!.meta.matureCount).toBe(2);
+  });
+});
+
+describe('withTags', () => {
+  it('appends a comma/newline paste in order, skipping tags the image already has', () => {
+    expect(withTags(['red hair', 'smile'], 'smile, blue eyes\nred hair,  hat ')).toEqual([
+      'red hair',
+      'smile',
+      'blue eyes',
+      'hat',
+    ]);
+  });
+  it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
+    const tags = ['smile'];
+    expect(withTags(tags, ' , smile ')).toBe(tags);
   });
 });

@@ -34,7 +34,7 @@ export function StorylineEarlyAccessModal({
       centered
       title={
         <Group gap="xs">
-          <Text fw={700}>Create the next section</Text>
+          <Text fw={700}>Story tool early access</Text>
           <Badge variant="outline" color="violet">
             Coming soon
           </Badge>
@@ -55,8 +55,9 @@ export function StorylineEarlyAccessModal({
       ) : (
         <Stack gap="sm">
           <Text size="sm">
-            The storyline tool is being built. You will pick up from here with the story so far
-            loaded, add an image, a video or a sequence, and publish it as the next section.
+            A tool for building storylines is being built. You will pick up from here with the story
+            so far loaded, add an image, a video or a sequence, and publish it as the next section.
+            To add a chapter today, write it as a post.
           </Text>
           <Text size="sm" c="dimmed">
             Want to try it first?

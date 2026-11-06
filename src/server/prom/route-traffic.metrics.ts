@@ -9,6 +9,7 @@ import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-
 import { pageRouteLabel } from '~/server/utils/page-routes';
 import { PAGE_ROUTE_HEADER } from '~/shared/constants/page-route.constants';
 import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
+import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const TRPC_CALLS_METRIC = PROM_PREFIX + 'trpc_calls_total';
 export const PAGE_RENDER_METRIC = PROM_PREFIX + 'page_render_total';
@@ -40,7 +41,8 @@ function pageRenderCounter(): Counter<'route' | 'authed' | 'bot_class'> {
           'Server-rendered HTML responses, counted once per document: route is the page actually ' +
           'rendered (/404 for notFound, /_error for a thrown error); redirects and /_next/data ' +
           'requests for getServerSideProps pages render no document and are not counted. authed ' +
-          'is unknown when the settings bootstrap failed for a request with a session cookie; ' +
+          'is unknown when the settings bootstrap failed for a request with a session cookie, ' +
+          'and shell for a static shell render, which reads no session; ' +
           'bot_class is set only where bot verification runs',
         labelNames: ['route', 'authed', 'bot_class'] as const,
         registers: [instrumentationRegistry],
@@ -59,9 +61,12 @@ type RenderRequest = {
   headers: HeaderBag;
   session?: { user?: unknown } | null;
   [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+  [SHELL_REQ_KEY]?: string;
 };
 
-export function renderAuthedLabel(req: RenderRequest): 'true' | 'false' | 'unknown' {
+/** `shell` for a static shell render, which reads no session: its viewer is unknown by design. */
+export function renderAuthedLabel(req: RenderRequest): 'true' | 'false' | 'unknown' | 'shell' {
+  if (req[SHELL_REQ_KEY]) return 'shell';
   if (req[SESSION_UNRESOLVED_REQ_KEY]) return 'unknown';
   return req.session?.user ? 'true' : 'false';
 }

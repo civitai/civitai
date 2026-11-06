@@ -77,3 +77,32 @@ export function estimateSpend(
     current: byModel.every((r) => r.usd === null || r.current),
   };
 }
+
+/** The dearest listed input and output prices: what the cap charges for a model it cannot price. */
+export const CEILING_PRICE: Price = {
+  input: Math.max(...ASSISTANT_MODELS.map((m) => m.price.input)),
+  output: Math.max(...ASSISTANT_MODELS.map((m) => m.price.output)),
+};
+
+/**
+ * The price the dollar cap charges a model at: the higher of OpenRouter's live price and the release's
+ * list price, per direction, so a live price read low (or wrong) can never make a turn cheaper than the
+ * list says. A model not in the list is charged `CEILING_PRICE`, never $0. `source` is `live` when a live
+ * price was read and taken into account.
+ */
+export function capPrice(
+  model: string,
+  prices: Record<string, Price>
+): { price: Price; source: 'live' | 'list' } {
+  const list = findModel(model)?.price;
+  if (!list) return { price: CEILING_PRICE, source: 'list' };
+  const live = prices[model];
+  if (!live?.current) return { price: { input: list.input, output: list.output }, source: 'list' };
+  return {
+    price: { input: Math.max(live.input, list.input), output: Math.max(live.output, list.output) },
+    source: 'live',
+  };
+}
+
+export const costUsd = (promptTokens: number, completionTokens: number, price: Price) =>
+  (promptTokens * price.input + completionTokens * price.output) / 1_000_000;

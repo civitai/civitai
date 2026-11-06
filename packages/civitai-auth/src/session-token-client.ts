@@ -1,23 +1,33 @@
-import { hubFetch } from './hub';
+import { hubFetch, sessionCall } from './hub';
 import { deviceCookieName, sessionCookieName } from './cookies';
 import { loadAuthEnv } from './env';
 
-// SESSION-TOKEN CLIENT — hub operations on a single session token (rolling refresh + revoke), authorized by the
-// token ITSELF (a Bearer), not the service secret or the device cookies the sibling clients use.
+// SESSION-TOKEN CLIENT — hub operations on a single session token (rolling refresh + revoke). The session goes
+// to the hub beside this server's own credential when `AUTH_INTERNAL_TOKEN` is set (see `sessionCall`).
+
+/** `declined`: the hub answered and refused. `unreachable`: no usable answer (network, timeout, bad body). */
+export type RefreshFailure = 'declined' | 'unreachable';
 
 export interface SessionTokenClient {
   /**
-   * Rolling refresh: ask the hub to re-mint the SAME session with a fresh window. Bearer-authed by the token.
+   * Rolling refresh: ask the hub to re-mint the SAME session with a fresh window.
    * Pass `deviceCookie` so the hub keeps this browser's active account fresh in its switcher. Null when the hub
    * declines, is unreachable, or times out — the caller keeps the still-valid current token. Times out so a hub
-   * blip can't stall the request path (the refresh is fire-safe).
+   * blip can't stall the request path (the refresh is fire-safe). `onFailure` says which of those it was.
    */
   refresh(
     token: string,
-    opts?: { deviceCookie?: string; timeoutMs?: number }
+    opts?: {
+      deviceCookie?: string;
+      timeoutMs?: number;
+      onFailure?: (reason: RefreshFailure) => void;
+    }
   ): Promise<{ token: string } | null>;
-  /** Best-effort token revocation at the hub (logout). Never throws — logout must not block on a hub blip. */
-  revoke(token: string): Promise<void>;
+  /**
+   * Best-effort token revocation at the hub (logout). Pass the browser's device id so the hub signs out
+   * everything else on that browser too. Never throws — logout must not block on a hub blip.
+   */
+  revoke(token: string, opts?: { deviceId?: string }): Promise<void>;
   /**
    * Migration-window upgrade-on-read: hand the hub a still-valid LEGACY next-auth cookie and get back a fresh
    * civ-token for the SAME user. The hub re-decodes the legacy cookie (it holds NEXTAUTH_SECRET) to prove the
@@ -39,33 +49,45 @@ export function createSessionTokenClient(): SessionTokenClient {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 2500);
       try {
+        // The device id lets the hub keep THIS browser's active account fresh in its switcher.
+        const { headers, body } = sessionCall(
+          { token, deviceId: opts?.deviceCookie },
+          {
+            authorization: `Bearer ${token}`,
+            ...(opts?.deviceCookie ? { cookie: `${deviceCookieName()}=${opts.deviceCookie}` } : {}),
+          }
+        );
         const res = await hubFetch('/api/auth/refresh', {
           method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            // Forward the device cookie so the hub keeps THIS browser's active account fresh in its switcher.
-            ...(opts?.deviceCookie ? { cookie: `${deviceCookieName()}=${opts.deviceCookie}` } : {}),
-          },
+          headers,
+          body,
           signal: controller.signal,
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          opts?.onFailure?.('declined');
+          return null;
+        }
         const { token: fresh } = (await res.json()) as { token?: string };
+        if (!fresh) opts?.onFailure?.('declined');
         return fresh ? { token: fresh } : null;
       } catch {
+        opts?.onFailure?.('unreachable');
         return null;
       } finally {
         clearTimeout(timer);
       }
     },
-    async revoke(token) {
+    async revoke(token, opts) {
       if (!token) return;
       try {
-        await hubFetch('/logout', {
-          method: 'POST',
-          // Forward under the ACTUAL (env-derived) cookie name so the hub reads it.
-          headers: { cookie: `${sessionCookieName()}=${token}` },
-          redirect: 'manual',
-        });
+        const deviceId = opts?.deviceId;
+        // Legacy shape: forward under the ACTUAL (env-derived) cookie names so the hub reads them.
+        const cookie = [
+          `${sessionCookieName()}=${token}`,
+          ...(deviceId ? [`${deviceCookieName()}=${deviceId}`] : []),
+        ].join('; ');
+        const { headers, body } = sessionCall({ token, deviceId }, { cookie });
+        await hubFetch('/logout', { method: 'POST', headers, body, redirect: 'manual' });
       } catch {
         // best-effort — the spoke clears its cookies regardless, so the session ends client-side
       }

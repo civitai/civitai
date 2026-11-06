@@ -73,9 +73,10 @@ const mocks = vi.hoisted(() => ({
   loading: false,
   terms: null as { open: boolean; closedReason: string | null; price: number } | null,
   termsFor: vi.fn(),
-  commentsPostId: vi.fn(),
+  discussion: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
+  openFirstChapter: vi.fn(),
   openDialog: vi.fn(),
   shares: {} as Record<number, unknown>,
   graph: undefined as Record<string, unknown> | undefined,
@@ -111,6 +112,9 @@ vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
 }));
 vi.mock('~/components/Storyline/manage/openStorylineManageModal', () => ({
   openStorylineManageModal: mocks.openManage,
+}));
+vi.mock('~/components/Storyline/openStorylineFirstChapterModal', () => ({
+  openStorylineFirstChapterModal: mocks.openFirstChapter,
 }));
 vi.mock('~/components/Storyline/StorylineCover', () => ({
   StorylineHero: ({
@@ -149,10 +153,14 @@ vi.mock('~/components/Storyline/StorylineThumb', () => ({
     </div>
   ),
 }));
-vi.mock('~/components/Post/Detail/PostComments', () => ({
-  PostComments: ({ postId }: { postId: number }) => {
-    mocks.commentsPostId(postId);
-    return <div>Comments for post {postId}</div>;
+vi.mock('~/components/CommentsV3/CommentSection', () => ({
+  CommentSection: ({ entityType, entityId }: { entityType: string; entityId: number }) => {
+    mocks.discussion(entityType, entityId);
+    return (
+      <div>
+        Comments for {entityType} {entityId}
+      </div>
+    );
   },
 }));
 // The header's report menu reads the session, which this scaffold does not mount: unmocked,
@@ -175,7 +183,7 @@ beforeEach(() => {
   mocks.graph = undefined;
   for (const fn of [
     mocks.termsFor,
-    mocks.commentsPostId,
+    mocks.discussion,
     mocks.openContinue,
     mocks.openManage,
     mocks.openDialog,
@@ -212,7 +220,7 @@ describe('StorylinePage', () => {
     // No banner picked: the server's hero is a portrait, so it is a backdrop, never a wide crop.
     expect(hero()).toEqual({ image: 'cover-pick', backdrop: 'true', position: '30' });
     expect(cardCover()).toEqual([{ image: 'cover-pick', ratio: '3/4' }]);
-    expect(testIds('storyline-ceiling-chip')).toContain('Up to PG-13');
+    expect(testIds('storyline-ceiling-detail')).toEqual(['Up to PG-13']);
     await expect
       .element(page.getByRole('link', { name: 'Start reading' }))
       .toHaveAttribute('href', '/images/5010?storylineChapter=130');
@@ -240,8 +248,25 @@ describe('StorylinePage', () => {
     expect(page.getByRole('region', { name: 'Contributors' }).element().textContent).toBe(
       'ContributorsSillycat831 chapterCreatortehalex863 chaptersEndorsedTar_Tarj0 chapters'
     );
-    await expect.element(page.getByText('Comments for post 501')).toBeVisible();
-    expect(mocks.commentsPostId).toHaveBeenCalledWith(501);
+    await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
+    expect(mocks.discussion).toHaveBeenCalledWith('storyline', 2);
+  });
+
+  test('the header carries the title and its counts, and no price, rating or "Started by"', async () => {
+    mocks.terms = { open: true, closedReason: null, price: 0 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    const header = page.getByRole('banner').element();
+    expect(header.textContent).toContain('chapters');
+    expect(header.textContent).toContain('creators');
+    expect(header.textContent).not.toContain('Started by');
+    expect(header.textContent).not.toContain('Free to continue');
+    expect(header.textContent).not.toContain('Up to');
+    // Where they are now: the details under "About continuing".
+    const about = page.getByRole('region', { name: 'About continuing' }).element();
+    expect(about.textContent).toContain('Free to continue');
+    expect(about.textContent).toContain('Up to PG-13');
   });
 
   test('a picked banner shows sharp at its focus', async () => {
@@ -276,12 +301,43 @@ describe('StorylinePage', () => {
     ).toEqual([false, false, true]);
   });
 
+  test('credits the spark image above chapter 1, linking to it', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      spark: {
+        image: { id: 77, url: 'spark-pick', type: 'image', nsfwLevel: 1 },
+        user: { id: 5, username: 'painter' },
+      },
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    const credit = page
+      .getByRole('region', { name: 'Chapters' })
+      .getByTestId('storyline-spark-credit');
+    await expect.element(credit).toHaveTextContent("Inspired by @painter's image");
+    await expect.element(credit).toHaveAttribute('href', '/images/77');
+    expect(thumbs(credit.element())).toEqual([{ image: 'spark-pick', ratio: '3/4' }]);
+    // Above chapter 1, not after it.
+    const first = stopElements()[0];
+    expect(
+      credit.element().compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  test('shows no credit when the server sends no spark', async () => {
+    mocks.storyline = { ...STORYLINE, spark: null };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(testIds('storyline-spark-credit')).toEqual([]);
+  });
+
   test('a ceiling with no label shows no ceiling chip', async () => {
     mocks.storyline = { ...STORYLINE, maxNsfwLevel: 0 };
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(testIds('storyline-ceiling-chip')).toEqual([]);
+    expect(testIds('storyline-ceiling-detail')).toEqual([]);
   });
 
   test('a Complete storyline offers no Continue and no price, whatever the terms say', async () => {
@@ -291,7 +347,7 @@ describe('StorylinePage', () => {
 
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
-    expect(testIds('storyline-price-chip')).toEqual([]);
+    expect(testIds('storyline-price-detail')).toEqual([]);
   });
 
   test('continues from the end of the canon path, and says the price before you press', async () => {
@@ -299,7 +355,7 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(testIds('storyline-price-chip')).toEqual(['Free to continue', 'Free to continue']);
+    expect(testIds('storyline-price-detail')).toEqual(['Free to continue']);
     await page.getByRole('button', { name: 'Continue the story' }).click();
     expect(mocks.openContinue).toHaveBeenCalledWith({ parentPostId: 504 });
     expect(mocks.termsFor).toHaveBeenLastCalledWith(504);
@@ -310,7 +366,7 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(testIds('storyline-price-chip')).toEqual(['1,500 to continue', '1,500 to continue']);
+    expect(testIds('storyline-price-detail')).toEqual(['1,500 Buzz to continue']);
   });
 
   test.each([
@@ -327,16 +383,12 @@ describe('StorylinePage', () => {
 
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
-    expect(testIds('storyline-price-chip')).toEqual([]);
+    expect(testIds('storyline-price-detail')).toEqual([]);
     expect(testIds('storyline-closed-chip')).toEqual(closed);
   });
 
   test.each([
-    [
-      {},
-      null,
-      'Anyone can continue. Sillycat83 reviews each one; endorsed collaborators skip review.',
-    ],
+    [{}, null, 'Anyone can continueSillycat83 reviews each oneEndorsed collaborators skip review'],
     [{ whoCanContinue: 'Collaborators' }, null, "Only Sillycat83's collaborators can continue it."],
     [
       { whoCanContinue: 'Collaborators' },
@@ -370,13 +422,13 @@ describe('StorylinePage', () => {
     await expect.element(heading()).toBeVisible();
     expect(testIds('storyline-closed-chip')).toEqual([]);
     expect(page.getByRole('region', { name: 'About continuing' }).element().textContent).toContain(
-      'Anyone can continue.'
+      'Anyone can continue'
     );
   });
 
-  // Chapter 1 hidden from this reader: its post, cover and thread must not be reached through
-  // the storyline, even though getById carries rootPostId.
-  test('a hidden chapter 1 shows no link, cover or thread', async () => {
+  // Chapter 1 hidden from this reader: its post and cover must not be reached through the
+  // storyline, even though getById carries rootPostId. The storyline's own thread still shows.
+  test('a hidden chapter 1 shows no link or cover, and the storyline thread', async () => {
     mocks.storyline = {
       ...STORYLINE,
       // The server drops chapter 1's image from the hero and cover when it is hidden.
@@ -391,7 +443,15 @@ describe('StorylinePage', () => {
     expect(cardCover()).toEqual([{ image: 'none', ratio: '3/4' }]);
     expect(stops()[0]).toBe('1This chapter is hidden by your browsing level');
     expect(page.getByText('Start reading').elements()).toHaveLength(0);
-    expect(mocks.commentsPostId).not.toHaveBeenCalled();
+    await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
+  });
+
+  test('a storyline with no chapter 1 yet shows no discussion', async () => {
+    mocks.storyline = { ...STORYLINE, mainPath: [] };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(mocks.discussion).not.toHaveBeenCalled();
   });
 
   test('a storyline the viewer cannot open says so instead of rendering a shell', async () => {
@@ -422,6 +482,71 @@ describe('StorylinePage', () => {
 
     await page.getByRole('button', { name: 'Manage' }).click();
     expect(mocks.openManage).toHaveBeenCalledWith({ storylineId: 2 });
+  });
+
+  test('an owner whose storyline has no chapter 1 yet is sent to write it', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: 'owner',
+      chapterCount: 0,
+      contributorCount: 0,
+      rootPostId: null,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect
+      .element(page.getByRole('link', { name: 'Write chapter 1' }))
+      .toHaveAttribute('href', '/posts/create?storyline=2');
+    expect(page.getByRole('link', { name: 'Start reading' }).elements()).toHaveLength(0);
+  });
+
+  test('an owner whose storyline has no chapter 1 yet can use a post already published', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: 'owner',
+      chapterCount: 0,
+      contributorCount: 0,
+      rootPostId: null,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await page.getByRole('button', { name: "Use a post you've published" }).click();
+    expect(mocks.openFirstChapter).toHaveBeenCalledWith({ storylineId: 2 });
+  });
+
+  test.each([
+    ['a stranger, on an empty storyline', { viewerRole: null, chapterCount: 0, mainPath: [] }],
+    [
+      'a collaborator, on an empty storyline',
+      { viewerRole: 'collaborator', chapterCount: 0, mainPath: [] },
+    ],
+    ['the owner, once chapter 1 exists', { viewerRole: 'owner' }],
+  ])('%s is not offered a published post as chapter 1', async (_, overrides) => {
+    mocks.storyline = { ...STORYLINE, contributors: [], ...overrides };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(
+      page.getByRole('button', { name: "Use a post you've published" }).elements()
+    ).toHaveLength(0);
+  });
+
+  test('no one else is offered "Write chapter 1"', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: null,
+      chapterCount: 0,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(page.getByRole('link', { name: 'Write chapter 1' }).elements()).toHaveLength(0);
   });
 
   test.each([null, 'collaborator'])('a %s viewer sees no Manage button', async (viewerRole) => {

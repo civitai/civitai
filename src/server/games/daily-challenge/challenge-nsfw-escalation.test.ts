@@ -25,6 +25,8 @@ const { applyChallengeNsfwEscalation } = await import('./challenge-nsfw-escalati
 
 const PG_PG13 = 3; // NsfwLevel.PG | NsfwLevel.PG13
 const R = 4;
+const X = 8;
+const XXX = 16;
 
 function challenge(overrides: Record<string, unknown> = {}) {
   return {
@@ -101,7 +103,48 @@ describe('applyChallengeNsfwEscalation', () => {
     const colData = mockDbWrite.collection.updateMany.mock.calls[0][0].data;
     expect(colData.metadata.forcedBrowsingLevel).toBe(PG_PG13 | R);
     expect(mockCreateNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'challenge-nsfw-raised-9' })
+      expect.objectContaining({
+        key: 'challenge-nsfw-raised-9',
+        details: expect.objectContaining({
+          message:
+            "Your challenge's rating was raised to R based on its text, so it won't appear in safe-mode feeds.",
+        }),
+      })
+    );
+  });
+
+  it('yellow user + X verdict: rates it X and names X to the creator', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(challenge({ buzzType: 'yellow' }));
+    await applyChallengeNsfwEscalation({ entityId: 9, isNsfw: true, level: X });
+
+    const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
+    expect(data.allowedNsfwLevel).toBe(PG_PG13 | R | X);
+    expect(data.nsfwLevel).toBe(X);
+    const colData = mockDbWrite.collection.updateMany.mock.calls[0][0].data;
+    expect(colData.metadata.forcedBrowsingLevel).toBe(PG_PG13 | R | X);
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          message:
+            "Your challenge's rating was raised to X based on its text, so it won't appear in safe-mode feeds.",
+        }),
+      })
+    );
+  });
+
+  it('yellow user + Blocked verdict: rates it XXX and names XXX, not the verdict', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(challenge({ buzzType: 'yellow' }));
+    await applyChallengeNsfwEscalation({ entityId: 9, isNsfw: true, level: 32 });
+
+    const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
+    expect(data.allowedNsfwLevel).toBe(PG_PG13 | R | X | XXX);
+    expect(data.nsfwLevel).toBe(XXX);
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          message: expect.stringContaining('raised to XXX based on its text'),
+        }),
+      })
     );
   });
 
@@ -182,7 +225,7 @@ describe('applyChallengeNsfwEscalation — moderator override', () => {
       mockDbWrite.challenge.findUnique.mockResolvedValue(challenge({ moderatorNsfwLevel: 1 }));
       mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
 
-      await applyChallengeNsfwEscalation({ entityId: 1, isNsfw });
+      await applyChallengeNsfwEscalation({ entityId: 1, isNsfw, level: XXX });
 
       expect(mockDbWrite.challenge.updateMany).toHaveBeenCalledWith({
         where: { id: 1, ingestion: { in: ['Pending', 'Error'] } },

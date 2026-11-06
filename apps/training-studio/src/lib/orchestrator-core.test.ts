@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { describeSubmitError } from './orchestrator-core';
 
 // The client's dist imports a directory, which Node's ESM loader refuses; this file needs none of it.
-vi.mock('@civitai/client', () => ({}));
+vi.mock('@civitai/orchestration-client', () => ({}));
 
 describe('describeSubmitError', () => {
   it('summarises an edge error page instead of returning its markup', () => {

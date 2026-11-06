@@ -58,6 +58,7 @@ Why: `src/providers/ThemeProvider.tsx` sets `Popover` `withinPortal: false` app-
 
 - Use dynamic imports for heavy components and virtual scrolling for large lists.
 - Serve images through `EdgeImage`/`EdgeMedia` (CDN-optimised), not `next/image`.
+- Images are served directly: the built-in Next image optimizer is disabled (`images.unoptimized`). Don't re-enable it, add a loader, or set `unoptimized={false}`.
 - Infinite scroll: `MasonryGrid` or virtual scrolling with React Query infinite queries.
 
 ## Modals

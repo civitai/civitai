@@ -1,6 +1,5 @@
 import type { FC, Ref } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ParsedUrlQuery } from 'querystring';
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { env } from '~/env/client';
@@ -8,6 +7,7 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { checkStudioModelLive } from '~/components/Training/studio-model-live';
 import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
 import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -48,12 +48,6 @@ const hrefFor = (loc: StudioLocation) =>
     : loc.view === 'new'
     ? '/training-studio?view=new'
     : `/training-studio?run=${encodeURIComponent(loc.workflowId)}`;
-
-const locationFromQuery = (query: ParsedUrlQuery): StudioLocation => {
-  if (typeof query.run === 'string' && query.run) return { view: 'run', workflowId: query.run };
-  if (query.view === 'new') return { view: 'new' };
-  return { view: 'home' };
-};
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -163,6 +157,15 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           return (await r.json()).token as string;
         },
         checkTrainingText: checkStudioTriggerWord,
+        // Auto-label is free: it runs on the system token here, never the user's (which would be
+        // charged). The element refuses auto-label when a host lacks these.
+        autoLabelSubmit: (
+          items: { mediaUrl: string; key: string }[],
+          mode: 'tag' | 'caption',
+          media: 'image' | 'video' | 'audio'
+        ) => utilsRef.current.client.training.studioAutoLabelSubmit.mutate({ items, mode, media }),
+        autoLabelPoll: (workflowId: string, signal?: AbortSignal) =>
+          utilsRef.current.client.training.studioAutoLabelPoll.query({ workflowId }, { signal }),
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
         getBuzzBalances: async () => {
@@ -226,6 +229,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             epoch: String(req.epoch),
           })}`,
         modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
+        modelLive: checkStudioModelLive,
         // The studio's Custom base: open this app's resource-select modal and hand back the picked
         // checkpoint as an AIR (the same urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>
         // shape the studio's paste input takes). Resolves null on cancel.
@@ -312,7 +316,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
       : `/user/${currentUser.username}/models?section=training`;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+    <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
       <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>

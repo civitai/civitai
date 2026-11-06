@@ -47,18 +47,21 @@
   $effect(() => () => closeReasonPicker());
 
   const choose = async (value: string) => {
+    // Read before closing: callers pass `index={reasonPicker.open}`, which a closed list turns to
+    // null, and `clickDecision(null)` presses the first decision.
+    const decision = index;
     onreason(value);
     closeReasonPicker();
     const needsNote = reasonRequiresNote(value);
     noteReasonChosen(needsNote);
     if (needsNote && !note.trim()) {
-      awaitReasonNote(index);
+      awaitReasonNote(decision);
       onneednote();
       return;
     }
     // Let the bar's reason update before the decision reads it.
     await tick();
-    clickDecision(index);
+    clickDecision(decision);
   };
 
   function onkeydown(e: KeyboardEvent) {

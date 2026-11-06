@@ -1,4 +1,5 @@
 import type { NavLink } from '$lib/server/access';
+import { queueSeverityRank } from './queue-thresholds';
 
 export const isPathActive = (href: string, path: string) =>
   href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
@@ -32,7 +33,8 @@ export const navHref = (link: NavLink): string | undefined =>
   link.tabs ? link.children?.[0]?.path ?? link.path : link.path;
 
 /**
- * The badge for a link: its own count, or for a group the sum of its non-informational children. Null
+ * The badge for a link: its own count, or for a group the sum of its children, less informational ones
+ * and shortcuts (counted where the page lives). Null
  * while nothing it sums has loaded.
  */
 export function navCount(
@@ -42,11 +44,49 @@ export function navCount(
   if (!link.children) return countFor(link.countKey);
   let total: number | null = null;
   for (const child of link.children) {
-    if (child.informational) continue;
+    if (child.informational || child.shortcut) continue;
     const count = navCount(child, countFor);
     if (count !== null) total = (total ?? 0) + count;
   }
   return total;
+}
+
+/** Whether a link's badge leaves out a count that could not be read: it, or a child it sums. */
+export function navPartial(link: NavLink, isUnavailable: (key: string) => boolean): boolean {
+  if (!link.children) return !!link.countKey && isUnavailable(link.countKey);
+  return link.children.some(
+    (child) => !child.informational && !child.shortcut && navPartial(child, isUnavailable)
+  );
+}
+
+/** A badge's text: the count, with "+" when it leaves out a count that could not be read ("?+" when
+ *  it has none it could). Null when there is nothing to show. */
+export function navBadge(
+  count: number | null,
+  partial: boolean,
+  format: (n: number) => string = String
+): { text: string; partial: boolean } | null {
+  if (partial) return { text: `${count === null ? '?' : format(count)}+`, partial };
+  return count === null ? null : { text: format(count), partial };
+}
+
+/**
+ * The worst threshold step among a link's queues, 0 worst; `null` when none has a standard. Skips
+ * informational children, as `navCount` does: nobody works through them.
+ */
+export function navWorstRank(
+  link: NavLink,
+  countFor: (key: string | undefined) => number | null
+): number | null {
+  if (!link.children)
+    return link.countKey ? queueSeverityRank(link.countKey, countFor(link.countKey)) : null;
+  let worst: number | null = null;
+  for (const child of link.children) {
+    if (child.informational || child.shortcut) continue;
+    const rank = navWorstRank(child, countFor);
+    if (rank !== null && (worst === null || rank < worst)) worst = rank;
+  }
+  return worst;
 }
 
 export type SwitcherEntry = { label: string; href: string; external: boolean };

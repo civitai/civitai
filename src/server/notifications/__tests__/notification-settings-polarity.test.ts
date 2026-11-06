@@ -187,10 +187,9 @@ describe('notification settings polarity', () => {
     // direction -- the exact bug the /shop bell shipped.
     //
     // Asserted here AND behaviourally in PlacementSpaceSection.freeSlots.browser.test.tsx, which is
-    // the stronger of the two. The duplication is deliberate: the browser project runs in no CI job,
-    // so the behavioural one protects nobody who is not running it locally. Drop this textual pin if
-    // that ever changes. The cost of keeping it is that renaming `subscribedToAuto` reddens a test in
-    // this file, which the rename is not looking at -- the failure message names the file to fix.
+    // the stronger of the two. The duplication is deliberate. The cost of keeping it is that
+    // renaming `subscribedToAuto` reddens a test in this file, which the rename is not looking at
+    // -- the failure message names the file to fix.
     const section = readFileSync('src/components/Account/PlacementSpaceSection.tsx', 'utf8');
     // Anchored on the CALL, exactly like the /shop bell's assertion four tests down. Without
     // `mutate({` the positive is satisfied by the string appearing anywhere -- including in the

@@ -88,9 +88,32 @@ function readPredicate() {
   return flat.slice(flat.indexOf('WHERE '), flat.indexOf(' ORDER BY'));
 }
 
+/**
+ * The primary's queries: the per-batch version lookup answers with `versions(batch)`, the model
+ * DELETE with `deleteModels(batch)` (by default every model asked for, as no owner is held here),
+ * and the lookup of models the DELETE left with `stillThere(ids)`.
+ */
+const write = {
+  versions: (_batch: number[]): unknown[] => [],
+  deleteModels: async (batch: number[]): Promise<{ id: number }[]> => batch.map((id) => ({ id })),
+  stillThere: (ids: number[]): { id: number }[] => ids.map((id) => ({ id })),
+};
+/** A tagged-template call, or one built elsewhere and passed as a single `Prisma.Sql`. */
+const asCall = (first: unknown, values: unknown[]) =>
+  Array.isArray(first)
+    ? { strings: first as string[], values }
+    : (first as { strings: string[]; values: unknown[] });
+const isModelDelete = (strings: readonly string[]) =>
+  strings.join('?').includes('DELETE FROM "Model"');
+const isLeftLookup = (strings: readonly string[]) =>
+  strings.join('?').includes('SELECT id FROM "Model"');
+
 /** Model ids handed to a given `DELETE FROM "Model"` call. */
 function deleteBatches() {
-  return mockDbWrite.$executeRaw.mock.calls.map((c) => c[1] as number[]);
+  return mockDbWrite.$queryRaw.mock.calls
+    .map((c) => asCall(c[0], c.slice(1)))
+    .filter((c) => isModelDelete(c.strings))
+    .map((c) => c.values[0] as number[]);
 }
 
 function axiomEvents(message: string) {
@@ -102,6 +125,17 @@ function axiomEvents(message: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   calls.length = 0;
+  write.versions = () => [];
+  write.deleteModels = async (batch) => batch.map((id) => ({ id }));
+  write.stillThere = (ids) => ids.map((id) => ({ id }));
+  mockDbWrite.$queryRaw.mockImplementation((async (first: unknown, ...rest: unknown[]) => {
+    const { strings, values } = asCall(first, rest);
+    return isModelDelete(strings)
+      ? write.deleteModels(values[0] as number[])
+      : isLeftLookup(strings)
+      ? write.stillThere(values[0] as number[])
+      : write.versions(values[0] as number[]);
+  }) as never);
 });
 
 describe('removeOldDrafts', () => {
@@ -209,8 +243,7 @@ describe('removeOldDrafts', () => {
     // fence that refuses everything — would read green across the board.
     it('deletes a candidate whose versions and files have all been quiet', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([versionRow({ id: 100, modelId: 42 })]);
-      mockDbWrite.$executeRaw.mockResolvedValue(1);
+      write.versions = () => [versionRow({ id: 100, modelId: 42 })];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -223,9 +256,7 @@ describe('removeOldDrafts', () => {
 
     it('spares a model whose version was CREATED inside the window', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([
-        versionRow({ id: 100, modelId: 42, createdAt: recent() }),
-      ]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42, createdAt: recent() })];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -237,9 +268,7 @@ describe('removeOldDrafts', () => {
 
     it('spares a model whose version was UPDATED inside the window', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([
-        versionRow({ id: 100, modelId: 42, updatedAt: recent() }),
-      ]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42, updatedAt: recent() })];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -255,9 +284,9 @@ describe('removeOldDrafts', () => {
     // ModelVersion."createdAt" can see it — only the file timestamp can.
     it('spares a model whose FILE was created inside the window, with an otherwise ancient version', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 2831418, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([
+      write.versions = () => [
         versionRow({ id: 3194997, modelId: 2831418, latestFileAt: recent() }),
-      ]);
+      ];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -273,11 +302,10 @@ describe('removeOldDrafts', () => {
         { id: 1, userId: 11 },
         { id: 2, userId: 22 },
       ]);
-      mockDbWrite.$queryRaw.mockResolvedValue([
+      write.versions = () => [
         versionRow({ id: 100, modelId: 1, latestFileAt: recent() }), // still in use
         versionRow({ id: 200, modelId: 2 }), // long quiet
-      ]);
-      mockDbWrite.$executeRaw.mockResolvedValue(1);
+      ];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -308,9 +336,7 @@ describe('removeOldDrafts', () => {
         { id: 2, userId: 22 },
       ]);
       // Query shape drifted: no modelId to hang the activity on.
-      mockDbWrite.$queryRaw.mockResolvedValue([
-        { id: 100, createdAt: quiet(), updatedAt: quiet() },
-      ]);
+      write.versions = () => [{ id: 100, createdAt: quiet(), updatedAt: quiet() }];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -322,9 +348,7 @@ describe('removeOldDrafts', () => {
 
     it('reports the spared models to Axiom so the two fences disagreeing is visible', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([
-        versionRow({ id: 100, modelId: 42, latestFileAt: recent() }),
-      ]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42, latestFileAt: recent() })];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -334,17 +358,69 @@ describe('removeOldDrafts', () => {
     });
   });
 
+  // The DELETE itself keeps a held owner's model (behaviour on a real database:
+  // remove-old-drafts-legal-hold.behavior.test.ts); these pin what the job does with what it left.
+  describe('models the DELETE left', () => {
+    it('reports a kept model as held and neither logs nor deregisters it as removed', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42 })];
+      write.deleteModels = async () => [];
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
+        expect.objectContaining({ modelIds: [42] }),
+      ]);
+      expect(axiomEvents('Removed old draft models')).toEqual([]);
+      expect(mockDeregisterBatch).not.toHaveBeenCalled();
+    });
+
+    it('does not report a model another delete removed first as held', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
+      write.versions = () => [versionRow({ id: 100, modelId: 42 })];
+      write.deleteModels = async () => [];
+      write.stillThere = () => [];
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
+    });
+
+    // The deletes have committed by then, so the batch must still be recorded and deregistered.
+    it('still records and deregisters what it deleted when the kept-models read fails', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([
+        { id: 1, userId: 11 },
+        { id: 2, userId: 22 },
+      ]);
+      write.versions = () => [
+        versionRow({ id: 100, modelId: 1 }),
+        versionRow({ id: 200, modelId: 2 }),
+      ];
+      write.deleteModels = async () => [{ id: 2 }];
+      write.stillThere = () => {
+        throw new Error('connection reset');
+      };
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(axiomEvents('Removed old draft models')).toEqual([
+        expect.objectContaining({ modelIds: [2] }),
+      ]);
+      expect(mockDeregisterBatch).toHaveBeenCalledWith([200]);
+      expect(axiomEvents('Failed to remove batch of old draft models')).toEqual([]);
+    });
+  });
+
   describe('identifying what was destroyed', () => {
     it('logs the deleted model ids and their owners', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([
         { id: 1, userId: 11 },
         { id: 2, userId: 22 },
       ]);
-      mockDbWrite.$queryRaw.mockResolvedValue([
+      write.versions = () => [
         versionRow({ id: 100, modelId: 1 }),
         versionRow({ id: 200, modelId: 2 }),
-      ]);
-      mockDbWrite.$executeRaw.mockResolvedValue(1);
+      ];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -358,10 +434,7 @@ describe('removeOldDrafts', () => {
       // rather than one field carrying every id of a 1,000-model run.
       const models = Array.from({ length: 11 }, (_, i) => ({ id: i + 1, userId: 900 + i }));
       mockDbRead.$queryRaw.mockResolvedValue(models);
-      mockDbWrite.$queryRaw.mockImplementation(async (_s: unknown, batch: number[]) =>
-        batch.map((modelId) => versionRow({ id: modelId * 10, modelId }))
-      );
-      mockDbWrite.$executeRaw.mockResolvedValue(1);
+      write.versions = (batch) => batch.map((modelId) => versionRow({ id: modelId * 10, modelId }));
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -372,8 +445,10 @@ describe('removeOldDrafts', () => {
 
     it('names the batch on the failure log so a failed delete is attributable too', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([versionRow({ id: 100, modelId: 42 })]);
-      mockDbWrite.$executeRaw.mockRejectedValue(new Error('deadlock detected'));
+      write.versions = () => [versionRow({ id: 100, modelId: 42 })];
+      write.deleteModels = async () => {
+        throw new Error('deadlock detected');
+      };
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
@@ -387,16 +462,14 @@ describe('removeOldDrafts', () => {
     it('collects version ids pre-delete then deregisters them post-delete', async () => {
       // Replica lookup: one old draft model (id 42).
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      // dbWrite.$queryRaw = the pre-delete version-id lookup.
-      mockDbWrite.$queryRaw.mockImplementation(async () => {
+      write.versions = () => {
         calls.push('collect-versions');
         return [versionRow({ id: 100, modelId: 42 }), versionRow({ id: 101, modelId: 42 })];
-      });
-      // dbWrite.$executeRaw = the cascade delete.
-      mockDbWrite.$executeRaw.mockImplementation(async () => {
+      };
+      write.deleteModels = async (batch) => {
         calls.push('delete');
-        return 1;
-      });
+        return batch.map((id) => ({ id }));
+      };
       mockDeregisterBatch.mockImplementation(async () => {
         calls.push('deregister');
         return { deleted: 2 };
@@ -411,12 +484,11 @@ describe('removeOldDrafts', () => {
 
     it('does not call deregister when a batch has no versions', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([{ id: 42, userId: 7 }]);
-      mockDbWrite.$queryRaw.mockResolvedValue([]); // no versions on the model
-      mockDbWrite.$executeRaw.mockResolvedValue(1);
+      write.versions = () => []; // no versions on the model
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(deleteBatches()).toHaveLength(1);
       expect(mockDeregisterBatch).not.toHaveBeenCalled();
     });
 
@@ -425,7 +497,7 @@ describe('removeOldDrafts', () => {
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+      expect(deleteBatches()).toEqual([]);
       expect(mockDeregisterBatch).not.toHaveBeenCalled();
     });
 
@@ -435,16 +507,15 @@ describe('removeOldDrafts', () => {
       mockDbRead.$queryRaw.mockResolvedValue(models);
 
       // Per-batch version lookup — return ids keyed off which batch is asked for.
-      mockDbWrite.$queryRaw.mockImplementation(async (_strings: unknown, batch: number[]) =>
+      write.versions = (batch) =>
         batch.includes(1)
           ? [versionRow({ id: 100, modelId: 1 }), versionRow({ id: 101, modelId: 2 })]
-          : [versionRow({ id: 200, modelId: 11 })]
-      );
+          : [versionRow({ id: 200, modelId: 11 })];
       // The DELETE FROM "Model" rejects for the FIRST batch only; the second succeeds.
-      mockDbWrite.$executeRaw.mockImplementation(async (_strings: unknown, batch: number[]) => {
+      write.deleteModels = async (batch) => {
         if (batch.includes(1)) throw new Error('deadlock detected');
-        return 1;
-      });
+        return batch.map((id) => ({ id }));
+      };
 
       // Job must not throw out — a failed batch is caught and the loop continues.
       await expect((removeOldDrafts as unknown as () => Promise<void>)()).resolves.toBeUndefined();
@@ -471,17 +542,18 @@ describe('removeOldDrafts', () => {
       mockDbRead.$queryRaw.mockResolvedValue(models);
 
       // Each batch's ModelVersion SELECT returns a disjoint set of version ids.
-      mockDbWrite.$queryRaw.mockImplementation(async (_strings: unknown, batch: number[]) =>
+      write.versions = (batch) =>
         batch.includes(1)
           ? [versionRow({ id: 1000, modelId: 1 }), versionRow({ id: 1001, modelId: 2 })]
-          : [versionRow({ id: 2000, modelId: 11 })]
-      );
-      mockDbWrite.$executeRaw.mockResolvedValue(1);
+          : [versionRow({ id: 2000, modelId: 11 })];
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
       // The version SELECT is scoped to exactly one batch of model ids per call.
-      const selectBatches = mockDbWrite.$queryRaw.mock.calls.map((c) => c[1] as number[]);
+      const selectBatches = mockDbWrite.$queryRaw.mock.calls
+        .map((c) => asCall(c[0], c.slice(1)))
+        .filter((c) => !isModelDelete(c.strings))
+        .map((c) => c.values[0] as number[]);
       expect(selectBatches).toEqual([Array.from({ length: 10 }, (_, i) => i + 1), [11]]);
 
       // Deregister runs once per batch, each with only that batch's version ids —

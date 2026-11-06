@@ -38,9 +38,13 @@ beforeAll(async () => {
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
+      "modelVersionId" int,
       "publishedAt" timestamp(3),
       metadata jsonb
     );
+    -- The publish refuses a post on a version a moderator took down; this post is on none.
+    CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL, "userId" int);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL);
   `);
 });
 

@@ -9,7 +9,7 @@ const { mockSubmitWorkflow } = vi.hoisted(() => ({
   mockSubmitWorkflow: vi.fn(),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // unused-by-these-tests named exports referenced at module load
   addWorkflowTag: vi.fn(),
@@ -29,10 +29,7 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 
 vi.mock('~/env/other', () => ({ isDev: false, isProd: true }));
 
-import {
-  submitWorkflow,
-  submitWorkflowWithRetry,
-} from '~/server/services/orchestrator/workflows';
+import { submitWorkflow, submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,7 +44,7 @@ afterEach(() => {
 const timeoutError = () =>
   Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
 
-// The REAL `@civitai/client` shape on a fetch failure / fired AbortSignal.timeout.
+// The REAL `@civitai/orchestration-client` shape on a fetch failure / fired AbortSignal.timeout.
 // `createOrchestratorClient` does NOT set `throwOnError`, so the client RESOLVES with
 // `{ error, response: undefined }` — it does NOT reject. Tests that mock the abort path
 // MUST use this shape, not `mockRejectedValue`, or they exercise a branch the real

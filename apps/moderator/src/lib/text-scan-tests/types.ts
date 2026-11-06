@@ -1,23 +1,15 @@
 import type { LabEntityType, LabField } from '../text-scan-lab/types';
 import type { Expected } from './expected';
 
-export const WORKSPACES = ['prompts', 'modelRules'] as const;
+export const WORKSPACES = ['prompts'] as const;
 export type Workspace = (typeof WORKSPACES)[number];
 
 export const WORKSPACE_PATHS: Record<Workspace, string> = {
   prompts: '/text-scan/prompts',
-  modelRules: '/text-scan/model-rules',
-};
-
-/** The one judge a workspace's Try runs, or null when it picks from the text's type and its edited prompts. */
-export const WORKSPACE_ONLY: Record<Workspace, 'ModelRules' | null> = {
-  prompts: null,
-  modelRules: 'ModelRules',
 };
 
 export const WORKSPACE_NAMES: Record<Workspace, string> = {
   prompts: 'Prompts',
-  modelRules: 'Model rules',
 };
 
 export const CASE_ORIGINS = ['try', 'matches', 'import'] as const;

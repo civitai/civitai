@@ -107,6 +107,13 @@ describe('buildTextScanFlagEntry', () => {
 });
 
 describe('isModelFlagAppealable', () => {
+  // The owner sees the appeal for a hash-applied real-person flag; creating it must not then refuse.
+  it('accepts a real-person flag the hash match applied, and not once it is lifted', () => {
+    const meta = { poiFlagSnapshot: { at: 'x', source: 'auto' } };
+    expect(isModelFlagAppealable({ minor: false, poi: true, meta })).toBe(true);
+    expect(isModelFlagAppealable({ minor: false, poi: false, meta })).toBe(false);
+  });
+
   it('accepts a minor flag that carries a minor snapshot (hash, manual or text-scan)', () => {
     expect(
       isModelFlagAppealable({ minor: true, poi: false, meta: { minorFlagSnapshot: { at: 'x' } } })

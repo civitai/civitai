@@ -192,6 +192,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         browsingLevel,
         types,
         ownerUserId,
+        baseModels,
+        supportsGeneration,
       });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;

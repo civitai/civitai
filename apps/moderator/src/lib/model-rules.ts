@@ -1,20 +1,73 @@
 import {
   MODEL_RULE_LIMITS,
   isSemanticDefinition,
+  MODEL_RULE_CATEGORIES,
   modelRuleAliasesField,
+  modelRuleCategoryField,
   modelRuleDescriptionField,
+  modelRuleReferencesField,
   modelRuleSubjectField,
-  parseModelRulesStoredResult,
   semanticModelRuleSchema,
   type SemanticModelRule,
 } from '@civitai/moderation/model-rules';
 import { z } from 'zod';
-import type { LabRule } from '$lib/text-scan-lab/types';
 
-export { MODEL_RULE_LIMITS, isSemanticDefinition, semanticModelRuleSchema, type SemanticModelRule };
+export {
+  MODEL_RULE_CATEGORIES,
+  MODEL_RULE_LIMITS,
+  isSemanticDefinition,
+  semanticModelRuleSchema,
+  type SemanticModelRule,
+};
 
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
+/** A reference row as the editor holds it: either field may be blank until saved. `key` only identifies the row while it is edited. */
+export type ReferenceRow = { key: string; url: string; label: string };
+
+let rowKeys = 0;
+export const newReferenceRow = (url = '', label = ''): ReferenceRow => ({
+  key: `ref-${++rowKeys}`,
+  url,
+  label,
+});
+
+const isBlankRow = (row: { url?: unknown; label?: unknown }) =>
+  !(typeof row.url === 'string' && row.url.trim()) &&
+  !(typeof row.label === 'string' && row.label.trim());
+
+/** Drops blank editor rows and the editor's row keys; a row with only a label stays, for the server to refuse. */
+export function cleanReferenceRows(
+  rows: readonly { url?: unknown; label?: unknown }[]
+): { url: string; label?: string }[] {
+  return rows
+    .filter((row) => !isBlankRow(row))
+    .map((row) => ({
+      url: typeof row.url === 'string' ? row.url : '',
+      ...(typeof row.label === 'string' && row.label.trim() ? { label: row.label } : {}),
+    }));
+}
+
+// The form posts references as JSON in one field; Save all sends them as an array.
+const referencesInput = z.preprocess((raw, ctx) => {
+  if (raw === undefined || raw === '') return [];
+  let value = raw;
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'Malformed references.' });
+      return z.NEVER;
+    }
+  }
+  if (!Array.isArray(value)) return [];
+  const rows = cleanReferenceRows(
+    value.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null)
+  );
+  if (rows.some((row) => !row.url.trim())) {
+    ctx.addIssue({ code: 'custom', message: 'A reference label needs a link.' });
+    return z.NEVER;
+  }
+  return rows;
+}, modelRuleReferencesField);
 
 // One per line, never split on commas: a name can contain one ("Doe, Jane"), and splitting it would
 // turn one alias into two far broader ones on an unrelated save.
@@ -35,6 +88,11 @@ export const modelRuleFormSchema = z.object({
   subject: modelRuleSubjectField(),
   description: modelRuleDescriptionField.default(''),
   aliases: z.string().default('').transform(parseAliases).pipe(modelRuleAliasesField),
+  category: z
+    .union([modelRuleCategoryField, z.literal('')])
+    .optional()
+    .transform((category) => category || undefined),
+  references: referencesInput,
   note: z.string().trim().max(2000, 'Note is too long.').default(''),
 });
 export type ModelRuleForm = z.infer<typeof modelRuleFormSchema>;
@@ -50,75 +108,25 @@ export function ruleMatchesText(
   );
 }
 
-/** `llm`: the model matched the rule. `literal`: the text names the rule's subject or an alias. */
-export type RuleMatch = {
-  ruleId: number;
-  subject: string | null;
-  reason: string | null;
-  llm: boolean;
-  literal: boolean;
-};
+/** The words of an alias as the literal matcher compares them, approximated: no confusable folding. */
+const aliasWords = (alias: string) =>
+  alias
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
 
-/** One entry per rule: the model's first match for it, then literal-only hits. */
-export function mergeRuleMatches(
-  matched: readonly unknown[],
-  literalIds: Iterable<number>,
-  subjects: ReadonlyMap<number, string>
-): RuleMatch[] {
-  const literal = new Set(literalIds);
-  const byRule = new Map<number, RuleMatch>();
-  for (const m of matched) {
-    if (!isRecord(m) || typeof m.ruleId !== 'number' || byRule.has(m.ruleId)) continue;
-    byRule.set(m.ruleId, {
-      ruleId: m.ruleId,
-      subject: subjects.get(m.ruleId) ?? null,
-      reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
-      llm: true,
-      literal: literal.has(m.ruleId),
-    });
-  }
-  for (const ruleId of literal)
-    if (!byRule.has(ruleId))
-      byRule.set(ruleId, {
-        ruleId,
-        subject: subjects.get(ruleId) ?? null,
-        reason: null,
-        llm: false,
-        literal: true,
-      });
-  return [...byRule.values()];
+export const BROAD_ALIAS_WARNING = 'May match unrelated models — prefer a full name.';
+
+/** `single-word` and `short` aliases match far beyond their subject; a full name rarely does. */
+export function aliasBreadth(alias: string): 'single-word' | 'short' | null {
+  const words = aliasWords(alias);
+  if (!words.length) return null;
+  if (words.length === 1) return 'single-word';
+  return words.join(' ').length < 5 ? 'short' : null;
 }
 
-/** The saved rules among `matches`, once each, as the choices a captured case can expect. Ad hoc rules (id <= 0) are left out. */
-export function ruleChoicesOf(
-  matches: readonly Pick<RuleMatch, 'ruleId' | 'subject'>[]
-): LabRule[] {
-  const seen = new Map<number, string>();
-  for (const m of matches)
-    if (m.ruleId > 0 && !seen.has(m.ruleId)) seen.set(m.ruleId, m.subject ?? `Rule ${m.ruleId}`);
-  return [...seen].map(([id, subject]) => ({ id, subject }));
+export function appendAliases(raw: string, added: readonly string[]): string {
+  return parseAliases([raw, ...added].join('\n')).join('\n');
 }
-
-export function parseRuleMatches(result: unknown): RuleMatch[] {
-  const { matched, snapshot, literalRuleIds } = parseModelRulesStoredResult(result);
-  const subjects = new Map(snapshot.map((rule) => [rule.id, rule.subject]));
-  return mergeRuleMatches(matched, literalRuleIds, subjects);
-}
-
-export const matchSourceLabel = (match: Pick<RuleMatch, 'llm' | 'literal'>) =>
-  !match.literal ? 'Model only' : match.llm ? 'Literal + model' : 'Literal only';
-
-export const matchSourceVariant = (
-  match: Pick<RuleMatch, 'llm' | 'literal'>
-): 'secondary' | 'outline' | 'default' =>
-  !match.literal ? 'secondary' : match.llm ? 'outline' : 'default';
-
-/** The cursor is a row's `updatedAt` as Postgres prints it plus its id: `YYYY-MM-DD HH:MM:SS(.ffffff)|id`. */
-export function parseMatchCursor(cursor: string | undefined) {
-  const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
-  return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
-}
-
-/** A row written by the publish-time literal hold rather than by a scan. */
-export const isHeldAtPublish = (result: unknown): boolean =>
-  parseModelRulesStoredResult(result).heldAtPublish;

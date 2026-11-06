@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ModelStatus, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -21,12 +20,15 @@ import {
   getCommentById,
   getCommentReactions,
   getComments,
-  getPinnedComments,
+  getCommentsViaKysely,
+  getPinnedCommentsViaKysely,
+  isLegacyCommentHidden,
   toggleHideComment,
   togglePinComment,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
+import { isKyselyCommentListPage } from '~/server/services/hot-reads-4.reads';
 import { createNotification } from '~/server/services/notification.service';
 import { maskHiddenReactors } from '~/server/services/reaction-privacy.service';
 import {
@@ -57,11 +59,12 @@ export const getCommentsInfiniteHandler = async ({
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
   const limit = input.limit + 1;
   const { user } = ctx;
-  const comments = await getComments({
-    input: { ...input, limit },
-    user,
-    select: getAllCommentsWithCachedUserSelect,
-  });
+  // The first page (newest or oldest first) and the pinned block read through Kysely, on the
+  // client the same lag decision picks. A cursor page or another sort reads through Prisma.
+  const pageInput = { ...input, limit };
+  const comments = isKyselyCommentListPage(pageInput)
+    ? await getCommentsViaKysely({ input: pageInput, user })
+    : await getComments({ input: pageInput, user, select: getAllCommentsWithCachedUserSelect });
 
   let nextCursor: number | undefined;
   if (comments.length > input.limit) {
@@ -70,9 +73,7 @@ export const getCommentsInfiniteHandler = async ({
   }
 
   // Pinned comments surface at the top of the first page only.
-  const pinnedComments = !input.cursor
-    ? await getPinnedComments({ input, user, select: getAllCommentsWithCachedUserSelect })
-    : [];
+  const pinnedComments = input.cursor ? [] : await getPinnedCommentsViaKysely({ input, user });
 
   const allComments = [...pinnedComments, ...comments];
   const commentIds = allComments.map((c) => c.id);
@@ -88,7 +89,10 @@ export const getCommentsInfiniteHandler = async ({
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
   const [userCosmetics] = await Promise.all([
-    getCosmeticsAndProfilePicturesForUsers(allComments.map((c) => c.user.id)),
+    getCosmeticsAndProfilePicturesForUsers(
+      allComments.map((c) => c.user.id),
+      { showcaseHat: true }
+    ),
     maskHiddenReactors(
       allComments.map((c) => c.reactions),
       user
@@ -250,7 +254,7 @@ export const deleteUserCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const deleted = await deleteCommentById({ ...input });
+    const deleted = await deleteCommentById(input);
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });
@@ -392,6 +396,7 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
+    const wasHidden = await isLegacyCommentHidden(id);
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
 
@@ -400,6 +405,7 @@ export const setTosViolationHandler = async ({
       id: updatedComment.id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: user.id,
     });
     // Reward users for accepted reports
     await Promise.allSettled(
@@ -408,11 +414,12 @@ export const setTosViolationHandler = async ({
       )
     );
 
+    if (wasHidden) return updatedComment;
     await createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: updatedComment.model.name, entity: 'comment' },
     }).catch((error) => {
       // Print out any errors

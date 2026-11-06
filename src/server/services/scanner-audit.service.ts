@@ -12,7 +12,11 @@
  * never propagates back to the operational webhook path.
  */
 import crypto from 'crypto';
-import type { MediaRatingOutput, Workflow, XGuardModerationStep } from '@civitai/client';
+import type {
+  MediaRatingOutput,
+  Workflow,
+  XGuardModerationStep,
+} from '@civitai/orchestration-client';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { ImageScanningResult } from '~/server/services/image-scanning-result.service';
 import { logToAxiom } from '~/server/logging/client';

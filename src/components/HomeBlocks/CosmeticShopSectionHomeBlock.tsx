@@ -3,9 +3,16 @@ import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { shopSectionAnchor } from '~/components/Shop/shop-section-anchor';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import {
+  SHOP_BLOCK_ROWS,
+  shopBlockMaxItems,
+  visibleShopBlockItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
@@ -24,19 +31,21 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     { trpc: { context: { skipBatch: true } } }
   );
 
+  const { blockRelations, hiddenLoading } = useHiddenPreferencesContext();
   const cosmeticShopSection = homeBlock?.cosmeticShopSection;
 
   const items = useMemo(() => {
     if (!cosmeticShopSection) return [];
+    // The server sends more than the row, rotated when the block rotates, so a viewer who blocks
+    // a seller still gets a full row from the items behind it.
+    return visibleShopBlockItems(cosmeticShopSection.items, {
+      blockRelations,
+      maxItems: shopBlockMaxItems(metadata.cosmeticShopSection),
+    });
+  }, [cosmeticShopSection, metadata, blockRelations]);
 
-    if (metadata.cosmeticShopSection?.maxItems) {
-      return cosmeticShopSection.items.slice(0, metadata.cosmeticShopSection.maxItems);
-    }
-
-    return cosmeticShopSection.items;
-  }, [cosmeticShopSection, metadata]);
-
-  if (!cosmeticShopSection) {
+  // Blocks are applied here and nowhere else, so nothing renders until they are known.
+  if (!cosmeticShopSection || hiddenLoading) {
     return null;
   }
 
@@ -46,13 +55,15 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
       style={
         {
           '--count': items.length ?? 0,
-          '--rows': 2,
+          '--rows': SHOP_BLOCK_ROWS,
         } as React.CSSProperties
       }
     >
       <HomeBlockHeaderMeta
         metadata={{
           ...metadata,
+          link: metadata.link ?? shopLink(metadata.cosmeticShopSection?.id),
+          linkText: metadata.linkText ?? 'View Shop',
           title: metadata?.title ?? cosmeticShopSection.title,
           description: metadata?.description ?? cosmeticShopSection.description ?? '',
         }}
@@ -76,5 +87,8 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     </div>
   );
 }
+
+const shopLink = (sectionId?: number) =>
+  sectionId == null ? '/shop' : `/shop#${shopSectionAnchor(sectionId)}`;
 
 type Props = { metadata: HomeBlockMetaSchema; showAds?: boolean; homeBlockId: number };

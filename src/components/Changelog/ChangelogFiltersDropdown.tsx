@@ -1,4 +1,5 @@
-import { Chip, Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback } from 'react';

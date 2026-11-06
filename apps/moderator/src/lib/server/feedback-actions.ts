@@ -245,7 +245,7 @@ export const promoteAction = requiresGrant(
       return fail(400, { error: 'Write a summary — it is what the issue board shows.' });
 
     /**
-     * 🔴 REFUSED, NOT STORED-AND-HOPED. The ClickUp webhook finds the entry to close by parsing a
+     * 🔴 REFUSED, NOT STORED-AND-HOPED. The completion webhook finds the entry to close by parsing a
      * task id back out of this column, so a URL that does not parse is a link in name only: the
      * issue board shows it, and the task completing closes nothing. That failure reports itself
      * NOWHERE — no error, no log, just an issue that stays open forever — so the only place it can
@@ -256,9 +256,9 @@ export const promoteAction = requiresGrant(
      * path that can write this column from the moderator queue — looser than the board's own create
      * form, which requires `z.url()`. A bare id and a foreign host both satisfy the matcher.
      *
-     * ⚠️ This checks the URL's SHAPE and cannot check the webhook's SCOPE: the subscription covers
-     * one ClickUp list, so a well-formed task URL from any other list stores fine and still never
-     * auto-closes. The form copy says so; this guard must not be read as covering it.
+     * ⚠️ This checks the URL's SHAPE and cannot check whether the task is private: a private HQ
+     * task does not announce its completion, so its link stores fine and never auto-closes. The form
+     * copy says so; this guard must not be read as covering it.
      *
      * Blank stays blank: the box is optional, and both functions read '' as absent.
      */
@@ -266,7 +266,7 @@ export const promoteAction = requiresGrant(
     if (clickupUrl && !isClickupTaskUrl(clickupUrl))
       return fail(400, {
         error:
-          'That does not look like a ClickUp task link — paste the task URL from ClickUp, like https://app.clickup.com/t/868kfwm3j.',
+          'That does not look like a task link — paste the task URL from HQ, like https://hq.civitai.com/t/868kfwm3j.',
       });
 
     const promoted = await promoteFeedbackToBug({

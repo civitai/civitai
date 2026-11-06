@@ -1,6 +1,8 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
+import { listUserSubscriptionRows } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {
   getMembershipPaymentMethod,
   summarizePrepaidTokens,
@@ -24,6 +26,7 @@ import {
   type BuzzSpendType,
 } from '~/shared/constants/buzz.constants';
 import { upsertContact } from '~/server/integrations/freshdesk';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -457,10 +460,23 @@ export const getHighestPaidTierSubscription = async (userId: number) =>
  * cap helpers read as free. Excludes bad-state subs (which `getHighestTierSubscription` keeps), so a user
  * mid-failed-payment can't get a gold cap on the write path while both UIs show them the free one.
  */
-export const getCapTier = async (userId: number): Promise<string | null> => {
-  const subscriptions = (await getAllUserSubscriptions(userId)).filter((s) => !s.isBadState);
-  return pickHighestTier(subscriptions)?.tier ?? null;
+export const getCapTier = async (userId: number): Promise<string | null> =>
+  capTierOf(await getAllUserSubscriptions(userId));
+
+/**
+ * `getCapTier` through Kysely, for the placement read path (`placementPriceRange`): the same rows
+ * from the primary (a cap decides a charge), the same mapping and the same bad-state exclusion.
+ */
+export const getCapTierViaKysely = async (userId: number): Promise<string | null> => {
+  const rows = (await listUserSubscriptionRows((await loadKyselyDb()).kyselyWrite, {
+    userId,
+    excludedStatuses: activeSubscriptionStatuses.notIn,
+  })) as UserSubscriptionRow[];
+  return capTierOf(rows.map(toUserSubscription).filter((sub) => sub !== null));
 };
+
+const capTierOf = (subscriptions: NonNullable<ReturnType<typeof toUserSubscription>>[]) =>
+  pickHighestTier(subscriptions.filter((s) => !s.isBadState))?.tier ?? null;
 
 /**
  * `getCapTier` for many users in one query, keyed by user id: the same rows, the same mapping and
@@ -534,7 +550,8 @@ export const deliverMonthlyCosmetics = async ({
         SELECT
           "userId",
           COALESCE(pdl.id, pr.id) "productId",
-          NOW() as "createdAt"
+          NOW() as "createdAt",
+          (pr.metadata->>'buzzPurchase') IS NOT DISTINCT FROM 'true' as "buzzPurchase"
         FROM "CustomerSubscription" cs
         JOIN "Product" pr ON pr.id = cs."productId"
         JOIN "Price" p ON p.id = cs."priceId"
@@ -553,11 +570,12 @@ export const deliverMonthlyCosmetics = async ({
         AND "currentPeriodEnd" > NOW()
         AND "currentPeriodEnd"::date > NOW()::date -- Don't grant cosmetics on the expiration day
         AND pr.provider = 'Civitai'
-        AND pr.metadata->>'monthlyBuzz' IS NOT NULL
-        -- Buzz-purchased memberships buy perks, not the monthly badge. Explicit rather
-        -- than relying on them having no monthlyBuzz key, so adding one can't quietly
-        -- start granting badges.
-        AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
+        -- Buzz-purchased memberships earn the monthly badge whether or not their product
+        -- carries a monthlyBuzz key (prod rows hold 0; the seed omits it).
+        AND (
+          pr.metadata->>'monthlyBuzz' IS NOT NULL
+          OR (pr.metadata->>'buzzPurchase') = 'true'
+        )
       )
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
       SELECT DISTINCT
@@ -574,6 +592,13 @@ export const deliverMonthlyCosmetics = async ({
         -- their badge (cron fired 10h before the window opened, then never retried).
         AND (c."availableStart" IS NULL OR p."createdAt"::date >= c."availableStart"::date)
         AND (c."availableEnd" IS NULL OR p."createdAt"::date <= c."availableEnd"::date)
+        -- Buzz memberships get the monthly badge only: a Badge with both ends of its window
+        -- set, as upsertProductBadge creates them. Anything else (the undated Supporter
+        -- Nameplate, open-ended items) would outlive a lapse before the revoke cutoff.
+        AND (
+          NOT p."buzzPurchase"
+          OR (c.type = 'Badge' AND c."availableStart" IS NOT NULL AND c."availableEnd" IS NOT NULL)
+        )
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
@@ -715,52 +740,58 @@ export const purchaseMembershipWithBuzz = async ({
   });
 
   try {
-    await dbWrite.$transaction(async (tx) => {
-      // Re-check inside the transaction: the balance check above is a network round trip,
-      // so a concurrent purchase could have created a membership in the meantime.
-      const conflicting = await tx.customerSubscription.findFirst({
-        where: {
-          userId,
-          status: { notIn: terminalSubscriptionStatuses },
-          currentPeriodEnd: { gt: now.toDate() },
-        },
-        select: { id: true },
-      });
-      if (conflicting) throw new Error('You already have an active membership');
+    await dbWrite.$transaction(
+      async (tx) => {
+        // Re-check inside the transaction: the balance check above is a network round trip,
+        // so a concurrent purchase could have created a membership in the meantime.
+        const conflicting = await tx.customerSubscription.findFirst({
+          where: {
+            userId,
+            status: { notIn: terminalSubscriptionStatuses },
+            currentPeriodEnd: { gt: now.toDate() },
+          },
+          select: { id: true },
+        });
+        if (conflicting) throw new Error('You already have an active membership');
 
-      // Upsert rather than insert: a repeat buyer's lapsed row still holds the
-      // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
-      // conflicting check above already proved this row carries no live benefit.
-      const period = {
-        productId: price.product.id,
-        priceId: price.id,
-        status: 'active',
-        currentPeriodStart: now.toDate(),
-        currentPeriodEnd: now.add(1, 'month').toDate(),
-        // Never renews — buying another month is an explicit purchase.
-        cancelAtPeriodEnd: true,
-        cancelAt: null,
-        canceledAt: null,
-        endedAt: null,
-        metadata: {},
-      };
+        // Upsert rather than insert: a repeat buyer's lapsed row still holds the
+        // (userId, BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE) slot. Nothing is deleted — the
+        // conflicting check above already proved this row carries no live benefit.
+        const period = {
+          productId: price.product.id,
+          priceId: price.id,
+          status: 'active',
+          currentPeriodStart: now.toDate(),
+          currentPeriodEnd: now.add(1, 'month').toDate(),
+          // Never renews — buying another month is an explicit purchase.
+          cancelAtPeriodEnd: true,
+          cancelAt: null,
+          canceledAt: null,
+          endedAt: null,
+          metadata: {},
+        };
 
-      await tx.customerSubscription.upsert({
-        where: {
-          userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
-        },
-        create: {
-          id: externalTransactionId,
-          userId,
-          buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-          createdAt: now.toDate(),
-          ...period,
-        },
-        update: { ...period, updatedAt: now.toDate() },
-      });
+        await tx.customerSubscription.upsert({
+          where: {
+            userId_buzzType: { userId, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
+          },
+          create: {
+            id: externalTransactionId,
+            userId,
+            buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+            createdAt: now.toDate(),
+            ...period,
+          },
+          update: { ...period, updatedAt: now.toDate() },
+        });
 
-      // No deliverMonthlyCosmetics here: Buzz memberships don't earn the monthly badge.
-    });
+        // `tx` is load-bearing: the subscription row above is uncommitted, so a delivery on
+        // any other client reads no active sub and silently inserts nothing.
+        await deliverMonthlyCosmetics({ userIds: [userId], tx });
+      },
+      // Same allowance as code redemption, which delivers cosmetics in its transaction too.
+      { timeout: 30000 }
+    );
   } catch (error) {
     if (transactionId)
       await refundTransaction(transactionId, 'Failed to purchase membership with Buzz');
@@ -777,6 +808,18 @@ export const purchaseMembershipWithBuzz = async ({
     currentPeriodEnd: now.add(1, 'month').toDate(),
   };
 };
+
+export const liveBuzzMembershipWhere = (userId: number) => ({
+  userId,
+  buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+  status: { notIn: terminalSubscriptionStatuses },
+});
+const endedSubscriptionData = (now: Date) => ({
+  status: 'canceled',
+  canceledAt: now,
+  endedAt: now,
+  updatedAt: now,
+});
 
 /**
  * Ends a Buzz-purchased membership because the user now has a real one.
@@ -796,12 +839,8 @@ export const supersedeBuzzMembershipForPaidSubscription = async ({
 }) => {
   const now = new Date();
   const { count } = await dbWrite.customerSubscription.updateMany({
-    where: {
-      userId,
-      buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-      status: { notIn: terminalSubscriptionStatuses },
-    },
-    data: { status: 'canceled', canceledAt: now, endedAt: now, updatedAt: now },
+    where: liveBuzzMembershipWhere(userId),
+    data: endedSubscriptionData(now),
   });
 
   if (!count) return { superseded: 0 };
@@ -810,6 +849,65 @@ export const supersedeBuzzMembershipForPaidSubscription = async ({
   await invalidateSubscriptionCaches(userId);
 
   return { superseded: count };
+};
+
+/**
+ * Ends a Buzz-purchased membership on a moderator's behalf, e.g. after support refunds the Buzz.
+ *
+ * Moves no Buzz: refunding the purchase and clawing back any membership Buzz are separate steps.
+ * Cancelled rather than deleted, like `supersedeBuzzMembershipForPaidSubscription`.
+ */
+export const endBuzzMembership = async ({
+  userId,
+  moderatorId,
+}: {
+  userId: number;
+  moderatorId: number;
+}) => {
+  const { trackModActivity } = await import('~/server/services/moderator.service');
+
+  const now = new Date();
+  const ended = await dbWrite.$transaction(async (tx) => {
+    const row = await tx.customerSubscription.findFirst({
+      where: liveBuzzMembershipWhere(userId),
+      select: {
+        id: true,
+        status: true,
+        productId: true,
+        currentPeriodEnd: true,
+      },
+    });
+    if (!row) throw throwNotFoundError('This account has no Buzz-purchased membership to end.');
+
+    await tx.customerSubscription.update({
+      where: { id: row.id },
+      data: endedSubscriptionData(now),
+    });
+    await trackModActivity(
+      moderatorId,
+      { entityType: 'user', entityId: userId, activity: `endBuzzMembership:${row.productId}` },
+      tx
+    );
+
+    return row;
+  });
+
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+  // The row is already committed: a Freshdesk failure must not report the end as failed.
+  const freshdeskSynced = await syncFreshdeskMembership({ userId }).then(
+    () => true,
+    () => false
+  );
+
+  return {
+    subscriptionId: ended.id,
+    productId: ended.productId,
+    previousStatus: ended.status,
+    currentPeriodEnd: ended.currentPeriodEnd,
+    endedAt: now,
+    freshdeskSynced,
+  };
 };
 
 export const claimPrepaidToken = async ({
@@ -1203,6 +1301,9 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
     AND cs."currentPeriodEnd"::date > ${date}::date
     AND pr.provider = 'Civitai'
     AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+    -- Buzz-purchased memberships never earn monthly Buzz. Their products carry
+    -- monthlyBuzz: 0 in prod, which the line above lets through.
+    AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
   `;
 
   if (!memberships.length) {

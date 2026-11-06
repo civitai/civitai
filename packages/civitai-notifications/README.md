@@ -11,12 +11,13 @@ single caller (see [`docs/plans/notifications-monorepo-migration.md`](../../docs
 - **`CreateNotificationPendingRow`** (`./schema`) — the zod contract for a producer payload. The
   `apps/notifications` producer API validates against it; callers type against it. Single source of
   truth, moved out of the monolith's `notification.schema.ts`.
-- **Category + signal constants** (`./constants`) — `NotificationCategory` / `notificationCategories`
-  and `newNotificationSignal` (`'notification:new'`), shared with the fan-out worker.
+- **Category + signal constants** (`./constants`) — `NotificationCategory` / `notificationCategories`,
+  `newNotificationSignal` (`'notification:new'`), and `emailNotificationTypes` (the types that send
+  email, pinned to the processors with `defaultEmail` by a main-app test), shared with the fan-out worker.
 - **`createNotificationsClient(config)`** (`./client`) — the client seam. Build one client bound to your
   endpoint/token/retry + failure sink; it validates then POSTs to the app's authed, internal-only API
   (create / bulk / query / count / mark / exists / cleanup). Swapping it for a direct write is a change
-  *behind* the client.
+  _behind_ the client.
 
 ## Usage
 
@@ -47,6 +48,15 @@ await notifications.createNotification({
 hot path treat delivery as best-effort: the methods throw `NotificationsClientError` on a non-2xx or
 transport failure (transient failures are retried with backoff first), so wrap-and-log rather than
 letting it break the request.
+
+### Test runs only reach loopback
+
+When the process is a test run (`VITEST` set, or `NODE_ENV=test`), the client refuses any endpoint
+whose host is not `localhost`, `127.0.0.1` or `[::1]`: it throws `NotificationsClientError` and sends
+nothing. Point tests at a local stub or mock `fetch`. To deliberately hit a remote service from a
+test, set `CIVITAI_NOTIFICATIONS_ALLOW_REMOTE_IN_TEST=1` (only the exact value `1` counts).
+In a test run the client also refuses redirects (`redirect: 'error'`); a custom `fetch` passed in
+config must honour that option.
 
 ## Consuming (transpile requirement)
 

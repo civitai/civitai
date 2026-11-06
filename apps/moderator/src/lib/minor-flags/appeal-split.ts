@@ -23,3 +23,21 @@ export function withSplitDecisions(form: FormData): FormData {
   }
   return form;
 }
+
+/** The appeal verdict a set of per-label decisions amounts to: none lifted rejects it, any lifted
+ *  approves it (`lifted` names them), and `perLabel` is set only when the labels differ. A label left
+ *  out of `decisions` is not on the ruling and, where `perLabel` is needed, counts as overturned. */
+export function appealVerdict(decisions: Partial<Record<FlagLabel, Decision>>) {
+  const present = Object.keys(decisions) as FlagLabel[];
+  const lifted = present.filter((label) => decisions[label] === 'overturn');
+  const verdict = lifted.length ? ('Approved' as const) : ('Rejected' as const);
+  const mixed = lifted.length > 0 && lifted.length < present.length;
+  const perLabel = mixed
+    ? { minor: decisions.minor ?? 'overturn', poi: decisions.poi ?? 'overturn' }
+    : null;
+  return { verdict, lifted, perLabel } as {
+    verdict: 'Rejected' | 'Approved';
+    lifted: FlagLabel[];
+    perLabel: { minor: Decision; poi: Decision } | null;
+  };
+}

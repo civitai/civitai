@@ -52,19 +52,19 @@ export type ProjectableGenerationResource = {
   name: string;
   baseModel: string;
   strength?: number | null;
-  minStrength?: number | null;
-  maxStrength?: number | null;
+  settings?: {
+    strength?: { min: number; max: number; default: number } | null;
+    clipSkip?: number | null;
+  } | null;
   trainedWords?: string[] | null;
-  clipSkip?: number | null;
   model: { id: number; name: string; type: string };
 };
 
 /**
- * Project a resource to the public {@link SafeGenerationResource} subset. Applies
- * the SAME recommended-setting defaults `getResourceData` uses (`strength ?? 1`,
- * `minStrength ?? -1`, `maxStrength ?? 2`, `trainedWords ?? []`) so a picked
- * resource and a rehydrated one look identical to the block. `clipSkip` has no
- * server default (a resource legitimately has none) → `null`.
+ * Project a resource to the public {@link SafeGenerationResource} subset. The block keeps
+ * the FLAT strength fields (public contract), read off `settings` with the SAME defaults
+ * `getResourceData` uses, so a picked and a rehydrated resource look identical.
+ * `clipSkip` has no default (a resource legitimately has none) → `null`.
  */
 export function projectSafeGenerationResource(
   r: ProjectableGenerationResource
@@ -76,10 +76,10 @@ export function projectSafeGenerationResource(
     versionName: r.name,
     baseModel: r.baseModel,
     modelType: r.model.type,
-    strength: r.strength ?? 1,
-    minStrength: r.minStrength ?? -1,
-    maxStrength: r.maxStrength ?? 2,
+    strength: r.strength ?? r.settings?.strength?.default ?? 1,
+    minStrength: r.settings?.strength?.min ?? -1,
+    maxStrength: r.settings?.strength?.max ?? 2,
     trainedWords: r.trainedWords ?? [],
-    clipSkip: r.clipSkip ?? null,
+    clipSkip: r.settings?.clipSkip ?? null,
   };
 }

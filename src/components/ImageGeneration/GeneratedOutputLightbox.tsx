@@ -148,6 +148,9 @@ export default function GeneratedOutputLightbox({
           // and this panel had no padding at all, so its controls were flush to
           // the viewport bottom — which the cutout now sits inside.
           paddingBottom: 'var(--safe-area-inset-bottom)',
+          // Opened, the details grow upward; past this they scroll instead of leaving the screen.
+          maxHeight: '75dvh',
+          overflowY: 'auto',
         }}
       >
         {images?.[slide] && !images[slide].hideDetails && (

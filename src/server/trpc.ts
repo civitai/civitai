@@ -4,11 +4,11 @@ import {
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
+import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
-import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
-import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
+import { mutedAccountRefusal } from '~/server/services/account-restriction.service';
+import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
-import semver from 'semver';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -26,10 +26,9 @@ import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-un
 import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { FeatureAccess, FeatureAccessContext } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -68,9 +67,24 @@ onDevalueWriteFallback((error) => {
   }
 });
 
-export interface TRPCMeta {
-  /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
-  requiredScope?: number;
+/**
+ * How a procedure gates scoped tokens: one required bitmask (every bit needed), or a list of
+ * scopes of which any one admits. Never both: a meta that sets both is a type error here and
+ * refused at call time by `runEnforceTokenScope`.
+ */
+type TRPCScopeMeta =
+  | {
+      /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
+      requiredScope?: number;
+      anyOfScopes?: never;
+    }
+  | {
+      requiredScope?: never;
+      /** A scoped token passes with any one of these. An empty list refuses every scoped token. */
+      anyOfScopes: readonly number[];
+    };
+
+export type TRPCMeta = TRPCScopeMeta & {
   /**
    * When true, this procedure cannot be invoked via API key or OAuth token,
    * regardless of scope — only session auth (browser cookie) is allowed.
@@ -84,7 +98,7 @@ export interface TRPCMeta {
    * (`isFullScopeUserKey`); session auth is unaffected.
    */
   requireFullUserCredential?: boolean;
-}
+};
 
 const t = initTRPC
   .context<Context>()
@@ -129,34 +143,7 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
   return next({ ctx: { user, acceptableOrigin } });
 });
 
-// The CLIENT hash is a single global key (forced-client-update version/date
-// gating), identical for every user and procedure. needsUpdate runs on EVERY
-// web-client tRPC procedure, and tRPC batches multiple procedures per HTTP
-// request, so an uncached hGetAll here is ~1 sysRedis round-trip PER PROCEDURE
-// across all web traffic. Cache it in-process with a short TTL: gating a
-// "refresh your browser" banner tolerates a few seconds of staleness trivially,
-// and this collapses thousands of reads/s into ~1 read / TTL / pod. Only
-// successful reads are cached, so the fail-open behavior below is preserved.
-const CLIENT_CONFIG_TTL_MS = 5_000;
-let clientConfigCache: { value: Record<string, string>; expiresAt: number } | null = null;
-async function getClientConfigCached(): Promise<Record<string, string>> {
-  const now = Date.now();
-  if (clientConfigCache && clientConfigCache.expiresAt > now) return clientConfigCache.value;
-  // Wall-clock deadline so a stalled/half-open sysRedis can't park this hGetAll for
-  // OS-keepalive minutes (the sys client has no socketTimeout, and a per-command
-  // timeout can't abort a written command). This read runs on EVERY web tRPC procedure
-  // (behind the 5s cache above); a timeout here is caught by needsUpdate's try/catch
-  // below and fails open (skips the update banner), never a 500.
-  const client = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT));
-  clientConfigCache = { value: client, expiresAt: now + CLIENT_CONFIG_TTL_MS };
-  return client;
-}
-
-// TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
-  const version = req?.headers['x-client-version'] as string;
-  const date = req?.headers['x-client-date'] as string;
-
   if (!isWebClient(req?.headers)) return false;
   // Fail open: if sysRedis is unreachable, don't force a client update —
   // every tRPC call runs through enforceClientVersion, so a throw here
@@ -168,16 +155,7 @@ async function needsUpdate(req?: NextApiRequest) {
     logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
   }
-  const clientVersion = decodeRedisString(client.version);
-  if (clientVersion) {
-    if (!version || version === 'unknown') return true;
-    return semver.lt(version, clientVersion);
-  }
-  if (client.date) {
-    if (!date) return true;
-    return new Date(Number(date)) < new Date(client.date);
-  }
-  return false;
+  return clientNeedsUpdate(req?.headers, client);
 }
 
 const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
@@ -201,10 +179,9 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   //   });
   // }
   const result = await next();
-  if (await needsUpdate(ctx.req)) {
-    ctx.res?.setHeader('x-update-required', 'true');
-    ctx.cache.edgeTTL = 0;
-  }
+  // The header itself is set in the route's responseMeta: on a streamed batch the response head
+  // is already written by now, and setting it here throws.
+  if (await needsUpdate(ctx.req)) ctx.cache.edgeTTL = 0;
   return result;
 });
 
@@ -366,8 +343,9 @@ function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null |
   return user;
 }
 
+// A banned viewer is on `bannedUser`, not `user` (see `trpcViewer`), so these two read both.
 const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
-  const user = requireSignedIn(maybeUser);
+  const user = requireSignedIn(maybeUser ?? ctx.bannedUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -381,17 +359,9 @@ const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ct
 const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.muted) {
-    // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
-    // rejecting here would turn the refusal into a 500 carrying the driver's message.
-    const offer = couldAwaitTosReacceptance(user)
-      ? await shouldOfferTosReacceptance(user.id).catch(() => false)
-      : false;
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'You cannot perform this action because your account has been restricted',
-      ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
-    });
+  // The stored standing, not just the session's copy of it.
+  if (user.muted || (await isAccountMuted(user.id, !!user.muted))) {
+    throw await mutedAccountRefusal(user.id, user);
   }
 
   return next({
@@ -408,7 +378,7 @@ const isEmailVerified = middleware(({ ctx, next }) => {
       // No `cause` flag: `errorFormatter` forwards only `softBlock` and `tosReacceptRequired` onto
       // `shape.data`, so anything else set here reaches no client. The banner is the way out, and it
       // reads the session rather than the error.
-      message: 'Verify your email address to do this',
+      message: EMAIL_VERIFICATION_REQUIRED_MESSAGE,
     });
 
   return next({
@@ -429,10 +399,22 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
   });
 });
 
+// The one flag a guard names. Behind `trpcFlagGuardPerRequest` it is read from `ctx.features`, the
+// per-request lazy object `createContext` builds (`getFeatureFlagsLazy`): it evaluates only the key
+// read, once per request, through the same per-key evaluator as `getFeatureFlags`. Off, it is read
+// out of the whole registry, as before. Same answer per key either way. `?.`: a context built
+// without `features` takes the old path.
+export function guardFlagEnabled(
+  ctx: FeatureAccessContext & { features?: FeatureAccess },
+  flag: keyof FeatureAccess
+): boolean {
+  if (ctx.features?.trpcFlagGuardPerRequest) return !!ctx.features[flag];
+  return !!getFeatureFlags(ctx)[flag];
+}
+
 export const isFlagProtected = (flag: keyof FeatureAccess) =>
   middleware(({ ctx, next }) => {
-    const features = getFeatureFlags(ctx);
-    if (!features[flag]) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!guardFlagEnabled(ctx, flag)) throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
   });
@@ -469,13 +451,12 @@ export const moderatorProcedure = protectedProcedure.use(isMod);
  * for a curated non-mod cohort WITHOUT granting the mod REVIEW/curation powers
  * (those stay on `moderatorProcedure`).
  *
- * Fail-CLOSED: `getFeatureFlags` resolves `appBlocksAuthor` from Flipt when the
+ * Fail-CLOSED: the flag evaluator resolves `appBlocksAuthor` from Flipt when the
  * flag exists, else falls back to the static `availability: ['mod']` — so an
  * absent flag / Flipt-down yields mods only, never open-to-all.
  */
 const hasAppBlocksAuthor = t.middleware(({ ctx, next }) => {
-  const features = getFeatureFlags(ctx);
-  if (!features.appBlocksAuthor)
+  if (!guardFlagEnabled(ctx, 'appBlocksAuthor'))
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'You do not have access to Apps authoring',
@@ -518,7 +499,7 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
 
 const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
-  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
+  next({ ctx: { ...ctx, user: requireSignedIn(user ?? ctx.bannedUser), acceptableOrigin } })
 );
 
 /**

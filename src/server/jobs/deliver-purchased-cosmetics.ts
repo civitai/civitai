@@ -4,6 +4,11 @@ import type { RemovedUserCosmetic } from '~/server/redis/caches';
 import { refreshUserCosmeticCacheForRemoved, wornUserIds } from '~/server/redis/caches';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 
+// Civitai memberships (bought with Buzz, redeemed from a code) never get a cancelAt; they revoke
+// once their period ends, but only for periods ending on or after this date. Product decision
+// (2026-10-23): don't strip the older backlog. Moving this earlier revokes that backlog in one run.
+export const NO_CANCEL_AT_REVOKE_FROM = new Date('2026-10-24T00:00:00Z');
+
 export async function deliverMembershipCosmetics({
   now,
   lastDelivered,
@@ -54,8 +59,9 @@ export async function deliverMembershipCosmetics({
       c."productId" = s."productId"
       AND (
         -- Undated (the Supporter Nameplate): held for as long as the membership is. Civitai
-        -- members get these from deliverMonthlyCosmetics, which leaves out Buzz-purchased
-        -- memberships; the level join here would map those onto civitai-bronze.
+        -- members get these from deliverMonthlyCosmetics, which gives Buzz-purchased
+        -- memberships dated badges only; the level join here would map those onto
+        -- civitai-bronze.
         (c."availableStart" IS NULL AND c.source = 'Membership' AND s.provider <> 'Civitai')
         OR (
           -- Compare the period start, not job time: a late-paid September period is still owed
@@ -102,7 +108,29 @@ export async function deliverMembershipCosmetics({
       SELECT
       "userId"
       FROM "CustomerSubscription" cs
-      WHERE "cancelAt" <= ${lastDelivered}
+      LEFT JOIN "Product" pd ON pd.id = cs."productId"
+      WHERE (
+        cs."cancelAt" <= ${lastDelivered}
+        -- Not endedAt: jobs stamp it whenever they close a row, long after the period may have ended.
+        OR (
+          cs."cancelAt" IS NULL
+          AND pd.provider = 'Civitai'
+          AND cs."currentPeriodEnd" BETWEEN ${NO_CANCEL_AT_REVOKE_FROM} AND ${lastDelivered}
+          -- An immediate cancel or a supersede leaves the period end in the future; one before the
+          -- cutoff is backlog.
+          AND (cs."canceledAt" IS NULL OR cs."canceledAt" >= ${NO_CANCEL_AT_REVOKE_FROM})
+          -- A day of grace for a live membership whose next period isn't written yet: referral
+          -- chunks advance at :05, a renewal webhook can land after this job. By the clock, not
+          -- lastDelivered, so a manual rerun doesn't shrink it.
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "CustomerSubscription" gcs
+            WHERE gcs."userId" = cs."userId"
+              AND gcs.status IN ('active', 'trialing', 'past_due')
+              AND gcs."currentPeriodEnd" > ${now}::timestamp - interval '1 day'
+          )
+        )
+      )
         -- An old canceled subscription must not strip a member who is subscribed today,
         -- including one whose renewal payment is still being retried.
         AND NOT EXISTS (

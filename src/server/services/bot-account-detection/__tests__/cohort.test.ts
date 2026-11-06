@@ -3,11 +3,11 @@ import {
   BOT_ACCOUNT_COHORT_WINDOW_HOURS,
   COHORT_PAGE_SIZE,
   MAX_COHORT_ACCOUNTS,
+  allCommentCountArgs,
   allContentCountArgs,
   cohortCutoff,
   collectCohort,
   commentCountArgs,
-  commentV2CountArgs,
   createCohortReader,
   emptyRawPostCounts,
   imageCountArgs,
@@ -88,11 +88,9 @@ const rawFor = (
     n === undefined || n === 0 ? [] : ids.map((userId) => ({ userId, count: n }));
   return {
     comments: rows(visiblePer.comments),
-    commentsV2: [],
     models: rows(visiblePer.models),
     images: rows(visiblePer.images),
     allComments: rows(per.comments),
-    allCommentsV2: [],
     allModels: rows(per.models),
     allImages: rows(per.images),
   };
@@ -124,7 +122,7 @@ describe('the cohort cap is set against the measured signup baseline', () => {
     // looks proven, and trips for the first time on exactly the day a wave lands. Expressed in
     // PAGES so the bound holds without naming the baseline.
     expect(MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE).toBeGreaterThanOrEqual(40);
-    // Still a bound: the walk is at most this many pages, eight content reads each.
+    // Still a bound: the walk is at most this many pages, two reads per surface each.
     expect(MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE).toBeLessThanOrEqual(100);
   });
 });
@@ -177,7 +175,7 @@ describe('content-count arguments count only content a moderator can open', () =
   // uploads, hidden comments and already-removed models as "posted" — and the finding's reason
   // string then told a moderator to go and look at them.
   it('shapes every read as a per-user count over exactly the ids handed in', () => {
-    for (const build of [commentCountArgs, commentV2CountArgs, modelCountArgs, imageCountArgs]) {
+    for (const build of [commentCountArgs, modelCountArgs, imageCountArgs]) {
       const args = build([3, 4]);
       expect(args.by).toEqual(['userId']);
       expect(args._count).toEqual({ _all: true });
@@ -185,16 +183,19 @@ describe('content-count arguments count only content a moderator can open', () =
     }
   });
 
-  it('excludes hidden and TOS-flagged comments, in both comment systems', () => {
-    // `hidden` is a NULLABLE boolean, so `{ not: true }` and not `false`: `hidden: false` would
-    // drop every comment that has never been hidden, which is nearly all of them.
-    for (const build of [commentCountArgs, commentV2CountArgs]) {
-      expect(build([7]).where).toEqual({
-        userId: { in: [7] },
-        hidden: { not: true },
-        tosViolation: false,
-      });
-    }
+  it('excludes hidden, TOS-flagged and deleted comments', () => {
+    expect(commentCountArgs([7]).where).toEqual({
+      userId: { in: [7] },
+      hidden: false,
+      tosViolation: false,
+      deletedAt: null,
+    });
+  });
+
+  it('the comment membership read excludes only the author deleting it', () => {
+    // A tombstone keeps its row when it has replies, so counting it would read a deletion as
+    // posting. No moderation predicate may appear here.
+    expect(allCommentCountArgs([7]).where).toEqual({ userId: { in: [7] }, deletedAt: null });
   });
 
   it('counts only published, undeleted, un-flagged models', () => {
@@ -229,8 +230,9 @@ describe('content-count arguments count only content a moderator can open', () =
 
     // And it is genuinely a different argument from each visible read, so a refactor collapsing the
     // pair back into one builder fails here rather than silently restoring the old behaviour.
-    for (const build of [commentCountArgs, commentV2CountArgs, modelCountArgs, imageCountArgs])
+    for (const build of [modelCountArgs, imageCountArgs])
       expect(build([7]).where).not.toEqual(allContentCountArgs([7]).where);
+    expect(commentCountArgs([7]).where).not.toEqual(allCommentCountArgs([7]).where);
   });
 });
 
@@ -242,10 +244,11 @@ describe('createCohortReader', () => {
     // Each surface is asked TWICE — once with its visibility filter and once without — and answers
     // differently, so a mutant that hands the same argument to both, or reads the wrong reply into
     // the wrong field, cannot produce the expected numbers by coincidence. The two are told apart
-    // by the only thing that distinguishes them: the unfiltered read's `where` has exactly one key.
+    // by the only thing that distinguishes them: every visible read filters on `tosViolation`, and
+    // no membership read may.
     const groupBy = (label: string, visible: number, all: number) => ({
       groupBy: vi.fn(async (args: { where: Record<string, unknown> }) => {
-        const filtered = Object.keys(args.where).length > 1;
+        const filtered = 'tosViolation' in args.where;
         calls.push(`${label}.groupBy:${filtered ? 'visible' : 'all'}`);
         return [{ userId: 1, _count: { _all: filtered ? visible : all } }];
       }),
@@ -258,9 +261,8 @@ describe('createCohortReader', () => {
           return [account(1)];
         }),
       },
-      // Pairwise-distinct across all eight values, and distinct from every total they add up to.
-      comment: groupBy('comment', 2, 20),
-      commentV2: groupBy('commentV2', 3, 30),
+      // Pairwise-distinct across all six values, and distinct from every total they add up to.
+      commentV3: groupBy('commentV3', 2, 20),
       model: groupBy('model', 4, 40),
       image: groupBy('image', 5, 50),
     } satisfies CohortDb;
@@ -280,8 +282,7 @@ describe('createCohortReader', () => {
     // `postCountArgs` would be invisible to a test of the builders alone.
     const { db } = makeDb();
     await createCohortReader(db).countPosts([1]);
-    expect(db.comment.groupBy).toHaveBeenCalledWith(commentCountArgs([1]));
-    expect(db.commentV2.groupBy).toHaveBeenCalledWith(commentV2CountArgs([1]));
+    expect(db.commentV3.groupBy).toHaveBeenCalledWith(commentCountArgs([1]));
     expect(db.model.groupBy).toHaveBeenCalledWith(modelCountArgs([1]));
     expect(db.image.groupBy).toHaveBeenCalledWith(imageCountArgs([1]));
     // And they are genuinely different objects — a shared one would satisfy all four above only if
@@ -295,38 +296,35 @@ describe('createCohortReader', () => {
     // pair of reads reaching the database, per surface.
     const { db } = makeDb();
     await createCohortReader(db).countPosts([1]);
-    for (const model of [db.comment, db.commentV2, db.model, db.image]) {
+    for (const model of [db.model, db.image]) {
       expect(model.groupBy).toHaveBeenCalledWith(allContentCountArgs([1]));
       expect(model.groupBy).toHaveBeenCalledTimes(2);
     }
+    expect(db.commentV3.groupBy).toHaveBeenCalledWith(allCommentCountArgs([1]));
+    expect(db.commentV3.groupBy).toHaveBeenCalledTimes(2);
   });
 
-  it('reads both comment systems, models and images — filtered AND unfiltered, nothing else', async () => {
+  it('reads comments, models and images — filtered AND unfiltered, nothing else', async () => {
     const { db, calls } = makeDb();
     const raw = await createCohortReader(db).countPosts([1]);
     // An asserted LEDGER, sorted so it is order-independent but not membership-independent: it
-    // fails if an operation is added AND if one is removed. Dropping `commentV2` is the realistic
-    // regression — it reads as a tidy-up and turns every newer-comment-only account into a
-    // false negative. Dropping an `:all` member is the F-2 regression: membership silently goes
+    // fails if an operation is added AND if one is removed. Dropping the comment read is the realistic
+    // regression — it turns every comment-only account into a false negative. Dropping an `:all` member is the F-2 regression: membership silently goes
     // back to being decided on visible content.
     expect([...calls].sort()).toEqual([
-      'comment.groupBy:all',
-      'comment.groupBy:visible',
-      'commentV2.groupBy:all',
-      'commentV2.groupBy:visible',
+      'commentV3.groupBy:all',
+      'commentV3.groupBy:visible',
       'image.groupBy:all',
       'image.groupBy:visible',
       'model.groupBy:all',
       'model.groupBy:visible',
     ]);
-    // Eight distinct values landing in eight distinct fields: a mutant that wires a reply to the
+    // Six distinct values landing in six distinct fields: a mutant that wires a reply to the
     // wrong field cannot land on the right number.
     expect(raw.comments).toEqual([{ userId: 1, count: 2 }]);
-    expect(raw.commentsV2).toEqual([{ userId: 1, count: 3 }]);
     expect(raw.models).toEqual([{ userId: 1, count: 4 }]);
     expect(raw.images).toEqual([{ userId: 1, count: 5 }]);
     expect(raw.allComments).toEqual([{ userId: 1, count: 20 }]);
-    expect(raw.allCommentsV2).toEqual([{ userId: 1, count: 30 }]);
     expect(raw.allModels).toEqual([{ userId: 1, count: 40 }]);
     expect(raw.allImages).toEqual([{ userId: 1, count: 50 }]);
   });
@@ -340,11 +338,9 @@ describe('createCohortReader', () => {
     // empty case would arrive as `undefined` and be silently skipped by `mergePostCounts`.
     expect(Object.keys(raw).sort()).toEqual([
       'allComments',
-      'allCommentsV2',
       'allImages',
       'allModels',
       'comments',
-      'commentsV2',
       'images',
       'models',
     ]);
@@ -352,14 +348,12 @@ describe('createCohortReader', () => {
 });
 
 describe('mergePostCounts', () => {
-  it('adds both comment systems together and totals the three surfaces', () => {
+  it('totals the three surfaces', () => {
     const merged = mergePostCounts({
-      comments: [{ userId: 1, count: 2 }],
-      commentsV2: [{ userId: 1, count: 3 }],
+      comments: [{ userId: 1, count: 5 }],
       models: [{ userId: 1, count: 4 }],
       images: [{ userId: 1, count: 5 }],
-      allComments: [{ userId: 1, count: 2 }],
-      allCommentsV2: [{ userId: 1, count: 3 }],
+      allComments: [{ userId: 1, count: 5 }],
       allModels: [{ userId: 1, count: 4 }],
       allImages: [{ userId: 1, count: 5 }],
     });
@@ -371,17 +365,14 @@ describe('mergePostCounts', () => {
   });
 
   it('keeps the two sides apart, per surface', () => {
-    // 🔴 The split itself. Every one of the eight inputs is a different number and no two of the
+    // 🔴 The split itself. Every one of the six inputs is a different number and no two of the
     // twelve outputs coincide, so a mutant that reads an `all*` row into the visible side (or the
-    // reverse), or that folds `commentsV2` into the wrong half, lands on a value this cannot
-    // produce.
+    // reverse) lands on a value this cannot produce.
     const merged = mergePostCounts({
-      comments: [{ userId: 1, count: 1 }],
-      commentsV2: [{ userId: 1, count: 2 }],
+      comments: [{ userId: 1, count: 3 }],
       models: [{ userId: 1, count: 4 }],
       images: [{ userId: 1, count: 8 }],
-      allComments: [{ userId: 1, count: 16 }],
-      allCommentsV2: [{ userId: 1, count: 32 }],
+      allComments: [{ userId: 1, count: 48 }],
       allModels: [{ userId: 1, count: 64 }],
       allImages: [{ userId: 1, count: 128 }],
     });
@@ -413,7 +404,7 @@ describe('mergePostCounts', () => {
   });
 
   it('🔴 a two-direction torn read still adds up', () => {
-    // 🔴 F2. The eight reads are separate statements in ONE `Promise.all`, so two surfaces can tear
+    // 🔴 F2. The six reads are separate statements in ONE `Promise.all`, so two surfaces can tear
     // in OPPOSITE directions within one run. `excluded.total` used to be
     // `max(0, all.total - visible.total)` — derived from the totals, independently of the three
     // floored surfaces — so this fixture produced a NOT-on-site total of 2 over a breakdown summing

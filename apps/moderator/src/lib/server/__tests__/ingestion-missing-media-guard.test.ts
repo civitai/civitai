@@ -58,7 +58,8 @@ vi.mock('../db', () => ({
         () => undefined,
         () => {
           expect(table).toBe('Image');
-          return imageRow;
+          // An unblocked image with an active owner; the refusal cases live in the PGlite suite.
+          return imageRow && { blockedFor: null, needsReview: null, ...imageRow };
         }
       ),
     updateTable: (table: string) =>
@@ -183,7 +184,12 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
 
     await resolve();
 
-    expect(updates[0].filter(([m]) => m === 'where').map(([, args]) => args)).toEqual([
+    // Column comparisons only; the block and owner guards are pinned against real rows in
+    // ingestion-resolve-refusal.pglite.test.ts.
+    const columnWheres = updates[0]
+      .filter(([m, args]) => m === 'where' && typeof (args as unknown[])[0] !== 'function')
+      .map(([, args]) => args);
+    expect(columnWheres).toEqual([
       ['id', '=', 4242],
       ['ingestion', '=', 'Error'],
     ]);
@@ -193,7 +199,7 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
     headObject.mockResolvedValue({ exists: true });
     updatedRows = 0n;
 
-    await expect(resolve()).rejects.toThrow(/no longer in an ingestion error state/);
+    await expect(resolve()).rejects.toThrow(/changed since the queue loaded/);
     expect(recordModActivity).not.toHaveBeenCalled();
     expect(syncSearchIndex).not.toHaveBeenCalled();
     expect(invalidateThumbnails).not.toHaveBeenCalled();

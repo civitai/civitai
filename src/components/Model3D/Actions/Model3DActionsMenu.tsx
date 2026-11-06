@@ -4,13 +4,13 @@ import {
   Button,
   Checkbox,
   Group,
-  Menu,
   Modal,
   Paper,
   Stack,
   Text,
   UnstyledButton,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,

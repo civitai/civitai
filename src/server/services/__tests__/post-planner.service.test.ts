@@ -7,6 +7,7 @@ import type * as Caches from '~/server/redis/caches';
 import type * as ModelController from '~/server/controllers/model.controller';
 import type * as ModelVersionController from '~/server/controllers/model-version.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import { POST_BATCH_MIN_GAP_MINUTES } from '@civitai/shared/post-scheduling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
@@ -243,7 +244,7 @@ describe('reschedulePlannerPost — the expectedScope check', () => {
 describe('reschedulePlannerPost — spacing and cap against the creator’s other posts', () => {
   it('refuses a target inside the gap of another scheduled post, writing nothing', async () => {
     findUnique.mockResolvedValue(standalonePost);
-    findMany.mockResolvedValueOnce([{ publishedAt: new Date(target.getTime() + 20 * 60_000) }]);
+    findMany.mockResolvedValueOnce([{ publishedAt: new Date(target.getTime() + 3 * 60_000) }]);
 
     await expect(
       reschedulePlannerPost({ id: 11, target, expectedScope: 'post', ctx: ctxFor() })
@@ -524,7 +525,7 @@ describe('shiftPlannerPosts', () => {
   it('refuses a shift that lands inside the gap of another scheduled post, writing nothing', async () => {
     findMany
       .mockResolvedValueOnce([own(11, at(10, 7))])
-      .mockResolvedValueOnce([{ publishedAt: at(11, 17) }]);
+      .mockResolvedValueOnce([{ publishedAt: at(11, 10) }]);
 
     await expect(
       shiftPlannerPosts({ ids: [11], deltaMinutes: 60, user: OWNER })
@@ -638,7 +639,7 @@ describe('getScheduledPosts', () => {
 
     expect(result.truncated).toBe(false);
     expect(result.dailyLimit).toBe(20);
-    expect(result.minGapMinutes).toBe(30);
+    expect(result.minGapMinutes).toBe(POST_BATCH_MIN_GAP_MINUTES);
     expect(result.posts.map((post) => [post.id, post.release, post.cover])).toEqual([
       [1, null, { url: 'abc', type: 'image' }],
       [

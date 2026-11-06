@@ -22,7 +22,7 @@ export type ThirdPartyConsentContext = {
 // `isConsentRequired` input must come from a source that survives client-side
 // navigation (`useAppContext().region`, not `_app`'s SSR-only prop). Do not
 // "simplify" that back into a prop; see that file's header.
-const defaultValue: ThirdPartyConsentContext = {
+export const CONSENT_NOT_REQUIRED: ThirdPartyConsentContext = {
   consent: null,
   required: false,
   allowed: true,
@@ -31,7 +31,8 @@ const defaultValue: ThirdPartyConsentContext = {
   reset: () => undefined,
 };
 
-export const ThirdPartyConsentContext = createContext<ThirdPartyConsentContext>(defaultValue);
+export const ThirdPartyConsentContext =
+  createContext<ThirdPartyConsentContext>(CONSENT_NOT_REQUIRED);
 
 export function useThirdPartyConsent(): ThirdPartyConsentContext {
   return useContext(ThirdPartyConsentContext);

@@ -9,6 +9,7 @@ import {
   createUpdateAwareFetch,
   isFirstPartyRequest,
 } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
+import { useSiteAlertsVersionStore } from '~/components/SiteAlerts/site-alerts-version.store';
 
 const ORIGIN = 'https://civitai.com';
 
@@ -363,5 +364,26 @@ describe('createUpdateAwareFetch — the first-party arm must not swallow a reje
       (e) => ({ ok: false as const, e })
     );
     expect(settled).toEqual({ ok: false, e: boom });
+  });
+});
+
+describe('createUpdateAwareFetch — site alerts version', () => {
+  it('moves only to a strictly greater version, so a stale cached header changes nothing', async () => {
+    useSiteAlertsVersionStore.setState({ version: 0 });
+    const seen = async (version?: string) => {
+      const headers: Record<string, string> = version ? { 'x-alerts-version': version } : {};
+      const wrapped = createUpdateAwareFetch(
+        vi.fn().mockResolvedValue(responseWith(headers)),
+        ORIGIN
+      );
+      await wrapped('/api/trpc/x');
+      return useSiteAlertsVersionStore.getState().version;
+    };
+
+    expect(await seen('500')).toBe(500);
+    expect(await seen('300')).toBe(500);
+    expect(await seen()).toBe(500);
+    expect(await seen('not-a-number')).toBe(500);
+    expect(await seen('700')).toBe(700);
   });
 });

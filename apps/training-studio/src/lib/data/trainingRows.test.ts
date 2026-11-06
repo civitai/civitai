@@ -1,4 +1,4 @@
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { describe, expect, it } from 'vitest';
 import {
   ARCHIVE_TOKEN_BUDGET,
@@ -252,5 +252,58 @@ describe('workflowToDetail settings export', () => {
     expect(text).not.toContain('sig=1');
     expect(text).not.toContain('defaultSteps');
     expect(text).not.toContain('trace');
+  });
+});
+
+describe('workflowToDetail sample input images', () => {
+  it("reads an edit run's input images, index-aligned to its prompts", () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.samples = { prompts: ['ohwx, make it night'], sourceImages: ['https://x/in-a.png'] };
+    const detail = workflowToDetail(w)!;
+    expect(detail.prompts).toEqual(['ohwx, make it night']);
+    expect(detail.sourceImages).toEqual(['https://x/in-a.png']);
+  });
+
+  it('carries none for a text-only run', () => {
+    expect(workflowToDetail(workflow())!.sourceImages).toBeUndefined();
+  });
+});
+
+describe('workflowToDetail dataset', () => {
+  const editWorkflow = () => {
+    const w = workflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.isEditTraining = true;
+    input.trainingData = {
+      type: 'blobs',
+      items: [
+        { air: 'start-a', caption: '', path: 'control_1/pair_0001.png' },
+        { air: 'res-a', caption: 'add a smiley', path: 'main/pair_0001.png' },
+      ],
+    };
+    return w;
+  };
+
+  it("keeps an edit run's pair paths and counts its pairs", () => {
+    const detail = workflowToDetail(editWorkflow())!;
+    expect(detail.dataset).toEqual([
+      { air: 'start-a', caption: '', path: 'control_1/pair_0001.png' },
+      { air: 'res-a', caption: 'add a smiley', path: 'main/pair_0001.png' },
+    ]);
+    expect(detail.settings.imageCount).toBe(1);
+  });
+
+  it('offers no dataset for an edit run whose items lost their paths', () => {
+    const w = editWorkflow();
+    const input = (w.steps![0] as unknown as { input: Record<string, unknown> }).input;
+    input.trainingData = { type: 'blobs', items: [{ air: 'start-a', caption: '' }] };
+    expect(workflowToDetail(w)!.dataset).toEqual([]);
+  });
+
+  it('gives a plain run no paths', () => {
+    expect(workflowToDetail(workflow())!.dataset).toEqual([
+      { air: 'https://x/blobs/A.png?sig=1', caption: 'ohwx, 1girl' },
+    ]);
   });
 });

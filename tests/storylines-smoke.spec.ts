@@ -93,10 +93,10 @@ test.describe('storylines smoke', () => {
     // Read again once settled: toHaveCount passes at the first moment it matches.
     expect(await forks.count()).toBe(3);
 
-    await page.getByTestId('storyline-create-next').click();
+    await page.getByTestId('storyline-early-access-link').click();
     // Title and badge render whether or not the account is signed in or already on the list.
     const prompt = page.getByRole('dialog');
-    await expect(prompt.getByText('Create the next section')).toBeVisible();
+    await expect(prompt.getByText('Story tool early access')).toBeVisible();
     await expect(prompt.getByText('Coming soon')).toBeVisible();
   });
 });

@@ -4,6 +4,7 @@ import { IconMessages } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
 
+import { PRESET_MODEL_SIZES } from '~/shared/generation/preset-sizes';
 import { Page } from '~/components/AppLayout/Page';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
 import type {
@@ -16,7 +17,6 @@ import type {
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
-  COMIC_MODEL_SIZES,
 } from '~/components/Comics/comic-project-constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -37,7 +37,7 @@ const DEFAULT_MODEL = 'NanoBanana';
 
 const config: IterativeEditorConfig = {
   modelOptions: COMIC_MODEL_OPTIONS,
-  modelSizes: COMIC_MODEL_SIZES,
+  modelSizes: PRESET_MODEL_SIZES,
   modelMaxImages: COMIC_MODEL_MAX_IMAGES,
   defaultModel: DEFAULT_MODEL,
   defaultAspectRatio: '3:4',

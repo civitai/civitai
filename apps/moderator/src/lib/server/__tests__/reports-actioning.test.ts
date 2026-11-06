@@ -14,7 +14,9 @@ const redisClearResolved = vi.fn().mockResolvedValue(1);
 
 let existingReportId: number | undefined;
 /** `undefined` means the guarded UPDATE matched nothing, i.e. the status was already set. */
-let updateResult: { userId: number; alsoReportedBy: number[] | null } | undefined;
+let updateResult:
+  | { userId: number; alsoReportedBy: number[] | null; details?: unknown }
+  | undefined;
 let affectedRows: number;
 
 type Call = [string, unknown[]];
@@ -79,7 +81,14 @@ vi.mock('../db', () => ({
           ).toContain('id');
           const returning = calls.some(([m]) => m === 'returning');
           if (!returning) return { numUpdatedRows: BigInt(affectedRows) };
-          return updateResult;
+          // Only the columns the UPDATE asked for, so a payout that reads one it never returned sees nothing.
+          const columns = calls.find(([m]) => m === 'returning')![1][0] as string[];
+          return (
+            updateResult &&
+            Object.fromEntries(
+              Object.entries(updateResult).filter(([key]) => columns.includes(key))
+            )
+          );
         }
       ),
   },
@@ -187,8 +196,29 @@ describe('setReportStatus', () => {
     expect(rewardReportReporters).toHaveBeenCalledWith({
       reportId: 1,
       reporterIds: [10, 11, 12],
+      unpaidReporterIds: [],
       ip: '203.0.113.9',
     });
+  });
+
+  it('passes on the reporters the report marks as earning nothing, filer and folded-in alike', async () => {
+    updateResult = {
+      userId: 10,
+      alsoReportedBy: [11, 12],
+      details: {
+        noReportReward: true,
+        additionalReports: [
+          { userId: 11, details: { noReportReward: true } },
+          { userId: 12, details: { comment: 'me too' } },
+        ],
+      },
+    };
+
+    await setReportStatus({ id: 1, status: ReportStatus.Actioned, userId: 7 });
+
+    expect(rewardReportReporters).toHaveBeenCalledWith(
+      expect.objectContaining({ reporterIds: [10, 11, 12], unpaidReporterIds: [10, 11] })
+    );
   });
 
   it('stamps previouslyReviewedCount when actioning', async () => {

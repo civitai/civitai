@@ -103,7 +103,10 @@ import {
   setStorylineSpace,
 } from '~/server/services/storyline-placement.service';
 import { rateLimit } from '~/server/middleware.trpc';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  STORYLINE_REFUSALS,
+  STORYLINE_SUBMIT_RATE_LIMIT,
+} from '~/shared/utils/storyline-placement';
 import { isPromotionSurface } from '~/shared/utils/promotion';
 import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
@@ -174,8 +177,6 @@ function assertSurfaceRouted(surface: PlacementSurface) {
 function assertStorylinesEnabled(ctx: Context) {
   if (!ctx.features.storylines) throw throwAuthorizationError(STORYLINE_REFUSALS.notAvailable);
 }
-
-export const STORYLINE_SUBMIT_RATE_LIMIT = { limit: 30, period: 3600 } as const;
 
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
@@ -292,6 +293,8 @@ export const placementRouter = router({
    */
   createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
     assertPlacementEnabled(ctx);
+    if (input.track && !ctx.features.stickerVideoTracks)
+      throw throwAuthorizationError('placement: moving stickers are not available yet');
     return createStickerPlacement({
       ...input,
       // After the spread, and the schema has no `placerId` to strip anyway —
@@ -465,6 +468,10 @@ export const placementRouter = router({
       getRemixGalleryCardSummaries({
         imageIds: input.imageIds,
         browsingLevel: viewerBrowsingLevel(ctx, input.browsingLevel),
+        storylinesFor:
+          ctx.features.storylines && ctx.features.remixGallery
+            ? { viewer: ctx.user && { id: ctx.user.id, isModerator: ctx.user.isModerator } }
+            : undefined,
       })
     ),
 
@@ -597,7 +604,11 @@ export const placementRouter = router({
 
   getStorylineSpace: protectedProcedure.input(storylineIdSchema).query(({ input, ctx }) => {
     assertStorylinesEnabled(ctx);
-    return getStorylineSpace({ storylineId: input.storylineId, userId: ctx.user.id });
+    return getStorylineSpace({
+      storylineId: input.storylineId,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
   }),
 
   setStorylineSpace: protectedProcedure
@@ -650,11 +661,15 @@ export const placementRouter = router({
    */
   submitStorylineContinuation: guardedProcedure
     .use(
-      rateLimit({
-        limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
-        period: STORYLINE_SUBMIT_RATE_LIMIT.period,
-        errorMessage: 'storyline: too many continuations, try again later',
-      })
+      rateLimit(
+        {
+          limit: STORYLINE_SUBMIT_RATE_LIMIT.limit,
+          period: STORYLINE_SUBMIT_RATE_LIMIT.period,
+          errorMessage: STORYLINE_SUBMIT_RATE_LIMIT.errorMessage,
+        },
+        undefined,
+        { sharedKey: STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey }
+      )
     )
     .input(submitStorylineContinuationSchema)
     .mutation(({ input, ctx }) => {

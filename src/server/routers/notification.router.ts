@@ -5,16 +5,21 @@ import {
 import {
   deletePushSubscriptionInput,
   getUserNotificationsSchema,
+  markImageMilestonesReadInput,
   markReadNotificationInput,
+  toggleEmailSettingInput,
   toggleNotificationSettingInput,
   togglePushSettingInput,
   upsertPushSubscriptionInput,
 } from '~/server/schema/notification.schema';
 import {
   deletePushSubscription,
+  getUserEmailSettings,
   getUserPushSettings,
   getUserPushSubscriptions,
+  markImageMilestonesRead,
   markNotificationsRead,
+  toggleEmailSetting,
   togglePushSetting,
   upsertPushSubscription,
 } from '~/server/services/notification.service';
@@ -30,6 +35,10 @@ export const notificationRouter = router({
     .meta({ requiredScope: TokenScope.NotificationsWrite })
     .input(markReadNotificationInput)
     .mutation(({ input, ctx }) => markNotificationsRead({ ...input, userId: ctx.user.id })),
+  markImageMilestonesRead: protectedProcedure
+    .meta({ requiredScope: TokenScope.NotificationsWrite })
+    .input(markImageMilestonesReadInput)
+    .mutation(({ input, ctx }) => markImageMilestonesRead({ ...input, userId: ctx.user.id })),
   updateUserSettings: protectedProcedure
     .meta({ requiredScope: TokenScope.NotificationsWrite })
     .input(toggleNotificationSettingInput)
@@ -58,4 +67,11 @@ export const notificationRouter = router({
     .meta({ requiredScope: TokenScope.NotificationsWrite })
     .input(togglePushSettingInput)
     .mutation(({ input, ctx }) => togglePushSetting({ ...input, userId: ctx.user.id })),
+  getEmailSettings: protectedProcedure
+    .meta({ requiredScope: TokenScope.NotificationsRead })
+    .query(({ ctx }) => getUserEmailSettings({ userId: ctx.user.id })),
+  updateEmailSettings: protectedProcedure
+    .meta({ requiredScope: TokenScope.NotificationsWrite })
+    .input(toggleEmailSettingInput)
+    .mutation(({ input, ctx }) => toggleEmailSetting({ ...input, userId: ctx.user.id })),
 });

@@ -9,8 +9,8 @@ import {
   Card,
   ActionIcon,
   Loader,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { Dispatch, DragEvent, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -51,6 +51,7 @@ import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { transferSourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import { recentSourceImagesStore, sourceImageKey } from '~/store/recent-source-images.store';
 import { isConsumerBlobUrl } from '~/shared/orchestrator/blob-url';
 import {
@@ -2055,8 +2056,15 @@ SourceImageUploadMultiple.UrlDropzone = function UrlDropzone({
 SourceImageUploadMultiple.Image = function ImagePreview({
   className,
   index,
+  showDimensions = true,
+  fit = 'contain',
   ...previewItem
-}: ImagePreview & { className?: string; index: number }) {
+}: ImagePreview & {
+  className?: string;
+  index: number;
+  showDimensions?: boolean;
+  fit?: 'contain' | 'cover';
+}) {
   const {
     missingAiMetadata,
     removeItem,
@@ -2151,7 +2159,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewItem.url}
-                className="size-full object-contain"
+                className={clsx('size-full', fit === 'cover' ? 'object-cover' : 'object-contain')}
                 alt="image"
                 onError={handleError}
               />
@@ -2160,10 +2168,12 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                   <Loader size="sm" />
                 </div>
               ) : (
-                <SourceImageUploadMultiple.Dimensions
-                  width={previewItem.width}
-                  height={previewItem.height}
-                />
+                showDimensions && (
+                  <SourceImageUploadMultiple.Dimensions
+                    width={previewItem.width}
+                    height={previewItem.height}
+                  />
+                )
               )}
               {enableMetadataExtraction && (
                 <MetadataAction url={previewItem.url} apply={metadataApply} />
@@ -2299,7 +2309,10 @@ export async function uploadOrchestratorImage(
         : typeof metadataSource === 'string'
         ? metadataSource
         : undefined;
-    if (provenanceFrom && uploadedUrl) remixProvenanceStore.transfer(provenanceFrom, uploadedUrl);
+    if (provenanceFrom && uploadedUrl) {
+      remixProvenanceStore.transfer(provenanceFrom, uploadedUrl);
+      transferSourceRating(provenanceFrom, uploadedUrl);
+    }
 
     // Cached before the url reaches the value, so the dimension check does not download it again.
     if (uploadedUrl) sourceMetadataStore.setMetadata(uploadedUrl, resizedSize);

@@ -1,4 +1,7 @@
-import type { OpenAiGpt2CreateImageInput, OpenAiGpt2EditImageInput } from '@civitai/client';
+import type {
+  OpenAiGpt2CreateImageInput,
+  OpenAiGpt2EditImageInput,
+} from '@civitai/orchestration-client';
 import type {
   OpenAiGpt15CreateImageInput,
   OpenAiGpt15EditImageInput,

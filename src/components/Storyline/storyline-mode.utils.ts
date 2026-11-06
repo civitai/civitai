@@ -166,10 +166,18 @@ export function getStorylineStep(index: number, length: number, direction: 'next
   return index > 0 ? 'move' : 'stay';
 }
 
-/** Carousel navigation that stops at a storyline's ends; outside one (`onEnd` absent) it loops. */
+/**
+ * Carousel navigation that stops at a storyline's ends; outside one (`onEnd` absent) it loops.
+ * `onCloseEnd` is passed while the end-of-chapter view is open: previous closes it in place.
+ */
 export function withStorylineNavigation<
   T extends { index: number; next: () => void; previous: () => void }
->(navigation: T, length: number, onEnd: (() => void) | undefined): T {
+>(
+  navigation: T,
+  length: number,
+  onEnd: (() => void) | undefined,
+  onCloseEnd?: (() => void) | undefined
+): T {
   if (!onEnd) return navigation;
   return {
     ...navigation,
@@ -178,7 +186,9 @@ export function withStorylineNavigation<
       else navigation.next();
     },
     previous: () => {
-      if (getStorylineStep(navigation.index, length, 'previous') === 'move') navigation.previous();
+      if (onCloseEnd) onCloseEnd();
+      else if (getStorylineStep(navigation.index, length, 'previous') === 'move')
+        navigation.previous();
     },
   };
 }
@@ -211,13 +221,16 @@ export function getPathImagesPaging({
 
 /**
  * A chapter's name: its post's title, else its number (and author, where nothing else shows it); a
- * tombstone reads as its reason.
+ * tombstone reads as its reason, or `inSentence` as its number, since the reason is a sentence.
  */
 export function getStorylineChapterName(
   chapter: Pick<StorylinePathChapter, 'depth' | 'post' | 'tombstone'>,
-  { withAuthor = false }: { withAuthor?: boolean } = {}
+  { withAuthor = false, inSentence = false }: { withAuthor?: boolean; inSentence?: boolean } = {}
 ) {
-  if (!chapter.post) return getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
+  if (!chapter.post)
+    return inSentence
+      ? `Chapter ${chapter.depth + 1}`
+      : getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
   const number = `Chapter ${chapter.depth + 1}`;
   const author = withAuthor && chapter.post.username ? ` by ${chapter.post.username}` : '';
   return chapter.post.title || `${number}${author}`;

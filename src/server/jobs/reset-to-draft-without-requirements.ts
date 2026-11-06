@@ -27,7 +27,10 @@ export const resetToDraftWithoutRequirements = createJob(
         -- requirement doesn't apply. Their training sample images getting
         -- moderation-blocked would otherwise empty the auto-created post and
         -- silently unpublish a privately-published trained LoRA.
-        AND m."availability" != 'Private'::"Availability";
+        AND m."availability" != 'Private'::"Availability"
+        -- Official models have no owner showcase post by design (e.g. the default
+        -- upscaler). The no-files branch still sweeps them: a fileless one can't serve.
+        AND m."isOfficial" = false;
     `;
 
     if (modelVersionsWithoutPosts.length) {

@@ -74,10 +74,10 @@ describe('ingestImage URL allowlist (submit seam)', () => {
     // The one write is the submit-failure stamp: permanent class -> ingestion=Error,
     // so the cron terminalizes on this attempt instead of retrying forever.
     expect(captured).toHaveLength(1);
-    // Args: (template, isPermanent, ImageIngestionStatus.Error, at, errorJson, imageId).
+    // Args: (template, isPermanent, ImageIngestionStatus.Error, ...the rest, imageId).
     expect(captured[0][1]).toBe(true);
     expect(captured[0][2]).toBe('Error');
-    const errorJson = JSON.parse(String(captured[0][4]));
+    const errorJson = JSON.parse(String(captured[0].find((v) => String(v).includes('send-fail'))));
     expect(errorJson.failureType).toBe('send-fail');
     expect(errorJson.responseStatus).toBe(400);
     expect(errorJson.failureClass).toBe('permanent');
@@ -94,6 +94,26 @@ describe('ingestImage URL allowlist (submit seam)', () => {
       lane: 'unknown',
       result: 'rejected',
     });
+  });
+
+  it('an orchestrator 400 logs its problem-details body as readable text', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+    mockCreateImageIngestionRequest.mockResolvedValue({
+      data: undefined,
+      error: { title: 'Bad Request', status: 400, detail: 'mediaUrl could not be fetched' },
+      status: 400,
+      useImageScanning: false,
+    });
+
+    expect(await ingestImage({ image: image(STORAGE_KEY) })).toBe(false);
+
+    const log = loggingMock.logToAxiom.mock.calls
+      .map(([payload]) => payload as Record<string, unknown>)
+      .find((p) => p.failureType === 'send-fail');
+    expect(log).toMatchObject({ reason: 'no-workflow-response', responseStatus: 400 });
+    const text = JSON.stringify(log);
+    expect(text).not.toContain('[object Object]');
+    expect(text).toContain('mediaUrl could not be fetched');
   });
 
   it('rejects a blob: url the same way — the failed-submit fold-in', async () => {

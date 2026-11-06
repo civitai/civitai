@@ -9,7 +9,7 @@ scan, a prompt or a rule.
 | tables | `schema.sql`, in the **moderator** database |
 | sets and cases | `src/lib/server/text-scan-tests/store.ts` |
 | run worker | `src/lib/server/text-scan-tests/worker.ts` |
-| pages | the Test sets tab on `/text-scan/prompts` and `/text-scan/model-rules`; `/text-scan/test-sets/<id>` |
+| pages | the Test sets tab on `/text-scan/prompts`; `/text-scan/test-sets/<id>` |
 
 ## Apply order
 
@@ -17,7 +17,7 @@ scan, a prompt or a rule.
 2. Run `pnpm run db:moderator:pull`, then `pnpm run db:moderator:generate`. The diff should be empty:
    the models in `prisma/schema.prisma` were written to match this SQL.
 3. On `/admin`, grant `textScan.testSets.edit` to whoever curates sets or cancels another moderator's
-   run. Viewing and running sets needs only the Prompts or Model rules page grant.
+   run. Viewing and running sets needs only the Prompts page grant.
 
 `schema.sql` adds a partial unique index for free-text cases (`text_scan_test_case_free_text_key`). It
 must exist **before** the code deploys: free-text capture's `ON CONFLICT` targets it. The index build
@@ -31,7 +31,7 @@ express a partial index, so after `db:moderator:pull` the schema may need a hand
   scanned, so Buzz and calls scale with cases, not with requests. Start is refused if the set, the draft or the live
   prompts changed since the quote. Buzz is derived on the server, not taken from the form.
 - **Baseline and draft.** A run of a draft is compared with the set's baseline: its latest finished run
-  of the production prompt versions (and, for Model rules, the live rule state). A fresh baseline is
+  of the production prompt versions. A fresh baseline is
   reused, so only the draft side is scanned; a stale or missing one is queued alongside. A fresh
   baseline missing some cases (added since, or re-added with changed text, which drops that case's
   verdicts) is topped up in place; if the top-up is cancelled or fails, the baseline is done again at
@@ -66,7 +66,7 @@ the repo root with `pnpm exec tsx --env-file=.env <script>`. Keep seed files out
 
 ```bash
 pnpm exec tsx --env-file=.env apps/moderator/text-scan-test-sets/import.ts \
-  --set <name> --workspace prompts|modelRules --file <path> --format lab-seed|bench \
+  --set <name> --workspace prompts --file <path> --format lab-seed|bench \
   [--label poi|minor|scam --truth-map <value>=yes|no|skip,...] --by <moderatorId> [--write]
 ```
 

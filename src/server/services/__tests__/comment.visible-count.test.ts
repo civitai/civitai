@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads4 from '@civitai/db-queries/hot-reads-4';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { hidden, blockedBy, blocked } = vi.hoisted(() => ({
@@ -14,21 +15,35 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: async () => dbMock.dbRead,
+  // The Kysely statements are stubbed below, so the client they are handed is never used.
+  getKyselyWithoutLag: async () => ({}),
   preventReplicationLag: vi.fn(),
 }));
+// The count and the pinned block are Kysely statements; their rows, against a real database, are
+// pinned in hot-reads-4.kysely-parity.test.ts.
+vi.mock('@civitai/db-queries/hot-reads-4', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads4>()),
+  countTopLevelComments: vi.fn(),
+  listTopLevelComments: vi.fn(),
+}));
 
-const { getVisibleCommentCount, getComments, getPinnedComments } = await import(
+const queries = vi.mocked(await import('@civitai/db-queries/hot-reads-4'));
+const { topLevelCommentsWhere } = await import('../hot-reads-4.reads');
+const { getVisibleCommentCount, getComments, getPinnedCommentsViaKysely } = await import(
   '../comment.service'
 );
 
 const MODEL_ID = 10;
 const user = (isModerator = false) => ({ id: 42, isModerator } as never);
 
-const countWheres = () => dbMock.dbRead.comment.count.mock.calls.map(([arg]) => arg.where);
+/** Each count statement's filter and scope, in call order. */
+const countCalls = () =>
+  queries.countTopLevelComments.mock.calls.map(([, filter, scope]) => ({ filter, scope }));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.comment.count.mockReset();
+  queries.countTopLevelComments.mockReset().mockResolvedValue(0);
+  queries.listTopLevelComments.mockReset().mockResolvedValue([]);
   dbMock.dbRead.comment.findMany.mockReset();
   dbMock.dbRead.model.findUnique.mockReset();
   hidden.mockResolvedValue([]);
@@ -37,8 +52,8 @@ beforeEach(() => {
 });
 
 describe('getVisibleCommentCount', () => {
-  it('issues ONE count over the list where when the unpinned and pinned wheres agree', async () => {
-    dbMock.dbRead.comment.count.mockResolvedValueOnce(23);
+  it('issues ONE count over the list filter when the unpinned and pinned filters agree', async () => {
+    queries.countTopLevelComments.mockResolvedValueOnce(23);
     dbMock.dbRead.comment.findMany.mockResolvedValue([]);
 
     await expect(
@@ -47,14 +62,17 @@ describe('getVisibleCommentCount', () => {
     await getComments({ input: { modelId: MODEL_ID }, select: {}, user: user() });
 
     // Before this change the count always issued two statements (pinnedAt null + not null).
-    expect(dbMock.dbRead.comment.count).toHaveBeenCalledTimes(1);
+    expect(countCalls().map(({ scope }) => scope)).toEqual(['any']);
     // ...and read each of the viewer's exclusion lists twice, once per where. getComments reads
     // each once more, so 2 here means the count read each list once.
     for (const list of [hidden, blockedBy, blocked]) expect(list).toHaveBeenCalledTimes(2);
     const [listWhere] = dbMock.dbRead.comment.findMany.mock.calls.map(([arg]) => arg.where);
     const { pinnedAt, ...listWhereWithoutPin } = listWhere;
     expect(pinnedAt).toBeNull();
-    expect(countWheres()).toEqual([listWhereWithoutPin]);
+    // The count's filter is the one the (Prisma) list's where is built from.
+    expect(countCalls().map(({ filter }) => topLevelCommentsWhere(filter))).toEqual([
+      listWhereWithoutPin,
+    ]);
   });
 
   it('applies the same filters as the list for a non-moderator with excluded users', async () => {
@@ -63,13 +81,16 @@ describe('getVisibleCommentCount', () => {
 
     await getVisibleCommentCount({ input: { modelId: MODEL_ID }, user: user() });
 
-    expect(countWheres()).toEqual([
+    expect(countCalls()).toEqual([
       {
-        modelId: MODEL_ID,
-        userId: { notIn: [1, 2] },
-        parentId: { equals: null },
-        tosViolation: false,
-        hidden: false,
+        filter: {
+          modelId: MODEL_ID,
+          userId: undefined,
+          excludedUserIds: [1, 2],
+          excludeTosViolations: true,
+          hidden: false,
+        },
+        scope: 'any',
       },
     ]);
   });
@@ -78,12 +99,11 @@ describe('getVisibleCommentCount', () => {
     await getVisibleCommentCount({ input: { modelId: MODEL_ID, hidden: true }, user: user(true) });
 
     // Hidden replies render in their thread, not in the "See N hidden comments" modal, so the
-    // hidden count must stay top-level too.
-    expect(countWheres()).toHaveLength(1);
-    for (const where of countWheres()) {
-      expect(where.tosViolation).toBeUndefined();
-      expect(where.hidden).toBe(true);
-      expect(where.parentId).toEqual({ equals: null });
+    // hidden count must stay top-level too: the count statement reads top-level comments only.
+    expect(countCalls()).toHaveLength(1);
+    for (const { filter } of countCalls()) {
+      expect(filter.excludeTosViolations).toBe(false);
+      expect(filter.hidden).toBe(true);
     }
   });
 
@@ -93,17 +113,21 @@ describe('getVisibleCommentCount', () => {
 
     await getVisibleCommentCount({ input: { modelId: MODEL_ID }, user: user() });
 
-    const [unpinned, pinned] = countWheres();
-    expect(unpinned).toMatchObject({ pinnedAt: null });
-    expect(unpinned.userId).toBeUndefined();
-    expect(pinned).toMatchObject({ pinnedAt: { not: null } });
-    expect(pinned.userId).toEqual({ notIn: [9] });
+    const [unpinned, pinned] = countCalls();
+    expect(unpinned.scope).toBe('unpinned');
+    expect(unpinned.filter.excludedUserIds).toEqual([]);
+    expect(pinned.scope).toBe('pinned');
+    expect(pinned.filter.excludedUserIds).toEqual([9]);
   });
 });
 
-// Parity on fixtures: the count must equal what getComments + getPinnedComments return to the
-// same viewer. `count`/`findMany` evaluate the Prisma where they are given over the fixture
-// rows, so this pins the RESULT, not the shape of the query.
+// Parity on fixtures: the count must equal what the unpinned list (`getComments`, Prisma) plus the
+// pinned block (`getPinnedCommentsViaKysely`) return to the same viewer. Every read evaluates its
+// filter over the fixture rows: Prisma's `findMany` the where it is given, and the stubbed Kysely
+// count and pinned block the where `topLevelCommentsWhere` builds from their filter. So this pins
+// that the count and the lists agree when they are built from the same filter; it never runs the
+// real Kysely SQL. What that statement returns against a real database is pinned in
+// hot-reads-4.kysely-parity.test.ts.
 type Row = {
   id: number;
   modelId: number;
@@ -158,9 +182,25 @@ describe('getVisibleCommentCount parity with the lists', () => {
   beforeEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const filter = ({ where }: any) => rows.filter((r) => matches(r, where));
-    dbMock.dbRead.comment.count.mockImplementation(
-      (async (arg: unknown) => filter(arg).length) as never
-    );
+    const pinnedAt = (scope: string) =>
+      scope === 'unpinned'
+        ? { pinnedAt: null }
+        : scope === 'pinned'
+        ? { pinnedAt: { not: null } }
+        : {};
+    queries.countTopLevelComments.mockImplementation((async (
+      _db: unknown,
+      f: Parameters<typeof topLevelCommentsWhere>[0],
+      scope: string
+    ) => filter({ where: { ...topLevelCommentsWhere(f), ...pinnedAt(scope) } }).length) as never);
+    queries.listTopLevelComments.mockImplementation((async (
+      _db: unknown,
+      f: Parameters<typeof topLevelCommentsWhere>[0],
+      page: { pinned: boolean }
+    ) =>
+      filter({
+        where: { ...topLevelCommentsWhere(f), ...pinnedAt(page.pinned ? 'pinned' : 'unpinned') },
+      }).map((r) => ({ ...r, reactions: [] }))) as never);
     dbMock.dbRead.comment.findMany.mockImplementation((async (arg: unknown) =>
       filter(arg)) as never);
   });
@@ -168,7 +208,7 @@ describe('getVisibleCommentCount parity with the lists', () => {
   const listed = async (input: { modelId: number; hidden?: boolean }, viewer: never) => {
     const [list, pinned] = await Promise.all([
       getComments({ input, select: {}, user: viewer }),
-      getPinnedComments({ input, select: {}, user: viewer }),
+      getPinnedCommentsViaKysely({ input, user: viewer }),
     ]);
     return list.length + pinned.length;
   };

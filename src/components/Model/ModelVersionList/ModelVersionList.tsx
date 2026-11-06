@@ -33,6 +33,7 @@ import {
 } from '~/shared/constants/model-version-flags.constants';
 import { LoadedMark } from '~/components/ResourceLoad/ResourceResidency';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
+import { ShellButton } from '~/components/AppLayout/ShellDs/ShellDs';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -47,12 +48,16 @@ export function ModelVersionList({
   showExtraIcons,
   onVersionClick,
   showToggleCoverage = false,
+  ds: dsProp,
 }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  // The owner/moderator row joins each button to its `ModelVersionMenu` in a Mantine `Button.Group`,
+  // whose radius rules select Mantine's button class, so that row stays on Mantine.
+  const ds = !!dsProp && !showExtraIcons;
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
@@ -115,18 +120,15 @@ export function ModelVersionList({
       }
       type="never"
     >
-      <Box className={clsx(classes.leftArrow, state.atStart && classes.hidden)}>
-        <LegacyActionIcon
-          className={classes.arrowButton}
-          variant="transparent"
-          radius="xl"
+      <ArrowBox ds={ds} className={clsx(classes.leftArrow, state.atStart && classes.hidden)}>
+        <ArrowButton
+          ds={ds}
           onClick={scrollLeft}
           aria-label="Scroll versions left"
-        >
-          <IconChevronLeft />
-        </LegacyActionIcon>
-      </Box>
-      <Group gap={4} wrap="nowrap">
+          icon={<IconChevronLeft />}
+        />
+      </ArrowBox>
+      <VersionRow ds={ds}>
         {versions.map((version) => {
           const active = selected === version.id;
           const isTraining = !!version.trainingStatus;
@@ -141,21 +143,32 @@ export function ModelVersionList({
           const isEarlyAccess =
             version.paidAccess?.endsAt && new Date(version.paidAccess.endsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
-          const earlyAccessButton = (
+          const earlyAccessStyle: React.CSSProperties = {
+            // Coloured by the Buzz the gate takes, like the price chips on the buttons.
+            background: paidAccessBuzzBackground({
+              isGreen: features.isGreen,
+              acceptsBlueBuzz: acceptsBlueBuzz(version.paidAccess?.terms),
+            }),
+            width: 20,
+            height: 26,
+            borderTopLeftRadius: 0,
+            borderBottomLeftRadius: 0,
+          };
+          const earlyAccessButton = ds ? (
+            <span
+              key={`early-access-${version.id}`}
+              className={classes.earlyAccessIcon}
+              style={earlyAccessStyle}
+            >
+              <IconBolt style={{ fill: theme.white }} color="white" size={16} />
+            </span>
+          ) : (
             <ThemeIcon
               key={`early-access-${version.id}`}
               radius="sm"
               size="sm"
               style={{
-                // Coloured by the Buzz the gate takes, like the price chips on the buttons.
-                background: paidAccessBuzzBackground({
-                  isGreen: features.isGreen,
-                  acceptsBlueBuzz: acceptsBlueBuzz(version.paidAccess?.terms),
-                }),
-                width: 20,
-                height: 26,
-                borderTopLeftRadius: 0,
-                borderBottomLeftRadius: 0,
+                ...earlyAccessStyle,
                 ...(showExtraIcons
                   ? {
                       borderTopRightRadius: 0,
@@ -168,7 +181,34 @@ export function ModelVersionList({
             </ThemeIcon>
           );
 
-          const versionButton = (
+          const versionLabel = (
+            <>
+              {features.imageGeneration && generatorReadiness(version) !== 'cold' && (
+                <LoadedMark readiness={generatorReadiness(version)} />
+              )}
+              {version.name}
+            </>
+          );
+
+          const versionButton = ds ? (
+            <ShellButton
+              key={version.id}
+              ref={active ? selectedRef : undefined}
+              className="relative min-w-[calc(2.5rem*var(--mantine-scale))]"
+              variant={
+                active ? 'filled-blue' : colorScheme === 'dark' ? 'filled-gray' : 'light-gray'
+              }
+              size="compact-sm"
+              onClick={() => onVersionClick(version)}
+              style={
+                isEarlyAccess ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 } : undefined
+              }
+            >
+              <span className="flex flex-row flex-nowrap items-center justify-start gap-[calc(0.5rem*var(--mantine-scale))]">
+                {versionLabel}
+              </span>
+            </ShellButton>
+          ) : (
             <Button
               key={version.id}
               ref={active ? selectedRef : undefined}
@@ -221,13 +261,20 @@ export function ModelVersionList({
               }
             >
               <Group gap={8} wrap="nowrap">
-                {features.imageGeneration && generatorReadiness(version) !== 'cold' && (
-                  <LoadedMark readiness={generatorReadiness(version)} />
-                )}
-                {version.name}
+                {versionLabel}
               </Group>
             </Button>
           );
+
+          if (ds)
+            return (
+              <div
+                key={version.id}
+                className="flex flex-row flex-nowrap items-center justify-start gap-0"
+              >
+                {versionButton} {isEarlyAccess && earlyAccessButton}
+              </div>
+            );
 
           if (!showExtraIcons)
             return (
@@ -256,28 +303,93 @@ export function ModelVersionList({
             </Button.Group>
           );
         })}
-      </Group>
-      <Box
+      </VersionRow>
+      <ArrowBox
+        ds={ds}
         className={clsx(
           classes.rightArrow,
           (state.atEnd || !state.largerThanViewport) && classes.hidden
         )}
       >
-        <LegacyActionIcon
-          className={classes.arrowButton}
-          variant="transparent"
-          radius="xl"
+        <ArrowButton
+          ds={ds}
           onClick={scrollRight}
           aria-label="Scroll versions right"
-        >
-          <IconChevronRight />
-        </LegacyActionIcon>
-      </Box>
+          icon={<IconChevronRight />}
+        />
+      </ArrowBox>
     </ScrollArea>
   );
 }
 
+function ArrowBox({
+  ds,
+  className,
+  children,
+}: {
+  ds: boolean;
+  className: string;
+  children: React.ReactNode;
+}) {
+  return ds ? (
+    <div className={className}>{children}</div>
+  ) : (
+    <Box className={className}>{children}</Box>
+  );
+}
+
+function ArrowButton({
+  ds,
+  onClick,
+  icon,
+  'aria-label': ariaLabel,
+}: {
+  ds: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  'aria-label': string;
+}) {
+  if (ds)
+    return (
+      <ShellButton
+        className={classes.arrowButton}
+        variant="transparent-gray"
+        icon="md"
+        radius="xl"
+        onClick={onClick}
+        aria-label={ariaLabel}
+      >
+        {icon}
+      </ShellButton>
+    );
+  return (
+    <LegacyActionIcon
+      className={classes.arrowButton}
+      variant="transparent"
+      radius="xl"
+      onClick={onClick}
+      aria-label={ariaLabel}
+    >
+      {icon}
+    </LegacyActionIcon>
+  );
+}
+
+function VersionRow({ ds, children }: { ds: boolean; children: React.ReactNode }) {
+  return ds ? (
+    <div className="flex flex-row flex-nowrap items-center justify-start gap-[calc(0.25rem*var(--mantine-scale))]">
+      {children}
+    </div>
+  ) : (
+    <Group gap={4} wrap="nowrap">
+      {children}
+    </Group>
+  );
+}
+
 type Props = {
+  /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). */
+  ds?: boolean;
   versions: ModelById['modelVersions'];
   onVersionClick: (version: ModelById['modelVersions'][number]) => void;
   selected?: number;

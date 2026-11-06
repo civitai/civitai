@@ -10,7 +10,7 @@ const { mockGetWorkflow, mockQueryWorkflows, mockObserveRead } = vi.hoisted(() =
   mockObserveRead: vi.fn(),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   getWorkflow: mockGetWorkflow,
   queryWorkflows: mockQueryWorkflows,
   // unused-by-these-tests named exports referenced at module load
@@ -124,7 +124,7 @@ describe('getWorkflow error mapping', () => {
 
   it('maps a status-less TimeoutError RESOLVE (the real pre-response abort shape) to 503', async () => {
     // LOAD-BEARING contract: createOrchestratorClient does NOT set `throwOnError`, so on a
-    // fetch abort BEFORE response headers (the common park shape) the @civitai/client
+    // fetch abort BEFORE response headers (the common park shape) the @civitai/orchestration-client
     // RESOLVES with `{ data: undefined, error: <TimeoutError>, response: undefined }` — it
     // does NOT reject. So the fired backstop lands in the `if(!data)` default branch, NOT
     // the `.catch` above (which only the mid-body-read reject path hits). Assert that real

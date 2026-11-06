@@ -14,7 +14,9 @@ export default defineModeratorEndpoint('restriction.resolve', {
   notes: [
     'Clearing the mute alone resolves nothing — this is the write path that also closes the row, the subscription and the notification.',
   ],
-  rateLimit: { max: 30, windowSeconds: 60 },
+  // The moderator app's scam review rules a whole page per submit, and moderators submit pages back
+  // to back.
+  rateLimit: { max: 120, windowSeconds: 60 },
   input: z.object({
     userRestrictionId: z.coerce.number().int().positive().describe('The restriction to rule on.'),
     // Pending is not offered: it is the state being ruled on, and the service refuses anything

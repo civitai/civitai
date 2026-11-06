@@ -85,3 +85,27 @@ export function setPublicClientCors(headers: Headers, origin: string, methods = 
   headers.set('Access-Control-Allow-Headers', '*');
   headers.set('Access-Control-Allow-Methods', methods);
 }
+
+/** RFC 6749 §2.3.1 form-urlencodes each half of a Basic credential. */
+function formDecode(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, ' '));
+  } catch {
+    return value;
+  }
+}
+
+/** HTTP Basic client credentials (RFC 6749 §2.3.1), or null when the request carries none. */
+export function basicCredentials(request: Request): { id: string; secret: string } | null {
+  const header = request.headers.get('authorization') ?? '';
+  if (!/^basic /i.test(header)) return null;
+  let decoded: string;
+  try {
+    decoded = Buffer.from(header.slice(6).trim(), 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  const sep = decoded.indexOf(':');
+  if (sep < 0) return null;
+  return { id: formDecode(decoded.slice(0, sep)), secret: formDecode(decoded.slice(sep + 1)) };
+}

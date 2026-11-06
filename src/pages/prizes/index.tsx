@@ -1,4 +1,4 @@
-import { Container, Stack, Text, Title } from '@mantine/core';
+import { Button, Container, Stack, Text, Title } from '@mantine/core';
 import { useEffect } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -22,7 +22,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function PrizesPage() {
-  const { data: prizes, isLoading } = trpc.prize.getMine.useQuery();
+  const { data: prizes, isLoading, isError, refetch } = trpc.prize.getMine.useQuery();
   const utils = trpc.useUtils();
 
   // checkNotifications is staleTime: Infinity, so mirror this list's count into it to keep the
@@ -45,11 +45,18 @@ export default function PrizesPage() {
 
   return (
     <>
-      <Meta title="Your prizes | Civitai" deIndex />
+      <Meta title="Prizes | Civitai" deIndex />
       <Container size="xs" my="xl">
         <Stack gap="md">
-          <Title order={1}>Your prizes</Title>
-          {prizes?.length ? (
+          <Title order={1}>Prizes</Title>
+          {isError && !prizes ? (
+            <Stack gap="xs" align="flex-start">
+              <Text c="red">Could not load your prizes.</Text>
+              <Button variant="default" onClick={() => refetch()}>
+                Retry
+              </Button>
+            </Stack>
+          ) : prizes?.length ? (
             prizes.map((prize) => <PrizeClaimCard key={prize.id} prize={prize} />)
           ) : (
             <Text c="dimmed">You have no prizes yet.</Text>

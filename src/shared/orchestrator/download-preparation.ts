@@ -123,7 +123,7 @@ export function summarizePreparation(
 /**
  * An AIR's segments, or undefined for anything that is not one.
  *
- * Read here rather than through `~/shared/utils/air`: that module reaches `@civitai/client` and the
+ * Read here rather than through `~/shared/utils/air`: that module reaches `@civitai/orchestration-client` and the
  * ecosystem constants, and this one runs for every step of every workflow in a queue listing.
  */
 function airSegments(resource: string) {

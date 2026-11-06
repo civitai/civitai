@@ -9,13 +9,17 @@
     IconX,
     IconArrowLeft,
     IconInfoCircle,
+    IconPhotoPlus,
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
+  import { isAbort, uploadFile } from '$lib/upload';
+  import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -40,15 +44,19 @@
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
-    PARAM_HELP,
     PARAM_LABELS,
+    optimizerLrParams,
     paramDeviations,
     paramDisplay,
+    paramHelpText,
     promptHasTrigger,
     runCard,
     runExtraCapabilities,
     runParamsKey,
+    runTakesSampleImages,
+    runTrainsPairs,
     runVersion,
+    sampleImagesProblem,
     runVersionLabel,
     filledPrompts,
     teLocked,
@@ -71,7 +79,8 @@
     params = $bindable(),
     presetType = $bindable(),
     imageCount,
-    matureCount,
+    trainsPairs = false,
+    matureCount: scannedMature,
     onStart,
     onBack,
     onShowMature,
@@ -87,18 +96,29 @@
     params: Record<string, RunParams>;
     presetType: string;
     imageCount: number;
+    /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
+    trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
     onStart: (
       launched: LaunchedRun[],
-      prompts: string[],
+      prompts: SamplePrompt[],
       name: string,
-      currencies: string[]
+      currencies: string[],
+      /** The user ticked the mature-dataset Yellow confirm. */
+      matureAck: boolean,
+      matureCount: number
     ) => Promise<void>;
     onBack: () => void;
     /** Back to the Data step, filtered to the mature images. */
     onShowMature: () => void;
   } = $props();
+
+  const datasetCount = $derived(
+    trainsPairs
+      ? `${imageCount.toLocaleString()} ${imageCount === 1 ? 'pair' : 'pairs'}`
+      : mediaCount(imageCount, selection.media)
+  );
 
   let starting = $state(false);
   let startError = $state('');
@@ -113,11 +133,14 @@
     if (!needsAttestation) attestSfw = false;
   });
 
-  // Blue can't pay for mature content without a paid membership: the orchestrator takes Blue, refunds
-  // it seconds after submit, and charges the whole price in Yellow. Users read that silent switch as a
-  // billing bug, so it is warned here and confirmed at Start. Unknown membership warns too, hedged.
+  // A mature dataset is never charged in Green: the orchestrator refunds that part seconds after submit and
+  // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
+  // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
-  const blueExcluded = $derived(matureCount > 0 && membership !== true);
+  // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
+  let refusedMature = $state(0);
+  const matureCount = $derived(Math.max(scannedMature, refusedMature));
+  const mature = $derived(matureCount > 0);
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -160,6 +183,7 @@
       steps: p.steps,
       epochs: p.epochs > 0 ? p.epochs : undefined,
       imageCount: imageCount > 0 ? imageCount : undefined,
+      editTraining: runTrainsPairs(run) || undefined,
     };
   };
   // An out-of-range Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
@@ -202,6 +226,12 @@
     return sum;
   });
   const total = $derived(runTotal);
+  const spend = $derived(
+    nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
+  );
+  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
+  let ackedFor = $state<string | null>(null);
+  const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
     const cost = runCostAt(i);
     return cost == null ? null : cost.toLocaleString();
@@ -300,7 +330,7 @@
     const run = selection.runs[i]!;
     if (field === 'textEncoderLr' && teLocked(run))
       return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
-    return PARAM_HELP[field].replace('{recommended}', paramDisplay(defaultsAt(i)[field]));
+    return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
   function setField(i: number, field: ParamField, value: NumericInput | boolean) {
@@ -316,6 +346,7 @@
       return;
     }
     (p as unknown as Record<string, NumericInput | boolean>)[field] = value;
+    if (field === 'optimizer') Object.assign(p, optimizerLrParams(selection.runs[i]!, p));
     // Shuffling with nothing kept would move the trigger word away from the front of every
     // caption — keep one, as the main trainer does when a trigger is set.
     if (field === 'shuffleTokens' && value === true && trigger.trim() && Number(p.keepTokens) === 0)
@@ -336,11 +367,49 @@
     prompts = addSamplePrompt(prompts);
   }
   function removePrompt(i: number) {
-    if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
+    if (prompts.length <= 1) return;
+    clearImage(prompts[i]!.id);
+    prompts = prompts.filter((_, k) => k !== i);
   }
   function insertTrigger(i: number) {
     prompts[i]!.text = withTrigger(trigger, prompts[i]!.text);
   }
+  // Edit LoRAs are judged by how they change an input image, so their sample rows take one.
+  const takesImages = $derived(selection.runs.some(runTakesSampleImages));
+  const someRunsTextOnly = $derived(takesImages && !selection.runs.every(runTakesSampleImages));
+  const imagesProblem = $derived(takesImages ? sampleImagesProblem(prompts) : null);
+  // Keyed by prompt id. An upload outliving its row (removed mid-upload) is aborted.
+  let imageUploads = $state<Record<number, AbortController>>({});
+  let imageErrors = $state<Record<number, string>>({});
+  const uploadingImage = $derived(Object.keys(imageUploads).length > 0);
+
+  async function attachImage(id: number, file: File | undefined) {
+    if (!file) return;
+    imageUploads[id]?.abort();
+    const controller = new AbortController();
+    imageUploads[id] = controller;
+    delete imageErrors[id];
+    try {
+      const { url } = await uploadFile(file, () => {}, controller.signal);
+      if (!url) throw new Error('Upload finished but the image is not ready yet — retry.');
+      const row = prompts.find((p) => p.id === id);
+      if (row) row.image = { url, name: file.name };
+    } catch (e) {
+      if (!isAbort(e)) imageErrors[id] = e instanceof Error ? e.message : 'Upload failed';
+    } finally {
+      if (imageUploads[id] === controller) delete imageUploads[id];
+    }
+  }
+  function clearImage(id: number) {
+    imageUploads[id]?.abort();
+    const row = prompts.find((p) => p.id === id);
+    if (row) row.image = undefined;
+    delete imageErrors[id];
+  }
+  $effect(() => () => {
+    for (const controller of Object.values(imageUploads)) controller.abort();
+  });
+
   const triggerText = $derived(trigger.trim());
   const promptsMissingTrigger = $derived(
     triggerText
@@ -349,8 +418,8 @@
   );
   // Blank rows generate no sample image, so they are not counted.
   const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
-  // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
-  // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder
+  // comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
   // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
   // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:
@@ -367,9 +436,17 @@
   function start() {
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)) return;
-    const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
-    if (spend) {
+    if (
+      starting ||
+      trainingDisabled ||
+      total == null ||
+      (needsAttestation && !attestSfw) ||
+      ackMissing ||
+      imagesProblem ||
+      uploadingImage
+    )
+      return;
+    if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
       return;
@@ -385,11 +462,14 @@
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
-        prompts.map((p) => p.text),
+        prompts,
         name,
-        buzzMode.currencies
+        buzzMode.currencies,
+        ackKey !== null && !ackMissing,
+        matureCount
       );
     } catch (e) {
+      if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
       startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
@@ -413,6 +493,49 @@
       </Tooltip.Content>
     </Tooltip.Root>
   </Tooltip.Provider>
+{/snippet}
+
+{#snippet sampleImage(p: SamplePrompt)}
+  {#if imageUploads[p.id]}
+    <div class="grid size-9 shrink-0 place-items-center rounded-md border border-dark-4 bg-dark-7">
+      <Spinner class="size-4" />
+    </div>
+  {:else if p.image}
+    <div class="group relative size-9 shrink-0">
+      <img
+        src={p.image.url}
+        alt="Input for sample: {p.image.name}"
+        title={p.image.name}
+        class="size-9 rounded-md border border-dark-4 object-cover"
+      />
+      <button
+        type="button"
+        aria-label="Remove input image"
+        onclick={() => clearImage(p.id)}
+        class="absolute -right-1.5 -top-1.5 grid size-4 place-items-center rounded-full border border-dark-4 bg-dark-6 text-dark-1 opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <IconX size={10} stroke={2.5} />
+      </button>
+    </div>
+  {:else}
+    <label
+      class="grid size-9 shrink-0 cursor-pointer place-items-center rounded-md border border-dashed border-dark-4 text-dark-2 transition-colors hover:border-primary hover:text-primary"
+      title="Add an input image"
+    >
+      <IconPhotoPlus size={16} stroke={2} />
+      <input
+        type="file"
+        accept="image/*"
+        class="sr-only"
+        aria-label="Add an input image"
+        onchange={(e) => {
+          const input = e.currentTarget;
+          void attachImage(p.id, input.files?.[0]);
+          input.value = '';
+        }}
+      />
+    </label>
+  {/if}
 {/snippet}
 
 {#snippet recommendedHint(i: number, field: ParamField, display: string)}
@@ -517,7 +640,8 @@
 
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
-      <div class="flex items-center gap-1.5">
+      <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
+      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>
@@ -593,6 +717,11 @@
             </span>
           </div>
 
+          {#if trainsPairs}
+            <div class="bg-dark-6 px-4 pb-3 font-mono text-xs text-dark-2">
+              each pair seen ~{seen(i)}×
+            </div>
+          {:else}
           <div class="flex items-center gap-1 bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-buzz' : 'text-emerald-400'}">
             {#if low(i)}<IconAlertTriangle size={13} stroke={2} class="shrink-0" />{:else}<IconCheck
                 size={13}
@@ -602,6 +731,7 @@
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}, target ~${presetSeen}×`})
           </div>
+          {/if}
 
           {#if openAdv === i && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
@@ -675,6 +805,9 @@
               triggerText !== '' && p.text.trim() !== '' && !promptHasTrigger(triggerText, p.text)}
             <div class="flex flex-col gap-1">
               <div class="flex items-center gap-2">
+                {#if takesImages}
+                  {@render sampleImage(p)}
+                {/if}
                 <Input
                   bind:value={prompts[i]!.text}
                   placeholder="Describe a test scene, e.g. standing in a forest at dusk"
@@ -685,6 +818,9 @@
                   <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
                 {/if}
               </div>
+              {#if imageErrors[p.id]}
+                <div class="font-mono text-[11px] text-red-400">{imageErrors[p.id]}</div>
+              {/if}
               {#if missing}
                 <div class="flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-buzz">
                   <IconAlertTriangle size={12} stroke={2} class="shrink-0" />
@@ -709,6 +845,11 @@
             <span class="text-buzz">No sample prompt filled in: no test images will be generated.</span>
           {/if}
           Applied to every run.
+          {#if takesImages}
+            Add an input image to each prompt to render the samples as edits of it{someRunsTextOnly
+              ? ' (on the runs whose model supports it; the others sample from text)'
+              : ''}, or leave them all empty for text-only samples.
+          {/if}
           {#if triggerText}
             Each sample starts with your trigger word "{triggerText}", so the images test what the
             LoRA is learning.
@@ -718,7 +859,7 @@
     </div>
   </div>
 
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <aside class="h-fit rounded-xl lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto border border-dark-4 bg-dark-6 p-5">
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -728,7 +869,7 @@
       <div class="flex justify-between gap-2.5">
         <dt class="text-dark-2">Dataset</dt>
         <dd class="m-0 font-semibold text-dark-0">
-          {mediaCount(imageCount, selection.media)} · {labelMode === 'tag' ? 'tags' : 'captions'}
+          {datasetCount} · {trainsPairs ? 'instructions' : labelMode === 'tag' ? 'tags' : 'captions'}
         </dd>
       </div>
       <div class="flex justify-between gap-2.5">
@@ -807,28 +948,68 @@
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      ~{etaMin} min{multi ? ' · parallel' : ''} · {mediaCount(imageCount, selection.media)}
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {datasetCount}
     </div>
 
-    {#if blueExcluded}
+    {#if mature}
       <div
         role="note"
-        class="mt-3 flex items-start gap-2 rounded-lg border border-buzz/30 bg-buzz/5 p-3 text-xs leading-snug text-dark-1"
+        class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
       >
-        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-buzz" />
+        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-amber-400" />
         <span>
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
-          <strong>mature</strong> (R or above) —
-          <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
-            see which
-          </button>.
-          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
-          membership, so {membership === undefined ? 'unless you have one, ' : ''}this
-          {multi ? 'training' : 'run'} is charged in full in <span class="text-buzz">Yellow</span> Buzz.
-          {@render membershipLink()}
+          <strong>mature</strong> (R or above).
+          {#if scannedMature > 0}
+            <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
+              See which
+            </button>.
+          {/if}
+          {#if membership === true}
+            Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
+            {#if buzzMode.blueFirst}
+              <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
+              charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
+          {:else}
+            <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
+            can't pay for mature content without a membership, so {membership === undefined
+              ? 'unless you have one, '
+              : ''}this {multi ? 'training' : 'run'} is charged in full in
+            <span class="text-yellow-400">Yellow</span> Buzz.
+            {@render membershipLink()}
+          {/if}
         </span>
       </div>
+      {#if ackKey}
+        <div
+          class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+        >
+          <Checkbox
+            id="ack-mature-yellow"
+            bind:checked={() => ackedFor === ackKey, (v) => (ackedFor = v ? ackKey : null)}
+            class="mt-0.5 shrink-0"
+          />
+          <label for="ack-mature-yellow" class="cursor-pointer">
+            {#if spend}
+              I understand {spend.uncertain ? 'up to ' : ''}<strong
+                >{spend.amount.toLocaleString()} Yellow Buzz</strong
+              >
+              will be charged because this dataset has mature images.
+            {:else if buzzMode.blueFirst}
+              I understand this dataset has mature images, so anything beyond my
+              <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              I understand this dataset has mature images, so it is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
+          </label>
+        </div>
+      {/if}
     {:else}
       <BlueFirstNote class="mt-3" />
     {/if}
@@ -848,7 +1029,13 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting || trainingDisabled || total == null || (needsAttestation && !attestSfw)}
+      disabled={starting ||
+        trainingDisabled ||
+        total == null ||
+        (needsAttestation && !attestSfw) ||
+        ackMissing ||
+        !!imagesProblem ||
+        uploadingImage}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -863,6 +1050,8 @@
       </p>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
+    {:else if imagesProblem}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{imagesProblem}</p>
     {:else if total == null && !quoting}
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         We couldn't price every run right now — start is disabled until each run shows a cost.
@@ -874,11 +1063,11 @@
   </aside>
 </div>
 
-<div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
+<div class="mt-6 flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
   <Button variant="outline" onclick={onBack}>
     <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
   </Button>
-  <span class="font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
+  <span class="text-right font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
 </div>
 
 <Dialog.Root bind:open={spendDialogOpen}>
@@ -889,12 +1078,9 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if blueExcluded}
-          Your dataset was rated mature, and
-          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
-          membership{membership === undefined ? ' — unless you have one, the' : '. The'} full
-          <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your Yellow Buzz.
-          {@render membershipLink()}
+        {#if !buzzMode.blueFirst}
+          Blue Buzz first is off, so all <strong>{confirmSpend?.amount.toLocaleString()}</strong> of
+          this run will come out of your {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
         {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your

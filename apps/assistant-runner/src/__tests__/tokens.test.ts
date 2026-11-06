@@ -127,6 +127,17 @@ describe('run grants', () => {
     expect(loose?.subagents).toBe(false);
   });
 
+  it('reads a preview grant only from civitai’s claim, exactly `use: preview`', async () => {
+    const on = await verifier.grant(await signGrant(keys, grantFields, 120, { use: 'preview' }));
+    expect(on?.preview).toBe(true);
+    const off = await verifier.grant(await signGrant(keys, grantFields, 7800));
+    expect(off?.preview).toBe(false);
+    for (const use of ['Preview', 'run', true])
+      expect(
+        (await verifier.grant(await signGrant(keys, grantFields, 120, { use })))?.preview
+      ).toBe(false);
+  });
+
   it('refuses a viewer token presented as a grant (aud confusion)', async () => {
     expect(await verifier.grant(await signViewer(keys, '42'))).toBeNull();
   });

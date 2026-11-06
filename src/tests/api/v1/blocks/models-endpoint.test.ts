@@ -235,6 +235,7 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
       baseModels: 'SDXL 1.0',
       sort: 'Most Downloaded',
       limit: '20',
+      supportsGeneration: 'true',
     });
 
     const [input] = mockRunModelSearch.mock.calls[0];
@@ -248,6 +249,8 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
     expect(mockResolveModelSearchIds.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
     expect(mockResolveModelSearchIds.mock.calls[0][0].types).toEqual(['Checkpoint']);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].baseModels).toEqual(['SDXL 1.0']);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].supportsGeneration).toBe(true);
   });
 
   it('401s when no block claims were stamped (defense-in-depth; e.g. no token)', async () => {

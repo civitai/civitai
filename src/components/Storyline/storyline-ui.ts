@@ -1,6 +1,7 @@
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES, placementPriceCaption } from '~/shared/utils/placement';
 import { STORYLINE_CEILING_LEVELS, storylineLevelAllowed } from '~/shared/utils/storyline';
+import { isStorylineVerdictLevel } from '~/shared/utils/storyline-placement';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 /**
@@ -98,18 +99,72 @@ export function storylineSubmitInput({
   };
 }
 
-export type StorylineChapterLevels = { rootNsfwLevel: number | null; chapterLevels: number[] };
+/**
+ * What the editor's publish button does for a draft linked to a storyline chapter. The label and
+ * the price sent come from this one value, so what the contributor is shown is what is charged.
+ */
+export type StorylineDraftPublish =
+  | { kind: 'owner'; label: string }
+  | { kind: 'contributor'; label: string; expectedPrice: number }
+  /** The terms no longer let them continue: it publishes as a post of its own. */
+  | { kind: 'closed'; reason: StorylineClosedReason | null }
+  /** The price is being read, or re-read after it changed. */
+  | { kind: 'pending' }
+  | { kind: 'unavailable' };
+
+export function storylineDraftPublish({
+  asOwner,
+  chapterNumber,
+  terms,
+  termsPending,
+}: {
+  asOwner: boolean;
+  chapterNumber: number;
+  terms: { open: boolean; price: number; closedReason: StorylineClosedReason | null } | null;
+  /** Terms are loading or re-reading: whatever they hold is not to be sent. */
+  termsPending: boolean;
+}): StorylineDraftPublish {
+  if (asOwner) return { kind: 'owner', label: `Publish chapter ${chapterNumber}` };
+  if (termsPending) return { kind: 'pending' };
+  if (!terms) return { kind: 'unavailable' };
+  if (!terms.open) return { kind: 'closed', reason: terms.closedReason };
+  return {
+    kind: 'contributor',
+    label: `Publish and submit · ${storylinePriceLabel(terms.price)}`,
+    expectedPrice: terms.price,
+  };
+}
+
+/** Sent only for a contributor's draft: it counts against their hourly submit quota. */
+export const storylineExpectedPrice = (plan: StorylineDraftPublish | null) =>
+  plan?.kind === 'contributor' ? plan.expectedPrice : undefined;
+
+/** The new price in a `priceChanged` refusal ("… deciding: now 60 Buzz"), if it names one. */
+export function storylineChangedPrice(message: string) {
+  const price = /now (\d+) Buzz/.exec(message)?.[1];
+  return price === undefined ? null : Number(price);
+}
+
+export type StorylineChapterLevels = {
+  rootNsfwLevel: number | null;
+  /** The spark image's level, null when it holds no floor. */
+  sparkNsfwLevel?: number | null;
+  chapterLevels: number[];
+};
 
 /**
- * What a ceiling does to a storyline that already has chapters. Chapter 1 sets the floor: the
- * server refuses a ceiling below it, so a story can never open on a hidden chapter. Any later
+ * What a ceiling does to a storyline that already has chapters. Chapter 1 and the spark image set
+ * the floor: the server refuses a ceiling below either, so a story can never open on a hidden
+ * chapter or lose its credited source. Any later
  * chapter above the ceiling is hidden from readers until it is raised again. Unrated chapters
  * (level 0) are not counted; they are hidden for being unrated, whatever the ceiling.
  */
 export function storylineCeilingImpact(ceiling: number, levels: StorylineChapterLevels) {
   const fits = (postLevel: number) => storylineLevelAllowed({ postLevel, maxNsfwLevel: ceiling });
   return {
-    allowed: levels.rootNsfwLevel == null || fits(levels.rootNsfwLevel),
+    allowed:
+      (levels.rootNsfwLevel == null || fits(levels.rootNsfwLevel)) &&
+      (levels.sparkNsfwLevel == null || fits(levels.sparkNsfwLevel)),
     hidden: levels.chapterLevels.filter((level) => level > 0 && !fits(level)).length,
   };
 }
@@ -121,7 +176,13 @@ export type StorylineSubmitVerdict =
   | { allowed: true; awaitingScan: boolean }
   | {
       allowed: false;
-      reason: 'ownStoryline' | 'complete' | StorylineClosedReason | 'aboveRating' | 'notRated';
+      reason:
+        | 'ownStoryline'
+        | 'complete'
+        | StorylineClosedReason
+        | 'aboveRating'
+        | 'notRated'
+        | 'cannotSubmit';
     };
 
 /**
@@ -151,6 +212,7 @@ export function storylineSubmitVerdict({
     if (storyline.userId !== viewerId) return { allowed: false, reason: 'ownStoryline' };
     if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
     if (!postLevel) return { allowed: false, reason: 'notRated' };
+    if (isStorylineVerdictLevel(postLevel)) return { allowed: false, reason: 'cannotSubmit' };
     if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
       return { allowed: false, reason: 'aboveRating' };
     return { allowed: true, awaitingScan: false };
@@ -159,7 +221,34 @@ export function storylineSubmitVerdict({
   if (storyline.status === 'Complete') return { allowed: false, reason: 'complete' };
   if (closedReason) return { allowed: false, reason: closedReason };
   if (!postLevel) return { allowed: true, awaitingScan: true };
+  if (isStorylineVerdictLevel(postLevel)) return { allowed: false, reason: 'cannotSubmit' };
   if (!storylineLevelAllowed({ postLevel, maxNsfwLevel: storyline.maxNsfwLevel }))
     return { allowed: false, reason: 'aboveRating' };
   return { allowed: true, awaitingScan: false };
+}
+
+/** The line under the publish button, saying what publishing this draft will do. */
+export function storylineDraftPublishCaption(plan: StorylineDraftPublish) {
+  switch (plan.kind) {
+    case 'owner':
+      return 'Joins your storyline as soon as you publish.';
+    case 'contributor':
+      return `Goes to the creator for review. If they do not answer in ${STORYLINE_CONTINUATION_EXPIRY_DAYS} days it expires${
+        plan.expectedPrice > 0
+          ? ` and your ${storylinePriceLabel(plan.expectedPrice)} is refunded`
+          : ''
+      }.`;
+    case 'closed':
+      return `${
+        plan.reason === 'collaboratorsOnly'
+          ? 'Only collaborators can continue this storyline'
+          : plan.reason === 'closed'
+          ? 'This storyline is closed to new chapters'
+          : 'This post cannot be added to the storyline'
+      }, so publishing posts it on its own.`;
+    case 'pending':
+      return 'Checking what this costs…';
+    case 'unavailable':
+      return "Couldn't read what this costs. Reload the page to try again.";
+  }
 }

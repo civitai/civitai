@@ -40,6 +40,7 @@ describe('applyCrucibleTextScan', () => {
       expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
         entityId: 5,
         isNsfw,
+        level: lvl,
         greenCancels: false,
       });
     }
@@ -50,6 +51,7 @@ describe('applyCrucibleTextScan', () => {
     expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
       entityId: 5,
       isNsfw: true,
+      level: NsfwLevel.R,
       greenCancels: false,
     });
   });
@@ -69,14 +71,15 @@ describe('settleSkippedCrucibleScan', () => {
     expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
       entityId: 5,
       isNsfw: false,
+      level: NsfwLevel.PG,
       greenCancels: false,
     });
   });
 
-  it('unchanged re-applies the stored verdict', async () => {
+  it('unchanged re-applies the stored verdict at its level', async () => {
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
       status: 'Succeeded',
-      nsfwLevel: NsfwLevel.R,
+      nsfwLevel: NsfwLevel.X,
       result: { version: 1 },
     });
     await settleSkippedCrucibleScan(5, 'unchanged');
@@ -88,6 +91,7 @@ describe('settleSkippedCrucibleScan', () => {
     expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
       entityId: 5,
       isNsfw: true,
+      level: NsfwLevel.X,
       greenCancels: false,
     });
   });
@@ -105,6 +109,7 @@ describe('settleSkippedCrucibleScan', () => {
     expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
       entityId: 5,
       isNsfw: false,
+      level: nsfwLevel ?? NsfwLevel.PG,
       greenCancels: false,
     });
   });

@@ -27,7 +27,7 @@ import {
 /**
  * W13 — the shared listing ASSET step, focused on the OG-image AUTO-FILL path
  * (Accept a server-suggested icon/cover → ingest → poll the attach proc until the
- * scan lands). Browser-mode surface test (report-only in Tekton).
+ * scan lands). Browser-mode surface test (`Component tests` in CI).
  *
  * Two behaviours are asserted (the client half of the OG-pull-ingest fix):
  *  1. A freshly-ingested image is NOT attached eagerly — the row shows a

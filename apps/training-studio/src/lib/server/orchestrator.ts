@@ -1,6 +1,6 @@
 // Server half of the orchestrator reads: builds the env-configured client and delegates to the
 // client-safe cores in $lib/orchestrator-core (shared with the web-component backend).
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import { env } from '$env/dynamic/private';
 import * as core from '$lib/orchestrator-core';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';

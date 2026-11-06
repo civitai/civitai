@@ -8,29 +8,38 @@ import {
   getPreviewImagesInput,
   getShopInput,
   purchaseCosmeticShopItemInput,
+  setShopItemEventTagsInput,
+  shopItemSectionInput,
   toggleWishlistShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticInput,
   upsertCosmeticShopItemInput,
   upsertCosmeticShopSectionInput,
+  shopItemsFeaturedHistoryInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
+  addShopItemToSection,
   deleteCosmeticShopItem,
   deleteCosmeticShopSection,
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getShopItemEventTags,
+  getShopItemSections,
   getShopSections,
   getShopSectionsWithItems,
   getUserPreviewImagesForCosmetics,
   getWishlistedShopItemIds,
   purchaseCosmeticShopItem,
+  removeShopItemFromSection,
   reorderCosmeticShopSections,
+  setShopItemEventTags,
   toggleWishlistShopItem,
   upsertCosmetic,
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
 } from '~/server/services/cosmetic-shop.service';
+import { getShopItemsFeaturedHistory } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   moderatorProcedure,
   protectedProcedure,
@@ -86,16 +95,36 @@ export const cosmeticShopRouter = router({
       return upsertCosmeticShopSection({
         ...input,
         userId: ctx.user.id,
+        tracker: ctx.track,
       });
     }),
-  deleteShopSection: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => {
-    return deleteCosmeticShopSection(input);
+  deleteShopSection: moderatorProcedure.input(getByIdSchema).mutation(({ input, ctx }) => {
+    return deleteCosmeticShopSection({ ...input, tracker: ctx.track });
   }),
   updateSectionsOrder: moderatorProcedure
     .input(updateCosmeticShopSectionsOrderInput)
     .mutation(({ input }) => {
       return reorderCosmeticShopSections(input);
     }),
+  getShopItemSections: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemSections(input)),
+  addShopItemToSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input, ctx }) => addShopItemToSection({ ...input, tracker: ctx.track })),
+  removeShopItemFromSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input, ctx }) => removeShopItemFromSection({ ...input, tracker: ctx.track })),
+  getShopItemsFeaturedHistory: moderatorProcedure
+    .input(shopItemsFeaturedHistoryInput)
+    .query(({ input }) => getShopItemsFeaturedHistory(input)),
+  // Event tags are moderator data: they decide what an official section sells.
+  getShopItemEventTags: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemEventTags(input)),
+  setShopItemEventTags: moderatorProcedure
+    .input(setShopItemEventTagsInput)
+    .mutation(({ input }) => setShopItemEventTags(input)),
   // #endregion
   // #region [Public facing routes]
   getShop: publicProcedure

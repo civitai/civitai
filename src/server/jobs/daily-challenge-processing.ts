@@ -22,6 +22,8 @@ import {
   type EventContext,
   type RecentEntry,
   type SelectedResource,
+  judgeReviewCommentSql,
+  saveReviewState,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   distributeParticipationPrizes,
@@ -40,6 +42,7 @@ import {
 import {
   MAX_PLACEMENTS_PER_TICK,
   REVIEW_JOB_LOCK_SECONDS,
+  REVIEW_JOB_NAME,
   REVIEW_TICK_BUDGET_MS,
 } from '~/server/games/daily-challenge/challenge-ladder';
 import {
@@ -78,6 +81,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  DEFAULT_REVIEW_MODEL,
+  REVIEW_FALLBACK_MODEL,
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
@@ -85,6 +90,8 @@ import {
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
+import { reviewWithFallback } from '~/server/games/daily-challenge/review-fallback';
+import { reviewWithShadow } from '~/server/games/daily-challenge/review-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import {
   recordChallengeCompleted,
@@ -102,11 +109,10 @@ import {
   createBuzzTransactionMany,
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
-import { upsertComment } from '~/server/services/commentsv2.service';
 import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
-import { toggleReaction } from '~/server/services/reaction.service';
+import { writeJudgeReview } from '~/server/services/challenge-judge-review.service';
 import {
   refundUserChallengeFunds,
   buildWinnerPrizes,
@@ -530,7 +536,7 @@ const dailyChallengeSetupJob = createJob('daily-challenge-setup', '0 22 * * *', 
 );
 
 const processDailyChallengeEntriesJob = createJob(
-  'daily-challenge-process-entries',
+  REVIEW_JOB_NAME,
   '*/10 * * * *',
   reviewEntries,
   // Overrides createJob's 300s default, which this job had only inherited. Arrival placement is
@@ -936,16 +942,21 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const scoredCountMap = new Map(userScoredCounts.map((r) => [r.userId, Number(r.count)]));
   log('Users with scored entries:', scoredCountMap.size);
 
-  // Durable "already reviewed" gate: the judged tag lives in the mutable
-  // CollectionItem.tagId, which resets when an entry is removed and re-added — letting
-  // users re-roll their score. The judge's comment survives that collection churn.
+  const judgeComment = judgeReviewCommentSql(judgingConfig.userId);
   const notYetReviewedByJudge = Prisma.sql`NOT EXISTS (
-    SELECT 1 FROM "Thread" th
-    JOIN "CommentV2" cm ON cm."threadId" = th.id
-    WHERE th."imageId" = ci."imageId" AND cm."userId" = ${judgingConfig.userId}
+    SELECT 1 FROM "CommentV3" cm WHERE cm."entityId" = ci."imageId" AND ${judgeComment}
   )`;
 
-  // Get entries approved since last reviewed
+  // Paid user challenges judge EVERY new entry: entrants paid for a score, so the random
+  // sampling and per-user cap (both sized for free dailies) must not leave one unjudged.
+  const judgeAllEntries =
+    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+
+  // Paid challenges skip the since-last-review window so no entry ages out of it unjudged.
+  const reviewedSince = judgeAllEntries
+    ? Prisma.empty
+    : Prisma.sql`AND ci."reviewedAt" >= ${lastReviewedAt}`;
+
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
@@ -959,25 +970,24 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     WHERE ci."collectionId" = ${currentChallenge.collectionId}
     AND ci.status = 'ACCEPTED'
     AND ci."tagId" IS NULL
-    AND ci."reviewedAt" >= ${lastReviewedAt}
+    ${reviewedSince}
     AND ${notYetReviewedByJudge}
   `;
   log('Recent entries:', recentEntries.length);
 
-  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
-  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
-  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
-  // the participant cap. Free challenges keep the sampled selection below.
-  const judgeAllEntries =
-    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+  // Owed entries are drawn below, under their own per-tick bound.
+  const pendingReview = challengeMetadata.pendingReview ?? {};
+  const pendingIds = Object.keys(pendingReview).map(Number);
+  const owedIds = new Set(pendingIds);
+  const unowedEntries = recentEntries.filter((entry) => !owedIds.has(entry.imageId));
 
   let toReview: typeof recentEntries;
   if (judgeAllEntries) {
-    toReview = [...recentEntries];
+    toReview = [...unowedEntries];
   } else {
     // Randomly select entries to review up to the limit
     let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
-    const shuffledEntries = shuffle(recentEntries);
+    const shuffledEntries = shuffle(unowedEntries);
     toReview = [];
     const reviewingUsers = new Set<number>();
     for (const entry of shuffledEntries) {
@@ -1010,10 +1020,47 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ${notYetReviewedByJudge}
   `;
   log('Requested review:', requestReview.length);
-  // Paid review entries bypass per-user cap — users paid for guaranteed review
+  // Owed reviews: a review that failed on an earlier tick, or a moderator re-judge.
+  const pendingEntries = pendingIds.length
+    ? await dbWrite.$queryRaw<RecentEntry[]>`
+        SELECT
+          ci."imageId",
+          i."userId",
+          u."username",
+          i."url",
+          i."nsfwLevel"
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        JOIN "User" u ON u.id = i."userId"
+        WHERE ci."collectionId" = ${currentChallenge.collectionId}
+        AND ci.status = 'ACCEPTED'
+        AND ci."imageId" = ANY(${pendingIds}::int[])
+        AND ${notYetReviewedByJudge}
+      `
+    : [];
+  log('Pending review:', pendingEntries.length);
+  // Paid and owed entries bypass the per-user cap. A re-judge can owe the whole field, so owed
+  // entries are drawn at most MAX_OWED_REVIEWS_PER_TICK at a time; the rest wait for later ticks.
+  const queued = new Set(toReview.map((entry) => entry.imageId));
+  const deferredReviews = new Set<number>();
+  let owedTaken = 0;
   for (const entry of requestReview) {
+    if (queued.has(entry.imageId)) continue;
+    queued.add(entry.imageId);
     toReview.push(entry);
   }
+  for (const entry of pendingEntries) {
+    if (queued.has(entry.imageId)) continue;
+    if (owedTaken >= MAX_OWED_REVIEWS_PER_TICK) {
+      deferredReviews.add(entry.imageId);
+      continue;
+    }
+    owedTaken++;
+    queued.add(entry.imageId);
+    toReview.push(entry);
+  }
+  let reviewsSucceeded = 0;
+  const reviewsFailed = new Set<number>();
 
   // Entries that cleared the theme gate, waiting to be placed into the ladder. Collected during
   // the concurrent absolute pass and placed SERIALLY afterwards — see the note at the drain below.
@@ -1030,9 +1077,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       // double-comment.
       const [alreadyReviewed] = await dbWrite.$queryRaw<[{ exists: boolean }?]>`
         SELECT EXISTS (
-          SELECT 1 FROM "Thread" th
-          JOIN "CommentV2" cm ON cm."threadId" = th.id
-          WHERE th."imageId" = ${entry.imageId} AND cm."userId" = ${judgingConfig.userId}
+          SELECT 1 FROM "CommentV3" cm WHERE cm."entityId" = ${entry.imageId} AND ${judgeComment}
         ) AS "exists"
       `;
       if (alreadyReviewed?.exists) {
@@ -1040,19 +1085,38 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         return;
       }
 
-      const review = await generateReview({
-        theme: currentChallenge.theme,
-        themeElements,
-        resourceConcept,
-        creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
-        config: judgingConfig,
-        categories: userCategories?.map((c) => ({
-          key: c.key,
-          name: c.label,
-          criteria: c.criteria,
-        })),
-        nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+      const reviewContext = {
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+        nsfwLevel: entry.nsfwLevel,
+      };
+      const runReview = (model?: string) =>
+        generateReview({
+          theme: currentChallenge.theme,
+          themeElements,
+          resourceConcept,
+          creator: entry.username,
+          imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
+          config: judgingConfig,
+          categories: userCategories?.map((c) => ({
+            key: c.key,
+            name: c.label,
+            criteria: c.criteria,
+          })),
+          nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
+          model,
+        });
+      const review = await reviewWithShadow({
+        shadow: config.reviewShadow,
+        context: reviewContext,
+        run: (model) =>
+          model
+            ? runReview(model)
+            : reviewWithFallback({
+                run: runReview,
+                fallbackModel: REVIEW_FALLBACK_MODEL,
+                context: reviewContext,
+              }),
       });
       log('Review prepared', entry.imageId, review);
 
@@ -1063,7 +1127,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
 
       const normalizedScore = normalizeJudgeScore(review.score);
 
-      // Add tag and score note to collection item (include judgeId for tracking)
+      // Include judgeId for tracking
       const note = JSON.stringify({
         // Never persist a non-object score. `review.score` is whatever the model returned (the
         // response is cast, not parsed), and a safety-rejected entry comes back as null; stored
@@ -1073,38 +1137,17 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         judgeId: judgingConfig.judgeId,
         ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
       });
-      await dbWrite.$executeRaw`
-        UPDATE "CollectionItem"
-        SET "tagId" = ${config.judgedTagId}, note = ${note}
-        WHERE
-          "collectionId" = ${currentChallenge.collectionId}
-          AND "imageId" = ${entry.imageId};
-      `;
-      log('Tag and note added', entry.imageId);
-
-      // Send comment
-      await upsertComment({
-        userId: judgingConfig.userId,
-        entityType: 'image',
-        entityId: entry.imageId,
-        content: review.comment,
-        eventPoints: false,
+      const reactionResult = await writeJudgeReview({
+        collectionId: currentChallenge.collectionId,
+        judgedTagId: config.judgedTagId,
+        judgeUserId: judgingConfig.userId,
+        imageId: entry.imageId,
+        note,
+        comment: review.comment,
+        reaction: review.reaction,
       });
-      log('Comment sent', entry.imageId);
-
-      // Send reaction
-      try {
-        await toggleReaction({
-          entityType: 'image',
-          entityId: entry.imageId,
-          reaction: review.reaction,
-          userId: judgingConfig.userId,
-          eventPoints: false,
-        });
-        log('Reaction sent', entry.imageId);
-      } catch (error) {
-        log('Failed to send reaction', entry.imageId, review.reaction);
-      }
+      log('Review written', entry.imageId, reactionResult);
+      reviewsSucceeded++;
 
       // Hand the entry to the challenge's judging engine. Disqualified entries are never placed:
       // the theme gate is an absolute judgement about one image and a comparison cannot express
@@ -1128,8 +1171,15 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         });
       }
     } catch (error) {
+      reviewsFailed.add(entry.imageId);
       const err = error as Error;
-      logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
+      logToAxiom({
+        type: 'daily-challenge-review-error',
+        message: err.message,
+        model: DEFAULT_REVIEW_MODEL,
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+      });
       log('Failed to review entry', entry.imageId, error);
     }
   });
@@ -1390,16 +1440,62 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     }
   }
 
-  // Update last review time in Challenge metadata
-  // ----------------------------------------------
+  const pending = settlePendingReview({
+    pending: pendingReview,
+    failed: reviewsFailed,
+    deferred: deferredReviews,
+    succeeded: reviewsSucceeded,
+  });
+  if (pending.dropped.length) {
+    logToAxiom({
+      type: 'error',
+      name: 'daily-challenge-review-dropped',
+      message: `Entry review failed ${MAX_PENDING_REVIEW_ATTEMPTS} times; no longer retried`,
+      challengeId: currentChallenge.challengeId,
+      imageIds: pending.dropped,
+    }).catch(() => undefined);
+  }
   if (currentChallenge.challengeId) {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "Challenge"
-      SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"reviewedAt": ${reviewing}}'
-      WHERE id = ${currentChallenge.challengeId};
-    `);
+    await saveReviewState({
+      challengeId: currentChallenge.challengeId,
+      reviewedAt: reviewing,
+      resolved: pending.resolved,
+      retry: pending.retry,
+    });
   }
   log('Last reviewed at updated');
+}
+
+export const MAX_PENDING_REVIEW_ATTEMPTS = 3;
+export const MAX_OWED_REVIEWS_PER_TICK = 50;
+
+/**
+ * A failed entry is retried, but its attempt counts only on a tick where some review succeeded, so
+ * a provider outage retries until it recovers instead of using up the attempts. A deferred entry
+ * keeps its place; every other owed entry is resolved: judged, or no longer eligible.
+ */
+export function settlePendingReview({
+  pending,
+  failed,
+  deferred,
+  succeeded,
+}: {
+  pending: Record<string, number>;
+  failed: Set<number>;
+  deferred: Set<number>;
+  succeeded: number;
+}) {
+  const counts = succeeded > 0;
+  const retry: Record<string, number> = {};
+  const dropped: number[] = [];
+  for (const imageId of deferred) retry[imageId] = pending[imageId] ?? 0;
+  for (const imageId of failed) {
+    const attempts = (pending[imageId] ?? 0) + (counts ? 1 : 0);
+    if (attempts >= MAX_PENDING_REVIEW_ATTEMPTS) dropped.push(imageId);
+    else retry[imageId] = attempts;
+  }
+  const resolved = Object.keys(pending).filter((imageId) => !(imageId in retry));
+  return { retry, resolved, dropped };
 }
 
 /**
@@ -1529,6 +1625,19 @@ export async function pickWinnersForChallenge(
         config.defaultJudge,
         challengeJudgeRow?.judgingPrompt
       );
+
+      const stillOwed = Object.keys(
+        parseChallengeMetadata(challengeJudgeRow?.metadata).pendingReview ?? {}
+      );
+      if (stillOwed.length) {
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-completion-owed-reviews',
+          message: 'Picking winners with entries still owed a review',
+          challengeId: currentChallenge.challengeId,
+          imageIds: stillOwed,
+        }).catch(() => undefined);
+      }
 
       const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
 

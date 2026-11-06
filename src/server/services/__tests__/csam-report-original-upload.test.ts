@@ -45,9 +45,15 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   },
 }));
 
+// Off by default; the upload-request IP case switches it on.
+const ch = vi.hoisted(() => ({
+  client: undefined as { $query: (sql: string) => unknown } | undefined,
+}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
-  clickhouse: undefined,
+  get clickhouse() {
+    return ch.client;
+  },
 }));
 
 // The sent-state update is written only in production.
@@ -76,9 +82,10 @@ import {
   CSAM_SEND_DECISION_AFTER_HOURS,
   CSAM_SEND_SHORT_AFTER_HOURS,
   logBlockedCsamReports,
-  processCsamReport,
+  processCsamReport as processClaimedReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_REQUEST_IP_NOTE } from '~/server/services/image-upload-action.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
@@ -113,7 +120,37 @@ const imageRow = (id: number) => ({
   tags: [],
 });
 
-const sentUpdate = () => dbMock.dbWrite.csamReport.update.mock.calls[0]?.[0]?.data;
+// The send claims the report and works from the row it re-reads: here, the report passed in.
+let filed: CsamReportProps | undefined;
+const processCsamReport = (report: CsamReportProps) => {
+  filed = report;
+  return processClaimedReport(report);
+};
+const stamps = () =>
+  dbMock.dbWrite.csamReport.updateMany.mock.calls
+    .map(([args]) => args.data)
+    .filter((data) => data.reportSentAt);
+const sentUpdate = () => stamps()[0];
+/** Every write of the report's details on their own, apart from the claim and the sent stamp. */
+const detailWrites = () =>
+  dbMock.dbWrite.csamReport.updateMany.mock.calls
+    .map(([args]) => args.data)
+    .filter((data) => Object.keys(data).join() === 'details');
+/** Report reads return what the run has written so far, as the database would. */
+const persistWrites = () => {
+  dbMock.dbWrite.csamReport.updateMany.mockImplementation(async ({ data }) => {
+    if (filed && data.details) filed = { ...filed, details: data.details };
+    return { count: 1 };
+  });
+};
+const uploadRow = { ip: '203.0.113.5', key: 'stored-key-501', time: '2025-12-31 23:59:00' };
+const uploadEvent = {
+  ip: uploadRow.ip,
+  time: uploadRow.time,
+  type: 'Upload',
+  details: { type: 'image-upload-request', id: 501 },
+};
+const claimId = () => dbMock.dbWrite.csamReport.updateMany.mock.calls[0]?.[0]?.data.sendClaimId;
 const lines = (subType: string) =>
   vi
     .mocked(logToAxiom)
@@ -123,11 +160,12 @@ const lines = (subType: string) =>
 describe('NCMEC image upload', () => {
   beforeEach(() => {
     vi.mocked(logToAxiom).mockClear();
+    ch.client = undefined;
     submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
     uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
     submitFileDetails.mockReset().mockResolvedValue({});
     finishReport.mockReset();
-    cancelReport.mockReset();
+    cancelReport.mockReset().mockResolvedValue({ data: { responseCode: 0 } });
     // Stored as webp while the row says png: the stored bytes' own type wins.
     getObject.mockReset().mockImplementation(async () => ({
       Body: { transformToByteArray: async () => new Uint8Array(stored) },
@@ -147,7 +185,8 @@ describe('NCMEC image upload', () => {
     );
     dbMock.dbRead.image.findMany.mockResolvedValue([imageRow(501)]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
-    dbMock.dbWrite.csamReport.update.mockReset().mockResolvedValue({});
+    dbMock.dbWrite.csamReport.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(async () => filed);
     dbMock.dbWrite.$executeRaw.mockReset().mockResolvedValue(1);
   });
 
@@ -158,12 +197,96 @@ describe('NCMEC image upload', () => {
     const file = uploadFile.mock.calls[0][0].file as File;
     expect(Buffer.from(await file.arrayBuffer()).equals(stored)).toBe(true);
     expect(file.type).toBe('image/webp');
+    expect(submitReport.mock.calls[0][0]).not.toHaveProperty('additionalInfo');
+  });
+
+  it("sends the image's upload-request IP, with the note that explains it", async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+
+    await processCsamReport(report);
+
+    const reported = submitReport.mock.calls[0][0].personOrUserReported;
+    expect(reported.ipCaptureEvent).toEqual([
+      expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+    ]);
+    expect(reported.additionalInfo).toBe(`Email: user@example.invalid\n${UPLOAD_REQUEST_IP_NOTE}`);
+  });
+
+  // The upload-request rows expire; the report's own copy is the evidence that outlives them.
+  it('keeps the IP events on the report before it is sent', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    submitReport.mockRejectedValue(new Error('NCMEC down'));
+
+    await processCsamReport(report).catch(() => undefined);
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(detailWrites()).toEqual([{ details: { userActivity: [uploadEvent] } }]);
+  });
+
+  it('still sends the IP events the report kept once the rows have expired', async () => {
+    ch.client = { $query: async () => [] };
+
+    await processCsamReport({ ...report, details: { userActivity: [uploadEvent] } } as never);
+
+    expect(submitReport.mock.calls[0][0].personOrUserReported.ipCaptureEvent).toEqual([
+      expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+    ]);
+    // Nothing new to keep, so nothing is written.
+    expect(detailWrites()).toEqual([]);
+  });
+
+  it('sends and keeps an event the report already holds only once', async () => {
+    const later = { ...uploadRow, time: '2026-01-01 00:00:00' };
+    ch.client = {
+      $query: async (sql: string) =>
+        sql.includes('FROM imageUploadRequests') ? [uploadRow, later] : [],
+    };
+
+    await processCsamReport({ ...report, details: { userActivity: [uploadEvent] } } as never);
+
+    expect(
+      submitReport.mock.calls[0][0].personOrUserReported.ipCaptureEvent.map(
+        (e: { dateTime: Date }) => e.dateTime.toISOString()
+      )
+    ).toEqual(['2025-12-31T23:59:00.000Z', '2026-01-01T00:00:00.000Z']);
+    expect(detailWrites()).toEqual([
+      { details: { userActivity: [uploadEvent, { ...uploadEvent, time: later.time }] } },
+    ]);
+  });
+
+  it('sends nothing when the claim is lost while keeping the IP events', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    dbMock.dbWrite.csamReport.updateMany.mockImplementation(async ({ data }) => ({
+      count: Object.keys(data).join() === 'details' ? 0 : 1,
+    }));
+
+    await processCsamReport(report);
+
+    expect(submitReport).not.toHaveBeenCalled();
+    expect(lines('send-claim-lost')).toHaveLength(1);
+  });
+
+  it('marks the report sent without dropping the IP events it kept', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    persistWrites();
+
+    await processCsamReport(report);
+
+    expect(sentUpdate().details.userActivity).toEqual([uploadEvent]);
   });
 
   it('records the sha256 in the same update that marks the report sent', async () => {
     await processCsamReport(report);
 
-    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
+    expect(stamps()).toHaveLength(1);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(sentUpdate().reportSentAt).toBeInstanceOf(Date);
     expect(sentUpdate().details.images).toEqual([
@@ -192,7 +315,7 @@ describe('NCMEC image upload', () => {
 
       expect(submitReport).not.toHaveBeenCalled();
       expect(cancelReport).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(stamps()).toHaveLength(0);
     });
 
     it('opens once and cancels once when a file that checked out cannot then be read', async () => {
@@ -205,13 +328,14 @@ describe('NCMEC image upload', () => {
       expect(cancelReport).toHaveBeenCalledTimes(1);
       expect(cancelReport).toHaveBeenCalledWith({ id: 99 });
       expect(finishReport).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(stamps()).toHaveLength(0);
       expect(lines('archive-data')).toEqual([
         expect.objectContaining({ reportId: report.id, ncmecReportId: 99 }),
       ]);
       expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
         JSON.stringify({ 501: 1 }),
         report.id,
+        claimId(),
       ]);
     });
 
@@ -227,7 +351,7 @@ describe('NCMEC image upload', () => {
       expect(submitReport).toHaveBeenCalledTimes(1);
       expect(cancelReport).toHaveBeenCalledTimes(1);
       expect(finishReport).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(stamps()).toHaveLength(0);
     });
 
     it('records a file gone by the time it is read, and sends the rest', async () => {
@@ -348,6 +472,7 @@ describe('NCMEC image upload', () => {
       expect(dbMock.dbWrite.$executeRaw.mock.calls.at(-1)?.slice(1)).toEqual([
         JSON.stringify({ 501: 1, 502: 1 }),
         report.id,
+        claimId(),
       ]);
       expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
         cancelReport.mock.invocationCallOrder[0]
@@ -381,16 +506,22 @@ describe('NCMEC image upload', () => {
       ]);
     });
 
-    it('logs both ids before cancelling, even when the cancel fails', async () => {
+    it('logs both ids before cancelling, and keeps the id for the next run when the cancel fails', async () => {
       headObject.mockResolvedValue({ ContentLength: stored.length });
       getObject.mockRejectedValue(storageOutage());
       cancelReport.mockRejectedValue(new Error('synthetic NCMEC outage'));
 
-      await expect(processCsamReport(report)).rejects.toThrow('synthetic NCMEC outage');
+      await processCsamReport(report);
 
       expect(lines('archive-data')).toEqual([
         expect.objectContaining({ reportId: report.id, ncmecReportId: 99 }),
       ]);
+      expect(lines('send-cancel-failed')).toEqual([
+        expect.objectContaining({ reportId: report.id, ncmecReportId: 99 }),
+      ]);
+      const writes = dbMock.dbWrite.csamReport.updateMany.mock.calls.map(([args]) => args.data);
+      expect(writes).toContainEqual({ reportId: 99 });
+      expect(writes).not.toContainEqual(expect.objectContaining({ reportId: null }));
     });
   });
 
@@ -445,8 +576,10 @@ describe('NCMEC image upload', () => {
 
       expect(recordedFailures()).toEqual([
         {
-          sql: expect.stringMatching(/WHERE id = \? AND "reportSentAt" IS NULL/),
-          values: [JSON.stringify({ 502: 4 }), report.id],
+          sql: expect.stringMatching(
+            /WHERE id = \? AND "sendClaimId" = \?::uuid AND "reportSentAt" IS NULL/
+          ),
+          values: [JSON.stringify({ 502: 4 }), report.id, claimId()],
         },
       ]);
       expect(submitReport).not.toHaveBeenCalled();
@@ -456,14 +589,14 @@ describe('NCMEC image upload', () => {
       await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS - 1, { 502: 5 }));
 
       expect(submitReport).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(stamps()).toHaveLength(0);
     });
 
     it('holds the report back at the limit on the first failed read of that file, as after an outage', async () => {
       await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS));
 
       expect(submitReport).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(stamps()).toHaveLength(0);
     });
 
     it('sends without it at the limit on its second failed read, keeping the readable file', async () => {
@@ -472,7 +605,7 @@ describe('NCMEC image upload', () => {
       expect(cancelReport).not.toHaveBeenCalled();
       expect(finishReport).toHaveBeenCalledTimes(1);
       expect(uploadFile).toHaveBeenCalledTimes(1);
-      expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
+      expect(stamps()).toHaveLength(1);
       expect(sentUpdate().reportSentAt).toBeInstanceOf(Date);
       expect(sentUpdate().details.readFailures).toEqual({ 502: 2 });
       expect(sentUpdate().details.images).toEqual([
@@ -487,6 +620,9 @@ describe('NCMEC image upload', () => {
       expect(lines('send-short')).toEqual([
         expect.objectContaining({ reportId: report.id, filesMissing: 1, filesAbsent: 0 }),
       ]);
+      expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
+        '1 file(s) named in this report could not be read from storage after repeated attempts and are not included.'
+      );
     });
 
     it('holds the report at the limit while any one unreadable file has failed only once', async () => {
@@ -506,7 +642,7 @@ describe('NCMEC image upload', () => {
       } as CsamReportProps);
 
       expect(submitReport).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+      expect(stamps()).toHaveLength(0);
     });
 
     it('holds a report whose only other file is gone, however often this one failed', async () => {
@@ -538,7 +674,7 @@ describe('NCMEC image upload', () => {
 
         await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS + 1, { 501: 9, 502: 9 }));
         expect(submitReport).not.toHaveBeenCalled();
-        expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+        expect(stamps()).toHaveLength(0);
       });
 
       it('asks for a decision once it has been blocked past the decision limit', async () => {
@@ -595,6 +731,9 @@ describe('NCMEC image upload', () => {
       expect(lines('send-short')).toEqual([
         expect.objectContaining({ reportId: report.id, filesMissing: 1, filesAbsent: 1 }),
       ]);
+      expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
+        '1 file(s) named in this report are no longer stored and are not included.'
+      );
     });
   });
 

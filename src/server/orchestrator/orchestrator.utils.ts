@@ -1,18 +1,21 @@
-import type { WorkflowCallback } from '@civitai/client';
+import type { WorkflowCallback } from '@civitai/orchestration-client';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { withSignals } from '~/server/signals/wrapper';
 
-export function getOrchestratorCallbacks(userId: number): Array<WorkflowCallback> | undefined {
+export function getOrchestratorCallbacks(
+  userId: number,
+  { remixApp = false }: { remixApp?: boolean } = {}
+): Array<WorkflowCallback> | undefined {
   if (!env.SIGNALS_ENDPOINT) return;
-  return [
-    {
-      url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TextToImageUpdate}`,
-      type: ['step:*'],
-      // type: ['workflow:*', 'step:*'],
-      // type: ['workflow:*', 'step:*', 'job:*'],
-    },
-  ];
+  const topics = [SignalMessages.TextToImageUpdate];
+  if (remixApp) topics.push(SignalMessages.RemixAppUpdate);
+  return topics.map((topic) => ({
+    url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${topic}`,
+    type: ['step:*'],
+    // type: ['workflow:*', 'step:*'],
+    // type: ['workflow:*', 'step:*', 'job:*'],
+  }));
 }
 
 /** Generic workflow callbacks — used for non-generation workflows (prompt enhancement, etc.) */

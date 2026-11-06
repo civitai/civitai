@@ -96,7 +96,12 @@ function fakeRes() {
 async function invoke(query: Record<string, unknown>, method = 'GET') {
   const mod = await import('~/pages/api/v1/blocks/generation-resources');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
-  const req = { method, query, headers: {}, url: '/api/v1/blocks/generation-resources' } as unknown as NextApiRequest;
+  const req = {
+    method,
+    query,
+    headers: {},
+    url: '/api/v1/blocks/generation-resources',
+  } as unknown as NextApiRequest;
   const res = fakeRes();
   await handler(req, res);
   return res;
@@ -109,10 +114,8 @@ function row(over: Partial<Record<string, unknown>> = {}) {
     name: 'v1',
     baseModel: 'SDXL 1.0',
     strength: 0.7,
-    minStrength: -1,
-    maxStrength: 2,
+    settings: { strength: { min: -1, max: 2, default: 0.7 }, clipSkip: 2 },
     trainedWords: ['w'],
-    clipSkip: 2,
     model: { id: 1, name: 'M', type: 'LORA', nsfw: false },
     image: { id: 9, url: 'u', nsfwLevel: NsfwLevel.PG },
     hasAccess: true,
@@ -163,7 +166,13 @@ describe('/api/v1/blocks/generation-resources — projection + clamp + bounds', 
       row({ id: 100, hasAccess: true, availability: 'Public' }),
       // getResourceData returns Draft/Private/Unpublished rows with hasAccess=false;
       // they must NOT leak their name/trainedWords.
-      row({ id: 200, hasAccess: false, availability: 'Private', name: 'secret-v', trainedWords: ['secretTrigger'] }),
+      row({
+        id: 200,
+        hasAccess: false,
+        availability: 'Private',
+        name: 'secret-v',
+        trainedWords: ['secretTrigger'],
+      }),
     ]);
     const res = await invoke({ ids: '100,200' });
 

@@ -25,7 +25,7 @@ export const WILDCARD_FETCH_TIMEOUT_MS = 30_000;
 
 // Strip a UTF-8 BOM + NUL bytes at the decode boundary (mirrors the canonical
 // server parser's `decodeUtf8`) so downstream splitting/parsing sees clean text.
-function decodeUtf8(bytes: Uint8Array): string {
+export function decodeUtf8(bytes: Uint8Array): string {
   let start = 0;
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) start = 3;
   return new TextDecoder().decode(start ? bytes.subarray(start) : bytes).replace(/\0/g, '');
@@ -36,7 +36,7 @@ function decodeUtf8(bytes: Uint8Array): string {
 // accessor the server parser (`getEntryUncompressedSize`) also uses. Returns
 // null when absent (a streamed zip without CD size info) so the bounded read is
 // the authoritative guard.
-function declaredUncompressedSize(entry: JSZip.JSZipObject): number | null {
+export function declaredUncompressedSize(entry: JSZip.JSZipObject): number | null {
   const data = (entry as unknown as { _data?: { uncompressedSize?: number } })._data;
   return typeof data?.uncompressedSize === 'number' ? data.uncompressedSize : null;
 }

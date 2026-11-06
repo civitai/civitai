@@ -16,7 +16,7 @@ export default defineConfig(({ mode }) => {
     // dev server.
     server: { watch: { ignored: ['**/*.tmp.*'] } },
 
-    // The workspace @civitai/* packages ship raw TS (main: ./src/index.ts). @civitai/client is a
+    // The workspace @civitai/* packages ship raw TS (main: ./src/index.ts). @civitai/orchestration-client is a
     // built ESM package whose index.js bare-re-exports a directory (`export * from './generated'`)
     // with no `exports` map, which Node's SSR resolver rejects (ERR_UNSUPPORTED_DIR_IMPORT). Both
     // need Vite to bundle them rather than hand them to Node.
@@ -25,7 +25,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/auth',
         '@civitai/axiom',
         '@civitai/brand',
-        '@civitai/client',
+        '@civitai/orchestration-client',
         '@civitai/db',
         '@civitai/db-schema',
         '@civitai/redis',

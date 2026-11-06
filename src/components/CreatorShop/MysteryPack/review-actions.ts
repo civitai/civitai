@@ -11,9 +11,12 @@ export function reviewActions({
   hasEdit,
   hasLive,
   loaded,
+  takenDown = false,
 }: {
   status: CosmeticShopItemStatus;
   isMysteryPack: boolean;
+  /** `meta.takedown` is set: a takedown ran, and retrying it pays whatever it still owes. */
+  takenDown?: boolean;
   /** A mystery pack's pending edit, from its review read. */
   hasEdit: boolean;
   /** Whether the pack has an approved version, from the same read. */
@@ -26,6 +29,7 @@ export function reviewActions({
     return {
       revert: live,
       remove: live,
+      retryTakedown: takenDown && status === CosmeticShopItemStatus.Archived,
       verdicts: !live,
       blocked: false,
       rejectLabel: 'Reject',
@@ -39,6 +43,7 @@ export function reviewActions({
     // Revert needs no edit named, so it doesn't wait for the read.
     revert: live,
     remove: false,
+    retryTakedown: false,
     // A rejected pack takes no edits, so it never qualifies.
     verdicts: hasEdit || status === CosmeticShopItemStatus.PendingReview,
     blocked: !loaded,

@@ -99,6 +99,8 @@ export default MixedAuthEndpoint(async function handler(
         limit,
         browsingLevel,
         types: data.types,
+        baseModels: data.baseModels,
+        supportsGeneration: data.supportsGeneration,
       });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;

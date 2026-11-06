@@ -55,7 +55,13 @@
 // ./filterable-attributes.ts and ./sortable-attributes.ts keep it out of the filter/sort oracle;
 // and THIS list keeps it out of free-text matching. The argument for writing that id at all is at
 // the projection site in ./models.search-index.ts.
-export const modelsSearchableAttributes = ['name', 'user.username', 'hashes', 'triggerWords'];
+export const modelsSearchableAttributes = [
+  'name',
+  'sfwName',
+  'user.username',
+  'hashes',
+  'triggerWords',
+];
 
 // 🔴 FROZEN, and the freeze is what makes hoisting this list a net improvement rather than a wider
 // hazard. ./displayed-attributes.ts records the measurement: that list went from a mutable

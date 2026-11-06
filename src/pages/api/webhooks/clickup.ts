@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
@@ -9,6 +8,7 @@ import {
   clickupDoneStatusFromPayload,
   resolveBugsByClickupTaskId,
 } from '~/server/services/bug.service';
+import { PayloadTooLarge, readRawBody } from '~/server/utils/raw-body';
 
 // ClickUp signs the raw request body — disable Next's parser.
 export const config = {
@@ -19,25 +19,6 @@ export const config = {
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'clickup-webhook', ...data }, 'webhooks').catch(() => null);
-
-// Next's own 1 MB cap goes away with bodyParser: false, and the body is buffered
-// BEFORE the signature can be checked — so the limit has to be re-imposed here or
-// any unauthenticated caller can size the allocation.
-const MAX_BODY_BYTES = 1_000_000;
-
-class PayloadTooLarge extends Error {}
-
-async function buffer(readable: Readable) {
-  const chunks = [];
-  let size = 0;
-  for await (const chunk of readable) {
-    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-    size += buf.length;
-    if (size > MAX_BODY_BYTES) throw new PayloadTooLarge();
-    chunks.push(buf);
-  }
-  return Buffer.concat(chunks);
-}
 
 function isValidSignature(rawBody: Buffer, signatureHeader: string, secret: string) {
   const digest = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
@@ -63,7 +44,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   let rawBody: Buffer;
   try {
-    rawBody = await buffer(req);
+    rawBody = await readRawBody(req);
   } catch (error: any) {
     if (error instanceof PayloadTooLarge) {
       await log({ type: 'error', message: 'Body exceeded the size cap' });

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive, navCount, navHref, switcherEntries } from '$lib/nav-links';
+import {
+  isNavLinkActive,
+  navBadge,
+  navCount,
+  navHref,
+  navPartial,
+  switcherEntries,
+} from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
@@ -10,6 +17,7 @@ import {
   PERMISSIONS,
   permissionKey,
 } from '$lib/server/access';
+import { reportCountKey } from '$lib/reports';
 
 const at = (href: string) => new URL(href, 'https://mod.test');
 
@@ -144,6 +152,40 @@ describe('the Models section', () => {
     ).toBe('modelFlagsNeedsReview');
   });
 
+  it('marks the Models badge partial while Needs review could not be counted', () => {
+    applyGrants({
+      [AUTO]: ['moderator:reviewer'],
+      [NEEDS_REVIEW]: ['moderator:reviewer'],
+      [DETECTIONS]: ['moderator:reviewer'],
+      [MATCHES]: ['moderator:reviewer'],
+    });
+    const models = navForUser(reviewer).find((l) => l.label === 'Models')!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    expect(navPartial(needsReview()!, unavailable(['modelFlagsNeedsReview']))).toBe(true);
+    // A count the viewer's badge does not sum leaves it whole.
+    expect(navPartial(models, unavailable(['modelFlagsNeedsReviewMatches']))).toBe(false);
+    expect(navPartial(models, unavailable([]))).toBe(false);
+  });
+
+  it('leaves a group whole when only an informational count is unavailable', () => {
+    const images = NAVIGATION.find((n) => n.children?.some((c) => c.path === '/images/to-ingest'))!;
+    const unavailable = (keys: string[]) => (key: string) => keys.includes(key);
+    expect(navPartial(images, unavailable(['stuckIngestion']))).toBe(false);
+    expect(navPartial(images, unavailable(['ingestionErrors']))).toBe(true);
+  });
+
+  it('writes a partial badge with a "+", and "?+" when nothing in it was counted', () => {
+    expect(navBadge(423, true)).toEqual({ text: '423+', partial: true });
+    expect(navBadge(null, true)).toEqual({ text: '?+', partial: true });
+    expect(navBadge(423, false)).toEqual({ text: '423', partial: false });
+    expect(navBadge(null, false)).toBeNull();
+    expect(navBadge(1746, true, (n) => n.toLocaleString('en-US'))).toEqual({
+      text: '1,746+',
+      partial: true,
+    });
+  });
+
   it('lets a user holding only Appeals open Appeals and nothing else', () => {
     applyGrants({ [APPEALS]: ['moderator:reviewer'] });
     expect(flags()?.children?.map((c) => c.path)).toEqual([APPEALS]);
@@ -198,6 +240,33 @@ describe('CSAM text holds', () => {
   });
 });
 
+describe('Image Reports under Images', () => {
+  const IMAGE_REPORTS = '/reports/image';
+  const imagesGroup = () => navForUser(reviewer).find((l) => l.label === 'Images');
+
+  it('is listed under Images for whoever holds Reports, and only for them', () => {
+    applyGrants({ '/reports': ['moderator:reviewer'], '/images/minor': ['moderator:reviewer'] });
+    expect(imagesGroup()?.children?.map((c) => c.path)).toContain(IMAGE_REPORTS);
+
+    applyGrants({ '/images/minor': ['moderator:reviewer'] });
+    expect(imagesGroup()?.children?.map((c) => c.path)).not.toContain(IMAGE_REPORTS);
+  });
+
+  it('does not open Images, or count toward its badge, on its own', () => {
+    applyGrants({ '/reports': ['moderator:reviewer'] });
+    expect(imagesGroup()).toBeUndefined();
+
+    applyGrants({ '/reports': ['moderator:reviewer'], '/images/minor': ['moderator:reviewer'] });
+    const counts: Record<string, number> = { minor: 2, [reportCountKey('image')]: 5 };
+    expect(navCount(imagesGroup()!, (k) => (k ? counts[k] ?? null : null))).toBe(2);
+  });
+
+  it('is granted where it lives, not as a page of Images', () => {
+    const images = pageAccessState().tree.find((n) => n.key === '/images');
+    expect(images?.children.map((c) => c.key)).not.toContain(IMAGE_REPORTS);
+  });
+});
+
 describe('/admin grantable pages', () => {
   const tree = pageAccessState().tree;
   const keys = (node: { children: { key: string }[] } | undefined) =>
@@ -218,6 +287,7 @@ describe('/admin grantable pages', () => {
       '/models/flags/appeals',
       '/models/flags/auto',
       '/models/flags/needs-review',
+      '/models/rule-matches',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/needs-review')).toBe(true);
@@ -250,6 +320,7 @@ describe('the text-scan lab', () => {
       ['/csam/text-holds', 'CSAM holds'],
       ['/text-scan/prompts', 'Prompts'],
       ['/text-scan/model-rules', 'Model rules'],
+      ['/text-scan/shadow-sexual-prompt', 'Shadow sexual prompt'],
     ]);
   });
 
@@ -271,12 +342,14 @@ describe('the Model rules history endpoint', () => {
 describe('the Feedback section', () => {
   const feedback = () => NAVIGATION.find((n) => n.path === '/feedback');
   const platformHref = '/feedback?area=apps-platform&status=new';
+  const orchestrationHref = '/feedback?area=orchestration&status=new';
 
   it('keeps one grant, on /feedback, for the queue and its developer-platform view', () => {
     expect(feedback()?.sharedAccess).toBe(true);
     expect(feedback()?.children?.map((c) => [c.path, c.countKey])).toEqual([
       ['/feedback', 'feedbackNew'],
       [platformHref, 'feedbackAppsPlatformNew'],
+      [orchestrationHref, 'feedbackOrchestrationNew'],
     ]);
     const { tree, granted } = pageAccessState();
     expect(tree.filter((n) => n.key.startsWith('/feedback')).map((n) => [n.key, n.kind])).toEqual([
@@ -290,6 +363,7 @@ describe('the Feedback section', () => {
     expect(labelsUnder('Feedback')).toEqual([
       ['/feedback', 'General queue'],
       [platformHref, 'Apps platform (developers)'],
+      [orchestrationHref, 'Generation & training errors'],
     ]);
     expect(canAccess(reviewer, '/feedback')).toBe(true);
     expect(canAccess(reviewer, '/feedback/12')).toBe(true);
@@ -370,5 +444,46 @@ describe('switcherEntries', () => {
 
   it('skips a group with no reachable page', () => {
     expect(switcherEntries([{ label: 'Empty', children: [] }], civitai)).toEqual([]);
+  });
+});
+
+describe('Model rule matches', () => {
+  it('sits under Models with its own grant, apart from the model flag queues', () => {
+    applyGrants({ '/models/rule-matches': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/models/rule-matches')).toBe(true);
+    expect(canAccess(reviewer, '/models/flags/needs-review')).toBe(false);
+    expect(
+      navForUser(reviewer)
+        .find((l) => l.label === 'Models')
+        ?.children?.map((c) => [c.path, c.label])
+    ).toEqual([['/models/rule-matches', 'Model rule matches']]);
+
+    applyGrants({ '/models/flags/needs-review': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/models/rule-matches')).toBe(false);
+  });
+});
+
+describe('pageAccessState for the editor', () => {
+  const HIGH = 'moderator:mod-high-access';
+  const KEY = 'grant:creatorServices.reviewDispute';
+
+  it('shows only catalogue roles as editable, and every other stored role once, read-only', () => {
+    const { granted, outside } = pageAccessState({
+      grants: {
+        [KEY]: [
+          HIGH,
+          'system:dispute-agent',
+          'moderator:retired',
+          'moderator:admin',
+          'system:dispute-agent',
+        ],
+        '/blocklists': [HIGH],
+      },
+      roles: [HIGH],
+    });
+    expect(granted[KEY]).toEqual([HIGH]);
+    expect(outside).toEqual({
+      [KEY]: { kept: ['system:dispute-agent'], retired: ['moderator:retired', 'moderator:admin'] },
+    });
   });
 });

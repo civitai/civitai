@@ -400,7 +400,7 @@ export type OrchestratorStepTemplate = {
 //
 // The concrete case, because it is coming: the orchestrator's `chatCompletion`
 // input takes `model: string` — a plain provider id ("gpt-4o"), NOT an AIR
-// (`ChatCompletionInput` in the generated `@civitai/client` types). Such an
+// (`ChatCompletionInput` in the generated `@civitai/orchestration-client` types). Such an
 // entry would declare `'none'` TRUTHFULLY and pass clause 7, while forwarding
 // an arbitrary model name from an untrusted iframe. There is also no
 // orchestrator-side model validation to catch it — a fabricated name quotes
@@ -479,7 +479,7 @@ const AIR_SCAN_MAX_DEPTH = 128;
  * ORCHESTRATOR'S OWN SCHEMA. `ImageJobParams.additionalNetworks` is typed
  * `{ [key: string]: ImageJobNetworkParams }` and its doc comment reads "Use the
  * AIR of the network as the key"; `WorkflowCost.fees` is likewise keyed by
- * resource AIR (both in the generated `@civitai/client` types). A scan over
+ * resource AIR (both in the generated `@civitai/orchestration-client` types). A scan over
  * `Object.values` alone therefore misses the single most likely real-world
  * placement of an AIR in a submitted step, and returns a confident
  * `noResourceReference` for `{ additionalNetworks: { 'urn:air:…': {…} } }` — a
@@ -639,7 +639,7 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
  * shape of problem because `'promptAudit'` is implemented and so that entry
  * would at least be registrable once someone notices.
  *
- * Enumerated from the generated `@civitai/client` `$type` literals, not from
+ * Enumerated from the generated `@civitai/orchestration-client` `$type` literals, not from
  * `src/**` usage — the same correction the registry's Tranche 1 note records:
  * grepping usage enumerates what is CALLED, not what EXISTS.
  */
@@ -1426,7 +1426,7 @@ export function isModerationPostureImplemented(posture: StepModerationPosture): 
 //
 // 🔴 The RFC named Tranche 1 as "background removal, upscale, convert". Only
 // CONVERT made it. Enumerating the orchestrator's real `$type` values from the
-// generated `@civitai/client` types found that the other two DO exist —
+// generated `@civitai/orchestration-client` types found that the other two DO exist —
 // `imageBackgroundRemoval` and `imageUpscaler` — but neither is `prepaidFixed`:
 //   - `imageBackgroundRemoval`: the client's own doc string says it "builds a
 //     ComfyUI graph under the hood and runs it as a comfy job", i.e. GPU work

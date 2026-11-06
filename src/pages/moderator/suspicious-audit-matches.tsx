@@ -9,8 +9,8 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconRefresh, IconTrash } from '@tabler/icons-react';
 import { Page } from '~/components/AppLayout/Page';

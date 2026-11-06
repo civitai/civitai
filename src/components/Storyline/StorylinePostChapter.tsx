@@ -1,4 +1,5 @@
-import { Anchor, Menu, Text } from '@mantine/core';
+import { Anchor, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconArrowLeft, IconBook2, IconPhoto } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useMemo } from 'react';
@@ -132,6 +133,7 @@ export function StorylinePostNext({ postId }: { postId: number }) {
         chapterTombstone={end.tombstone}
         parentPostId={end.post?.id}
         isOwner={!!currentUser && currentUser.id === path.storyline.userId}
+        onMain={end.onMain}
         onContinue={onContinue}
       />
       <Text
@@ -153,10 +155,15 @@ export function StorylinePostNext({ postId }: { postId: number }) {
                   </Anchor>
                 ) : (
                   parent.name
-                )}{' '}
-                <Text span c="dimmed" inherit>
-                  ({parent.where})
-                </Text>
+                )}
+                {parent.where && (
+                  <>
+                    {' '}
+                    <Text span c="dimmed" inherit>
+                      ({parent.where})
+                    </Text>
+                  </>
+                )}
               </span>
             ))}
           </span>

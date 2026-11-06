@@ -27,7 +27,7 @@ import {
  * 🔴 A STRUCTURAL CHECK IS NOT A BEHAVIOURAL ONE. That the modal is mounted says
  * nothing about whether the gate works — that is
  * `__tests__/appModeratorMessageForm.test.ts` (blocking) and
- * `MessageAppOwnerModal.browser.test.tsx` (report-only in CI).
+ * `MessageAppOwnerModal.browser.test.tsx` (`Component tests` in CI).
  *
  * 🔴 KNOWN LIMITS, stated rather than implied. Detection is syntactic and per-file: a
  * site that mounts the modal through a wrapper or `React.createElement` is invisible
@@ -591,7 +591,7 @@ describe('the composer takes no owner from its caller', () => {
    * string and nothing else.
    *
    * So the whole normalised sentence is the assertion, and it lives in the BLOCKING tier
-   * rather than only in the report-only browser one. A deliberate reword fails this and
+   * rather than only in the browser one. A deliberate reword fails this and
    * is meant to: the copy is a claim about where a moderation message goes, and updating
    * a machine-readable pin is the cheap half of changing it.
    */

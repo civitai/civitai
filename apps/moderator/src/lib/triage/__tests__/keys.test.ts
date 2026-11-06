@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bulkReviewKeyAction,
   isRevealKey,
   isTypingTarget,
   reasonPickerKeyAction,
@@ -176,5 +177,37 @@ describe('isRevealKey', () => {
     ['composition', { isComposing: true }],
   ])('ignores V with %s', (_label, over) => {
     expect(press(over)).toBe(false);
+  });
+});
+
+describe('bulkReviewKeyAction', () => {
+  const bulk = (k: string, over: Partial<Parameters<typeof bulkReviewKeyAction>[0]> = {}) =>
+    bulkReviewKeyAction({
+      key: k,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      typing: false,
+      defaultPrevented: false,
+      isComposing: false,
+      onControl: false,
+      ...over,
+    });
+
+  it.each([
+    ['k', 'next'],
+    ['ArrowDown', 'next'],
+    ['j', 'previous'],
+    ['ArrowUp', 'previous'],
+    ['Enter', 'toggle'],
+    [' ', 'toggle'],
+    ['x', null],
+  ])('%s → %s', (k, action) => expect(bulk(k)).toBe(action));
+
+  it('leaves Enter to a focused button, and every key to a field or a dialog', () => {
+    expect(bulk('Enter', { onControl: true })).toBeNull();
+    expect(bulk('k', { typing: true })).toBeNull();
+    expect(bulk('Enter', { dialogOpen: true })).toBeNull();
+    expect(bulk('ArrowDown', { ctrlKey: true })).toBeNull();
   });
 });

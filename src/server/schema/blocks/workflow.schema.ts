@@ -11,6 +11,8 @@ import type {
 } from '~/server/services/blocks/pass-through-quote-failure';
 import type { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
 import type { BlockWorkflowErrorCode } from '~/server/services/blocks/workflow-graph';
+import type { InlineComfyRefusedCode } from '~/server/services/blocks/inline-comfy.service';
+import { detectGraphFormat } from '~/components/AppBlocks/resourceFileParse';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
@@ -457,6 +459,33 @@ const inlineComfyNodeSchema = z
   })
   .strict();
 
+/** A ComfyUI API-format (`/prompt`) graph: node id → node. */
+export const inlineComfyApiGraphSchema = z.record(z.string(), inlineComfyNodeSchema);
+
+/**
+ * The inline arm's `workflow`: any JSON object, held to the strict API-node schema
+ * only when it is API-shaped (`detectGraphFormat` says `api`: every value carries
+ * `class_type` and `inputs`).
+ *
+ * 🔴 A GRAPH THAT IS NOT API-SHAPED PASSES HERE ON PURPOSE, AND IS REFUSED ONE
+ * STEP LATER. A UI (editor) graph used to fail this field with a schema error,
+ * which is thrown at the tRPC boundary and cannot carry the `errorCode` a block
+ * branches on. Letting it through means `checkInlineComfyGraph`
+ * (`services/blocks/inline-comfy.service`) refuses it in the estimate and the
+ * submit with `errorCode: 'not-api-format'`, before anything is quoted, reserved
+ * or submitted. That check is not optional for a caller: it is the only source of
+ * the typed `ComfyGraph` the submit's gates and step builder take.
+ *
+ * An API-shaped graph gets exactly the validation it had before, with the same
+ * issues at the same paths.
+ */
+const inlineComfyWorkflowSchema = z.record(z.string(), z.unknown()).superRefine((graph, ctx) => {
+  if (detectGraphFormat(graph) !== 'api') return;
+  const parsed = inlineComfyApiGraphSchema.safeParse(graph);
+  if (parsed.success) return;
+  for (const issue of parsed.error.issues) ctx.addIssue({ ...issue });
+});
+
 // 🔴 EXTRACTED AS A NAMED SHAPE, not inlined into `z.object({…})`, so
 // `customComfyArmKeys('inline')` can enumerate this arm's PUBLIC keys in a
 // rejection message without a hand-written list that could drift — or name one
@@ -468,7 +497,7 @@ const inlineComfyShape = {
   // two arms can never both match, the rejection names the arm, and a future
   // field addition to either arm cannot silently change which one a body hits.
   mode: z.literal('inline'),
-  workflow: z.record(z.string(), inlineComfyNodeSchema),
+  workflow: inlineComfyWorkflowSchema,
   // The orchestrator's DECLARED DOWNLOAD MANIFEST. The graph itself is opaque
   // to the orchestrator ("Forwarded opaquely to the worker; the orchestrator
   // does not inspect or validate node contents" — `CustomComfyInput.workflow`),
@@ -1093,12 +1122,18 @@ export type BlockWorkflowSnapshot = {
    * daily Buzz limit for this app. Never overridable by the confirm; the viewer raises
    * the limit themselves. Returned by the submit for an ordinary page token only: a
    * private run reserves against its own cap and makes no daily-limit check at submit.
+   *
+   * `'not-api-format'` / `'model-filenames'` — an inline `customComfy` graph that cannot
+   * run: not ComfyUI API format, or a loader input holding a model filename instead of
+   * an AIR. The codes are `checkComfyGraph`'s from `@civitai/app-sdk/blocks`. Returned
+   * by the estimate and the submit alike, with no `cost`, before anything is reserved.
    */
   errorCode?:
     | TrainingQuoteErrorCode
     | WorkflowQuoteErrorCode
     | StepQuoteErrorCode
     | BlockWorkflowErrorCode
+    | InlineComfyRefusedCode
     | typeof CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that

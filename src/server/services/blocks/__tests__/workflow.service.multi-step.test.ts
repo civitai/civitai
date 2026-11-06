@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import {
   BLOCK_STEP_NAME,
   buildBlockWorkflowStepsMetadata,

@@ -31,9 +31,14 @@ const linked = {
     },
   ],
 };
+const getAccountsOnAddresses = vi.fn(async (_addresses: string[], _opts?: unknown) => ({
+  linked: linked as never,
+  invalid: [] as string[],
+}));
 vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
   ...(await importOriginal<typeof IpLinks>()),
   getLinkedAccounts: vi.fn(async () => linked),
+  getAccountsOnAddresses,
   getReactionBreadth: vi.fn(async () => ({ reactors: 0, top: [] })),
 }));
 
@@ -66,10 +71,37 @@ vi.mock('$lib/server/dossier.service', () => ({
 
 const getBuzzFlows = vi.fn(async () => ({ days: 90, accounts: [], flows: [], truncated: false }));
 vi.mock('$lib/server/buzz-flows.service', () => ({ getBuzzFlows, MAX_BUZZ_DAYS: 365 }));
+const getPlacementFlows = vi.fn(async () => ({
+  days: 90,
+  accounts: [],
+  pairs: [],
+  truncated: false,
+}));
+vi.mock('$lib/server/placement-flows.service', () => ({ getPlacementFlows }));
 const resolveUserId = vi.fn(async () => null);
 vi.mock('$lib/server/user-lookup.service', () => ({ resolveUserId }));
+const getRegistrationEmails = vi.fn(
+  async (ids: number[]) => new Map(ids.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+);
+vi.mock('../email', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../email')>()),
+  getRegistrationEmails,
+}));
 
+const getAccounts = vi.fn(async (ids: number[]) => ({
+  accounts: ids.map((userId) => ({ userId, username: `u${userId}` })),
+  missing: [],
+}));
+vi.mock('../reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../reads')>()),
+  getAccounts,
+}));
+
+const addPlaybookVersion = vi.fn(async () => ({ version: 1 }));
+const fileToolRequest = vi.fn(async () => 1);
 vi.mock('../store', () => ({
+  addPlaybookVersion,
+  fileToolRequest,
   getPlaybook: vi.fn(async (slug: string) => ({
     slug,
     version: 2,
@@ -80,8 +112,41 @@ vi.mock('../store', () => ({
   })),
 }));
 
+const previewMembershipExtension = vi.fn(async () => ({
+  ok: true as const,
+  preview: {
+    userId: 5,
+    days: 3,
+    subscription: null,
+    problems: [],
+    expectedCurrentPeriodEnd: 1795314120,
+    trialEndIso: '2026-11-25T02:22:00.000Z',
+    mode: 'renewing' as const,
+  },
+}));
+const extendMembership = vi.fn(async () => {
+  throw new Error('the assistant must never extend');
+});
+const previewMembershipCancel = vi.fn();
+const previewMembershipResync = vi.fn();
+const mustNotWrite = (name: string) =>
+  vi.fn(async () => {
+    throw new Error(`the assistant must never call ${name}`);
+  });
+const setMembershipCancel = mustNotWrite('setMembershipCancel');
+const resyncMembership = mustNotWrite('resyncMembership');
+vi.mock('$lib/server/user-actions.service', () => ({
+  previewMembershipExtension,
+  extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
+}));
+
 const { TOOLS, toolsFor, quoted, reactorClusters, toolCatalog } = await import('../tools');
 const { addressLabeler, turnTokenBudget } = await import('../turn.service');
+const { DAILY_TOKEN_CAP, MAX_TOOL_CHARS, fitJson } = await import('../loop');
 
 const ctx = (paths: string[], grants: string[] = []) => ({
   moderatorId: 1,
@@ -120,9 +185,14 @@ describe('toolsFor', () => {
       'accounts_on_address',
       'search_accounts',
       'buzz_flows',
+      'placement_flows',
       'abuse_findings',
     ])
       expect(offered).not.toContain(lookupOnly);
+  });
+
+  it('offers placement_flows to a User Lookup holder', () => {
+    expect(names(['/retool/user-lookup'])).toContain('placement_flows');
   });
 
   it('offers detector findings only with the /abuse page', () => {
@@ -166,6 +236,32 @@ describe('what the tools hand the model', () => {
   });
 });
 
+describe('placement_flows', () => {
+  it('takes 1 to 100 accounts and at most a year, like buzz_flows', () => {
+    const input = TOOLS.find((t) => t.name === 'placement_flows')!.input;
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(input.safeParse({ userIds: ids(100), days: 365 }).success).toBe(true);
+    expect(input.safeParse({ userIds: ids(101) }).success).toBe(false);
+    expect(input.safeParse({ userIds: [] }).success).toBe(false);
+    expect(input.safeParse({ userIds: [1], days: 366 }).success).toBe(false);
+  });
+
+  it('cites both ends of every pair it returns, and passes the cap on', async () => {
+    getPlacementFlows.mockResolvedValueOnce({
+      days: 30,
+      accounts: [{ userId: 5, username: 'five', placed: {}, received: {} }],
+      pairs: [{ placerId: 5, placerName: 'five', ownerId: 9, ownerName: 'nine' }],
+      truncated: true,
+    } as never);
+    const out = (await run('placement_flows', { userIds: [5], days: 30 }, [
+      '/retool/user-lookup',
+    ])) as unknown as { truncated: boolean; sources: unknown[] };
+    expect(getPlacementFlows).toHaveBeenLastCalledWith([5], 30);
+    expect(out.truncated).toBe(true);
+    expect(out.sources).toContainEqual(expect.objectContaining({ ref: 'user:9' }));
+  });
+});
+
 describe('reads User Lookup gates beyond the page', () => {
   it('shows bank Buzz only with the user.buzz.bank grant, as User Lookup does', async () => {
     await run('buzz_flows', { userIds: [5] }, ['/retool/user-lookup']);
@@ -181,6 +277,261 @@ describe('reads User Lookup gates beyond the page', () => {
     expect(out.data).toMatchObject({ found: false });
     await run('find_user', { query: 'someone@example.com' }, ['/retool/user-lookup']);
     expect(resolveUserId).toHaveBeenCalledWith('someone@example.com');
+  });
+});
+
+describe('accounts_on_address', () => {
+  const LOOKUP_PAGE = '/retool/user-lookup';
+  const ask = async (args: unknown) =>
+    (await run('accounts_on_address', args, [LOOKUP_PAGE])).data as Record<string, unknown>;
+  beforeEach(() => {
+    getAccountsOnAddresses.mockClear();
+  });
+
+  it('reads a list of addresses in one call', async () => {
+    await ask({ addresses: ['192.0.2.1', '198.51.100.7'] });
+    expect(getAccountsOnAddresses).toHaveBeenCalledTimes(1);
+    expect(getAccountsOnAddresses.mock.lastCall![0]).toEqual(['192.0.2.1', '198.51.100.7']);
+  });
+
+  it('still takes one address as before, and says when it is not one', async () => {
+    await ask({ address: '192.0.2.1' });
+    expect(getAccountsOnAddresses.mock.lastCall![0]).toEqual(['192.0.2.1']);
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: null as never, invalid: ['nope'] });
+    expect(await ask({ address: 'nope' })).toEqual({ error: 'Not an IP address.' });
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: null as never, invalid: ['a', 'b'] });
+    expect(await ask({ addresses: ['aaa', 'bbb'] })).toEqual({
+      error: 'None of these is an IP address.',
+    });
+  });
+
+  it('passes the window and the page through, so a later page is not page one again', async () => {
+    await ask({ addresses: ['192.0.2.1'], days: 7, offset: 100, limit: 50 });
+    expect(getAccountsOnAddresses.mock.lastCall![1]).toEqual({ days: 7, offset: 100, limit: 50 });
+  });
+
+  it('names every address it was given when it times out', () => {
+    const tool = TOOLS.find((t) => t.name === 'accounts_on_address')!;
+    expect(tool.timeoutMs).toBeGreaterThan(45_000);
+    expect(
+      (tool.onTimeout as (args: unknown) => Record<string, unknown>)(
+        tool.input.parse({ addresses: ['192.0.2.1'], address: '198.51.100.7' })
+      )
+    ).toMatchObject({
+      notChecked: ['192.0.2.1', '198.51.100.7'],
+      note: expect.stringContaining('were checked'),
+    });
+  });
+
+  it('names back what was not an address, so it is not read as an empty one', async () => {
+    getAccountsOnAddresses.mockResolvedValueOnce({ linked: linked as never, invalid: ['nope'] });
+    expect(await ask({ addresses: ['192.0.2.1', 'nope'] })).toMatchObject({
+      notAddresses: ['nope'],
+    });
+  });
+
+  it('refuses a call with no address, or more than twenty-five, without reading anything', async () => {
+    expect(await ask({})).toMatchObject({ error: expect.any(String) });
+    const many = Array.from({ length: 25 }, (_, i) => `192.0.2.${i + 1}`);
+    expect(await ask({ addresses: many, address: '198.51.100.7' })).toMatchObject({
+      error: expect.any(String),
+    });
+    expect(getAccountsOnAddresses).not.toHaveBeenCalled();
+    const tool = TOOLS.find((t) => t.name === 'accounts_on_address')!;
+    expect(tool.input.safeParse({ addresses: [...many, '198.51.100.8'] }).success).toBe(false);
+  });
+});
+
+describe('registration emails', () => {
+  const LOOKUP_PAGE = '/retool/user-lookup';
+  beforeEach(() => {
+    getRegistrationEmails.mockClear();
+  });
+
+  it('are never read for a User Lookup holder without assistant.emails', async () => {
+    const out = JSON.stringify(await run('find_linked_accounts', { userId: 5 }, [LOOKUP_PAGE]));
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('are never read with assistant.emails but without User Lookup', async () => {
+    const out = JSON.stringify(
+      await run('get_user_dossier', { userId: 5 }, ['/reports/user'], ['assistant.emails'])
+    );
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    expect(out).not.toContain('@');
+  });
+
+  it('reach the model with their inbox for a User Lookup holder with assistant.emails', async () => {
+    const linkedOut = await run(
+      'find_linked_accounts',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect((linkedOut.data as { accounts: unknown[] }).accounts[0]).toMatchObject({
+      userId: 7,
+      email: 'Sock.7+x@GoogleMail.com',
+      normalizedEmail: 'sock7@gmail.com',
+    });
+    const dossier = await run(
+      'get_user_dossier',
+      { userId: 5 },
+      [LOOKUP_PAGE],
+      ['assistant.emails']
+    );
+    expect(dossier.data).toMatchObject({
+      normalizedEmail: 'sock5@gmail.com',
+      linked: { accounts: [{ userId: 7, normalizedEmail: 'sock7@gmail.com' }] },
+    });
+  });
+
+  it.each([
+    ['find_user', { query: '9' }],
+    ['get_accounts', { userIds: [9] }],
+  ])('%s carries them only with both User Lookup and assistant.emails', async (name, args) => {
+    resolveUserId.mockImplementation(async () => 9 as never);
+    expect(JSON.stringify(await run(name, args, [LOOKUP_PAGE]))).not.toContain('@');
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+    const out = JSON.stringify(await run(name, args, [LOOKUP_PAGE], ['assistant.emails']));
+    expect(out).toContain('"normalizedEmail":"sock9@gmail.com"');
+    resolveUserId.mockImplementation(async () => null);
+  });
+
+  describe('get_accounts fields', () => {
+    const data = async (args: unknown, paths = [LOOKUP_PAGE], grants = ['assistant.emails']) =>
+      (await run('get_accounts', args, paths, grants)).data as {
+        accounts: object[];
+        emailsWithheld?: true;
+      };
+    const accounts = async (args: unknown, grants?: string[]) =>
+      (await data(args, undefined, grants)).accounts;
+    // Every column `getAccounts` returns, so a column lost on the way out shows.
+    const fullRow = (userId: number) => ({
+      userId,
+      username: `u${userId}`,
+      createdAt: new Date('2025-01-02T03:04:05Z'),
+      bannedAt: null,
+      banReason: 'spam',
+      deletedAt: null,
+      muted: true,
+      strikes: 2,
+    });
+
+    it('returns only the columns asked for, and always the id', async () => {
+      expect(await accounts({ userIds: [3, 4], fields: ['normalizedEmail'] })).toEqual([
+        { userId: 3, normalizedEmail: 'sock3@gmail.com' },
+        { userId: 4, normalizedEmail: 'sock4@gmail.com' },
+      ]);
+      expect(await accounts({ userIds: [3], fields: ['email'] })).toEqual([
+        { userId: 3, email: 'Sock.3+x@GoogleMail.com' },
+      ]);
+    });
+
+    it('returns every column when none are named, as before', async () => {
+      getAccounts.mockImplementationOnce(async (ids: number[]) => ({
+        accounts: ids.map(fullRow) as never,
+        missing: [],
+      }));
+      expect(await data({ userIds: [3] })).toEqual({
+        accounts: [
+          { ...fullRow(3), email: 'Sock.3+x@GoogleMail.com', normalizedEmail: 'sock3@gmail.com' },
+        ],
+        missing: [],
+      });
+    });
+
+    it('never gives an email without both User Lookup and assistant.emails, and says so', async () => {
+      const fields = ['email', 'normalizedEmail'];
+      for (const [paths, grants] of [
+        [[LOOKUP_PAGE], []],
+        [['/reports/user'], ['assistant.emails']],
+      ]) {
+        const out = await data({ userIds: [3], fields }, paths, grants);
+        expect(out.accounts).toEqual([{ userId: 3 }]);
+        expect(out.emailsWithheld).toBe(true);
+      }
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('does not read emails unless they are asked for', async () => {
+      expect(await accounts({ userIds: [3], fields: ['username'] })).toEqual([
+        { userId: 3, username: 'u3' },
+      ]);
+      expect(getRegistrationEmails).not.toHaveBeenCalled();
+    });
+
+    it('fits a full list of inboxes into one result, where every column does not', async () => {
+      // The model sees a result through `fitJson`; a trimmed one has silently lost accounts.
+      const ids = Array.from({ length: 200 }, (_, i) => 9_000_000 + i);
+      const address = (id: number) => `firstname.lastname${id % 1000}@outlook.com`;
+      getRegistrationEmails.mockImplementation(
+        async (list: number[]) => new Map(list.map((id) => [id, address(id)]))
+      );
+      getAccounts.mockImplementation(async (list: number[]) => ({
+        accounts: list.map(fullRow) as never,
+        missing: [],
+      }));
+      const seen = async (fields?: string[]) =>
+        fitJson({ data: await data({ userIds: ids, fields }), truncated: false }, MAX_TOOL_CHARS)
+          .trimmed;
+      try {
+        expect(await seen(['normalizedEmail'])).toBe(false);
+        expect(await seen()).toBe(true);
+      } finally {
+        getRegistrationEmails.mockImplementation(
+          async (list: number[]) => new Map(list.map((id) => [id, `Sock.${id}+x@GoogleMail.com`]))
+        );
+        getAccounts.mockImplementation(async (list: number[]) => ({
+          accounts: list.map((userId) => ({ userId, username: `u${userId}` })) as never,
+          missing: [],
+        }));
+      }
+    });
+
+    it('refuses a column it does not have', () => {
+      const tool = TOOLS.find((t) => t.name === 'get_accounts')!;
+      expect(tool.input.safeParse({ userIds: [3], fields: ['passwordHash'] }).success).toBe(false);
+      expect(tool.input.safeParse({ userIds: [3], fields: [] }).success).toBe(false);
+    });
+  });
+
+  const EMAIL = 'b.o.t+1@gmail.com';
+  const pilot = { ...ctx([LOOKUP_PAGE], ['assistant.emails']) };
+
+  it('are dropped from a proposed playbook, which every assistant user reads', async () => {
+    const tool = TOOLS.find((t) => t.name === 'propose_playbook')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        slug: 'chain',
+        title: `Chains like ${EMAIL}`,
+        summary: `Accounts sharing ${EMAIL} as one inbox.`,
+        body: `Example:\n${EMAIL}\nand ${EMAIL.toUpperCase()}`,
+        note: EMAIL,
+      }),
+      pilot
+    );
+    const saved = JSON.stringify(addPlaybookVersion.mock.lastCall);
+    expect(saved).toContain('[email]');
+    expect(saved.toLowerCase()).not.toContain('gmail');
+  });
+
+  it('are dropped from a tool request, its attached conversation included', async () => {
+    const tool = TOOLS.find((t) => t.name === 'request_tool')!;
+    await (tool.run as (a: unknown, c: unknown) => Promise<unknown>)(
+      tool.input.parse({
+        need: `Group accounts by inbox, e.g. ${EMAIL}`,
+        reason: `The chain all used ${EMAIL}.`,
+        example: EMAIL,
+      }),
+      {
+        ...pilot,
+        conversation: () => [{ prompt: `who is ${EMAIL}?`, answer: `${EMAIL} is a sock.` }],
+      }
+    );
+    const filed = JSON.stringify(fileToolRequest.mock.lastCall);
+    expect(filed).toContain('[email]');
+    expect(filed).not.toContain('gmail');
   });
 });
 
@@ -327,7 +678,7 @@ describe('turnTokenBudget', () => {
   it('clamps a setting into range, so a tighter budget never comes out looser', () => {
     expect(turnTokenBudget('3000')).toBe(5_000);
     expect(turnTokenBudget('40000')).toBe(40_000);
-    expect(turnTokenBudget('99000000')).toBe(2_000_000);
+    expect(turnTokenBudget('99000000')).toBe(DAILY_TOKEN_CAP);
   });
 
   it('falls back to the default when unset or not a whole number', () => {
@@ -505,5 +856,243 @@ describe('reactors_of', () => {
   it('lets any other failure of the address check fail the call', async () => {
     getSharedIpCoverage.mockRejectedValue(new Error('ClickHouse query failed: connection refused'));
     await expect(reactors()).rejects.toThrow(/connection refused/);
+  });
+});
+
+describe('membership extension: the assistant reads and proposes, a person extends', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const GRANT = ['user.membership.extend'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('offers the two tools only with User Lookup AND the extension grant', () => {
+    const both = ['preview_membership_extension', 'propose_membership_extension'];
+    expect(offered(LOOKUP_PAGE, GRANT)).toEqual(expect.arrayContaining(both));
+    for (const name of both) {
+      expect(offered(LOOKUP_PAGE, [])).not.toContain(name);
+      expect(offered([], GRANT)).not.toContain(name);
+    }
+  });
+
+  it('proposing extends nothing: it returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_extension',
+      { userId: 5, days: 3, reason: 'Ticket 123: three free days' },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: { extended: boolean; confirmAt: string } };
+    expect(out.data.extended).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&extendDays=3&extendReason=Ticket+123%3A+three+free+days#membership-extend'
+    );
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('the preview hands the model status, dates and the verdict, and no Stripe ids', async () => {
+    previewMembershipExtension.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        days: 3,
+        subscription: {
+          id: 'sub_secret',
+          status: 'active',
+          currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+          trialEnd: null,
+          cancelAtPeriodEnd: false,
+          cancelAt: null,
+          latestInvoiceId: 'in_secret',
+        },
+        problems: ['sub_secret is on a schedule'],
+        expectedCurrentPeriodEnd: 1795314120,
+        trialEndIso: '2026-11-25T02:22:00.000Z',
+        mode: 'renewing',
+      },
+    } as never);
+    const out = (await run(
+      'preview_membership_extension',
+      { userId: 5, days: 3 },
+      LOOKUP_PAGE,
+      GRANT
+    )) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      days: 3,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: false,
+      },
+      problems: ['[Stripe id] is on a schedule'],
+      newEnd: '2026-11-25T02:22:00.000Z',
+      mode: 'renewing',
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/sub_secret|in_secret/);
+    expect(extendMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the extend write', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\bextendMembership\b|callModEndpoint|user\/membership-extend\b/);
+  });
+});
+
+describe('cancel-at-period-end and re-sync: the assistant reads and proposes, a person writes', () => {
+  const LOOKUP_PAGE = ['/retool/user-lookup'];
+  const offered = (paths: string[], grants: string[]) =>
+    toolsFor(ctx(paths, grants)).map((t) => t.name);
+
+  it('the cancel tools need the cancel grant; the extend grant alone does not offer them', () => {
+    const cancel = ['preview_membership_cancel', 'propose_membership_cancel'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).toEqual(
+      expect.arrayContaining(cancel)
+    );
+    for (const name of cancel)
+      expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).not.toContain(name);
+  });
+
+  it('the re-sync tools need the extend grant', () => {
+    const resync = ['preview_membership_resync', 'propose_membership_resync'];
+    expect(offered(LOOKUP_PAGE, ['user.membership.extend'])).toEqual(
+      expect.arrayContaining(resync)
+    );
+    for (const name of resync)
+      expect(offered(LOOKUP_PAGE, ['user.membership.cancel'])).not.toContain(name);
+  });
+
+  it('proposing a cancel change returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_cancel',
+      { userId: 5, cancelAtPeriodEnd: false, reason: 'Ticket 123: wants to keep it' },
+      LOOKUP_PAGE,
+      ['user.membership.cancel']
+    )) as { data: { changed: boolean; confirmAt: string } };
+    expect(out.data.changed).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&cancelAtPeriodEnd=false&cancelReason=Ticket+123%3A+wants+to+keep+it#membership-cancel'
+    );
+    expect(setMembershipCancel).not.toHaveBeenCalled();
+  });
+
+  it('the re-sync preview hands the model the differing fields and the Buzz verdict, no ids', async () => {
+    previewMembershipResync.mockResolvedValueOnce({
+      ok: true,
+      preview: {
+        userId: 5,
+        ours: null,
+        stripe: null,
+        changes: [
+          { field: 'id', ours: 'sub_old_secret', stripe: 'sub_new_secret' },
+          { field: 'status', ours: 'past_due', stripe: 'active' },
+        ],
+        endsBuzzMembership: {
+          id: 'buzz_secret',
+          status: 'active',
+          currentPeriodEnd: null,
+          confirm: 'buzz_secret|active|null',
+        },
+        problems: ['Stripe has no subscription sub_1Oldsecret'],
+      },
+    });
+    const out = (await run('preview_membership_resync', { userId: 5 }, LOOKUP_PAGE, [
+      'user.membership.extend',
+    ])) as { data: Record<string, unknown> };
+    expect(out.data).toEqual({
+      changes: [{ field: 'status', ours: 'past_due', stripe: 'active' }],
+      idOrPlanDiffers: true,
+      endsBuzzMembership: { status: 'active', currentPeriodEnd: null },
+      problems: ['Stripe has no subscription [Stripe id]'],
+    });
+    expect(JSON.stringify(out.data)).not.toMatch(/secret/);
+    expect(resyncMembership).not.toHaveBeenCalled();
+  });
+
+  it('no tool can reach the cancel or re-sync writes', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(
+      /\bsetMembershipCancel\b|\bresyncMembership\b|user\/membership-cancel\b|user\/membership-resync\b/
+    );
+  });
+
+  const cancelPreview = (over: Record<string, unknown>) => ({
+    ok: true,
+    preview: {
+      userId: 5,
+      cancelAtPeriodEnd: false,
+      subscription: {
+        id: 'sub_secret',
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        trialEnd: null,
+        cancelAtPeriodEnd: true,
+        cancelAt: null,
+        latestInvoiceId: 'in_secret',
+      },
+      problems: [],
+      changed: true,
+      ...over,
+    },
+  });
+  const previewCancelTool = async () =>
+    (await run('preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: false }, LOOKUP_PAGE, [
+      'user.membership.cancel',
+    ])) as { data: Record<string, unknown> };
+
+  it('the cancel preview tells "already so" apart from refused, and hides Stripe ids in problems', async () => {
+    previewMembershipCancel.mockResolvedValueOnce(cancelPreview({ changed: false }));
+    expect((await previewCancelTool()).data).toEqual({
+      cancelAtPeriodEnd: false,
+      subscription: {
+        status: 'active',
+        currentPeriodEnd: '2026-11-22T02:22:00.000Z',
+        cancelAtPeriodEnd: true,
+      },
+      problems: [],
+      alreadySo: true,
+    });
+
+    previewMembershipCancel.mockResolvedValueOnce(
+      cancelPreview({ changed: null, problems: ['Stripe returned sub_secret, not sub_other'] })
+    );
+    const refused = (await previewCancelTool()).data;
+    expect(refused).toMatchObject({
+      alreadySo: false,
+      problems: ['Stripe returned [Stripe id], not [Stripe id]'],
+    });
+    expect(JSON.stringify(refused)).not.toMatch(/secret|sub_other/);
+  });
+
+  it.each([
+    ['preview_membership_extension', { userId: 5, days: 3 }, 'user.membership.extend'],
+    ['preview_membership_cancel', { userId: 5, cancelAtPeriodEnd: true }, 'user.membership.cancel'],
+    ['preview_membership_resync', { userId: 5 }, 'user.membership.extend'],
+  ])('%s hides Stripe ids in a failed preview too', async (name, args, grant) => {
+    const preview = (
+      {
+        preview_membership_extension: previewMembershipExtension,
+        preview_membership_cancel: previewMembershipCancel,
+        preview_membership_resync: previewMembershipResync,
+      } as Record<string, { mockResolvedValueOnce: (v: never) => unknown }>
+    )[name];
+    preview.mockResolvedValueOnce({
+      ok: false,
+      error: 'Stripe returned sub_1Secret for cus_1Secret',
+    } as never);
+    const out = (await run(name, args, LOOKUP_PAGE, [grant])) as { data: { error: string } };
+    expect(out.data.error).toBe('Stripe returned [Stripe id] for [Stripe id]');
+  });
+
+  it('proposing a re-sync returns a prefilled panel link and calls no write', async () => {
+    const out = (await run(
+      'propose_membership_resync',
+      { userId: 5, reason: 'Ticket 123: webhook missed' },
+      LOOKUP_PAGE,
+      ['user.membership.extend']
+    )) as { data: { resynced: boolean; confirmAt: string } };
+    expect(out.data.resynced).toBe(false);
+    expect(out.data.confirmAt).toBe(
+      '/retool/user-lookup/basic?q=5&resyncReason=Ticket+123%3A+webhook+missed#membership-resync'
+    );
   });
 });

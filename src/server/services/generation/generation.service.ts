@@ -1,4 +1,13 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { asResourceValue } from '~/shared/utils/resource.utils';
+import { stopsCreatorEarnings } from '~/server/common/constants';
+import {
+  LORA_STRENGTH_BOUNDS,
+  fluxKreaAir,
+  fluxUltraAir,
+  getBaseModelFromResources,
+  ponyV7Air,
+} from '~/shared/constants/generation.constants';
 import {
   coverageAudience,
   coverageColumn,
@@ -39,6 +48,7 @@ import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
@@ -52,14 +62,8 @@ import {
 import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
-import {
-  fluxKreaAir,
-  fluxUltraAir,
-  getBaseModelFromResources,
-  ponyV7Air,
-} from '~/shared/constants/generation.constants';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 
 import {
   applicableRulesFor,
@@ -88,6 +92,7 @@ import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
+  isBaseModelGenerationDisabled,
   ecosystemById,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
@@ -269,10 +274,20 @@ export type GenerationData = {
   remixOfId?: number;
   remixOf?: RemixOfProps;
   /** Flat array of all resources (checkpoint, LoRAs, VAE, etc.) */
-  resources: GenerationResource[];
+  resources: GenerationResourceValue[];
   /** Generation parameters (prompt, seed, steps, etc.) */
   params: Record<string, unknown>;
 };
+
+/** The image's recorded weight for each resource it used; the version default where it recorded none. */
+export function weightImageResources<T extends GenerationResource>(
+  data: T[],
+  imageResources: { modelVersionId?: number; strength?: number }[]
+) {
+  return data.map((item) =>
+    asResourceValue(item, imageResources.find((x) => x.modelVersionId === item.id)?.strength)
+  );
+}
 
 export const getGenerationData = async ({
   query,
@@ -334,15 +349,15 @@ export const getGenerationData = async ({
  * target that no longer resolves is dropped (fail-closed). Results are deduped
  * by id in case the image already referenced the target directly.
  */
-async function swapGenerationAliases(
-  resources: (GenerationResource & { air: string })[],
+export async function swapGenerationAliases(
+  resources: (GenerationResourceValue & { air: string })[],
   opts: {
     user?: { id?: number; isModerator?: boolean };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
   }
-): Promise<(GenerationResource & { air: string })[]> {
+): Promise<(GenerationResourceValue & { air: string })[]> {
   const aliasIds = [...new Set(resources.map((r) => r.aliasId).filter(isDefined))];
   if (!aliasIds.length) return resources;
 
@@ -354,7 +369,7 @@ async function swapGenerationAliases(
       if (r.aliasId == null) return r;
       const target = targetById.get(r.aliasId);
       if (!target) return null;
-      return { ...target, strength: r.strength };
+      return asResourceValue(target, r.strength);
     })
     .filter(isDefined);
 
@@ -384,10 +399,10 @@ function resolveGraphParamsFromImageMeta({
   initialMeta: ImageMetaProps;
   baseModel: string | undefined;
   engine: string | undefined;
-  allResources: GenerationResource[];
+  allResources: GenerationResourceValue[];
   width: number;
   height: number;
-}): { resources: GenerationResource[]; params: Record<string, unknown> } {
+}): { resources: GenerationResourceValue[]; params: Record<string, unknown> } {
   const metaRecord = initialMeta as Record<string, unknown>;
   const cleanedPrompts = cleanPrompt({
     prompt: initialMeta.prompt,
@@ -532,15 +547,7 @@ async function getMediaGenerationData({
     withPreview,
     browsingLevel,
   })
-    .then((data) =>
-      data.map((item) => {
-        const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
-        return {
-          ...item,
-          strength: imageResource?.strength ?? item.strength,
-        };
-      })
-    )
+    .then((data) => weightImageResources(data, imageResources))
     // Redirect any cover resources to their alias target (carrying the image's
     // recorded strength) before the data is used for the remix.
     .then((data) => swapGenerationAliases(data, { user, generation, withPreview, browsingLevel }));
@@ -681,28 +688,16 @@ const getModelVersionGenerationData = async ({
     return { id: alias.versionId };
   });
 
-  const resources = await getResourceData(resolvedVersionIds, {
-    user,
-    generation,
-    withPreview,
-    browsingLevel,
-  });
-
-  // Apply alias strength overrides to the redirected resources.
-  if (aliasStrengthByTarget.size) {
-    for (const resource of resources) {
-      const strength = aliasStrengthByTarget.get(resource.id);
-      if (strength != null) resource.strength = strength;
-    }
-  }
+  const resources = (
+    await getResourceData(resolvedVersionIds, { user, generation, withPreview, browsingLevel })
+  ).map((resource) => asResourceValue(resource, aliasStrengthByTarget.get(resource.id)));
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
-  // Resolve VAE from linked components instead of vaeId
   if (checkpoint) {
     const vaeMap = await getLinkedVaeIds([checkpoint.id]);
     const vaeVersionId = vaeMap.get(checkpoint.id);
     if (vaeVersionId) {
       const [vae] = await getResourceData([vaeVersionId], { user, generation });
-      if (vae) resources.push({ ...vae, vaeId: undefined });
+      if (vae) resources.push(asResourceValue(vae));
     }
   }
 
@@ -711,7 +706,7 @@ const getModelVersionGenerationData = async ({
   // Build params from checkpoint settings
   const params = mapDataToGraphInput(
     {
-      clipSkip: checkpoint?.clipSkip,
+      clipSkip: checkpoint?.settings.clipSkip,
     },
     deduped
   );
@@ -1186,6 +1181,8 @@ export function getResourceCanGenerate({
     canGenerate = false;
   }
 
+  if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
+
   if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);
     const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
@@ -1340,6 +1337,8 @@ export async function getResourceData(
 
   const { next, member } = await coverageAudience(user);
 
+  const showSfwFace = showsSfwFace(browsingLevel);
+
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
   const featuredModels = await withSpan('gen:getResourceData:featured', () => getFeaturedModels());
@@ -1348,7 +1347,7 @@ export async function getResourceData(
   );
 
   function transformGenerationData(
-    { settings, ...item }: GenerationResourceDataModel,
+    { settings, clipSkip, vaeId: _vaeId, ...item }: GenerationResourceDataModel,
     epochNumber?: number
   ) {
     const isOwnedByUser = !!user.id && user.id === item.model.userId;
@@ -1394,7 +1393,8 @@ export async function getResourceData(
     // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
     // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
     // so mutating in place applies this user's gate outcome to a concurrent user's payload.
-    const { userFlags: ownerFlags, ...ownerlessModel } = item.model;
+    const { userFlags: ownerFlags, ...ownerModel } = item.model;
+    const ownerlessModel = resolveModelFace(ownerModel, showSfwFace);
     let model = ownerlessModel;
     if (!canGenerate) {
       const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = ownerlessModel;
@@ -1407,22 +1407,29 @@ export async function getResourceData(
       // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
       // resourceDataCache, whose TTL would serve stale gating terms after a config change.
       paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-      strength: settings?.strength ?? 1,
-      turbo: settings?.turbo ?? undefined,
-      turboLora: settings?.generation?.turboLora
-        ? {
+      settings: {
+        strength: {
+          min: settings?.minStrength ?? LORA_STRENGTH_BOUNDS.min,
+          max: settings?.maxStrength ?? LORA_STRENGTH_BOUNDS.max,
+          default: settings?.strength ?? 1,
+        },
+        ...(clipSkip != null && { clipSkip }),
+        ...(settings?.generation?.turboLora && {
+          turboLora: {
             id: settings.generation.turboLora.id,
             strength: settings.generation.turboLora.strength ?? undefined,
-          }
-        : undefined,
+          },
+        }),
+      },
+      ...(settings?.turbo && { turbo: true, recommendedSettings: settings.turbo }),
       hasAccess,
       canGenerate,
       epochNumber,
       isOwnedByUser,
       isPrivate,
-      tipsEnabled: isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
+      tipsEnabled:
+        !stopsCreatorEarnings(item.baseModel) &&
+        isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
     };
   }
 
@@ -1825,7 +1832,7 @@ export async function resolveImageMeta({
   input: ResolveImageMetaInput;
   user?: SessionUser;
   browsingLevel?: number;
-}): Promise<{ resources: GenerationResource[]; params: Record<string, unknown> }> {
+}): Promise<{ resources: GenerationResourceValue[]; params: Record<string, unknown> }> {
   const metadata = input.metadata;
   const resourceInput = extractResourceInputFromMeta(metadata);
   const resolved = new Map<number, ResolvedCandidate>();
@@ -1902,17 +1909,17 @@ export async function resolveImageMeta({
   }
 
   // --- Enrich via getResourceData() ---
-  let allResources: GenerationResource[] = [];
+  let allResources: GenerationResourceValue[] = [];
   if (resolved.size > 0) {
     const versionIds = [...resolved.keys()];
     allResources = (
       await getResourceData(versionIds, { user, withPreview: true, browsingLevel })
     ).map((resource) => {
       const candidate = resolved.get(resource.id);
-      if (candidate?.strength != null) {
-        return { ...resource, strength: candidate.strength / 100 };
-      }
-      return resource;
+      return asResourceValue(
+        resource,
+        candidate?.strength != null ? candidate.strength / 100 : undefined
+      );
     });
   }
 

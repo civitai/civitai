@@ -434,6 +434,7 @@ export const ApiKeyType = {
   User: 'User',
   Access: 'Access',
   Refresh: 'Refresh',
+  Worker: 'Worker',
 } as const;
 export type ApiKeyType = (typeof ApiKeyType)[keyof typeof ApiKeyType];
 export const CommentEntityType = {
@@ -450,6 +451,7 @@ export const CommentEntityType = {
   model3dReview: 'model3dReview',
   appListing: 'appListing',
   crucible: 'crucible',
+  storyline: 'storyline',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {
@@ -670,6 +672,12 @@ export const CsamReportType = {
   ExternalLink: 'ExternalLink',
 } as const;
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];
+export const CsamQueueSetAsideOutcome = {
+  AfterReport: 'AfterReport',
+  Dismissed: 'Dismissed',
+} as const;
+export type CsamQueueSetAsideOutcome =
+  (typeof CsamQueueSetAsideOutcome)[keyof typeof CsamQueueSetAsideOutcome];
 export const Availability = {
   Public: 'Public',
   Unsearchable: 'Unsearchable',
@@ -764,6 +772,7 @@ export const JobQueueType = {
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
+  ImageCdnPersistRetry: 'ImageCdnPersistRetry',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -1042,6 +1051,12 @@ export const StorylineWhoCanContinue = {
 } as const;
 export type StorylineWhoCanContinue =
   (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
+export const StorylineFollowScope = {
+  Canon: 'Canon',
+  Endorsed: 'Endorsed',
+  Everything: 'Everything',
+} as const;
+export type StorylineFollowScope = (typeof StorylineFollowScope)[keyof typeof StorylineFollowScope];
 export const ServiceOfferingStatus = {
   Draft: 'Draft',
   Active: 'Active',

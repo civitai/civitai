@@ -11,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { hasPayoutHold } from '~/server/services/creator-program-prepayout-review/hold';
 import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
@@ -75,29 +76,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const rawPayload = buf.toString('utf8');
 
     // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('tipalti', rawPayload).catch(() => {});
+    trackWebhookEvent('tipalti', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
         return res.status(400).send({
           error: 'Invalid Request. Signature or Secret not found',
-          sig,
         });
       }
 
       const client = await tipaltiCaller();
-      const { isValid, ...data } = client.validateWebhookEvent(sig as string, rawPayload);
-      const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
-        sig as string,
-        req.body as string
-      );
+      const { isValid } = client.validateWebhookEvent(sig as string, rawPayload);
+      const { isValid: isValid2 } = client.validateWebhookEvent(sig as string, req.body as string);
       if (!isValid && !isValid2) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
           error: 'Invalid Request. Could not validate Webhook signature',
-          data,
-          data2,
         });
       }
 
@@ -106,7 +101,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       switch (event.type) {
         case 'payeeDetailsChanged':
           // Handle payee details changed event
-          await updateByTipaltiAccount({
+          const updatedPaymentConfiguration = await updateByTipaltiAccount({
             // In this webhook, the payeeId is the refCode which is our userId, not the actual payeeId.
             userId: Number.parseInt(event.eventData.payeeId),
             tipaltiAccountStatus: parsePayeeStatus(event.eventData.status),
@@ -117,6 +112,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ? (event.eventData.unpayableReasons as string[])
               : undefined,
           });
+          // withdrawCash reads its ready/pending status from this cache (TTL one day).
+          await userCashCache.bust(updatedPaymentConfiguration.userId);
           break;
         case 'paymentGroupApproved':
         case 'paymentGroupDeclined':
@@ -154,7 +151,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      return res.status(400).send('Webhook Error');
     }
 
     return res.status(200).json({ received: true });
@@ -331,6 +328,29 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
+
+      // Alert only: Tipalti has already approved, so a failed hold read must not stop recording it.
+      if (
+        event.type === 'paymentGroupApproved' &&
+        (await hasPayoutHold(cashWithdrawal.userId).catch(async (e: unknown) => {
+          await logToAxiom({
+            name: 'creator-program-payout-hold-unchecked',
+            type: 'error',
+            userId: cashWithdrawal.userId,
+            withdrawalId: cashWithdrawal.id,
+            refCode: payment.refCode,
+            message: e instanceof Error ? e.message : String(e),
+          }).catch(() => undefined);
+          return false;
+        }))
+      )
+        await logToAxiom({
+          name: 'creator-program-payout-approved-while-held',
+          type: 'error',
+          userId: cashWithdrawal.userId,
+          withdrawalId: cashWithdrawal.id,
+          refCode: payment.refCode,
+        });
 
       // Update the status of the withdrawal request:
       const status =

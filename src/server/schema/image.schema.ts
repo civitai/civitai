@@ -371,6 +371,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter
+// - ids: the index feed builder never applies it, so an ids batch would return the global feed
 // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
 //   a modelId-only query would silently return the global feed (matches the
 //   /api/v1/images legacy-method logic)
@@ -425,6 +426,7 @@ export function requiresImageDbPath(input: {
   collectionId?: number | null;
   reactions?: unknown[] | null;
   imageId?: number | null;
+  ids?: number[] | null;
   modelId?: number | null;
   modelVersionId?: number | null;
   prioritizedUserIds?: number[] | null;
@@ -439,6 +441,7 @@ export function requiresImageDbPath(input: {
     !!input.collectionId ||
     !!input.reactions?.length ||
     !!input.imageId ||
+    !!input.ids?.length ||
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
     (!!input.publishedOnly && !!input.userId)
@@ -508,7 +511,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
     generation: z.enum(ImageGenerationProcess).array().optional(),
-    ids: z.array(z.number()).optional(),
+    // Raw SQL serves ids queries, so keep it bounded; sticker-book sends up to 200.
+    ids: z.array(z.number()).max(200).optional(),
     imageId: z.number().optional(),
     include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),

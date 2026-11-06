@@ -4,7 +4,7 @@ import { resolvePollOutcomes } from '~/components/ImageGeneration/utils/useGener
 
 type Outcome = Parameters<typeof resolvePollOutcomes>[1][number];
 
-// Taken FROM the production constant rather than spelled out. `@civitai/client`'s `WorkflowStatus`
+// Taken FROM the production constant rather than spelled out. `@civitai/orchestration-client`'s `WorkflowStatus`
 // members read as `undefined` under Vitest though they are real strings in a build, so a literal
 // 'processing' matches nothing and a literal 'succeeded' matches everything — both silently.
 const RUNNING = POLLABLE_STATUSES[0];

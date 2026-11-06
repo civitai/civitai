@@ -1,3 +1,4 @@
+import type { ScanLabelCard } from '$lib/server/scan-label.service';
 import { z } from 'zod';
 
 export const VOTES_PER_ITEM = 3;
@@ -126,3 +127,11 @@ export type QuotaRow = {
   onRoster: boolean;
   days: { day: string; votes: number; status: QuotaStatus }[];
 };
+
+/** Where a card's media is served: keyed by the claim token, like the vote. */
+export const cardMediaPath = (token: string) => `/images/scan-labels/media/${token}`;
+
+/** The card as the page gets it: the claim token stands in for every internal id and media key. */
+export function pageCard({ token, type, width, height, leaseExpiresAt }: ScanLabelCard) {
+  return { token, type, width, height, leaseExpiresAt, mediaSrc: cardMediaPath(token) };
+}

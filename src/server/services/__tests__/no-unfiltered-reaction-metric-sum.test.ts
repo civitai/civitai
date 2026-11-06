@@ -57,16 +57,6 @@ const SCOPES = [
 const NOTIFICATION_RUNNER = 'src/server/jobs/send-notifications.ts';
 
 /**
- * Reaction tables whose count is NOT expected to filter, with the reason. Both belong to
- * the retired Q&A feature and neither surfaces on a browsable feed, so they were left
- * out of the scope this guard was written for rather than overlooked.
- *
- * The list's length is asserted below: adding a table here has to be a visible change,
- * because an exemption is how the same defect gets written again unseen.
- */
-const EXEMPT_TABLES = ['AnswerReaction', 'QuestionReaction'] as const;
-
-/**
  * The call sites this guard expects to find. A regex that matches nothing passes every
  * prohibition in this file, so the set it discovered is asserted before it is judged.
  */
@@ -80,17 +70,16 @@ const EXPECTED_SITES = [
 ] as const;
 
 /**
- * Sites left unfiltered on purpose, each with the reason it is not a divergence.
- *
- * The two Q&A ones are the retired feature. The comment milestone is different: the
- * displayed comment reaction count is not filtered either, so the pair still AGREES.
- * Filtering one half is what creates the defect this guard exists for, so the comment
+ * Sites left unfiltered on purpose, each with the reason it is not a divergence. The comment
+ * milestone: the displayed comment reaction count is not filtered either, so the pair still
+ * AGREES. Filtering one half is what creates the defect this guard exists for, so the comment
  * milestone moves when the comment display does, not before.
+ *
+ * The list's length is asserted below: an exemption is how the same defect gets written again
+ * unseen, so adding one has to be a visible change.
  */
 const EXEMPT_SITES = [
-  'src/server/metrics/answer.metrics.ts:AnswerReaction',
-  'src/server/metrics/question.metrics.ts:QuestionReaction',
-  'src/server/notifications/reaction.notifications.ts:CommentReaction',
+  'src/server/notifications/reaction.notifications.ts:CommentV3Reaction',
 ] as const;
 
 type Site = {
@@ -143,9 +132,7 @@ for (const scope of SCOPES) {
 }
 
 const key = (s: Site) => `${s.rel}:${s.table}`;
-const isExempt = (s: Site) =>
-  (EXEMPT_TABLES as readonly string[]).includes(s.table) ||
-  (EXEMPT_SITES as readonly string[]).includes(key(s));
+const isExempt = (s: Site) => (EXEMPT_SITES as readonly string[]).includes(key(s));
 const covered = sites.filter((s) => !isExempt(s));
 
 describe('no unfiltered reaction count', () => {
@@ -162,11 +149,8 @@ describe('no unfiltered reaction count', () => {
     ).toEqual(expected);
   });
 
-  it('the exemption lists are the size they are — widening either must be visible', () => {
-    // Both, not just the tables: EXEMPT_SITES carries the comment-milestone carve-out, so
-    // a line added there moves a real site out of `covered` with nothing else noticing.
-    expect(EXEMPT_TABLES).toHaveLength(2);
-    expect(EXEMPT_SITES).toHaveLength(3);
+  it('the exemption list is the size it is — widening it must be visible', () => {
+    expect(EXEMPT_SITES).toHaveLength(1);
   });
 
   it('every reaction count splices the exclusion filter', () => {

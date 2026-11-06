@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 /**
@@ -46,8 +46,17 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 import * as imageService from '~/server/services/image.service';
-import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
+import * as postService from '~/server/services/post.service';
+import {
+  imageMetaCache,
+  imageMetadataCache,
+  thumbnailCache,
+  userImageVideoCountCaches,
+} from '~/server/redis/caches';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imagesSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const { deleteImageById, deleteImages } = imageService;
 
@@ -63,6 +72,10 @@ const mockDbWrite = dbMock.dbWrite;
 let bustSpy: ReturnType<typeof vi.spyOn>;
 let thumbnailRefreshSpy: ReturnType<typeof vi.spyOn>;
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(imageService, 'queueImageSearchIndexUpdate').mockResolvedValue(undefined as never);
@@ -71,20 +84,77 @@ beforeEach(() => {
   thumbnailRefreshSpy = vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
 });
 
+// The single delete is one raw statement; every other raw read here answers empty.
+const deleteReturns = (row: Record<string, unknown> | Error) =>
+  mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    if (!Array.from(strings).join('?').includes('DELETE FROM "Image"')) return [];
+    if (row instanceof Error) throw row;
+    return [row];
+  }) as never);
+
 describe('deleteImageById', () => {
   it("busts the owner's image/video count cache", async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockResolvedValue({
-      url: 'some-url',
-      postId: POST_ID,
-      nsfwLevel: 1,
-      userId: OWNER_ID,
-    });
+    deleteReturns({ url: 'some-url', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID });
 
     await deleteImageById({ id: IMAGE_ID });
 
     expect(bustSpy).toHaveBeenCalledTimes(1);
     expect(bustSpy).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  // A hold marker's delete trigger kept the row, blocked it and took it out of its post: every
+  // cache a delete busts is stale for it too, its post's included.
+  it("busts a kept row's caches and its post's", async () => {
+    const postBust = vi.spyOn(postService, 'bustCachesForPosts').mockResolvedValue(undefined);
+    const metaRefresh = vi.spyOn(imageMetaCache, 'refresh').mockResolvedValue(undefined as never);
+    const metadataRefresh = vi
+      .spyOn(imageMetadataCache, 'refresh')
+      .mockResolvedValue(undefined as never);
+    // Answers the kept-record lookup only for the id it binds.
+    mockDbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('?').includes('"EvidenceHoldImage"') &&
+      JSON.stringify(values).includes(String(IMAGE_ID))
+        ? [{ imageId: IMAGE_ID, userId: OWNER_ID, postId: POST_ID }]
+        : []) as never);
+
+    await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
+
+    expect(vi.mocked(imagesSearchIndex.queueUpdate)).toHaveBeenCalledWith([
+      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
+    expect(postBust).toHaveBeenCalledWith([POST_ID]);
+    expect(metaRefresh).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(metadataRefresh).toHaveBeenCalledWith([IMAGE_ID]);
+    // The existence cache is what takes a blocked image off the site.
+    expect(vi.mocked(redisMock.sysRedis.packed.set)).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`:${IMAGE_ID}$`)),
+      'false',
+      expect.anything()
+    );
+  });
+
+  // Already gone: no kept record, so it leaves search and nothing else runs for it.
+  it('drops a row the delete did not remove from search, and stops there', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+
+    await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
+
+    expect(vi.mocked(imagesSearchIndex.queueUpdate)).toHaveBeenCalledWith([
+      { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+    expect(bustSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not treat any other delete failure as a removed row', async () => {
+    deleteReturns(new Error('connection reset'));
+
+    await deleteImageById({ id: IMAGE_ID });
+
+    expect(vi.mocked(imagesSearchIndex.queueUpdate)).not.toHaveBeenCalled();
   });
 });
 
@@ -97,8 +167,7 @@ describe('deleting a custom video thumbnail', () => {
       ([ids]) => ids === 900 || (Array.isArray(ids) && ids.includes(900))
     );
   it('refreshes the parent video’s thumbnail entry on a single delete', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockResolvedValue({
+    deleteReturns({
       url: 'thumb',
       postId: null,
       nsfwLevel: 1,
@@ -147,14 +216,7 @@ describe('deleting a custom video thumbnail', () => {
   });
 
   it('refreshes nothing when no deleted image was a thumbnail', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockResolvedValue({
-      url: 'img',
-      postId: null,
-      nsfwLevel: 1,
-      userId: OWNER_ID,
-      metadata: {},
-    });
+    deleteReturns({ url: 'img', postId: null, nsfwLevel: 1, userId: OWNER_ID, metadata: {} });
 
     await deleteImageById({ id: IMAGE_ID });
 

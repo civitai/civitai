@@ -13,12 +13,11 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
@@ -65,6 +64,7 @@ import {
 import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import {
   DEFAULT_EDGE_IMAGE_WIDTH,
@@ -102,7 +102,14 @@ import {
 } from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
+import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { queryClient, trpc } from '~/utils/trpc';
+import {
+  spaceRowInput,
+  STICKER_PRICE_RANGE_INPUT,
+} from '~/components/Sticker/PlacementSpaceToggle';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import { isDefined } from '~/utils/type-guards';
 import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
@@ -153,6 +160,9 @@ const useAddedImageContext = () => {
 // #endregion
 
 export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
+  // Advanced Mode allows unrestricted mixing of base models; an empty list leaves the picker
+  // unfiltered, as it is before the image has any resource.
+  if (advancedMode) return [];
   const resourcesSorted = sortByModelTypes(resources);
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
@@ -162,9 +172,7 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
       if (isDefined(baseModel)) {
         const options =
           (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
-        // Advanced Mode allows unrestricted mixing of base models; keep Checkpoint available so a
-        // second one can be added.
-        return advancedMode ? options : options.filter((t) => t.type !== 'Checkpoint');
+        return options.filter((t) => t.type !== ModelType.Checkpoint);
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
@@ -288,6 +296,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     isOwner &&
     !!postId &&
     id > 0 &&
+    isScanned &&
+    !needsReview &&
     !contestCollection &&
     !!postPublishedAt &&
     new Date(postPublishedAt) <= new Date();
@@ -350,7 +360,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   return (
     <AddedImageContext.Provider
       value={{
-        image,
+        image: { ...image, nsfwLevel },
         isBlocked,
         isPending,
         isScanned,
@@ -393,6 +403,9 @@ function Preview() {
   return (
     <div className="flex flex-col">
       <PostImage />
+      <div className="p-3 empty:hidden">
+        <StorylineCaption />
+      </div>
       {isBlocked && <TosViolationBanner />}
       <Accordion
         value={value}
@@ -785,6 +798,7 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {!showPreview && <StorylineCaption />}
               {/* Directly under the image. The wrapper is `flex-row-reverse`, so
                   this narrow column is the one on the RIGHT. Renders nothing
                   without remix provenance, which is the ordinary case. */}
@@ -1273,6 +1287,33 @@ function EditDetail() {
   );
 }
 
+function StorylineCaption() {
+  const { image } = useAddedImageContext();
+  const post = usePostEditStore((state) => state.post);
+  if (!post) return null;
+  return <StorylineCaptionSlot post={post} image={image} />;
+}
+
+/**
+ * The menu's dropdown mounts only when it opens, so the sticker setting and the party-hat item
+ * would otherwise start loading at that moment and change the menu's size when they arrive. Warm
+ * them as the pointer, a touch or the keyboard reaches the button.
+ */
+function useWarmImageMenu(imageId: number, isOwner: boolean) {
+  const utils = trpc.useUtils();
+  const features = useFeatureFlags();
+  const hatEvent = isOwner ? getReleasedEventDecoration(CosmeticEntity.Image)?.event : undefined;
+  return () => {
+    if (imageId <= 0) return;
+    if (features.stickerPlacement) {
+      void utils.placement.getSpaceRow.prefetch(spaceRowInput('image', imageId));
+      void utils.placement.getPriceRange.prefetch(STICKER_PRICE_RANGE_INPUT);
+    }
+    if (hatEvent)
+      void utils.event.getAccess.prefetch({ event: hatEvent }, { staleTime: 5 * 60 * 1000 });
+  };
+}
+
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
   const { image, isBlocked, onDelete, onMove, isDeleting, onEditMetaClick, needsReview, isMinor } =
@@ -1280,6 +1321,7 @@ function PostImage() {
   const { metadata, url, type, id, nsfwLevel, poi } = image;
   // Only the owner can hat their images; a moderator editing this post would be refused.
   const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const warmMenu = useWarmImageMenu(id, isOwner);
   const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
   return (
     <div className={`relative`}>
@@ -1321,10 +1363,14 @@ function PostImage() {
           )}
         </div>
       )}
+      <ImageReactionCount
+        count={image.reactionCount}
+        className="pointer-events-none absolute bottom-2 left-2 z-20"
+      />
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <LegacyActionIcon>
+            <LegacyActionIcon onPointerEnter={warmMenu} onTouchStart={warmMenu} onFocus={warmMenu}>
               <IconDotsVertical
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"

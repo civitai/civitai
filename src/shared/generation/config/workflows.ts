@@ -23,6 +23,7 @@ import type { OutputType } from './types';
 // graphs import helpers from this file, so importing them back here would form a
 // graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
 import {
+  flux3VideoVersionIds,
   grokVersionIds,
   happyHorseVersionIds,
   klingVersionIds,
@@ -314,6 +315,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Extract Metadata',
     description: 'Extract generation parameters from an image',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
   },
@@ -390,6 +392,16 @@ export const workflowConfigs: WorkflowConfigs = {
     excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0'], grokVersionIds['v2.0']],
   },
 
+  'img2vid:keyframes': {
+    outputUses: OUTPUT_USES,
+    label: 'Keyframes to Video',
+    description: 'Generate video that passes through your images at chosen moments',
+    category: 'video',
+    ecosystemIds: [ECO.Flux3Video],
+    excludeModelVersionIds: [flux3VideoVersionIds['v3.0']],
+    isNew: true,
+  },
+
   // ===========================================================================
   // Video Enhancement Workflows
   // ===========================================================================
@@ -427,13 +439,17 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Edit Video',
     description: 'Edit a video with AI',
     category: 'video',
-    ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
+    ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse, ECO.Kling],
     // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
-    // Grok edit-video is likewise v1.0-only.
+    // Grok edit-video is likewise v1.0-only, and Kling edits are V4-only.
     excludeModelVersionIds: [
       happyHorseVersionIds['v1.1'],
       grokVersionIds['v1.5'],
       grokVersionIds['v2.0'],
+      klingVersionIds.v1_6,
+      klingVersionIds.v2,
+      klingVersionIds.v2_5_turbo,
+      klingVersionIds.v3,
     ],
   },
 
@@ -475,9 +491,9 @@ export const workflowConfigs: WorkflowConfigs = {
     outputUses: OUTPUT_USES,
     label: 'Create 3D Model',
     modeLabel: 'Text to 3D',
-    description: 'Generate a 3D model from a text prompt (PolyGen via Meshy)',
+    description: 'Generate a 3D model from a text prompt (Meshy or Tripo)',
     category: 'model3d',
-    ecosystemIds: [ECO.PolyGen],
+    ecosystemIds: [ECO.PolyGen, ECO.Tripo],
     featureFlag: 'model3dGenerator',
     isNew: true,
   },
@@ -493,9 +509,10 @@ export const workflowConfigs: WorkflowConfigs = {
       'Generate a 3D model from a source image (Meshy, Tripo, Hunyuan3D, Pixal3D, or Trellis.2)',
     category: 'model3d',
     // Image-to-3D is supported by all the 3D ecosystems; the user picks one
-    // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) stays
-    // PolyGen-only — Tripo/Hunyuan3D/Pixal3D/Trellis.2 have no text-to-3D
-    // operation, and neither does Meshy v7 (a version inside PolyGen).
+    // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) is
+    // PolyGen and Tripo only — Hunyuan3D/Pixal3D/Trellis.2 have no text-to-3D
+    // operation, and neither do Meshy v7 or Tripo v2.5 (versions inside their
+    // ecosystems).
     ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D, ECO.Pixal3D, ECO.Trellis2],
     featureFlag: 'model3dGenerator',
     isNew: true,
@@ -510,6 +527,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Enhance Prompt',
     description: 'Improve your prompt with AI suggestions',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
     hidden: true,
@@ -876,7 +894,7 @@ export const workflowGroups: WorkflowGroup[] = [
   { workflows: ['txt2img:face-fix', 'img2img:face-fix'] },
   { workflows: ['txt2img:hires-fix', 'img2img:hires-fix'] },
   {
-    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid'],
+    workflows: ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'img2vid:keyframes'],
     overrides: [{ ecosystemIds: WAN_ALL_IDS, workflows: ['txt2vid', 'img2vid'] }],
   },
   { workflows: ['vid2vid:edit', 'vid2vid:extend'] },

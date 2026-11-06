@@ -2,6 +2,7 @@ import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 
 class CoinbaseCaller extends HttpCaller {
   private static instance: CoinbaseCaller;
@@ -79,7 +80,7 @@ class CoinbaseCaller extends HttpCaller {
     // Fix for Buffer<ArrayBufferLike> type issue: convert to Buffer using Uint8Array
     const nodeBuffer = Buffer.from(Uint8Array.prototype.slice.call(data));
     const computedSig = createHmac('sha256', secret).update(nodeBuffer.toString()).digest('hex');
-    return signature === computedSig;
+    return timingSafeEqualStrings(computedSig, signature);
   }
 }
 

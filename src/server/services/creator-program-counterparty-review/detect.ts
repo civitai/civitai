@@ -2,8 +2,9 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import {
-  BANKABLE_EARNING_PREDICATE_SQL,
-  RECEIVED_FROM_USER_SQL,
+  clickhouseDateTime,
+  platformPaidFromUsersSql,
+  receivedFromUsersSql,
   SENT_TO_USER_SQL,
 } from '~/server/services/creator-program-bankable';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
@@ -39,26 +40,31 @@ export type Member = { id: number; username: string | null };
 /** `$query` is the only method used, so a test substitutes this port rather than the client. */
 export type ReviewClickhouse = { $query: <T extends object>(sql: string) => Promise<T[]> };
 
-const clickhouseDateTime = (at: Date) => `'${at.toISOString().slice(0, 19).replace('T', ' ')}'`;
+const earnedSince = (since: Date) =>
+  `date >= ${clickhouseDateTime(
+    since
+  )} AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})`;
+
+/** Buzz each user sent each other user in the window, per sender and payee. */
+const sentBetweenUsersSql = (since: Date) => `
+  SELECT sender, payee, sum(amount) AS amount FROM (
+    SELECT toInt64(fromAccountId) AS sender, toInt64(toAccountId) AS payee,
+      toInt64(amount) AS amount
+    FROM buzzTransactions
+    WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
+    UNION ALL
+    SELECT payer, recipient, amount FROM (${platformPaidFromUsersSql(earnedSince(since))})
+  )
+  GROUP BY sender, payee
+`;
 
 export function counterpartyPairsSql({ since, min }: { since: Date; min: number }) {
   return `
     SELECT received.recipient AS userId, received.payer AS counterpartyId,
       received.amount AS received, sent.amount AS sent
-    FROM (
-      SELECT toAccountId AS recipient, fromAccountId AS payer, sum(amount) AS amount
-      FROM buzzTransactions
-      WHERE date >= ${clickhouseDateTime(since)}
-        AND toAccountId > 0 AND toAccountType IN (${buzzBankTypesSql})
-        AND ${BANKABLE_EARNING_PREDICATE_SQL} AND ${RECEIVED_FROM_USER_SQL}
-      GROUP BY recipient, payer
-    ) AS received
-    INNER JOIN (
-      SELECT fromAccountId AS sender, toAccountId AS payee, sum(amount) AS amount
-      FROM buzzTransactions
-      WHERE date >= ${clickhouseDateTime(since)} AND ${SENT_TO_USER_SQL}
-      GROUP BY sender, payee
-    ) AS sent ON sent.sender = received.recipient AND sent.payee = received.payer
+    FROM (${receivedFromUsersSql(earnedSince(since))}) AS received
+    INNER JOIN (${sentBetweenUsersSql(since)}) AS sent
+      ON sent.sender = received.recipient AND sent.payee = received.payer
     WHERE received.payer != received.recipient
       AND least(received.amount, sent.amount) >= ${Math.trunc(min)}
     ORDER BY least(received.amount, sent.amount) DESC
@@ -82,6 +88,82 @@ export async function findCounterpartyPairs(
     counterpartyId: Number(r.counterpartyId),
     received: Number(r.received),
     sent: Number(r.sent),
+  }));
+}
+
+/** How many other users Buzz passes through before it reaches the creator again. */
+export const DEFAULT_MAX_INTERMEDIARIES = 2;
+export const MAX_INTERMEDIARIES = 3;
+/** Inside the job's lock, so a slow search fails on its own instead of overlapping the next run. */
+const INDIRECT_QUERY_SECONDS = 120;
+
+export type IndirectTransfer = {
+  userId: number;
+  /** The users it passed through, in order. */
+  path: number[];
+  /** The smallest leg: no more than this went all the way round. */
+  amount: number;
+};
+
+/**
+ * Buzz a creator sent that reached them again as bankable earnings through `intermediaries`
+ * other users, every leg at least `min`. Each leg has its own column names and the distinct-user
+ * check is a chain of `!=`: ClickHouse's old analyzer cannot resolve joined columns otherwise.
+ */
+export function indirectTransfersSql({
+  since,
+  min,
+  intermediaries,
+}: {
+  since: Date;
+  min: number;
+  intermediaries: number;
+}) {
+  const floor = Math.max(1, Math.trunc(min));
+  const hops = Math.min(MAX_INTERMEDIARIES, Math.max(2, Math.trunc(intermediaries) || 2));
+  const legs = Array.from({ length: hops }, (_, i) => i + 1);
+  const users = ['e1.s1', ...legs.map((i) => `e${i}.p${i}`)];
+  const distinct = users.flatMap((a, i) => users.slice(0, i).map((b) => `${a} != ${b}`));
+  const last = `e${hops}.p${hops}`;
+
+  return `
+    SELECT e1.s1 AS userId, [${legs.map((i) => `e${i}.p${i}`).join(', ')}] AS path,
+      least(${[...legs.map((i) => `e${i}.amt${i}`), 'r.ramt'].join(', ')}) AS amount
+    FROM ${legs
+      .map(
+        (i) => `(
+      SELECT sender AS s${i}, payee AS p${i}, amount AS amt${i}
+      FROM (${sentBetweenUsersSql(since)})
+      WHERE amount >= ${floor}
+    ) AS e${i}${i > 1 ? ` ON e${i}.s${i} = e${i - 1}.p${i - 1}` : ''}`
+      )
+      .join('\n    INNER JOIN ')}
+    INNER JOIN (
+      SELECT recipient AS rc, payer AS rp, amount AS ramt
+      FROM (${receivedFromUsersSql(earnedSince(since))})
+      WHERE amount >= ${floor}
+    ) AS r ON r.rc = e1.s1 AND r.rp = ${last}
+    WHERE ${distinct.join(' AND ')}
+    ORDER BY amount DESC
+    LIMIT ${PAIR_CEILING}
+    SETTINGS max_execution_time = ${INDIRECT_QUERY_SECONDS}
+  `;
+}
+
+export async function findIndirectTransfers(
+  ch: ReviewClickhouse,
+  params: { since: Date; min: number; intermediaries: number }
+): Promise<IndirectTransfer[]> {
+  const rows = await ch.$query<{
+    userId: string | number;
+    path: (string | number)[];
+    amount: string | number;
+  }>(indirectTransfersSql(params));
+
+  return rows.map((r) => ({
+    userId: Number(r.userId),
+    path: r.path.map(Number),
+    amount: Number(r.amount),
   }));
 }
 

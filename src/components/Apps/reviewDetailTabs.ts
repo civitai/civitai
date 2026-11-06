@@ -12,7 +12,7 @@ import { parseReportHash } from '~/components/Apps/agentReviewReport';
  *
  * Pure, React-free and Mantine-free (same precedent as `appsActivityTabs.ts` /
  * `appListingEditorTabs.ts`) so the resolution rules run in the node-env `unit` project
- * rather than only in the report-only browser tier.
+ * rather than only in the browser tier.
  */
 
 /**

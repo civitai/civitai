@@ -97,7 +97,8 @@ export const INIT_RETRY_INTERVAL_MS = 400;
  * Three extra posts in the first 350 ms is the whole of the added cost.
  *
  * 🔴 WHAT THIS MUST NOT TOUCH, and does not: the readiness timeout
- * (`readyTimeoutMs`, wired to `BLOCK_READY_TIMEOUT_MS = 10_000`) is armed by
+ * (`readyTimeoutMs`, wired per surface via `readyWaitPolicyFor` — 10 s, or 30 s on
+ * the dev tunnel — and to `BLOCK_READY_TIMEOUT_MS = 10_000` in IframeHost) is armed by
  * `start()` and is independent of the retry cadence; and `notifyHello()` still
  * posts immediately without consulting the schedule.
  */

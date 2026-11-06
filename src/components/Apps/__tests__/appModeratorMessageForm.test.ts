@@ -17,10 +17,9 @@ import {
 /**
  * The BLOCKING gate on the moderator → app-developer message composer.
  *
- * `MessageAppOwnerModal` is covered by a browser suite too, but the browser project is
- * REPORT-ONLY in this repo's CI, so the rule that decides whether a half-typed message
- * can be sent to a developer is pinned here, in the node `unit` project, exactly as
- * `appListingModerationTableView.test.ts` pins the action set.
+ * `MessageAppOwnerModal` is covered by a browser suite too, but the rule that decides whether a
+ * half-typed message can be sent to a developer is pinned here, in the node `unit` project, exactly
+ * as `appListingModerationTableView.test.ts` pins the action set.
  *
  * 🔴 EVERY BOUNDARY CASE IS BUILT FROM THE SCHEMA CONSTANTS, not from the literals 3 /
  * 200 / 20 / 2000. A test that hardcodes them keeps passing when the schema moves and

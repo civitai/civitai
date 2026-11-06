@@ -130,8 +130,7 @@ describe('BlockRegistry.resolvePageBlockBySlug — sandbox + scopes', () => {
   // iframe from mount. It is PUBLISHER-CONTROLLED JSON, so the coercion has to
   // be strict — a truthy-but-not-boolean value must not switch a host behaviour
   // on. These live in the UNIT tier deliberately: the browser suite that covers
-  // the rendering half is not run by CI (lint.yml excludes *.browser.test.tsx),
-  // so the coercion claim was previously untested in the only tier that gates.
+  // the rendering half does not exercise this coercion with a non-boolean value.
   it('bootSkeleton: true only for a literal boolean true', async () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(
       pageRow({ manifest: PAGE_MANIFEST({ bootSkeleton: true }), trustTier: 'verified' })

@@ -37,7 +37,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // component's ENTIRE transitive import graph: when the component grew an import
 // that reached `showSuccessNotification`, this module stopped providing it and
 // the whole file failed to COLLECT -- `Tests no tests`, which reads as a pass to
-// anything checking a summary, and no CI job runs the browser project.
+// anything checking a summary.
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationUtils>()),
   showErrorNotification: vi.fn(),

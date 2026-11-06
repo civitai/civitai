@@ -1,6 +1,6 @@
 import { MAX_REASON_LENGTH, type AbuseReportInput } from '@civitai/moderation';
 import { NO_ACTION_TAKEN, plural } from '../abuse-report-prose';
-import type { CounterpartyPair } from './detect';
+import type { CounterpartyPair, IndirectTransfer } from './detect';
 
 type Finding = AbuseReportInput['findings'][number];
 
@@ -51,7 +51,8 @@ export type ReviewOutcome =
 export function renderReason(
   pairs: CounterpartyPair[],
   outcome: ReviewOutcome,
-  since: Date
+  since: Date,
+  indirect: IndirectTransfer[] = []
 ): string {
   const total = pairs.reduce((sum, p) => sum + twoWay(p), 0);
   const window = `since ${since.toISOString().slice(0, 10)}`;
@@ -63,13 +64,17 @@ export function renderReason(
     `(${describePairs(
       pairs
     )}). ${total.toLocaleString()} Buzz went both ways and was left out of their bankable earnings.`;
+  // Last, so a long list is what gets cut rather than what the review did.
+  const tail = indirect.length ? ` ${describeIndirect(indirect, since)}` : '';
 
   switch (outcome.kind) {
     case 'warned':
-      return truncateReason(`${head} Sent the one-time warning message from the Civitai account.`);
+      return truncateReason(
+        `${head} Sent the one-time warning message from the Civitai account.${tail}`
+      );
     case 'warning-failed':
       return truncateReason(
-        `${head} The warning message could not be sent (${outcome.error}); it will be retried on the next run. ${NO_ACTION_TAKEN}`
+        `${head} The warning message could not be sent (${outcome.error}); it will be retried on the next run. ${NO_ACTION_TAKEN}${tail}`
       );
     case 'repeat':
       return truncateReason(
@@ -78,7 +83,7 @@ export function renderReason(
           .slice(
             0,
             10
-          )}, and the exchange grew again after that. Removing the account from the Creator Program is a moderator decision. ${NO_ACTION_TAKEN}`
+          )}, and the exchange grew again after that. Removing the account from the Creator Program is a moderator decision. ${NO_ACTION_TAKEN}${tail}`
       );
   }
 }
@@ -88,12 +93,77 @@ export function toFinding(
   userId: number,
   pairs: CounterpartyPair[],
   outcome: ReviewOutcome,
-  since: Date
+  since: Date,
+  indirect: IndirectTransfer[] = []
 ): Finding {
-  const reason = renderReason(pairs, outcome, since);
+  const reason = renderReason(pairs, outcome, since, indirect);
   if (outcome.kind === 'warned')
     return { userId, confidence: 0.9, reason, actioned: true, action: WARNED_ACTION };
   return { userId, confidence: outcome.kind === 'repeat' ? 0.95 : 0.9, reason, actioned: false };
+}
+
+/** Below a direct exchange: more innocent patterns look like this, so a moderator decides. */
+export const INDIRECT_CONFIDENCE = 0.7;
+
+/** Enough for a moderator to start from; the rest are counted, not listed. */
+const INDIRECT_PATHS_SHOWN = 5;
+
+/** The members of a transfer's loop, so a moderator can see which findings are one loop. */
+export const loopKey = (t: IndirectTransfer) =>
+  [t.userId, ...t.path].sort((a, b) => a - b).join('-');
+
+function describeIndirect(transfers: IndirectTransfer[], since: Date) {
+  const shown = transfers
+    .slice(0, INDIRECT_PATHS_SHOWN)
+    .map(
+      (t) =>
+        `through accounts ${t.path.join(' → ')}: ${t.amount.toLocaleString()} Buzz (loop ${loopKey(
+          t
+        )})`
+    )
+    .join('; ');
+  const more = transfers.length - INDIRECT_PATHS_SHOWN;
+  return (
+    `Since ${since
+      .toISOString()
+      .slice(
+        0,
+        10
+      )} this creator sent Buzz to other accounts that, in turn, paid it on and back to them as bankable earnings (${shown}${
+      more > 0 ? `; and ${more} more` : ''
+    }). ` +
+    `Each amount is the smallest leg of totals since then; the order of the transfers is not checked.`
+  );
+}
+
+export function renderIndirectReason(
+  transfers: IndirectTransfer[],
+  since: Date,
+  warnedAt?: Date
+): string {
+  const earlier = warnedAt
+    ? ` Already warned on ${warnedAt.toISOString().slice(0, 10)} for a direct exchange.`
+    : '';
+  return truncateReason(
+    `No warning message was sent: whether this is abuse is a moderator decision.${earlier} ${NO_ACTION_TAKEN} ${describeIndirect(
+      transfers,
+      since
+    )}`
+  );
+}
+
+export function toIndirectFinding(
+  userId: number,
+  transfers: IndirectTransfer[],
+  since: Date,
+  warnedAt?: Date
+): Finding {
+  return {
+    userId,
+    confidence: INDIRECT_CONFIDENCE,
+    reason: renderIndirectReason(transfers, since, warnedAt),
+    actioned: false,
+  };
 }
 
 export function renderSummary(counts: {
@@ -102,6 +172,7 @@ export function renderSummary(counts: {
   warned: number;
   repeats: number;
   failed: number;
+  indirect: number;
 }): string {
   return (
     `${counts.pairs.toLocaleString()} creator-to-user ${plural(
@@ -113,6 +184,7 @@ export function renderSummary(counts: {
       'was',
       'were'
     )} current Creator Program ${plural(counts.members, 'member')}. ` +
-    `${counts.warned} warned for the first time, ${counts.repeats} filed again after a warning, ${counts.failed} could not be messaged.`
+    `${counts.warned} warned for the first time, ${counts.repeats} filed again after a warning, ${counts.failed} could not be messaged. ` +
+    `${counts.indirect} of the filed members also or only had indirect transfers.`
   );
 }

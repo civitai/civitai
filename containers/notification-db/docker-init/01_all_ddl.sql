@@ -22,6 +22,7 @@ CREATE TYPE public."NotificationCategory" AS ENUM (
     'Creator',
     'Referral',
     'System',
+    'Moderation',
     'Other'
 );
 
@@ -74,15 +75,15 @@ ALTER SEQUENCE public."PendingNotification_id_seq" OWNED BY public."PendingNotif
 
 
 CREATE TABLE public."UserNotification" (
-    id integer NOT NULL,
+    id bigint NOT NULL,
     "notificationId" integer NOT NULL,
     "userId" integer NOT NULL,
     viewed boolean DEFAULT false NOT NULL,
-    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+    "createdAt" timestamp(6) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE SEQUENCE public."UserNotification_id_seq"
-    AS integer
+    AS bigint
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -143,7 +144,7 @@ ALTER TABLE ONLY public."UserNotification"
 -- after it behave the way they read.
 SET search_path = public;
 
-CREATE INDEX CONCURRENTLY "UserNotification_userId_createdAt_idx" ON "UserNotification" ("userId", "createdAt" DESC) INCLUDE ("viewed", "notificationId");
+CREATE INDEX CONCURRENTLY "UserNotification_userId_createdAt" ON "UserNotification" ("userId", "createdAt" DESC);
 CREATE INDEX CONCURRENTLY "Notification_id_with_category_idx" ON "Notification" (id) INCLUDE (category);
 
 DROP INDEX "UserNotification_viewed_idx";

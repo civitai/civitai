@@ -165,7 +165,7 @@ describe('validateBatchSchedule', () => {
     existingPosts(Array.from({ length: 20 }, (_, i) => at(-11 + i)));
 
     const result = await validateBatchSchedule({
-      input: { publishedAts: [at(8, 15), at(9)] },
+      input: { publishedAts: [at(8, 8), at(9)] },
       user: OWNER,
     });
 
@@ -217,7 +217,7 @@ describe('scheduleBatch', () => {
     existingPosts([at(2)]);
 
     await expect(
-      scheduleBatch({ input: batchOf([at(2, 10), at(0, 2)]), ctx: ctxFor() })
+      scheduleBatch({ input: batchOf([at(2, 8), at(0, 2)]), ctx: ctxFor() })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringMatching(/Post 2 must be at least 10 minutes.*Post 1 is too close/s),
@@ -561,11 +561,11 @@ describe('scheduleBatch: an attempt repeated after the client gave up on it', ()
     expect(world).toHaveLength(2);
   });
 
-  it('still refuses a new post 10 minutes from one already scheduled', async () => {
+  it('still refuses a new post 3 minutes from one already scheduled', async () => {
     worldOf([{ id: 400, createdAt: at(-1), publishedAt: at(24), urls: ['other'] }]);
 
     await expect(
-      scheduleBatch({ input: keyed(batchOf([at(24, 15)]), KEYS), ctx: ctxFor() })
+      scheduleBatch({ input: keyed(batchOf([at(24, 8)]), KEYS), ctx: ctxFor() })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('too close') });
     expect(createPost).not.toHaveBeenCalled();
   });
@@ -666,7 +666,7 @@ describe('scheduleBatch: the step breakdown a slow call logs', () => {
     }) as never);
 
     await expect(
-      scheduleBatch({ input: batchOf([at(24, 10)]), ctx: ctxFor() })
+      scheduleBatch({ input: batchOf([at(24, 8)]), ctx: ctxFor() })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(stepLines()).toEqual([expect.objectContaining({ failed: true, created: 0 })]);

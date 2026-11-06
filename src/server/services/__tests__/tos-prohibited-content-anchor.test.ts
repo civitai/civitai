@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { getTosMeta } from '~/server/services/content.service';
+import type { Context } from '~/server/createContext';
+import { getStaticContent, getTosMeta } from '~/server/services/content.service';
 import { TOS_PROHIBITED_CONTENT_ID } from '~/components/Markdown/rehype-tos-section-ids';
 
 /**
@@ -56,6 +57,25 @@ describe('ToS prohibited-content anchor', () => {
       ).toBeDefined();
     }
   });
+
+  // Legal asked for this rewrite WITHOUT re-acceptance: it drops a right Civitai reserved, so nobody
+  // has to agree to anything new. If a later edit to §5.8 does need a re-accept, change this test.
+  it.each(Object.keys(ACCEPTED_IDENTITY))(
+    '%s serves the 2026-10-22 §5.8 failed-renewal wording without re-acceptance',
+    async (domainColor) => {
+      const tos = await getStaticContent({
+        slug: ['tos'],
+        ctx: { domain: domainColor } as Context,
+      });
+      expect(tos.content).toContain(
+        'We will not delete your account or User Content because a renewal payment failed.'
+      );
+      expect(tos.content).not.toContain('reserves the right to delete your account');
+
+      const { hash } = await getTosMeta({ domainColor });
+      expect(hash).toBe(ACCEPTED_IDENTITY[domainColor]);
+    }
+  );
 
   it.each(Object.keys(ACCEPTED_IDENTITY))(
     '%s still advertises the identity users have accepted',

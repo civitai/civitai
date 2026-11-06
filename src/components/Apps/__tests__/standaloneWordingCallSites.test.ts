@@ -83,7 +83,7 @@ const SCAN_ROOTS = ['components/Apps', 'components/AppBlocks', 'pages/apps'];
  * .test.tsx` asserted `toHaveTextContent(/On-site app/i)`. The kind rename made that
  * assertion false, every rule here stayed green, the whole `unit` tier stayed green, and
  * the only thing that caught it was the preview pipeline's `component-tests` job — which
- * is report-only, runs 187 files (not the App-store subset), and is the tier a local
+ * was report-only, ran every browser file (not the App-store subset), and is the tier a local
  * `vitest src/components/Apps` run cannot see. Note the shape: this file's docblock
  * claims rule (1) fails "when the set GROWS", and for `src/tests/**` it could not. A
  * guard narrower than its own description reads as coverage while providing none.
@@ -717,9 +717,9 @@ describe('🔴 NO TEST ASSERTS A RETIRED WORDING IS ON SCREEN', () => {
   /**
    * 🔴 THE RULE. A test that asserts a retired wording is on screen is either testing a
    * surface that was never renamed, or it is a stale expectation that will fail the
-   * moment the rename lands — and it fails in the REPORT-ONLY browser tier, hours later,
-   * on a job that runs 187 files rather than the App-store subset a developer runs
-   * locally.
+   * moment the rename lands — and it fails in the browser tier (`Component tests`), on a
+   * job that runs every `*.browser.test.tsx` rather than the App-store subset a developer
+   * runs locally.
    */
   it('🔴 no test asserts a retired wording is rendered', () => {
     const offenders = SCANNED_TESTS.flatMap(({ rel, raw }) =>

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   POST_BATCH_CHUNK_MAX_IMAGES,
   POST_BATCH_CHUNK_POSTS,
+  POST_BATCH_MIN_EVERY_MINUTES,
+  POST_BATCH_MIN_GAP_MINUTES,
   seededRng,
   utcDayKey,
   validateBatchSchedule,
@@ -20,10 +22,12 @@ import {
   serializeDraft,
   shuffle,
   toBatchImage,
+  withoutReuploads,
 } from '~/components/Post/Batch/batch-composer.utils';
 import type { ComposerDraft, UploadedMedia } from '~/components/Post/Batch/batch-composer.utils';
 
 const date = (iso: string) => new Date(iso);
+const inMinutes = (minutes: number, from: Date) => new Date(from.getTime() + minutes * 60_000);
 
 describe('expandTitleTemplate', () => {
   const tokens = {
@@ -150,12 +154,12 @@ describe('generateBatchDates', () => {
     expect(first.dates.every((d) => d.getUTCMinutes() !== 0)).toBe(true);
   });
 
-  it('reports an issue for a cadence under an hour', () => {
+  it('reports an issue for a cadence the jitter could collapse below the gap', () => {
     const result = generateBatchDates(
       {
         mode: 'every',
         start: date('2026-10-07T15:00:00Z'),
-        every: 30,
+        every: POST_BATCH_MIN_EVERY_MINUTES - 1,
         unit: 'minutes',
         from: new Date(),
         to: new Date(),
@@ -171,11 +175,14 @@ describe('fixSpacing', () => {
   const now = date('2026-10-07T12:00:00Z');
 
   it('pushes a post forward out of a gap violation, never backward', () => {
-    const dates = [date('2026-10-07T15:07:00Z'), date('2026-10-07T15:17:00Z')];
+    const first = date('2026-10-07T15:07:00Z');
+    const dates = [first, inMinutes(POST_BATCH_MIN_GAP_MINUTES - 1, first)];
     const { dates: fixed, moved } = fixSpacing({ dates, existing: [], dailyLimit: 10, now });
     expect(moved).toBe(1);
     expect(fixed[0]).toEqual(dates[0]);
-    expect(fixed[1].getTime() - fixed[0].getTime()).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(fixed[1].getTime() - fixed[0].getTime()).toBeGreaterThanOrEqual(
+      POST_BATCH_MIN_GAP_MINUTES * 60_000
+    );
     expect(fixed[1] >= dates[1]).toBe(true);
   });
 
@@ -189,9 +196,11 @@ describe('fixSpacing', () => {
 
   it('keeps the gap from an existing post', () => {
     const existing = [date('2026-10-07T18:00:00Z')];
-    const dates = [date('2026-10-07T18:10:00Z')];
+    const dates = [inMinutes(POST_BATCH_MIN_GAP_MINUTES - 1, existing[0])];
     const { dates: fixed } = fixSpacing({ dates, existing, dailyLimit: 10, now });
-    expect(fixed[0].getTime() - existing[0].getTime()).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(fixed[0].getTime() - existing[0].getTime()).toBeGreaterThanOrEqual(
+      POST_BATCH_MIN_GAP_MINUTES * 60_000
+    );
   });
 
   it('produces a schedule the validator accepts and returns dates in input order', () => {
@@ -372,5 +381,81 @@ describe('draft serialisation', () => {
         shared: { ...draft().shared, tools: [], tags: [] },
       })
     ).toBe(true);
+  });
+});
+
+describe('withoutReuploads', () => {
+  const key = (n: number) => `${String(n).padStart(8, '0')}-ef56-4a7b-8c9d-0e1f2a3b4c5d`;
+  const draftOf = (urls: string[]) =>
+    ({
+      media: urls.map((url) => ({ url, status: 'added' })),
+      imagesPerPost: 3,
+      seed: 42,
+    } as unknown as ComposerDraft);
+
+  it('drops the uploads the check marks, counts them, and keeps the rest of the draft', async () => {
+    const draft = draftOf([key(1), key(2), key(3)]);
+    const result = await withoutReuploads(draft, async () => [key(2)], 64);
+    expect(result).toEqual({
+      draft: { ...draft, media: [draft.media[0], draft.media[2]] },
+      dropped: 1,
+    });
+  });
+
+  it('keeps the whole draft when a later check fails', async () => {
+    const draft = draftOf([key(1), key(2), key(3)]);
+    const check = vi
+      .fn<(keys: string[]) => Promise<string[]>>()
+      .mockResolvedValueOnce([key(1)])
+      .mockRejectedValueOnce(new Error('offline'));
+    expect(await withoutReuploads(draft, check, 2)).toEqual({ draft, dropped: 0 });
+  });
+
+  it('sends one check at a time', async () => {
+    let inFlight = 0;
+    let most = 0;
+    const check = async () => {
+      most = Math.max(most, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return [] as string[];
+    };
+    await withoutReuploads(draftOf([key(1), key(2), key(3)]), check, 1);
+    expect(most).toBe(1);
+  });
+
+  it('keeps the whole draft when the checks do not answer in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const draft = draftOf([key(1)]);
+      const result = withoutReuploads(
+        draft,
+        () => new Promise<string[]>(() => undefined),
+        64,
+        5_000
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await result).toEqual({ draft, dropped: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the whole draft when a check fails', async () => {
+    const draft = draftOf([key(1), key(2)]);
+    const result = await withoutReuploads(
+      draft,
+      async () => {
+        throw new Error('offline');
+      },
+      64
+    );
+    expect(result).toEqual({ draft, dropped: 0 });
+  });
+
+  it('checks upload keys only, at most perCheck at a time', async () => {
+    const check = vi.fn<(keys: string[]) => Promise<string[]>>(async () => []);
+    await withoutReuploads(draftOf([key(1), 'blob:https://x/y', key(2), key(3)]), check, 2);
+    expect(check.mock.calls).toEqual([[[key(1), key(2)]], [[key(3)]]]);
   });
 });

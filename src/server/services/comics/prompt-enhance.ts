@@ -1,4 +1,5 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
@@ -75,7 +76,9 @@ export async function enhanceComicPrompt(input: {
   try {
     const textParts = [
       names.length > 0 && `Characters referenced in this prompt: ${names.join(', ')}`,
-      characterName && names.includes(characterName) && `Active character (has reference images): ${characterName}`,
+      characterName &&
+        names.includes(characterName) &&
+        `Active character (has reference images): ${characterName}`,
       storyContext && `Overall story: ${storyContext.storyDescription}`,
       storyContext &&
         storyContext.previousPanelPrompts.length > 0 &&
@@ -108,7 +111,7 @@ export async function enhanceComicPrompt(input: {
 
     const result = await orchestratorChatCompletion({
       token,
-      model: 'gpt-4o-mini',
+      model: DEFAULT_CHAT_COMPLETION_MODEL,
       temperature: 0.4,
       maxTokens: 512,
       messages: [

@@ -5,6 +5,7 @@ import type * as Cloudflare from '~/server/cloudflare/client';
 import type * as SearchIndex from '~/server/search-index';
 import type * as UserProfileService from '~/server/services/user-profile.service';
 import type * as UserService from '~/server/services/user.service';
+import type * as UserCreatorReads from '~/server/services/user-creator.reads';
 import type * as UtilService from '~/server/services/util.service';
 
 /**
@@ -15,14 +16,20 @@ import type * as UtilService from '~/server/services/util.service';
  * `bustUserCreator` is the only thing that can drop the entry.
  */
 
-const { purgeCache, mocks } = vi.hoisted(() => ({
+const { purgeCache, readCreator, mocks } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
+  readCreator: vi.fn(),
   mocks: {
     updateUserProfile: vi.fn(),
     getUserWithProfile: vi.fn(),
     getUserById: vi.fn(),
     updateUserById: vi.fn(),
   },
+}));
+// The creator card's database read (the user and its published-model count, one Kysely read).
+vi.mock('~/server/services/user-creator.reads', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserCreatorReads>()),
+  readUserCreatorViaKysely: readCreator,
 }));
 vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
   ...(await importOriginal<typeof Cloudflare>()),
@@ -66,20 +73,33 @@ beforeEach(() => {
   installFakeCacheRedis();
   usernames = { [OWNER]: 'owner-before', [MODERATOR]: 'mod-before' };
   purgeCache.mockResolvedValue(undefined);
-  dbMock.dbRead.user.findFirst.mockImplementation((async ({ where }: { where: { id: number } }) =>
+  readCreator.mockImplementation(async (_db: unknown, where: { id: number }) =>
     usernames[where.id]
       ? {
-          id: where.id,
-          username: usernames[where.id],
-          settings: null,
-          cosmetics: [],
-          links: [],
+          user: {
+            id: where.id,
+            username: usernames[where.id],
+            settings: null,
+            cosmetics: [],
+            links: [],
+          },
+          modelCount: 0,
         }
-      : null) as never);
-  dbMock.dbRead.model.count.mockResolvedValue(0 as never);
+      : null
+  );
+  // The username the edge purge reads from the primary, after the write.
+  dbMock.dbWrite.user.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ username: usernames[id] }))) as never);
   mocks.updateUserProfile.mockResolvedValue({ id: OWNER });
   mocks.getUserWithProfile.mockResolvedValue({ id: OWNER, profile: { showcaseItems: [] } });
-  mocks.getUserById.mockResolvedValue({ profilePictureId: null, profilePicture: null });
+  mocks.getUserById.mockResolvedValue({
+    username: 'owner-before',
+    profilePictureId: null,
+    profilePicture: null,
+  });
   mocks.updateUserById.mockResolvedValue({ id: OWNER, profilePictureId: null });
 });
 afterEach(() => {
@@ -114,7 +134,9 @@ describe('creator-card bust in the profile and user write handlers', () => {
       } as never)
     );
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
-    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${OWNER}`] });
+    expect(purgeCache).toHaveBeenCalledWith({
+      tags: [`user-creator-${OWNER}`, 'user-creator-owner-after'],
+    });
   });
 
   it('addEntityToShowcaseHandler busts the caller', async () => {
@@ -125,10 +147,12 @@ describe('creator-card bust in the profile and user write handlers', () => {
       } as never)
     );
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
-    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${OWNER}`] });
+    expect(purgeCache).toHaveBeenCalledWith({
+      tags: [`user-creator-${OWNER}`, 'user-creator-owner-after'],
+    });
   });
 
-  it('updateUserHandler busts the caller on a plain save', async () => {
+  it('updateUserHandler busts the caller by id, new username and old username', async () => {
     const cards = await cardsAfter(() =>
       updateUserHandler({
         input: { id: OWNER, username: 'owner-after' },
@@ -136,6 +160,8 @@ describe('creator-card bust in the profile and user write handlers', () => {
       } as never)
     );
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
-    expect(purgeCache).toHaveBeenCalledWith({ tags: [`user-creator-${OWNER}`] });
+    expect(purgeCache).toHaveBeenCalledWith({
+      tags: [`user-creator-${OWNER}`, 'user-creator-owner-after', 'user-creator-owner-before'],
+    });
   });
 });

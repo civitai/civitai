@@ -44,6 +44,13 @@ interface BlockFallbackProps {
    * other existing caller byte-identical.
    */
   prominentRetry?: boolean;
+  /**
+   * Which copy a `timeout` renders. `'dev-server'` is set by PageBlockHost on the
+   * author's dev tunnel only (`readyWaitPolicyFor`): there the usual cause is a dev
+   * server that is slow to reach, not a broken app, and the copy says so. Default
+   * `'default'` keeps every other caller byte-identical. Ignored for other reasons.
+   */
+  timeoutCopy?: 'default' | 'dev-server';
 }
 
 const DEFAULT_MIN_HEIGHT = 200;
@@ -76,6 +83,13 @@ const REASON_COPY: Record<
   },
 };
 
+/** `timeout` copy on the dev tunnel — see `BlockFallbackProps.timeoutCopy`. */
+const DEV_SERVER_TIMEOUT_COPY = {
+  color: 'gray',
+  title: "Your app's dev server didn't respond in time",
+  hint: "Your app's dev server is taking a while to respond. It may be a slow connection to the preview — try again.",
+};
+
 export function BlockFallback({
   reason,
   blockName,
@@ -84,6 +98,7 @@ export function BlockFallback({
   autoRetry,
   autoRetriesSpent = 0,
   prominentRetry = false,
+  timeoutCopy = 'default',
 }: BlockFallbackProps) {
   // `true` = fail SAFE (assume reduced motion) until the media query resolves —
   // the same default PageBlockHost passes.
@@ -105,10 +120,15 @@ export function BlockFallback({
     // stayed correct even with `animate` hardcoded to true, so the test passed
     // while the shimmer kept running. Mutation testing caught it; assert the
     // prop's real rendered effect, never a restatement of the intent.
-    return <Skeleton h={minHeight} radius="md" animate={!reduceMotion} data-block-fallback="loading" />;
+    return (
+      <Skeleton h={minHeight} radius="md" animate={!reduceMotion} data-block-fallback="loading" />
+    );
   }
 
-  const copy = REASON_COPY[reason];
+  const copy =
+    reason === 'timeout' && timeoutCopy === 'dev-server'
+      ? DEV_SERVER_TIMEOUT_COPY
+      : REASON_COPY[reason];
   // Surface the (sanitized upstream) app name in the fatal case so the user
   // knows which app failed; the other reasons read fine without it.
   const title =

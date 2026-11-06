@@ -36,11 +36,9 @@ import { describe, expect, it } from 'vitest';
  * the counter — and because the symptom is silent, the seventh would ship the same
  * way the first six did.
  *
- * WHY A SOURCE SCAN. The behavioural proof needs a real browser, and browser-mode
- * tests here run only in the label-gated `preview / component-tests` pipeline, which
- * is REPORT-ONLY and gates no merge. This file is a `.test.ts` under `src/`, so it
- * matches the `unit` project's `include` and runs in CI's `Unit tests` job — the
- * tier that can actually block. It buys blocking coverage of the *shape*; it is not
+ * WHY A SOURCE SCAN. The behavioural proof needs a real browser (`Component tests` in
+ * CI). This file is a `.test.ts` under `src/`, so it matches the `unit` project's `include`
+ * and runs in CI's `Unit tests` job. It buys coverage of the *shape*; it is not
  * a claim that any particular menu opens. See the SCOPE note at the end, which is
  * deliberately specific about what this cannot see.
  */

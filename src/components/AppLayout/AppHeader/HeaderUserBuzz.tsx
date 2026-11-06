@@ -14,7 +14,8 @@ export function HeaderUserBuzz() {
     <UserBuzz
       animated={buzzSpendPop}
       withDeltaPop={buzzSpendPop}
-      pr="sm"
+      iconGap={2}
+      pr={{ base: 0, md: 'sm' }}
       accountTypes={hideBlueBuzzInHeader ? [mainBuzzColor] : undefined}
     />
   );

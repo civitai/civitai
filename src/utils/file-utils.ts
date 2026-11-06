@@ -30,7 +30,8 @@ export function downloadBlob(blob: Blob, filename: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(href);
+  // Revoking in the same tick can cancel a large download before the browser has read it.
+  setTimeout(() => URL.revokeObjectURL(href), 40_000);
 }
 
 export function blobToFile(
@@ -41,9 +42,13 @@ export function blobToFile(
   return new File([blob], filename, { type });
 }
 
-export async function fetchBlobAsFile(src: string | Blob | File, filename?: string) {
+export async function fetchBlobAsFile(
+  src: string | Blob | File,
+  filename?: string,
+  options?: { requireOk?: boolean }
+) {
   if (src instanceof File) return src;
-  const blob = await fetchBlob(src);
+  const blob = await fetchBlob(src, undefined, options);
   if (!blob) return null;
   let type = blob.type;
 

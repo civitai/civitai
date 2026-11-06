@@ -5,13 +5,7 @@ import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { LabHarnessError, type LabOverrides, type LabRun } from '../text-scan-lab/harness-client';
 import { chunkTexts } from '../../text-scan-lab/limits';
-import type {
-  LabEntityType,
-  LabField,
-  LabRuleOverride,
-  LabScanResult,
-  LabText,
-} from '../../text-scan-lab/types';
+import type { LabEntityType, LabField, LabScanResult, LabText } from '../../text-scan-lab/types';
 import { verdictOf, type ResultStatus } from '../../text-scan-tests/score';
 import {
   ACTIVE_RUN_STATUSES,
@@ -35,14 +29,10 @@ export type WorkerDeps = {
   ) => Promise<LabRun>;
   workerId: string;
   log: (event: string, data: Record<string, unknown>, level?: 'info' | 'error') => void;
-  /** The hash of the live Model rules, compared with a run's recorded `rule_state_hash`. */
-  liveRuleStateHash?: () => Promise<string | null>;
 };
 
 export const PROMPT_MOVED =
   'A prompt was saved while this run was scanning, so its results would mix versions. Start a new run.';
-export const RULES_MOVED =
-  'A Model rule changed while this run was scanning, so its results would mix versions. Start a new run.';
 export const UNEXPECTED = 'The run stopped on an unexpected error.';
 const PENDING_PAGE = 64;
 const LEASE_EXPIRED = sql<boolean>`heartbeat_at < now() - ${TEST_SET_LIMITS.leaseStaleMs} * interval '1 millisecond'`;
@@ -139,7 +129,7 @@ function toResultRow(caseId: number, r: LabScanResult | undefined): ResultRow {
     case_id: String(caseId),
     status: 'ok',
     output: JSON.stringify(r.output),
-    literal_rule_ids: r.literalRuleIds?.length ? JSON.stringify(r.literalRuleIds) : null,
+    literal_rule_ids: null,
     workflow_id: r.workflowId,
     error: null,
     segments: verdictOf(r.output).segments,
@@ -245,12 +235,6 @@ async function pauseRun(deps: WorkerDeps, runId: number): Promise<void> {
   deps.log('text-scan test run paused', { runId, reason: 'session refused' }, 'info');
 }
 
-async function rulesMoved(deps: WorkerDeps, run: RunRow): Promise<boolean> {
-  if (!run.rule_state_hash) return false;
-  if (!deps.liveRuleStateHash) throw new Error('No live rule state to check this run against.');
-  return (await deps.liveRuleStateHash()) !== run.rule_state_hash;
-}
-
 // claimRun stamps both with one `now()`, so equal means this claim is the run's first start.
 const firstStart = (run: RunRow) =>
   run.started_at !== null &&
@@ -261,11 +245,9 @@ const firstStart = (run: RunRow) =>
 async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<void> {
   const runId = Number(run.id);
   if (run.status === 'cancelling') return endRun(deps, runId, 'cancelled');
-  if (await rulesMoved(deps, run)) return endRun(deps, runId, 'failed', RULES_MOVED);
   const recorded = run.prompt_ids as Record<string, number>;
   const overrides: LabOverrides = {
     prompts: (run.prompt_overrides as Record<string, string> | null) ?? undefined,
-    rules: (run.rule_overrides as LabRuleOverride[] | null) ?? [],
   };
   let launchFirstRequest = launch && firstStart(run);
 
@@ -311,7 +293,6 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
       }
       if (results.some((r) => r.ok && !idsAgree(recorded, r.promptIds)))
         return endRun(deps, runId, 'failed', PROMPT_MOVED);
-      if (await rulesMoved(deps, run)) return endRun(deps, runId, 'failed', RULES_MOVED);
       const byKey = new Map(results.map((r) => [r.key, r] as const));
       rows.push(...live.map((c) => toResultRow(c.id, byKey.get(String(c.id)))));
       launchFirstRequest = false;

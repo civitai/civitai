@@ -20,7 +20,7 @@ const { buildTextScanSteps, planTextScanPasses } = await import(
 const { composeTextScanMessages, getActiveTextScanPrompts, getTextScanConfig } = await import(
   '~/server/services/text-scan/prompt'
 );
-const { submitWorkflow } = await import('@civitai/client');
+const { submitWorkflow } = await import('@civitai/orchestration-client');
 
 const PROMPTS = {
   base: { id: 1, key: 'base', content: 'BASE PROMPT' },

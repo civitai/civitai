@@ -89,6 +89,7 @@
 // defaulting it. Where it CAN be established, it must not hide behind
 // `'unknown'` either.
 
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import type { Prisma } from '@prisma/client';
 // The pool's `connect` is OVERLOADED (callback form + promise form), so deriving
 // the client type from its return — `Awaited<ReturnType<…['connect']>>` — selects
@@ -404,6 +405,8 @@ async function resolveSchemaOwnership(): Promise<{
   collidingSchemas: Set<string>;
 }> {
   const blocks = await dbRead.appBlock.findMany({
+    // A remix app row has no storage schema.
+    where: { status: { notIn: REMIX_STATUSES } },
     select: { id: true, blockId: true, appListing: { select: { id: true, slug: true } } },
   });
   const bySchema = new Map<string, BlockIdentity & { storageSlug: string }>();

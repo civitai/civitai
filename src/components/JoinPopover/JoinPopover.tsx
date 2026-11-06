@@ -1,10 +1,10 @@
-import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
+import { Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
 import { useState, cloneElement } from 'react';
 import { create } from 'zustand';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { v4 as uuidv4 } from 'uuid';
 
 type StoreProps = {
   keys: Record<string, boolean>;
@@ -30,7 +30,7 @@ export function JoinPopover({
   dependency?: boolean;
   trigger?: 'onClick' | 'onChange';
 }) {
-  const [uuid] = useState(uuidv4());
+  const [uuid] = useState(() => crypto.randomUUID());
   const user = useCurrentUser();
   const isMember = user?.isMember;
 

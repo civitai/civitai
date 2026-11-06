@@ -70,6 +70,7 @@ export const latestChat = Prisma.validator<Prisma.ChatSelect>()({
       createdAt: true,
       content: true,
       contentType: true,
+      userId: true,
     },
     where: {
       contentType: { not: ChatMessageType.Embed },

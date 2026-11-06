@@ -8,6 +8,7 @@ const {
   mockLogToAxiom,
   mockSafeError,
   mockGetJobDate,
+  markerView,
 } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
   mockQueueSearchIndex: vi.fn(async () => undefined),
@@ -19,6 +20,8 @@ const {
     stack: (e as Error).stack,
   })),
   mockGetJobDate: vi.fn(),
+  // Whether the database has the hold marker's view; prod does.
+  markerView: { present: true },
 }));
 
 vi.mock('~/server/services/image.service', () => ({
@@ -202,18 +205,24 @@ function blockedByLegalHold(
 /** The same, for a `deleteImages` `onlyWhere`, which arrives as one flattened fragment. */
 function keptByOnlyWhere(onlyWhere: { sql: string } | undefined, fixture: Fixture) {
   if (!onlyWhere || !isLegalHold(onlyWhere)) return false;
-  const held = !!fixture.heldAsSecondary || (reportsOnPrimary(fixture) ?? []).some(reportHolds);
+  const held =
+    !!fixture.heldAsSecondary ||
+    (reportsOnPrimary(fixture) ?? []).some(reportHolds) ||
+    blockedByReviewFlag('', [onlyWhere], flaggedOnPrimary(fixture));
   return /^\s*NOT\b/.test(onlyWhere.sql) ? held : !held;
 }
 
 /** What the primary sees, which is what every gate on a write is answered from. */
 const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fixture.csamReports;
 
-/** The per-account review-flag exclusion, as every statement that carries it spells it. */
+/** The per-account review-flag hold, as the account hold carried in a statement spells it. */
 const REVIEW_FLAG_HOLD =
-  /NOT EXISTS \(\s*SELECT 1 FROM "Image" f\s+WHERE f\."userId" = (?:\?|u\.id) AND f\."needsReview" = 'csam'\s*\)/;
-const blockedByReviewFlag = (sql: string, flagged: boolean | undefined) =>
-  !!flagged && REVIEW_FLAG_HOLD.test(sql);
+  /SELECT 1 FROM "Image" hr WHERE hr\."userId" = (?:\?(?:::int)?|u\.id) AND hr\."needsReview" = 'csam'/;
+const blockedByReviewFlag = (sql: string, values: unknown[], flagged: boolean | undefined) =>
+  !!flagged &&
+  [sql, ...values.filter(isLegalHold).map((v) => (v as { sql: string }).sql)].some((text) =>
+    REVIEW_FLAG_HOLD.test(text.replace(/\s+/g, ' '))
+  );
 const flaggedOnPrimary = (fixture: Fixture) => fixture.primaryCsamFlagged ?? fixture.csamFlagged;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
@@ -400,7 +409,7 @@ function seed(next: Record<number, Fixture>) {
           (id) =>
             !blockedByLegalHold(sql, values, fixtures[id].csamReports, fixtures[id].heldAsSecondary)
         )
-        .filter((id) => !blockedByReviewFlag(sql, fixtures[id].csamFlagged))
+        .filter((id) => !blockedByReviewFlag(sql, values, fixtures[id].csamFlagged))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -427,6 +436,7 @@ function seed(next: Record<number, Fixture>) {
       const sql = strings.join('?');
 
       if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyImageUpdate(sql, values));
+      if (sql.includes('to_regclass')) return Promise.resolve([{ present: markerView.present }]);
 
       const userId = values[0] as number;
       const fixture = fixtures[userId];
@@ -458,7 +468,7 @@ function seed(next: Record<number, Fixture>) {
           return Promise.resolve([]);
         if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
           return Promise.resolve([]);
-        if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve([]);
+        if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -503,7 +513,7 @@ function seed(next: Record<number, Fixture>) {
       if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
       if (blockedByLegalHold(sql, values, reportsOnPrimary(fixture), fixture.heldAsSecondary))
         return Promise.resolve(0);
-      if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve(0);
+      if (blockedByReviewFlag(sql, values, flaggedOnPrimary(fixture))) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -593,6 +603,7 @@ beforeEach(() => {
   deletedPostIds = [];
   blockedUpdates = [];
   batchChecks = {};
+  markerView.present = true;
   // The compiled default is inert, so a run only happens if something names a budget: every test
   // that is not about the budget itself gets a generous one here.
   mockSysRedis.get.mockResolvedValue('500');
@@ -611,6 +622,29 @@ afterEach(() => {
 });
 
 describe('removeDeletedUserImages', () => {
+  it('drains nothing on a database without the hold marker view', async () => {
+    markerView.present = false;
+    // One account of each removal choice: an immediate one is deleted, a grace one is blocked.
+    seed({
+      7: { deletedAt: NEWER, images: ids(150), posts: [900] },
+      8: { deletedAt: NEWER, meta: { imageRemoval: 'grace' }, images: ids(10, 500) },
+    });
+
+    const result = await run();
+
+    expect(result).toMatchObject({
+      skipped: 'hold-marker-view-missing',
+      deletedImages: 0,
+      blockedImages: 0,
+      deletedUsers: 0,
+    });
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(blockedUpdates).toEqual([]);
+    // Neither cursor moves, so a later run with the view picks up where the last one left off.
+    expect(cursorSets).toEqual({});
+  });
+
   it('deletes a deleted user images in batches of 100 and then removes their posts', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({ 7: { deletedAt: NEWER, images: ids(150), posts: [900] } });

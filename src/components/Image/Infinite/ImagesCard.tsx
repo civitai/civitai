@@ -1,6 +1,7 @@
-import { Alert, Anchor, Badge, Loader, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useCallback, useMemo, memo } from 'react';
+import { useCallback, useEffect, useMemo, useState, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -16,8 +17,13 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
-import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { HatTurfButton } from '~/components/HatTurf/HatTurfButton';
+import { HatTurfCardProvider } from '~/components/HatTurf/HatTurfCardProvider';
+import { HatTurfLayer } from '~/components/HatTurf/HatTurfLayer';
+import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
@@ -47,11 +53,34 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
   return images.slice(minIndex, index + 50);
 }
 
-export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  return <ImagesCardContent data={data} height={height} />;
+/** The masonry adds this to each card's image height for the reaction footer. */
+export const IMAGES_CARD_FOOTER_HEIGHT = 38;
+
+export function ImagesCard({
+  data,
+  height,
+  width,
+}: {
+  data: ImagesInfiniteModel;
+  height: number;
+  width?: number;
+}) {
+  return (
+    <HatTurfCardProvider>
+      <ImagesCardContent data={data} height={height} width={width} />
+    </HatTurfCardProvider>
+  );
 }
 
-function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
+function ImagesCardContent({
+  data,
+  height,
+  width,
+}: {
+  data: ImagesInfiniteModel;
+  height: number;
+  width?: number;
+}) {
   const { getImages, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
@@ -94,7 +123,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   // The hook is called first and unconditionally — inside the `??` it sits after
   // a short-circuit, which is a conditional hook call.
   const remix = useRemixCardData(image.id);
-  const cosmetic = image.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined);
+  const cosmetic = image.cosmetic?.data ?? (remix.any ? REMIX_FRAME : undefined);
 
   const twCardStyle = useMemo(() => {
     return !cosmetic ? { height } : undefined;
@@ -138,7 +167,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       skip={getSkipValue(image)}
                       type={image.type}
                       wrapperProps={{ className: 'flex-1 h-full' }}
-                      width={450}
+                      width={Math.max(450, width ?? 0)}
                       hiDpi={features.hiDpiPreviews}
                       sourceWidth={image.width}
                       placeholder="empty"
@@ -157,63 +186,64 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     revealStickers={contextProps.revealStickers}
                   />
                 )}
+                {safe && <HatTurfLayer imageId={image.id} />}
                 {/* Steps clear of an event decoration sitting on the corner. */}
-                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2">
-                  <div className="flex flex-nowrap items-center gap-1">
-                    <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
-                    {safe && storyline && (
-                      <StorylinePill
-                        title={storyline.title}
-                        depth={storyline.depth}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          triggerRoutedDialog({
-                            name: 'imageDetail',
-                            state: {
-                              imageId: image.id,
-                              images: getDialogState(image.id, getImages()),
-                              ...contextProps,
-                              storylineChapterId: storyline.chapterId,
-                            },
-                          });
-                        }}
-                      />
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-nowrap items-center gap-1">
+                  <HatTurfBadge imageId={image.id} />
+                  {/* This row's chips take the Hat Turf badge's 24px so they read as one line. */}
+                  <ImageGuard2.BlurToggle radius="xl" h={24} style={{ pointerEvents: 'auto' }} />
+                  {safe && storyline && (
+                    <StorylinePill
+                      title={storyline.title}
+                      depth={storyline.depth}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        triggerRoutedDialog({
+                          name: 'imageDetail',
+                          state: {
+                            imageId: image.id,
+                            images: getDialogState(image.id, getImages()),
+                            ...contextProps,
+                            storylineChapterId: storyline.chapterId,
+                          },
+                        });
+                      }}
+                    />
+                  )}
+                  {safe &&
+                    image.type === MediaType.video &&
+                    image.metadata &&
+                    'duration' in image.metadata && (
+                      <DurationBadge duration={image.metadata.duration ?? 0} h={24} />
                     )}
-                    {safe &&
-                      image.type === MediaType.video &&
-                      image.metadata &&
-                      'duration' in image.metadata && (
-                        <DurationBadge duration={image.metadata.duration ?? 0} />
-                      )}
-                    {safe && image.judgeScore && (
-                      <JudgeScoreBadge
-                        score={image.judgeScore}
-                        imageId={image.id}
-                        judgeInfo={contextProps.judgeInfo}
-                        judgingCategories={contextProps.judgingCategories}
-                      />
+                  {safe && image.judgeScore && (
+                    <JudgeScoreBadge
+                      score={image.judgeScore}
+                      imageId={image.id}
+                      judgeInfo={contextProps.judgeInfo}
+                      judgingCategories={contextProps.judgingCategories}
+                    />
+                  )}
+                  {isModerator && image.poi && (
+                    <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                      POI
+                    </Badge>
+                  )}
+                  {(currentUser?.id === data.user.id || isModerator) &&
+                    data.collectionItemStatus === CollectionItemStatus.REVIEW && (
+                      <Tooltip
+                        label="Still being reviewed — not yet eligible for judging"
+                        withinPortal
+                      >
+                        <Badge variant="filled" radius="xl" h={26} color="yellow">
+                          Pending review
+                        </Badge>
+                      </Tooltip>
                     )}
-                    {isModerator && image.poi && (
-                      <Badge variant="filled" radius="xl" h={26} color="pink.3">
-                        POI
-                      </Badge>
-                    )}
-                    {(currentUser?.id === data.user.id || isModerator) &&
-                      data.collectionItemStatus === CollectionItemStatus.REVIEW && (
-                        <Tooltip
-                          label="Still being reviewed — not yet eligible for judging"
-                          withinPortal
-                        >
-                          <Badge variant="filled" radius="xl" h={26} color="yellow">
-                            Pending review
-                          </Badge>
-                        </Tooltip>
-                      )}
-                  </div>
                 </div>
                 {safe && (
-                  <div className="absolute right-2 top-2 flex flex-col gap-2">
+                  <div className="absolute right-2 top-2 z-[4] flex flex-col gap-2">
                     {!isBlocked && <ImageContextMenu image={image} />}
                     {features.imageGeneration && isRemixMenuVisible(image) && (
                       <RemixMenu
@@ -347,25 +377,14 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
-              {!contextProps.hideReactions &&
-                // The row only becomes a flex container when there is something
-                // to put beside the reactions. `StickerPlacementCardBadge`
-                // returns null with the flag off, so wrapping unconditionally
-                // would still change this card's layout for everyone while
-                // adding nothing — a visual regression with no feature behind
-                // it, on the surface the flag exists to keep clear of.
-                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
-                  <div className="flex items-center">
-                    <div className="min-w-0 flex-1">
-                      <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                    </div>
-                    <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
-                  </div>
-                ) : (
-                  <div>
-                    <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                  </div>
-                ))}
+              {!contextProps.hideReactions && (
+                <ImageReactions
+                  image={image}
+                  readonly={!safe || (isScanned && isBlocked)}
+                  showStickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
+                  safe={safe}
+                />
+              )}
             </>
           )}
         </ImageGuard2>
@@ -376,8 +395,65 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
 export const ImagesCardMemoized = memo(ImagesCard);
 
-function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; readonly: boolean }) {
+/**
+ * Reactions that wrap onto the bar's clipped line can't be seen, so they must not take focus or
+ * be read out either. Re-checked whenever the bar or its buttons change size or number.
+ */
+function useInertClippedReactions() {
+  // State, not a ref: the row can be replaced, and the observers must follow it.
+  const [row, setRow] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!row) return;
+    let bar: Element | null = null;
+    const update = () => {
+      if (!bar) return;
+      const bottom = bar.getBoundingClientRect().bottom;
+      for (const child of Array.from(bar.children) as HTMLElement[]) {
+        child.inert = child.getBoundingClientRect().top >= bottom - 0.5;
+      }
+    };
+    const resize = new ResizeObserver(update);
+    const children = new MutationObserver(() => observe());
+    const observe = () => {
+      resize.disconnect();
+      children.disconnect();
+      bar = row.firstElementChild;
+      if (!bar) return;
+      resize.observe(bar);
+      for (const child of Array.from(bar.children)) resize.observe(child);
+      children.observe(bar, { childList: true });
+      update();
+    };
+    // The bar itself can mount after the row (a card with no reactions yet renders none).
+    const mounts = new MutationObserver(observe);
+    mounts.observe(row, { childList: true });
+    observe();
+    return () => {
+      resize.disconnect();
+      children.disconnect();
+      mounts.disconnect();
+    };
+  }, [row]);
+  return setRow;
+}
+
+// Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
+function ImageReactions({
+  image,
+  readonly,
+  showStickerBadge,
+  safe,
+}: {
+  image: ImagesInfiniteModel;
+  readonly: boolean;
+  showStickerBadge: boolean;
+  /** The hat layer only draws over shown media, so a blurred card gets no hat button either. */
+  safe: boolean;
+}) {
+  // Read here, not in the card: a hat push re-renders every mounted card's row, but not the card.
+  const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
+  const reactionsRef = useInertClippedReactions();
   return (
     <Metrics
       entityType="Image"
@@ -392,21 +468,66 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
       }}
       useLive={inView !== false}
     >
-      {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          metricsUnknown={image.stats?.statsUnknown}
-          targetUserId={image.user.id}
-          readonly={readonly}
-          className="justify-between p-2"
-          invisibleEmpty
-          disableBuzzTip={image.poi}
-          abbreviate
-        />
-      )}
+      {(metrics) => {
+        // A read-only card with nothing to show renders no row at all, tip included.
+        const hasReactions =
+          !!image.stats?.statsUnknown ||
+          image.reactions.length > 0 ||
+          [
+            metrics.likeCount,
+            metrics.dislikeCount,
+            metrics.heartCount,
+            metrics.laughCount,
+            metrics.cryCount,
+          ].some((n) => (n ?? 0) > 0);
+        return (
+          <div
+            className={clsx(cardClasses.footer, classes.actionsFooter)}
+            style={{ ['--footer-height' as string]: `${IMAGES_CARD_FOOTER_HEIGHT}px` }}
+            onClick={(e) => {
+              // The padding around the buttons must not open the card's image link.
+              if (!readonly) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+          >
+            <div className={clsx(cardClasses.actions, cardClasses.oneLine, classes.fitRow)}>
+              <div ref={reactionsRef} className={cardClasses.actionRow}>
+                <Reactions
+                  className={clsx(cardClasses.reactions, classes.bar, classes.fitReactions)}
+                  entityId={image.id}
+                  entityType="image"
+                  reactions={image.reactions}
+                  metrics={metrics}
+                  metricsUnknown={image.stats?.statsUnknown}
+                  targetUserId={image.user.id}
+                  readonly={readonly}
+                  invisibleEmpty
+                  disableBuzzTip
+                  abbreviate
+                />
+              </div>
+              <div className={cardClasses.tipRow}>
+                {!image.poi && !(readonly && !hasReactions) && (
+                  <ImageBuzzTip
+                    entityId={image.id}
+                    targetUserId={image.user.id}
+                    tippedAmountCount={metrics.tippedAmountCount}
+                    metricsUnknown={image.stats?.statsUnknown}
+                    readonly={readonly}
+                    className={clsx(cardClasses.reactions, classes.bar, 'flex items-center pl-0.5')}
+                  />
+                )}
+                <div className={cardClasses.tipEnd}>
+                  {showStickerBadge && <StickerPlacementCardBadge imageId={image.id} />}
+                  {turf && <HatTurfButton imageId={image.id} />}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }}
     </Metrics>
   );
 }

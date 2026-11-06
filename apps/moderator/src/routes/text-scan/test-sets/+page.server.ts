@@ -6,6 +6,7 @@ import { recordModActivity } from '$lib/server/mod-activity';
 import { getModeratorDb } from '$lib/server/moderator-db';
 import { parseForm } from '$lib/server/query';
 import { composeEntities } from '$lib/server/text-scan-lab/harness-client';
+import { readerOf, recordChatMessageReads } from '$lib/server/chat-read-audit';
 import { captureCase, captureSchema } from '$lib/server/text-scan-tests/capture';
 import { refusal, requireWorkspace } from '$lib/server/text-scan-tests/guard';
 import { createSet } from '$lib/server/text-scan-tests/store';
@@ -60,7 +61,16 @@ export const actions: Actions = {
     try {
       requireWorkspace(locals.user, input.workspace);
       const db = getModeratorDb();
-      const saved = await captureCase({ db, compose: composeEntities }, input, locals.user.id);
+      const compose: typeof composeEntities = async (type, ids, credential) => {
+        const composed = await composeEntities(type, ids, credential);
+        if (type === 'ChatMessage')
+          await recordChatMessageReads(
+            readerOf(locals.user),
+            composed.filter((c) => c.ok).map((c) => c.entityId)
+          );
+        return composed;
+      };
+      const saved = await captureCase({ db, compose }, input, locals.user.id);
       if (saved.setCreated) await recordSetCreated(locals.user.id, saved.setId);
       await recordModActivity({
         userId: locals.user.id,

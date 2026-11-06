@@ -13,9 +13,8 @@ import {
 /**
  * The review PAGE's `?tab=` contract, in the node-env `unit` project.
  *
- * This is the BLOCKING half of the tab coverage: the browser tier that renders the bar is
- * report-only in CI, so the rules that decide WHICH tab a URL selects are pinned here where
- * a failure actually stops something.
+ * This is the node-tier half of the tab coverage: the rules that decide WHICH tab a URL
+ * selects are pinned here, without rendering the bar.
  */
 
 describe('the tab set', () => {

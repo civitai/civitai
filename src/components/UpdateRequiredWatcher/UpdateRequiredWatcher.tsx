@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { noteSiteAlertsVersion } from '~/components/SiteAlerts/site-alerts-version.store';
 import { GENERATION_UPDATE_HEADER } from '~/shared/constants/generation.constants';
+import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 
 const UpdateRequiredModal = dynamic(
   () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal')
@@ -12,7 +14,7 @@ let originalFetch: typeof window.fetch | undefined;
 /**
  * True when a request targets our OWN origin.
  *
- * Both update headers are set exclusively by tRPC middleware, so they only ever ride
+ * The update and site-alerts headers are set only by the tRPC route, so they only ever ride
  * same-origin `/api/trpc/…` responses. Everything else on the page — ad, analytics and embed
  * requests — can skip the header inspection entirely.
  *
@@ -107,6 +109,8 @@ export function createUpdateAwareFetch(
         dialogStore.trigger({ id: 'update-required-modal', component: UpdateRequiredModal });
         warned = true;
       }
+
+      noteSiteAlertsVersion(response.headers.get(SITE_ALERTS_VERSION_HEADER));
 
       return response;
     });

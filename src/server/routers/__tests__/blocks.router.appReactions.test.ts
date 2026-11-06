@@ -409,18 +409,22 @@ describe('setReactionFromApp — set semantics', () => {
     );
   });
 
-  it('🔴 a toggle that did not apply (race / replica lag) is reported TRUTHFULLY, not as asked', async () => {
-    // Asked for reacted:true; the site's own (replica) check saw a row the primary no longer has,
-    // so its delete matched nothing. The primary read-back is the truth: still not reacted.
-    viewerHolds(false);
-    afterWrite([]);
-    h.toggle.mockResolvedValue('noop');
-    const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
-    expect(h.toggle).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ changed: false, reacted: false, viewerReactions: [] });
-    // Nothing changed on the viewer's account, so nothing is audited.
-    expect(h.recordScopeInvocation).not.toHaveBeenCalled();
-  });
+  // 'noop': the site's own (replica) check saw a row the primary no longer has, so its delete
+  // matched nothing. 'ignored': the reverse-toggle guard dropped it. Either way the primary
+  // read-back is the truth: still not reacted.
+  it.each(['noop', 'ignored'] as const)(
+    '🔴 a toggle that did not apply (%s) is reported TRUTHFULLY, not as asked',
+    async (outcome) => {
+      viewerHolds(false);
+      afterWrite([]);
+      h.toggle.mockResolvedValue(outcome);
+      const result = await caller().setReactionFromApp(setInput({ reacted: true }) as never);
+      expect(h.toggle).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ changed: false, reacted: false, viewerReactions: [] });
+      // Nothing changed on the viewer's account, so nothing is audited.
+      expect(h.recordScopeInvocation).not.toHaveBeenCalled();
+    }
+  );
 
   it('never toggles twice — a toggle that went the other way is reported and audited as such', async () => {
     // Asked to REMOVE; the site's replica check missed the row, so the toggle CREATED instead.

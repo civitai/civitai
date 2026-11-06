@@ -1,7 +1,9 @@
 # Comics Generation → generationGraph Port — DONE
 
 > **Shipped.** `submitComicGeneration` (`src/server/routers/comics.router.ts`) now delegates to
-> `submitPresetImageGen` (`src/server/services/orchestrator/preset-image-gen.service.ts`); see
+> `submitPresetImageGen` (`src/server/services/orchestrator/preset-image-gen.service.ts`). Sizes
+> are being moved off that registry onto the graph's resolved output:
+> [`plans/preset-generation-from-graph.md`](./plans/preset-generation-from-graph.md). See
 > [`legacy-generation-removal-plan.md`](./legacy-generation-removal-plan.md) Phase 1. Everything
 > below is the plan, written against the retired data-graph lane — `openai-graph.ts`,
 > `ecosystem-graph` and `aspectRatioNode` no longer exist.

@@ -12,7 +12,8 @@ import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { CREATOR_SCORE_CATEGORIES } from '~/shared/utils/creator-score';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
-  countRemovalsByOwner,
+  removalPenaltyWeightsByOwner,
+  getOwnersWithRemovalsAgedOutSince,
   getOwnersWithReversalsSince,
   reportsAgainstScore,
 } from '~/server/services/creator-removals.service';
@@ -517,7 +518,7 @@ export function rollupImageScoreDeltas(
   return byUser;
 }
 
-// New absolute images score = stored (or 0) + this run's delta. Keeps `images`
+// New absolute images score = max(stored (or 0) + this run's delta, 0). Keeps `images`
 // in the shared absolute-score persist path so `total` is recomputed there.
 export function foldImageDeltasOntoStored(
   scoreDeltaByUser: Map<number, number>,
@@ -525,7 +526,7 @@ export function foldImageDeltasOntoStored(
 ): Map<number, number> {
   const result = new Map<number, number>();
   for (const [userId, delta] of scoreDeltaByUser) {
-    result.set(userId, (storedByUser.get(userId) ?? 0) + delta);
+    result.set(userId, Math.max((storedByUser.get(userId) ?? 0) + delta, 0));
   }
   return result;
 }
@@ -555,7 +556,7 @@ async function getReportedActionedScore(ctx: Context) {
 
 // Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
 export async function getReportAgainstScore(
-  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'>
+  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'> & { now?: Date }
 ) {
   const removed = await ctx.ch.$query<{ ownerId: number }>`
     SELECT DISTINCT ownerId
@@ -563,16 +564,18 @@ export async function getReportAgainstScore(
     WHERE type = '${REPORTS_AGAINST_EVENT}'
     AND time > ${ctx.lastUpdate}
   `;
+  const now = ctx.now ?? new Date();
   const owners = [
     ...new Set([
       ...removed.map((r) => Number(r.ownerId)),
       ...(await getOwnersWithReversalsSince(ctx.ch, ctx.lastUpdate)),
+      ...(await getOwnersWithRemovalsAgedOutSince(ctx.ch, ctx.lastUpdate, now)),
     ]),
   ];
 
-  const violations = await countRemovalsByOwner(ctx.ch, owners);
+  const penaltyWeights = await removalPenaltyWeightsByOwner(ctx.ch, owners, now);
   for (const id of owners) {
-    const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
+    const score = reportsAgainstScore(penaltyWeights.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);
   }
 }

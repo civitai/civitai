@@ -43,16 +43,14 @@ export const needsReviewFilterParams = (filters: NeedsReviewFilters): Record<str
   return params;
 };
 
-/**
- * Which queries a Needs review list runs: the kinds the viewer holds, narrowed by the filters. File
- * matches are minor-only, so a real-person filter leaves them out.
- */
+/** Which queries a Needs review list runs: the kinds the viewer holds, narrowed by the source filter.
+ *  The label filter narrows file matches by label inside the query. */
 export const needsReviewBranches = (
   granted: NeedsReviewSources,
-  { source, flag }: Pick<NeedsReviewFilters, 'source' | 'flag'>
+  { source }: Pick<NeedsReviewFilters, 'source' | 'flag'>
 ): NeedsReviewSources => ({
   detections: granted.detections && source !== 'hash',
-  matches: granted.matches && source !== 'text-scan' && flag !== 'poi',
+  matches: granted.matches && source !== 'text-scan',
 });
 
 /** The source chips worth offering: with only one kind held there is nothing to choose between. */
@@ -109,16 +107,20 @@ export function needsReviewTotal(
 }
 
 /**
- * What a Needs review row's decision rules: its held detections, then its file match (a minor lead
- * with no text behind it). The order is the ruling order: a kept minor detection lands before
- * set-minor makes it a moderator's flag.
+ * What a Needs review row's decision rules: its held detections, then its file matches (leads with no
+ * text behind them). The order is the ruling order: a kept detection lands before the match's set
+ * makes it a moderator's flag.
  */
 export const leadRefs = (row: {
   flags: readonly Pick<FlagRef, 'label' | 'source' | 'textHash'>[];
   match: unknown;
+  poiMatch: unknown;
 }): FlagRef[] => [
   ...row.flags.map(({ label, source, textHash }) => ({ label, source, textHash })),
   ...(row.match
     ? [{ label: 'minor' as const, source: 'file-match' as const, textHash: null }]
+    : []),
+  ...(row.poiMatch
+    ? [{ label: 'poi' as const, source: 'file-match' as const, textHash: null }]
     : []),
 ];

@@ -1,14 +1,5 @@
-import {
-  Group,
-  Text,
-  Stack,
-  Popover,
-  Checkbox,
-  Button,
-  Tooltip,
-  Anchor,
-  Indicator,
-} from '@mantine/core';
+import { Group, Text, Stack, Checkbox, Button, Anchor, Indicator } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { IconProps } from '@tabler/icons-react';
 import { IconAlertTriangle, IconEyeExclamation, IconSword } from '@tabler/icons-react';
@@ -48,7 +39,14 @@ type BrowsingModeIconProps = {
   closeMenu?: () => void;
 };
 
-export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
+export function BrowsingModeMenu({
+  closeMenu,
+  compact = false,
+}: {
+  closeMenu?: () => void;
+  /** Type at the size of the rows around it, for the account menu on a phone. */
+  compact?: boolean;
+}) {
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
@@ -117,7 +115,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
             checked={blurNsfw}
             onChange={toggleBlurNsfw}
             label="Blur mature content (R+)"
-            size="md"
+            size={compact ? 'sm' : 'md'}
           />
         )}
 
@@ -134,7 +132,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
             checked={!disableHidden}
             onChange={toggleDisableHidden}
             label={
-              <Text>
+              <Text size={compact ? 'sm' : undefined}>
                 Apply{' '}
                 <Anchor
                   onClick={(e: React.MouseEvent) => {
@@ -148,7 +146,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 </Anchor>
               </Text>
             }
-            size="md"
+            size={compact ? 'sm' : 'md'}
           />
         </Group>
       </Stack>

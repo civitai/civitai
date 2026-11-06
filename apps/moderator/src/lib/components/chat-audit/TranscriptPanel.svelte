@@ -76,7 +76,7 @@
 
       <ul class="space-y-2 text-sm">
         {#each shown as m (m.id)}
-          {@const edits = transcript.edits?.[m.id]}
+          {@const edits = transcript.edits[m.id]}
           <li
             class={m.deletedAt
               ? 'rounded-md border-l-2 border-red-500/50 pl-2'
@@ -113,10 +113,15 @@
                       </li>
                     {/each}
                   </ol>
+                  {#if transcript.editsPartial}
+                    <p class="mt-1 text-amber-300">
+                      Part of the edit history could not be read, so earlier versions may be missing.
+                    </p>
+                  {/if}
                 </details>
-              {:else if transcript.edits === null}
+              {:else if transcript.editsPartial}
                 <p class="mt-1 text-xs text-amber-300">
-                  Edited — the audit log could not be read, so the original is unknown here, not
+                  Edited — the edit history could not be read, so the original is unknown here, not
                   absent.
                 </p>
               {:else}

@@ -25,8 +25,8 @@ import type {
   PreprocessImageStepTemplate,
   WorkflowCost,
   WorkflowStepTemplate,
-} from '@civitai/client';
-// The pinned @civitai/client predates preprocessVideo; this comes from
+} from '@civitai/orchestration-client';
+// The pinned @civitai/orchestration-client predates preprocessVideo; this comes from
 // orchestration-client.
 import type {
   Priority as DownloadPriority,
@@ -66,7 +66,7 @@ import {
   type PersistedModelSubstitution,
 } from '~/shared/generation/model-substitution';
 import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 import {
   redis,
   REDIS_KEYS,
@@ -80,6 +80,11 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
+import {
+  assertGenerationInputsUsable,
+  generationInputUrlsIn,
+} from '~/server/services/generation-input-urls';
+import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
 import {
   getWorkflow,
@@ -113,6 +118,8 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { REMIX_APP_TAG } from '~/shared/remix-apps/tags';
+import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -123,7 +130,7 @@ import { BlocklistType } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { toStepMetadata } from '~/shared/utils/resource.utils';
+import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
@@ -144,6 +151,7 @@ import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { createComfyInput, resourcesToImageMetadataResources } from './handlers/comfy-input';
+import { withImageMetadata } from './step-image-metadata';
 import { sanitizeStepErrors } from './provider-errors';
 import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -197,6 +205,8 @@ export type GenerationContext = {
   externalId?: string;
   /** User saw a soft-block prompt warning and chose to proceed. See `auditPromptServer`. */
   acknowledgedSoftBlock?: boolean;
+  /** Stored as `metadata.remixRun`; user-writable afterwards, like the rest of the metadata. */
+  remixRun?: Record<string, unknown>;
 };
 
 /** Options for submitting a generation */
@@ -204,12 +214,36 @@ export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   downloadPriority?: DownloadPriority;
+  inputGate: GenerationInputGate;
 } & GenerationContext;
+
+/**
+ * Which caller a graph input came through, for `assertGenerationInputsUsable`. `'checked-by-caller'`
+ * is for server-composed input whose urls the calling route already checked (comics, iterate).
+ */
+export type GenerationInputGate =
+  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | 'checked-by-caller';
+
+/** Every url the validated graph input carries must pass the generation input gate. */
+async function assertGraphInputsUsable(
+  data: unknown,
+  userId: number | undefined,
+  gate: GenerationInputGate
+) {
+  if (gate === 'checked-by-caller') return;
+  await assertGenerationInputsUsable({
+    urls: generationInputUrlsIn(data),
+    userId: userId ?? 0,
+    ...gate,
+  });
+}
 
 /** Options for what-if requests */
 export type WhatIfOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
+  inputGate: GenerationInputGate;
   userId?: number;
   isModerator?: boolean;
   experimental?: boolean;
@@ -801,6 +835,14 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  * (computed values like `triggerWords` are derived, not user input).
  */
 export function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
+  // The tRPC entries are `.input(z.any())`, and `generateFromGraph` reads its form values off
+  // `input.input`, so a payload sent flat arrives as `undefined` — refuse it as a 400 here
+  // rather than let `normalizeInput` throw a TypeError (a 500) dereferencing it.
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw throwBadRequestError(
+      'Validation failed: input: expected an object of generation form values'
+    );
+  }
   const normalized = normalizeInput(input);
   // `reconcileSelectors` first: it settles the model/workflow/ecosystem trio before the
   // hub dispatches on them.
@@ -1026,24 +1068,6 @@ async function createImagePreprocessInput(
 // =============================================================================
 // Main Router
 // =============================================================================
-
-/**
- * Step types whose orchestrator input schemas don't accept `imageMetadata`.
- * These run as intermediate (non-generation) steps inside multi-step workflows;
- * injecting imageMetadata into their input pollutes the request payload.
- */
-const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
-  'promptEnhancement',
-  'chatCompletion',
-  // Renders a 2D preview of a prior polyGen mesh — its input has no image to
-  // tag, so injecting imageMetadata would only pollute the request payload.
-  'model3DPreview',
-];
-
-function withImageMetadata(input: object, type: string, imageMetadata: string): object {
-  if (STEP_TYPES_WITHOUT_IMAGE_METADATA.includes(type)) return input;
-  return { ...input, imageMetadata };
-}
 
 /** Context for step-level metadata (imageMetadata, params/resources, source lineage) */
 type StepMetadataCtx = {
@@ -1587,14 +1611,17 @@ export async function createWorkflowStepsFromGraphInput({
   user,
   isWhatIf,
   isGreen,
+  inputGate,
 }: {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
   user?: { id?: number; isModerator?: boolean };
   isWhatIf?: boolean;
   isGreen?: boolean;
+  inputGate: GenerationInputGate;
 }): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
+  await assertGraphInputsUsable(data, user?.id, inputGate);
   const sourceImageIds = isWhatIf
     ? undefined
     : await resolveSourceImageIds(
@@ -1779,6 +1806,14 @@ function extractInputImageUrls(data: Record<string, unknown>): string[] | undefi
   }
   const sourceImageUrl = (data.sourceImage as { url?: string } | null | undefined)?.url;
   if (typeof sourceImageUrl === 'string') urls.push(sourceImageUrl);
+  for (const key of ['keyframes', 'styleReferences']) {
+    const entries = data[key];
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const url = (entry as { image?: { url?: string } } | null | undefined)?.image?.url;
+      if (typeof url === 'string') urls.push(url);
+    }
+  }
   return urls.length ? urls : undefined;
 }
 
@@ -1838,8 +1873,11 @@ export async function generateFromGraph({
   externalId,
   acknowledgedSoftBlock,
   downloadPriority,
+  inputGate,
+  remixRun,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
+  await assertGraphInputsUsable(data, userId, inputGate);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
   // One read for both consumers below, so the provenance check and the prompt
@@ -2006,6 +2044,9 @@ export async function generateFromGraph({
           [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions,
         }
       : workflowMetadata;
+  const metadata = remixRun
+    ? { ...(metadataWithSubstitutions as Record<string, unknown> | undefined), remixRun }
+    : metadataWithSubstitutions;
 
   const priceDownloads = () =>
     submitWorkflow({
@@ -2059,8 +2100,8 @@ export async function generateFromGraph({
       steps,
       tips,
       experimental,
-      metadata: metadataWithSubstitutions,
-      callbacks: getOrchestratorCallbacks(userId),
+      metadata,
+      callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,
@@ -2125,6 +2166,7 @@ export async function whatIfFromGraph({
   token,
   currencies,
   downloadPriority,
+  inputGate,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
   // The client excludes content fields (prompt/negativePrompt for image/video,
@@ -2138,6 +2180,7 @@ export async function whatIfFromGraph({
     ...input,
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
+  await assertGraphInputsUsable(data, userId, inputGate);
   const { steps } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -2214,7 +2257,7 @@ import type {
   WorkflowStatus,
   WorkflowStep,
   WorkflowStepQueuePosition,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -2362,7 +2405,7 @@ export interface NormalizedStepMetadata {
    * Source generation resources (for steps with source lineage).
    * Undefined for standard generation steps (use workflow.metadata.resources instead).
    */
-  resources?: GenerationResource[];
+  resources?: GenerationResourceValue[];
   /** Remix reference (legacy — new writes put this on workflow.metadata) */
   remixOfId?: number;
   /**
@@ -2439,7 +2482,7 @@ export interface NormalizedWorkflowMetadata {
   /** The generation form params (prompt, steps, model settings, etc.) */
   params: Record<string, unknown>;
   /** The generation form resources (model, LoRAs, VAE, etc.) — enriched */
-  resources: GenerationResource[];
+  resources: GenerationResourceValue[];
   /** Remix reference */
   remixOfId?: number;
   /** Whether the generation was private */
@@ -2561,7 +2604,7 @@ function getResourceRefsFromStep(
 function getResourcesFromStep(
   step: WorkflowStep,
   allResources: GenerationResource[]
-): GenerationResource[] {
+): GenerationResourceValue[] {
   const refs = getResourceRefsFromStep(step);
   return refs
     .map((ref) => {
@@ -2573,8 +2616,7 @@ function getResourcesFromStep(
         ) ?? allResources.find((r) => r.id === ref.id);
       if (!enriched) return null;
       return {
-        ...enriched,
-        strength: ref.strength ?? enriched.strength,
+        ...asResourceValue(enriched, ref.strength),
         epochDetails: enriched.epochDetails
           ? enriched.epochDetails
           : ref.epochNumber
@@ -2689,17 +2731,19 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'yuE2':
     case 'soniloAudioGen':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
-    case 'polyGen':
+    case 'polyGen': {
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh
       // (regardless of how many rigged/animated/motion-template variants
       // the workflow emitted).
-      if (!output.model) return [];
+      const primary = getPolyGenPrimaryModel(output);
+      if (!primary) return [];
+      const fbxIsPrimary = primary === output.fbxModel;
       return [
         {
-          ...(output.model as Model3dBlob),
+          ...primary,
           type: 'model3d' as const,
-          fbxModel: output.fbxModel ?? null,
+          fbxModel: fbxIsPrimary ? null : output.fbxModel ?? null,
           thumbnail: output.thumbnail ?? null,
           riggedModel: output.riggedModel ?? null,
           riggedFbxModel: output.riggedFbxModel ?? null,
@@ -2708,6 +2752,7 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
           basicAnimations: output.basicAnimations ?? null,
         },
       ];
+    }
     default:
       return [];
   }
@@ -2996,7 +3041,7 @@ function formatStep(
   // Resolve step-level params/resources based on format.
   // Legacy formats always populate step params. New format only has step params for enhancements.
   let resolvedParams: Record<string, unknown> | undefined;
-  let resolvedResources: GenerationResource[] | undefined;
+  let resolvedResources: GenerationResourceValue[] | undefined;
   let remixOfId: number | undefined;
   let fromSourceLineage = false;
 
@@ -3024,9 +3069,9 @@ function formatStep(
               if (!id) return null;
               const enriched = allResources.find((ar) => ar.id === id);
               if (!enriched) return null;
-              return { ...enriched, strength: (r.strength as number) ?? enriched.strength };
+              return asResourceValue(enriched, r.strength as number | undefined);
             })
-            .filter((r): r is GenerationResource => r !== null)
+            .filter((r): r is GenerationResourceValue => r !== null)
         : stepResources;
   } else if (hasStepParams) {
     // Step has its own params (legacy standard gen, or enhancement with params at root).
@@ -3249,7 +3294,7 @@ export async function formatGenerationResponse2(
     if (hasWfMeta) {
       const wfParams = (rawWfMeta.params ?? {}) as Record<string, unknown>;
       const wfRawResources = rawWfMeta.resources as ResourceData[] | undefined;
-      const wfResources: GenerationResource[] = [];
+      const wfResources: GenerationResourceValue[] = [];
       for (const r of wfRawResources ?? []) {
         if (isRawAirResource(r)) {
           wfResources.push(rawAirGenerationResource(r));
@@ -3257,7 +3302,7 @@ export async function formatGenerationResponse2(
         }
         const enriched = enrichedResources.find((ar) => ar.id === r.id);
         if (enriched) {
-          wfResources.push({ ...enriched, strength: r.strength ?? enriched.strength });
+          wfResources.push(asResourceValue(enriched, r.strength));
         }
       }
 
@@ -3291,11 +3336,11 @@ export async function formatGenerationResponse2(
         // Legacy enhancement: last transformation is the workflow metadata
         const lastTransform = transformations[transformations.length - 1];
         const tParams = (lastTransform.params ?? {}) as Record<string, unknown>;
-        const tResources: GenerationResource[] = [];
+        const tResources: GenerationResourceValue[] = [];
         for (const r of (lastTransform.resources ?? []) as ResourceData[]) {
           const enriched = enrichedResources.find((ar) => ar.id === r.id);
           if (enriched) {
-            tResources.push({ ...enriched, strength: r.strength ?? enriched.strength });
+            tResources.push(asResourceValue(enriched, r.strength));
           }
         }
         const mapped = mapDataToGraphInput(tParams, tResources);

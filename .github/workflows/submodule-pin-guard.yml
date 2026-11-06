@@ -11,9 +11,18 @@ name: Submodule Pin Guard
 # reverted the pin, undoing it. Forward bumps (the new pin is a descendant of the
 # base pin) pass; intentional downgrades can be allowed with a label.
 
+# Runs only when the pin can have moved: the gitlink itself (a pointer change is reported as a
+# change to the path `event-engine-common`), .gitmodules, or this file. `main` and `release`
+# have no required_status_checks, so a skipped run blocks nothing; if this check is ever made
+# required, drop the filter or a skipping PR waits forever.
 on:
   pull_request:
     branches: [main, release]
+    paths:
+      - '.github/workflows/submodule-pin-guard.yml'
+      - '.gitmodules'
+      - 'event-engine-common'
+      - 'event-engine-common/**'
 
 permissions:
   contents: read
@@ -28,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

@@ -87,6 +87,8 @@ describe('setTosViolationHandler re-removal hold', () => {
 
     await expect(setTosViolationHandler({ input, ctx })).rejects.toThrow();
     expect(reportsActioned).toHaveBeenCalledTimes(1);
+    // The moderator is recorded on the reports, so the moderator app can see the queue was worked.
+    expect(reportsActioned).toHaveBeenCalledWith(expect.objectContaining({ actorId: 2 }));
   });
 
   it('does not hold a moderator who may confirm re-removals', async () => {

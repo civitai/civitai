@@ -39,6 +39,12 @@ export const dateTime = (value: Date | string | null) => {
 
 export const num = (value: number) => value.toLocaleString();
 
+export const ordinal = (n: number): string => {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+};
+
 /**
  * "1 finding" / "2 findings" — a count and the noun it counts, agreeing.
  *

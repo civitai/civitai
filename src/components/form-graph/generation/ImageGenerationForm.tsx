@@ -1,4 +1,6 @@
-import { Checkbox, Input, Select, Stack, Switch } from '@mantine/core';
+import { Checkbox, Input, Stack, Switch } from '@mantine/core';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
 import { TurboRow } from '~/components/form-graph/generation/TurboRow';
@@ -21,7 +23,6 @@ import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { MissingPreprocessorExamplesAlert } from '~/components/generation_v2/inputs/MissingPreprocessorExamplesAlert';
 import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
-import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
 import { UpscaleDimensionsInput } from '~/components/generation_v2/inputs/UpscaleDimensionsInput';
 import {
@@ -38,6 +39,7 @@ import {
   PromptLabel,
   VersionGroupSelector,
   useWildcardHandlers,
+  ModelCardInput,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
@@ -57,46 +59,37 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
 
   return (
     <Stack gap="sm">
-      <div className="flex flex-col gap-1">
-        <Controller
-          graph={imageHub}
-          name="model"
-          render={({ value, meta, onChange }) => {
-            const defaultModelId = meta?.defaultModelId;
-            return (
-              <>
-                <ResourceSelectInput
-                  value={value}
+      <Controller
+        graph={imageHub}
+        name="model"
+        render={({ value, meta, onChange }) => {
+          const defaultModelId = meta?.defaultModelId;
+          return (
+            <ModelCardInput
+              value={value}
+              onChange={onChange}
+              buttonLabel="Select Model"
+              modalTitle="Select Model"
+              options={meta?.options}
+              allowRemove={false}
+              allowSwap={!meta?.modelLocked}
+              onRevertToDefault={
+                defaultModelId
+                  ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                  : undefined
+              }
+            >
+              {meta?.versions ? (
+                <VersionGroupSelector
+                  versions={meta.versions}
+                  modelId={value?.id}
                   onChange={onChange}
-                  label={
-                    <ControllerLabel
-                      label="Model"
-                      info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
-                    />
-                  }
-                  buttonLabel="Select Model"
-                  modalTitle="Select Model"
-                  options={meta?.options}
-                  allowRemove={false}
-                  allowSwap={!meta?.modelLocked}
-                  onRevertToDefault={
-                    defaultModelId
-                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                      : undefined
-                  }
                 />
-                {meta?.versions ? (
-                  <VersionGroupSelector
-                    versions={meta.versions}
-                    modelId={value?.id}
-                    onChange={onChange}
-                  />
-                ) : null}
-              </>
-            );
-          }}
-        />
-      </div>
+              ) : null}
+            </ModelCardInput>
+          );
+        }}
+      />
       <GateRuleWarnings />
       <Controller
         graph={imageHub}
@@ -178,7 +171,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 onPrev={() => cycle(-1)}
                 onNext={() => cycle(1)}
                 header={
-                  <Select
+                  <SheetSelect
                     label="Preprocessor"
                     description="Choose a control signal, or browse previews with the arrows below."
                     data={groups}
@@ -226,7 +219,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             buttonLabel="Select Upscaler"
             modalTitle="Select Upscaler"
             options={meta?.options}
-            allowRemove
+            allowRemove={!meta?.required}
           />
         )}
       />
@@ -664,7 +657,7 @@ function SegmentedEnumField<T extends string>({
   return (
     <div className="flex flex-col gap-1">
       <Input.Label>{label}</Input.Label>
-      <SegmentedControlWrapper
+      <ChoiceGroup
         value={value}
         onChange={(v) => onChange(v as T)}
         data={options.map((o) => ({ label: o.label, value: o.value }))}

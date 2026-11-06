@@ -1,5 +1,6 @@
 import type { MantineSize, TextProps } from '@mantine/core';
-import { Group, Loader, Text, Tooltip } from '@mantine/core';
+import { Group, Loader, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { BuzzDeltaPop } from '~/components/Buzz/BuzzDeltaPop';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
@@ -20,6 +21,8 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 type Props = TextProps & {
   iconSize?: number;
+  /** Space between the bolt and the number, in px. */
+  iconGap?: number;
   textSize?: MantineSize;
   withTooltip?: boolean;
   withAbbreviation?: boolean;
@@ -34,6 +37,7 @@ type Props = TextProps & {
 
 export function UserBuzz({
   iconSize = 20,
+  iconGap = 4,
   textSize = 'md',
   withTooltip,
   withAbbreviation = true,
@@ -71,7 +75,7 @@ export function UserBuzz({
   const clipText = !!gradient && !animated;
 
   const content = isLoading ? (
-    <Group gap={4} wrap="nowrap">
+    <Group gap={iconGap} wrap="nowrap">
       <Icon size={iconSize} color={config.color} fill={config.color} />
       <Loader color={config.color} type="dots" size="xs" />
     </Group>
@@ -87,7 +91,7 @@ export function UserBuzz({
       className={clsx(classes.userBuzz, clipText && classes.withGradient, textProps.className)}
       {...textProps}
     >
-      <Group gap={4} wrap="nowrap">
+      <Group gap={iconGap} wrap="nowrap">
         <BuzzBoltSvg
           size={iconSize}
           color={gradient ? undefined : config.color}
@@ -151,7 +155,7 @@ function AnimatedBalance({
   if (!match) return <span className={textClass}>{text}</span>;
 
   return (
-    <span className="inline-flex items-baseline leading-none">
+    <span className="inline-flex items-center leading-none">
       <CustomNumberFlow value={Number(match[1])} gradient={gradient} />
       {match[2] && <span className={textClass}>{match[2]}</span>}
     </span>

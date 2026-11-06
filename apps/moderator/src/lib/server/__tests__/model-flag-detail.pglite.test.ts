@@ -50,7 +50,8 @@ CREATE TABLE "ModelFile" (
 CREATE TABLE "ModelMetric" ("modelId" INTEGER PRIMARY KEY, "downloadCount" INTEGER, "generationCount" INTEGER);
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER, "userId" INTEGER NOT NULL);
 CREATE TABLE "Image" (
-  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "type" TEXT NOT NULL DEFAULT 'image'
+  "id" INTEGER PRIMARY KEY, "postId" INTEGER, "type" TEXT NOT NULL DEFAULT 'image',
+  "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ModelReport" ("modelId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
@@ -108,10 +109,8 @@ afterEach(async () => {
 });
 
 describe('getModelFlagDetail', () => {
-  it('counts the owner previews and the open reports on the model', async () => {
+  it('counts the open reports on the model', async () => {
     const detail = await getModelFlagDetail({ modelId: 10 });
-    // Images only, on the owner's posts: not the video, not another user's post.
-    expect(detail?.previewCount).toBe(3);
     // Pending and Processing only, and only reports on this model.
     expect(detail?.openReports).toBe(2);
   });
@@ -144,6 +143,15 @@ describe('getModelFlagDetail', () => {
     expect(memory.notes).toHaveBeenCalledWith(1, null);
   });
 
+  it('does not count as mod-unpublished a model kept when its owner was wiped', async () => {
+    await pg.exec(`
+      INSERT INTO "Model" ("id","name","userId","status","meta") VALUES
+        (90, 'kept', (SELECT "userId" FROM "Model" WHERE id = 10), 'UnpublishedViolation', '{"removedWithOwner": true}')
+    `);
+    const detail = await getModelFlagDetail({ modelId: 10 });
+    expect(detail).toMatchObject({ uploaderModUnpublished: 1 });
+  });
+
   it('ignores a sibling flag whose timestamp does not parse instead of failing the pane', async () => {
     await pg.exec(`
       INSERT INTO "Model" ("id","name","userId","meta") VALUES
@@ -170,7 +178,7 @@ describe('getModelFlagDetail', () => {
     await pg.exec('DROP TABLE "UserStrike"');
     memory.notes.mockRejectedValue(new Error('down'));
     const detail = await getModelFlagDetail({ modelId: 10 });
-    expect(detail).toMatchObject({ strikes: null, notes: null, previewCount: 3 });
+    expect(detail).toMatchObject({ strikes: null, notes: null });
   });
 
   it('copes with a model that has no versions, files or metrics', async () => {
@@ -180,7 +188,6 @@ describe('getModelFlagDetail', () => {
       latestPublishedAt: null,
       mainFile: null,
       downloads: null,
-      previewCount: 0,
       openReports: 0,
     });
   });

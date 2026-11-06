@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
   storylineCeilingImpact,
+  storylineChangedPrice,
+  storylineDraftPublish,
+  storylineDraftPublishCaption,
+  storylineExpectedPrice,
   storylineContinuePostOptions,
   storylineWithoutChapters,
   storylineSubmitInput,
@@ -11,6 +15,7 @@ import {
 import { NsfwLevel } from '~/server/common/enums';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 const owner = 1;
 const contributor = 2;
@@ -100,6 +105,18 @@ describe('storylineSubmitVerdict', () => {
       allowed: false,
       reason: 'closed',
     });
+  });
+
+  // Blocked is a moderation verdict: refused as unusable, so the picker never calls it a rating.
+  test('a post with a Blocked level is refused as unusable, owner or contributor', () => {
+    const postLevel = NsfwLevel.R | NsfwLevel.Blocked;
+    expect([
+      verdict({ postLevel, storyline: story({ maxNsfwLevel: NsfwLevel.XXX }) }),
+      verdict({ postLevel, viewerId: owner, asOwner: true }),
+    ]).toEqual([
+      { allowed: false, reason: 'cannotSubmit' },
+      { allowed: false, reason: 'cannotSubmit' },
+    ]);
   });
 
   test('an open storyline still holds everyone to the ceiling', () => {
@@ -207,6 +224,12 @@ describe('storylineCeilingImpact', () => {
     expect(storylineCeilingImpact(NsfwLevel.PG13, levels)).toEqual({ allowed: true, hidden: 2 });
   });
 
+  test('refuses a ceiling below the spark image, as the server does', () => {
+    const sparked = { ...levels, sparkNsfwLevel: NsfwLevel.R };
+    expect(storylineCeilingImpact(NsfwLevel.PG13, sparked).allowed).toBe(false);
+    expect(storylineCeilingImpact(NsfwLevel.R, sparked).allowed).toBe(true);
+  });
+
   test('refuses a ceiling below chapter 1, judged by its most severe image', () => {
     expect(storylineCeilingImpact(NsfwLevel.PG, levels).allowed).toBe(false);
     expect(
@@ -218,7 +241,7 @@ describe('storylineCeilingImpact', () => {
   });
 
   // Must agree with the server, or the picker offers a ceiling the server refuses:
-  // assertCeilingKeepsFirstChapter refuses when firstChapterFloor (the root's highest bit,
+  // assertCeilingKeepsFloor refuses when firstChapterFloor (the root's highest bit,
   // module-private) is above the ceiling, and getStorylineChapterLevels sends null wherever that
   // floor is null.
   test('agrees with the server floor for every ceiling and root level', () => {
@@ -245,5 +268,60 @@ describe('storylineCeilingImpact', () => {
     expect(
       storylineCeilingImpact(NsfwLevel.PG, { rootNsfwLevel: null, chapterLevels: [] }).allowed
     ).toBe(true);
+  });
+});
+
+describe('the publish plan for a storyline draft', () => {
+  const open = (price: number) => ({ open: true, price, closedReason: null });
+  const plan = (overrides: Partial<Parameters<typeof storylineDraftPublish>[0]> = {}) =>
+    storylineDraftPublish({
+      asOwner: false,
+      chapterNumber: 5,
+      terms: open(50),
+      termsPending: false,
+      ...overrides,
+    });
+
+  test('a contributor sees and sends one price', () => {
+    for (const price of [0, 1, 50, 12_345]) {
+      const p = plan({ terms: open(price) });
+      expect(p).toMatchObject({ kind: 'contributor', expectedPrice: price });
+      expect('label' in p && p.label).toBe(`Publish and submit · ${storylinePriceLabel(price)}`);
+      expect(storylineExpectedPrice(p)).toBe(price);
+    }
+  });
+
+  test('the owner publishes the chapter by number and sends no price', () => {
+    const p = plan({ asOwner: true, terms: open(50) });
+    expect([p, storylineExpectedPrice(p)]).toEqual([
+      { kind: 'owner', label: 'Publish chapter 5' },
+      undefined,
+    ]);
+  });
+
+  test('sends nothing until the terms are read, or when they close', () => {
+    for (const p of [
+      plan({ termsPending: true }),
+      plan({ terms: null }),
+      plan({ terms: { open: false, price: 50, closedReason: 'closed' } }),
+      null,
+    ])
+      expect(storylineExpectedPrice(p)).toBeUndefined();
+  });
+
+  test('says what a closed storyline means for the publish', () => {
+    const caption = (closedReason: 'closed' | 'collaboratorsOnly' | null) =>
+      storylineDraftPublishCaption({ kind: 'closed', reason: closedReason });
+    expect([caption('closed'), caption('collaboratorsOnly'), caption(null)]).toEqual([
+      'This storyline is closed to new chapters, so publishing posts it on its own.',
+      'Only collaborators can continue this storyline, so publishing posts it on its own.',
+      'This post cannot be added to the storyline, so publishing posts it on its own.',
+    ]);
+  });
+
+  test('reads the new price out of a price-changed refusal', () => {
+    expect(storylineChangedPrice(`${STORYLINE_REFUSALS.priceChanged}: now 60 Buzz`)).toBe(60);
+    expect(storylineChangedPrice(`${STORYLINE_REFUSALS.priceChanged}: now 0 Buzz`)).toBe(0);
+    expect(storylineChangedPrice(STORYLINE_REFUSALS.priceChanged)).toBeNull();
   });
 });

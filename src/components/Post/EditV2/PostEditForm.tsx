@@ -5,6 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
+import { PostEditBackLink } from '~/components/Post/EditV2/PostEditBackLink';
 import { presetTitleFor } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
 import {
   usePendingSave,
@@ -16,8 +17,8 @@ import { Group } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 import { isDefined } from '~/utils/type-guards';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { POST_TITLE_MAX_LENGTH } from '~/server/common/constants';
 
-const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
 
 export function PostEditForm() {
@@ -71,7 +72,9 @@ export function PostEditForm() {
           mutate({
             id: post.id,
             title:
-              title && title.length > titleCharLimit ? title.substring(0, titleCharLimit) : title,
+              title && title.length > POST_TITLE_MAX_LENGTH
+                ? title.substring(0, POST_TITLE_MAX_LENGTH)
+                : title,
             detail,
           })
         );
@@ -112,6 +115,13 @@ export function PostEditForm() {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this post."
         }
       />
+      {post && (
+        <PostEditBackLink
+          modelId={post.parentModelId}
+          modelVersionId={post.modelVersionId}
+          modelName={post.parentModelName}
+        />
+      )}
       <InputTextArea
         data-tour="post:title"
         name="title"

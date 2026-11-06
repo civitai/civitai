@@ -137,15 +137,22 @@ const rows = [latestAndSecond, earliestAndLast, ownedAndFirst];
 const ids = (entries: { id: number }[]) => entries.map((e) => e.id);
 const lastFindManyArgs = () =>
   findEntries.mock.calls.at(-1)![0] as { orderBy: unknown; take: number; cursor?: unknown };
+/** The page query: a first page also asks for the list's count, which is not under test here. */
+const lastPageQueryCall = () =>
+  queryRaw.mock.calls
+    .filter(
+      ([strings]) => !(strings as unknown as TemplateStringsArray).join('').includes('count(*)')
+    )
+    .at(-1) as [TemplateStringsArray, ...unknown[]];
 /** The raw query's text, nested `Prisma.sql` fragments included, with its bound values. */
 /** The raw query as Postgres receives it, nested fragments in place. */
 const lastRendered = () => {
-  const [strings, ...values] = queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
+  const [strings, ...values] = lastPageQueryCall();
   return Prisma.sql(strings, ...values);
 };
 const lastRenderedSql = () => lastRendered().text.replace(/\s+/g, ' ');
 const lastRawQuery = () => {
-  const [strings, ...values] = queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
+  const [strings, ...values] = lastPageQueryCall();
   const fragments = values.filter(
     (value): value is { strings: string[] } =>
       !!value && typeof value === 'object' && 'strings' in value
@@ -674,6 +681,32 @@ describe('crucible.getMinVotesToPlace', () => {
         post: { publishedAt: { not: null } },
       },
     });
+  });
+
+  it.each([
+    ['a plain', false],
+    ['a time-adjusted', true],
+  ])('leaves contest-banned entrants out of the count for %s crucible', async (_, timeAdjusted) => {
+    const startAt = new Date(Date.now() - 3_600_000);
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      timeAdjustedPlacement: timeAdjusted,
+      startAt,
+      endAt: new Date(startAt.getTime() + 7_200_000),
+    });
+    queryRaw.mockResolvedValueOnce([{ userId: 7 }]);
+    aggregate.mockResolvedValue({ _sum: { voteCount: 0 }, _count: { _all: 0 } });
+    findEntries.mockResolvedValue([]);
+
+    await caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID });
+
+    const [strings, ...values] = queryRaw.mock.calls.at(-1)!;
+    const banSql = Prisma.sql(strings as TemplateStringsArray, ...values);
+    expect(banSql.sql).toContain("u.meta ->> 'contestBanDetails' IS NOT NULL");
+    expect(banSql.values).toEqual([CRUCIBLE_ID]);
+    const where = (timeAdjusted ? findEntries : aggregate).mock.calls.at(-1)![0].where;
+    expect(where.userId).toEqual({ notIn: [7] });
   });
 
   it('projects the vote rate over the time left for a time-adjusted crucible', async () => {

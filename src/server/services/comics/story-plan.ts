@@ -1,4 +1,5 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { refundMultiAccountTransaction } from '~/server/services/buzz.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
@@ -43,7 +44,7 @@ export async function planChapterPanels(input: {
 
   const result = await orchestratorChatCompletion({
     token: input.token,
-    model: 'gpt-4o-mini',
+    model: DEFAULT_CHAT_COMPLETION_MODEL,
     temperature: 0.7,
     maxTokens: 2048,
     messages: [

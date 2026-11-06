@@ -15,6 +15,7 @@ type MembershipCosmetic = {
   id: number;
   name: string;
   productId: string;
+  type: string;
   availableStart: Date | null;
   availableEnd: Date | null;
 };
@@ -68,6 +69,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       c.id,
       c.name,
       c."productId",
+      c.type,
       c."availableStart",
       c."availableEnd"
     FROM "Cosmetic" c
@@ -111,7 +113,16 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       JOIN "Product" pr ON pr.id = cs."productId"
       JOIN "Product" cosmeticProduct ON cosmeticProduct.id = ${cosmetic.productId}
       WHERE cs.status IN ('active', 'expired_claimable')
-        AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+        AND (
+          pr.metadata->>'monthlyBuzz' IS NOT NULL
+          OR (pr.metadata->>'buzzPurchase') = 'true'
+        )
+        -- Buzz memberships earn the monthly badge only, as in deliverMonthlyCosmetics.
+        ${
+          cosmetic.type === 'Badge' && cosmetic.availableStart && cosmetic.availableEnd
+            ? Prisma.empty
+            : Prisma.sql`AND (pr.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'`
+        }
         -- Cosmetic is provider-specific: only grant it to subs from the same provider
         -- (mirrors the deliver-purchased-cosmetics job's pdl.provider = pr.provider rule).
         AND pr.provider = cosmeticProduct.provider

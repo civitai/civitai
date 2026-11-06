@@ -1,11 +1,14 @@
 import type { AutoCheck } from '~/server/schema/creator-shop.schema';
 import {
+  LOOP_SEAM_CHECK_LABEL,
+  LOOP_SEAM_FIX_HINT,
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
+  hasEmptyLoopSeam,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { formatBytes } from '~/utils/number-helpers';
@@ -78,6 +81,40 @@ async function getWebPAnimationStats(
   return { frames, minDelayMs: Number.isFinite(minDelayMs) ? minDelayMs : 0 };
 }
 
+// Mirrors the server's loop-seam check. Null when the browser has no ImageDecoder (WebCodecs)
+// or can't decode the file; the server check still applies.
+async function detectEmptyLoopSeam(file: File, frames: number): Promise<boolean | null> {
+  if (typeof ImageDecoder === 'undefined') return null;
+  let decoder: ImageDecoder | undefined;
+  try {
+    const openDecoder = new ImageDecoder({ data: file.stream(), type: file.type });
+    decoder = openDecoder;
+    const frameHasContent = async (frameIndex: number) => {
+      const { image } = await openDecoder.decode({ frameIndex });
+      try {
+        const canvas = new OffscreenCanvas(image.displayWidth, image.displayHeight);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('no 2d context');
+        ctx.drawImage(image, 0, 0);
+        const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+        return false;
+      } finally {
+        image.close();
+      }
+    };
+    return hasEmptyLoopSeam({
+      first: await frameHasContent(0),
+      penultimate: await frameHasContent(frames - 2),
+      last: await frameHasContent(frames - 1),
+    });
+  } catch {
+    return null;
+  } finally {
+    decoder?.close();
+  }
+}
+
 /**
  * Runs the pre-submit artwork checks a creator sees before they can pay the fee.
  * Returns the per-check results (also persisted to item meta for moderators).
@@ -131,6 +168,17 @@ export async function validateCosmeticImage(
       passed: animation.minDelayMs >= MIN_ANIMATION_FRAME_DELAY_MS,
       detail: `~${Math.round(1000 / Math.max(1, animation.minDelayMs))} fps peak`,
     });
+    const emptyLoopSeam =
+      hasTransparency && checks.every((c) => c.passed)
+        ? await detectEmptyLoopSeam(file, animation.frames)
+        : null;
+    if (emptyLoopSeam !== null)
+      checks.push({
+        key: 'loopSeam',
+        label: LOOP_SEAM_CHECK_LABEL,
+        passed: !emptyLoopSeam,
+        detail: emptyLoopSeam ? LOOP_SEAM_FIX_HINT : undefined,
+      });
   }
   checks.push({
     key: 'size',

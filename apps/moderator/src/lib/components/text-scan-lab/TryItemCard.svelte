@@ -2,9 +2,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import AddToSetDialog from '$lib/components/text-scan-tests/AddToSetDialog.svelte';
-  import { ruleChoicesOf } from '$lib/model-rules';
-  import { labRuleMatches } from '$lib/text-scan-lab/labels';
-  import { itemChanged, type TryItem, type TrySide } from '$lib/text-scan-lab/try';
+  import { itemChanged, type TryItem } from '$lib/text-scan-lab/try';
   import type { LabEntityType, LabLabel, PromptKey } from '$lib/text-scan-lab/types';
   import { expectedFromOutput } from '$lib/text-scan-tests/expected';
   import type { Workspace } from '$lib/text-scan-tests/types';
@@ -14,15 +12,11 @@
   let {
     item,
     labels,
-    current,
-    edited,
     onedit,
     capture,
   }: {
     item: TryItem;
     labels: readonly LabLabel[];
-    current: TrySide;
-    edited: TrySide | null;
     onedit: ((key: PromptKey) => void) | null;
     capture: { workspace: Workspace; entityType: LabEntityType } | null;
   } = $props();
@@ -33,25 +27,14 @@
   const columns = $derived(
     item.edited
       ? [
-          { title: 'Current', result: item.current, rules: current.rules },
-          { title: 'Edited', result: item.edited, rules: edited?.rules ?? null },
+          { title: 'Current', result: item.current },
+          { title: 'Edited', result: item.edited },
         ]
-      : [{ title: 'Current', result: item.current, rules: current.rules }]
+      : [{ title: 'Current', result: item.current }]
   );
 
-  const currentMatches = $derived(labRuleMatches(item.current, current.rules));
   const prefill = $derived(
-    expectedFromOutput(
-      item.current.ok ? item.current.output : null,
-      labels,
-      item.current.ok ? currentMatches.map((m) => m.ruleId) : null
-    )
-  );
-  const ruleChoices = $derived(
-    ruleChoicesOf([
-      ...currentMatches,
-      ...(item.edited ? labRuleMatches(item.edited, edited?.rules ?? null) : []),
-    ])
+    expectedFromOutput(item.current.ok ? item.current.output : null, labels)
   );
 </script>
 
@@ -71,7 +54,6 @@
           fields={item.entityId === null ? item.fields : null}
           origin="try"
           {prefill}
-          {ruleChoices}
         />
       </span>
     {/if}

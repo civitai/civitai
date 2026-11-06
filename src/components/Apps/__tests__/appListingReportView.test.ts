@@ -10,8 +10,8 @@ import {
 import { APP_LISTING_REPORT_REASONS } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
- * W13 P3b — pure report VIEW MODEL (the blocking gate for the reason picker; the
- * browser-mode modal test is report-only). Pins: the option list matches the
+ * W13 P3b — pure report VIEW MODEL (the node-tier gate for the reason picker).
+ * Pins: the option list matches the
  * schema tuple exactly (no drift), every label is non-empty, and the error mapper
  * gives the friendly duplicate-report copy on CONFLICT.
  */
@@ -99,7 +99,7 @@ describe('reportErrorMessage', () => {
  * `ReportListingButton` nothing rendered). The regression cover for that is
  * `__tests__/appListingReportCallSites.test.ts` (wiring, blocking) plus the
  * report-through-the-menu case in `AppListingDetailBody.browser.test.tsx`
- * (behaviour, report-only). What this pins is that the rule keeps exactly one
+ * (behaviour, browser tier). What this pins is that the rule keeps exactly one
  * definition and both halves move together.
  */
 describe('reportTriggerState', () => {

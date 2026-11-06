@@ -1,8 +1,10 @@
 import type { BadgeProps } from '@mantine/core';
-import { CopyButton, Tooltip, Badge, Group } from '@mantine/core';
+import { CopyButton, Badge, Group } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { DsBadge, DsTooltip } from '~/components/AppLayout/ShellDs/ContentDs';
 import type { ModelFileType } from '~/server/common/constants';
 
 export function TrainedWords({
@@ -11,6 +13,7 @@ export function TrainedWords({
   type,
   limit = 10,
   badgeProps,
+  ds,
 }: Props) {
   const [showAll, setShowAll] = useState(false);
 
@@ -24,6 +27,25 @@ export function TrainedWords({
     return words;
   }, [trainedWords, files, type, showAll, limit]);
 
+  if (ds)
+    return (
+      <div className="flex flex-row flex-wrap items-center justify-start gap-[calc(0.25rem*var(--mantine-scale))]">
+        {words.map((word, index) => (
+          <DsTrainingWordBadge key={index} word={word} />
+        ))}
+        {trainedWords.length > limit && !showAll && (
+          <DsBadge
+            size="sm"
+            color="gray"
+            style={{ cursor: 'pointer' }}
+            onClick={() => setShowAll(true)}
+          >
+            +{trainedWords.length - limit} more
+          </DsBadge>
+        )}
+      </div>
+    );
+
   return (
     <Group gap={4}>
       {words.map((word, index) => (
@@ -36,6 +58,7 @@ export function TrainedWords({
           color="gray"
           style={{ cursor: 'pointer' }}
           onClick={() => setShowAll(true)}
+          data-tap-target
         >
           +{trainedWords.length - limit} more
         </Badge>
@@ -50,6 +73,8 @@ type Props = {
   type: ModelType;
   limit?: number;
   badgeProps?: BadgeProps;
+  /** `@civitai/components` markup in place of Mantine (`modelPageDesignSystemMarkup`). Ignores `badgeProps`. */
+  ds?: boolean;
 };
 
 export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: string }) {
@@ -63,6 +88,7 @@ export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: 
             color={copied ? 'green' : 'violet'}
             style={{ cursor: 'pointer', height: 'auto' }}
             onClick={copy}
+            data-tap-target
             pr={2}
             {...badgeProps}
           >
@@ -76,6 +102,36 @@ export function TrainingWordBadge({ word, ...badgeProps }: BadgeProps & { word: 
             </Group>
           </Badge>
         </Tooltip>
+      )}
+    </CopyButton>
+  );
+}
+
+function DsTrainingWordBadge({ word }: { word: string }) {
+  return (
+    <CopyButton value={word.trim()}>
+      {({ copy, copied }) => (
+        <DsTooltip label="Copied!" opened={copied}>
+          <DsBadge
+            size="sm"
+            color={copied ? 'green' : 'violet'}
+            style={{
+              cursor: 'pointer',
+              height: 'auto',
+              paddingRight: 'calc(0.125rem * var(--mantine-scale))',
+            }}
+            onClick={copy}
+          >
+            <span className="flex flex-row flex-nowrap items-center justify-start gap-[calc(0.3125rem*var(--mantine-scale))] whitespace-normal">
+              {word}
+              {copied ? (
+                <IconCheck className="shrink-0 grow-0" stroke={2} size={14} />
+              ) : (
+                <IconCopy className="shrink-0 grow-0" stroke={2} size={14} />
+              )}
+            </span>
+          </DsBadge>
+        </DsTooltip>
       )}
     </CopyButton>
   );

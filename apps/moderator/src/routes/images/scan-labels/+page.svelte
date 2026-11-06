@@ -6,7 +6,6 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS } from '$lib/format';
@@ -20,7 +19,7 @@
   let submitting = $state(false);
   let shownAt = 0;
   $effect.pre(() => {
-    void data.card?.itemId;
+    void data.card?.token;
     shownAt = Date.now();
   });
 
@@ -32,7 +31,7 @@
 
   let videoState = $state<'loading' | 'ready' | 'failed'>('loading');
   $effect.pre(() => {
-    void data.card?.itemId;
+    void data.card?.token;
     videoState = 'loading';
   });
 
@@ -152,7 +151,7 @@
   {/if}
 
   {#if data.card}
-    {#key data.card.itemId}
+    {#key data.card.token}
       <section
         class="flex flex-col gap-4 rounded-xl border border-dark-4 bg-dark-6 p-5 transition-opacity"
         class:opacity-50={submitting}
@@ -164,16 +163,30 @@
           oncanplaycapture={() => (videoState = 'ready')}
           onerrorcapture={onMediaError}
         >
-          <EdgeMedia
-            src={data.card.url}
-            name={data.card.name}
-            type={data.card.type === 'video' ? 'video' : 'image'}
-            width={1200}
-            fit="scale-down"
-            anim
-            alt="Image under review"
-            class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
-          />
+          <!-- Served by the card's token, so the page never names the media itself. -->
+          {#if data.card.type === 'video'}
+            <video
+              class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
+              poster="{data.card.mediaSrc}?v=poster"
+              autoplay
+              muted
+              loop
+              playsinline
+              preload="metadata"
+            >
+              <source src="{data.card.mediaSrc}?v=webm" type="video/webm" />
+              <source src="{data.card.mediaSrc}?v=mp4" type="video/mp4" />
+            </video>
+          {:else}
+            <img
+              src="{data.card.mediaSrc}?v=image"
+              alt="Under review"
+              width={data.card.width ?? undefined}
+              height={data.card.height ?? undefined}
+              decoding="async"
+              class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain"
+            />
+          {/if}
           {#if data.card.type === 'video' && videoState !== 'ready'}
             <div
               class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-dark-2"
@@ -185,7 +198,7 @@
             </div>
           {/if}
         </div>
-        <VoteForm itemId={data.card.itemId} {submitting} onsubmit={submitVote} />
+        <VoteForm token={data.card.token} {submitting} onsubmit={submitVote} />
       </section>
     {/key}
   {:else}

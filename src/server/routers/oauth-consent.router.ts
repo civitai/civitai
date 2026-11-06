@@ -6,7 +6,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { buzzLimitSchema, type BuzzLimit } from '~/server/schema/api-key.schema';
 import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrator/api-key-spend';
-import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
+import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import * as z from 'zod';
 
@@ -135,9 +135,8 @@ export const oauthConsentRouter = router({
         }).catch(() => {});
       });
 
-      // Expire the revoked tokens in the orchestrator's auth cache so they
-      // stop authenticating immediately instead of lingering until TTL.
-      await invalidateCivitaiUser({ userId: ctx.user.id });
+      // Expire the revoked tokens in the orchestrator's auth cache.
+      await revokeCivitaiUserTokens({ userId: ctx.user.id });
 
       // Last, after the tokens, consent and auth cache are gone, so neither a slow nor a failed
       // withdraw delays or blocks revoking access. `null` = it failed; the client tells the user

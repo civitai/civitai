@@ -45,7 +45,12 @@ export default function EventTeamsPage({
         <NextLink href={`/events/${event}`} className="text-sm">
           ← {data.title}
         </NextLink>
-        <TeamRoster event={event} teams={data.teams} initialTeam={ownTeam} />
+        <TeamRoster
+          event={event}
+          teams={data.teams}
+          initialTeam={ownTeam}
+          startDate={data.startDate}
+        />
       </Container>
     </>
   );

@@ -54,8 +54,8 @@ describe('unpublishPostAsModerator', () => {
       ids: [1, 2],
       action: 'Delete',
     });
-    expect(mocks.refreshPostCount).toHaveBeenCalledWith(900);
-    expect(mocks.refreshMediaCount).toHaveBeenCalledWith(900);
+    expect(mocks.refreshPostCount).toHaveBeenCalledWith([900]);
+    expect(mocks.refreshMediaCount).toHaveBeenCalledWith([900]);
   });
 
   it('does nothing further for a post that is not published', async () => {

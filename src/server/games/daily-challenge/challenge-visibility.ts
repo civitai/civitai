@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { hasBlockMarker, imageReviewedSql } from '~/server/common/image-visibility';
 import {
   hasPublicBrowsingLevel,
   hasSafeBrowsingLevel,
@@ -86,4 +88,36 @@ export function isChallengeHiddenByCoverScan(
     challenge.createdById !== viewerId &&
     !isChallengeCoverScanned({ coverImage: challenge.coverImage })
   );
+}
+
+// The image state `winnerImageFields` needs, as columns over `"Image" i`.
+export const winnerImageStateSql = Prisma.sql`
+  i.ingestion AS "imageIngestion",
+  i."blockedFor" AS "imageBlockedFor",
+  ${imageReviewedSql()} AS "imageReviewed"`;
+
+// A winner's image as any site may serve it: a blocked or unscanned image is withheld everywhere,
+// while the winner and their place stay. All four fields go, because WinnerPodiumCard reads an id
+// and hash with no url as "gated on this site" and links to the image on the other one.
+export function winnerImageFields(row: {
+  imageId: number | null;
+  imageUrl: string | null;
+  imageNsfwLevel: number | null;
+  imageHash: string | null;
+  imageIngestion: ImageIngestionStatus | null;
+  imageBlockedFor: string | null;
+  imageReviewed: boolean | null;
+}) {
+  const { imageId, imageUrl, imageNsfwLevel, imageHash } = row;
+  const withheld =
+    imageId != null &&
+    (!row.imageReviewed ||
+      hasBlockMarker({
+        ingestion: row.imageIngestion ?? '',
+        nsfwLevel: imageNsfwLevel ?? 0,
+        blockedFor: row.imageBlockedFor,
+      }));
+  return withheld
+    ? { imageId: null, imageUrl: null, imageNsfwLevel: null, imageHash: null }
+    : { imageId, imageUrl, imageNsfwLevel, imageHash };
 }
