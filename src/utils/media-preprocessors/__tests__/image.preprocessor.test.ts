@@ -112,7 +112,7 @@ describe('isAnimatedImage', () => {
   const ascii = (text: string) => Uint8Array.from(text, (c) => c.charCodeAt(0));
   const bigProfile = new Uint8Array(20_000);
 
-  const webp = (vp8xFlags: number, ...chunks: Uint8Array[]) =>
+  const webp = (vp8xFlags: number, ...chunks: BlobPart[]) =>
     new File(
       [ascii('RIFF\0\0\0\0WEBPVP8X\x0a\0\0\0'), Uint8Array.of(vp8xFlags, 0, 0, 0), ...chunks],
       'a.webp',
@@ -124,7 +124,7 @@ describe('isAnimatedImage', () => {
     head.set(ascii(type), 4);
     return [head, payload, new Uint8Array(4)];
   };
-  const png = (...chunks: Uint8Array[][]) =>
+  const png = (...chunks: BlobPart[][]) =>
     new File([new Uint8Array(8), ...chunks.flat()], 'a.png', { type: 'image/png' });
 
   it.each([
