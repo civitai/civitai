@@ -31,6 +31,7 @@ vi.mock('$lib/server/users.service', () => ({
 const { getShopPurchaseSummary, summarizeShopPurchases } = await import(
   '$lib/server/shop-purchases.service'
 );
+const { MAX_BUZZ_DAYS } = await import('$lib/server/buzz-flows.service');
 
 const BUYER = 5;
 const OTHER_BUYER = 6;
@@ -80,6 +81,15 @@ describe('shop_purchases paid-from matching', () => {
       ]
     );
     expect(items[0].paidFrom).toEqual({ yellow: 60, blue: 40 });
+    expect(items[0].noChargeFound).toBe(0);
+  });
+
+  it('matches a charge whose leg landed in the extra day read before the window', () => {
+    const { items } = summarize(
+      [purchase(itemCharge('k'))],
+      [leg(`${itemCharge('k')}-User`, { inWindow: 0 })]
+    );
+    expect(items[0].paidFrom).toEqual({ yellow: 100 });
     expect(items[0].noChargeFound).toBe(0);
   });
 
@@ -188,7 +198,13 @@ describe('shop_purchases ledger read', () => {
     expect(chQueries).toHaveLength(1);
     const [q] = chQueries;
     expect(q.query).toContain('date >= now() - toIntervalDay({readDays:UInt32})');
-    expect(q.query_params).toMatchObject({ ids: [BUYER], days: 365, readDays: 366 });
+    expect(q.query_params).toMatchObject({
+      ids: [BUYER],
+      days: MAX_BUZZ_DAYS,
+      readDays: MAX_BUZZ_DAYS + 1,
+      limit: 5000,
+    });
+    expect(q.query).toContain('LIMIT {limit:UInt32} BY fromAccountId');
     // The client's own request timeout is 300s.
     expect(q.clickhouse_settings.max_execution_time).toBeLessThan(300);
   });
@@ -247,6 +263,52 @@ describe('shop_purchases item summary', () => {
     expect(items).toHaveLength(25);
     expect(items[0].shopItemId).toBe(27);
     expect(other).toMatchObject({ items: 2, count: 2, buzz: 30 });
+  });
+
+  it('carries paid-from, refunds, dates and misses into other', () => {
+    const top = Array.from({ length: 25 }, (_, i) =>
+      purchase(itemCharge(`k${i}`), { shopItemId: i + 100, unitAmount: 1000 })
+    );
+    const tail = [
+      purchase(itemCharge('a'), {
+        shopItemId: 1,
+        unitAmount: 10,
+        purchasedAt: new Date('2026-11-01T00:00:00Z'),
+      }),
+      purchase(itemCharge('b'), {
+        shopItemId: 2,
+        unitAmount: 20,
+        refunded: true,
+        purchasedAt: new Date('2026-11-03T00:00:00Z'),
+      }),
+    ];
+    const legs = [leg(`${itemCharge('a')}-User`, { fromAccountType: 'blue', amount: '10' })];
+    const { other } = summarize([...top, ...tail], legs);
+    expect(other).toEqual({
+      items: 2,
+      count: 2,
+      buzz: 30,
+      refunded: 1,
+      firstAt: new Date('2026-11-01T00:00:00Z'),
+      lastAt: new Date('2026-11-03T00:00:00Z'),
+      paidFrom: { blue: 10 },
+      noChargeFound: 1,
+    });
+  });
+
+  it('says nothing about misses in other when the ledger read was cut short', () => {
+    const rows = Array.from({ length: 27 }, (_, i) =>
+      purchase(itemCharge(`k${i}`), { shopItemId: i + 1 })
+    );
+    const fill = Array.from({ length: 5000 }, (_, i) => leg(`${itemCharge(`x${i}`)}-User`));
+    expect(summarize(rows, fill).other?.noChargeFound).toBeNull();
+  });
+
+  it('marks an account truncated when its purchase rows hit the cap', () => {
+    const rows = (n: number) =>
+      Array.from({ length: n }, (_, i) => purchase(itemCharge(`k${i}`), { unitAmount: 0 }));
+    expect(summarize(rows(1000), []).truncated).toBe(true);
+    expect(summarize(rows(999), []).truncated).toBe(false);
   });
 
   it('filters to one kind, and keeps top-ups only for stickers', () => {

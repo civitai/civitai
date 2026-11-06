@@ -202,7 +202,7 @@ function summarizeTopUps(legs: LegRow[]): StickerTopUp[] {
     .sort((a, b) => b.charges - a.charges);
 }
 
-/** Joins purchase rows to ledger legs. Pure so the matching rules can be tested on real id shapes. */
+/** Joins purchase rows to ledger legs. */
 export function summarizeShopPurchases(
   ids: number[],
   purchases: PurchaseRow[],
