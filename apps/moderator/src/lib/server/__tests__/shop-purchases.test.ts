@@ -98,11 +98,7 @@ describe('shop_purchases paid-from matching', () => {
       [purchase(charge)],
       [
         leg(`${charge}-User`, { amount: '100' }),
-        leg(`${charge}:sell:9-User`, {
-          fromAccountId: String(BUYER),
-          toAccountId: '9',
-          amount: '70',
-        }),
+        leg(`${charge}:sell:9:yellow`, { type: 'sell', toAccountId: '9', amount: '70' }),
         leg(`${charge}-User`, { toAccountId: '9', amount: '100', type: 'refund' }),
         leg(`${charge}-User`, { fromAccountId: '0', toAccountId: String(BUYER), amount: '100' }),
       ]
