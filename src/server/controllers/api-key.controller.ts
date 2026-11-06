@@ -7,6 +7,7 @@ import type {
   GetUserAPIKeysInput,
   SetBuzzLimitInput,
 } from '~/server/schema/api-key.schema';
+import { MODERATOR_ONLY_KEY_SCOPES } from '~/server/schema/api-key.schema';
 import {
   deleteApiKey,
   getApiKey,
@@ -65,6 +66,11 @@ export async function addApiKeyHandler({
   input: AddAPIKeyInput;
 }) {
   const { user } = ctx;
+  if (input.tokenScope != null && input.tokenScope & MODERATOR_ONLY_KEY_SCOPES && !user.isModerator)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Only moderators can create a key with that scope.',
+    });
   await assertAccountNotRestricted(user.id, user);
   const apiKey = await mintApiKey(
     { ...input, userId: user.id },

@@ -20,7 +20,11 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
-import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import {
+  isFullScopeUserKey,
+  isUserKeyWithScope,
+  type BearerCredential,
+} from '~/server/auth/full-user-credential';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -60,6 +64,23 @@ export function assertSessionOrFullUserKey(
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This action requires a signed-in session or a full-access personal API key.',
+    });
+  }
+}
+
+/**
+ * Throws FORBIDDEN unless `isSessionOrFullUserKey`, or the credential is a personal API key carrying
+ * `scope` (`isUserKeyWithScope`).
+ */
+export function assertSessionFullUserKeyOrScopedUserKey(
+  ctx: BearerCredential & { apiKeyId?: number | null },
+  scope: number
+): void {
+  if (!isSessionOrFullUserKey(ctx) && !isUserKeyWithScope(ctx, scope)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        'This action requires a signed-in session, a full-access personal API key, or a personal API key with its scope.',
     });
   }
 }

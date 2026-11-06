@@ -48,14 +48,15 @@ describe('AppBlocksDevTunnel (opt-in scope — NOT part of Full)', () => {
 
   it('IS included in ALL_SCOPES (the computed upper bound)', () => {
     expect(ALL_SCOPES & TokenScope.AppBlocksDevTunnel).toBe(TokenScope.AppBlocksDevTunnel);
-    // Full is exactly ALL_SCOPES minus the five opt-in bits.
+    // Full is exactly ALL_SCOPES minus the six opt-in bits.
     expect(ALL_SCOPES).toBe(
       TokenScope.Full |
         TokenScope.AppBlocksSubmit |
         TokenScope.AppBlocksDevTunnel |
         TokenScope.LinkConnect |
         TokenScope.AppStoreCatalogWrite |
-        TokenScope.WorkerRegister
+        TokenScope.WorkerRegister |
+        TokenScope.ModeratorFeedbackRead
     );
   });
 
@@ -154,10 +155,8 @@ describe('WorkerRegister (opt-in, worker token-exchange only — NOT part of Ful
     expect(TokenScope.Full & TokenScope.WorkerRegister).toBe(0);
   });
 
-  it('IS included in ALL_SCOPES, raising it to (1 << 30) - 1, still inside a signed int4', () => {
-    expect(ALL_SCOPES).toBe((1 << 30) - 1);
-    expect(ALL_SCOPES).toBe(1073741823);
-    expect(ALL_SCOPES).toBeLessThan(2 ** 31);
+  it('IS included in ALL_SCOPES', () => {
+    expect(ALL_SCOPES & TokenScope.WorkerRegister).toBe(TokenScope.WorkerRegister);
   });
 
   it('is never consentable, and leaves the client_credentials cap alone', () => {
@@ -171,6 +170,39 @@ describe('WorkerRegister (opt-in, worker token-exchange only — NOT part of Ful
   it('has a label', () => {
     expect(tokenScopeLabels[TokenScope.WorkerRegister]).toBe(
       'Register a worker machine with the orchestrator'
+    );
+  });
+});
+
+describe('ModeratorFeedbackRead (opt-in, personal keys only — NOT part of Full)', () => {
+  it('is bit 30 = 1073741824, the last positive int4 bit', () => {
+    expect(TokenScope.ModeratorFeedbackRead).toBe(1 << 30);
+    expect(TokenScope.ModeratorFeedbackRead).toBe(1073741824);
+  });
+
+  it('is NOT part of Full', () => {
+    expect(TokenScope.Full & TokenScope.ModeratorFeedbackRead).toBe(0);
+  });
+
+  it('IS included in ALL_SCOPES, raising it to the int4 maximum and no further', () => {
+    expect(ALL_SCOPES & TokenScope.ModeratorFeedbackRead).toBe(TokenScope.ModeratorFeedbackRead);
+    expect(ALL_SCOPES).toBe(2 ** 31 - 1);
+    expect(ALL_SCOPES).toBe(2147483647);
+  });
+
+  it('no OAuth grant may mint it: not consentable, outside the client_credentials cap', () => {
+    expect(NON_USER_SCOPES & TokenScope.ModeratorFeedbackRead).toBe(
+      TokenScope.ModeratorFeedbackRead
+    );
+    expect(consentableScopes(TokenScope.UserRead | TokenScope.ModeratorFeedbackRead)).toBe(
+      TokenScope.UserRead
+    );
+    expect(CLIENT_CREDENTIALS_MAX_SCOPE & TokenScope.ModeratorFeedbackRead).toBe(0);
+  });
+
+  it('has a label', () => {
+    expect(tokenScopeLabels[TokenScope.ModeratorFeedbackRead]).toBe(
+      'Moderators: read the developer-platform feedback feed'
     );
   });
 });

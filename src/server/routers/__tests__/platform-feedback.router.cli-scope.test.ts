@@ -137,7 +137,7 @@ describe('platformFeedback token-scope gate', () => {
 
   // Read off the built router and lists every procedure: adding one, or dropping an annotation,
   // fails here until the scope decision is written down.
-  it('the two agent procedures, and only these, require AppBlocksSubmit', () => {
+  it('the two agent procedures require AppBlocksSubmit, and the feed its own scope', () => {
     const procedures = platformFeedbackRouter._def.procedures as unknown as Record<
       string,
       { _def: { type: string; meta?: { requiredScope?: number; blockApiKeys?: boolean } } }
@@ -148,8 +148,8 @@ describe('platformFeedback token-scope gate', () => {
     expect(ledger).toEqual({
       create: ['mutation', { requiredScope: 33554432 }],
       getStatus: ['query', { requiredScope: 33554432 }],
-      // A moderator procedure: a token caller needs a full-scope personal key, whatever its meta.
-      listChanges: ['query', null],
+      // The moderator feed: its own opt-in scope, ModeratorFeedbackRead (1 << 30).
+      listChanges: ['query', { requiredScope: 1073741824 }],
     });
   });
 

@@ -17,6 +17,7 @@ import {
   Text,
 } from '@mantine/core';
 import type * as z from 'zod';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GenerationPresetHint } from '~/components/Account/ApiKeyGeneration';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -57,6 +58,7 @@ const periodOptions = [
 
 export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props) {
   const features = useFeatureFlags();
+  const isModerator = !!useCurrentUser()?.isModerator;
   // Optional deeplink prefill (e.g. the App Blocks CLI scaffold link). These are
   // read once at mount; ApiKeysCard remounts the modal (via `key`) to apply them.
   const startScope = initialTokenScope ?? TokenScope.Full;
@@ -110,8 +112,11 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
     }
   };
 
+  // `toggleGridScope` keeps only the grid's bits, so the moderator opt-in is carried across it.
   const handleToggleFlag = (flag: number) => {
-    updateTokenScope(toggleGridScope(tokenScope, flag));
+    updateTokenScope(
+      toggleGridScope(tokenScope, flag) | (tokenScope & TokenScope.ModeratorFeedbackRead)
+    );
   };
 
   const handleSaveApiKey = (values: z.infer<typeof schema>) => {
@@ -270,6 +275,17 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
                 </Table.Tbody>
               </Table>
             </Box>
+            {/* Refused server-side for anyone else. A key for this alone: untick every box above. */}
+            {isModerator && (
+              <Checkbox
+                label="Moderator: read the developer-platform feedback feed"
+                description="Lets this key read the feedback change feed only, without Full Access. Untick every permission above for a key that can do nothing else."
+                checked={Flags.hasFlag(tokenScope, TokenScope.ModeratorFeedbackRead)}
+                onChange={() =>
+                  updateTokenScope(Flags.toggleFlag(tokenScope, TokenScope.ModeratorFeedbackRead))
+                }
+              />
+            )}
             {features.apiKeyBuzzLimit && (
               <Box>
                 <Group justify="space-between" align="center" mb={4}>

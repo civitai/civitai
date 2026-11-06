@@ -32,6 +32,7 @@ import type { FeatureAccess, FeatureAccessContext } from '~/server/services/feat
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
 import {
+  assertSessionFullUserKeyOrScopedUserKey,
   assertSessionOrFullUserKey,
   runEnforceTokenScope,
 } from '~/server/services/oauth/enforce-token-scope';
@@ -443,6 +444,28 @@ export const protectedProcedure = publicProcedure.use(isAuthed);
  * `requiredScope` the procedure declares.
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
+
+/**
+ * `moderatorProcedure` that also answers a personal API key carrying the opt-in `scope`, so a
+ * moderator can hand tooling a key narrower than Full for one read. The caller must still be a
+ * moderator at request time; an OAuth token is refused whatever it carries. The `requiredScope`
+ * meta makes `enforceTokenScope` refuse every other scoped token first.
+ *
+ * Only for an opt-in scope outside `Full` that is itself moderator-only at key creation.
+ */
+export const moderatorScopedKeyProcedure = (scope: number) =>
+  protectedProcedure.meta({ requiredScope: scope }).use(
+    t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) => {
+      if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+      if (!user.isModerator)
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to perform this action',
+        });
+      assertSessionFullUserKeyOrScopedUserKey(ctx, scope);
+      return next({ ctx: { ...ctx, user, acceptableOrigin } });
+    })
+  );
 
 /**
  * App developer procedure — authenticated + the `appBlocksAuthor` capability

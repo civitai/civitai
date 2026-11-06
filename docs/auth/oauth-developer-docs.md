@@ -367,6 +367,9 @@ name. Token responses report `scope` as the bitmask.
 > clients whose registration lists them, and are deliberately excluded from `Full` so an existing
 > key is never silently widened. `AppStoreCatalogWrite` is issued only through the
 > [Client Credentials Flow](#client-credentials-flow).
+>
+> `ModeratorFeedbackRead` (1073741824) is a personal-API-key scope for moderators; no OAuth grant
+> issues it.
 
 ### Common Scope Combinations
 

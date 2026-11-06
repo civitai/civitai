@@ -97,6 +97,15 @@ export const TokenScope = {
   // `WORKER_ONLY_SCOPES`); every other grant refuses it.
   WorkerRegister: 1 << 29, // 536870912
 
+  // Moderator feedback feed — read the developer-platform feedback change feed
+  // (`platformFeedback.listChanges`) from a personal API key without holding a Full one. Opt-in
+  // and EXCLUDED from `Full`; offered at API-key creation to moderators only, refused there for
+  // anyone else, and the procedure still requires the key's owner to be a moderator when called.
+  // Personal keys only: every OAuth grant refuses it (`PERSONAL_KEY_ONLY_SCOPES`).
+  // 🔴 THE LAST BIT. `tokenScope` and `allowedScopes` are int4 columns, so 1 << 30 is the highest
+  // positive bit; the next scope needs a column change (bigint) or a reused bit.
+  ModeratorFeedbackRead: 1 << 30, // 1073741824
+
   // All scopes
   //
   // NOTE: `Full` is INTENTIONALLY frozen at (1 << 25) - 1 = 33554431 — it is the
@@ -114,7 +123,7 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
  * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect`,
- * `AppStoreCatalogWrite` and `WorkerRegister`). Use this as the
+ * `AppStoreCatalogWrite`, `WorkerRegister` and `ModeratorFeedbackRead`). Use this as the
  * upper bound when validating a requested/stored scope value in the OAuth flow —
  * bounding against `Full` would reject any value carrying an opt-in bit. Computed
  * from the enum so it can never drift behind a newly-added bit.
@@ -156,6 +165,7 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
   [TokenScope.AppStoreCatalogWrite]: "Publish items to the app's App Store listing",
   [TokenScope.WorkerRegister]: 'Register a worker machine with the orchestrator',
+  [TokenScope.ModeratorFeedbackRead]: 'Moderators: read the developer-platform feedback feed',
 };
 
 /**
@@ -171,8 +181,15 @@ export const CLIENT_CREDENTIALS_MAX_SCOPE: number =
 /** Scopes a token can carry only when minted through the hub's worker token-exchange grant. */
 export const WORKER_ONLY_SCOPES: number = TokenScope.WorkerRegister;
 
-/** Scopes no grant acting for a user may mint. */
-export const NON_USER_SCOPES: number = CLIENT_CREDENTIALS_ONLY_SCOPES | WORKER_ONLY_SCOPES;
+/** Scopes only a personal API key can carry: every OAuth grant refuses them. */
+export const PERSONAL_KEY_ONLY_SCOPES: number = TokenScope.ModeratorFeedbackRead;
+
+/**
+ * Scopes no grant acting for a user may mint. `PERSONAL_KEY_ONLY_SCOPES` is outside
+ * `CLIENT_CREDENTIALS_MAX_SCOPE` too, so no OAuth grant mints it at all.
+ */
+export const NON_USER_SCOPES: number =
+  CLIENT_CREDENTIALS_ONLY_SCOPES | WORKER_ONLY_SCOPES | PERSONAL_KEY_ONLY_SCOPES;
 
 /** The part of a client's `allowedScopes` a user can be asked to consent to. */
 export function consentableScopes(allowedScopes: number): number {

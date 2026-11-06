@@ -1,26 +1,39 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OnboardingSteps } from '~/server/common/enums';
+import type * as AppFeedbackService from '~/server/services/blocks/app-feedback.service';
 import type * as PlatformFeedbackService from '~/server/services/platform-feedback.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * Who reaches `platformFeedback.listChanges`, the moderator change feed: a moderator on a session or
- * on a full-scope personal API key, and nobody else. The other two procedures answer agent tokens
- * carrying `AppBlocksSubmit`, so this pins that the opt-in bit those use does not open the feed.
+ * Who reaches `platformFeedback.listChanges`, the moderator change feed: a moderator on a session,
+ * on a full-scope personal API key, or on a personal key carrying the opt-in
+ * `ModeratorFeedbackRead`, and nobody else. The other two procedures answer agent tokens carrying
+ * `AppBlocksSubmit`, so this pins that the opt-in bit those use does not open the feed, and that
+ * the feed's own bit opens nothing else a moderator can reach.
  */
 
-const svc = vi.hoisted(() => ({ listPlatformFeedbackChanges: vi.fn() }));
+const svc = vi.hoisted(() => ({
+  listPlatformFeedbackChanges: vi.fn(),
+  modListAppFeedback: vi.fn(),
+}));
 
 vi.mock('~/server/services/platform-feedback.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlatformFeedbackService>()),
-  ...svc,
+  listPlatformFeedbackChanges: svc.listPlatformFeedbackChanges,
+}));
+
+vi.mock('~/server/services/blocks/app-feedback.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppFeedbackService>()),
+  modListAppFeedback: svc.modListAppFeedback,
 }));
 
 const { platformFeedbackRouter } = await import('~/server/routers/platform-feedback.router');
+const { appFeedbackRouter } = await import('~/server/routers/app-feedback.router');
 
 // Literals, so a renumbered enum fails the sanity test instead of moving every arm with it.
 const FULL = 33554431;
 const SUBMIT = 1 << 25;
+const FEED = 1 << 30; // ModeratorFeedbackRead
 const SCOPED = [
   ['UserRead|AppBlocksSubmit (the agent token the other procedures take)', 1 | SUBMIT],
   ['Full|AppBlocksSubmit', FULL | SUBMIT],
@@ -67,24 +80,63 @@ const INPUT = { cursor: '1767225600000:12', limit: 10 } as const;
 const listChanges = (ctx: never) =>
   platformFeedbackRouter.createCaller(ctx).listChanges({ ...INPUT });
 
+const SCOPE_GATE_ERROR = {
+  code: 'FORBIDDEN',
+  message: 'Your API key does not have the required scope for this action',
+};
+const NOT_A_PERSONAL_KEY = {
+  code: 'FORBIDDEN',
+  message:
+    'This action requires a signed-in session, a full-access personal API key, or a personal API key with its scope.',
+};
+
 const NOT_A_MODERATOR = {
   code: 'FORBIDDEN',
   message: 'You do not have permission to perform this action',
-};
-const NOT_A_FULL_KEY = {
-  code: 'FORBIDDEN',
-  message: 'This action requires a signed-in session or a full-access personal API key.',
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   svc.listPlatformFeedbackChanges.mockResolvedValue({ reached: true });
+  svc.modListAppFeedback.mockResolvedValue({ reached: true });
 });
 
 describe('platformFeedback.listChanges access', () => {
   it('the literal masks match the enum', () => {
     expect(TokenScope.Full).toBe(FULL);
     expect(TokenScope.AppBlocksSubmit).toBe(SUBMIT);
+    expect(TokenScope.ModeratorFeedbackRead).toBe(FEED);
+    expect(TokenScope.Full & FEED).toBe(0);
+  });
+
+  it.each([
+    ['the feed scope alone', FEED],
+    ['the feed scope with UserRead', 1 | FEED],
+  ])('answers a moderator on a personal key carrying %s', async (_label, scope) => {
+    await expect(listChanges(personalKeyCtx(moderator, scope))).resolves.toEqual({
+      reached: true,
+    });
+    expect(svc.listPlatformFeedbackChanges).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a non-moderator on a key carrying the feed scope', async () => {
+    await expect(listChanges(personalKeyCtx(developer, FEED))).rejects.toMatchObject(
+      NOT_A_MODERATOR
+    );
+    expect(svc.listPlatformFeedbackChanges).not.toHaveBeenCalled();
+  });
+
+  it('refuses a moderator on an OAuth token carrying the feed scope', async () => {
+    await expect(listChanges(oauthCtx(moderator, FEED))).rejects.toMatchObject(NOT_A_PERSONAL_KEY);
+    expect(svc.listPlatformFeedbackChanges).not.toHaveBeenCalled();
+  });
+
+  it('the feed scope opens no other moderator procedure (appFeedback.modList)', async () => {
+    const modList = (ctx: never) => appFeedbackRouter.createCaller(ctx).modList({});
+    // The control: the same moderator on a full key reaches it.
+    await expect(modList(personalKeyCtx(moderator, FULL))).resolves.toEqual({ reached: true });
+    await expect(modList(personalKeyCtx(moderator, FEED))).rejects.toMatchObject(SCOPE_GATE_ERROR);
+    expect(svc.modListAppFeedback).toHaveBeenCalledTimes(1);
   });
 
   it('answers a moderator on a session, with the parsed input', async () => {
@@ -108,14 +160,14 @@ describe('platformFeedback.listChanges access', () => {
   });
 
   it.each(SCOPED)('refuses a moderator on a scoped personal key (%s)', async (_label, scope) => {
-    await expect(listChanges(personalKeyCtx(moderator, scope))).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    await expect(listChanges(personalKeyCtx(moderator, scope))).rejects.toMatchObject(
+      SCOPE_GATE_ERROR
+    );
     expect(svc.listPlatformFeedbackChanges).not.toHaveBeenCalled();
   });
 
   it('refuses a moderator on an OAuth token, even a full-scope one', async () => {
-    await expect(listChanges(oauthCtx(moderator, FULL))).rejects.toMatchObject(NOT_A_FULL_KEY);
+    await expect(listChanges(oauthCtx(moderator, FULL))).rejects.toMatchObject(NOT_A_PERSONAL_KEY);
     await expect(listChanges(oauthCtx(moderator, 1 | SUBMIT))).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });

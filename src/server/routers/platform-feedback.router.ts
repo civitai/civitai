@@ -9,7 +9,11 @@ import {
   getPlatformFeedbackStatus,
   listPlatformFeedbackChanges,
 } from '~/server/services/platform-feedback.service';
-import { guardedProcedureAllowUnverifiedEmail, moderatorProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedureAllowUnverifiedEmail,
+  moderatorScopedKeyProcedure,
+  router,
+} from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // `AppBlocksSubmit` is opt-in, so a token holding only ordinary scopes stays refused.
@@ -40,11 +44,11 @@ export const platformFeedbackRouter = router({
     .query(({ ctx, input }) => getPlatformFeedbackStatus({ user: ctx.user, input })),
 
   /**
-   * Read-only change feed for moderator tooling. No `.meta`: like every moderator procedure, a
-   * token caller must hold a full-scope personal API key, so a scoped token is refused whatever
-   * bits it carries, `AppBlocksSubmit` included.
+   * Read-only change feed for moderator tooling. A moderator, on a session, a full-scope personal
+   * API key, or a personal key carrying `ModeratorFeedbackRead`; every other scoped token and every
+   * OAuth token is refused, `AppBlocksSubmit` included.
    */
-  listChanges: moderatorProcedure
+  listChanges: moderatorScopedKeyProcedure(TokenScope.ModeratorFeedbackRead)
     .input(listPlatformFeedbackChangesSchema)
     .query(({ input }) => listPlatformFeedbackChanges(input)),
 });
