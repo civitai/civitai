@@ -70,8 +70,10 @@ export interface Adapter {
   ): Promise<{ cursor: string; entities: Iterable<Entity> | AsyncIterable<Entity> }>;
   /**
    * The changes after `cursor`. The cursor is checked before this resolves: it rejects with
-   * {@link cursorExpired} for a cursor it cannot resume from, so the stream answers that before
-   * `live`, never after it.
+   * {@link cursorExpired} for a cursor it cannot resume from, so a cursor refused on resume is
+   * answered before `live` (HTTP 410). A cursor that goes stale DURING the stream (the document
+   * feed's later polls, e.g. its app re-created mid-stream) is thrown by the iterable and still
+   * arrives after `live` as an SSE `cursor_expired` error, so a consumer must handle both.
    */
   changes(schema: string, cursor: string, ctx: AdapterContext): Promise<AsyncIterable<Change>>;
 }

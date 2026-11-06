@@ -1,6 +1,8 @@
 /**
- * The HTTP/SSE binding of the source protocol, matching the registry SDK's `serve()`: one
- * route, `GET /subscribe`, plus `/healthz` for a process supervisor.
+ * The HTTP/SSE binding of the source protocol, after the registry SDK's `serve()`: one route,
+ * one route, `GET /subscribe`, plus `/healthz` for a process supervisor. Unlike the demo SDK, a
+ * resume checks the cursor before `live`: a refused cursor gets HTTP 410 `cursor_expired` with no
+ * event, where the SDK sends `live` first and then the error.
  *
  * A request's `filter` is applied as the SDK applies it: a snapshot entity that does not match
  * is left out, and a change that stops matching is sent as a delete. A filter this source will
