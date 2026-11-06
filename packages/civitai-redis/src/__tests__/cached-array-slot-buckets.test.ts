@@ -247,14 +247,25 @@ describe('slot-bucketed layout: parity with the legacy layout', () => {
       expect(on.lookups).toEqual(off.lookups);
       expect(writeShape(on.writes)).toEqual(writeShape(off.writes));
 
-      // And the modes really did use different keys: off never wrote a bucketed key on a fetch,
-      // on never read a legacy one.
+      // The modes really were different: only `on` sent MGETs. (Which keys each mode's FETCHES
+      // touch is pinned below; an SWR invalidate reads both layouts by design.)
       expect(off.commands.some((c) => c[0] === 'MGET')).toBe(false);
-      expect(
-        on.commands.filter((c) => c[0] === 'GET' || c[0] === 'MGET').flatMap((c) => c.slice(1))
-      ).toSatisfy((keys: string[]) => keys.every((k) => k.includes('{')));
+      expect(on.commands.some((c) => c[0] === 'MGET')).toBe(true);
     });
   }
+
+  it('fetches read and fill only the bucketed layout when on, only the legacy one when off', async () => {
+    for (const on of [false, true]) {
+      const w = world({ on });
+      const ids = range(40, 6001);
+      w.seed(ids.slice(0, 30)); // 10 deleted: notFound markers are fills too
+      await w.cache.fetch(ids);
+      await w.cache.fetch(ids);
+      const touched = w.commands.flatMap((c) => c.slice(1));
+      expect(touched.length).toBeGreaterThan(0);
+      expect(touched.every((k) => k.includes('{') === on)).toBe(true);
+    }
+  });
 
   it('the parity fixture is not vacuous: every per-id field differs between rows and versions', () => {
     const rows = [...range(60, 1001), ...range(30, 9001)].flatMap((id) => [
