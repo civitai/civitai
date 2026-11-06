@@ -114,6 +114,8 @@ const DERIVED_BASES: Record<string, string> = {
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
   // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
+  remixAppAdminProcedure: 'moderatorProcedure',
   remixAppProcedure: 'protectedProcedure',
   semanticSearchProcedure: 'protectedProcedure',
   servicesGuardedProcedure: 'guardedProcedure',

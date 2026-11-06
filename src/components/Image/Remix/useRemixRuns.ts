@@ -7,7 +7,6 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { SignalMessages } from '~/server/common/enums';
 import { TEAM_REMIX_APP } from '~/shared/constants/remix-apps.constants';
-import { REMIX_MENU_APPS } from '~/shared/remix-apps/system-apps';
 import type { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import {
   readRemixTag,
@@ -16,7 +15,9 @@ import {
   REMIX_DONE_TAG,
   REMIX_RUN_TAG_PREFIX,
   REMIX_SEGMENT_TAG_PREFIX,
+  isRuntimeRun,
 } from '~/shared/remix-apps/tags';
+import { useRemixAppList } from '~/components/Image/Remix/useRemixAppList';
 import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 
@@ -36,8 +37,6 @@ export type RemixRun = {
   runtime: boolean;
 };
 
-const APPS = [...REMIX_MENU_APPS, { ...TEAM_REMIX_APP, runtime: false }];
-
 const RUNNING = ['unassigned', 'preparing', 'scheduled', 'processing'];
 
 export const isRunningWorkflow = (workflow: Pick<WorkflowData, 'status'>) =>
@@ -50,7 +49,11 @@ function runStatus(workflow: WorkflowData): RemixRunStatus {
 }
 
 /** One row per run, from its latest segment; posted and dismissed runs are left out. */
-export function groupRemixRuns(workflows: WorkflowData[]): RemixRun[] {
+export function groupRemixRuns(
+  workflows: WorkflowData[],
+  apps: readonly { slug: string; name: string }[]
+): RemixRun[] {
+  const names = new Map([...apps, TEAM_REMIX_APP].map((app) => [app.slug, app.name]));
   const latest = new Map<string, { workflow: WorkflowData; index: number }>();
   for (const workflow of workflows) {
     const runId = readRemixTag(workflow.tags, REMIX_RUN_TAG_PREFIX);
@@ -66,12 +69,11 @@ export function groupRemixRuns(workflows: WorkflowData[]): RemixRun[] {
     if (tags.includes(REMIX_DONE_TAG) || tags.includes(REMIX_DISMISSED_TAG)) continue;
     const slug = readRemixTag(tags, `${REMIX_APP_TAG}:`);
     if (!slug) continue;
-    const app = APPS.find((app) => app.slug === slug);
     runs.push({
       runId,
       slug,
-      appName: app?.name ?? slug,
-      runtime: !!app?.runtime,
+      appName: names.get(slug) ?? slug,
+      runtime: isRuntimeRun(slug, tags),
       imageId: workflow.remixOfId,
       workflowId: workflow.id as string,
       status: runStatus(workflow),
@@ -95,7 +97,8 @@ export function useRemixRuns({ enabled = true }: { enabled?: boolean } = {}) {
     includeTags: false,
     ignoreFilters: true,
   });
-  const runs = useMemo(() => groupRemixRuns(data), [data]);
+  const apps = useRemixAppList();
+  const runs = useMemo(() => groupRemixRuns(data, apps), [data, apps]);
   const inProgress = runs.filter((run) => run.status === 'running').length;
   const ready = runs.length - inProgress;
 
