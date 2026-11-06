@@ -25,6 +25,17 @@
   }
 }
 
+/* The feed card's button sits among the reaction chips, so it takes their corner radius, not the detail view's circle. */
+.feed {
+  width: 26px;
+  border-radius: var(--mantine-radius-xs);
+
+  & svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
 .invite {
   background-color: transparent;
   box-shadow: inset 0 0 0 1.5px var(--mantine-color-gray-6);
