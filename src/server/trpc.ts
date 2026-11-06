@@ -343,8 +343,9 @@ function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null |
   return user;
 }
 
+// A banned viewer is on `bannedUser`, not `user` (see `trpcViewer`), so these two read both.
 const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
-  const user = requireSignedIn(maybeUser);
+  const user = requireSignedIn(maybeUser ?? ctx.bannedUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -498,7 +499,7 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
 
 const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
-  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
+  next({ ctx: { ...ctx, user: requireSignedIn(user ?? ctx.bannedUser), acceptableOrigin } })
 );
 
 /**
