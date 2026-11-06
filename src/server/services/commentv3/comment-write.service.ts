@@ -4,12 +4,10 @@ import {
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
-import { upsertComment } from '~/server/services/commentsv2.service';
 import {
   getStoredComment,
   insertComment,
   isCommentWriteLocked,
-  isV3WriteSurface,
   prismaRunner,
   type StoredCommentV3,
   updateCommentContent,
@@ -115,16 +113,6 @@ export async function writeJudgeComment({
   imageId: number;
   content: string;
 }) {
-  if (!isV3WriteSurface('image')) {
-    await upsertComment({
-      userId,
-      entityType: 'image',
-      entityId: imageId,
-      content,
-      eventPoints: false,
-    });
-    return;
-  }
   await throwOnBlockedCommentContent(content, { isModerator: false });
   await throwIfBlockedByOwners({
     userId,

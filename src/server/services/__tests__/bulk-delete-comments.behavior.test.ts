@@ -35,10 +35,7 @@ import {
   bulkDeleteComments,
   deleteCommentById,
 } from '~/server/services/comment.service';
-import {
-  bulkClearCommentV2TosViolation,
-  deleteComment,
-} from '~/server/services/commentsv2.service';
+import { bulkClearCommentV2TosViolation } from '~/server/services/commentsv2.service';
 
 const A = 1;
 const B = 2;
@@ -308,30 +305,6 @@ describe('a member deleting their own legacy comment', () => {
 
   it('is not found when it does not exist', async () => {
     await expect(deleteCommentById({ id: 999 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
-  });
-});
-
-describe('a member deleting their own CommentV2', () => {
-  beforeEach(() => {
-    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation(
-      (async (args: { where: { id: number } }) =>
-        (await holder.db.query(`SELECT * FROM "CommentV2" WHERE id = $1`, [args.where.id]))
-          .rows[0]) as never
-    );
-  });
-
-  it('deletes it and takes its points back', async () => {
-    await expect(deleteComment({ id: 21 })).resolves.toMatchObject({ id: 21, userId: B });
-    expect(await state('CommentV2')).not.toHaveProperty('21');
-    expect(pointsRemoved).toHaveBeenCalledTimes(1);
-    expect(pointsRemoved).toHaveBeenCalledWith([
-      expect.objectContaining({ userId: B, threadId: B * 100 }),
-    ]);
-  });
-
-  it('is not found when it does not exist', async () => {
-    await expect(deleteComment({ id: 999 })).resolves.toBeNull();
-    expect(pointsRemoved).not.toHaveBeenCalled();
   });
 });
 

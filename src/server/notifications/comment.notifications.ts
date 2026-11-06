@@ -244,8 +244,9 @@ export const commentDedupeKeyByShape = `concat('comment:', case when details->>'
  *
  * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
  * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
- * key deliberately (see `comics.router.ts`), and is inserted synchronously at comment-creation, so its
- * `PendingNotification` is drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
+ * key deliberately (see `notifyComicOwner` in `commentv3/surfaces.ts`), and is queued at comment
+ * creation (after the commit, not awaited), ahead of the cron sweeps, so its `PendingNotification`
+ * is normally drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
  * gets the one deep-linked comic notification; a non-owner thread participant, whom `new-comic-comment`
  * never targets, gets this working `/comics/<project>` link instead of the dead one it used to render.
  *

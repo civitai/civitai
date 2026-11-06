@@ -15,8 +15,15 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import {
+  isComicProjectHidden,
+  isPanelTainted,
+  readerPanelsWhere,
+} from '~/server/services/comics/chapter-visibility';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
-import type { CommentEntityType } from '~/shared/utils/prisma/enums';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+import { type CommentEntityType, ComicChapterStatus } from '~/shared/utils/prisma/enums';
 
 export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req'>;
 
@@ -69,6 +76,45 @@ const accessGated =
     if (!access?.hasAccess)
       throw throwAuthorizationError('You do not have access to this resource.');
   };
+
+/**
+ * The comic reader's chapter rules (`comics/chapter-visibility.ts`), but not its `comicCreator`
+ * flag or its early-access panel lock.
+ */
+async function assertComicChapterVisible(chapterId: number, ctx: CommentReadContext) {
+  const chapter = await dbRead.comicChapter.findUnique({
+    where: { id: chapterId },
+    select: {
+      status: true,
+      panels: {
+        where: readerPanelsWhere,
+        select: { image: { select: { tosViolation: true, needsReview: true, ingestion: true } } },
+      },
+      project: {
+        select: {
+          userId: true,
+          status: true,
+          tosViolation: true,
+          publishedAt: true,
+          nsfwLevel: true,
+          user: { select: { bannedAt: true } },
+        },
+      },
+    },
+  });
+  if (
+    !chapter ||
+    chapter.panels.length === 0 ||
+    (ctx.features?.isGreen &&
+      chapter.project.nsfwLevel !== 0 &&
+      Flags.intersects(chapter.project.nsfwLevel, nsfwBrowsingLevelsFlag)) ||
+    (await isComicProjectHidden(chapter.project, ctx.user))
+  )
+    throw throwNotFoundError('Chapter not found');
+  if (ctx.user?.isModerator || chapter.project.userId === ctx.user?.id) return;
+  if (chapter.status !== ComicChapterStatus.Published || chapter.panels.some(isPanelTainted))
+    throw throwNotFoundError('Chapter not found');
+}
 
 /**
  * Tells the project owner about a new top-level comment on a chapter, deep-linked to it. Shares the
@@ -141,6 +187,7 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   },
   challenge: {},
   comicChapter: {
+    assertVisible: assertComicChapterVisible,
     onCreated: (comment, ctx) => void notifyComicOwner(comment, ctx).catch(handleLogError),
   },
   model: {},
