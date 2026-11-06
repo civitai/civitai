@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { box, renderAtViewport } from '../../../../test/geometry-setup';
+import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 
 const DESKTOP = { width: 1280, height: 800 } as const;
@@ -26,10 +27,15 @@ const inlineImage = (src: string, size?: string) => ({
   content: [{ type: 'image', attrs: { src, size: size ?? null } }],
 });
 
-async function renderArticle(nodes: object[], viewport: typeof DESKTOP = DESKTOP, column = COLUMN) {
+async function renderArticle(
+  nodes: object[],
+  viewport: typeof DESKTOP = DESKTOP,
+  column = COLUMN,
+  className?: string
+) {
   await renderAtViewport(
     <div style={{ width: column }}>
-      <RenderRichText content={{ type: 'doc', content: nodes }} />
+      <RenderRichText content={{ type: 'doc', content: nodes }} className={className} />
     </div>,
     viewport
   );
@@ -57,8 +63,16 @@ describe('article image sizes', () => {
     expect(box(full).width).toBeCloseTo(COLUMN, 0);
   });
 
-  it('centres a sized image in the column', async () => {
-    const [small] = await renderArticle([media(await imageUrl(1600, 900), '33')]);
+  it.each([
+    ['', undefined],
+    [' with the article-typography flag', articleBodyClasses.articleBody],
+  ])('centres a sized image in the column%s', async (_label, className) => {
+    const [small] = await renderArticle(
+      [media(await imageUrl(1600, 900), '33')],
+      DESKTOP,
+      COLUMN,
+      className
+    );
     const host = small.closest('div[style]') as HTMLElement;
     const { left, width } = box(small);
     expect(width).toBeLessThan(COLUMN / 2);
