@@ -4,7 +4,8 @@
  * cursors in memory. Refuses to start in production. `pnpm run registry-adapter:fixture`.
  *
  *   REGISTRY_ADAPTER_FIXTURE               path of the fixture catalog JSON (required)
- *   REGISTRY_ADAPTER_PORT                  adapter port (default 7130)
+ *   REGISTRY_ADAPTER_PORT                  adapter HTTP/SSE port (default 7130)
+ *   REGISTRY_ADAPTER_GRPC_PORT             adapter gRPC port (default 7131)
  *   REGISTRY_ADAPTER_POLL_SECONDS          poll interval (default 1)
  *
  * The app, release and service schemas are served on the adapter's own schema stream, as the live
@@ -21,6 +22,7 @@ import {
   fixtureDocSource,
   fixtureFile,
 } from './fixture-source';
+import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
 import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
@@ -32,6 +34,7 @@ function main() {
   const path = process.env.REGISTRY_ADAPTER_FIXTURE;
   if (!path) throw new Error('REGISTRY_ADAPTER_FIXTURE must name a fixture catalog file');
   const port = Number(process.env.REGISTRY_ADAPTER_PORT || 7130);
+  const grpcPort = Number(process.env.REGISTRY_ADAPTER_GRPC_PORT || 7131);
   const pollMs = Number(process.env.REGISTRY_ADAPTER_POLL_SECONDS || 1) * 1000;
   const onError = (err: unknown) => console.error('registry-adapter (fixture):', err);
 
@@ -68,6 +71,9 @@ function main() {
   const adapter = composeAdapter(entities, docs);
   createRegistryServer(adapter, { onError }).listen(port, () =>
     console.log(`registry-adapter (fixture ${path}) on :${port}`)
+  );
+  void listenGrpc(createGrpcServer(adapter, { onError }), grpcPort).then((bound) =>
+    console.log(`registry-adapter (fixture ${path}) gRPC on :${bound}`)
   );
 }
 

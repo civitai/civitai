@@ -4,9 +4,9 @@ import { buildEntities } from '~/server/registry-adapter/entities';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 const SCHEMA = 'urn:schema:registry:schema@v1';
-const APP = 'urn:schema:app-blocks:app@v1';
-const RELEASE = 'urn:schema:app-blocks:app-release@v1';
-const SERVICE = 'urn:schema:app-blocks:service@v1';
+const APP = 'urn:schema:apps.civitai.com:app@v1';
+const RELEASE = 'urn:schema:apps.civitai.com:app-release@v1';
+const SERVICE = 'urn:schema:apps.civitai.com:service@v1';
 /** The schema entities this source publishes for its own entities, whatever the catalog holds. */
 const OWN_SCHEMAS = [APP, RELEASE, SERVICE];
 
@@ -95,21 +95,21 @@ describe('buildEntities', () => {
 
   it('one app entity per listed app, whatever its rating', () => {
     expect(urns(sets, APP)).toEqual([
-      'urn:app-blocks:app/orbit-notes',
-      'urn:app-blocks:app/tide-log',
-      'urn:app-blocks:app/hush-board',
+      'urn:apps.civitai.com:app/orbit-notes',
+      'urn:apps.civitai.com:app/tide-log',
+      'urn:apps.civitai.com:app/hush-board',
     ]);
   });
 
   it('releases and schemas only for an approved block', () => {
     expect(urns(sets, RELEASE)).toEqual([
-      'urn:app-blocks:app/orbit-notes@1.0.0',
-      'urn:app-blocks:app/orbit-notes@1.1.0',
+      'urn:apps.civitai.com:app/orbit-notes@1.0.0',
+      'urn:apps.civitai.com:app/orbit-notes@1.1.0',
     ]);
     expect(urns(sets, SCHEMA)).toEqual([
       ...OWN_SCHEMAS,
-      'urn:schema:app-blocks:orbit-notes/cards@v1',
-      'urn:schema:app-blocks:orbit-notes/cards@v2',
+      'urn:schema:apps.civitai.com:orbit-notes/cards@v1',
+      'urn:schema:apps.civitai.com:orbit-notes/cards@v2',
     ]);
   });
 
@@ -131,8 +131,8 @@ describe('buildEntities', () => {
     ).toEqual([false, false]);
     // The releases themselves are still published.
     expect(urns(off, RELEASE)).toEqual([
-      'urn:app-blocks:app/orbit-notes@1.0.0',
-      'urn:app-blocks:app/orbit-notes@1.1.0',
+      'urn:apps.civitai.com:app/orbit-notes@1.0.0',
+      'urn:apps.civitai.com:app/orbit-notes@1.1.0',
     ]);
   });
 
@@ -140,13 +140,15 @@ describe('buildEntities', () => {
     expect(
       (sets.get(RELEASE) ?? []).map((e) => (e.body as { collections: unknown }).collections)
     ).toEqual([
-      { cards: 'urn:schema:app-blocks:orbit-notes/cards@v1' },
-      { cards: 'urn:schema:app-blocks:orbit-notes/cards@v2' },
+      { cards: 'urn:schema:apps.civitai.com:orbit-notes/cards@v1' },
+      { cards: 'urn:schema:apps.civitai.com:orbit-notes/cards@v2' },
     ]);
   });
 
   it('the app body', () => {
-    const orbit = (sets.get(APP) ?? []).find((e) => e.urn === 'urn:app-blocks:app/orbit-notes');
+    const orbit = (sets.get(APP) ?? []).find(
+      (e) => e.urn === 'urn:apps.civitai.com:app/orbit-notes'
+    );
     expect(orbit?.body).toEqual({
       slug: 'orbit-notes',
       name: 'Orbit Notes',
@@ -156,18 +158,18 @@ describe('buildEntities', () => {
       category: 'productivity-q',
       iconUrl: 'https://img.example/orbit.png',
       creator: 'maker-k',
-      runtime: 'urn:app-blocks:runtime/iframe@1',
-      release: 'urn:app-blocks:app/orbit-notes@1.1.0',
+      runtime: 'urn:apps.civitai.com:runtime/iframe@1',
+      release: 'urn:apps.civitai.com:app/orbit-notes@1.1.0',
     });
   });
 
   it('contentRating falls back to the block, and is present (null) on an off-site app without one', () => {
     const body = (urn: string) =>
       (sets.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
-    expect(body('urn:app-blocks:app/hush-board').contentRating).toBe('r');
-    expect(Object.hasOwn(body('urn:app-blocks:app/tide-log'), 'contentRating')).toBe(true);
-    expect(body('urn:app-blocks:app/tide-log').contentRating).toBeNull();
-    expect(body('urn:app-blocks:app/tide-log').externalUrl).toBe('https://tide.example');
+    expect(body('urn:apps.civitai.com:app/hush-board').contentRating).toBe('r');
+    expect(Object.hasOwn(body('urn:apps.civitai.com:app/tide-log'), 'contentRating')).toBe(true);
+    expect(body('urn:apps.civitai.com:app/tide-log').contentRating).toBeNull();
+    expect(body('urn:apps.civitai.com:app/tide-log').externalUrl).toBe('https://tide.example');
   });
 
   it('🔴 forkOf is the parent app URN when the catalog read named a parent, and absent otherwise', () => {
@@ -180,8 +182,10 @@ describe('buildEntities', () => {
     );
     const body = (urn: string) =>
       (forked.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
-    expect(body('urn:app-blocks:app/kelp-fork').forkOf).toBe('urn:app-blocks:app/tide-log');
-    expect(Object.hasOwn(body('urn:app-blocks:app/reef-fork'), 'forkOf')).toBe(false);
+    expect(body('urn:apps.civitai.com:app/kelp-fork').forkOf).toBe(
+      'urn:apps.civitai.com:app/tide-log'
+    );
+    expect(Object.hasOwn(body('urn:apps.civitai.com:app/reef-fork'), 'forkOf')).toBe(false);
   });
 
   it('🔴 a URN segment out of bounds skips only its own entity, never the catalog', () => {
@@ -204,19 +208,19 @@ describe('buildEntities', () => {
       { baseUrl: 'https://site.example', onSkip: (reason) => skipped.push(reason) }
     );
     expect(urns(out, APP)).toEqual([
-      'urn:app-blocks:app/orbit-notes',
-      'urn:app-blocks:app/kelp-fork',
-      'urn:app-blocks:app/tide-log',
+      'urn:apps.civitai.com:app/orbit-notes',
+      'urn:apps.civitai.com:app/kelp-fork',
+      'urn:apps.civitai.com:app/tide-log',
     ]);
     expect(urns(out, RELEASE)).toEqual([
-      'urn:app-blocks:app/orbit-notes@1.0.0',
-      'urn:app-blocks:app/orbit-notes@1.1.0',
+      'urn:apps.civitai.com:app/orbit-notes@1.0.0',
+      'urn:apps.civitai.com:app/orbit-notes@1.1.0',
     ]);
     const body = (urn: string) =>
       (out.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
     // The head version was the skipped release, so the app names no current release.
-    expect(Object.hasOwn(body('urn:app-blocks:app/orbit-notes'), 'release')).toBe(false);
-    expect(Object.hasOwn(body('urn:app-blocks:app/kelp-fork'), 'forkOf')).toBe(false);
+    expect(Object.hasOwn(body('urn:apps.civitai.com:app/orbit-notes'), 'release')).toBe(false);
+    expect(Object.hasOwn(body('urn:apps.civitai.com:app/kelp-fork'), 'forkOf')).toBe(false);
     expect(skipped).toHaveLength(3);
     expect(skipped[0]).toMatch(/^release pubreq_3 of orbit-notes skipped: .*invalid version/);
     expect(skipped[1]).toMatch(/^app skipped: .*invalid slug/);
@@ -226,14 +230,14 @@ describe('buildEntities', () => {
   it('one static runtime record', () => {
     expect(sets.get(SERVICE)).toEqual([
       expect.objectContaining({
-        urn: 'urn:app-blocks:runtime/iframe@1',
+        urn: 'urn:apps.civitai.com:runtime/iframe@1',
         schemas: [SERVICE],
         body: expect.objectContaining({
           kind: 'app-runtime',
           reads: RELEASE,
           endpoint: 'https://site.example/apps',
           parameters: {
-            namespace: 'app-blocks',
+            namespace: 'apps.civitai.com',
             launch: 'https://site.example/apps/run/{slug}',
             submit: 'https://site.example/apps/submit',
           },
@@ -265,9 +269,9 @@ describe('buildEntities', () => {
     const out = buildEntities([diverged], ON);
     expect(urns(out, SCHEMA)).toEqual([
       ...OWN_SCHEMAS,
-      'urn:schema:app-blocks:orbit-notes/cards@v1',
-      'urn:schema:app-blocks:orbit-notes/cards@v2',
+      'urn:schema:apps.civitai.com:orbit-notes/cards@v1',
+      'urn:schema:apps.civitai.com:orbit-notes/cards@v2',
     ]);
-    expect(urns(out, RELEASE)).toEqual(['urn:app-blocks:app/orbit-notes@1.0.0']);
+    expect(urns(out, RELEASE)).toEqual(['urn:apps.civitai.com:app/orbit-notes@1.0.0']);
   });
 });

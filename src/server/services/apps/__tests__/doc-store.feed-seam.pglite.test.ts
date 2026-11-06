@@ -31,7 +31,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MOD = 9_302;
 const SLUG = 'seam-board';
-const V1 = `urn:schema:app-blocks:${SLUG}/board@v1`;
+const V1 = `urn:schema:apps.civitai.com:${SLUG}/board@v1`;
 // Every object fits, so what streams is decided by the store's reads alone.
 const FAMILY: CollectionStream['family'] = [
   {
@@ -39,8 +39,9 @@ const FAMILY: CollectionStream['family'] = [
     body: { $schema: 'https://json-schema.org/draft/2020-12/schema', $id: V1, type: 'object' },
   },
 ];
-const urn = (key: string) => `urn:app-blocks:${SLUG}/board/${key}`;
-const shape = (c: Change) => ('upsert' in c ? ['upsert', c.upsert.urn] : ['delete', c.delete]);
+const urn = (key: string) => `urn:apps.civitai.com:${SLUG}/board/${key}`;
+const shape = (c: Change) =>
+  'upsert' in c ? ['upsert', c.upsert.urn] : 'delete' in c ? ['delete', c.delete] : ['progress'];
 
 async function codeOf(p: Promise<unknown>) {
   try {
@@ -84,6 +85,9 @@ describe.each([{ rls: true }, { rls: false }])(
           schema === V1 ? { appId: app, slug: SLUG, collection: 'board', family: FAMILY } : null,
         store: snapshots,
         pollMs: 1,
+        // Every position-only move is saved and reported here: this file pins what the real
+        // store's writes look like through the feed, not the save throttle (doc-feed.test.ts).
+        progressEveryMs: 0,
         sleep: async () => {
           if (polls >= edits.length) abort.abort();
           else await edits[polls]();
@@ -131,6 +135,9 @@ describe.each([{ rls: true }, { rls: false }])(
         ['delete', urn('b2')],
         ['upsert', urn('b2')],
         ['delete', urn('b3')],
+        // The private write moved the production namespace's seq with no change for this
+        // stream: reported as progress (spec rule 9), carrying a cursor and nothing else.
+        ['progress'],
       ]);
       const edited = changes[1];
       expect('upsert' in edited && edited.upsert.body).toEqual({ t: 'one, edited' });

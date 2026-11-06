@@ -28,6 +28,7 @@ import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
+import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -51,6 +52,12 @@ if (pgDbWrite) {
     );
   }
 }
+
+// Hand the proxy's API policy to the standalone server (scripts/trpc-server/server.cjs), which
+// applies it before `/api/v1/` routes under its `api` profile because it never runs the proxy.
+// Sets one global and nothing else, so it is a no-op under Next. That server awaits register()
+// before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
+registerStandaloneApiPolicy();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is

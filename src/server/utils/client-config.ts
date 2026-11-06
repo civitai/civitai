@@ -64,13 +64,30 @@ export function clientNeedsUpdate(
   const version = headers?.['x-client-version'] as string | undefined;
   const date = headers?.['x-client-date'] as string | undefined;
   const clientVersion = decodeRedisString(client.version);
-  if (clientVersion) {
-    if (!version || version === 'unknown') return true;
-    return semver.lt(version, clientVersion);
+  if (semver.valid(clientVersion)) {
+    // semver.lt throws on a version it cannot parse, and the client sends this header.
+    if (!version || !semver.valid(version)) return true;
+    return semver.lt(version, clientVersion as string);
   }
   if (client.date) {
     if (!date) return true;
     return new Date(Number(date)) < new Date(client.date);
   }
   return false;
+}
+
+/**
+ * A call whose procedure no longer resolves, from a bundle older than the server. A newer bundle
+ * on a pod the rollout has not replaced yet misses procedures it added; refreshing would not help it.
+ */
+export function callsRemovedProcedure(
+  headers: IncomingHttpHeaders | undefined,
+  calls: readonly { procedure: unknown }[] | undefined,
+  serverVersion = process.env.version
+) {
+  if (!calls?.some((call) => !call.procedure)) return false;
+  const version = headers?.['x-client-version'];
+  if (typeof version !== 'string' || !semver.valid(version) || !semver.valid(serverVersion))
+    return false;
+  return semver.lt(version, serverVersion as string);
 }

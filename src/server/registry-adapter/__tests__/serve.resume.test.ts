@@ -7,6 +7,7 @@ import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter } from '~/server/registry-adapter/doc-streams';
 import type { Adapter, Entity } from '~/server/registry-adapter/protocol';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import {
   createMemorySnapshotStore,
@@ -19,12 +20,12 @@ import {
  * which tells a consumer it is complete.
  */
 
-const APPS = 'urn:schema:app-blocks:app@v1';
-const NOTES = 'urn:schema:app-blocks:orbit-notes/notes@v1';
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
+const NOTES = 'urn:schema:apps.civitai.com:orbit-notes/notes@v1';
 const LIVE = 'event: live';
 
 const app = (slug: string, rev: string): Entity => ({
-  urn: `urn:app-blocks:app/${slug}`,
+  urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
   body: { slug },
@@ -72,14 +73,22 @@ async function subscribe(a: Adapter, query: string, done: (text: string) => bool
   return { status, text };
 }
 
+/**
+ * A resume of `schema` from an ADAPTER's cursor, bound to the request as this source binds every
+ * cursor it hands out, so the adapter's own check is what each case reaches.
+ */
+const issued = (schema: string, cursor: string) =>
+  bindCursor(cursor, requestBinding({ schema, urns: [] }));
 const sub = (schema: string, cursor: string) =>
-  `/subscribe?schema=${encodeURIComponent(schema)}&cursor=${encodeURIComponent(cursor)}`;
+  `/subscribe?schema=${encodeURIComponent(schema)}&cursor=${encodeURIComponent(
+    issued(schema, cursor)
+  )}`;
 
 /** The catalog adapter over `states`, read in turn, the last one repeating. */
 function catalog(store: ReturnType<typeof createMemorySnapshotStore>, states: Entity[][]) {
   let reads = 0;
   return createPollingAdapter({
-    namespace: 'app-blocks',
+    namespace: 'apps.civitai.com',
     serves: [APPS],
     read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
     store,
@@ -96,7 +105,10 @@ const expired = (res: { status: number; text: string }) => ({
 
 describe('🔴 a resume checks the cursor before live: the catalog streams', () => {
   it('a malformed cursor is cursor_expired, with no live before it', async () => {
-    const res = await subscribe(catalog(createMemorySnapshotStore(), [[]]), sub(APPS, 'nope'));
+    const res = await subscribe(
+      catalog(createMemorySnapshotStore(), [[]]),
+      `/subscribe?schema=${encodeURIComponent(APPS)}&cursor=nope`
+    );
     expect(expired(res)).toEqual({ status: 410, error: 'cursor_expired', sawLive: false });
   });
 
@@ -127,7 +139,10 @@ describe('🔴 a resume checks the cursor before live: the catalog streams', () 
     const { cursor } = await a.snapshot(APPS, { signal: new AbortController().signal });
     const res = await subscribe(a, sub(APPS, cursor), (t) => t.includes('event: upsert'));
     expect(res.status).toBe(200);
-    expect(res.text.startsWith(`${LIVE}\ndata: ${JSON.stringify({ cursor })}\n\n`)).toBe(true);
+    const live = issued(APPS, cursor);
+    expect(
+      res.text.startsWith(`${LIVE}\nid: ${live}\ndata: ${JSON.stringify({ cursor: live })}\n\n`)
+    ).toBe(true);
     const events = [...res.text.matchAll(/^event: (\w+)$/gm)].map((m) => m[1]);
     expect(events).toEqual(['live', 'delete', 'upsert']);
   });
@@ -206,7 +221,10 @@ describe('🔴 a resume checks the cursor before live: the document streams', ()
       t.includes('event: upsert')
     );
     expect(res.status).toBe(200);
-    expect(res.text.startsWith(`${LIVE}\ndata: ${JSON.stringify({ cursor })}\n\n`)).toBe(true);
-    expect(res.text).toContain('urn:app-blocks:orbit-notes/notes/n2');
+    const live = issued(NOTES, cursor);
+    expect(
+      res.text.startsWith(`${LIVE}\nid: ${live}\ndata: ${JSON.stringify({ cursor: live })}\n\n`)
+    ).toBe(true);
+    expect(res.text).toContain('urn:apps.civitai.com:orbit-notes/notes/n2');
   });
 });
