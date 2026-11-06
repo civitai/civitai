@@ -33,6 +33,50 @@ export function deriveHiddenUsers(
   };
 }
 
+type HiddenPreferencesData = ReturnType<typeof useQueryHiddenPreferences>['data'];
+
+/**
+ * The provider's state from the expanded `hiddenPreferences.getHidden` data, outside React — also
+ * read by the bot lean model page (`~/server/bot-cache/lean/models-lean`), so both filter alike.
+ */
+export function hiddenPreferencesState(
+  data: HiddenPreferencesData,
+  {
+    isModerator,
+    disableHidden,
+    excludedTagIds,
+    isLoading,
+  }: {
+    isModerator: boolean;
+    disableHidden: boolean;
+    excludedTagIds: number[] | undefined;
+    isLoading: boolean;
+  }
+): HiddenPreferencesState {
+  const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);
+  const tags = new Map(
+    data.hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => [x.id, true])
+  );
+
+  const images = new Map(
+    data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
+  );
+
+  const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, isModerator);
+
+  return {
+    hiddenUsers,
+    blockRelations,
+    hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
+    hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
+    hiddenTags: tags,
+    hiddenImages: images,
+    hiddenLoading: isLoading,
+    moderatedTags,
+    systemHiddenTags: new Map((excludedTagIds ?? []).map((id) => [id, true])),
+  };
+}
+
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
 export const useHiddenPreferencesContext = () => {
   const context = useContext(HiddenPreferencesContext);
@@ -47,30 +91,16 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
   const { settings } = useBrowsingSettingsAddons();
 
-  const hidden = useMemo(() => {
-    const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);
-    const tags = new Map(
-      data.hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => [x.id, true])
-    );
-
-    const images = new Map(
-      data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
-    );
-
-    const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, !!currentUser?.isModerator);
-
-    return {
-      hiddenUsers,
-      blockRelations,
-      hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
-      hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
-      hiddenTags: tags,
-      hiddenImages: images,
-      hiddenLoading: isLoading,
-      moderatedTags,
-      systemHiddenTags: new Map((settings?.excludedTagIds ?? []).map((id) => [id, true])),
-    };
-  }, [data, isLoading, disableHidden, settings]);
+  const hidden = useMemo(
+    () =>
+      hiddenPreferencesState(data, {
+        isModerator: !!currentUser?.isModerator,
+        disableHidden: !!disableHidden,
+        excludedTagIds: settings?.excludedTagIds,
+        isLoading,
+      }),
+    [data, isLoading, disableHidden, settings]
+  );
 
   const hiddenDeferred = useDeferredValue(hidden);
 

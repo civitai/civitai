@@ -351,6 +351,8 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
         'components/Model/ModelVersions/ModelVersionReview.tsx',
         // The app-store listing detail's "Reviews" row, via the pure row builder.
         'components/Apps/appListingDetailRows.ts',
+        // The bot lean model page, which draws the same review link as the version page.
+        'server/bot-cache/lean/models-lean.ts',
         // This file.
         'utils/__tests__/rating-label.test.ts',
       ].sort()

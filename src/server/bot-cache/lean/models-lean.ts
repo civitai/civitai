@@ -20,6 +20,8 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 import { BOT_LEAN_CHROME_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 import { expandHiddenPreferences } from '~/shared/hidden-preferences/compact';
+import { hiddenPreferencesState } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import { filterPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { serializeJsonLd } from '@civitai/shared/json-ld';
 import { getDisplayName, getInitials, removeTags, slugit } from '~/utils/string-helpers';
 import { getImageProps } from 'next/image';
@@ -86,14 +88,56 @@ function readQuery<T>(ssg: Ssg, queryKey: readonly unknown[]): { found: boolean;
   return { found: true, data: state.data as T };
 }
 
-type CarouselImage = { url: string; nsfwLevel: number; name?: string | null; id: number };
+type CarouselImage = {
+  id: number;
+  url: string;
+  nsfwLevel: number;
+  name?: string | null;
+  width?: number | null;
+  poi?: boolean;
+  user: { id: number };
+  stats?: Record<string, number | boolean | undefined> | null;
+};
 
-/** The carousel's `image.getInfinite` prefetch (one per render), or `null` when it has no data. */
-function carouselImages(ssg: Ssg): CarouselImage[] | null {
+type CarouselFilters = {
+  browsingLevel: number;
+  excludedTagIds?: number[];
+  disablePoi?: boolean;
+  disableMinor?: boolean;
+};
+
+/**
+ * The carousel's `image.getInfinite` prefetch (one per render) as `useQueryImages` shows it: its
+ * items, de-duplicated, through the hidden-preference filter (`filterPreferences`) with the addon
+ * filters the prefetch was keyed with — the client query's own key, so the same values. `null`
+ * when it has no data (the carousel then shows a loader, which this file does not draw).
+ */
+function carouselImages(ssg: Ssg, hidden: ExpandedHidden): CarouselImage[] | null {
   const [query] = ssg.queryClient.getQueryCache().findAll({ queryKey: [['image', 'getInfinite']] });
   if (!query || query.state.status !== 'success') return null;
+  const filters = (query.queryKey[1] as { input?: CarouselFilters } | undefined)?.input;
+  if (!filters) return null;
   const data = query.state.data as { pages?: { items?: CarouselImage[] }[] } | undefined;
-  return (data?.pages ?? []).flatMap((page) => page.items ?? []);
+  const seen = new Set<number>();
+  const items = (data?.pages ?? [])
+    .flatMap((page) => page.items ?? [])
+    .filter((item) => !seen.has(item.id) && !!seen.add(item.id));
+  const { items: shown } = filterPreferences({
+    type: 'images',
+    data: items as never,
+    hiddenPreferences: hiddenPreferencesState(hidden, {
+      isModerator: false,
+      disableHidden: false,
+      excludedTagIds: filters.excludedTagIds,
+      isLoading: false,
+    }),
+    browsingLevel: filters.browsingLevel,
+    currentUser: null,
+    canViewNsfw: false,
+    poiDisabled: !!filters.disablePoi,
+    minorDisabled: !!filters.disableMinor,
+  });
+  return shown as unknown as CarouselImage[];
 }
 
 type File = Version['files'][number];
@@ -165,6 +209,8 @@ function unsupported(model: Model, version: Version, versions: Version[], ctx: U
   );
 }
 
+type ExpandedHidden = ReturnType<typeof expandHiddenPreferences>;
+
 type UnsupportedCtx = { showcase: unknown; creator: Creator | null; hasAccess: boolean };
 
 export async function renderModelDetailLean({
@@ -221,7 +267,7 @@ export async function renderModelDetailLean({
     hasAccess: !!access?.[0]?.hasAccess,
   };
   if (unsupported(model, selected, versions, ctx) || !creator) return { fallback: 'unsupported' };
-  const images = carouselImages(ssg);
+  const images = carouselImages(ssg, hidden);
   if (!images) return { fallback: 'unsupported' };
   // A description with markup `RenderHtml` rewrites (links, mentions, media, embeds, styles).
   const html = [model.description, selected.description].join('');
@@ -544,6 +590,32 @@ function creatorCard(creator: Creator) {
   );
 }
 
+/**
+ * `ModelCarousel`: only the first slide is in view on the server, so only its image is drawn — a
+ * link to the image, the preview, and its reactions (`Reactions`, not read-only: the reactions
+ * with a count, then the Buzz tip count, shown even at zero).
+ */
+function carousel(images: CarouselImage[]) {
+  const [image] = images;
+  if (!image) return '';
+  const src = getEdgeUrl(image.url, { width: 800, name: image.name ?? undefined });
+  const preview = `<img src="${esc(src)}"${attr('alt', image.name ?? undefined)}>`;
+  const stats = image.stats ?? {};
+  const emoji = constants.availableReactions as Record<string, string>;
+  const metrics: Record<string, number> = {
+    Like: Number(stats.likeCountAllTime ?? 0),
+    Heart: Number(stats.heartCountAllTime ?? 0),
+    Laugh: Number(stats.laughCountAllTime ?? 0),
+    Cry: Number(stats.cryCountAllTime ?? 0),
+  };
+  const badges = (Object.keys(constants.availableReactions) as string[])
+    .filter((key) => key in metrics && metrics[key]! >= 1)
+    .map((key) => `<button>${p(emoji[key])} ${count(metrics[key]!, false)}</button>`)
+    .join('');
+  const tip = image.poi ? '' : `<span>${count(0)}</span>`;
+  return link(`/images/${image.id}`, preview) + `<div>${badges}${tip}</div>`;
+}
+
 /** The license block under the creator card. */
 function licenseBlock({ model, selected }: PageArgs) {
   const license = getDisplayedBaseModelLicense(selected.baseModel);
@@ -678,6 +750,7 @@ function renderPage(args: PageArgs) {
     versionDetails(args) +
     creatorCard(creator) +
     licenseBlock(args) +
+    (model.mode !== 'TakenDown' ? carousel(images) : '') +
     (model.description ? sanitizeHtml(model.description) : '') +
     '</main>' +
     siteFooter();

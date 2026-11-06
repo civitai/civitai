@@ -491,7 +491,8 @@ export function queryRetry(failureCount: number, _error: unknown): boolean {
   return failureCount < 1;
 }
 
-const queryClientConfig: QueryClientConfig = {
+/** Exported for tests that render the app with a stand-in tRPC client (they must keep its defaults). */
+export const queryClientConfig: QueryClientConfig = {
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,

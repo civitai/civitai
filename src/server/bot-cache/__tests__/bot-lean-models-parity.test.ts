@@ -102,6 +102,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 // tRPC keys it, with a query function that never settles — a server render never fetches.
 // Mutations, `useUtils` and `useQueries` are the inert proxy's (`test/trpcProxyStub`).
 vi.mock('~/utils/trpc', async (importOriginal) => {
+  const original = await importOriginal<typeof TrpcModule>();
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   const { useState } = await import('react');
   const RQ = await import('@tanstack/react-query');
@@ -110,14 +111,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const withTRPC = (AppComponent: ComponentType<object> & { getInitialProps?: unknown }) => {
     const WithQueryClient = (props: { pageProps?: { trpcState?: unknown } }) => {
       const [client] = useState(() => {
-        const queryClient = new RQ.QueryClient();
+        // The app's own defaults (`staleTime: Infinity` above all): with React Query's, a hydrated
+        // query is stale on the server, reports a refetch, and `useQueryImages` drops its items.
+        const queryClient = new RQ.QueryClient(original.queryClientConfig);
         const state = props.pageProps?.trpcState;
         if (state !== undefined) RQ.hydrate(queryClient, unionDeserialize(state));
-        // DEBUG (temporary): which keys the render was hydrated with.
-        (globalThis as { __leanHydrated?: string[] }).__leanHydrated = queryClient
-          .getQueryCache()
-          .getAll()
-          .map((q) => JSON.stringify(q.queryKey));
         return queryClient;
       });
       return createElement(
@@ -152,18 +150,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             return (input: unknown, { trpc: _trpc, ...rest }: Opts = {}) =>
               RQ.useQuery({ queryKey: keyOf(path, input, 'query'), queryFn: never, ...rest });
           if (key === 'useInfiniteQuery')
-            return (input: unknown, { trpc: _trpc, initialCursor, ...rest }: Opts = {}) => {
-              // DEBUG (temporary): which infinite keys the tree asks for.
-              const g = globalThis as { __leanKeys?: string[] };
-              (g.__leanKeys ??= []).push(JSON.stringify(keyOf(path, input, 'infinite')));
-              return RQ.useInfiniteQuery({
+            return (input: unknown, { trpc: _trpc, initialCursor, ...rest }: Opts = {}) =>
+              RQ.useInfiniteQuery({
                 queryKey: keyOf(path, input, 'infinite'),
                 queryFn: never,
                 initialPageParam: initialCursor ?? null,
                 getNextPageParam: () => undefined,
                 ...rest,
               } as never);
-            };
           if (key === 'useMutation' || key === 'useSuspenseQuery') return inert[key];
           return node([...path, key]);
         },
@@ -176,7 +170,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       return node([key]);
     },
   });
-  return { ...(await importOriginal<typeof TrpcModule>()), trpc };
+  return { ...original, trpc };
 });
 
 import { initTRPC, TRPCError } from '@trpc/server';
@@ -330,13 +324,9 @@ async function renderModel(fixture: ModelFixture, flags: { serve?: boolean; shad
   setFlags(flags);
   const req = makeReq(fixture.url, { headers: fixture.headers ?? {} });
   const res = makeSendingRes();
-  const g = globalThis as { __leanKeys?: string[]; __leanHydrated?: string[] };
-  g.__leanKeys = [];
-  g.__leanHydrated = [];
   const returned = await renderPage(MODEL_PAGE, req as never, res as never);
   const html = res.body ?? returned;
-  const keys = { asked: g.__leanKeys, hydrated: g.__leanHydrated };
-  return { html, res, keys, outcome: outcomeOf(html, res.statusCode), headers: res.getHeaders() };
+  return { html, res, outcome: outcomeOf(html, res.statusCode), headers: res.getHeaders() };
 }
 
 beforeAll(() => {
@@ -416,7 +406,6 @@ describe('bot lean render of /models/[id]: what a crawler reads is the full rend
     // The whole of both sides when anything differs: a CI log is the only place to read them.
     if (differs.length)
       console.log(`PARITY ${fixture.label}\n${JSON.stringify({ fullSeo, leanSeo }, null, 1)}`);
-    console.log(`KEYS ${fixture.label}\n${JSON.stringify(full.keys)}`);
     for (const field of Object.keys(fullSeo) as (keyof typeof fullSeo)[])
       expect.soft(leanSeo[field], field).toEqual(fullSeo[field]);
   });
