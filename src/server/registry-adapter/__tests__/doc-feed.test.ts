@@ -9,8 +9,8 @@ import {
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
-const V1 = 'urn:schema:civitai-apps:orbit-notes/notes@v1';
-const V2 = 'urn:schema:civitai-apps:orbit-notes/notes@v2';
+const V1 = 'urn:schema:app-blocks:orbit-notes/notes@v1';
+const V2 = 'urn:schema:app-blocks:orbit-notes/notes@v2';
 const DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 const title = (maxLength: number) => ({
   type: 'object',
@@ -24,7 +24,7 @@ const TWO_MAJORS: CollectionStream['family'] = [
   { urn: V2, body: { ...title(100), $schema: DIALECT, $id: V2 } },
 ];
 
-const urn = (key: string) => `urn:civitai-apps:orbit-notes/notes/${key}`;
+const urn = (key: string) => `urn:app-blocks:orbit-notes/notes/${key}`;
 const doc = (key: string, t: string, seq: number, extra: Record<string, unknown> = {}) => ({
   appId: 'ab_orbit_7',
   ns: 'prod',
@@ -68,7 +68,8 @@ function setup(store = createMemorySnapshotStore()) {
     });
     const drain = async (schema: string, cursor: string) => {
       const out: Change[] = [];
-      for await (const c of feed.changes(schema, cursor, { signal: abort.signal })) out.push(c);
+      for await (const c of await feed.changes(schema, cursor, { signal: abort.signal }))
+        out.push(c);
       return out;
     };
     return { feed, drain, signal: abort.signal };
@@ -244,7 +245,7 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
   it('a snapshot of a collection URN that resolves to nothing gets a constant cursor and no write', async () => {
     const { world, store, make } = setup();
     world.stream = null;
-    const snap = await make().feed.snapshot('urn:schema:civitai-apps:no-such-app/invented@v1');
+    const snap = await make().feed.snapshot('urn:schema:app-blocks:no-such-app/invented@v1');
     expect([snap.cursor, store.puts()]).toEqual([EMPTY_CURSOR, 0]);
   });
 
@@ -325,7 +326,8 @@ describe('🔴 an empty published stream reads incrementally', () => {
     const snap = await feed.snapshot(V1);
     expect([snap.entities, fullReads]).toEqual([[], 1]);
     const out: Change[] = [];
-    for await (const c of feed.changes(V1, snap.cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await feed.changes(V1, snap.cursor, { signal: abort.signal }))
+      out.push(c);
     expect(out.map(shape)).toEqual([['upsert', urn('n7')]]);
     expect(fullReads).toBe(1);
   });
@@ -372,7 +374,7 @@ describe('a poll with nothing new', () => {
     const { cursor } = await feed.snapshot(V2);
     const after = { puts: store.puts(), reads: { ...reads } };
     const out: Change[] = [];
-    for await (const c of feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
     expect(out).toEqual([]);
     expect(polls).toBe(4);
     expect([store.puts() - after.puts, reads]).toEqual([0, after.reads]);

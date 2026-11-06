@@ -233,15 +233,15 @@ describe('deriveCollectionMajors', () => {
     expect(cards).toEqual({ declared: true, majors: [undefined, SEED] });
     expect(collectionSchemaDocuments('pixel-garden', d)).toEqual([
       {
-        urn: 'urn:schema:civitai-apps:pixel-garden/cards@v1',
+        urn: 'urn:schema:app-blocks:pixel-garden/cards@v1',
         body: {
           $schema: DIALECT,
-          $id: 'urn:schema:civitai-apps:pixel-garden/cards@v1',
-          'x-successor': 'urn:schema:civitai-apps:pixel-garden/cards@v2',
+          $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+          'x-successor': 'urn:schema:app-blocks:pixel-garden/cards@v2',
         },
       },
       {
-        urn: 'urn:schema:civitai-apps:pixel-garden/cards@v2',
+        urn: 'urn:schema:app-blocks:pixel-garden/cards@v2',
         body: {
           type: 'object',
           properties: {
@@ -249,7 +249,7 @@ describe('deriveCollectionMajors', () => {
             stars: { type: 'integer', maximum: 10 },
           },
           $schema: DIALECT,
-          $id: 'urn:schema:civitai-apps:pixel-garden/cards@v2',
+          $id: 'urn:schema:app-blocks:pixel-garden/cards@v2',
         },
       },
     ]);
@@ -290,7 +290,7 @@ describe('deriveCollectionMajors', () => {
     ]);
     expect(cards?.declared).toBe(false);
     expect(collectionSchemaDocuments('pixel-garden', d).map((x) => x.urn)).toEqual([
-      'urn:schema:civitai-apps:pixel-garden/notes@v1',
+      'urn:schema:app-blocks:pixel-garden/notes@v1',
     ]);
   });
 
@@ -320,23 +320,23 @@ describe('synthesizeCollectionSchema', () => {
   it('is the declared schema with $schema and $id = the URN', () => {
     expect(
       synthesizeCollectionSchema({
-        urn: 'urn:schema:civitai-apps:pixel-garden/cards@v1',
+        urn: 'urn:schema:app-blocks:pixel-garden/cards@v1',
         declared: { type: 'object', properties: { title: { type: 'string' } } },
       })
     ).toEqual({
       type: 'object',
       properties: { title: { type: 'string' } },
       $schema: DIALECT,
-      $id: 'urn:schema:civitai-apps:pixel-garden/cards@v1',
+      $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
     });
   });
 
   it('a declared $id never replaces the URN', () => {
     expect(
       synthesizeCollectionSchema({
-        urn: 'urn:schema:civitai-apps:pixel-garden/cards@v4',
+        urn: 'urn:schema:app-blocks:pixel-garden/cards@v4',
         declared: { $id: 'https://elsewhere.example/schema-q2' },
       }).$id
-    ).toBe('urn:schema:civitai-apps:pixel-garden/cards@v4');
+    ).toBe('urn:schema:app-blocks:pixel-garden/cards@v4');
   });
 });

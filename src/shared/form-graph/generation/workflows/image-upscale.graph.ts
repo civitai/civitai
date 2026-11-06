@@ -114,6 +114,8 @@ const UPSCALER = {
   output: resourceSchema,
   default: { id: DEFAULT_UPSCALER.versionId, model: { type: 'Upscaler' } } as ResourceData,
   meta: (value: ResourceData | undefined) => ({
+    // The workflow can't run without one, so the form offers no remove.
+    required: true,
     options: {
       canGenerate: true,
       resources: [{ type: 'Upscaler' }],

@@ -75,7 +75,7 @@ test.describe('generation cost quote (gold)', () => {
    * `orchestration-new.service.ts:whatIfFromGraph` always returns both — so a sibling
    * procedure sharing the batch can't satisfy the match and produce a false pass.
    */
-  function extractCostTotal(raw: string): number | null {
+  function parseBodyDocs(raw: string): unknown[] {
     const docs: unknown[] = [];
     try {
       docs.push(JSON.parse(raw));
@@ -90,6 +90,11 @@ test.describe('generation cost quote (gold)', () => {
         }
       }
     }
+    return docs;
+  }
+
+  function extractCostTotal(raw: string): number | null {
+    const docs = parseBodyDocs(raw);
 
     const seen = new Set<unknown>();
     const walk = (value: unknown): number | null => {
@@ -112,6 +117,34 @@ test.describe('generation cost quote (gold)', () => {
       if (hit !== null) return hit;
     }
     return null;
+  }
+
+  /**
+   * The tRPC errors in a raw response body, as `CODE: message (path)`. A batch answers
+   * 200 even when one call fails, so a missing `cost.total` usually means whatIf errored;
+   * this names the error instead of reporting a bare null. Matched structurally (a
+   * string `message` beside a string `data.code`) for the same three-shapes reason as
+   * `extractCostTotal`. whatIf's own errors come first; a sibling's are kept as context.
+   */
+  function extractTrpcErrors(raw: string): string[] {
+    const own: string[] = [];
+    const other: string[] = [];
+    const seen = new Set<unknown>();
+    const walk = (value: unknown) => {
+      if (value === null || typeof value !== 'object' || seen.has(value)) return;
+      seen.add(value);
+      const node = value as { message?: unknown; data?: { code?: unknown; path?: unknown } };
+      const code = node.data?.code;
+      if (typeof node.message === 'string' && typeof code === 'string') {
+        const path = typeof node.data?.path === 'string' ? node.data.path : undefined;
+        const line = `${code}: ${node.message}${path ? ` (${path})` : ''}`;
+        (path === WHATIF_PROCEDURE ? own : other).push(line);
+        return;
+      }
+      for (const child of Object.values(value)) walk(child);
+    };
+    for (const doc of parseBodyDocs(raw)) walk(doc);
+    return [...own, ...other];
   }
 
   // 1. Primary, network-based: whatIf fires on /generate load and quotes a cost.
@@ -194,7 +227,14 @@ test.describe('generation cost quote (gold)', () => {
     ).finally(() => page.unrouteAll({ behavior: 'ignoreErrors' }));
 
     const total = extractCostTotal(body);
-    expect(total, 'cost.total parsed from whatIfFromGraph response').not.toBeNull();
+    if (total === null) {
+      // The batch answers 200 with the call's error inside, so say what it was.
+      const errors = extractTrpcErrors(body);
+      const detail = errors.length
+        ? `tRPC error in the response: ${errors.join(' | ')}`
+        : `no tRPC error either; body starts: ${String(body).slice(0, 300)}`;
+      throw new Error(`whatIfFromGraph returned no cost.total; ${detail}`);
+    }
     expect(typeof total, 'cost.total is numeric').toBe('number');
     expect(total as number, 'cost.total is a non-negative quote').toBeGreaterThanOrEqual(0);
   });

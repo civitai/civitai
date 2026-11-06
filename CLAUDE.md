@@ -36,7 +36,7 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`, `label-store`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
@@ -58,6 +58,7 @@ where it loads on demand:
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
   `prettier --write`, and never `prettier --plugin=prettier-plugin-svelte` (it empties `.svelte` files).
+- **CI runs on CI:** never run the whole workspace locally (all `scripts/ci/*.mjs`, `turbo`, recursive `pnpm`); see `docs/dev/local-ci.md`.
 - **Releases** (`pnpm run release[:minor|:major]`) need explicit user approval — they bump, tag and push.
 
 ## Tests
