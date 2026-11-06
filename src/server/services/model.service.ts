@@ -238,6 +238,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
   buildPermissionSnapshots,
@@ -4882,6 +4883,11 @@ export const publishModelById = async ({
     assertBaseModelAttestations({ versions: ownVersions });
     await assertNonCommercialVersionsUnmonetized(ownVersions);
   }
+  await assertNoFailedScanFiles(
+    versionIds?.length
+      ? { id: { in: versionIds }, modelId: id }
+      : { modelId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } }
+  );
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -7092,6 +7098,10 @@ export const privateModelFromTraining = async ({
   // its own moderator action.
   if (constants.modPublishOnlyStatuses.includes(model.status))
     throw throwAuthorizationError('You are not authorized to publish this model');
+  await assertNoFailedScanFiles({
+    modelId: id,
+    status: { notIn: constants.modPublishOnlyStatuses },
+  });
 
   enforceLockedProperties({
     data,
@@ -7361,6 +7371,7 @@ export const publishPrivateModel = async (
   if (!versions.length) {
     throw throwBadRequestError('Model has no published versions');
   }
+  await assertNoFailedScanFiles({ id: { in: versions.map((v) => v.id) } });
 
   if (publishVersions) {
     assertBaseModelAttestations({

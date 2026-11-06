@@ -830,3 +830,60 @@ describe('getFileForModelVersion — names against every file on the version', (
     expect(servedName()).toBe(advertisedName(1));
   });
 });
+
+describe('getFileForModelVersion — a file that failed its scan', () => {
+  let getFileForModelVersion: typeof FileService.getFileForModelVersion;
+  beforeAll(async () => {
+    ({ getFileForModelVersion } = await import('../file.service'));
+  }, 60000);
+
+  beforeEach(() => {
+    versionRead.mockReset();
+    listDownloadFilesMock.mockReset();
+    hasEntityAccessMock.mockReset();
+    resolveDownloadUrlMock.mockReset();
+    getPaidAccessMock.mockReset();
+
+    versionRead.mockResolvedValue(publishedModelVersion());
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 0 }]);
+    getPaidAccessMock.mockResolvedValue({});
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+  });
+
+  const statusFor = async (
+    scan: { pickleScanResult: string; virusScanResult: string },
+    user: { id: number; isModerator?: boolean }
+  ) => {
+    listDownloadFilesMock.mockResolvedValue([{ ...aFile, ...scan }]);
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user,
+      attribution: { caller: 'download-route', actor: 'user' },
+    });
+    return result.status;
+  };
+
+  const owner = { id: 999 };
+  const member = { id: 5 };
+  const moderator = { id: 6, isModerator: true };
+
+  it('refuses a pickle or virus Danger file to members and the owner, not to moderators', async () => {
+    for (const scan of [
+      { pickleScanResult: 'Danger', virusScanResult: 'Success' },
+      { pickleScanResult: 'Success', virusScanResult: 'Danger' },
+    ]) {
+      expect([
+        await statusFor(scan, member),
+        await statusFor(scan, owner),
+        await statusFor(scan, moderator),
+      ]).toEqual(['failed-scan', 'failed-scan', 'success']);
+    }
+  });
+
+  it('serves a file whose scan errored or is still pending', async () => {
+    expect([
+      await statusFor({ pickleScanResult: 'Error', virusScanResult: 'Success' }, member),
+      await statusFor({ pickleScanResult: 'Pending', virusScanResult: 'Pending' }, member),
+    ]).toEqual(['success', 'success']);
+  });
+});

@@ -719,6 +719,8 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           type: 'Model',
           metadata: { fp: 'fp16', size: 'full' },
           sizeKB: 1234.5,
+          pickleScanResult: 'Pending',
+          virusScanResult: 'Pending',
           hashes: [{ hash: 'SHA-MODEL' }],
         },
         {
@@ -729,6 +731,8 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           type: 'Config',
           metadata: null,
           sizeKB: 0.25,
+          pickleScanResult: 'Pending',
+          virusScanResult: 'Pending',
           hashes: [],
         },
         {
@@ -739,6 +743,8 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           type: 'Model',
           metadata: {},
           sizeKB: 2048,
+          pickleScanResult: 'Pending',
+          virusScanResult: 'Pending',
           hashes: [{ hash: 'SHA-SENSITIVE' }],
         },
       ]);

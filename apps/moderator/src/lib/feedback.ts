@@ -2,6 +2,10 @@ import {
   APP_BLOCK_FEEDBACK_AREA,
   APPS_PLATFORM_FEEDBACK_AREA,
   FEEDBACK_AREAS,
+  FEEDBACK_ERROR_REF_PATTERN,
+  FEEDBACK_ORCHESTRATOR_ID_PATTERN,
+  FEEDBACK_TOAST_TEXT_MAX_LENGTH,
+  ORCHESTRATION_FEEDBACK_AREA,
 } from '@civitai/shared/feedback.constants';
 import type { LightboxItem } from './lightbox';
 
@@ -57,18 +61,21 @@ export function feedbackAreaOptions(
 
 /**
  * Areas the queue and the general sidebar badge leave out unless the area is picked explicitly. App
- * feedback is monitored on the main app's App review page; developer-platform feedback has its own
- * badge and nav link. Both still open at `/feedback/<id>`.
+ * feedback is monitored on the main app's App review page; developer-platform and orchestration
+ * feedback each have their own badge and nav link (orchestration is the orchestrator owner's
+ * queue). All still open at `/feedback/<id>`.
  */
 export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [
   APP_BLOCK_FEEDBACK_AREA,
   APPS_PLATFORM_FEEDBACK_AREA,
+  ORCHESTRATION_FEEDBACK_AREA,
 ];
 
 // A Map, not an object literal: `area` is a stored string, and `{}['constructor']` is not undefined.
 const FEEDBACK_AREA_LABELS = new Map<string, string>([
   [APP_BLOCK_FEEDBACK_AREA, 'App feedback'],
   [APPS_PLATFORM_FEEDBACK_AREA, 'Apps platform (developers)'],
+  [ORCHESTRATION_FEEDBACK_AREA, 'Generation & training errors'],
 ]);
 
 /** The display name for an area slug; unlabelled slugs render as themselves. */
@@ -147,6 +154,8 @@ export type FeedbackConsoleError = {
   count: number;
 };
 
+export type FeedbackToast = { title: string | null; message: string };
+
 export type FeedbackContext = {
   path: string | null;
   filters: FeedbackFilters | null;
@@ -158,6 +167,12 @@ export type FeedbackContext = {
   consoleErrors: FeedbackConsoleError[];
   /** Requests that came back 4xx/5xx. Empty on the same three cases as `consoleErrors`. */
   networkErrors: FeedbackNetworkError[];
+  /** From a toast's "Report this": the server-fault ref and orchestrator ids it carried, and the
+   *  text the reporter was shown. Rendered as text only — reporter-supplied claims. */
+  errorRef: string | null;
+  workflowId: string | null;
+  jobId: string | null;
+  toast: FeedbackToast | null;
   /** Everything the named keys did not claim. `null` when there is nothing left over. */
   other: Record<string, unknown> | null;
 };
@@ -218,6 +233,16 @@ const isConsoleError = (value: unknown): value is FeedbackConsoleError =>
   Number.isFinite(value.count) &&
   Object.keys(value).length === CONSOLE_ERROR_FIELDS.length;
 
+const isToastText = (value: unknown): value is string =>
+  typeof value === 'string' && value.length <= FEEDBACK_TOAST_TEXT_MAX_LENGTH;
+
+/** Exact keys, for the reason `isNetworkError` gives: a key this app does not draw must not be claimed. */
+const isToast = (value: unknown): value is { title?: string; message: string } =>
+  isPlainObject(value) &&
+  isToastText(value.message) &&
+  (value.title === undefined || isToastText(value.title)) &&
+  Object.keys(value).every((k) => k === 'message' || k === 'title');
+
 /**
  * A Cloudflare-images key, as the delivery URL builder requires one.
  *
@@ -274,6 +299,10 @@ export function splitContext(context: unknown): FeedbackContext {
     sessionId: null,
     consoleErrors: [],
     networkErrors: [],
+    errorRef: null,
+    workflowId: null,
+    jobId: null,
+    toast: null,
     other: null,
   };
   if (!isPlainObject(context)) return out;
@@ -307,6 +336,16 @@ export function splitContext(context: unknown): FeedbackContext {
       out.consoleErrors = value;
     } else if (key === 'networkErrors' && Array.isArray(value) && value.every(isNetworkError)) {
       out.networkErrors = value;
+    } else if (key === 'errorRef' && isString(value) && FEEDBACK_ERROR_REF_PATTERN.test(value)) {
+      out.errorRef = value;
+    } else if (
+      (key === 'workflowId' || key === 'jobId') &&
+      isString(value) &&
+      FEEDBACK_ORCHESTRATOR_ID_PATTERN.test(value)
+    ) {
+      out[key] = value;
+    } else if (key === 'toast' && isToast(value)) {
+      out.toast = { title: value.title ?? null, message: value.message };
     } else {
       other[key] = value;
     }

@@ -69,7 +69,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL,
       "publishedAt" timestamp(3), availability text
     );
-    CREATE TABLE "ModelFile" (id serial PRIMARY KEY, "modelVersionId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id serial PRIMARY KEY, "modelVersionId" int NOT NULL,
+      "pickleScanResult" text NOT NULL DEFAULT 'Success',
+      "virusScanResult" text NOT NULL DEFAULT 'Success'
+    );
     CREATE TABLE "PaidAccess" (
       "entityType" text, "entityId" int, "timeframeDays" int, "endsAt" timestamp(3)
     );
