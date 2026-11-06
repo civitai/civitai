@@ -45,7 +45,10 @@ beforeEach(() => {
 
 describe('POST /feedback', () => {
   it('files the message with where the player was and how they play', async () => {
-    expect(await post({ message: 'hello', path: '/play' })).toEqual({ status: 200, body: { ok: true } });
+    expect(await post({ message: 'hello', path: '/play' })).toEqual({
+      status: 200,
+      body: { ok: true },
+    });
     expect(feedbackEnabled).toHaveBeenCalledWith(user);
     expect(submitFeedback).toHaveBeenCalledWith(
       expect.anything(),

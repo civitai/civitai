@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { load } from './+page.server';
 
-const run = (locals: Record<string, unknown>) => (load as unknown as (event: unknown) => unknown)({ locals });
+const run = (locals: Record<string, unknown>) =>
+  (load as unknown as (event: unknown) => unknown)({ locals });
 
 describe('welcome page load at /', () => {
   it('sends a signed-in player to /home', () => {
-    expect(() => run({ user: { id: 1 } })).toThrowError(expect.objectContaining({ status: 303, location: '/home' }));
+    expect(() => run({ user: { id: 1 } })).toThrowError(
+      expect.objectContaining({ status: 303, location: '/home' })
+    );
   });
 
   it('hands a signed-out visitor the hub sign-in URL', () => {

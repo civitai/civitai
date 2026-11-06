@@ -113,7 +113,9 @@ export async function pickYesNo(
   if (!input.force) {
     if (input.share <= 0) return null;
     const digest = createHash('sha256')
-      .update(`${input.secret}:yesno:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`)
+      .update(
+        `${input.secret}:yesno:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`
+      )
       .digest();
     if (unit(digest, 0) >= input.share) return null;
   }
@@ -140,7 +142,13 @@ export async function pickYesNo(
   ];
 
   for (const axis of order) {
-    const found = await unanswered(db, input.userId, axis, stages, input.exclude ?? []).executeTakeFirst();
+    const found = await unanswered(
+      db,
+      input.userId,
+      axis,
+      stages,
+      input.exclude ?? []
+    ).executeTakeFirst();
     if (!found) continue;
     const heading = headingOf(axis, YESNO_KEY_PREFIX);
     return {

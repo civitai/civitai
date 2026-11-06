@@ -105,6 +105,9 @@ describe('accessibleIds', () => {
   it('does not report unknown when only moderators were asked about', async () => {
     flipt.ensureInitialized.mockRejectedValue(new Error('down'));
 
-    expect(await accessibleIds([{ id: 1, isModerator: true }])).toEqual({ ids: [1], unknown: false });
+    expect(await accessibleIds([{ id: 1, isModerator: true }])).toEqual({
+      ids: [1],
+      unknown: false,
+    });
   });
 });

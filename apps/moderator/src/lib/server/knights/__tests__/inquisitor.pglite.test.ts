@@ -183,9 +183,18 @@ describe('Inquisitor queue filters', () => {
 
   beforeEach(async () => {
     await db.exec(`INSERT INTO "Image" ("id","url") VALUES (4,'k4'), (5,'k5'), (6,'k6')`);
-    await insertItem(ID.blocked, 1, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'blocked' });
-    await insertItem(ID.pushedDown, 2, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'pushed-down' });
-    await insertItem(ID.noConsensus, 3, 'Inquisitor', Q, 2, { reason: null, escalationReason: 'no-consensus' });
+    await insertItem(ID.blocked, 1, 'Inquisitor', Q, 2, {
+      reason: null,
+      escalationReason: 'blocked',
+    });
+    await insertItem(ID.pushedDown, 2, 'Inquisitor', Q, 2, {
+      reason: null,
+      escalationReason: 'pushed-down',
+    });
+    await insertItem(ID.noConsensus, 3, 'Inquisitor', Q, 2, {
+      reason: null,
+      escalationReason: 'no-consensus',
+    });
     await insertItem(ID.writeBack, 4, 'Inquisitor', Q, 2, { reason: 'level-moved' });
     await insertItem(ID.neither, 5, 'Inquisitor', Q, 2, { reason: null });
     await insertItem(ID.notWaiting, 6, 'Open', Q, 2, { reason: null, escalationReason: 'blocked' });

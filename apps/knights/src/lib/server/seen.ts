@@ -97,7 +97,10 @@ export async function readNotices(
       return { guide, progress: null };
     }
     const kind = now.rank === seen.rank ? 'level' : 'rank';
-    return { guide, progress: { kind, rank: now.rank, level: now.level, from: seen.level, fromRank: seen.rank } };
+    return {
+      guide,
+      progress: { kind, rank: now.rank, level: now.level, from: seen.level, fromRank: seen.rank },
+    };
   } catch (error) {
     console.error('knights: could not read what the player has seen', { userId, error });
     return { guide: false, progress: null };

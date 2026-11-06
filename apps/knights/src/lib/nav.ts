@@ -19,11 +19,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/shop', label: 'Shop', icon: 'coins' },
 ];
 
-const under = (root: string, pathname: string) => pathname === root || pathname.startsWith(`${root}/`);
+const under = (root: string, pathname: string) =>
+  pathname === root || pathname.startsWith(`${root}/`);
 
 /** The tab a path belongs to, or null on a page with no tab (the dev tools, for one). */
 export function activeHref(pathname: string, items: readonly NavItem[] = NAV_ITEMS): string | null {
   return (
-    items.find((item) => [item.href, ...(item.also ?? [])].some((root) => under(root, pathname)))?.href ?? null
+    items.find((item) => [item.href, ...(item.also ?? [])].some((root) => under(root, pathname)))
+      ?.href ?? null
   );
 }

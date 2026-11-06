@@ -3,7 +3,9 @@ const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 
 /** Pointer effects are for a mouse and for players who have not asked for less motion: never touch, never reduced motion. */
 export const effectsAllowed = () =>
-  typeof matchMedia === 'function' && matchMedia(FINE_POINTER).matches && !matchMedia(REDUCED_MOTION).matches;
+  typeof matchMedia === 'function' &&
+  matchMedia(FINE_POINTER).matches &&
+  !matchMedia(REDUCED_MOTION).matches;
 
 const clamp = (value: number) => Math.max(-1, Math.min(1, value));
 
@@ -65,7 +67,9 @@ export function parallax(node: HTMLElement) {
     x += (targetX - x) * EASE;
     y += (targetY - y) * EASE;
     for (const { el, depth } of layers) {
-      el.style.transform = `translate3d(${(-x * depth).toFixed(2)}px, ${(-y * depth).toFixed(2)}px, 0)`;
+      el.style.transform = `translate3d(${(-x * depth).toFixed(2)}px, ${(-y * depth).toFixed(
+        2
+      )}px, 0)`;
     }
     const moving = Math.abs(targetX - x) > SETTLED || Math.abs(targetY - y) > SETTLED;
     frame = moving ? requestAnimationFrame(tick) : 0;

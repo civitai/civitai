@@ -196,7 +196,7 @@ describe('setImageNsfwLevelFromKnights', () => {
     await seed(marker);
     expect(await write(8)).toMatchObject({ applied: false, reason: 'blocked' });
     expect(await stored()).toMatchObject({ nsfwLevelLocked: false });
-    expect((await stored()).nsfwLevel).toBe(marker.nsfwLevel ?? 4);
+    expect((await stored()).nsfwLevel).toBe('nsfwLevel' in marker ? marker.nsfwLevel : 4);
     expect(refreshThumbnailCache).not.toHaveBeenCalled();
   });
 

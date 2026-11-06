@@ -67,9 +67,7 @@ const waitingOnInquisitors = (db: Kysely<DB>) =>
 type QueueItemBuilder = ExpressionBuilder<DB & { i: DB['KnightsQueueItem'] }, 'i'>;
 
 const filterCondition = (eb: QueueItemBuilder, filter: Exclude<InquisitorFilter, 'all'>) =>
-  filter === 'write-back'
-    ? eb('i.reason', 'is not', null)
-    : eb('i.escalationReason', '=', filter);
+  filter === 'write-back' ? eb('i.reason', 'is not', null) : eb('i.escalationReason', '=', filter);
 
 export type InquisitorFilterCounts = Record<InquisitorFilter, number>;
 

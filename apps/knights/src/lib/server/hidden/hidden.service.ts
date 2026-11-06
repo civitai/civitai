@@ -95,7 +95,9 @@ export async function pickHiddenCheck(
 ): Promise<HiddenCheckOffer | null> {
   if (!isRank(input.rank) || !canVote(input.rank, 'Knight')) return null;
   const digest = createHash('sha256')
-    .update(`${input.secret}:hidden:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`)
+    .update(
+      `${input.secret}:hidden:${input.userId}:${input.slot ?? (await slotOf(db, input.userId))}`
+    )
     .digest();
 
   const { low, top } = await db
