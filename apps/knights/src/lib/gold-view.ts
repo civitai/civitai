@@ -1,18 +1,18 @@
 import { count } from './format';
 
 /**
- * What the header's gold pill and popover print. The pill counts earned plus pending, so it moves the moment a vote
- * earns pending gold; the popover splits the two, and only earned gold is worth Buzz (it is what converts).
+ * What the header's gold pill and popover print. The pill counts spendable plus pending gold, so it moves the moment a
+ * vote earns pending gold and drops when the shop takes gold; only spendable gold is worth Buzz.
  */
 export function goldView(
-  { goldEarned, goldPending }: { goldEarned: number; goldPending: number },
+  { goldSpendable, goldPending }: { goldSpendable: number; goldPending: number },
   goldPerBuzz: number
 ) {
   return {
-    pill: goldEarned + goldPending,
-    earned: count(goldEarned),
+    pill: goldSpendable + goldPending,
+    spendable: count(goldSpendable),
     pending: count(goldPending),
-    buzz: `${count(Math.floor(goldEarned / goldPerBuzz))} Buzz`,
+    buzz: `${count(Math.floor(goldSpendable / goldPerBuzz))} Buzz`,
     rate: `${count(goldPerBuzz)} gold = 1 Buzz`,
   };
 }

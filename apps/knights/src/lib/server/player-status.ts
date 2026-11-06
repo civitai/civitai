@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { getGoldBalance } from './conversion/balance';
 import { getLevelProgression } from './progression/levels';
 import { calculateFervor, fervorLedgerOf } from './progression/fervor';
 import { daysPlayedOf, ledgerOf, pendingXpOf } from './progression/progression';
@@ -26,6 +27,8 @@ export type PlayerStatus = {
   fervor: number;
   goldPending: number;
   goldEarned: number;
+  /** What the shop calls spendable: earned gold not yet spent or reserved, 0 while the player is held. */
+  goldSpendable: number;
   /** Active smites, out of `maxSmites`; the player's hearts are what is left. */
   smites: number;
   maxSmites: number;
@@ -51,6 +54,7 @@ type Extras = {
   fervorLedger?: Ledger;
   goldPending?: number;
   goldEarned?: number;
+  goldSpendable?: number;
   xpPending?: number;
   smites?: number;
   daysPlayed?: number;
@@ -71,6 +75,7 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
     fervor: calculateFervor(standing.fervorLedger ?? { correct: 0, graded: 0 }),
     goldPending: standing.goldPending ?? 0,
     goldEarned: standing.goldEarned ?? 0,
+    goldSpendable: standing.goldSpendable ?? 0,
     smites: standing.smites ?? 0,
     maxSmites: SMITES.max,
     rating: {
@@ -103,6 +108,7 @@ export async function getPlayerStatus(
   return player
     ? statusFrom(player.rankType, player.exp, {
         ...player,
+        goldSpendable: (await getGoldBalance(db, userId)).convertible,
         daysPlayed: next && next.minDaysPlayed > 0 ? await daysPlayedOf(db, userId) : 0,
         ledger: await ledgerOf(db, userId),
         xpPending: await pendingXpOf(db, userId),
