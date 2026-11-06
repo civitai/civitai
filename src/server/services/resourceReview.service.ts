@@ -587,6 +587,12 @@ type ResourceReviewRow = {
   imageCount: number;
   commentCount: number;
 };
+// `details` is editor HTML, so an emptied review can be `<p></p>` rather than NULL.
+export const writtenReviewSql = Prisma.sql`(
+  NOT rr.exclude AND NOT rr."tosViolation" AND NOT rr.nsfw
+  AND btrim(regexp_replace(coalesce(rr.details, ''), '<[^>]*>|&nbsp;', '', 'g')) <> ''
+)`;
+
 export const getPagedResourceReviews = async ({
   input,
   userId,
@@ -594,9 +600,10 @@ export const getPagedResourceReviews = async ({
   input: GetResourceReviewPagedInput;
   userId?: number;
 }) => {
-  const { limit, page, modelVersionId, username } = input;
+  const { limit, page, modelVersionId, username, writtenOnly } = input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
+  if (writtenOnly) AND.push(writtenReviewSql);
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);

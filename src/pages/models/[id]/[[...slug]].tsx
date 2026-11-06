@@ -198,6 +198,7 @@ import { isNumber } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
+import { ModelVersionWrittenReviews } from '~/components/Model/ModelVersions/ModelVersionWrittenReviews';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
@@ -1671,6 +1672,14 @@ export default function ModelDetailsV2({
                   />
                 )}
               </>
+            )}
+            {selectedVersion && (
+              <Container size="xl" mt="xl">
+                <ModelVersionWrittenReviews
+                  modelId={model.id}
+                  modelVersionId={selectedVersion.id}
+                />
+              </Container>
             )}
             <AdUnitTopSection />
             <Container size="xl" my="xl">
