@@ -44,11 +44,11 @@ import { renderWithProviders } from '../../../../test/component-setup';
 const section = () => document.body.querySelector('[data-testid="hat-turf-event-section"]');
 const button = (name: RegExp) =>
   [...document.body.querySelectorAll('button')].find((b) => name.test(b.textContent ?? ''));
-const render = (team: string | undefined, video?: string, width = 360) =>
+const render = (team: string | undefined, video?: string, width = 360, duration?: number) =>
   renderWithProviders(
     <div style={{ width }}>
       <DialogProvider />
-      <HatTurfEventSection event="birthday2026" team={team} video={video} />
+      <HatTurfEventSection event="birthday2026" team={team} video={video} duration={duration} />
     </div>
   );
 // Everything here renders on the first commit (mocks are synchronous): a tick is enough to know a
@@ -99,6 +99,21 @@ describe('Hat Turf on the event page', () => {
         document.body.querySelector('[data-testid="hat-turf-video"]')?.getAttribute('src')
       ).toBe('https://example.com/hat-turf.mp4')
     );
+  });
+
+  test('the play button shows the video length', async () => {
+    await render('blue', 'https://example.com/hat-turf.mp4', 360, 81);
+    await vi.waitFor(() => expect(section()).not.toBeNull());
+    expect(section()!.querySelector('[data-testid="hat-turf-duration"]')?.textContent).toBe(
+      'Watch · 1:21'
+    );
+  });
+
+  test('a 0-second video keeps the play button and hides the length', async () => {
+    await render('blue', 'https://example.com/hat-turf.mp4', 360, 0);
+    await vi.waitFor(() => expect(section()).not.toBeNull());
+    expect(section()!.querySelector('[data-testid="hat-turf-play"]')).not.toBeNull();
+    expect(section()!.querySelector('[data-testid="hat-turf-duration"]')).toBeNull();
   });
 
   test.each([360, 880])(

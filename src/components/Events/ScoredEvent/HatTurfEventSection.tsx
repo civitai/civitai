@@ -7,10 +7,12 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import {
   HAT_TURF_ART,
   HAT_TURF_VIDEO,
+  HAT_TURF_VIDEO_DURATION,
   HAT_TURF_VIDEO_TITLE,
 } from '~/components/Events/ScoredEvent/hat-turf-section.constants';
 import styles from '~/components/Events/ScoredEvent/HatTurfEventSection.module.scss';
 import HatTurfVideoModal from '~/components/Events/ScoredEvent/HatTurfVideoModal';
+import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
 
@@ -26,6 +28,7 @@ export function HatTurfEventSection({
   team,
   teams = [],
   video = HAT_TURF_VIDEO,
+  duration = HAT_TURF_VIDEO_DURATION,
 }: {
   event: string;
   team?: string;
@@ -33,6 +36,8 @@ export function HatTurfEventSection({
   teams?: readonly string[];
   /** The song's URL or CDN id; empty hides the play button. */
   video?: string;
+  /** The song's length in seconds; 0 hides the label. */
+  duration?: number;
 }) {
   const gate = useTurfGate(!!team);
   const teamColor = useTeamColor();
@@ -108,8 +113,18 @@ export function HatTurfEventSection({
               data-testid="hat-turf-play"
               className="group absolute left-[30%] top-1/2 z-[3] -translate-x-1/2 -translate-y-1/2"
             >
-              <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
-                <IconPlayerPlayFilled size={22} />
+              <span className="flex flex-col items-center gap-1.5">
+                <span className="flex size-[52px] items-center justify-center rounded-full border border-solid border-white/50 bg-white/30 text-white shadow-lg backdrop-blur-md transition-transform group-hover:scale-110">
+                  <IconPlayerPlayFilled size={22} />
+                </span>
+                {Number.isFinite(duration) && Math.round(duration) > 0 && (
+                  <span
+                    className="rounded-full bg-dark-9/70 px-2.5 py-0.5 text-xs font-semibold text-white backdrop-blur-sm"
+                    data-testid="hat-turf-duration"
+                  >
+                    Watch · {filmLength(duration)}
+                  </span>
+                )}
               </span>
             </UnstyledButton>
           )}
