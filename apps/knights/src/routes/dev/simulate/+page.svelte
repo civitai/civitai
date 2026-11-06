@@ -19,6 +19,10 @@
   };
 </script>
 
+<svelte:head>
+  <title>Simulate voters (dev) · Knights of New Order</title>
+</svelte:head>
+
 <h1>Simulate other voters</h1>
 <p class="muted">
   Development only. Casts votes from other Knights players, through the normal voting path, until the

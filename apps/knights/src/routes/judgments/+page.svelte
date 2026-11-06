@@ -25,6 +25,10 @@
   ] as const;
 </script>
 
+<svelte:head>
+  <title>Your judgments · Knights of New Order</title>
+</svelte:head>
+
 <div class="page-wide">
   <header class="head">
     <div>

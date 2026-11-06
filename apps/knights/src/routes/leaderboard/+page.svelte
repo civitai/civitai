@@ -38,6 +38,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>Leaderboard · Knights of New Order</title>
+</svelte:head>
+
 {#snippet avatar(entry: Row, size: 'big' | 'mid' | 'row')}
   <span class="av {size}">
     <Avatar src={entry.avatarUrl} name={entry.username} />

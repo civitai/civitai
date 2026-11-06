@@ -40,6 +40,10 @@
   const half = $derived(Math.ceil(facts.ratingGuide.length / 2));
 </script>
 
+<svelte:head>
+  <title>Codex · Knights of New Order</title>
+</svelte:head>
+
 <div class="page-wide codex">
   <header class="head">
     <p class="eyebrow">Knights of New Order</p>

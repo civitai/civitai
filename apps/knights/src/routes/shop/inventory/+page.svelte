@@ -56,6 +56,10 @@
   const showMembership = $derived((filter === 'all' || filter === 'membership') && data.membership);
 </script>
 
+<svelte:head>
+  <title>Inventory · Knights of New Order</title>
+</svelte:head>
+
 <div class="page-wide inventory">
   <header class="head">
     <div>
