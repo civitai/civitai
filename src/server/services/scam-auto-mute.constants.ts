@@ -1,5 +1,4 @@
-import { isSystemAccountMeta } from '@civitai/auth';
-import { isModerationAccountRow } from '~/server/auth/moderation-account';
+import { isSystemAccountRow } from '~/server/auth/moderation-account';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 
 export const SCAM_AUTO_MUTE_MAX_ACCOUNT_AGE_DAYS = 7;
@@ -33,7 +32,7 @@ export function scamMuteIneligibility(
   { ignoreAccountAge = false, now = new Date() }: { ignoreAccountAge?: boolean; now?: Date } = {}
 ): ScamMuteIneligibility | null {
   if (PROTECTED_USER_IDS.has(user.id)) return 'protected';
-  if (isModerationAccountRow(user) || isSystemAccountMeta(user.meta)) return 'system-account';
+  if (isSystemAccountRow(user)) return 'system-account';
   if (user.isModerator) return 'moderator';
   if (user.deletedAt) return 'deleted';
   if (user.bannedAt) return 'banned';

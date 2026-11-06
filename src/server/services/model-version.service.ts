@@ -166,6 +166,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import {
   assertFileTypeChangeAllowed,
   versionAcceptsNewTrainingData,
@@ -601,6 +602,37 @@ function assertOwnerTrainingStatusChange(
     throw throwBadRequestError("A version's training status can't be changed here.");
 }
 
+type PublishState = {
+  status: ModelStatus;
+  publishedAt: Date | null;
+  initialPublishedAt: Date | null;
+};
+const PUBLISHED_STATUSES: ModelStatus[] = [
+  ModelStatus.Published,
+  ModelStatus.Unpublished,
+  ModelStatus.UnpublishedViolation,
+];
+// initialPublishedAt is write-once, so it holds after a version goes back to Draft with publishedAt
+// cleared (the private-model flow does this). The status covers legacy rows with no dates.
+// A scheduled version counts too, even before its date: initialPublishedAt keeps the first schedule
+// date when the version is published early, so "is that date past" can't tell scheduled from live.
+function hasBeenPublished(v: PublishState) {
+  return !!v.initialPublishedAt || !!v.publishedAt || PUBLISHED_STATUSES.includes(v.status);
+}
+
+// A version published on a non-commercial base model keeps it: its files went out under that
+// licence. Drafts can still be relabelled, and moderators correct a published mislabel.
+function assertOwnerBaseModelChange(
+  stored: PublishState & { baseModel: string },
+  next: string | undefined
+) {
+  if (next === undefined || next === stored.baseModel) return;
+  if (hasBeenPublished(stored) && isNonCommercialBaseModel(stored.baseModel))
+    throw throwBadRequestError(
+      `This version was published on "${stored.baseModel}", which is licensed for non-commercial use, so its base model can't be changed. If it was labelled incorrectly, contact a moderator.`
+    );
+}
+
 /** Turbo is an ecosystem opt-in: a turbo block or default turbo LoRA is refused where the ecosystem has no turbo defaults. */
 export function assertRecommendedSettingsForType(
   settings: ModelVersionUpsertInput['settings'],
@@ -1024,6 +1056,7 @@ export const upsertModelVersion = async ({
         description: true,
         trainedWords: true,
         publishedAt: true,
+        initialPublishedAt: true,
         meta: true,
         baseModel: true,
         usageControl: true,
@@ -1102,6 +1135,7 @@ export const upsertModelVersion = async ({
         throw throwBadRequestError('A version cannot be moved to another model.');
       }
       assertOwnerTrainingStatusChange(existingVersion.trainingStatus, data.trainingStatus);
+      assertOwnerBaseModelChange(existingVersion, data.baseModel);
     }
 
     const baseModel = data.baseModel ?? existingVersion.baseModel;
@@ -1143,17 +1177,25 @@ export const upsertModelVersion = async ({
         // The name and trained words were scanned as a diff against `storedText`. Lock the row and
         // refuse if either moved since, or a concurrent edit could slip an unscanned value past.
         const [locked] = await tx.$queryRaw<
-          { name: string; trainedWords: string[]; trainingStatus: TrainingStatus | null }[]
+          ({
+            name: string;
+            trainedWords: string[];
+            trainingStatus: TrainingStatus | null;
+          } & PublishState & { baseModel: string })[]
         >`
-          SELECT name, "trainedWords", "trainingStatus" FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
+          SELECT name, "trainedWords", "trainingStatus", "baseModel", status, "publishedAt",
+            "initialPublishedAt"
+          FROM "ModelVersion" WHERE id = ${id} FOR UPDATE
         `;
         if (storedText && locked && !sameVersionText(locked, storedText))
           throw throwConflictError(
             'This version changed while you were saving. Reload and try again.'
           );
-        // A run can start between the read above and this lock.
-        if (!isModerator && locked)
+        // A run can start, or the version publish, between the read above and this lock.
+        if (!isModerator && locked) {
           assertOwnerTrainingStatusChange(locked.trainingStatus, data.trainingStatus);
+          assertOwnerBaseModelChange(locked, data.baseModel);
+        }
 
         const updated = await tx.modelVersion.update({
           where: { id },
@@ -2042,6 +2084,7 @@ export const publishModelVersionById = async ({
     versions: [{ ...currentVersion, meta: meta ?? currentVersion.meta }],
   });
   await assertNonCommercialVersionsUnmonetized([currentVersion]);
+  await assertNoFailedScanFiles({ id });
 
   // Native: a version is "in early access" iff it has a pending (endsAt NULL) or still-active
   // (endsAt future) PaidAccess gate. A tombstone (ended gate) routes through the normal publish path.
@@ -2256,7 +2299,10 @@ export const unpublishModelVersionById = async ({
   refundEarlyAccess,
   meta,
   user,
-}: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+}: UnpublishModelSchema & {
+  meta?: ModelMeta;
+  user: Pick<SessionUser, 'id' | 'isModerator'>;
+}) => {
   // Same obligation as unpublishing the whole model, scoped to this version: taking a version down
   // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
   // exactly as they do in unpublishModelById.
@@ -3666,9 +3712,15 @@ export const mergeVersions = async ({
     async (tx) => {
       // 0. Lock the rows, in id order, so a run can't change status under these checks.
       const runs = await tx.$queryRaw<
-        { id: number; name: string; status: ModelStatus; trainingStatus: TrainingStatus | null }[]
+        ({
+          id: number;
+          name: string;
+          trainingStatus: TrainingStatus | null;
+          baseModel: string;
+        } & PublishState)[]
       >`
-        SELECT id, name, status, "trainingStatus" FROM "ModelVersion"
+        SELECT id, name, status, "trainingStatus", "baseModel", "publishedAt", "initialPublishedAt"
+        FROM "ModelVersion"
         WHERE id IN (${Prisma.join([targetVersionId, ...sourceVersionIds])})
         ORDER BY id
         FOR UPDATE
@@ -3683,9 +3735,20 @@ export const mergeVersions = async ({
         throw throwBadRequestError(
           `Version "${lockedSource.name}" has a training run in progress, under review or denied, and can't be merged.`
         );
+      // Files keep the licence of the base model they were made on, and a published source's lock on
+      // that base model (assertOwnerBaseModelChange) moves with them, so its target must hold it too.
+      const target = runs.find((r) => r.id === targetVersionId);
+      const ncSources = sourceRuns.filter((r) => isNonCommercialBaseModel(r.baseModel));
+      if (ncSources.some((r) => r.baseModel !== target?.baseModel))
+        throw throwBadRequestError(
+          "Files from a version on a non-commercial base model can't be merged into a version on a different base model. Contact a moderator."
+        );
+      if (target && !hasBeenPublished(target) && ncSources.some(hasBeenPublished))
+        throw throwBadRequestError(
+          'Files from a published version on a non-commercial base model can only be merged into a published version. Contact a moderator.'
+        );
       // A trained dataset stays fixed: its run's results live in the file's metadata, so it can't
       // move to a version that still takes a new dataset.
-      const target = runs.find((r) => r.id === targetVersionId);
       const trainedSourceIds = sourceRuns
         .filter((r) => !isDatasetEditable(r.trainingStatus))
         .map((r) => r.id);

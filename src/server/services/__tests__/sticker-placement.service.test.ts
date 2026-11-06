@@ -21,6 +21,7 @@ import {
   STICKER_REMOVAL_LOCK_HOURS,
 } from '~/shared/utils/sticker-placement';
 import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
+import { encodeStickerTrack } from '~/shared/utils/sticker-track';
 
 /**
  * Fixture discipline: every quantity in scope is a distinct number, so a value
@@ -2600,5 +2601,86 @@ describe('the listing and the counts from one read', () => {
       counts: {},
     });
     expect(stickerRows).not.toHaveBeenCalled();
+  });
+});
+
+describe('a moving sticker on a video', () => {
+  const VIDEO_SPACE = { ...OPEN_SPACE, mediaType: 'video' as const };
+  // Starts small at the image's centre-left and grows while it moves.
+  const track = encodeStickerTrack([
+    { x: 0.2, y: 0.5, scale: 0.1, rotation: 10 },
+    { x: 0.3, y: 0.5, scale: 0.15, rotation: 10 },
+    { x: 0.4, y: 0.5, scale: 0.22, rotation: 10 },
+  ]);
+  // A different pose from the track's start, so the replacement is observable.
+  const data = { ...placeInput.data, x: 0.9, y: 0.9, scale: 0.12, rotation: 0 };
+
+  beforeEach(() => givenStickerAndBalance());
+
+  it('stores the track, with `data` holding the pose at time zero', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+    await createStickerPlacement({ ...placeInput, data, track });
+
+    expect(placementCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          track,
+          data: expect.objectContaining({ x: 0.2, y: 0.5, scale: 0.1, rotation: 10 }),
+        }),
+      })
+    );
+  });
+
+  it('carries the track into a free claim', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+    await createStickerPlacement({ ...placeInput, data, track, free: true });
+
+    expect(createFreePlacement).toHaveBeenCalledWith(expect.objectContaining({ track }));
+  });
+
+  it('refuses a track on a still image, on both paths', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mediaType: 'image' });
+
+    for (const free of [false, true])
+      await expect(createStickerPlacement({ ...placeInput, data, track, free })).rejects.toThrow(
+        /only be recorded on a video/
+      );
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses a track that grows past the creator’s limit after a start inside it', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...VIDEO_SPACE, settings: { maxScale: 0.2 } });
+
+    await expect(createStickerPlacement({ ...placeInput, data, track })).rejects.toThrow(
+      /up to 20%/
+    );
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('a moving sticker is sized by its track, not by the pose it was sent with', () => {
+  beforeEach(() => givenStickerAndBalance());
+
+  it('accepts a request whose sent scale is over the limit when the whole track is under it', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ...OPEN_SPACE,
+      mediaType: 'video',
+      settings: { maxScale: 0.2 },
+    });
+    const track = encodeStickerTrack([
+      { x: 0.2, y: 0.5, scale: 0.1, rotation: 0 },
+      { x: 0.3, y: 0.5, scale: 0.15, rotation: 0 },
+    ]);
+
+    await createStickerPlacement({
+      ...placeInput,
+      data: { ...placeInput.data, scale: 0.35 },
+      track,
+    });
+
+    expect(placementCreate).toHaveBeenCalledTimes(1);
   });
 });

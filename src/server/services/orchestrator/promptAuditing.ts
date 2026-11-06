@@ -791,17 +791,19 @@ async function reportProhibitedRequest(options: {
 
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
+    let muted = false;
     try {
       const allBlockedPrompts = await getBlockedPrompts(userId);
 
-      await applyPendingReviewMute({
+      const result = await applyPendingReviewMute({
         userId,
         triggers: allBlockedPrompts,
         updateSource: 'promptAuditing:autoMute',
       });
+      muted = result.muted;
 
-      // Clear the blocked prompts from Redis now that they're stored in the DB
-      await clearBlockedPromptsAfterMute(userId);
+      // Only a mute clears the list; a skipped one leaves it to expire on its own.
+      if (muted) await clearBlockedPromptsAfterMute(userId);
     } catch (banError) {
       logToAxiom({
         name: 'user-ban-creation-error',
@@ -811,7 +813,7 @@ async function reportProhibitedRequest(options: {
       });
     }
 
-    if (track) {
+    if (muted && track) {
       await track.userActivity({
         type: 'Muted',
         targetUserId: userId,

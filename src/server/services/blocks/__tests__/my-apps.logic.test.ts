@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildMyApps,
+  buildMyApps as buildMyAppsHome,
+  MY_APPS_MAX_ROWS,
   type BuildMyAppsOptions,
   type MyAppsListingCandidate,
   type MyAppsSignals,
@@ -17,6 +18,9 @@ import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility
  */
 
 const at = (iso: string) => new Date(iso);
+
+/** The rows alone, for the cases that are not about hides. */
+const buildMyApps = (...args: Parameters<typeof buildMyAppsHome>) => buildMyAppsHome(...args).apps;
 
 const BASE_OPTS: BuildMyAppsOptions = {
   scope: 'full',
@@ -385,6 +389,18 @@ describe('exclusions', () => {
     ).toHaveLength(1);
   });
 
+  // My apps is the viewer's own launcher: it is not narrowed by their browsing level (only the
+  // store's public surfaces are). An extra option is ignored, which is the point.
+  it('an R app the viewer has stays in My apps whatever their browsing level', () => {
+    expect(
+      buildMyApps(LIVE_GRANT, [delta({ contentRating: 'r' })], {
+        ...BASE_OPTS,
+        redCapable: true,
+        viewerBrowsingLevel: 1,
+      } as BuildMyAppsOptions)
+    ).toHaveLength(1);
+  });
+
   it('an off-site-only scope drops page apps and keeps off-site ones; a dark scope drops all', () => {
     const signals: MyAppsSignals = {
       ...LIVE_GRANT,
@@ -495,5 +511,156 @@ describe('launch href — page vs off-site', () => {
       { ...BASE_OPTS, limit: 1 }
     );
     expect(rows.map((r) => r.listingId)).toEqual(['apl_bravo']);
+  });
+});
+
+describe('"Remove from My apps" is applied BEFORE the row cap', () => {
+  // Sized off the cap, so a deliberate cap change does not fail here. COUNT page apps, each
+  // used at a distinct minute: app i at BASE + i min, so a higher i is more recent. INSIDE
+  // hides fall in the top CAP (the old cutoff) and 2 well below it; COUNT overshoots the cap
+  // by more than the hides, so the cap still cuts and the freed slots are filled from below.
+  const CAP = MY_APPS_MAX_ROWS;
+  const INSIDE = 15;
+  const COUNT = CAP + 2 * INSIDE;
+  const BELOW_IDX = [5, 3];
+  const BASE_MS = Date.parse('2026-10-03T00:00:00.000Z');
+  const pad = (i: number) => String(i).padStart(String(COUNT - 1).length, '0');
+  const id = (i: number) => `apl_app_${pad(i)}`;
+  const usedAtMs = (i: number) => BASE_MS + i * 60_000;
+  const many = Array.from({ length: COUNT }, (_, i) =>
+    pageApp({
+      id: id(i),
+      slug: `app-${pad(i)}`,
+      name: `App ${pad(i)}`,
+      appBlockId: `blk_${pad(i)}`,
+    })
+  );
+  const manySignals: MyAppsSignals = {
+    ...NO_SIGNALS,
+    grants: Array.from({ length: COUNT }, (_, i) => ({
+      appBlockId: `blk_${pad(i)}`,
+      grantedAt: new Date(usedAtMs(i)),
+      revokedAt: null,
+    })),
+  };
+  // INSIDE hides spread across the old top CAP (from the most recent app down), plus the 2
+  // below it — each 37s AFTER that app's use (never on a minute), so every one is in force.
+  const INSIDE_IDX = Array.from(
+    { length: INSIDE },
+    (_, k) => COUNT - 1 - Math.floor((k * CAP) / INSIDE)
+  );
+  const HIDDEN_IDX = [...INSIDE_IDX, ...BELOW_IDX];
+  const hidden = Object.fromEntries(
+    HIDDEN_IDX.map((i) => [`app-${pad(i)}`, new Date(usedAtMs(i) + 37_000).toISOString()])
+  );
+  // The first app below the old cutoff, and the first one the freed slots do NOT reach.
+  const OLD_CUTOFF = COUNT - CAP;
+  const FIRST_LEFT_OUT = OLD_CUTOFF - INSIDE - 1;
+
+  it('the fixture has the shape the cases below rely on', () => {
+    expect(new Set(HIDDEN_IDX).size).toBe(INSIDE + BELOW_IDX.length);
+    for (const i of INSIDE_IDX) expect(i).toBeGreaterThanOrEqual(OLD_CUTOFF);
+    for (const i of BELOW_IDX) expect(i).toBeLessThan(FIRST_LEFT_OUT);
+    expect(HIDDEN_IDX).not.toContain(COUNT - 2);
+  });
+
+  it('🔴 a removed app takes no slot: exactly the cap, filled by the apps past the old cutoff', () => {
+    const { apps, removedCount } = buildMyAppsHome(manySignals, many, { ...BASE_OPTS, hidden });
+    expect(apps).toHaveLength(CAP);
+    expect(removedCount).toBe(HIDDEN_IDX.length);
+    const ids = apps.map((r) => r.listingId);
+    // Most recent visible first; no hidden app anywhere.
+    expect(ids[0]).toBe(id(COUNT - 2));
+    for (const i of HIDDEN_IDX) expect(ids).not.toContain(id(i));
+    // The INSIDE apps just below the old cutoff fill the freed slots; the next one is left out.
+    expect(ids.slice(-INSIDE)).toEqual(
+      Array.from({ length: INSIDE }, (_, k) => id(OLD_CUTOFF - 1 - k))
+    );
+    expect(ids).not.toContain(id(FIRST_LEFT_OUT));
+  });
+
+  it('🔴 removedSlugsByListingId is EXACTLY the hidden rows, listing id → slug, inside and below the old cutoff', () => {
+    const { removedCount, removedSlugsByListingId } = buildMyAppsHome(manySignals, many, {
+      ...BASE_OPTS,
+      hidden,
+    });
+    expect(removedSlugsByListingId).toStrictEqual(
+      Object.fromEntries(HIDDEN_IDX.map((i) => [id(i), `app-${pad(i)}`]))
+    );
+    expect(Object.keys(removedSlugsByListingId)).toHaveLength(removedCount);
+  });
+
+  it('no hidden map (or an empty one) → the plain top CAP, nothing removed', () => {
+    const plain = buildMyAppsHome(manySignals, many, BASE_OPTS);
+    const empty = buildMyAppsHome(manySignals, many, { ...BASE_OPTS, hidden: {} });
+    const expected = Array.from({ length: CAP }, (_, k) => id(COUNT - 1 - k));
+    expect(plain.apps.map((r) => r.listingId)).toEqual(expected);
+    expect(plain.removedCount).toBe(0);
+    expect(plain.removedSlugsByListingId).toStrictEqual({});
+    expect(empty).toEqual(plain);
+  });
+
+  it('🔴 hidden, then used LATER → shown (the hide is older than the last use)', () => {
+    const signals: MyAppsSignals = {
+      ...NO_SIGNALS,
+      grants: [
+        { appBlockId: 'blk_alpha', grantedAt: at('2026-10-14T09:00:00.000Z'), revokedAt: null },
+        { appBlockId: 'blk_bravo', grantedAt: at('2026-10-11T06:00:00.000Z'), revokedAt: null },
+      ],
+    };
+    const { apps, removedCount } = buildMyAppsHome(signals, [ALPHA, BRAVO], {
+      ...BASE_OPTS,
+      // alpha hidden before its last use; bravo hidden after it.
+      hidden: {
+        'alpha-slug': '2026-10-12T03:00:00.000Z',
+        'bravo-slug': '2026-10-13T05:00:00.000Z',
+      },
+    });
+    expect(apps.map((r) => r.listingId)).toEqual(['apl_alpha']);
+    expect(removedCount).toBe(1);
+    // Only the row still hidden; the reshown one is not reported as dropped.
+    expect(
+      buildMyAppsHome(signals, [ALPHA, BRAVO], {
+        ...BASE_OPTS,
+        hidden: {
+          'alpha-slug': '2026-10-12T03:00:00.000Z',
+          'bravo-slug': '2026-10-13T05:00:00.000Z',
+        },
+      }).removedSlugsByListingId
+    ).toStrictEqual({ apl_bravo: 'bravo-slug' });
+  });
+
+  it('the boundary follows the shared predicate: used AT hiddenAt stays hidden, 1ms after shows', () => {
+    const signals: MyAppsSignals = {
+      ...NO_SIGNALS,
+      grants: [
+        { appBlockId: 'blk_alpha', grantedAt: at('2026-10-16T08:00:00.000Z'), revokedAt: null },
+        { appBlockId: 'blk_bravo', grantedAt: at('2026-10-15T07:00:00.001Z'), revokedAt: null },
+      ],
+    };
+    const { apps, removedCount } = buildMyAppsHome(signals, [ALPHA, BRAVO], {
+      ...BASE_OPTS,
+      hidden: {
+        'alpha-slug': '2026-10-16T08:00:00.000Z',
+        'bravo-slug': '2026-10-15T07:00:00.000Z',
+      },
+    });
+    expect(apps.map((r) => r.listingId)).toEqual(['apl_bravo']);
+    expect(removedCount).toBe(1);
+  });
+
+  it('a hide for a slug no row has, or an unparseable hide, removes nothing', () => {
+    const signals: MyAppsSignals = {
+      ...NO_SIGNALS,
+      grants: [
+        { appBlockId: 'blk_alpha', grantedAt: at('2026-10-17T02:00:00.000Z'), revokedAt: null },
+      ],
+    };
+    const { apps, removedCount } = buildMyAppsHome(signals, [ALPHA], {
+      ...BASE_OPTS,
+      hidden: { 'gone-slug': '2026-10-18T00:00:00.000Z', 'alpha-slug': 'not a date' },
+    });
+    expect(apps.map((r) => r.listingId)).toEqual(['apl_alpha']);
+    expect(removedCount).toBe(0);
   });
 });

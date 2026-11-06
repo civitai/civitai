@@ -93,8 +93,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { generateJSON } from '~/server/utils/tiptap-generate-json';
-import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import {
   assertContentLinkHoldWritable,
@@ -822,7 +821,7 @@ export const getArticleById = async ({
     // included). `generateJSON` is total over arbitrary text.
     let contentJson: MixedObject | undefined;
     if (article.content) {
-      contentJson = generateJSON(article.content, tiptapExtensions);
+      contentJson = articleContentJson(article.content);
     }
 
     return {

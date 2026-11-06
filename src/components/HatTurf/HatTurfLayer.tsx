@@ -144,7 +144,11 @@ function HatDraftSticker({
   return (
     <DraftSticker
       draft={draft}
-      artwork={artwork(scale)}
+      artwork={
+        <span style={{ display: 'block', transform: flip ? 'scaleX(-1)' : undefined }}>
+          {artwork(scale)}
+        </span>
+      }
       selected
       dressed={UNDRESSED}
       price={0}

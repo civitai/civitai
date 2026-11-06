@@ -9,6 +9,8 @@ import { withDefiniteArticle } from '~/utils/string-helpers';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
 export const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
+export const imageReactionMilestoneKey = (imageId: number, milestone: number) =>
+  `image-reaction-milestone:${imageId}:${milestone}`;
 const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
 // const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
 

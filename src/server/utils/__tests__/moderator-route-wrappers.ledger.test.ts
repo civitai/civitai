@@ -23,9 +23,7 @@ const WEBHOOK_ROUTES = [
   'adjust-tag-level',
   'ban-user',
   'custom-challenge',
-  'daily-challenge/backfill-theme-elements',
   'daily-challenge/cycle',
-  'daily-challenge/re-review',
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
@@ -193,6 +191,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'download/vault/[vaultItemId]':
+    'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
     'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':

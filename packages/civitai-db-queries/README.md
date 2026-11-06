@@ -105,6 +105,14 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-8.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
 
+  `hot-reads-9.db.ts` holds the user profile read (the user with its profile picture, cosmetics,
+  links, rank, profile and the profile's two cover images with their tags) as ONE statement, where
+  the Prisma read issues one per relation. It is served behind the default-off server Flipt flag
+  `kysely-hot-reads-9`. It reads base tables plus "UserRank" (marked `/// @view` but a table) and
+  the "TagsOnImageDetails" projection view, whose base-table scan the parity suite EXPLAINs. Parity
+  is pinned by `<civitai>/src/server/services/__tests__/hot-reads-9.kysely-parity.test.ts`, on the
+  same Postgres service.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

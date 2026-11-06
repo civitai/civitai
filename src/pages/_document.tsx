@@ -11,10 +11,10 @@ import { applyShellEdgeHeaders } from '~/server/shell/shell-response';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache';
 import {
-  applyBotCacheEdgeHeaders,
-  BOT_CACHE_ROUTES,
+  applyBotCachePrivateHeaders,
   botCacheResponseRefusal,
 } from '~/server/bot-cache/bot-cache';
+import { captureBotCacheRender } from '~/server/bot-cache/bot-cache-origin';
 
 export default class _Document extends Document {
   // Next runs this once per HTML response, after getServerSideProps: a notFound arrives here as
@@ -36,7 +36,8 @@ export default class _Document extends Document {
     if (shellRoute && marks[SHELL_RENDERED_REQ_KEY] === shellRoute && ctx.res) {
       applyShellEdgeHeaders(ctx.res, shellRoute);
     } else if (ctx.res && botCacheResponseRefusal(ctx.req, ctx.res, ctx.pathname) === null) {
-      applyBotCacheEdgeHeaders(ctx.res, BOT_CACHE_ROUTES[ctx.pathname as BotCacheRoutePattern]);
+      applyBotCachePrivateHeaders(ctx.res);
+      captureBotCacheRender(ctx.req, ctx.res, ctx.pathname as BotCacheRoutePattern);
     }
     // Not awaited: a flag evaluation or log write must never delay the response.
     void sampleImageRender(ctx.pathname, ctx.query, ctx.req as never);

@@ -161,8 +161,8 @@ const MIGRATIONS = [
   '20261029140000_creator_service_deal_file_delivery',
   '20261128150000_creator_service_final_malware_scan',
   '20261208120000_creator_service_dispute_review',
-  '20261224120100_service_deal_file_held',
-  '20261224120200_service_deal_file_attachment',
+  '20261224150000_service_deal_file_held',
+  '20261224150100_service_deal_file_attachment',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );

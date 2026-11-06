@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import { Button } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
@@ -25,10 +26,20 @@ const COVER_HATS = [
 ];
 
 /** The hat button for the picture on screen. Nothing when Hat Turf is off or the picture is a contest entry. */
-export function HatTurfDetailControls({ imageId }: { imageId: number }) {
+export function HatTurfDetailControls({
+  imageId,
+  large,
+}: {
+  imageId: number;
+  /** A 36px circle, as the phone bottom bar's other buttons are. */
+  large?: boolean;
+}) {
   const feed = useTurfFeed();
   return feed && !feed.hidden?.[imageId] ? (
-    <div className={classes.group} data-testid="hat-turf-detail-controls">
+    <div
+      className={clsx(classes.group, large && classes.large)}
+      data-testid="hat-turf-detail-controls"
+    >
       <HatButton imageId={imageId} />
     </div>
   ) : null;

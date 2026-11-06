@@ -17,8 +17,8 @@ import { Group } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 import { isDefined } from '~/utils/type-guards';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { POST_TITLE_MAX_LENGTH } from '~/server/common/constants';
 
-const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
 
 export function PostEditForm() {
@@ -72,7 +72,9 @@ export function PostEditForm() {
           mutate({
             id: post.id,
             title:
-              title && title.length > titleCharLimit ? title.substring(0, titleCharLimit) : title,
+              title && title.length > POST_TITLE_MAX_LENGTH
+                ? title.substring(0, POST_TITLE_MAX_LENGTH)
+                : title,
             detail,
           })
         );

@@ -16,7 +16,7 @@ export const config = {
   },
 };
 import { isSystemAccountMeta } from '@civitai/auth';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -28,6 +28,7 @@ import {
   getRequestDomainColor,
   isHostForColor,
   isMatureContentRating,
+  ratingAllowedOnHost,
 } from '~/server/utils/server-domain';
 import {
   allBrowsingLevelsFlag,
@@ -35,6 +36,7 @@ import {
   effectiveBrowsingCeiling,
 } from '~/shared/constants/browsingLevel.constants';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { ratingHiddenByBrowsingLevel } from '~/server/services/blocks/app-listing-store-gate';
 import {
   resolvePerCallBuzzBudget,
   isAppStorageScope,
@@ -105,9 +107,26 @@ function resolveEffectiveBrowsingLevel(args: {
   maxBrowsingLevel: number;
 }): number {
   const { req, sessionUser, maxBrowsingLevel } = args;
+  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerOwnBrowsingLevel(req, sessionUser));
+}
+
+/** The viewer's own browsing level for this request (`getServerBrowsingLevel`; PG when absent). */
+function viewerOwnBrowsingLevel(req: NextApiRequest, sessionUser: SessionUser | undefined) {
   const canViewNsfw = getFeatureFlags({ user: sessionUser, req }).canViewNsfw;
-  const viewerBrowsingLevel = getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
-  return effectiveBrowsingCeiling(maxBrowsingLevel, viewerBrowsingLevel);
+  return getServerBrowsingLevel({ canViewNsfw, user: sessionUser });
+}
+
+/** Call only after the host gate: the site rule takes precedence over the level. */
+function hiddenByViewerBrowsingLevel(
+  contentRating: unknown,
+  req: NextApiRequest,
+  sessionUser: SessionUser | undefined
+): boolean {
+  return (
+    typeof contentRating === 'string' &&
+    isMatureContentRating(contentRating) &&
+    ratingHiddenByBrowsingLevel(contentRating, viewerOwnBrowsingLevel(req, sessionUser)) != null
+  );
 }
 
 /**
@@ -1012,6 +1031,16 @@ async function tryPrivateRunMint(args: {
 
   const app = access.block;
 
+  if (!ratingAllowedOnHost(app.contentRating, req.headers.host ?? '')) {
+    res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return 'handled';
+  }
+  // Owners and moderators get no exemption from the browsing level.
+  if (hiddenByViewerBrowsingLevel(app.contentRating, req, sessionUser)) {
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
+    return 'handled';
+  }
+
   // 🔴 NO SOFT-DELETE / BAN RE-READ HERE — `resolvePrivateRunAccess` owns it, against
   // the PRIMARY, and refuses `viewer-ineligible`. This branch used to perform its own
   // copy (the fourth in this file), which is what created the asymmetry review found:
@@ -1142,7 +1171,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  if (session === false) return;
   if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
@@ -1683,6 +1713,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     !redCapableHost
   ) {
     res.status(403).json({ error: 'This app is only available on civitai.red.' });
+    return;
+  }
+  // …and on .red, only for a viewer whose browsing level includes it (page AND model-slot mints).
+  if (hiddenByViewerBrowsingLevel(appContentRating, req, session?.user)) {
+    res.status(403).json({ error: 'This app is hidden by your browsing settings.' });
     return;
   }
 

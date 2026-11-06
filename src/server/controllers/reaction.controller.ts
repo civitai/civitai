@@ -4,7 +4,10 @@ import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
 import { notifications } from '~/server/notifications/client';
 import { logToAxiom } from '~/server/logging/client';
-import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
+import {
+  imageReactionMilestoneKey,
+  imageReactionMilestones,
+} from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
@@ -384,7 +387,7 @@ export const createReactionNotification = async ({ entityType, entityId }: Toggl
     if (!match) return;
 
     const type = 'image-reaction-milestone';
-    const key = `${type}:${entityId}:${match}`;
+    const key = imageReactionMilestoneKey(entityId, match);
 
     if (await notifications.notificationExists({ key })) return;
 

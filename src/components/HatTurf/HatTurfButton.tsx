@@ -79,6 +79,7 @@ function HatTurfButtonContent({ imageId }: { imageId: number }) {
         placed={!!placed}
         aria-label={label}
         aria-pressed={!!draft}
+        className={classes.feed}
         onClick={press}
       />
       <Popover

@@ -66,6 +66,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingOfficialSchema,
   setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
@@ -2065,10 +2066,10 @@ export const appListingsRouter = router({
    * open it in the store), but a dark scope REJECTS rather than returning an empty list: this
    * is a signed-in surface behind the same flag as the page, not an anon-capable grid.
    *
-   * Returns the derived `apps` AND the viewer's "Remove from My apps" `hidden` map
-   * (slug → ISO time). The server does NOT filter hidden apps out: whether one shows again
-   * depends on this browser's recently-opened time too, so the client merge applies the one
-   * rule (`isHiddenFromHome`) to both sources (`mergeHomeApps`).
+   * Returns the derived `apps`, the viewer's "Remove from My apps" `hidden` map (slug → ISO
+   * time), `removedCount` and `removedSlugsByListingId` (listing id → slug of each row a hide
+   * dropped). Hidden apps are filtered out BEFORE the row cap, so they do not take slots. The
+   * rule and why the dropped-row map exists: `my-apps-hidden.ts`.
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)
@@ -2084,22 +2085,15 @@ export const appListingsRouter = router({
       if (scope === 'none') {
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
       }
-      const [{ listMyApps }, { getMyHiddenApps }] = await Promise.all([
-        import('~/server/services/blocks/my-apps.service'),
-        import('~/server/services/blocks/my-apps-hidden.service'),
-      ]);
-      const [apps, hidden] = await Promise.all([
-        listMyApps({
-          userId: ctx.user.id,
-          scope,
-          floor,
-          redCapable: isRedCapableRequest(ctx),
-          viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
-          canOpenPage: !!ctx.features?.appBlocksPages,
-        }),
-        getMyHiddenApps(ctx.user.id),
-      ]);
-      return { apps, hidden };
+      const { listMyApps } = await import('~/server/services/blocks/my-apps.service');
+      return listMyApps({
+        userId: ctx.user.id,
+        scope,
+        floor,
+        redCapable: isRedCapableRequest(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+        canOpenPage: !!ctx.features?.appBlocksPages,
+      });
     }),
 
   /**
@@ -2242,6 +2236,23 @@ export const appListingsRouter = router({
       });
     }),
 
+  /** MOD mark / unmark a listing Official. A listing's owner has no path to this flag. */
+  setListingOfficial: moderatorProcedure
+    .input(setListingOfficialSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Marking apps as Official is restricted to civitai team');
+      }
+      const { setListingOfficialAsModerator } = await import(
+        '~/server/services/blocks/app-listing-official.service'
+      );
+      return setListingOfficialAsModerator({
+        appListingId: input.appListingId,
+        isOfficial: input.isOfficial,
+        moderatorUserId: ctx.user.id,
+      });
+    }),
+
   /**
    * The PUBLISHED forks of one listing — "N forks" and a paged list on its store page.
    *
@@ -2268,12 +2279,14 @@ export const appListingsRouter = router({
       const { scope, floor } = applyStoreGates(ctx, 'trpc-forks');
       if (scope === 'none') return null;
       const redCapable = isRedCapableRequest(ctx);
+      // An R/X parent or fork is visible only to a viewer whose browsing level includes it.
+      const viewerBrowsingLevel = getRequestBrowsingLevel(ctx);
       const { getStoreVisibleListingSummary } = await import(
         '~/server/services/blocks/app-listing.service'
       );
       const parent = await getStoreVisibleListingSummary(
         { id: input.listingId },
-        { redCapable, scope, floor }
+        { redCapable, scope, floor, viewerBrowsingLevel }
       );
       if (!parent) return null;
       const [{ listListingForks }, { dbRead }] = await Promise.all([
@@ -2287,6 +2300,7 @@ export const appListingsRouter = router({
         scope,
         floor,
         redCapable,
+        viewerBrowsingLevel,
       });
     }),
 
@@ -2308,6 +2322,9 @@ export const appListingsRouter = router({
         listingId: input.listingId,
         scope,
         redCapable: isRedCapableRequest(ctx),
+        // Any signed-in viewer may fork a publicly visible listing, so "visible" includes their
+        // own browsing level for an R/X parent.
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
         req: ctx.req,
       });
     }),
@@ -2353,6 +2370,36 @@ export const appListingsRouter = router({
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  /**
+   * Why `getAppDetail` 404'd, when the ONLY reason is the viewer's browsing level: an R/X app
+   * whose rating their level leaves out. Returns `{ contentRating }` (nothing else of the app) so
+   * the detail page can show a hidden state that explains it; `null` otherwise, and the page
+   * shows its ordinary NotFound. Same gates and rate limit as `getAppDetail`.
+   */
+  getAppHiddenState: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') return null;
+      const { getListingHiddenByBrowsingLevel } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingHiddenByBrowsingLevel(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
     }),
 
   getAppCard: publicProcedure
