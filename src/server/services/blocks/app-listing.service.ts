@@ -2137,8 +2137,8 @@ export async function getListingHiddenByBrowsingLevel(
     floor: opts.floor ?? 'public',
     browsingLevel: allBrowsingLevelsFlag,
   });
-  // Invariant guard, unreachable today (the loader already drops site-gated rows): never
-  // report hidden-by-level for a site-gated app.
+  // Non-red hosts never get a hidden-by-level answer. A site-gated row is already dropped by
+  // the loader; this return covers the remaining rows (e.g. PG-rated apps).
   if (!gated || !opts.redCapable) return null;
   const hidden = ratingHiddenByBrowsingLevel(gated.row.contentRating, opts.viewerBrowsingLevel);
   return hidden ? { contentRating: hidden } : null;

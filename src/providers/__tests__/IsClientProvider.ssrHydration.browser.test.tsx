@@ -69,7 +69,6 @@ describe('useIsClient without an IsClientProvider', () => {
   });
 });
 
-// Invariant guard, green before and after the no-provider fallback: the provider path is unchanged.
 test('with an IsClientProvider: the same placeholder-then-value, no mismatch', async () => {
   const tree = (
     <IsClientProvider>

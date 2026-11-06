@@ -7,6 +7,8 @@ const noopSubscribe = () => () => undefined;
 /**
  * `false` on the server and during hydration, `true` after. Without a provider above it (a
  * component test harness, say) it reads the same thing from React itself, so it never throws.
+ * That is deliberate and holds for every caller: a missing provider gets the hydration-safe
+ * client read, not an error.
  */
 export const useIsClient = () => {
   const context = useContext(IsClientContext);
