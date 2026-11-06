@@ -299,7 +299,7 @@ describe('the writer seam', () => {
     }
   });
 
-  it('has exactly nine writers of searchableAttributes, tree-wide', () => {
+  it('has exactly eight writers of searchableAttributes, tree-wide', () => {
     // 🔴 THE MISSING THIRD GUARD, AND THE ONLY TREE-WIDE ONE. The displayed list is protected by
     // three guards of different SHAPES — this writer ledger, the write-argument pin, and the
     // no-local ban — and when the same protection was built for the searchable whitelist in
@@ -327,13 +327,14 @@ describe('the writer seam', () => {
     // MUTATOR regex above covers `modelsSearchableAttributes`: the tree-wide walks have ONE home,
     // so `walk`/`callsIn` are not duplicated and a reviewer finds every tree-wide ledger together.
     //
-    // 🔴 AND WHY THE SET IS THE NINE INDEX FILES RATHER THAN "the models index's writers". Which
+    // 🔴 AND WHY THE SET IS THE EIGHT INDEX FILES RATHER THAN "the models index's writers". Which
     // index a `*.search-index.ts` writes is decided by a runtime `indexName`, so no syntactic walk
     // can scope this ledger to the models index — the honest scope is every caller of the setter,
     // anywhere. The cost is that it also moves when an unrelated index gains or loses a searchable
     // write, which is the review event we want: a NEW writer is the hazard, and a writer
     // DISAPPEARING means an index stopped having its whitelist applied at all and silently fell
     // back to Meili's `["*"]`.
+    // Eight since the retired images index (`images.search-index.ts`) was deleted with its writer.
     const writers = walk(SRC)
       .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
       .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
@@ -347,7 +348,6 @@ describe('the writer seam', () => {
       'server/search-index/bounties.search-index.ts',
       'server/search-index/collections.search-index.ts',
       'server/search-index/comics.search-index.ts',
-      'server/search-index/images.search-index.ts',
       'server/search-index/metrics-images.search-index.ts',
       'server/search-index/models.search-index.ts',
       'server/search-index/tools.search-index.ts',
@@ -355,9 +355,9 @@ describe('the writer seam', () => {
     ]);
 
     // 🔴 ONLY the models index is required to read the shared export, and that asymmetry is
-    // DELIBERATE and documented: the other eight index files each declare their own inline
+    // DELIBERATE and documented: the other seven index files each declare their own inline
     // `searchableAttributes` literal, which is out of scope here and not a defect to be swept up.
-    // Asserting the shared read across all nine would be a redesign of eight unrelated indexes
+    // Asserting the shared read across all eight would be a redesign of seven unrelated indexes
     // dressed up as a guard.
     // Note `~/server/search-index/searchable-attributes.ts` is correctly ABSENT from the ledger
     // above: it names `updateSearchableAttributes` in a prose comment, and a comment is not a call

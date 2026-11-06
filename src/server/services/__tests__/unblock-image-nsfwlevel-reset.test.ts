@@ -156,7 +156,6 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 

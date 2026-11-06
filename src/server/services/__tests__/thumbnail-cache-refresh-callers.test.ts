@@ -48,7 +48,6 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/games/new-order/utils', async (importOriginal) => {

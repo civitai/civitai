@@ -16,7 +16,9 @@ describe('viewerSearchClauses', () => {
   it('names only attributes each index declares filterable', () => {
     const filterable: Record<string, readonly string[]> = filterableAttributesByIndex;
     const checked = new Set<string>();
-    for (const index of [...SITE_SEARCH_INDEXES, ...RETIRED_SEARCH_INDEXES]) {
+    // `images_v6` is retired for good: image search is the semantic search, not this index.
+    const restorable = RETIRED_SEARCH_INDEXES.filter((index) => index !== IMAGES_SEARCH_INDEX);
+    for (const index of [...SITE_SEARCH_INDEXES, ...restorable]) {
       for (const viewer of [
         { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag },
         { userId: 42, showSfwFace: false },
@@ -33,7 +35,6 @@ describe('viewerSearchClauses', () => {
     expect(checked).toContain(`${MODELS_SEARCH_INDEX}:poi`);
     expect(checked).toContain(`${MODELS_SEARCH_INDEX}:user.id`);
     expect(checked).toContain(`${MODELS_SEARCH_INDEX}:nsfwLevel`);
-    expect(checked).toContain(`${IMAGES_SEARCH_INDEX}:poi`);
   });
 
   it('a retired index is not searchable', () => {

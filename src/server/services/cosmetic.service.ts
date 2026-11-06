@@ -27,7 +27,6 @@ import type {
 import {
   articlesSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';

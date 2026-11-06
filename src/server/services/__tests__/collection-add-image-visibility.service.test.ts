@@ -38,7 +38,6 @@ vi.mock('~/server/services/image-visibility.service', async (importOriginal) => 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => ({
   ...(await importOriginal<typeof HomeBlockCache>()),

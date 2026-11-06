@@ -39,7 +39,6 @@ vi.mock('~/server/redis/caches', () => caches);
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
   articlesSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));

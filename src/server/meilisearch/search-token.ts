@@ -6,7 +6,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -16,7 +15,6 @@ import { Availability } from '~/shared/utils/prisma/enums';
 
 const SITE_SEARCH_INDEXES = [
   MODELS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   ARTICLES_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
@@ -52,7 +50,6 @@ export function buildSearchRules(
     ? {}
     : {
         [MODELS_SEARCH_INDEX]: `(poi != true${own}) AND (availability != ${Availability.Private}${own})`,
-        [IMAGES_SEARCH_INDEX]: 'poi != true',
       };
   return Object.fromEntries(
     grantedIndexes(retired).map((index) => [

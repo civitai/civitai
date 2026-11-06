@@ -29,7 +29,6 @@ describe('buildSearchRules', () => {
     ['a zero id', { id: 0 }],
   ])('%s gets the filters with no owner carve-out', (_label, viewer) => {
     expect(buildSearchRules(viewer)[MODELS_SEARCH_INDEX]).toEqual({ filter: anonModels });
-    expect(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX]).toEqual({ filter: 'poi != true' });
   });
 
   it('a signed-in user also sees their own models, keyed on user.id', () => {
@@ -37,8 +36,6 @@ describe('buildSearchRules', () => {
     expect(rules[MODELS_SEARCH_INDEX]).toEqual({
       filter: '(poi != true OR user.id = 42) AND (availability != Private OR user.id = 42)',
     });
-    // Images carry no owner carve-out.
-    expect(rules[IMAGES_SEARCH_INDEX]).toEqual({ filter: 'poi != true' });
   });
 
   it('moderators get no filters on any index', () => {
@@ -68,12 +65,6 @@ describe('buildSearchRules', () => {
     }
   });
 
-  it('restoring a retired index grants it with its filter, never without', () => {
-    for (const viewer of [undefined, { id: 42 }]) {
-      expect(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX]).toEqual({ filter: 'poi != true' });
-    }
-  });
-
   it('every filter names only attributes its index declares filterable', () => {
     const filterable: Record<string, readonly string[]> = filterableAttributesByIndex;
     const checked: string[] = [];
@@ -92,7 +83,6 @@ describe('buildSearchRules', () => {
         `${MODELS_SEARCH_INDEX}:poi`,
         `${MODELS_SEARCH_INDEX}:availability`,
         `${MODELS_SEARCH_INDEX}:user.id`,
-        `${IMAGES_SEARCH_INDEX}:poi`,
       ])
     );
   });
