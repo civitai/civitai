@@ -21,8 +21,20 @@ export type DocCollectionConfig = DeclaredStorageCollection;
 
 export type DocIndexType = AppStorageIndexType;
 
-/** A collection as the store sees it: its declared name plus its declaration. */
-export type DocCollection = { name: string; config: DocCollectionConfig };
+/**
+ * A collection as the store sees it: its declared name plus its declaration.
+ *
+ * `schemaMajor` is the collection's current schema major (`storage-schema-majors.ts`), which a
+ * write of a document body stamps into `appdata.doc.schema_major` (once that manual migration is
+ * applied). Absent: the write leaves the column alone (development and review namespaces, which
+ * are never stamped). `null`: the major is not known, and the write clears any older stamp, since
+ * the body it held no longer describes the document. Nothing reads the column yet.
+ */
+export type DocCollection = {
+  name: string;
+  config: DocCollectionConfig;
+  schemaMajor?: number | null;
+};
 
 /**
  * The resolved identity every operation runs under. Produced by the caller's

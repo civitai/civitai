@@ -34,6 +34,11 @@ export const MIGRATION_APP_PURGE_DOWN = path.resolve(
   __dirname,
   '../migrations/20261102120000_appdata_app_purge.down.sql'
 );
+/** The `doc.schema_major` column. Off by default: a suite opts in, as an environment would. */
+export const MIGRATION_SCHEMA_MAJOR_UP = path.resolve(
+  __dirname,
+  '../migrations/20261106130000_appdata_doc_schema_major.sql'
+);
 
 export type Row = Record<string, unknown>;
 
@@ -169,10 +174,13 @@ export async function createPgliteHarness(opts: {
   rls: boolean;
   /** Apply the app-purge policy migration too (default true). */
   appPurgePolicy?: boolean;
+  /** Apply the `doc.schema_major` migration too (default false). */
+  schemaMajor?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
   if (opts.appPurgePolicy !== false) await pg.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+  if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
