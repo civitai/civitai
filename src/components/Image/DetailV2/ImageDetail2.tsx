@@ -267,6 +267,9 @@ function ImageDetail2Content() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
+  const reactionsHidden =
+    hideReactions || collectionItems.some((ci) => contestCollectionReactionsHidden(ci.collection));
+
   const pillStyling =
     (h: number) =>
     (_reaction: unknown, hasReacted?: boolean): Omit<ButtonProps, 'onClick'> & BadgeProps => ({
@@ -342,7 +345,19 @@ function ImageDetail2Content() {
           </Button>
         </NextLink>
       )}
-      {/* On a phone the Buzz chip in the reaction row is the tip button. */}
+      {/* On a phone the Buzz chip in the reaction row is the tip button, unless reactions are
+          hidden: the chip goes with them, so the bar keeps a Tip circle. */}
+      {!withStoryline && reactionsHidden && !image.poi && (
+        <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
+          <LegacyActionIcon
+            {...sharedActionIconProps}
+            aria-label="Tip"
+            data-testid="image-detail-tip"
+          >
+            <IconBolt size={18} fill={theme.colors.accent[5]} color={theme.colors.accent[5]} />
+          </LegacyActionIcon>
+        </InteractiveTipBuzzButton>
+      )}
       {withStoryline && !image.poi && (
         <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
           <Badge
@@ -564,11 +579,7 @@ function ImageDetail2Content() {
                           <ReactionSettingsProvider
                             settings={{
                               hideReactionCount: false,
-                              hideReactions:
-                                hideReactions ||
-                                collectionItems.some((ci) =>
-                                  contestCollectionReactionsHidden(ci.collection)
-                                ),
+                              hideReactions: reactionsHidden,
                               buttonStyling: pillStyling(30),
                             }}
                           >

@@ -9,7 +9,7 @@ import type * as HatTurfDetailProviderModule from '~/components/HatTurf/detail/H
 import '~/styles/globals.css';
 
 // Layout test: the REAL reaction pills in the real footer row, beside a fixed-width sticker bar.
-const ctx = vi.hoisted(() => ({ active: false, hats: true }));
+const ctx = vi.hoisted(() => ({ active: false, hats: true, hideReactions: false }));
 const image = {
   id: 1,
   url: 'img-1',
@@ -75,7 +75,7 @@ vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) 
     loadMore: () => undefined,
     hasMore: false,
     collection: undefined,
-    hideReactions: false,
+    hideReactions: ctx.hideReactions,
   }),
 }));
 vi.mock('~/components/HatTurf/detail/HatTurfDetailProvider', async (importOriginal) => ({
@@ -186,9 +186,11 @@ vi.mock('~/components/Metrics', async (o) => ({
   Metrics: ({ initial, children }: { initial: unknown; children: (m: unknown) => ReactNode }) =>
     children(initial),
 }));
-vi.mock('~/components/Reaction/ImageReactorsPreview', async (o) => ({
+// The viewer owns the image on a touch screen: the real preview adds its "Who reacted" button to
+// the row, which makes it the narrowest case.
+vi.mock('~/components/UserAvatar/UserHoverCard', async (o) => ({
   ...(await o<object>()),
-  ImageReactorsPreview: ({ children }: { children: ReactNode }) => <>{children}</>,
+  useHoverCapable: () => false,
 }));
 vi.mock('~/components/ShareButton/ShareButton', async (o) => ({
   ...(await o<object>()),
@@ -286,6 +288,7 @@ const drawn = (els: Iterable<Element>) =>
 afterEach(() => {
   cleanup();
   ctx.hats = true;
+  ctx.hideReactions = false;
 });
 
 /** Each digit of every count in the reaction row, against the label that clips it. */
@@ -314,6 +317,7 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
   test('every reaction count is whole, with three-digit counts', async () => {
     await renderDetail(width);
     await vi.waitFor(() => expect(label('Like reaction')).not.toBeNull());
+    expect(label('Who reacted')).not.toBeNull();
     const digits = countDigits();
     // 775 / 276 / 68 / 21 and the 120 Buzz chip: 13 digits, so the check cannot pass empty.
     expect(digits).toHaveLength(13);
@@ -324,8 +328,8 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
     await renderDetail(width);
     await vi.waitFor(() => expect(label('Like reaction')).not.toBeNull());
     const row = label('Like reaction')!.parentElement!;
-    // The footer row holding the reactions, not just the reactions' own box.
-    expect(row.parentElement!.contains(q('sticker-bar'))).toBe(false);
+    // The footer under the picture, not just the reactions' own box.
+    expect(row.closest('.flex-col')!.contains(q('sticker-bar'))).toBe(false);
     const tops = new Set(
       Array.from(row.children).map((el) => Math.round(el.getBoundingClientRect().top))
     );
@@ -372,6 +376,19 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
     await vi.waitFor(() => expect(q('hat-turf-panel')).not.toBeNull());
     const sheet = q('hat-turf-panel')!.closest<HTMLElement>('.mantine-Drawer-content')!;
     await vi.waitFor(() => expect(Math.round(sheet.getBoundingClientRect().width)).toBe(width));
+  });
+
+  // The Buzz chip goes with the reactions, so the bar keeps a way to tip.
+  test('with reactions hidden, the bottom bar has a Tip circle', async () => {
+    ctx.hideReactions = true;
+    await renderDetail(width);
+    await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
+    expect(label('Like reaction')).toBeNull();
+    const tip = drawn(document.querySelectorAll('[data-testid="image-detail-tip"]'));
+    expect(tip?.getAttribute('aria-label')).toBe('Tip');
+    const r = tip!.getBoundingClientRect();
+    expect([r.width, r.height]).toEqual([36, 36]);
+    expect(r.right).toBeLessThanOrEqual(q('image-detail-chevron')!.getBoundingClientRect().left);
   });
 
   test('with Hat Turf off, both bars keep their order without the badge or hat', async () => {

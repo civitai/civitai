@@ -2,6 +2,7 @@ import { Switch } from '@mantine/core';
 import { HAT_TURF_SETTING_LABEL } from '~/components/Account/HatTurfSetting';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -15,7 +16,11 @@ export const HAT_TURF_OWNER_LABEL = 'Let people play Hat Turf on my images';
  */
 export function useHatTurfOwnerSwitch() {
   const user = useCurrentUser();
+  const features = useFeatureFlags();
   const event = getReleasedEventDecoration('Image')?.event;
+  // Where HatTurfSetting renders: the V2 Profile pane, behind the same flags as useTurfGate.
+  const leaveInSettings =
+    !!features.accountSettingsV2 && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard);
   const utils = trpc.useUtils();
   const { data: stock } = trpc.hatTurf.getStock.useQuery(
     { event: event ?? '' },
@@ -33,7 +38,9 @@ export function useHatTurfOwnerSwitch() {
   if (!user || !event || !stock || stock.mode === 'off') return null;
 
   return {
-    description: stock.optedIn ? (
+    description: !stock.optedIn ? (
+      "Off hides team hats on your images and they stop counting. They're back if you turn it on."
+    ) : leaveInSettings ? (
       // The switch that leaves is in the Profile pane, not this Creator one.
       <>
         Turn off{' '}
@@ -43,7 +50,14 @@ export function useHatTurfOwnerSwitch() {
         first
       </>
     ) : (
-      "Off hides team hats on your images and they stop counting. They're back if you turn it on."
+      // The legacy account page has no "Take part" switch; the event page has Leave.
+      <>
+        Leave Hat Turf on the{' '}
+        <NextLink href={`/events/${event}#hat-turf`} className="underline">
+          event page
+        </NextLink>{' '}
+        first
+      </>
     ),
     switchProps: {
       name: 'hatTurfOwner',

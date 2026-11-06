@@ -132,7 +132,8 @@ export function HatTurfPanelPopover({
 
 /**
  * Your hat and what's left of your supply, the image's standings, then Show hats.
- * No Leave here by product decision: leaving is on the event page's Hat Turf section.
+ * No Leave here by product decision: leaving is on the event page's Hat Turf section and the
+ * "Take part in Hat Turf" account setting.
  */
 export function HatTurfPanel({
   imageId,
