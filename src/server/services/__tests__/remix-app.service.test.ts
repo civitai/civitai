@@ -523,7 +523,11 @@ describe('remixApp.quote', () => {
     const [disabled, video, ...listed] = MENU_APPS;
     dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
       rowOf(disabled, 0, 'remix_disabled'),
-      rowOf({ ...video, target: 'video.remix' }, 1),
+      // A stored video.remix row: saves refuse that target now, but a read must still skip one.
+      (({ manifest, ...row }) => ({
+        ...row,
+        manifest: { ...manifest, targets: [{ slotId: 'video.remix' }] },
+      }))(rowOf(video, 1)),
       ...listed.map((app, i) => rowOf(app, i + 2)),
     ] as never);
     addImage(21);
