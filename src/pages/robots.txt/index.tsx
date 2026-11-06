@@ -56,8 +56,8 @@ const ruleSections: { comment?: string[]; rules: string[] }[] = [
   {
     // Each of these tabs is a full server render of a listing that search engines send almost no
     // visitors to. Disallowing the tab does not block the items it lists, which keep their own
-    // URLs. The profile page and its models, images, videos and posts tabs stay crawlable: they
-    // are how crawlers reach content that has no sitemap.
+    // URLs. The profile page and its models, images, videos, posts and collections tabs stay
+    // crawlable: they carry most of the profile search traffic.
     comment: [
       '# Low-value profile tabs — the items they list stay crawlable at their own URLs',
     ],
@@ -66,11 +66,17 @@ const ruleSections: { comment?: string[]; rules: string[] }[] = [
       'Disallow: /user/*/sticker-book',
       'Disallow: /user/*/comics',
       'Disallow: /user/*/3d-models',
-      'Disallow: /user/*/collections',
       'Disallow: /user/*/articles',
       'Disallow: /user/*/followers',
       'Disallow: /user/*/following',
     ],
+  },
+  {
+    // Image (and video) detail pages are `noindex` on every domain (see ImageDetail2), so a crawl
+    // of one is a server render that cannot earn a search result. The trailing slash keeps the
+    // `/images` index crawlable.
+    comment: ['# Image detail pages — noindex on every domain, so a crawl only costs a render'],
+    rules: ['Disallow: /images/'],
   },
 ];
 
