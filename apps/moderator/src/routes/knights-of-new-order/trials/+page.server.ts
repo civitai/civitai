@@ -30,11 +30,12 @@ import {
 import {
   getYesNoAxes,
   getYesNoQuestionItems,
-  NOTE_MAX,
   retireYesNoQuestion,
   rewordYesNoQuestion,
   unretireYesNoQuestion,
   YESNO_QUESTION_STATUSES,
+  type YesNoQuestionItem,
+  type YesNoQuestionQuery,
 } from '$lib/server/knights/yesno-question.service';
 
 const TABS = ['core', 'fresh', 'spot-check', 'yes-no', 'questions'] as const;
@@ -69,16 +70,9 @@ const forms = {
     explanation: why.optional().default(''),
   }),
   deleteYesNo: z.object({ id: int4Id }),
-  retireQuestion: z.object({
-    id: int4Id,
-    note: z.string().trim().min(1, 'Say why.').max(NOTE_MAX),
-  }),
+  retireQuestion: z.object({ id: int4Id, note: z.string().trim() }),
   unretireQuestion: z.object({ id: int4Id }),
-  rewordQuestion: z.object({
-    id: int4Id,
-    prompt: question,
-    note: z.string().trim().min(1, 'Say why.').max(NOTE_MAX),
-  }),
+  rewordQuestion: z.object({ id: int4Id, prompt: z.string().trim(), note: z.string().trim() }),
   add: z.object({ image: imageRef, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
   retire: z.object({ id: int4Id }),
@@ -96,15 +90,29 @@ const query = z.object({
 
 const blank = <T>(): ListPage<T> => ({ items: [], total: 0, page: 1 });
 
+const AXIS_PREFIX = 'knights.yesno.';
+
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
-  const { tab, page, q, axis, status } = parseQuery(url, query);
+  const parsed = parseQuery(url, query);
+  const { tab, page, q } = parsed;
+  const questionsTab = tab === 'questions';
+  const axis = questionsTab ? parsed.axis : '';
+  const status = questionsTab ? parsed.status : 'open';
   const imageId = q ? parseImageRef(q) : null;
   // The question list also searches the prompt, so text that is not an image reference is not an error there.
-  const searchError = q && imageId === null && tab !== 'questions' ? BAD_IMAGE : null;
+  const searchError = q && imageId === null && !questionsTab ? BAD_IMAGE : null;
   const list: ListQuery = imageId === null ? { page } : { page, imageId };
   const read = <T>(wanted: Tab, get: (q: ListQuery) => Promise<ListPage<T>>) =>
     tab === wanted && !searchError ? get(list) : Promise.resolve(blank<T>());
+
+  // A bare number is an image id or a number in the question; a URL is only ever an image.
+  const questionQuery = (): YesNoQuestionQuery => {
+    const base = { page, status, axis: axis || undefined };
+    if (!q) return base;
+    if (imageId === null) return { ...base, search: { text: q } };
+    return /^\d+$/.test(q) ? { ...base, search: { text: q, imageId } } : { ...base, imageId };
+  };
 
   const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions, queue, axes] =
     await Promise.all([
@@ -115,17 +123,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       read('spot-check', getSpotCheckItems),
       read('yes-no', getYesNoReferences),
       tab === 'yes-no' ? getYesNoQuestions() : Promise.resolve([]),
-      tab === 'questions'
-        ? getYesNoQuestionItems({
-            page,
-            status,
-            axis: axis || undefined,
-            ...(imageId === null ? { text: q || undefined } : { imageId }),
-          })
-        : Promise.resolve(
-            blank<Awaited<ReturnType<typeof getYesNoQuestionItems>>['items'][number]>()
-          ),
-      tab === 'questions' ? getYesNoAxes() : Promise.resolve([]),
+      questionsTab
+        ? getYesNoQuestionItems(questionQuery())
+        : Promise.resolve(blank<YesNoQuestionItem>()),
+      questionsTab ? getYesNoAxes() : Promise.resolve([]),
     ]);
   const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo, questions: queue }[tab];
   return {
@@ -138,7 +139,11 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     items: tab === 'core' ? core.items : fresh.items,
     spotCheck: spotCheck.items,
     yesNo: { items: yesNo.items, questions },
-    questions: { items: queue.items, axes, filters: { axis, status } },
+    questionQueue: {
+      items: queue.items,
+      axes: axes.map((a) => ({ key: a.key, label: a.key.replace(AXIS_PREFIX, '') })),
+      filters: { axis, status },
+    },
   };
 };
 
@@ -174,7 +179,7 @@ export const actions: Actions = {
   spotCheck: (event) => run(event, forms.spotCheck, 'record the rating', spotCheckItem),
   addYesNo: (event) =>
     run(event, forms.addYesNo, 'add the pair', ({ image, ...rest }) =>
-      addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user?.id ?? 0 })
+      addYesNoReference({ ...rest, imageId: image, createdBy: event.locals.user!.id })
     ),
   toggleYesNo: (event) =>
     run(event, forms.toggleYesNo, 'update the pair', ({ id, active }) =>
@@ -188,14 +193,14 @@ export const actions: Actions = {
     run(event, forms.deleteYesNo, 'delete the pair', ({ id }) => deleteYesNoReference(id)),
   retireQuestion: (event) =>
     run(event, forms.retireQuestion, 'retire the question', (input) =>
-      retireYesNoQuestion({ ...input, by: event.locals.user?.id ?? 0 })
+      retireYesNoQuestion({ ...input, by: event.locals.user!.id })
     ),
   unretireQuestion: (event) =>
     run(event, forms.unretireQuestion, 'restore the question', ({ id }) =>
-      unretireYesNoQuestion({ id, by: event.locals.user?.id ?? 0 })
+      unretireYesNoQuestion({ id, by: event.locals.user!.id })
     ),
   rewordQuestion: (event) =>
     run(event, forms.rewordQuestion, 'reword the question', (input) =>
-      rewordYesNoQuestion({ ...input, by: event.locals.user?.id ?? 0 })
+      rewordYesNoQuestion({ ...input, by: event.locals.user!.id })
     ),
 };

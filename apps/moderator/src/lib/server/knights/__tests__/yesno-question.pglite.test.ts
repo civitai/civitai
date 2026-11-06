@@ -4,7 +4,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { YESNO_QUESTION_MAX } from '@civitai/db/knights';
-import { YESNO_PROMPT_MAX } from '../../../knights/trials-limits';
+import { NOTE_MAX, YESNO_PROMPT_MAX } from '../../../knights/trials-limits';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '../../__tests__/abuse-detection-pglite.harness';
 
@@ -158,8 +158,10 @@ describe('getYesNoQuestionItems', () => {
       imageName: 'a.png',
       status: 'Closed',
       reason: 'moderator-retired',
+      retired: true,
       moderation: { action: 'retired', by: MOD, note: 'unreadable' },
     });
+    expect(items.slice(0, 3).map((i) => i.retired)).toEqual([false, false, false]);
   });
 
   it('filters by axis and by status, where closed means no longer open', async () => {
@@ -175,20 +177,21 @@ describe('getYesNoQuestionItems', () => {
     expect((await getYesNoQuestionItems({ page: 1, status: 'all' })).total).toBe(4);
   });
 
-  it('searches the prompt case-insensitively, taking % and _ literally, and the image', async () => {
-    expect(
-      (await getYesNoQuestionItems({ page: 1, text: 'KNIFE' })).items.map((i) => i.id)
-    ).toEqual([1]);
-    expect((await getYesNoQuestionItems({ page: 1, text: '100%' })).items.map((i) => i.id)).toEqual(
-      [2]
-    );
-    expect((await getYesNoQuestionItems({ page: 1, text: '%' })).total).toBe(1);
-    expect((await getYesNoQuestionItems({ page: 1, imageId: 1 })).items.map((i) => i.id)).toEqual([
-      3, 1,
-    ]);
-    expect(
-      (await getYesNoQuestionItems({ page: 1, imageId: 1, text: 'blood' })).items.map((i) => i.id)
-    ).toEqual([3]);
+  it('searches the prompt case-insensitively, taking % and _ literally, and by image', async () => {
+    const ids = async (query: Parameters<typeof getYesNoQuestionItems>[0]) =>
+      (await getYesNoQuestionItems(query)).items.map((i) => i.id);
+    expect(await ids({ page: 1, search: { text: 'KNIFE' } })).toEqual([1]);
+    expect(await ids({ page: 1, search: { text: '100%' } })).toEqual([2]);
+    expect((await getYesNoQuestionItems({ page: 1, search: { text: '%' } })).total).toBe(1);
+    expect(await ids({ page: 1, imageId: 1 })).toEqual([3, 1]);
+  });
+
+  it('matches a bare number against the image id or the question text', async () => {
+    await seedItem(7, { imageId: 2, prompt: 'Does the sign read 3?' });
+    const ids = async (search: { text: string; imageId?: number }) =>
+      (await getYesNoQuestionItems({ page: 1, search })).items.map((i) => i.id);
+    expect(await ids({ text: '3', imageId: 3 })).toEqual([7, 4]);
+    expect(await ids({ text: '3' })).toEqual([7]);
   });
 
   it('pages with a total and clamps a stale page to the last', async () => {
@@ -288,53 +291,28 @@ describe('unretireYesNoQuestion', () => {
 });
 
 describe('rewordYesNoQuestion', () => {
-  it('rewrites the prompt in place while nobody has answered, trimmed and recorded', async () => {
-    await seedItem(1);
-
-    expect(
-      await rewordYesNoQuestion({
-        id: 1,
-        prompt: '  Is a blade held?  ',
-        by: MOD,
-        note: 'clearer',
-        now: NOW,
-      })
-    ).toEqual({ ok: true });
-
-    expect(await row(1)).toMatchObject({
-      status: 'Open',
-      prompt: 'Is a blade held?',
-      meta: { caseId: 'c', moderation: { action: 'reworded', by: MOD, note: 'clearer' } },
-    });
-    expect((await db.query(`SELECT 1 FROM "KnightsQueueItem"`)).rows).toHaveLength(1);
-  });
-
-  it('retires an answered question and opens a :r1 item, then :r2, linked by rewordOf', async () => {
-    await seedItem(1, { voteCount: 2, externalId: 'q-1', imageId: 2 });
-    await vote(1, 10);
-
-    expect(
-      await rewordYesNoQuestion({
-        id: 1,
-        prompt: 'Is a blade held?',
-        by: MOD,
-        note: 'clearer',
-        now: NOW,
-      })
-    ).toEqual({ ok: true });
-
-    const created = (
+  const rewordTo = (id: number, prompt: string, note = 'clearer') =>
+    rewordYesNoQuestion({ id, prompt, by: MOD, note, now: NOW });
+  const idOf = async (externalId: string) =>
+    (
       await db.query<{ id: number }>(
-        `SELECT "id" FROM "KnightsQueueItem" WHERE "externalId" = 'q-1:r1'`
+        `SELECT "id" FROM "KnightsQueueItem" WHERE "externalId" = $1`,
+        [externalId]
       )
-    ).rows[0];
+    ).rows[0]?.id;
+
+  it('retires an unanswered question too and opens a :r1 item in its place', async () => {
+    await seedItem(1, { externalId: 'q-1', imageId: 2 });
+
+    expect(await rewordTo(1, '  Is a blade held?  ')).toEqual({ ok: true });
+
     expect(await row(1)).toMatchObject({
       status: 'Closed',
       reason: 'moderator-retired',
+      prompt: 'Question 1?',
       meta: { moderation: { action: 'retired', by: MOD, note: 'Reworded as q-1:r1: clearer' } },
     });
-    expect(await verdicts(1)).toEqual(['inconclusive']);
-    expect(await row(created.id)).toMatchObject({
+    expect(await row((await idOf('q-1:r1'))!)).toMatchObject({
       status: 'Open',
       prompt: 'Is a blade held?',
       voteCount: 0,
@@ -344,24 +322,42 @@ describe('rewordYesNoQuestion', () => {
       yesEffect: 'R4',
       meta: { caseId: 'c', rewordOf: 'q-1', moderation: { action: 'reworded', by: MOD } },
     });
+  });
 
-    // The new item has no votes yet, so rewording it again rewrites it in place.
-    await rewordYesNoQuestion({
-      id: created.id,
-      prompt: 'Is a dagger held?',
-      by: MOD,
-      note: 'again',
+  it('settles an answered question inconclusive and links the copy by rewordOf', async () => {
+    await seedItem(1, { voteCount: 2, externalId: 'q-1' });
+    await vote(1, 10);
+
+    await rewordTo(1, 'Is a blade held?');
+
+    expect(await verdicts(1)).toEqual(['inconclusive']);
+    expect((await row(1)).voteCount).toBe(2);
+    expect((await row((await idOf('q-1:r1'))!)).meta).toMatchObject({ rewordOf: 'q-1' });
+  });
+
+  it('rewording a reworded copy makes :r2 from the same origin', async () => {
+    await seedItem(1, { externalId: 'q-1' });
+    await rewordTo(1, 'First words?');
+    const r1 = (await idOf('q-1:r1'))!;
+
+    expect(await rewordTo(r1, 'Second words?')).toEqual({ ok: true });
+
+    expect(await row(r1)).toMatchObject({ status: 'Closed', reason: 'moderator-retired' });
+    expect(await row((await idOf('q-1:r2'))!)).toMatchObject({
+      status: 'Open',
+      prompt: 'Second words?',
+      meta: { rewordOf: 'q-1' },
     });
-    expect((await row(created.id)).prompt).toBe('Is a dagger held?');
+    expect(await idOf('q-1:r1:r1')).toBeUndefined();
   });
 
   it('takes the next free :rN', async () => {
-    await seedItem(1, { voteCount: 2, externalId: 'q-1' });
+    await seedItem(1, { externalId: 'q-1' });
     await seedItem(2, { status: 'Closed', reason: 'moderator-retired', externalId: 'q-1:r1' });
     await seedItem(3, { status: 'Closed', reason: 'moderator-retired', externalId: 'q-1:r4' });
     await seedItem(4, { externalId: 'q-1x:r9' });
 
-    await rewordYesNoQuestion({ id: 1, prompt: 'New words?', by: MOD, note: 'n' });
+    await rewordTo(1, 'New words?');
 
     const ids = await db.query<{ externalId: string }>(
       `SELECT "externalId" FROM "KnightsQueueItem" WHERE "externalId" LIKE 'q-1:r%' ORDER BY "id"`
@@ -372,27 +368,15 @@ describe('rewordYesNoQuestion', () => {
   it('refuses an empty, unchanged or over-long prompt, a missing note, and an item that is not open', async () => {
     await seedItem(1, { prompt: 'Same?' });
     await seedItem(2, { status: 'Closed', reason: 'moderator-retired' });
-    expect(await rewordYesNoQuestion({ id: 1, prompt: ' ', by: MOD, note: 'n' })).toMatchObject({
+    expect(await rewordTo(1, ' ', 'n')).toMatchObject({ ok: false });
+    expect(await rewordTo(1, 'Same?', 'n')).toMatchObject({ ok: false });
+    expect(await rewordTo(1, 'x'.repeat(YESNO_QUESTION_MAX + 1), 'n')).toMatchObject({
       ok: false,
     });
-    expect(await rewordYesNoQuestion({ id: 1, prompt: 'Same?', by: MOD, note: 'n' })).toMatchObject(
-      { ok: false }
-    );
-    expect(
-      await rewordYesNoQuestion({
-        id: 1,
-        prompt: 'x'.repeat(YESNO_QUESTION_MAX + 1),
-        by: MOD,
-        note: 'n',
-      })
-    ).toMatchObject({ ok: false });
-    expect(
-      await rewordYesNoQuestion({ id: 1, prompt: 'Other?', by: MOD, note: ' ' })
-    ).toMatchObject({ ok: false });
-    expect(
-      await rewordYesNoQuestion({ id: 2, prompt: 'Other?', by: MOD, note: 'n' })
-    ).toMatchObject({ ok: false });
-    expect((await row(1)).prompt).toBe('Same?');
+    expect(await rewordTo(1, 'Other?', ' ')).toMatchObject({ ok: false });
+    expect(await rewordTo(1, 'Other?', 'x'.repeat(NOTE_MAX + 1))).toMatchObject({ ok: false });
+    expect(await rewordTo(2, 'Other?', 'n')).toMatchObject({ ok: false });
+    expect((await row(1)).status).toBe('Open');
     expect((await db.query(`SELECT 1 FROM "KnightsQueueItem"`)).rows).toHaveLength(2);
   });
 });

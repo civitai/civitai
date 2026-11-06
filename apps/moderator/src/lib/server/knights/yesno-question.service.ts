@@ -1,22 +1,29 @@
 import { sql, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { closeYesNoItemRow, MODERATOR_RETIRED, YESNO_QUESTION_MAX } from '@civitai/db/knights';
+import {
+  closeYesNoItemRow,
+  mergeMeta,
+  MODERATION_META_KEY,
+  moderationMeta,
+  MODERATOR_RETIRED,
+  REWORD_OF_META_KEY,
+  YESNO_QUESTION_MAX,
+  type ModerationNote,
+} from '@civitai/db/knights';
+import { NOTE_MAX } from '../../knights/trials-limits';
 import { dbWrite } from '../db';
-import { FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
+import { countRows, FIRST_PAGE, pageWindow, type ListPage, type ListQuery } from './coreset.config';
 import type { Outcome } from './coreset.service';
 
 export const YESNO_QUESTION_STATUSES = ['open', 'closed', 'all'] as const;
 export type YesNoQuestionStatus = (typeof YESNO_QUESTION_STATUSES)[number];
-export const NOTE_MAX = 500;
 
 export type YesNoQuestionQuery = ListQuery & {
   axis?: string;
   status?: YesNoQuestionStatus;
-  /** Matches inside the prompt, case-insensitively. */
-  text?: string;
+  /** Matches the prompt, or also the image when `imageId` is given. */
+  search?: { text: string; imageId?: number };
 };
-
-export type ModerationNote = { action: string; by: number; note: string; at: string };
 
 export type YesNoQuestionItem = {
   id: number;
@@ -28,6 +35,8 @@ export type YesNoQuestionItem = {
   questionKey: string;
   status: string;
   reason: string | null;
+  /** Closed by a moderator, so it can be restored. */
+  retired: boolean;
   voteCount: number;
   moderation: ModerationNote | null;
   rewordOf: string | null;
@@ -39,12 +48,15 @@ const NEEDS_NOTE = 'Say why, so the next moderator knows.';
 const NEEDS_PROMPT = 'Write the question players will be asked.';
 const TOO_LONG = `Keep the question to ${YESNO_QUESTION_MAX} characters or fewer.`;
 const NOTE_TOO_LONG = `Keep the note to ${NOTE_MAX} characters or fewer.`;
+const RACED = 'Someone else reworded this question at the same moment. Reload and try again.';
 
 type Trx = Transaction<DB>;
 
-const likePattern = (text: string) => `%${text.replace(/[\\%_]/g, '\\$&')}%`;
+const UNIQUE_VIOLATION = '23505';
 
-/** Yes/no questions players are served, newest first. Closed means any item no longer open. */
+const escapeLike = (text: string) => text.replace(/[\\%_]/g, '\\$&');
+
+/** Yes/no questions players are served, newest first. */
 export async function getYesNoQuestionItems(
   query: YesNoQuestionQuery = FIRST_PAGE,
   pageSize = 50
@@ -58,13 +70,18 @@ export async function getYesNoQuestionItems(
     if (query.axis) q = q.where('i.questionKey', '=', query.axis);
     if (query.status === 'open') q = q.where('i.status', '=', 'Open');
     if (query.status === 'closed') q = q.where('i.status', '<>', 'Open');
-    if (query.text) q = q.where('i.prompt', 'ilike', likePattern(query.text));
+    const { search } = query;
+    if (search) {
+      q = q.where((eb) => {
+        const text = eb('i.prompt', 'ilike', `%${escapeLike(search.text)}%`);
+        return search.imageId === undefined
+          ? text
+          : eb.or([text, eb('i.imageId', '=', search.imageId)]);
+      });
+    }
     return q;
   };
-  const counted = await filtered()
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .executeTakeFirstOrThrow();
-  const total = Number(counted.count);
+  const total = await countRows(filtered());
   const { page, offset, limit } = pageWindow(query.page, total, pageSize);
   const rows = await filtered()
     .select([
@@ -86,18 +103,18 @@ export async function getYesNoQuestionItems(
     .offset(offset)
     .execute();
   const items = rows.map(({ meta, prompt, ...row }) => {
-    const m = (meta ?? {}) as { moderation?: ModerationNote; rewordOf?: string };
+    const m = (meta ?? {}) as Record<string, unknown>;
     return {
       ...row,
       prompt: prompt ?? '',
-      moderation: m.moderation ?? null,
-      rewordOf: m.rewordOf ?? null,
+      retired: row.status === 'Closed' && row.reason === MODERATOR_RETIRED,
+      moderation: (m[MODERATION_META_KEY] as ModerationNote | undefined) ?? null,
+      rewordOf: (m[REWORD_OF_META_KEY] as string | undefined) ?? null,
     };
   });
   return { items, total, page };
 }
 
-/** Axes player yes/no questions fall under, for the filter. */
 export async function getYesNoAxes(): Promise<{ key: string; prompt: string }[]> {
   return dbWrite
     .selectFrom('KnightsQuestion')
@@ -108,36 +125,35 @@ export async function getYesNoAxes(): Promise<{ key: string; prompt: string }[]>
     .execute();
 }
 
-type Locked = {
-  id: number;
-  status: string;
-  reason: string | null;
-  voteCount: number;
-  externalId: string | null;
-  prompt: string | null;
-  meta: unknown;
-};
+const lockColumns = [
+  'id',
+  'status',
+  'reason',
+  'voteCount',
+  'externalId',
+  'prompt',
+  'meta',
+  'questionKey',
+  'imageId',
+  'source',
+  'minRank',
+  'votesNeeded',
+  'priority',
+  'audience',
+  'yesEffect',
+  'noEffect',
+] as const;
 
-/**
- * The row lock comes first, so a vote cannot land between the checks and the write; the vote path takes its own player lock,
- * then this row. Only the item row and its votes are touched here, never player rows.
- */
-async function lockItem(trx: Trx, id: number): Promise<Locked | undefined> {
+/** Locks the row before any check: a vote also takes it (after its player lock), so none can land between check and write. Never lock player rows here; that inverts the vote path's order. */
+async function lockItem(trx: Trx, id: number) {
   return trx
     .selectFrom('KnightsQueueItem')
-    .select(['id', 'status', 'reason', 'voteCount', 'externalId', 'prompt', 'meta'])
+    .select(lockColumns)
     .where('id', '=', id)
     .where('audience', '=', 'players')
     .forUpdate()
     .executeTakeFirst();
 }
-
-const moderation = (action: string, by: number, note: string, now: Date): ModerationNote => ({
-  action,
-  by,
-  note,
-  at: now.toISOString(),
-});
 
 function checkedNote(raw: string): { note: string } | { error: string } {
   const note = raw.trim();
@@ -151,13 +167,7 @@ function checkedPrompt(raw: string): { prompt: string } | { error: string } {
   return prompt.length > YESNO_QUESTION_MAX ? { error: TOO_LONG } : { prompt };
 }
 
-const mergeMeta = (patch: Record<string, unknown>) =>
-  sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`;
-
-/**
- * Closes an open question as `moderator-retired`. Its pending votes become inconclusive and the Knights tick pays them out like
- * any other close: voters lose only the pending gold.
- */
+/** Closes an open question as `moderator-retired`. Its pending votes become inconclusive; the Knights tick (`settleFinalItems`) settles them later, dropping their pending gold. */
 export async function retireYesNoQuestion(input: {
   id: number;
   by: number;
@@ -173,9 +183,13 @@ export async function retireYesNoQuestion(input: {
     if (item.status !== 'Open') {
       return { ok: false, error: 'Only an open question can be retired.' };
     }
-    await closeYesNoItemRow(trx, item.id, MODERATOR_RETIRED, now, {
-      moderation: moderation('retired', input.by, checked.note, now),
-    });
+    await closeYesNoItemRow(
+      trx,
+      item.id,
+      MODERATOR_RETIRED,
+      now,
+      moderationMeta('retired', input.by, checked.note, now)
+    );
     return { ok: true };
   });
 }
@@ -184,7 +198,6 @@ export async function retireYesNoQuestion(input: {
 export async function unretireYesNoQuestion(input: {
   id: number;
   by: number;
-  note?: string;
   now?: Date;
 }): Promise<Outcome> {
   const now = input.now ?? new Date();
@@ -204,9 +217,7 @@ export async function unretireYesNoQuestion(input: {
         reason: null,
         resolvedAt: null,
         updatedAt: sql<Date>`${now.toISOString()}::timestamp`,
-        meta: mergeMeta({
-          moderation: moderation('restored', input.by, input.note?.trim() ?? '', now),
-        }),
+        meta: mergeMeta(moderationMeta('restored', input.by, '', now)),
       })
       .where('id', '=', item.id)
       .execute();
@@ -215,8 +226,8 @@ export async function unretireYesNoQuestion(input: {
 }
 
 /**
- * Rewrites an open question. With no answers yet the prompt changes in place. Otherwise answers stay tied to the words they
- * answered: the old item is retired and a new open item carries the new words, as `<externalId>:r<n>`.
+ * Retires an open question and opens a new one with the new words, `<origin externalId>:r<n>`. Always a new item, even with no
+ * answers: label keys are per producer id, so an answer under a producer id must be an answer to the producer's wording.
  */
 export async function rewordYesNoQuestion(input: {
   id: number;
@@ -233,83 +244,72 @@ export async function rewordYesNoQuestion(input: {
   const now = input.now ?? new Date();
   const at = sql<Date>`${now.toISOString()}::timestamp`;
 
-  return dbWrite.transaction().execute(async (trx): Promise<Outcome> => {
-    const item = await lockItem(trx, input.id);
-    if (!item) return { ok: false, error: GONE };
-    if (item.status !== 'Open') {
-      return { ok: false, error: 'Only an open question can be reworded.' };
-    }
-    if (prompt === item.prompt) return { ok: false, error: 'That is already the question.' };
+  try {
+    return await dbWrite.transaction().execute(async (trx): Promise<Outcome> => {
+      const item = await lockItem(trx, input.id);
+      if (!item) return { ok: false, error: GONE };
+      if (item.status !== 'Open') {
+        return { ok: false, error: 'Only an open question can be reworded.' };
+      }
+      if (prompt === item.prompt) return { ok: false, error: 'That is already the question.' };
 
-    if (item.voteCount === 0) {
+      const { [MODERATION_META_KEY]: _previous, ...inherited } = (item.meta ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const origin =
+        (inherited[REWORD_OF_META_KEY] as string | undefined) ?? item.externalId ?? String(item.id);
+      const taken = await trx
+        .selectFrom('KnightsQueueItem')
+        .select('externalId')
+        .where('externalId', 'like', `${escapeLike(origin)}:r%`)
+        .execute();
+      const suffix = /^:r(\d+)$/;
+      const next =
+        1 +
+        Math.max(
+          0,
+          ...taken.map((t) =>
+            Number(suffix.exec((t.externalId ?? '').slice(origin.length))?.[1] ?? 0)
+          )
+        );
+      const externalId = `${origin}:r${next}`;
+
+      await closeYesNoItemRow(
+        trx,
+        item.id,
+        MODERATOR_RETIRED,
+        now,
+        moderationMeta('retired', input.by, `Reworded as ${externalId}: ${note.note}`, now)
+      );
       await trx
-        .updateTable('KnightsQueueItem')
-        .set({
+        .insertInto('KnightsQueueItem')
+        .values({
+          externalId,
+          questionKey: item.questionKey,
+          imageId: item.imageId,
+          source: item.source,
+          minRank: item.minRank,
+          votesNeeded: item.votesNeeded,
+          priority: item.priority,
+          expiresAt: null,
+          audience: item.audience,
           prompt,
+          yesEffect: item.yesEffect,
+          noEffect: item.noEffect,
+          meta: JSON.stringify({
+            ...inherited,
+            [REWORD_OF_META_KEY]: origin,
+            ...moderationMeta('reworded', input.by, note.note, now),
+          }),
+          createdAt: at,
           updatedAt: at,
-          meta: mergeMeta({ moderation: moderation('reworded', input.by, note.note, now) }),
         })
-        .where('id', '=', item.id)
         .execute();
       return { ok: true };
-    }
-
-    const base = item.externalId ?? String(item.id);
-    const taken = await trx
-      .selectFrom('KnightsQueueItem')
-      .select('externalId')
-      .where('externalId', 'like', `${base.replace(/[\\%_]/g, '\\$&')}:r%`)
-      .execute();
-    const used = taken.map((t) => /^:r(\d+)$/.exec((t.externalId ?? '').slice(base.length))?.[1]);
-    const next = Math.max(0, ...used.map((n) => Number(n ?? 0))) + 1;
-    const externalId = `${base}:r${next}`;
-
-    const original = await trx
-      .selectFrom('KnightsQueueItem')
-      .select([
-        'questionKey',
-        'imageId',
-        'source',
-        'minRank',
-        'votesNeeded',
-        'priority',
-        'audience',
-      ])
-      .select(['yesEffect', 'noEffect', 'meta'])
-      .where('id', '=', item.id)
-      .executeTakeFirstOrThrow();
-    const { moderation: _previous, ...inherited } = (original.meta ?? {}) as Record<
-      string,
-      unknown
-    >;
-
-    await closeYesNoItemRow(trx, item.id, MODERATOR_RETIRED, now, {
-      moderation: moderation('retired', input.by, `Reworded as ${externalId}: ${note.note}`, now),
     });
-    await trx
-      .insertInto('KnightsQueueItem')
-      .values({
-        externalId,
-        questionKey: original.questionKey,
-        imageId: original.imageId,
-        source: original.source,
-        minRank: original.minRank,
-        votesNeeded: original.votesNeeded,
-        priority: original.priority,
-        expiresAt: null,
-        audience: original.audience,
-        prompt,
-        yesEffect: original.yesEffect,
-        noEffect: original.noEffect,
-        meta: JSON.stringify({
-          ...inherited,
-          rewordOf: base,
-          moderation: moderation('reworded', input.by, note.note, now),
-        }),
-        createdAt: at,
-        updatedAt: at,
-      })
-      .execute();
-    return { ok: true };
-  });
+  } catch (error) {
+    if ((error as { code?: string }).code === UNIQUE_VIOLATION) return { ok: false, error: RACED };
+    throw error;
+  }
 }

@@ -31,13 +31,29 @@
     { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
     { value: 'questions', label: 'Questions', href: '?tab=questions' },
   ]);
-  const statuses = [
-    { value: 'open', label: 'Open' },
-    { value: 'closed', label: 'Closed' },
-    { value: 'all', label: 'All' },
-  ] as const;
-  const filterTo = (params: Record<string, string | null>) =>
-    goto(urlWith(page.url, { ...params, page: null }), { keepFocus: true, noScroll: true });
+  const statusLinks = $derived(
+    (
+      [
+        { value: 'open', label: 'Open' },
+        { value: 'closed', label: 'Closed' },
+        { value: 'all', label: 'All' },
+      ] as const
+    ).map((s) => ({
+      ...s,
+      href: urlWith(page.url, { status: s.value === 'open' ? null : s.value, page: null }),
+    }))
+  );
+  const ALL_AXES = 'all';
+  const axisLabel = $derived.by(() => {
+    const { axis } = data.questionQueue.filters;
+    if (!axis) return 'All axes';
+    return data.questionQueue.axes.find((a) => a.key === axis)?.label ?? `${axis} (unknown)`;
+  });
+  const pickAxis = (axis: string) =>
+    goto(urlWith(page.url, { axis: axis === ALL_AXES ? null : axis, page: null }), {
+      keepFocus: true,
+      noScroll: true,
+    });
   const nouns = {
     core: 'core images',
     fresh: 'fresh images',
@@ -194,35 +210,31 @@
 {:else if data.tab === 'questions'}
   <p class="mb-3 text-sm text-dark-2">
     The yes/no questions players are asked, one per image and question. Retire one that makes no sense
-    for its image, or reword it; players who already answered lose only their pending gold. Search by
-    image id or URL, or by words in the question.
+    for its image, or reword it (which retires it and opens a new question); answers already given
+    stay recorded, and pending ones become inconclusive and earn no gold. Search by image URL, by
+    image id or a number in the question, or by words in the question.
   </p>
   <div class="mb-3 flex flex-wrap items-center gap-2">
-    {#each statuses as s (s.value)}
-      <Button
-        size="sm"
-        variant={data.questions.filters.status === s.value ? 'default' : 'outline'}
-        onclick={() => filterTo({ status: s.value === 'open' ? null : s.value })}>{s.label}</Button
-      >
-    {/each}
-    <select
-      aria-label="Axis"
-      class="h-8 rounded-md border border-dark-4 bg-dark-6 px-2 text-sm"
-      value={data.questions.filters.axis}
-      onchange={(e) => filterTo({ axis: e.currentTarget.value || null })}
+    <LinkTabs items={statusLinks} active={data.questionQueue.filters.status} />
+    <Select.Root
+      type="single"
+      bind:value={() => data.questionQueue.filters.axis || ALL_AXES, pickAxis}
     >
-      <option value="">All axes</option>
-      {#each data.questions.axes as axis (axis.key)}
-        <option value={axis.key}>{axis.key.replace('knights.yesno.', '')}</option>
-      {/each}
-    </select>
+      <Select.Trigger aria-label="Axis" class="h-8 w-48">{axisLabel}</Select.Trigger>
+      <Select.Content>
+        <Select.Item value={ALL_AXES}>All axes</Select.Item>
+        {#each data.questionQueue.axes as axis (axis.key)}
+          <Select.Item value={axis.key}>{axis.label}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
   </div>
   {#key data.tab}<ListSearch {...searchProps} placeholder="Image id, image URL or question text" />{/key}
-  {#if data.questions.items.length === 0}
+  {#if data.questionQueue.items.length === 0}
     <p class="text-sm text-dark-2">{empty.questions}</p>
   {:else}
     <div class="flex flex-col gap-3">
-      {#each data.questions.items as item (item.id)}
+      {#each data.questionQueue.items as item (item.id)}
         <QuestionCard {item} />
       {/each}
     </div>

@@ -1,37 +1,63 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
-  import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
+  import { NOTE_MAX, YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import type { YesNoQuestionItem } from '$lib/server/knights/yesno-question.service';
 
   let { item }: { item: YesNoQuestionItem } = $props();
 
-  const NOTE_MAX = 500;
   const isOpen = $derived(item.status === 'Open');
-  const retired = $derived(item.status === 'Closed' && item.reason === 'moderator-retired');
+  const pending = $derived(
+    item.voteCount === 0
+      ? 'Nobody has answered it yet.'
+      : `Of its ${item.voteCount} ${item.voteCount === 1 ? 'answer' : 'answers'}, any still pending become inconclusive and earn no gold; answers already given stay recorded as data.`
+  );
 
   type Mode = 'retire' | 'reword' | null;
   let mode = $state<Mode>(null);
+  let confirming = $state<Mode>(null);
   let note = $state('');
   let ask = $state<string | null>(null);
+  let retireForm: HTMLFormElement | undefined = $state();
+  let rewordForm: HTMLFormElement | undefined = $state();
 
-  const done = (message: string) => () => {
+  const retire = new FormState({
+    reload: true,
+    reset: false,
+    onSuccess: () => finish('Question retired'),
+  });
+  const reword = new FormState({
+    reload: true,
+    reset: false,
+    onSuccess: () => finish('Question reworded'),
+  });
+  const restore = new FormState({ reload: true, onSuccess: () => toast.success('Question restored') });
+
+  function close() {
     mode = null;
     note = '';
     ask = null;
+    retire.error = null;
+    reword.error = null;
+  }
+  function finish(message: string) {
+    close();
     toast.success(message);
-  };
-  const retire = new FormState({ reload: true, reset: false, onSuccess: done('Question retired') });
-  const reword = new FormState({ reload: true, reset: false, onSuccess: done('Question reworded') });
-  const restore = new FormState({ reload: true, onSuccess: () => toast.success('Question restored') });
+  }
+  function confirmed() {
+    const form = confirming === 'retire' ? retireForm : rewordForm;
+    confirming = null;
+    form?.requestSubmit();
+  }
 </script>
 
 <article
@@ -73,64 +99,76 @@
     {#if mode === 'retire'}
       {#if retire.error}<ErrorAlert message={retire.error} />{/if}
       <form
+        bind:this={retireForm}
         method="POST"
         action="?/retireQuestion"
         use:enhance={retire.enhance}
         class="flex flex-col gap-2"
       >
         <input type="hidden" name="id" value={item.id} />
-        <Input
-          name="note"
-          required
-          maxlength={NOTE_MAX}
-          placeholder="Why retire it? e.g. watermark is illegible"
-          bind:value={note}
-        />
+        <label class="flex flex-col gap-1 text-xs text-dark-2">
+          Why retire it?
+          <Textarea
+            name="note"
+            rows={2}
+            required
+            maxlength={NOTE_MAX}
+            placeholder="e.g. the watermark is illegible"
+            bind:value={note}
+          />
+        </label>
         <p class="text-xs text-dark-2">
-          Players stop seeing it. Answers already given are marked inconclusive and cost the player only
-          their pending gold.
+          Players stop seeing it. Answers already given are kept as data; pending ones become
+          inconclusive and earn no gold.
         </p>
         <div class="flex gap-2">
           <Button
-            type="submit"
+            type="button"
             size="sm"
             variant="destructive"
-            disabled={retire.submitting || !note.trim()}>Retire</Button
+            disabled={retire.submitting || !note.trim()}
+            onclick={() => (confirming = 'retire')}>Retire</Button
           >
-          <Button type="button" size="sm" variant="ghost" onclick={() => (mode = null)}>Cancel</Button>
+          <Button type="button" size="sm" variant="ghost" onclick={close}>Cancel</Button>
         </div>
       </form>
     {:else if mode === 'reword'}
       {#if reword.error}<ErrorAlert message={reword.error} />{/if}
       <form
+        bind:this={rewordForm}
         method="POST"
         action="?/rewordQuestion"
         use:enhance={reword.enhance}
         class="flex flex-col gap-2"
       >
         <input type="hidden" name="id" value={item.id} />
-        <Input
-          name="prompt"
-          required
-          maxlength={YESNO_PROMPT_MAX}
-          value={ask ?? item.prompt}
-          oninput={(e) => (ask = e.currentTarget.value)}
-        />
-        <Input
-          name="note"
-          required
-          maxlength={NOTE_MAX}
-          placeholder="Why reword it?"
-          bind:value={note}
-        />
+        <label class="flex flex-col gap-1 text-xs text-dark-2">
+          New question
+          <Textarea
+            name="prompt"
+            rows={2}
+            required
+            maxlength={YESNO_PROMPT_MAX}
+            value={ask ?? item.prompt}
+            oninput={(e) => (ask = e.currentTarget.value)}
+          />
+        </label>
+        <label class="flex flex-col gap-1 text-xs text-dark-2">
+          Why reword it?
+          <Textarea name="note" rows={2} required maxlength={NOTE_MAX} bind:value={note} />
+        </label>
         <p class="text-xs text-dark-2">
-          {item.voteCount === 0
-            ? 'Nobody has answered it, so the words change in place.'
-            : 'Players have answered it, so this question is retired and a new one with the new words opens for the same image.'}
+          This question is retired and a new one with the new words opens for the same image. Answers
+          already given stay with this one.
         </p>
         <div class="flex gap-2">
-          <Button type="submit" size="sm" disabled={reword.submitting || !note.trim()}>Reword</Button>
-          <Button type="button" size="sm" variant="ghost" onclick={() => (mode = null)}>Cancel</Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={reword.submitting || !note.trim()}
+            onclick={() => (confirming = 'reword')}>Reword</Button
+          >
+          <Button type="button" size="sm" variant="ghost" onclick={close}>Cancel</Button>
         </div>
       </form>
     {:else}
@@ -138,7 +176,7 @@
         {#if isOpen}
           <Button size="sm" variant="outline" onclick={() => (mode = 'reword')}>Reword</Button>
           <Button size="sm" variant="outline" onclick={() => (mode = 'retire')}>Retire</Button>
-        {:else if retired}
+        {:else if item.retired}
           <form method="POST" action="?/unretireQuestion" use:enhance={restore.enhance}>
             <input type="hidden" name="id" value={item.id} />
             <Button
@@ -155,3 +193,27 @@
     {/if}
   </div>
 </article>
+
+<AlertDialog.Root bind:open={() => confirming !== null, (open) => !open && (confirming = null)}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title
+        >{confirming === 'reword' ? 'Reword this question?' : 'Retire this question?'}</AlertDialog.Title
+      >
+      <AlertDialog.Description>
+        {#if confirming === 'reword'}
+          This question is retired and a new one with the new words replaces it for image #{item.imageId}.
+        {:else}
+          Players stop seeing this question for image #{item.imageId}.
+        {/if}
+        {pending}
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+      <AlertDialog.Action variant="destructive" onclick={confirmed}
+        >{confirming === 'reword' ? 'Reword' : 'Retire'}</AlertDialog.Action
+      >
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
