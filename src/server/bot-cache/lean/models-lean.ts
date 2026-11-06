@@ -21,7 +21,28 @@ import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 import { BOT_LEAN_CHROME_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 import { expandHiddenPreferences } from '~/shared/hidden-preferences/compact';
 import { serializeJsonLd } from '@civitai/shared/json-ld';
-import { getDisplayName, removeTags, slugit } from '~/utils/string-helpers';
+import { getDisplayName, getInitials, removeTags, slugit } from '~/utils/string-helpers';
+import { getImageProps } from 'next/image';
+import dayjs from '~/shared/utils/dayjs';
+import { residencyLabel } from '~/components/ResourceLoad/ResourceResidency';
+import { howToUseModelHref } from '~/components/Model/HowToUseModel/HowToUseModel';
+import {
+  creatorCardStatsDefaults,
+  getDisplayedBaseModelLicense,
+  hasAdditionalLicensePermissions,
+  constants,
+} from '~/server/common/constants';
+import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { getPrimaryFile, groupFilesByVariant, resolveActiveFile } from '~/server/utils/model-helpers';
+import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
+import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
+import { inferTensorMetadataFormat } from '~/utils/model-tensor-metadata';
+import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
+import { abbreviateNumber, formatKBytes, numberWithCommas } from '~/utils/number-helpers';
+import { formatDate } from '~/utils/date-helpers';
+import { getRatingLabel } from '~/utils/rating-label';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 /**
  * The lean page for `/models/[id]/[[...slug]]` (`~/server/bot-cache/bot-lean`): what a crawler
@@ -75,24 +96,76 @@ function carouselImages(ssg: Ssg): CarouselImage[] | null {
   return (data?.pages ?? []).flatMap((page) => page.items ?? []);
 }
 
-/** Why the page is one this file does not draw, or `null` when it draws it. */
-function unsupported(model: Model, versions: Version[]) {
+type File = Version['files'][number];
+type Creator = {
+  id: number;
+  username: string | null;
+  image: string | null;
+  deletedAt: Date | null;
+  createdAt?: Date | null;
+  links?: { url: string; type: string }[];
+  stats?: Record<string, number | null> | null;
+  rank?: { leaderboardRank: number | null; leaderboardId: string; leaderboardTitle: string } | null;
+  publicSettings?: unknown;
+  cosmetics?: unknown[];
+  profilePicture?: unknown;
+};
+
+/** The model and version file sections this file draws: SafeTensor model files only. */
+function modelFiles(model: Model, version: Version) {
+  const visible = (version.files ?? []).filter((file) => file.visibility === 'Public');
+  const grouped = groupFilesByVariant(visible, model.type);
+  return { visible, grouped };
+}
+
+/** Whether the page is one this file does not draw, so the full render must answer. */
+function unsupported(model: Model, version: Version, versions: Version[], ctx: UnsupportedCtx) {
   const row = model as unknown as {
     poi?: boolean;
     mode?: string | null;
+    meta?: { showcaseCollectionId?: number } | null;
+    licenses?: unknown[];
+    reportStats?: { ownershipProcessing?: number } | null;
     user: { cosmetics?: unknown[]; profilePicture?: unknown };
   };
-  if (row.poi || row.mode) return true;
+  if (row.poi || row.mode || row.licenses?.length) return true;
+  if (row.reportStats?.ownershipProcessing) return true;
   if (row.user.cosmetics?.length || row.user.profilePicture) return true;
-  return versions.some((version) => {
-    const v = version as unknown as {
+  if (ctx.showcase) return true;
+  if (!ctx.creator || ctx.creator.cosmetics?.length || ctx.creator.profilePicture) return true;
+  if (!ctx.hasAccess) return true;
+  const earlyOrFlagged = versions.some((candidate) => {
+    const v = candidate as unknown as {
       earlyAccessDeadline?: Date | null;
       paidAccess?: unknown;
       inaccurate?: boolean;
     };
     return !!v.earlyAccessDeadline || !!v.paidAccess || !!v.inaccurate;
   });
+  if (earlyOrFlagged) return true;
+  const v = version as unknown as {
+    usageControl?: string | null;
+    trainingStatus?: unknown;
+    recommendedResources?: unknown[];
+    linkedComponents?: unknown[];
+    licensingFee?: number | null;
+  };
+  if (v.usageControl !== 'Download' || v.trainingStatus) return true;
+  if (v.recommendedResources?.length || v.linkedComponents?.length || v.licensingFee) return true;
+  const { visible, grouped } = modelFiles(model, version);
+  if (!grouped.safeTensorVariants.length) return true;
+  if (grouped.ggufVariants.length || grouped.otherFormatVariants.length) return true;
+  if (Object.keys(grouped.requiredComponents).length || grouped.optionalFiles.length) return true;
+  // `ModelFileAlert` warns about scans and negative/config files; not drawn here.
+  return visible.some(
+    (file) =>
+      file.type !== 'Model' ||
+      file.pickleScanResult !== 'Success' ||
+      file.virusScanResult !== 'Success'
+  );
 }
+
+type UnsupportedCtx = { showcase: unknown; creator: Creator | null; hasAccess: boolean };
 
 export async function renderModelDetailLean({
   req,
@@ -132,28 +205,373 @@ export async function renderModelDetailLean({
     verifiedBot: false,
   });
   if (state !== 'page') return { fallback: 'gated' };
-  if (unsupported(model, versions)) return { fallback: 'unsupported' };
-  const images = carouselImages(ssg);
-  if (!images) return { fallback: 'unsupported' };
 
+  // The page reads `?modelVersionId=`, falling back to the first published version.
   const requested = Number(query.modelVersionId);
   const selected = versions.find((version) => version.id === requested) ?? versions[0]!;
-  return { html: renderPage({ req, model, selected, versions, images, features }) };
+  const showcaseKey = ssg.model.getCollectionShowcase.queryOptions({ id }).queryKey;
+  const creatorKey = ssg.user.getCreator.queryOptions({ id: model.user.id }).queryKey;
+  const accessInput = { entityId: [selected.id], entityType: 'ModelVersion' as const };
+  const accessKey = ssg.common.getEntityAccess.queryOptions(accessInput).queryKey;
+  const access = readQuery<{ hasAccess?: boolean }[]>(ssg, accessKey).data;
+  const creator = readQuery<Creator>(ssg, creatorKey).data ?? null;
+  const ctx = {
+    showcase: readQuery(ssg, showcaseKey).data,
+    creator,
+    hasAccess: !!access?.[0]?.hasAccess,
+  };
+  if (unsupported(model, selected, versions, ctx) || !creator) return { fallback: 'unsupported' };
+  const images = carouselImages(ssg);
+  if (!images) return { fallback: 'unsupported' };
+  // A description with markup `RenderHtml` rewrites (links, mentions, media, embeds, styles).
+  const html = [model.description, selected.description].join('');
+  if (/<(a|img|iframe|edge-media|time|span|div)\b|style=/i.test(html)) return { fallback: 'unsupported' };
+
+  return { html: renderPage({ req, model, selected, versions, images, creator, features }) };
 }
 
-function renderPage({
-  req,
-  model,
-  selected,
-  images,
-}: {
+type PageArgs = {
   req: IncomingMessage;
   model: Model;
   selected: Version;
   versions: Version[];
   images: CarouselImage[];
+  creator: Creator;
   features: FeatureAccess;
-}) {
+};
+
+/** `AnimatedCount` → `CustomNumberFlow`: the formatted value, then one aria-hidden column per character. */
+const compactFormatter = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
+const fullFormatter = new Intl.NumberFormat('en-US');
+const DIGIT_STACK_TEXT = '0\n1\n2\n3\n4\n5\n6\n7\n8\n9';
+function count(value: number, abbreviate = true) {
+  const formatted = (abbreviate ? compactFormatter : fullFormatter).format(value);
+  const columns = [...formatted]
+    .map((char) => (/^[0-9]$/.test(char) ? DIGIT_STACK_TEXT : esc(char)))
+    .map((column) => `<span aria-hidden="true">${column}</span>`)
+    .join('');
+  return `<span><span>${esc(formatted)}</span>${columns}</span>`;
+}
+
+const p = (text: unknown) => `<p>${esc(text)}</p>`;
+const link = (href: string, inner: string, rel?: string) =>
+  `<a href="${esc(href)}"${attr('rel', rel)}>${inner}</a>`;
+
+/** The site header for a signed-out visitor (`AppHeader`). */
+function siteHeader(asPath: string) {
+  const nav: [string, string][] = [
+    ['/', 'home'],
+    ['/models', 'models'],
+    ['/images', 'images'],
+    ['/videos', 'videos'],
+    ['/articles', 'articles'],
+    ['/changelog', 'updates'],
+    ['/shop', 'shop'],
+  ];
+  return (
+    '<header>' +
+    link('/pricing?utm_campaign=support_pro', p('Pro')) +
+    p('Create') +
+    link(`/login?returnUrl=${asPath}`, p('Sign In'), 'nofollow') +
+    p('Create') +
+    nav.map(([href, label]) => link(href, p(label))).join('') +
+    p('More') +
+    '</header>'
+  );
+}
+
+/** The site footer (`AppFooter`). */
+function siteFooter() {
+  const social = ['discord', 'twitter', 'instagram', 'youtube', 'tiktok', 'reddit', 'github', 'twitch'];
+  const links: [string, string, string?][] = [
+    ['/content/tos', 'Terms of Service'],
+    ['/content/privacy', 'Privacy'],
+    ['/safety', 'Safety'],
+    ['https://developer.civitai.com/', 'API', 'nofollow'],
+    ['https://status.civitai.com', 'Status', 'nofollow'],
+    ['/issues', 'Known Issues'],
+    ['/creator-program', 'Creators'],
+    ['https://advertising.civitai.com', 'Advertise', 'nofollow'],
+  ];
+  return (
+    '<footer>' +
+    p(`© Civitai ${new Date().getFullYear()}`) +
+    links.map(([href, label, rel]) => link(href, p(label), rel)).join('') +
+    p('🛟 Support') +
+    social.map((name) => link(`/${name}`, '', 'nofollow')).join('') +
+    '</footer>'
+  );
+}
+
+/** The title row, stat badges, updated date, category and tags, and the version list. */
+function pageHeader({ model, versions, features }: PageArgs) {
+  const rank = model.rank;
+  const hiddenMetrics = (model as { hiddenMetrics?: Record<string, boolean> | null }).hiddenMetrics;
+  const generating = versions.find((version) => version.canGenerate);
+  const buzz =
+    (rank?.tippedAmountCountAllTime ?? 0) +
+    model.modelVersions.reduce((acc, version) => acc + (version.rank?.earnedAmountAllTime ?? 0), 0);
+  const stats = [
+    p(abbreviateNumber(rank?.thumbsUpCountAllTime ?? 0)),
+    hiddenMetrics?.downloads ? '' : p(abbreviateNumber(rank?.downloadCountAllTime ?? 0)),
+    generating && !hiddenMetrics?.generations
+      ? p(abbreviateNumber(rank?.generationCountAllTime ?? 0))
+      : '',
+    features.collections ? p(abbreviateNumber(rank?.collectedCountAllTime ?? 0)) : '',
+    !hiddenMetrics?.buzz ? p(abbreviateNumber(buzz)) : '',
+  ].join('');
+  // The page's own "What is this?" link, fixed.
+  const howTo = 'https://education.civitai.com/civitais-guide-to-resource-types/#models';
+  const tagHref = (name: string) => `/tag/${encodeURIComponent(name.toLowerCase())}`;
+  const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
+  const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map(({ tag }) => tag);
+  const TAG_LIMIT = 5;
+  const tagLinks = tags
+    .slice(0, TAG_LIMIT)
+    .map((tag) => link(tagHref(tag.name), p(tag.name)))
+    .join('');
+  const moreTags = tags.length > TAG_LIMIT ? `<button>+ ${tags.length - TAG_LIMIT}</button>` : '';
+  return (
+    `<h1>${esc(model.name)}</h1>` +
+    stats +
+    link(howTo, '', 'nofollow noreferrer') +
+    p(`Updated: ${formatDate(model.updatedAt)}`) +
+    (category ? link(tagHref(category.name), p(category.name)) : '') +
+    tagLinks +
+    moreTags +
+    versions.map((version) => `<button>${esc(version.name)}</button>`).join('')
+  );
+}
+
+/** `DownloadVariantDropdown`'s `VerifiedText` for a scanned-clean file. */
+function verified(file: File) {
+  const scanned = file.scannedAt ? dayjs(file.scannedAt).fromNow() : 'Scan requested';
+  return `<p>Verified:</p><a><abbr>${esc(scanned)}</abbr></a>`;
+}
+
+/** The download card (`ModelVersionDetails` → `DownloadVariantDropdown`), SafeTensor files only. */
+function downloadCard({ model, selected }: PageArgs) {
+  const { grouped } = modelFiles(model, selected);
+  const files = grouped.safeTensorVariants;
+  const best = getPrimaryFile(files, { metadata: undefined });
+  const active = resolveActiveFile(files, null, { metadata: undefined }) ?? files[0]!;
+  const url = (file: File) =>
+    createModelFileDownloadUrl({
+      versionId: selected.id,
+      fileId: file.id,
+      type: file.type,
+      meta: file.metadata,
+    });
+  const header = p('Download') + p(`${files.length} variant${files.length !== 1 ? 's' : ''} available`);
+  const summary = (file: File, bestMatch: boolean) => {
+    const label = getFileLabel(file);
+    const description = getFileDescription(file);
+    const title = [label, file.metadata?.format].filter(Boolean).join(' ') || file.name;
+    const detail = [description, formatKBytes(file.sizeKB)].filter(Boolean).join(' • ');
+    return (
+      p(title) +
+      (bestMatch ? p('Best match') : '') +
+      (label ? p(file.name) : '') +
+      p(detail) +
+      verified(file)
+    );
+  };
+  if (files.length === 1)
+    return (
+      header +
+      summary(active, false) +
+      link(url(active), `<p>Download (${esc(formatKBytes(active.sizeKB))})</p>`)
+    );
+  const row = (file: File) => {
+    const label = getFileLabel(file);
+    const description = getFileDescription(file);
+    return (
+      p(label ?? file.name) +
+      (file.id === best?.id ? p('Best match') : '') +
+      (label ? p(file.name) : '') +
+      (description ? p(description) : '') +
+      verified(file) +
+      p(formatKBytes(file.sizeKB)) +
+      link(url(file), '')
+    );
+  };
+  return (
+    header +
+    summary(active, active.id === best?.id) +
+    p('SafeTensor') +
+    files.map(row).join('') +
+    link(url(active), p('Download Selected'))
+  );
+}
+
+/** The "Details" accordion, "Tensors", and "About this version". */
+function versionDetails({ model, selected, features }: PageArgs) {
+  const rank = selected.rank;
+  const hidden = (selected as { hiddenMetrics?: Record<string, boolean> | null }).hiddenMetrics;
+  const canGenerate = !!features.imageGeneration && !!selected.canGenerate;
+  const earned = rank?.earnedAmountAllTime ?? 0;
+  const howTo = howToUseModelHref(model.type);
+  const typeRow =
+    p('Type') +
+    p(`${getDisplayName(model.type)} ${model.checkpointType ?? ''}`) +
+    (howTo ? link(howTo, '', 'nofollow noreferrer') : '');
+  const statsRow =
+    p('Stats') +
+    (hidden?.downloads ? '' : count(rank?.downloadCountAllTime ?? 0, false)) +
+    (canGenerate && !hidden?.generations ? count(rank?.generationCountAllTime ?? 0) : '') +
+    (earned && !hidden?.buzz ? count(earned) : '');
+  const up = rank?.thumbsUpCountAllTime ?? 0;
+  const total = up + (rank?.thumbsDownCountAllTime ?? 0);
+  const reviews = total
+    ? link(
+        `/models/${model.id}/reviews?modelVersionId=${selected.id}`,
+        p(getRatingLabel({ positiveRating: up / total, totalCount: total }).label)
+      ) + p(`(${numberWithCommas(total)})`)
+    : p('No reviews yet');
+  const published = selected.status === 'Published' && selected.publishedAt;
+  const ecosystem = getEcosystemSeoPageForKey(getBaseModelGroup(selected.baseModel));
+  const baseType =
+    selected.baseModelType && selected.baseModelType !== 'Standard' ? ` ${selected.baseModelType}` : '';
+  const baseModel = ecosystem
+    ? link(`/ecosystems/${ecosystem.slug}`, esc(selected.baseModel)) + esc(baseType)
+    : esc(`${selected.baseModel}${baseType}`);
+  const training =
+    selected.steps || selected.epochs
+      ? p('Training') +
+        (selected.steps ? p(`Steps: ${selected.steps.toLocaleString()}`) : '') +
+        (selected.epochs ? p(`Epochs: ${selected.epochs.toLocaleString()}`) : '')
+      : '';
+  const strength = (selected.settings as { strength?: number } | null | undefined)?.strength;
+  const hasClipSkip = selected.clipSkip !== null && selected.clipSkip !== undefined;
+  const tips =
+    hasClipSkip || strength !== undefined
+      ? p('Usage Tips') +
+        (hasClipSkip ? p(`Clip Skip: ${selected.clipSkip}`) : '') +
+        (strength !== undefined ? p(`Strength: ${strength}`) : '')
+      : '';
+  const { grouped } = modelFiles(model, selected);
+  const files = grouped.safeTensorVariants;
+  const active = resolveActiveFile(files, null, { metadata: undefined }) ?? files[0];
+  const hashes = active?.hashes ?? [];
+  const hash = hashes.find((h) => h.type === 'AutoV2') ?? hashes[0];
+  const hashRow = hash ? p('Hash') + p(hash.type) + p(hash.hash) : '';
+  const words = selected.trainedWords ?? [];
+  const WORD_LIMIT = 10;
+  const wordsRow = words.length
+    ? p('Trigger Words') +
+      words
+        .slice(0, WORD_LIMIT)
+        .map((word) => p(word))
+        .join('') +
+      (words.length > WORD_LIMIT ? p(`+${words.length - WORD_LIMIT} more`) : '')
+    : '';
+  const tensors = files.some((file) => inferTensorMetadataFormat(file)) ? p('Tensors') : '';
+  const description = selected.description
+    ? p('About this version') +
+      sanitizeHtml(selected.description) +
+      (removeTags(selected.description).length > 150 ? p('Show more') : '')
+    : '';
+  return (
+    p('Details') +
+    typeRow +
+    statsRow +
+    p('Reviews') +
+    reviews +
+    p(published ? 'Published' : 'Uploaded') +
+    p(formatDate(published ? selected.publishedAt : selected.createdAt)) +
+    p('Base Model') +
+    `<p>${baseModel}</p>` +
+    training +
+    tips +
+    hashRow +
+    wordsRow +
+    tensors +
+    description
+  );
+}
+
+const BADGE_IMAGE = getImageProps({ src: '/images/base-badge.png', alt: '', width: 32, height: 32 })
+  .props;
+
+/** `SmartCreatorCard` → `CreatorCardSimple`, with the `user.getCreator` prefetch. */
+function creatorCard(creator: Creator) {
+  const rank = creator.rank;
+  const rankBadge =
+    rank?.leaderboardRank && rank.leaderboardRank <= 100
+      ? link(`/leaderboard/${rank.leaderboardId}#${rank.leaderboardRank}`, p(`#${rank.leaderboardRank}`))
+      : '';
+  const settings = (creator.publicSettings ?? {}) as { creatorCardStatsPreferences?: string[] };
+  const display = new Set(settings.creatorCardStatsPreferences ?? creatorCardStatsDefaults);
+  const stats = creator.stats ?? {};
+  const values: [string, number | null | undefined][] = [
+    ['uploads', stats.uploadCountAllTime],
+    ['reactions', stats.reactionCountAllTime],
+    ['followers', stats.followerCountAllTime],
+    ['likes', stats.thumbsUpCountAllTime],
+    ['downloads', stats.downloadCountAllTime],
+    ['generations', stats.generationCountAllTime],
+  ];
+  const badge =
+    `<img src="${esc(BADGE_IMAGE.src)}" alt="" width="32" height="32"` +
+    `${attr('srcset', BADGE_IMAGE.srcSet)}>`;
+  const statBadges = creator.stats
+    ? values
+        .filter(([key, value]) => display.has(key) && value !== null && value !== undefined)
+        .map(([, value]) => badge + count(value ?? 0))
+        .join('')
+    : '';
+  const username = creator.username && !creator.deletedAt ? creator.username : null;
+  const avatar = creator.image
+    ? `<img src="${esc(getEdgeUrl(creator.image, { width: 96, optimized: true }))}"` +
+      `${attr('alt', username ? `${username}'s Avatar` : undefined)} loading="lazy">`
+    : p(username ? getInitials(username) : '');
+  const joined = creator.createdAt ? p(`Joined ${formatDate(creator.createdAt)}`) : '';
+  const inner = avatar + p(username ?? '[deleted]') + joined;
+  const profile = username ? new URL(`/user/${username}`, 'http://n').pathname : null;
+  const socials = (creator.links ?? [])
+    .map((social) => link(social.url, '', 'nofollow noreferrer'))
+    .join('');
+  return (
+    '<img src="/images/civitai-default-account-bg.png" alt="default creator card background decoration">' +
+    rankBadge +
+    statBadges +
+    (profile ? link(profile, inner) : inner) +
+    '<button>Follow</button>' +
+    socials
+  );
+}
+
+/** The license block under the creator card. */
+function licenseBlock({ model, selected }: PageArgs) {
+  const license = getDisplayedBaseModelLicense(selected.baseModel);
+  if (model.type !== 'Checkpoint' && !license) return '';
+  const addendum =
+    (constants.supportedBaseModelAddendums as readonly string[]).includes(selected.baseModel) &&
+    hasAdditionalLicensePermissions(model)
+      ? link(`/models/license/${selected.id}`, p('Addendum'))
+      : '';
+  const lines = (license?.lines ?? [])
+    .map(
+      (line) =>
+        (line.label ? p(line.label) : '') +
+        (line.url ? link(line.url, p(line.name), 'nofollow noreferrer') : p(line.name)) +
+        (line.suffix ? p(line.suffix) : '')
+    )
+    .join('');
+  return (
+    p('License:') +
+    lines +
+    addendum +
+    (license?.notice ? p(license.notice) : '') +
+    (license?.poweredBy ? p(license.poweredBy) : '')
+  );
+}
+
+function renderPage(args: PageArgs) {
+  const { req, model, selected, images, creator, features } = args;
   const baseUrl = env.NEXT_PUBLIC_BASE_URL ?? '';
   const host = (req.headers.host ?? '').toLowerCase();
   const canIndex = getAllServerHosts().includes(host);
@@ -198,9 +616,12 @@ function renderPage({
       },
     }),
   };
+  const categoryCrumb = category
+    ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }]
+    : [];
   const breadcrumb = buildBreadcrumbSchema(baseUrl, [
     { name: 'Models', path: '/models' },
-    ...(category ? [{ name: category.name, path: `/tag/${encodeURIComponent(category.name)}` }] : []),
+    ...categoryCrumb,
     { name: model.name },
   ]);
   const siteSchema = getSiteSchema({
@@ -221,6 +642,7 @@ function renderPage({
       `<meta property="og:description"${attr('content', description)}>` +
       `<meta property="twitter:description"${attr('content', description)}>`
     : '';
+  const canonical = resolveMetaHref(`/models/${model.id}/${slug}`, baseUrl);
 
   const head =
     `<meta charset="utf-8"><meta name="viewport" content="${esc(VIEWPORT_META_CONTENT)}">` +
@@ -237,11 +659,27 @@ function renderPage({
     `<meta property="og:image:height" content="630">` +
     `<meta property="twitter:image"${attr('content', ogImage)}>` +
     `<meta name="robots"${attr('content', robots)}>` +
-    `<link rel="canonical"${attr('href', resolveMetaHref(`/models/${model.id}/${slug}`, baseUrl))}>` +
+    `<link rel="canonical"${attr('href', canonical)}>` +
     `<link rel="alternate"${attr('href', resolveMetaHref(`/models/${model.id}`, baseUrl))}>` +
     jsonLd(schema) +
     jsonLd(breadcrumb);
 
-  const body = `<main><h1>${esc(model.name)}</h1></main>`;
+  const canGenerate = !!features.imageGeneration && !!selected.canGenerate;
+  const generate = canGenerate
+    ? p('Create') + p(residencyLabel(generatorReadiness(selected)))
+    : '';
+  const asPath = req.url ?? `/models/${model.id}/${slug}`;
+  const body =
+    siteHeader(asPath) +
+    '<main>' +
+    pageHeader(args) +
+    generate +
+    downloadCard(args) +
+    versionDetails(args) +
+    creatorCard(creator) +
+    licenseBlock(args) +
+    (model.description ? sanitizeHtml(model.description) : '') +
+    '</main>' +
+    siteFooter();
   return `<!DOCTYPE html><html lang="en"><head>${head}</head><body>${body}</body></html>`;
 }

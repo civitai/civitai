@@ -112,15 +112,17 @@ export function recordBotLeanShadow(route: BotCacheRouteName, result: ShadowResu
   }
 }
 
-function flagReader(flag: FLIPT_FEATURE_FLAGS) {
+// The key is read when the gate is, not at module load: suites that mock `~/server/flipt/client`
+// without the enum still import this file through `server-side-helpers`.
+function flagReader(flag: () => FLIPT_FEATURE_FLAGS) {
   return () => {
-    const on = isFliptSync(flag);
+    const on = isFliptSync(flag());
     if (on === null && !getFliptClientSync()) void ensureFliptInitialized().catch(() => undefined);
     return on;
   };
 }
-const readServe = flagReader(FLIPT_FEATURE_FLAGS.BOT_LEAN_RENDER);
-const readShadow = flagReader(FLIPT_FEATURE_FLAGS.BOT_LEAN_RENDER_SHADOW);
+const readServe = flagReader(() => FLIPT_FEATURE_FLAGS.BOT_LEAN_RENDER);
+const readShadow = flagReader(() => FLIPT_FEATURE_FLAGS.BOT_LEAN_RENDER_SHADOW);
 let serveGate = createCachedFlagGate(readServe);
 let shadowGate = createCachedFlagGate(readShadow);
 
@@ -158,7 +160,7 @@ function logBotLean(route: BotCacheRouteName, name: string, data: Record<string,
 
 function logBotLeanFailure(route: BotCacheRouteName, error: unknown) {
   void import('~/server/logging/client')
-    .then(({ safeError }) => logBotLean(route, 'bot-lean-render', safeError(error)))
+    .then(({ safeError }) => logBotLean(route, 'bot-lean-render', { ...safeError(error) }))
     .catch(() => undefined);
 }
 

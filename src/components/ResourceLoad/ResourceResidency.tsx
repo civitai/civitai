@@ -224,6 +224,11 @@ const RESIDENCY_BY_READINESS: Record<ResidencyReadiness, Residency> = {
   ready: READY,
 };
 
+/** The text `LoadedCornerBadge` shows for `readiness` (the bot lean page draws the same words). */
+export function residencyLabel(readiness: GeneratorReadiness) {
+  return RESIDENCY_BY_READINESS[readiness].label;
+}
+
 /** Top-left because `GenerateButton` owns the right corner for its price badge. */
 export function LoadedCornerBadge({ readiness }: { readiness: GeneratorReadiness }) {
   const residency = RESIDENCY_BY_READINESS[readiness];

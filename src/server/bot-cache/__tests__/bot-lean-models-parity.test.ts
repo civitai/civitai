@@ -113,6 +113,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         const queryClient = new RQ.QueryClient();
         const state = props.pageProps?.trpcState;
         if (state !== undefined) RQ.hydrate(queryClient, unionDeserialize(state));
+        // DEBUG (temporary): which keys the render was hydrated with.
+        (globalThis as { __leanHydrated?: string[] }).__leanHydrated = queryClient
+          .getQueryCache()
+          .getAll()
+          .map((q) => JSON.stringify(q.queryKey));
         return queryClient;
       });
       return createElement(
@@ -147,14 +152,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             return (input: unknown, { trpc: _trpc, ...rest }: Opts = {}) =>
               RQ.useQuery({ queryKey: keyOf(path, input, 'query'), queryFn: never, ...rest });
           if (key === 'useInfiniteQuery')
-            return (input: unknown, { trpc: _trpc, initialCursor, ...rest }: Opts = {}) =>
-              RQ.useInfiniteQuery({
+            return (input: unknown, { trpc: _trpc, initialCursor, ...rest }: Opts = {}) => {
+              // DEBUG (temporary): which infinite keys the tree asks for.
+              const g = globalThis as { __leanKeys?: string[] };
+              (g.__leanKeys ??= []).push(JSON.stringify(keyOf(path, input, 'infinite')));
+              return RQ.useInfiniteQuery({
                 queryKey: keyOf(path, input, 'infinite'),
                 queryFn: never,
                 initialPageParam: initialCursor ?? null,
                 getNextPageParam: () => undefined,
                 ...rest,
               } as never);
+            };
           if (key === 'useMutation' || key === 'useSuspenseQuery') return inert[key];
           return node([...path, key]);
         },
@@ -321,9 +330,13 @@ async function renderModel(fixture: ModelFixture, flags: { serve?: boolean; shad
   setFlags(flags);
   const req = makeReq(fixture.url, { headers: fixture.headers ?? {} });
   const res = makeSendingRes();
+  const g = globalThis as { __leanKeys?: string[]; __leanHydrated?: string[] };
+  g.__leanKeys = [];
+  g.__leanHydrated = [];
   const returned = await renderPage(MODEL_PAGE, req as never, res as never);
   const html = res.body ?? returned;
-  return { html, res, outcome: outcomeOf(html, res.statusCode), headers: res.getHeaders() };
+  const keys = { asked: g.__leanKeys, hydrated: g.__leanHydrated };
+  return { html, res, keys, outcome: outcomeOf(html, res.statusCode), headers: res.getHeaders() };
 }
 
 beforeAll(() => {
@@ -403,6 +416,7 @@ describe('bot lean render of /models/[id]: what a crawler reads is the full rend
     // The whole of both sides when anything differs: a CI log is the only place to read them.
     if (differs.length)
       console.log(`PARITY ${fixture.label}\n${JSON.stringify({ fullSeo, leanSeo }, null, 1)}`);
+    console.log(`KEYS ${fixture.label}\n${JSON.stringify(full.keys)}`);
     for (const field of Object.keys(fullSeo) as (keyof typeof fullSeo)[])
       expect.soft(leanSeo[field], field).toEqual(fullSeo[field]);
   });
