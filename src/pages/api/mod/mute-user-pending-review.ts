@@ -48,7 +48,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       updateSource: UPDATE_SOURCE,
     });
 
-    if (result.muted && !result.deduped) {
+    // A deduped claim on an account that was not muted mutes it now.
+    if (result.muted && (!result.deduped || !result.wasMuted)) {
       await trackModActivity(SYSTEM_ACTOR_ID, {
         entityType: 'user',
         entityId: userId,
