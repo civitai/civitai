@@ -591,8 +591,8 @@ describe('the advisory locks have exactly one call site', () => {
   // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
   // form) around the open-hold check and the hold write. The only lock in its transaction.
   // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
-  // count-then-insert and article saves' shared-text reads; never in the same transaction as
-  // another advisory lock.
+  // count-then-insert, article saves' shared-text reads and every go-live revoke. Always before the
+  // Article row lock; the ingestion recompute takes article.service.ts's bare id lock first, then it.
   // apps/storage-migration-run takes one per app block (0x41534d01, hashtext of the id) around the
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
   const ALLOWED = [

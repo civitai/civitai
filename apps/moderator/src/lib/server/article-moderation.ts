@@ -140,8 +140,23 @@ export function withContentLinkHold(
   return derived;
 }
 
+// The main app's share-link lock (`lockAccessTokens` in access-token.service.ts), taken before the
+// row lock as it is there, so a link being created waits for this transaction.
+const ACCESS_TOKEN_LOCK_CLASS = 0x41544b;
+
 async function restoreArticle(id: number): Promise<void> {
   const userId = await dbWrite.transaction().execute(async (trx): Promise<number> => {
+    // A share link made while it was unpublished must not read it again after a later unpublish.
+    await sql`SELECT pg_advisory_xact_lock(${ACCESS_TOKEN_LOCK_CLASS}::int, ${id}::int)`.execute(
+      trx
+    );
+    await trx
+      .updateTable('AccessToken')
+      .set({ revokedAt: new Date() })
+      .where('resourceType', '=', 'Article')
+      .where('resourceId', '=', id)
+      .where('revokedAt', 'is', null)
+      .execute();
     const article = await trx
       .selectFrom('Article')
       .select([

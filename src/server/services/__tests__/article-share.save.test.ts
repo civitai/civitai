@@ -19,6 +19,9 @@ vi.mock('~/server/services/text-scan/route', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanRoute>()),
   submitTextModerationOrScan: vi.fn(async () => ({ id: 'wf' })),
 }));
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   preventReplicationLag: vi.fn(async () => undefined),
@@ -36,6 +39,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 
 import {
   applyArticleContentChange,
+  recomputeArticleIngestion,
   unpublishArticleById,
   upsertArticle,
 } from '~/server/services/article.service';
@@ -67,6 +71,11 @@ const writtenSql = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
     .map(([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).sql)
     .find((sql) => sql.startsWith('UPDATE "Article" SET content'));
+
+const writtenStatus = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .map(([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).sql)
+    .find((sql) => sql.trim().startsWith('UPDATE "Article"')) ?? '';
 
 /** The check record as the submit left it: reset now, or untouched since an hour ago. */
 const checkRecord = (resetBySubmit: boolean) =>
@@ -371,6 +380,39 @@ describe('publishing a draft that has a share link', () => {
     expect(
       await getArticleByShareToken({ articleId: ARTICLE, shareToken: 'a'.repeat(43) })
     ).toEqual({ status: 'unavailable' });
+  });
+});
+
+describe('the scan settling on an article sent for processing', () => {
+  const settle = (status: ArticleStatus) => {
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.article.findUniqueOrThrow.mockResolvedValue({
+      ingestion: ArticleIngestionStatus.Pending,
+      status,
+      publishedAt: null,
+      userId: AUTHOR,
+      title: '',
+      content: '',
+      coverId: null,
+      moderatorNsfwLevel: null,
+    } as never);
+    return recomputeArticleIngestion(ARTICLE);
+  };
+  const revoked = () =>
+    dbMock.dbWrite.accessToken.updateMany.mock.calls.some(
+      ([args]) => (args as { where: { resourceId?: number } }).where.resourceId === ARTICLE
+    );
+
+  it('revokes its share links in the recompute that takes it live', async () => {
+    await settle(ArticleStatus.Processing);
+    expect(writtenStatus()).toContain('status =');
+    expect(revoked()).toBe(true);
+  });
+
+  it('leaves the links of a draft whose scan settles', async () => {
+    await settle(ArticleStatus.Draft);
+    expect(writtenStatus()).not.toContain('status =');
+    expect(revoked()).toBe(false);
   });
 });
 

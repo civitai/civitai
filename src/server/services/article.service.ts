@@ -2597,6 +2597,8 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
     const result = await dbWrite.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+        // Before the row lock below, in the order every share-link writer takes them.
+        await lockAccessTokens(tx, articleId);
 
         await updateArticleNsfwLevels([articleId], tx);
 
@@ -2749,6 +2751,8 @@ export async function recomputeArticleIngestionInTx(
   articleId: number
 ): Promise<RecomputeIngestionResult> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+  // Held to commit, so a share link cannot be made between the go-live revoke below and the flip.
+  await lockAccessTokens(tx, articleId);
 
   // --- Image side (content images + cover) ---
   //
@@ -2878,6 +2882,8 @@ export async function recomputeArticleIngestionInTx(
   if (flipToPublished) {
     setFragments.push(Prisma.sql`status = ${ArticleStatus.Published}::"ArticleStatus"`);
     setFragments.push(Prisma.sql`"publishedAt" = ${flipPublishedAt}`);
+    // A link made for the draft must not reopen it after a later unpublish.
+    await revokeActiveAccessTokens('Article', articleId, tx);
   }
   await tx.$executeRaw`
     UPDATE "Article"
