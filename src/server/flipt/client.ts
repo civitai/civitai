@@ -104,18 +104,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
-  // ON makes the internal image-delivery lookup call the `image_delivery_lookup(url)` SQL function
-  // instead of running the same statement inline (image-delivery.service.ts). Same row either way;
-  // the function is what lets another service read that answer from the database. Boolean,
-  // evaluated with no entityId, once per lookup that misses the cache.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
-  // key makes `evaluateBoolean` throw and log on every call.
-  //
-  // 🔴 DO NOT TURN IT ON in an environment until migration 20261106120000_image_delivery_lookup_fn is
-  // applied there AND the app's database roles hold EXECUTE on the function (it is revoked from
-  // PUBLIC). Otherwise every lookup errors on the replica and again on the primary.
-  IMAGE_DELIVERY_LOOKUP_FN = 'image-delivery-lookup-fn',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',

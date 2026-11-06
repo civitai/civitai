@@ -1,14 +1,11 @@
 -- image_delivery_lookup(url): the image-delivery row for one image url. The same rule the internal
--- image-delivery endpoint has applied inline (src/server/services/image-delivery.service.ts), kept in
--- ONE place so every caller that needs the answer reads the same one: the endpoint itself (behind the
--- `image-delivery-lookup-fn` flag) and any service granted EXECUTE on it.
+-- image-delivery endpoint applies inline (`imageDeliveryStatement` in
+-- src/server/services/image-delivery.service.ts), as a function a service can be granted EXECUTE on
+-- without any privilege on "Image". The two are pinned to the same rows by
+-- src/server/services/__tests__/image-delivery-lookup-fn.parity.pg.test.ts: change one, change both.
 --
 -- Apply this MANUALLY, per environment. We do not use `prisma migrate deploy` anywhere; this file
 -- exists for review and history. Re-runnable: CREATE OR REPLACE, and REVOKE/GRANT are idempotent.
---
--- 🔴 ORDER: apply it, and grant EXECUTE to the app's database roles, BEFORE the flag is turned on in
--- that environment. With the flag on and the function missing (or not granted), every image-delivery
--- lookup fails.
 --
 -- The rule, unchanged from the endpoint's statement:
 --   * the url matches EXACTLY (case- and whitespace-sensitive);

@@ -1,24 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Pool, type PoolClient } from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { dbMock } from '~/__tests__/mocks/db.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { imageDeliveryStatement } from '~/server/services/image-delivery.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { statementOf } from '~/test-utils/queryRawProjection';
 
-const flags = vi.hoisted(() => ({ fn: false }));
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/flipt/client')>()),
-  isFlipt: vi.fn(async (flag: string) => flag === 'image-delivery-lookup-fn' && flags.fn),
-}));
-
-import {
-  getCachedImageDeliveryMetadata,
-  imageDeliveryFunctionStatement,
-  imageDeliveryStatement,
-} from '~/server/services/image-delivery.service';
+// How a caller reads the row through the function: the same columns the inline statement selects.
+const imageDeliveryFunctionStatement = (url: string) =>
+  Prisma.sql`SELECT id, url, "hideMeta", type, "mimeType" FROM image_delivery_lookup(${url})`;
 
 /**
  * Parity gate for `image_delivery_lookup(url)`: the SQL function in migration
@@ -302,39 +292,6 @@ describe.skipIf(!adminUrl)(
 
         expect(inline).toStrictEqual(expected);
         expect(viaFunction).toStrictEqual(expected);
-      });
-    });
-
-    describe('the endpoint path, flag off and on', () => {
-      beforeEach(() => {
-        vi.clearAllMocks();
-        redisMock.redis.packed.get.mockResolvedValue(null);
-        redisMock.redis.packed.set.mockResolvedValue(undefined);
-        const query = (async (...call: unknown[]) => run(statementOf(call))) as never;
-        vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(query);
-        vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(query);
-      });
-
-      it.each<[string, boolean]>([
-        ['flag off: the inline statement', false],
-        ['flag on: the function', true],
-      ])('%s, same answers', async (_, on) => {
-        flags.fn = on;
-        const answers = await Promise.all(
-          [SHOWN_THEN_HIDDEN, NULL_MIME, GONE_SHOWN, UPPER_HEX].map(getCachedImageDeliveryMetadata)
-        );
-
-        const sent = vi
-          .mocked(dbMock.dbRead.$queryRaw)
-          .mock.calls.map((call) => statementOf(call).text);
-        expect(sent).toHaveLength(4);
-        for (const text of sent) expect(text.includes('image_delivery_lookup(')).toBe(on);
-        expect(answers).toStrictEqual([
-          { ...rowById(9304) },
-          { ...rowById(9311), mimeType: null },
-          null,
-          { ...rowById(9312) },
-        ]);
       });
     });
 
