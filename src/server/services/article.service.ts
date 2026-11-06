@@ -1963,7 +1963,7 @@ export async function unpublishArticleById({
       const unpublishedAt = new Date().toISOString();
 
       // Build updated metadata
-      const updatedMetadata = {
+      const updatedMetadata: ArticleMetadata = {
         ...metadata,
         ...(reason
           ? {
@@ -1974,6 +1974,9 @@ export async function unpublishArticleById({
         unpublishedAt,
         unpublishedBy: userId,
       };
+      // Only a Published article gets here, so a restore must publish it, whatever an earlier
+      // block recorded.
+      delete updatedMetadata.statusBeforeViolation;
 
       // An old share link must not reopen what a moderator took down.
       if (isModerator) await revokeActiveAccessTokens('Article', id, tx);

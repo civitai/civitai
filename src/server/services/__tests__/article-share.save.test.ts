@@ -470,6 +470,30 @@ describe('a moderator unpublishing an article', () => {
     );
   });
 
+  // A moderator may have published a blocked draft from the editor, keeping what the block
+  // recorded; the next restore must publish it, not return it to its author.
+  it('drops the status an earlier block recorded', async () => {
+    await unpublishArticleById({
+      id: ARTICLE,
+      userId: 99,
+      isModerator: true,
+      reason: 'other',
+      metadata: { theme: 'x', statusBeforeViolation: 'Draft' },
+    });
+    expect(dbMock.dbWrite.article.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.not.objectContaining({ statusBeforeViolation: expect.anything() }),
+        }),
+      })
+    );
+    expect(
+      (
+        dbMock.dbWrite.article.update.mock.calls[0] as unknown as [{ data: { metadata: object } }]
+      )[0].data.metadata
+    ).toMatchObject({ theme: 'x', unpublishedReason: 'other' });
+  });
+
   it('leaves them when the author unpublishes it', async () => {
     await unpublishArticleById({ id: ARTICLE, userId: AUTHOR });
     expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
