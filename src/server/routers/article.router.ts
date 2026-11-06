@@ -125,11 +125,12 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => revokeArticleShareLink({ ...input, userId: ctx.user.id })),
+  // A mutation only for its transport: POST keeps the token out of URLs and every cache.
   getShared: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getSharedArticleSchema)
     .use(rateLimit(articleShareTokenRateLimits))
-    .query(({ input, ctx }) => getArticleByShareToken({ ...input, viewerId: ctx.user?.id })),
+    .mutation(({ input, ctx }) => getArticleByShareToken({ ...input, viewerId: ctx.user?.id })),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)

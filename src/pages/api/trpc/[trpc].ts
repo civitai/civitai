@@ -223,13 +223,14 @@ const trpcHandler = createNextApiHandler({
           if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
             axInput = LOGGED_INPUT_OVER_LIMIT;
           } else {
-            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Bearer fields (`blockToken`, `shareToken`) are replaced, key kept — see redactBlockTokens.
             // Stringify first and redact only when the key appears, so only an input that carries
             // one is serialized twice.
             const raw = JSON.stringify(input);
-            axInput = raw?.includes('"blockToken"')
-              ? JSON.stringify(redactBlockTokens(input))
-              : raw;
+            axInput =
+              raw?.includes('"blockToken"') || raw?.includes('"shareToken"')
+                ? JSON.stringify(redactBlockTokens(input))
+                : raw;
           }
         } catch {
           axInput = undefined;

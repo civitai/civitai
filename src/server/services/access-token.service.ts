@@ -1,5 +1,8 @@
+import type { Prisma } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
 import { dbWrite } from '~/server/db/client';
+
+type Db = Prisma.TransactionClient | typeof dbWrite;
 
 export type AccessTokenResourceType = 'Article';
 
@@ -48,6 +51,14 @@ export class AccessTokenLimitError extends Error {}
 const ACCESS_TOKEN_LOCK_CLASS = 0x41544b; // 'ATK'
 
 /**
+ * Serialises token creation against a writer that must know whether the resource is shared at
+ * the moment it writes: whichever commits first, the other sees its result.
+ */
+export async function lockAccessTokens(tx: Prisma.TransactionClient, resourceId: number) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ACCESS_TOKEN_LOCK_CLASS}::int, ${resourceId}::int)`;
+}
+
+/**
  * The raw token is returned once and never stored. `maxActive` is enforced under a per-resource
  * lock, so two concurrent creates cannot both take the last slot.
  */
@@ -66,7 +77,7 @@ export async function createAccessToken({
 }) {
   const token = randomBytes(32).toString('base64url');
   const row = await dbWrite.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ACCESS_TOKEN_LOCK_CLASS}::int, ${resourceId}::int)`;
+    await lockAccessTokens(tx, resourceId);
     const active = await tx.accessToken.count({
       where: { resourceType, resourceId, ...activeWhere() },
     });
@@ -108,10 +119,11 @@ export async function getActiveAccessTokens(
 /** The ids, of those given, that have at least one token still granting access. */
 export async function getResourceIdsWithActiveAccessTokens(
   resourceType: AccessTokenResourceType,
-  resourceIds: number[]
+  resourceIds: number[],
+  db: Db = dbWrite
 ): Promise<Set<number>> {
   if (!resourceIds.length) return new Set();
-  const rows = await dbWrite.accessToken.findMany({
+  const rows = await db.accessToken.findMany({
     where: { resourceType, resourceId: { in: resourceIds }, ...activeWhere() },
     select: { resourceId: true, resourceType: true, expiresAt: true, revokedAt: true },
   });
@@ -126,6 +138,17 @@ export async function getAccessTokenById(id: number) {
 export async function revokeAccessToken(id: number) {
   await dbWrite.accessToken.updateMany({
     where: { id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+}
+
+export async function revokeActiveAccessTokens(
+  resourceType: AccessTokenResourceType,
+  resourceId: number,
+  db: Db = dbWrite
+) {
+  await db.accessToken.updateMany({
+    where: { resourceType, resourceId, revokedAt: null },
     data: { revokedAt: new Date() },
   });
 }

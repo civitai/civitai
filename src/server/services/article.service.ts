@@ -39,7 +39,11 @@ import type {
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
-import { getResourceIdsWithActiveAccessTokens } from '~/server/services/access-token.service';
+import {
+  getResourceIdsWithActiveAccessTokens,
+  lockAccessTokens,
+  revokeActiveAccessTokens,
+} from '~/server/services/access-token.service';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
@@ -1275,10 +1279,19 @@ export const upsertArticle = async ({
       ? { id, status: { not: ArticleStatus.UnpublishedViolation } }
       : { id };
     const result = await dbWrite.$transaction(async (tx) => {
+      // A shared draft leaves Scanned in the same write that changes its text; the lock keeps a
+      // link being created meanwhile from missing it.
+      await lockAccessTokens(tx, id as number);
+      const sharedSave = await isSharedArticle(
+        id as number,
+        (data.status as ArticleStatus | undefined) ?? (article.status as ArticleStatus),
+        tx
+      );
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
+          ...(sharedSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           metadata: { ...prevMetadata, ...data.metadata },
           publishedAt,
@@ -1496,10 +1509,17 @@ export async function applyArticleContentChange({
     // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
-    const affected =
-      await dbWrite.$executeRaw`UPDATE "Article" SET content = ${content} WHERE id = ${id}${
+    // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
+    // draft leaves Scanned in the same statement that changes its text.
+    const affected = await dbWrite.$transaction(async (tx) => {
+      await lockAccessTokens(tx, id);
+      const shared = await isSharedArticle(id, publication.status, tx);
+      return tx.$executeRaw`UPDATE "Article" SET content = ${content}${
+        shared ? Prisma.sql`, ingestion = 'Rescan'::"ArticleIngestionStatus"` : Prisma.empty
+      } WHERE id = ${id}${
         expectedContent === undefined ? Prisma.empty : Prisma.sql` AND content = ${expectedContent}`
       }`;
+    });
     if (expectedContent !== undefined && !affected) return false;
   }
 
@@ -1576,16 +1596,23 @@ export async function applyArticleContentChange({
     const currentTitle = title ?? '';
     const hasText = articleHasText(currentTitle, content);
     // Only asked when it can change the answer.
-    const shared =
-      !isPublicArticle(publication) &&
-      isShareableArticleStatus(publication.status) &&
-      (await getResourceIdsWithActiveAccessTokens('Article', [id])).has(id);
+    const shared = !isPublicArticle(publication) && (await isSharedArticle(id, publication.status));
 
     if (!hasText) {
       await dbWrite.entityModeration.deleteMany({
         where: { entityType: 'Article', entityId: id },
       });
-    } else if (isPublicArticle(publication, shared)) {
+    } else if (shared) {
+      // Its link holders see this text as soon as it passes, so a check that cannot be shown to
+      // have started withdraws the links instead.
+      const checked = await submitSharedArticleText({ id, title: currentTitle, content }).catch(
+        (e) => {
+          handleLogError(e as Error, 'article-share-check', { articleId: id });
+          return false;
+        }
+      );
+      if (!checked) await revokeActiveAccessTokens('Article', id);
+    } else if (isPublicArticle(publication)) {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
       const submitted = submitTextModerationOrScan({
@@ -1608,9 +1635,8 @@ export async function applyArticleContentChange({
           articleId: id,
         }).catch();
       });
-      // Otherwise the recompute below can count a verdict for older text and take it live. A
-      // shared draft is live to its link holders, so it waits too.
-      if (articleAwaitsTextVerdict(publication) || shared) await submitted;
+      // Otherwise the recompute below can count a verdict for older text and take it live.
+      if (articleAwaitsTextVerdict(publication)) await submitted;
     }
   }
 
@@ -1924,6 +1950,9 @@ export async function unpublishArticleById({
         unpublishedAt,
         unpublishedBy: userId,
       };
+
+      // An old share link must not reopen what a moderator took down.
+      if (isModerator) await revokeActiveAccessTokens('Article', id, tx);
 
       // Update article status and metadata
       return await tx.article.update({
@@ -2396,7 +2425,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   };
   textModeration: ArticleTextModerationStatus;
 }> {
-  const [connections, article, moderation, sharedIds] = await Promise.all([
+  const [connections, article, moderation] = await Promise.all([
     dbRead.imageConnection.findMany({
       where: {
         entityId: id,
@@ -2423,8 +2452,8 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
       select: { status: true, blocked: true, retryCount: true, updatedAt: true },
     }),
-    getResourceIdsWithActiveAccessTokens('Article', [id]),
   ]);
+  const shared = !!article && (await isSharedArticle(id, article.status));
 
   // Cover lives on `Article.coverId`, not in `ImageConnection`, so a cover-only
   // problem (no content images) would otherwise render nothing. Fold it into the
@@ -2466,7 +2495,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     moderation?.status === EntityModerationStatus.Succeeded && !!moderation.blocked;
   const required =
     !!article &&
-    (isPublicArticle(article, sharedIds.has(id)) || textBlocked) &&
+    (isPublicArticle(article, shared) || textBlocked) &&
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
@@ -2563,6 +2592,58 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
  * must also be treated as "textDone" by the state machine, otherwise the article
  * gets trapped in Pending waiting for a moderation callback that will never come.
  */
+/** Draft or Unpublished with a share link that still grants access. */
+export async function isSharedArticle(
+  id: number,
+  status: ArticleStatus,
+  db: Prisma.TransactionClient | typeof dbWrite = dbWrite
+) {
+  return (
+    isShareableArticleStatus(status) &&
+    (await getResourceIdsWithActiveAccessTokens('Article', [id], db)).has(id)
+  );
+}
+
+/**
+ * A shared draft passes the same content checks as a published article before it can be viewed.
+ * Sends its current text for a fresh check, and returns false unless the check record was reset
+ * by this call: a check that did not start must not leave an earlier result standing for this
+ * text. Throws when the submit does.
+ */
+export async function submitSharedArticleText({
+  id,
+  title,
+  content,
+}: {
+  id: number;
+  title: string | null;
+  content: string | null;
+}): Promise<boolean> {
+  if (!articleHasText(title, content)) return true;
+  const startedAt = new Date();
+  const text = [title, removeTags(content ?? '')].filter(Boolean).join(' ');
+  await submitTextModerationOrScan({
+    entityType: 'Article',
+    entityId: id,
+    force: true,
+    xguard: () =>
+      submitTextModeration({
+        entityType: 'Article',
+        entityId: id,
+        content: text,
+        labels: ['nsfw'],
+        recordForReview: true,
+        forceRescan: true,
+        rearmRetries: true,
+      }),
+  });
+  const row = await dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+    select: { updatedAt: true },
+  });
+  return !!row && row.updatedAt >= startedAt;
+}
+
 export function articleHasText(title: string | null, content: string | null): boolean {
   const titleText = title?.trim() ?? '';
   const contentText = removeTags(content ?? '').trim();
@@ -3047,8 +3128,10 @@ export async function rescanArticle({
   // `createXGuardModerationRequest` so a moderator-initiated rescan
   // produces a new orchestrator workflow even when the article's text
   // is unchanged.
-  const sharedIds = await getResourceIdsWithActiveAccessTokens('Article', [id]);
-  if (article.content && isPublicArticle(article, sharedIds.has(id))) {
+  if (
+    article.content &&
+    (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
+  ) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
       .join(' ');

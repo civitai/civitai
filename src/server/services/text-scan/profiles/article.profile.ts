@@ -1,7 +1,10 @@
 import { dbWrite } from '~/server/db/client';
 import { getResourceIdsWithActiveAccessTokens } from '~/server/services/access-token.service';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
-import { isPublicArticle } from '~/server/services/text-scan/public-content';
+import {
+  isPublicArticle,
+  isShareableArticleStatus,
+} from '~/server/services/text-scan/public-content';
 import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
@@ -22,7 +25,7 @@ registerTextScanProfile({
     });
     const shared = await getResourceIdsWithActiveAccessTokens(
       'Article',
-      rows.map((a) => a.id)
+      rows.filter((a) => isShareableArticleStatus(a.status)).map((a) => a.id)
     );
     return new Map(
       rows.map((a) => [

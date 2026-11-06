@@ -16,6 +16,9 @@
  */
 export const REDACTED_BLOCK_TOKEN = '[redacted]';
 
+/** Input keys that carry a bearer credential: a block token, or an article share token. */
+export const BEARER_KEYS: ReadonlySet<string> = new Set(['blockToken', 'shareToken']);
+
 export function redactBlockTokens<T>(input: T): T {
   return redact(input) as T;
 }
@@ -40,7 +43,7 @@ function redact(value: unknown): unknown {
 
   let out: Record<string, unknown> | undefined;
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    const next = key === 'blockToken' && child != null ? REDACTED_BLOCK_TOKEN : redact(child);
+    const next = BEARER_KEYS.has(key) && child != null ? REDACTED_BLOCK_TOKEN : redact(child);
     if (next !== child) {
       out ??= { ...(value as Record<string, unknown>) };
       out[key] = next;

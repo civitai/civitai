@@ -24,7 +24,13 @@ import {
   revokeArticleShareLink,
 } from '~/server/services/article-share.service';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
-import { ArticleIngestionStatus, ArticleStatus } from '~/shared/utils/prisma/enums';
+import { updateArticleImageScanStatus } from '~/server/services/article.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  ArticleIngestionStatus,
+  ArticleStatus,
+  EntityModerationStatus,
+} from '~/shared/utils/prisma/enums';
 
 const AUTHOR = 10;
 const STRANGER = 20;
@@ -75,12 +81,22 @@ const articles = (over: ArticleOver = {}) => {
   }) => base(where.id)) as never);
 };
 
-const read = () => getArticleByShareToken({ token: TOKEN });
+const read = (viewerId?: number) => getArticleByShareToken({ shareToken: TOKEN, viewerId });
+
+/** The text check as the read and the share create see it. */
+const textCheck = (over: Record<string, unknown> = {}) =>
+  dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+    status: EntityModerationStatus.Succeeded,
+    blocked: false,
+    updatedAt: new Date(Date.now() + 1000),
+    ...over,
+  } as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(tokenRow() as never);
   articles();
+  textCheck();
 });
 
 describe('getArticleByShareToken', () => {
@@ -154,6 +170,68 @@ describe('getArticleByShareToken', () => {
   });
 });
 
+describe('getArticleByShareToken: the text check', () => {
+  it.each([
+    ['still pending', { status: EntityModerationStatus.Pending }, 'checking'],
+    ['missing', null, 'checking'],
+    ['failed', { status: EntityModerationStatus.Failed }, 'unavailable'],
+    ['blocked', { blocked: true }, 'unavailable'],
+  ])(
+    'does not show text whose check is %s, even when ingestion reads Scanned',
+    async (_, check, status) => {
+      if (check === null) dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null);
+      else textCheck(check);
+      expect(await read()).toEqual({ status });
+    }
+  );
+
+  it('needs no text check for an article with no text', async () => {
+    articles({ title: '', content: null });
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null);
+    expect((await read()).status).toBe('ok');
+  });
+});
+
+describe('getArticleByShareToken: cover and viewer', () => {
+  const cover = (over: Record<string, unknown>) => ({
+    id: 5,
+    url: 'u',
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    meta: null,
+    metadata: null,
+    tags: [],
+    ...over,
+  });
+
+  it.each([
+    ['not scanned', { ingestion: 'Pending' }, false],
+    ['awaiting review', { needsReview: 'minor' }, false],
+    ['scanned and clear', {}, true],
+  ])('shows a cover that is %s: %s', async (_, over, shown) => {
+    articles({ coverImage: cover(over) });
+    const result = await read();
+    expect(result.status === 'ok' && !!result.article.coverImage).toBe(shown);
+  });
+
+  it('refuses a signed-in viewer the author has blocked', async () => {
+    vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
+    expect(await read(STRANGER)).toEqual({ status: 'unavailable' });
+  });
+
+  it('shows the draft to a signed-in viewer the author has not blocked', async () => {
+    expect((await read(STRANGER)).status).toBe('ok');
+  });
+
+  it('never hands the author account state to the viewer', async () => {
+    const result = await read();
+    expect(result.status === 'ok' && Object.keys(result.article.user)).not.toEqual(
+      expect.arrayContaining(['bannedAt'])
+    );
+  });
+});
+
 describe('createArticleShareLink', () => {
   const create = (userId = AUTHOR) =>
     createArticleShareLink({ articleId: ARTICLE, expiresInDays: 7, userId });
@@ -172,7 +250,18 @@ describe('createArticleShareLink', () => {
     const stored = dbMock.dbWrite.accessToken.create.mock.calls[0][0].data;
     expect(stored.tokenHash).toBe(hashAccessToken(token));
     expect(JSON.stringify(stored)).not.toContain(token);
-    expect(submitTextModerationOrScan).toHaveBeenCalledTimes(1);
+    expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: ARTICLE, force: true })
+    );
+    expect(updateArticleImageScanStatus).toHaveBeenCalledWith([ARTICLE]);
+  });
+
+  it('withdraws the link when the check record was not reset by the submit', async () => {
+    textCheck({ updatedAt: new Date(Date.now() - DAY) });
+    await expect(create()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 7, revokedAt: null } })
+    );
   });
 
   it('refuses someone who does not own the article', async () => {
@@ -214,6 +303,12 @@ describe('revokeArticleShareLink', () => {
       code: 'NOT_FOUND',
     });
     expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('lets the current owner revoke a link someone else made', async () => {
+    dbMock.dbWrite.accessToken.findUnique.mockResolvedValue(tokenRow({ createdById: 99 }) as never);
+    await revokeArticleShareLink({ id: 7, userId: AUTHOR });
+    expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalled();
   });
 
   it('lets the author revoke whatever state the article is in', async () => {

@@ -177,7 +177,7 @@ describe('rated-entity profiles', () => {
           scheduledAt: null,
         },
       ]);
-      dbMock.dbWrite.accessToken.findMany.mockResolvedValueOnce([
+      dbMock.dbWrite.accessToken.findMany.mockResolvedValue([
         { resourceId: 1, resourceType: 'Article', ...link },
       ] as never);
       expect(Boolean((await load('Article')).notPublic)).toBe(notPublic);

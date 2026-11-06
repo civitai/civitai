@@ -11,10 +11,12 @@ import {
   resolveAccessToken,
   revokeAccessToken,
 } from '~/server/services/access-token.service';
-import { articleHasText, updateArticleImageScanStatus } from '~/server/services/article.service';
-import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  articleHasText,
+  submitSharedArticleText,
+  updateArticleImageScanStatus,
+} from '~/server/services/article.service';
 import { isShareableArticleStatus } from '~/server/services/text-scan/public-content';
-import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import {
@@ -23,8 +25,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { NsfwLevel } from '~/server/common/enums';
-import { ArticleIngestionStatus, ArticleStatus } from '~/shared/utils/prisma/enums';
-import { getArticleUrl, removeTags } from '~/utils/string-helpers';
+import {
+  ArticleIngestionStatus,
+  ArticleStatus,
+  EntityModerationStatus,
+} from '~/shared/utils/prisma/enums';
+import { getArticleUrl } from '~/utils/string-helpers';
 
 export const ARTICLE_SHARE_MAX_ACTIVE = 5;
 
@@ -39,31 +45,17 @@ async function getOwnArticle(articleId: number, userId: number) {
 }
 
 /**
- * Sends the article's current text for the same checks a published article gets, then
- * recomputes its ingestion. Until that verdict is in, ingestion is not Scanned and the shared
- * read answers "still being checked". Throws when the text could not be sent.
+ * Sends the article's current text for a fresh check, then recomputes its ingestion. Until that
+ * check passes, the shared read answers "still being checked". Throws when the check could not be
+ * shown to have started.
  */
 async function checkSharedArticle(articleId: number) {
   const article = await dbWrite.article.findUnique({
     where: { id: articleId },
     select: { title: true, content: true },
   });
-  if (article && articleHasText(article.title, article.content)) {
-    const content = [article.title, removeTags(article.content ?? '')].filter(Boolean).join(' ');
-    await submitTextModerationOrScan({
-      entityType: 'Article',
-      entityId: articleId,
-      xguard: () =>
-        submitTextModeration({
-          entityType: 'Article',
-          entityId: articleId,
-          content,
-          labels: ['nsfw'],
-          recordForReview: true,
-          rearmRetries: true,
-        }),
-    });
-  }
+  if (article && !(await submitSharedArticleText({ id: articleId, ...article })))
+    throw new Error('The share check did not start');
   await updateArticleImageScanStatus([articleId]);
 }
 
@@ -142,7 +134,7 @@ export type SharedArticleResult =
   | { status: 'published'; url: string }
   | { status: 'ok'; article: SharedArticle };
 
-export type SharedArticle = NonNullable<Awaited<ReturnType<typeof loadSharedArticle>>>;
+export type SharedArticle = ReturnType<typeof toSharedArticle>;
 
 const UNAVAILABLE = { status: 'unavailable' } as const;
 
@@ -151,26 +143,17 @@ const UNAVAILABLE = { status: 'unavailable' } as const;
  * else: the token never reaches `getById` or the session.
  */
 export async function getArticleByShareToken({
-  token,
+  shareToken,
   viewerId,
 }: {
-  token: string;
+  shareToken: string;
   viewerId?: number;
 }): Promise<SharedArticleResult> {
-  const row = await resolveAccessToken(token, 'Article');
+  const row = await resolveAccessToken(shareToken, 'Article');
   if (!row) return UNAVAILABLE;
 
-  const article = await dbWrite.article.findUnique({
-    where: { id: row.resourceId },
-    select: {
-      id: true,
-      title: true,
-      userId: true,
-      status: true,
-      ingestion: true,
-      user: { select: { bannedAt: true, muted: true, deletedAt: true } },
-    },
-  });
+  // One read, so the text shown is the text whose state was checked.
+  const article = await readSharedArticle(row.resourceId);
   if (!article) return UNAVAILABLE;
   // A link outlives nothing about its author: a transferred article, or a banned, muted or
   // deleted author, ends it.
@@ -190,12 +173,24 @@ export async function getArticleByShareToken({
     return settling ? { status: 'checking' } : UNAVAILABLE;
   }
 
-  const shared = await loadSharedArticle(article.id);
-  return shared ? { status: 'ok', article: shared } : UNAVAILABLE;
+  // Ingestion alone is not enough: a rating override can mark it Scanned with no text verdict.
+  if (articleHasText(article.title, article.content)) {
+    const check = await dbWrite.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Article', entityId: article.id } },
+      select: { status: true, blocked: true },
+    });
+    if (check?.blocked) return UNAVAILABLE;
+    if (check?.status !== EntityModerationStatus.Succeeded) {
+      const settling = !check || check.status === EntityModerationStatus.Pending;
+      return settling ? { status: 'checking' } : UNAVAILABLE;
+    }
+  }
+
+  return { status: 'ok', article: toSharedArticle(article) };
 }
 
-async function loadSharedArticle(id: number) {
-  const article = await dbWrite.article.findUnique({
+function readSharedArticle(id: number) {
+  return dbWrite.article.findUnique({
     where: { id },
     select: {
       id: true,
@@ -203,18 +198,27 @@ async function loadSharedArticle(id: number) {
       content: true,
       nsfwLevel: true,
       updatedAt: true,
-      user: { select: userWithCosmeticsSelect },
+      userId: true,
+      status: true,
+      ingestion: true,
+      user: { select: { ...userWithCosmeticsSelect, bannedAt: true, muted: true } },
       coverImage: { select: imageSelect },
     },
   });
-  if (!article) return null;
+}
 
-  const { coverImage, content, ...rest } = article;
+/** Only what the read-only view renders. */
+function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readSharedArticle>>>) {
+  const { id, title, content, nsfwLevel, updatedAt, coverImage } = article;
+  const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
   const showCover = coverImage?.ingestion === 'Scanned' && !coverImage.needsReview;
   return {
-    ...rest,
-    nsfwLevel: article.nsfwLevel as NsfwLevel,
+    id,
+    title,
     content,
+    updatedAt,
+    user,
+    nsfwLevel: nsfwLevel as NsfwLevel,
     contentJson: content ? articleContentJson(content) : undefined,
     coverImage:
       showCover && coverImage

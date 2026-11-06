@@ -1,6 +1,5 @@
 import {
   Button,
-  CopyButton,
   Group,
   Loader,
   Modal,
@@ -9,8 +8,8 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useState } from 'react';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { articleShareExpiryDays } from '~/server/schema/article.schema';
@@ -37,7 +36,7 @@ export function ArticleShareDraftModal({ articleId }: { articleId: number }) {
 
   const createMutation = trpc.article.createShareLink.useMutation({
     onSuccess: async ({ token }) => {
-      setCreatedUrl(`${window.location.origin}/articles/shared/${token}`);
+      setCreatedUrl(`${window.location.origin}/articles/shared#token=${token}`);
       await invalidate();
     },
     onError,
@@ -81,11 +80,12 @@ export function ArticleShareDraftModal({ articleId }: { articleId: number }) {
             <Group gap="xs" wrap="nowrap">
               <TextInput value={createdUrl} readOnly className="flex-1" />
               <CopyButton value={createdUrl}>
-                {({ copied, copy }) => (
+                {({ copied, copy, Icon, color }) => (
                   <Button
                     variant="light"
+                    color={color}
                     onClick={copy}
-                    leftSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                    leftSection={<Icon size={16} />}
                   >
                     {copied ? 'Copied' : 'Copy'}
                   </Button>

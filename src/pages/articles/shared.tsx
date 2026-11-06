@@ -1,8 +1,7 @@
 import { AspectRatio, Container, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { IconEye } from '@tabler/icons-react';
-import type { InferGetServerSidePropsType } from 'next';
-import { useMemo } from 'react';
-import * as z from 'zod';
+import { useRouter } from 'next/router';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Page } from '~/components/AppLayout/Page';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -15,7 +14,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
-import { getSharedArticleSchema } from '~/server/schema/article.schema';
+import { shareTokenSchema } from '~/server/schema/article.schema';
 import type { SharedArticle } from '~/server/services/article-share.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -23,42 +22,43 @@ import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-const querySchema = z.object({ token: z.string() });
-
+// The token rides in the fragment (`/articles/shared#token=…`), which no request carries: not to
+// this server, a CDN, analytics or a Referer. The page reads it and asks for the draft by POST.
 export const getServerSideProps = createServerSideProps({
-  useSSG: true,
-  useSession: true,
-  prefetch: 'always',
-  resolver: async ({ ctx, ssg }) => {
-    // The token is a bearer credential in the URL: never stored by a shared cache, never sent
-    // on as a referrer by links inside the draft, never indexed.
+  resolver: async ({ ctx }) => {
     ctx.res.setHeader('Cache-Control', 'private, no-store');
     ctx.res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     ctx.res.setHeader('Referrer-Policy', 'no-referrer');
-
-    const query = querySchema.safeParse(ctx.query);
-    const token = query.success ? query.data.token : '';
-    if (!ssg || !getSharedArticleSchema.safeParse({ token }).success) return { props: { token } };
-
-    const result = await ssg.article.getShared.fetch({ token }).catch(() => null);
-    if (result?.status === 'published')
-      return { redirect: { destination: result.url, permanent: false } };
-
-    const gating =
-      result?.status === 'ok' ? { contentNsfwLevel: result.article.nsfwLevel } : undefined;
-    return { props: { token }, gating, suppressAds: true };
+    return { props: {}, suppressAds: true };
   },
 });
 
-function SharedArticlePage({ token }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const valid = getSharedArticleSchema.safeParse({ token }).success;
-  const { data, isLoading } = trpc.article.getShared.useQuery(
-    { token },
-    { enabled: valid, staleTime: Infinity, refetchOnWindowFocus: false, retry: false }
-  );
+function readShareToken() {
+  const token = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
+  return shareTokenSchema.safeParse(token).success ? token : null;
+}
 
-  if (valid && isLoading) return <PageLoader />;
+function SharedArticlePage() {
+  const router = useRouter();
+  const [token, setToken] = useState<string | null>();
+  const { mutate, data, isPending, isError } = trpc.article.getShared.useMutation();
+
+  useEffect(() => {
+    const read = () => setToken(readShareToken());
+    read();
+    window.addEventListener('hashchange', read);
+    return () => window.removeEventListener('hashchange', read);
+  }, []);
+  useEffect(() => {
+    if (token) mutate({ shareToken: token });
+  }, [token, mutate]);
+  useEffect(() => {
+    if (data?.status === 'published') void router.replace(data.url);
+  }, [data, router]);
+
+  if (token === undefined || (token && !isError && (isPending || !data))) return <PageLoader />;
   if (data?.status === 'ok') return <SharedArticleView article={data.article} />;
+  if (data?.status === 'published') return <PageLoader />;
   return (
     <SharedArticleMessage
       message={

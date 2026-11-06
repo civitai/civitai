@@ -83,7 +83,7 @@ const request = (width: number) =>
     method: 'GET',
     headers: {},
     query: { trpc: Array(width).fill('a').join(','), batch: '1' },
-  }) as unknown as NextApiRequest;
+  } as unknown as NextApiRequest);
 
 describe('src/pages/api/trpc/[trpc].ts wiring', () => {
   beforeAll(async () => {
@@ -329,6 +329,20 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
       expect(JSON.parse(input as string)).toEqual({ blockToken: '[redacted]', key: 'k' });
     }
   );
+
+  it('onError: an article share token is redacted, key kept', async () => {
+    await h.options?.onError?.({
+      error: new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }),
+      type: 'mutation',
+      path: 'article.getShared',
+      input: { shareToken: TOKEN },
+      ctx: {},
+      req: request(2),
+    });
+    const input = loggedInput();
+    expect(input).not.toContain(TOKEN);
+    expect(JSON.parse(input as string)).toEqual({ shareToken: '[redacted]' });
+  });
 
   it('onError: redaction does not mutate the input object tRPC handed the procedure', async () => {
     const original = { blockToken: TOKEN, nested: { blockToken: TOKEN } };
