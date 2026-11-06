@@ -1416,20 +1416,15 @@ describe('/apps/activity activity — the table that a ledger cannot help', () =
  * fix driven by `@media` would pass a narrow-viewport test and leave the real drawer broken.
  * Reading these at the widest fixture is what makes them a claim about the CONTAINER.
  *
- * 🔴 AND EVERY ARM THAT PINS THE PRE-CHANGE BEHAVIOUR LEADS WITH A LOCATOR THAT EXISTS THERE.
- * An earlier revision resolved `[data-testid="app-activity-panel"]` /
- * `[data-testid="block-scope-list"]`, testids that change introduced — so four arms went red at
- * `origin/main` inside the `need()` helper, on a missing test hook, which is evidence about
- * nothing. Mantine's own `.mantine-Drawer-*` static classes and plain `table`/`tbody` are present
- * either way, so the activity-table arms' FIRST failing read at base is a geometry one.
+ * Arms pinning pre-change behaviour lead with a locator present at base (Mantine static classes,
+ * plain table/tbody), not a testid this change introduced, so the base-red failure is a geometry
+ * read.
  *
- * ⚠️ TWO THINGS THIS DOES NOT CLAIM, because an earlier revision claimed both and was wrong.
- * (a) `data-activity-cell` and the status pill's `sr-only` span are introduced by this change, so
- * an arm that LEADS with `stackedCell()` or with that span is red at base on a missing hook — put
- * a base-stable read first, as the phone arm now does. (b) The sr-only arm is not in the base-red
- * set at all, and does not need to be: it pins a property of the NEW rendering, not of the old
- * one. Read the base-red count off a fresh run rather than from a number in this comment — arms
- * have been added to this block twice since the first one was taken.
+ * ⚠️ TWO THINGS THIS DOES NOT CLAIM. (a) `data-activity-cell` and the status pill's `sr-only`
+ * span are introduced by this change, so an arm that LEADS with `stackedCell()` or with that span
+ * is red at base on a missing hook — put a base-stable read first, as the phone arm does. (b) The
+ * sr-only arm is not in the base-red set, and does not need to be: it pins a property of the NEW
+ * rendering, not of the old one. Read the base-red count off a fresh run, not from a number here.
  */
 describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewport', () => {
   const drawer = () => (
@@ -1687,6 +1682,21 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
       px(title.getBoundingClientRect().right),
       `the fallback title paints past the drawer's ${px(drawerContent().right)} content edge`
     ).toBeLessThanOrEqual(px(drawerContent().right) + 0.5);
+    // The edge read alone passes a clipped or ellipsised title, so also: nothing is cut off...
+    expect(
+      title.scrollWidth,
+      `the fallback title is clipped: ${title.scrollWidth}px of content in ${title.clientWidth}px`
+    ).toBeLessThanOrEqual(title.clientWidth + 0.5);
+    // ...and it really wraps: taller than a one-line title in the same drawer, so this fixture
+    // exercises the wrap rather than happening to fit.
+    const oneLine = rowTitle(fixture.describedScope);
+    const oneLineHeight = oneLine.getBoundingClientRect().height;
+    expect(oneLineHeight, `"${oneLine.textContent}" has no height`).toBeGreaterThan(0);
+    expect(
+      title.getBoundingClientRect().height,
+      `the fallback title is ${px(title.getBoundingClientRect().height)} tall, against ` +
+        `${px(oneLineHeight)} for the one-line "${oneLine.textContent}" — it did not wrap`
+    ).toBeGreaterThan(oneLineHeight * 1.5);
     await cleanup();
   });
 

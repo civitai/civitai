@@ -23,18 +23,15 @@
  *     never take a store page down.
  * The moderator write does not degrade: before the migration it refuses with
  * PRECONDITION_FAILED and writes nothing.
- *
- * NOT A CATALOG AXIS. The cached `/apps` id page (`listAvailableListings`) neither filters nor
- * sorts on the flag — card hydration is live — so the write here busts no catalog cache.
  */
 
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
 import type { AppListingModerationAction } from '~/server/schema/blocks/offsite-moderation.schema';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 
 /** The moderation-event action every flag change records. */
@@ -72,10 +69,6 @@ export type OfficialWriteClient = {
   $transaction: <T>(fn: (tx: OfficialWriteTx) => Promise<T>) => Promise<T>;
 };
 
-// ---------------------------------------------------------------------------
-// Reads
-// ---------------------------------------------------------------------------
-
 /**
  * The ids, out of `listingIds`, whose listing is marked Official. One query per page; an empty
  * input issues none.
@@ -103,21 +96,6 @@ export async function readListingOfficialMany(
   }
 }
 
-/**
- * Record a degraded render read without letting the recording break the page. Only the
- * real-outage complement arrives here (a missing column is answered upstream without
- * throwing), so it is an `error`. The `.catch` keeps a rejected log call from becoming an
- * unhandled rejection on the render it only observes.
- */
-function noteDegradedOfficialRead(err: unknown): void {
-  logToAxiom({
-    name: 'app-listing-official-read-degraded',
-    type: 'error',
-    message: err instanceof Error ? err.message : String(err),
-    code: (err as { code?: unknown })?.code ?? null,
-  }).catch(() => null);
-}
-
 /** {@link readListingOfficialMany} for a RENDERING path: any error → an empty set, logged. */
 export async function readListingOfficialManyForRender(
   listingIds: readonly string[],
@@ -126,7 +104,7 @@ export async function readListingOfficialManyForRender(
   try {
     return await readListingOfficialMany(listingIds, db);
   } catch (err) {
-    noteDegradedOfficialRead(err);
+    noteDegradedRead('app-listing-official-read-degraded', err);
     return new Set();
   }
 }
@@ -138,10 +116,6 @@ export async function readListingOfficialForRender(
 ): Promise<boolean> {
   return (await readListingOfficialManyForRender([listingId], db)).has(listingId);
 }
-
-// ---------------------------------------------------------------------------
-// The moderator write
-// ---------------------------------------------------------------------------
 
 /** The refusal a moderator sees before the manual migration has been applied here. Exported
  *  so the tests assert the exact string. */

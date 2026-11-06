@@ -342,12 +342,14 @@ describe('the Model rules history endpoint', () => {
 describe('the Feedback section', () => {
   const feedback = () => NAVIGATION.find((n) => n.path === '/feedback');
   const platformHref = '/feedback?area=apps-platform&status=new';
+  const orchestrationHref = '/feedback?area=orchestration&status=new';
 
   it('keeps one grant, on /feedback, for the queue and its developer-platform view', () => {
     expect(feedback()?.sharedAccess).toBe(true);
     expect(feedback()?.children?.map((c) => [c.path, c.countKey])).toEqual([
       ['/feedback', 'feedbackNew'],
       [platformHref, 'feedbackAppsPlatformNew'],
+      [orchestrationHref, 'feedbackOrchestrationNew'],
     ]);
     const { tree, granted } = pageAccessState();
     expect(tree.filter((n) => n.key.startsWith('/feedback')).map((n) => [n.key, n.kind])).toEqual([
@@ -361,6 +363,7 @@ describe('the Feedback section', () => {
     expect(labelsUnder('Feedback')).toEqual([
       ['/feedback', 'General queue'],
       [platformHref, 'Apps platform (developers)'],
+      [orchestrationHref, 'Generation & training errors'],
     ]);
     expect(canAccess(reviewer, '/feedback')).toBe(true);
     expect(canAccess(reviewer, '/feedback/12')).toBe(true);

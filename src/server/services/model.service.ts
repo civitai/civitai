@@ -238,6 +238,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
   buildPermissionSnapshots,
@@ -249,7 +250,7 @@ import {
   pickServerOwnedMeta,
   RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
-  stripMinorHashMeta,
+  filterModelMetaForClient,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
   systemNsfwLockMarker,
@@ -2082,12 +2083,11 @@ export const getModelVersionsMicro = async ({
   });
 };
 
-// Mutations hand their updated row straight back to the caller, so the moderation-only
-// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
-// these rows feed many callers, and the keys are only ever read back through the
-// minor-hash service's own raw SQL.
-function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
-  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+// Mutation rows go straight back to callers and feed many of them, so strip moderator-only meta
+// here rather than narrowing the Prisma select.
+function withoutModeratorOnlyMeta<T extends { meta: unknown }>(model: T): T {
+  const meta = model.meta as ModelMeta | null;
+  return { ...model, meta: meta && filterModelMetaForClient(meta, false) } as T;
 }
 
 export const updateModelById = async ({
@@ -2145,7 +2145,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return withoutMinorHashMeta(model);
+  return withoutModeratorOnlyMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -4163,7 +4163,7 @@ export const upsertModel = async (
       isModerator,
     }).catch(() => null);
 
-    return { ...result, meta: stripMinorHashMeta(modelMeta) };
+    return { ...result, meta: modelMeta && filterModelMetaForClient(modelMeta, false) };
   } else {
     if (!beforeUpdate) return null;
 
@@ -4693,7 +4693,7 @@ export const upsertModel = async (
       });
     }
 
-    return withoutMinorHashMeta(result);
+    return withoutModeratorOnlyMeta(result);
   }
 };
 
@@ -4882,6 +4882,11 @@ export const publishModelById = async ({
     assertBaseModelAttestations({ versions: ownVersions });
     await assertNonCommercialVersionsUnmonetized(ownVersions);
   }
+  await assertNoFailedScanFiles(
+    versionIds?.length
+      ? { id: { in: versionIds }, modelId: id }
+      : { modelId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } }
+  );
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -7092,6 +7097,10 @@ export const privateModelFromTraining = async ({
   // its own moderator action.
   if (constants.modPublishOnlyStatuses.includes(model.status))
     throw throwAuthorizationError('You are not authorized to publish this model');
+  await assertNoFailedScanFiles({
+    modelId: id,
+    status: { notIn: constants.modPublishOnlyStatuses },
+  });
 
   enforceLockedProperties({
     data,
@@ -7281,7 +7290,7 @@ export const privateModelFromTraining = async ({
     await bustModelGallerySettings([id]);
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
-    return withoutMinorHashMeta(result);
+    return withoutModeratorOnlyMeta(result);
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
@@ -7361,6 +7370,7 @@ export const publishPrivateModel = async (
   if (!versions.length) {
     throw throwBadRequestError('Model has no published versions');
   }
+  await assertNoFailedScanFiles({ id: { in: versions.map((v) => v.id) } });
 
   if (publishVersions) {
     assertBaseModelAttestations({

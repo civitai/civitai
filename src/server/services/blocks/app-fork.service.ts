@@ -43,8 +43,8 @@
 
 import { TRPCError } from '@trpc/server';
 
-import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 import type { ListingForkOf } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -246,26 +246,6 @@ export async function readListingForkParents(
 }
 
 /**
- * Record a degraded render read without letting the recording break the page. A missing column
- * never reaches here (the narrow reader swallows it), so what arrives is a real fault — `error`.
- * The `.catch(() => null)` is load-bearing: nothing awaits this, so an unhandled rejection would
- * take down the render this exists only to observe.
- */
-function noteDegradedForkRead(name: string, err: unknown): void {
-  try {
-    logToAxiom({
-      name,
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err),
-      code: (err as { code?: unknown })?.code ?? null,
-    }).catch(() => null);
-  } catch {
-    // The degraded path's whole job is to keep rendering; a logger that throws synchronously
-    // must not undo that.
-  }
-}
-
-/**
  * {@link readListingForkProvenance} for a RENDERING path — degrades on ANY error. A provenance
  * line is cosmetic; a statement timeout on it must not 500 a public store page.
  */
@@ -276,7 +256,7 @@ export async function readListingForkProvenanceForRender(
   try {
     return await readListingForkProvenance(listingId, db);
   } catch (err) {
-    noteDegradedForkRead('app-fork-provenance-read-degraded', err);
+    noteDegradedRead('app-fork-provenance-read-degraded', err);
     return NO_FORK_PROVENANCE;
   }
 }
@@ -305,7 +285,7 @@ export async function resolveForkAttribution(
     const parent = await lookupVisibleParent(provenance.forkOfListingId);
     return parent ? { visible: true, slug: parent.slug, name: parent.name } : { visible: false };
   } catch (err) {
-    noteDegradedForkRead('app-fork-attribution-degraded', err);
+    noteDegradedRead('app-fork-attribution-degraded', err);
     return { visible: false };
   }
 }
@@ -436,7 +416,7 @@ export async function carryForkProvenanceToPublishRequest(
     );
     return count > 0;
   } catch (err) {
-    if (!isMissingColumnError(err)) noteDegradedForkRead('app-fork-provenance-carry-failed', err);
+    if (!isMissingColumnError(err)) noteDegradedRead('app-fork-provenance-carry-failed', err);
     return false;
   }
 }

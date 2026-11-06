@@ -32,11 +32,16 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
-import { addLinkedComponent } from '~/server/services/model-version.service';
+import {
+  addLinkedComponent,
+  unpublishModelVersionById,
+} from '~/server/services/model-version.service';
+import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan';
 import { Tracker } from '~/server/clickhouse/client';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 
@@ -159,6 +164,8 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       // for the file — so a hash-only rescan has to re-derive it from what is already stored.
       headerData: true,
       sizeKB: true,
+      pickleScanResult: true,
+      virusScanResult: true,
       modelVersion: {
         select: {
           modelId: true,
@@ -233,7 +240,15 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data.rawScanResult = stripNul(outcome.rawScanResult) as Prisma.InputJsonValue;
   }
 
-  await dbWrite.modelFile.update({ where: { id: fileId }, data });
+  const written = await dbWrite.modelFile.update({
+    where: { id: fileId },
+    data,
+    select: { pickleScanResult: true, virusScanResult: true },
+  });
+  const failedScan = ranScan && hasFailedScan(written);
+  const coverageMoved =
+    ranScan &&
+    (excludedFromCoverage({ ...written, type: file.type }) || excludedFromCoverage(file));
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
@@ -411,14 +426,31 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     await dataForModelsCache.refresh(modelId);
   }
 
+  if (failedScan) {
+    await unpublishForFailedScan(modelVersionId).catch((e) =>
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'model-file-scan',
+          message: `failed-scan unpublish failed: ${String(e)}`,
+          modelVersionId,
+        },
+        'webhooks'
+      ).catch(() => undefined)
+    );
+  }
+
   // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
   // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
   // expiry, resourceDataCache for an hour. Last and logged, not thrown: the scan result is
   // already written, and a throw would make the orchestrator redeliver the whole workflow.
-  if (ranScan && LOADABLE_FILE_TYPES.includes(file.type))
+  // A failed scan of any file, or an errored scan of a loadable one, uncovers the version, and a
+  // clean rescan recovers it, so both bust too.
+  if (coverageMoved || (ranScan && LOADABLE_FILE_TYPES.includes(file.type)))
     await Promise.all([
       resourceDataCache.bust([modelVersionId]),
       bustOrchestratorModelCache(modelVersionId),
+      coverageMoved && file.modelVersion && bustScannedFileAirs(modelVersionId, file.modelVersion),
     ]).catch((e) =>
       logToAxiom(
         {
@@ -430,6 +462,28 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         'webhooks'
       ).catch(() => undefined)
     );
+}
+
+// Version busts never reach the file-pinned AIRs, and the exclusion covers every file of the version.
+async function bustScannedFileAirs(
+  modelVersionId: number,
+  version: { modelId: number; baseModel: string; model: { type: ModelType } }
+) {
+  const files = await dbWrite.modelFile.findMany({
+    where: { modelVersionId },
+    select: { id: true },
+  });
+  await Promise.all(
+    files.map(({ id }) =>
+      bustOrchestratorScannedFileCache({
+        fileId: id,
+        modelVersionId,
+        modelId: version.modelId,
+        modelType: version.model.type,
+        baseModel: version.baseModel,
+      })
+    )
+  );
 }
 
 const FAILURE_BUST_TTL_SECONDS = 60 * 60;
@@ -923,6 +977,33 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 // Lives here (vs. model.service.ts) so the orchestrator-side scan flow and the
 // retroactive-hash-blocking job can both import it from a stable location.
 // -----------------------------------------------------------------------------
+
+export async function unpublishForFailedScan(modelVersionId: number) {
+  const live: ModelStatus[] = [ModelStatus.Published, ModelStatus.Scheduled];
+  const version = await dbWrite.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { status: true, meta: true, modelId: true },
+  });
+  if (!version || !live.includes(version.status)) return;
+
+  // Not resolveUnpublishScope: it never cascades from a Scheduled version, and a Scheduled model
+  // left with no live version stays Scheduled for good.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: { modelId: version.modelId, status: { in: live }, id: { not: modelVersionId } },
+  });
+  const reason = 'failed-scan';
+  if (!liveSiblings) {
+    await unpublishModelById({ id: version.modelId, reason, userId: -1, isModerator: true });
+  } else {
+    await unpublishModelVersionById({
+      id: modelVersionId,
+      reason,
+      // Written back whole, so it carries the stored meta.
+      meta: (version.meta as ModelMeta | null) ?? undefined,
+      user: { id: -1, isModerator: true },
+    });
+  }
+}
 
 export async function unpublishBlockedModel(modelVersionId: number) {
   const version = await dbWrite.modelVersion.findUnique({
