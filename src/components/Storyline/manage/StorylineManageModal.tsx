@@ -1,16 +1,4 @@
-import {
-  Alert,
-  Badge,
-  Button,
-  Group,
-  Loader,
-  Modal,
-  Stack,
-  Tabs,
-  Text,
-  TextInput,
-} from '@mantine/core';
-import { useRouter } from 'next/router';
+import { Alert, Badge, Button, Group, Loader, Modal, Tabs, Text, TextInput } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { STORYLINE_QUEUE_RECEIVED_URL } from '~/components/Placement/queue-routes';
@@ -18,7 +6,6 @@ import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/Story
 import { StorylineCoversRow } from '~/components/Storyline/manage/StorylineCoversRow';
 import { StorylineSettingsForm } from '~/components/Storyline/manage/StorylineSettingsForm';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
-import { STORYLINES_URL } from '~/components/Storyline/storyline-routes';
 import {
   useStorylineChapterLevels,
   useStorylineSpace,
@@ -55,22 +42,12 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
   });
   const addCollaborator = trpc.storyline.addCollaborator.useMutation({
     onSuccess: invalidate,
-    onError: showError("Couldn't endorse them"),
+    onError: showError("Couldn't invite them"),
   });
   const removeCollaborator = trpc.storyline.removeCollaborator.useMutation({
     onSuccess: invalidate,
     onError: showError("Couldn't remove them"),
   });
-  const router = useRouter();
-  const remove = trpc.storyline.delete.useMutation({
-    onSuccess: async () => {
-      dialog.onClose();
-      await router.push(STORYLINES_URL);
-      await utils.storyline.getInfinite.invalidate();
-    },
-    onError: showError("Couldn't delete the storyline"),
-  });
-
   return (
     <Modal
       {...dialog}
@@ -138,18 +115,13 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
               priceUnavailable={space.unavailable}
               priceReadOnly={!isOwner}
             />
-            {isOwner && storyline.chapterCount === 0 && !storyline.tosViolation && (
-              <StorylineDeleteRow
-                deleting={remove.isPending}
-                onDelete={() => remove.mutate({ id: storylineId })}
-              />
-            )}
           </Tabs.Panel>
 
           <Tabs.Panel value="collaborators">
             <StorylineCollaboratorsPanel
               ownerId={storyline.userId}
               collaborators={storyline.collaborators}
+              pending={storyline.pendingCollaborators}
               canEndorse={isOwner}
               adding={addCollaborator.isPending}
               removingId={
@@ -214,42 +186,5 @@ function StorylineTitleField({
         Save
       </Button>
     </form>
-  );
-}
-
-/** Shown only while the storyline has no chapter: the server refuses a delete once it has one. */
-function StorylineDeleteRow({ deleting, onDelete }: { deleting: boolean; onDelete: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-
-  return (
-    <Stack gap={6} mt="md" className="rounded-xl border border-red-3 px-4 py-3 dark:border-red-9">
-      <Group justify="space-between" gap="xs">
-        <Text size="sm" fw={500}>
-          {confirming ? 'Delete this storyline? This cannot be undone.' : 'Delete storyline'}
-        </Text>
-        {confirming ? (
-          <Group gap="xs">
-            <Button
-              size="xs"
-              variant="default"
-              disabled={deleting}
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </Button>
-            <Button size="xs" color="red" loading={deleting} onClick={onDelete}>
-              Delete
-            </Button>
-          </Group>
-        ) : (
-          <Button size="xs" color="red" variant="light" onClick={() => setConfirming(true)}>
-            Delete storyline
-          </Button>
-        )}
-      </Group>
-      <Text size="xs" c="dimmed">
-        A storyline can be deleted until it has its first chapter.
-      </Text>
-    </Stack>
   );
 }

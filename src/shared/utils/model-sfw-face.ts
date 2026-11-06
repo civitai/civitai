@@ -2,7 +2,13 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import { Flags } from '~/shared/utils/flags';
+
+export const SFW_NAME_TOO_LONG_MESSAGE = `Title must be ${MODEL_NAME_MAX_LENGTH} characters or fewer.`;
+export const SFW_DESCRIPTION_MAX_LENGTH = 50_000;
+export const SFW_DESCRIPTION_TOO_LONG_MESSAGE = 'Description is too long.';
+export const COM_FACE_REFUSED_MESSAGE = "We can't make this model safe for civitai.com.";
 
 /**
  * A model's .com face: `Model.sfwName` / `sfwDescription`, shown in place of the name and
@@ -15,6 +21,11 @@ export type ModelSfwFaceSource = {
   sfwName?: string | null;
   sfwDescription?: string | null;
 };
+
+/** A rating .com shows as is: rated, with only PG/PG-13 bits. What a .com cover must be. */
+export function isComSafeLevel(nsfwLevel: number) {
+  return nsfwLevel !== 0 && (nsfwLevel & sfwBrowsingLevelsFlag) === nsfwLevel;
+}
 
 /** An empty input or an empty RTE document is stored as NULL, never as a blank face. */
 export function normalizeSfwFaceText(value: string | null | undefined): string | null {
@@ -47,6 +58,22 @@ export function resolveModelFace<T extends ModelSfwFaceSource>(
     name: sfwName,
     ...('description' in model ? { description: sfwDescription ?? null } : {}),
   };
+}
+
+/**
+ * Swaps the model name on rows that name a model by id (image resources, version lists,
+ * notification details) for its .com title. `sfwNames` holds only models with a face on, and is
+ * empty for a viewer who gets the .red face.
+ */
+export function withSfwModelNames<T extends { modelId: number; modelName: string }>(
+  rows: T[],
+  sfwNames: ReadonlyMap<number, string>
+): T[] {
+  if (!sfwNames.size) return rows;
+  return rows.map((row) => {
+    const sfwName = sfwNames.get(row.modelId);
+    return sfwName ? { ...row, modelName: sfwName } : row;
+  });
 }
 
 /** Normalises a write that carries the face. Clearing the title turns the face off, description included. */
@@ -105,8 +132,5 @@ export function imagesForFace<T extends { nsfwLevel: number }>(
   showSfwFace: boolean
 ) {
   if (!showSfwFace || !model.nsfw || !model.hasSfwFace) return images;
-  return images.filter(
-    (image) =>
-      image.nsfwLevel !== 0 && (image.nsfwLevel & sfwBrowsingLevelsFlag) === image.nsfwLevel
-  );
+  return images.filter((image) => isComSafeLevel(image.nsfwLevel));
 }

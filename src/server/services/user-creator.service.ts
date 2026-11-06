@@ -1,13 +1,11 @@
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readUserCreatorViaKysely,
-  readUserCreatorViaPrisma,
   type UserCreatorWhere,
 } from '~/server/services/user-creator.reads';
 import { createCachedObject } from '~/server/utils/cache-helpers';
@@ -18,10 +16,7 @@ import { createCachedObject } from '~/server/utils/cache-helpers';
  * (a username, or both) straight here.
  */
 export async function fetchUserCreator(where: UserCreatorWhere) {
-  // `kysely-hot-reads-2` on: the same two reads in one Kysely statement, on the replica as before.
-  const found = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
-    ? await readUserCreatorViaKysely((await loadKyselyDb()).kyselyRead, where)
-    : await readUserCreatorViaPrisma(dbRead, where);
+  const found = await readUserCreatorViaKysely((await loadKyselyDb()).kyselyRead, where);
   if (!found) return null;
   const { user, modelCount } = found;
 

@@ -14,26 +14,42 @@ import type * as TrpcMod from '~/utils/trpc';
 const mocks = vi.hoisted(() => ({
   items: [] as unknown[],
   decided: [] as unknown[],
+  // Stable spies: the proxy's default `useUtils` mints a fresh spy per read, which can never be
+  // asserted on.
+  invalidated: [] as string[],
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: makeTrpcProxy({
-    'appAccessRequest.list': {
-      useInfiniteQuery: () => ({
-        data: { pages: [{ items: mocks.items, nextCursor: null }] },
-        isLoading: false,
-        hasNextPage: false,
-      }),
+  trpc: makeTrpcProxy(
+    {
+      'appAccessRequest.list': {
+        useInfiniteQuery: () => ({
+          data: { pages: [{ items: mocks.items, nextCursor: null }] },
+          isLoading: false,
+          hasNextPage: false,
+        }),
+      },
+      'appAccessRequest.decide': {
+        useMutation: (opts?: { onSuccess?: () => unknown }) => ({
+          mutate: (input: unknown) => {
+            mocks.decided.push(input);
+            void opts?.onSuccess?.();
+          },
+          isPending: false,
+          variables: undefined,
+        }),
+      },
     },
-    'appAccessRequest.decide': {
-      useMutation: () => ({
-        mutate: (input: unknown) => mocks.decided.push(input),
-        isPending: false,
-        variables: undefined,
+    {
+      useUtils: () => ({
+        appAccessRequest: {
+          list: { invalidate: async () => void mocks.invalidated.push('list') },
+          countPending: { invalidate: async () => void mocks.invalidated.push('countPending') },
+        },
       }),
-    },
-  }),
+    }
+  ),
 }));
 
 // The avatar reads feature flags and cosmetics; it is not what this file measures.
@@ -60,6 +76,7 @@ const inRow = (id: number) => page.getByTestId(`app-access-request-${id}`);
 beforeEach(() => {
   mocks.items = [row(11, 'pending'), row(12, 'approved'), row(13, 'declined')];
   mocks.decided = [];
+  mocks.invalidated = [];
 });
 
 describe('AppAccessRequestsQueue — the actions that grant and revoke', () => {
@@ -85,5 +102,13 @@ describe('AppAccessRequestsQueue — the actions that grant and revoke', () => {
     renderWithProviders(<AppAccessRequestsQueue />);
     await expect.element(inRow(13)).toBeInTheDocument();
     expect(inRow(13).getByRole('button').elements()).toHaveLength(0);
+  });
+});
+
+describe('AppAccessRequestsQueue — a decision refreshes what shows it', () => {
+  test('a recorded decision invalidates the queue AND the /apps/review tab badge count', async () => {
+    renderWithProviders(<AppAccessRequestsQueue />);
+    await inRow(11).getByRole('button', { name: 'Approve' }).click();
+    expect([...mocks.invalidated].sort()).toEqual(['countPending', 'list']);
   });
 });

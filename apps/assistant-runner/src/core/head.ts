@@ -25,7 +25,15 @@ export interface EndedReply {
   errorKind?: string;
   ranOut?: boolean;
   stopped?: string;
+  /** What the reply's model calls were charged, in Buzz (the chat's `assistant.buzz`, which its spend readout sums). */
+  buzz?: number;
 }
+
+/** The charge a saved reply carries (`EndedReply.buzz`), when it has one. */
+export const chargeOf = (assistant: HeadTurn['assistant']): number | undefined => {
+  const buzz = (assistant as { buzz?: unknown } | undefined)?.buzz;
+  return typeof buzz === 'number' && Number.isFinite(buzz) ? buzz : undefined;
+};
 
 type Head = StoredConversationMetadata;
 /**
@@ -68,6 +76,11 @@ export interface TurnStart {
    * message is named after the edited one). Without it, a turn already saved keeps its message.
    */
   edit?: boolean;
+  /**
+   * The chat's own model. A chat picks it before anything is saved and sends it with its first run
+   * only, so a new head keeps it; an existing head keeps its own (a later change arrives as a patch).
+   */
+  model?: string;
 }
 
 /** The head with the user's turn saved as the reply starts (a new head when there is none). */
@@ -83,6 +96,7 @@ export function startTurn(head: Head | null, start: TurnStart): Head {
     updatedAt: now,
     turns: [],
     ...(start.scope ? { scope: start.scope } : {}),
+    ...(start.model ? { model: start.model } : {}),
   };
   const existing = base.turns.find((turn) => turn.seq === start.seq);
   const renamed =
@@ -95,7 +109,14 @@ export function startTurn(head: Head | null, start: TurnStart): Head {
     user: start.edit ? start.user : existing?.user ?? start.user,
     ...(start.runId ? { runId: start.runId } : {}),
     ...(start.from
-      ? { assistant: { messages: start.from.messages, status: 'running', savedAt: now } }
+      ? {
+          assistant: {
+            messages: start.from.messages,
+            status: 'running',
+            savedAt: now,
+            ...charged(chargeOf(existing?.assistant)),
+          },
+        }
       : {}),
   };
   const turns = [...(base.turns as HeadTurn[]).filter((t) => t.seq < start.seq), turn];
@@ -111,6 +132,16 @@ export function withProgress(head: Head, seq: number, messages: ModelMessage[], 
 /** The head with how the reply ended. */
 export function withEnd(head: Head, seq: number, reply: EndedReply, now: Date): Head {
   return replaceReply(head, seq, reply as HeadTurn['assistant'] & object, now.toISOString());
+}
+
+/**
+ * The head with turn `seq`'s reply charged `buzz` in all, once it has one saved; the head as it is
+ * otherwise. A total, not an increment, so writing it twice counts it once.
+ */
+export function withCharge(head: Head, seq: number, buzz: number): Head {
+  const turn = savedTurn(head, seq);
+  if (!turn?.assistant) return head;
+  return replaceReply(head, seq, { ...turn.assistant, ...charged(buzz) }, head.updatedAt);
 }
 
 export function withPatch(head: Head, patch: ConversationPatchRequest, now: Date): Head {
@@ -207,10 +238,23 @@ function replaceReply(
   assistant: HeadTurn['assistant'],
   updatedAt: string
 ): Head {
-  const turns = (head.turns as HeadTurn[]).map((turn) =>
-    turn.seq === seq ? { ...turn, assistant } : turn
-  );
+  // A reply saved again keeps what it was charged so far unless the save says otherwise.
+  const turns = (head.turns as HeadTurn[]).map((turn) => {
+    if (turn.seq !== seq) return turn;
+    const kept = chargeOf(turn.assistant);
+    return {
+      ...turn,
+      assistant:
+        assistant && chargeOf(assistant) === undefined
+          ? { ...assistant, ...charged(kept) }
+          : assistant,
+    };
+  });
   return versioned({ ...head, updatedAt }, turns);
+}
+
+function charged(buzz: number | undefined): { buzz?: number } {
+  return buzz === undefined ? {} : { buzz };
 }
 
 /** v3 while any reply is saved `running`, v2 otherwise, as the chat writes them. */

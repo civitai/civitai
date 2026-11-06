@@ -1360,6 +1360,47 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
 }
 
 /**
+ * Dedicated flag for the App Blocks TESTER COHORT — the audience a listing at the
+ * `testers` visibility level admits ("users with app testing enabled").
+ *
+ * 🔴 WHY A DEDICATED FLAG, AND WHY IT MUST NEVER WIDEN TO EVERYONE. The cohort used to be
+ * read off `app-blocks-enabled`, on the assumption that the runtime gate stays
+ * cohort-segmented. It does not: civitai/flipt-state#263 widens `app-blocks-enabled` (and
+ * `app-listings`) to every user for the public apps launch, and from that moment every
+ * signed-in viewer would floor at `testers` and see listings their owner restricted to
+ * testers. Membership is a COHORT question, so it gets a flag whose only job is to answer
+ * it; the capability and surface flags can then widen freely without touching it. Widening
+ * THIS flag to all users is the same leak by another route — its rollout should only ever
+ * name tester segments.
+ *
+ * 🔴 FAIL-CLOSED, AND THAT IS DELIBERATE. When the flag is absent or Flipt is unreachable,
+ * `isFlipt` returns `false`, so a non-moderator is NOT a tester and floors at `public`.
+ * There is deliberately no fallback to `app-blocks-enabled` (the pattern
+ * `isAppListingsEnabled` uses): that fallback is exactly the signal that widens. The cost
+ * is borne only by the window between this code deploying and the flag existing — real
+ * testers temporarily stop seeing `testers`-level listings (moderators are unaffected).
+ * Create the flag in flipt-state first to avoid that window.
+ *
+ * Evaluated per-user only; see {@link resolveViewerAudienceFloor} for why there is no
+ * no-user branch.
+ */
+export const APP_BLOCKS_TESTERS_FLAG = 'app-blocks-testers';
+
+/**
+ * Is this SIGNED-IN viewer in the App Blocks tester cohort? Per-user eval of
+ * {@link APP_BLOCKS_TESTERS_FLAG} with the same entityId + context shape as every other
+ * per-user app flag. `user` is required: "is THIS subject a tester" has no subject-less
+ * answer, and a no-user eval would return the flag's BASE value rather than denying (see
+ * GLOBAL-EVAL SEMANTICS at the top of this file).
+ */
+export async function isAppBlocksTester(opts: { user: SessionUser }): Promise<boolean> {
+  const { user } = opts;
+  return (
+    (await isFlipt(APP_BLOCKS_TESTERS_FLAG, String(user.id), buildFliptContext(user))) === true
+  );
+}
+
+/**
  * Resolve the viewer's LISTING AUDIENCE FLOOR — the narrowest per-listing visibility level
  * that still admits them.
  *
@@ -1369,17 +1410,16 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
  * this viewer" — a cohort question. A listing at `public` is still invisible to a viewer
  * whose scope is `none`; nothing here can lift that.
  *
- * 🔴 THE TESTER COHORT IS READ OFF `app-blocks-enabled`, AND THAT CHOICE IS THE WHOLE
- * REASON THIS FEATURE NEEDS NO NEW FLAG. A level stores an ENUM and is mapped to a cohort
- * here, server-side, so no flag state is created, widened or referenced by key from the
- * database. The two existing flags already partition the population the way the levels
- * need:
- *   · `app-listings` is the SURFACE flag and is the one that widens to public at GA;
- *   · `app-blocks-enabled` is the runtime gate and stays mods + `app-dev-testers`
- *     segmented — this file says so where that flag is declared.
- * So post-GA a general viewer fails `app-blocks-enabled` and floors at `public`, while a
- * tester passes it and floors at `testers`, which is exactly the distinction the enum
- * draws.
+ * 🔴 THE TESTER COHORT IS READ OFF {@link APP_BLOCKS_TESTERS_FLAG}, AND ONLY THAT. It
+ * was previously read off `app-blocks-enabled`, which was safe only while that runtime gate
+ * stayed segmented to the tester cohorts; the public apps launch (civitai/flipt-state#263)
+ * widens it to every user. A level stores an ENUM and is mapped to a cohort here,
+ * server-side, so no flag state is created, widened or referenced by key from the
+ * database. The flags now partition the population the way the levels need:
+ *   · `app-listings` is the SURFACE flag (who sees the store);
+ *   · `app-blocks-enabled` is the RUNTIME gate (who may run blocks);
+ *   · `app-blocks-testers` is the COHORT flag (who counts as a tester) — the only one of
+ *     the three this function reads, and the only one that must stay narrow.
  *
  * ⚠️ ALL FOUR LEVELS ARE ALREADY DISTINGUISHABLE — an earlier revision of this paragraph
  * claimed `testers` and `public` "admit the same population pre-GA", and that was false in
@@ -1391,9 +1431,9 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
  *
  * 🔴 FAIL-CLOSED IS `public`, WHICH READS BACKWARDS AND IS CORRECT. The floor is the
  * NARROWEST level that admits the viewer, so the least-privileged answer is the WIDEST
- * level — `public`, which admits them to nothing a level has restricted. An absent flag or
- * an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors at
- * `public` and sees only listings their owner marked public.
+ * level — `public`, which admits them to nothing a level has restricted. An absent tester
+ * flag or an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors
+ * at `public` and sees only listings their owner marked public.
  *
  * Moderators short-circuit on the server-stamped session flag rather than on a flag eval,
  * for the same reason the private-run predicate does: a moderator is typically outside
@@ -1409,7 +1449,7 @@ export async function resolveViewerAudienceFloor(opts?: {
   // rather than denying (see GLOBAL-EVAL SEMANTICS at the top of this file). Answer the
   // least-privileged floor directly instead of asking a question that cannot refuse.
   if (!user) return 'public';
-  return (await isAppBlocksEnabled({ user })) ? 'testers' : 'public';
+  return (await isAppBlocksTester({ user })) ? 'testers' : 'public';
 }
 
 /** The three flags a `full` / `public-external` scope can come from. */

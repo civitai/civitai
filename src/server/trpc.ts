@@ -4,13 +4,10 @@ import {
   requestDomainBrowsingLevelCap,
   type RequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
-import {
-  EMAIL_VERIFICATION_REQUIRED_MESSAGE,
-  RESTRICTED_ACCOUNT_MESSAGE,
-} from '~/server/common/content-restriction';
+import { EMAIL_VERIFICATION_REQUIRED_MESSAGE } from '~/server/common/content-restriction';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
-import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
-import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
+import { mutedAccountRefusal } from '~/server/services/account-restriction.service';
+import { isAccountMuted } from '~/server/services/account-standing.service';
 import type { NextApiRequest } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -70,9 +67,24 @@ onDevalueWriteFallback((error) => {
   }
 });
 
-export interface TRPCMeta {
-  /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
-  requiredScope?: number;
+/**
+ * How a procedure gates scoped tokens: one required bitmask (every bit needed), or a list of
+ * scopes of which any one admits. Never both: a meta that sets both is a type error here and
+ * refused at call time by `runEnforceTokenScope`.
+ */
+type TRPCScopeMeta =
+  | {
+      /** Bitwise token scope required for this procedure. Checked against ctx.tokenScope. */
+      requiredScope?: number;
+      anyOfScopes?: never;
+    }
+  | {
+      requiredScope?: never;
+      /** A scoped token passes with any one of these. An empty list refuses every scoped token. */
+      anyOfScopes: readonly number[];
+    };
+
+export type TRPCMeta = TRPCScopeMeta & {
   /**
    * When true, this procedure cannot be invoked via API key or OAuth token,
    * regardless of scope — only session auth (browser cookie) is allowed.
@@ -86,7 +98,7 @@ export interface TRPCMeta {
    * (`isFullScopeUserKey`); session auth is unaffected.
    */
   requireFullUserCredential?: boolean;
-}
+};
 
 const t = initTRPC
   .context<Context>()
@@ -331,8 +343,9 @@ function requireSignedIn<U extends { deletedAt?: Date | null }>(user: U | null |
   return user;
 }
 
+// A banned viewer is on `bannedUser`, not `user` (see `trpcViewer`), so these two read both.
 const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ctx }, next }) => {
-  const user = requireSignedIn(maybeUser);
+  const user = requireSignedIn(maybeUser ?? ctx.bannedUser);
   if (user.bannedAt)
     throw new TRPCError({
       code: 'FORBIDDEN',
@@ -346,17 +359,9 @@ const isAuthed = t.middleware(({ ctx: { user: maybeUser, acceptableOrigin, ...ct
 const isMuted = middleware(async ({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.muted) {
-    // `.catch`: this decides whether to OFFER a way out, never whether to refuse. A replica blip
-    // rejecting here would turn the refusal into a 500 carrying the driver's message.
-    const offer = couldAwaitTosReacceptance(user)
-      ? await shouldOfferTosReacceptance(user.id).catch(() => false)
-      : false;
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: RESTRICTED_ACCOUNT_MESSAGE,
-      ...(offer ? { cause: { tosReacceptRequired: true } } : {}),
-    });
+  // The stored standing, not just the session's copy of it.
+  if (user.muted || (await isAccountMuted(user.id, !!user.muted))) {
+    throw await mutedAccountRefusal(user.id, user);
   }
 
   return next({
@@ -494,7 +499,7 @@ export const guardedProcedure = verifiedProcedure.use(isMuted).use(isEmailVerifi
 export const guardedProcedureAllowUnverifiedEmail = verifiedProcedure.use(isMuted);
 
 const isAuthedAllowRestricted = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =>
-  next({ ctx: { ...ctx, user: requireSignedIn(user), acceptableOrigin } })
+  next({ ctx: { ...ctx, user: requireSignedIn(user ?? ctx.bannedUser), acceptableOrigin } })
 );
 
 /**

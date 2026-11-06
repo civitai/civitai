@@ -1,7 +1,7 @@
 /**
  * OverflowSegmentedControl
  *
- * A wrapper around Mantine's SegmentedControl that handles overflow gracefully.
+ * A row of ChoiceGroup tiles that handles overflow gracefully.
  * When there are more options than can be displayed, it shows a "More" button
  * that opens a popover with all options.
  *
@@ -12,11 +12,11 @@
  * - Built-in popover for selecting from all options; a bottom sheet on a phone
  */
 
-import { Popover, ScrollArea, SegmentedControl, Text } from '@mantine/core';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { ScrollArea, Text } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 
 // =============================================================================
 // Types
@@ -70,11 +70,7 @@ export interface OverflowSegmentedControlProps<T extends string = string> {
   gridColumns?: number;
   /** Title of the bottom sheet "More" opens on a phone, where the popover is replaced. */
   drawerTitle?: ReactNode;
-  /**
-   * A click on the segment that is already selected. Mantine's SegmentedControl
-   * reports nothing for it (the radio doesn't change), so a segment that opens
-   * something — Custom's size modal — would otherwise open only once.
-   */
+  /** A click on the tile that is already selected, for a tile that opens something (Custom's size modal). */
   onReselect?: (value: T) => void;
   className?: string;
 }
@@ -243,7 +239,6 @@ export function OverflowSegmentedControl<T extends string = string>({
   onReselect,
   className,
 }: OverflowSegmentedControlProps<T>) {
-  const mobile = useIsMobile({ type: 'media' });
   // Default maxVisible to the number of options
   const maxVisible = maxVisibleProp ?? options.length;
 
@@ -326,7 +321,6 @@ export function OverflowSegmentedControl<T extends string = string>({
     };
   }, [options, value, visibleCount, priorityOptions]);
 
-  // Build segmented control data (includes "More" button if needed)
   const segmentedData = useMemo(() => {
     const data = visibleOptions.map((opt) => ({
       value: opt.value,
@@ -358,70 +352,32 @@ export function OverflowSegmentedControl<T extends string = string>({
     setPopoverOpened(false);
   };
 
-  // Create a key based on visible option values and popover state to force re-render
-  const segmentedKey = useMemo(
-    () => `${segmentedData.map((d) => d.value).join(',')}-${popoverOpened}`,
-    [segmentedData, popoverOpened]
-  );
-
   return (
-    <div
-      ref={containerRef}
-      className={`relative ${className ?? ''}`}
-      onClick={(event) => {
-        if (!onReselect || !value || disabled) return;
-        // A segment is a <label> beside its radio, so one click arrives twice: on the
-        // label, then forwarded to the radio. Act on the radio's only — reacting to both
-        // opened Custom's modal twice.
-        const radio = event.target;
-        if (radio instanceof HTMLInputElement && radio.type === 'radio' && radio.value === value)
-          onReselect(value);
-      }}
-    >
-      <SegmentedControl
-        key={segmentedKey}
+    <div ref={containerRef} className={`relative ${className ?? ''}`}>
+      <ChoiceGroup
         value={controlValue}
         onChange={handleChange}
+        onReselect={(selected) => onReselect?.(selected as T)}
         data={segmentedData}
+        columns={segmentedData.length}
         disabled={disabled}
-        fullWidth
-        classNames={{ label: 'relative', innerLabel: 'static' }}
       />
-      {showMoreButton && mobile && (
-        <MobileMenuDrawer
+      {showMoreButton && (
+        <PopoverOrSheet
           opened={popoverOpened}
           onClose={() => setPopoverOpened(false)}
           title={drawerTitle && <Text fw={600}>{drawerTitle}</Text>}
+          popoverProps={{
+            position: 'bottom-end',
+            withArrow: true,
+            arrowPosition: 'center',
+            arrowSize: 12,
+          }}
+          dropdownProps={{ p: 0 }}
+          target={<span className="absolute bottom-0 right-0 top-0 w-px" />}
         >
-          <OptionGrid
-            options={options}
-            value={value}
-            disabled={disabled}
-            onSelect={handlePopoverSelect}
-            renderOption={renderOption}
-            gridColumns={gridColumns}
-            inSheet
-          />
-        </MobileMenuDrawer>
-      )}
-      {showMoreButton && !mobile && (
-        <Popover
-          opened={popoverOpened}
-          onChange={setPopoverOpened}
-          position="bottom-end"
-          withArrow
-          arrowPosition="center"
-          arrowSize={12}
-          withinPortal
-          shadow="md"
-          closeOnClickOutside
-        >
-          <Popover.Target>
-            <span className="absolute bottom-0 right-0 top-0 w-px" />
-          </Popover.Target>
-          <Popover.Dropdown p={0}>
-            {/* Saved sizes can make the list taller than the screen: it scrolls. */}
-            <ScrollArea.Autosize mah="min(60vh, 480px)" type="auto">
+          {(surface) => {
+            const grid = (
               <OptionGrid
                 options={options}
                 value={value}
@@ -429,10 +385,19 @@ export function OverflowSegmentedControl<T extends string = string>({
                 onSelect={handlePopoverSelect}
                 renderOption={renderOption}
                 gridColumns={gridColumns}
+                inSheet={surface !== 'popover'}
               />
-            </ScrollArea.Autosize>
-          </Popover.Dropdown>
-        </Popover>
+            );
+            return surface === 'popover' ? (
+              // Saved sizes can make the list taller than the screen: it scrolls.
+              <ScrollArea.Autosize mah="min(60vh, 480px)" type="auto">
+                {grid}
+              </ScrollArea.Autosize>
+            ) : (
+              grid
+            );
+          }}
+        </PopoverOrSheet>
       )}
     </div>
   );

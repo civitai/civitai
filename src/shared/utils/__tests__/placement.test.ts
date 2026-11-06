@@ -176,6 +176,8 @@ describe('settling a stored placement', () => {
       'removedByCosmeticTakedown'
     );
     expect(() => placementOutcomeFromStatus('removed', null)).toThrow(/who removed it/);
+    // A placer removes only a settled placement; settling one again must stop, not pick an outcome.
+    expect(() => placementOutcomeFromStatus('removed', 'placer')).toThrow(/settled placement/);
     expect(() => placementOutcomeFromStatus('removed')).toThrow(/who removed it/);
   });
 

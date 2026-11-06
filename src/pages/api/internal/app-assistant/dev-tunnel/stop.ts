@@ -4,7 +4,10 @@ import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
-import { stopOwnDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
+import {
+  cancelDevTunnelStart,
+  stopOwnDevTunnel,
+} from '~/server/services/blocks/dev-tunnel.service';
 
 /**
  * POST /api/internal/app-assistant/dev-tunnel/stop
@@ -12,8 +15,12 @@ import { stopOwnDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
  * App Assistant's server runner closes a dev tunnel it opened (`start`, a sibling of this file):
  * the route, the host and the credential go, as `blocks.stopDevTunnel` does it. Idempotent.
  *
- * Called only by the runner, with `Authorization: Bearer <ASSISTANT_RUNNER_SECRET>`. Body:
+ * Called only by the runner, with `Authorization: Bearer <ASSISTANT_RUNNER_SECRET>`. Body, one of:
  *   { grant, sessionId }   `sessionId` as `start` returned it
+ *   { grant, clientKey }   the `clientKey` a `start` was sent with, for a start the runner gave up
+ *                          on (it timed out, or its reply ended) and so has no `sessionId` of:
+ *                          closes what that start opened, whether it is still running
+ *                          (`cancelDevTunnelStart`), has finished, or never came
  *
  * Only the grant's user's own tunnel is closed (`stopOwnDevTunnel` checks the owner, as
  * `stopDevTunnel` does). Unlike `start` and `keepalive`, no feature gate is re-judged: closing only
@@ -28,28 +35,38 @@ import { stopOwnDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
  *   503 not configured; `unavailable` the session could not be read just now, so nothing was
  *       closed and it may still be live: retry
  */
-const body = z.object({
-  grant: z.string().min(1).max(4096),
-  sessionId: z.string().min(1).max(128),
-});
+const body = z.union([
+  z.object({ grant: z.string().min(1).max(4096), sessionId: z.string().min(1).max(128) }),
+  z.object({ grant: z.string().min(1).max(4096), clientKey: z.string().min(1).max(128) }),
+]);
 
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-  const request = await readRunnerRequest(req, res, body, 'Expected { grant, sessionId }');
+  const request = await readRunnerRequest(
+    req,
+    res,
+    body,
+    'Expected { grant, sessionId } or { grant, clientKey }'
+  );
   if (!request) return;
   const { grant } = request;
-  const { sessionId } = request.body;
+  const target = request.body;
   const log = (type: string, extra: Record<string, unknown> = {}) =>
     logToAxiom({
       type: `app-assistant.runner-dev-tunnel.${type}`,
       message: `App Assistant runner dev tunnel ${type} for user ${grant.userId}`,
       userId: grant.userId,
-      sessionId,
+      ...('sessionId' in target
+        ? { sessionId: target.sessionId }
+        : { clientKey: target.clientKey }),
       grantId: grant.grantId,
       ...extra,
     }).catch(() => undefined);
 
   try {
-    const outcome = await stopOwnDevTunnel(grant.userId, sessionId);
+    const outcome =
+      'sessionId' in target
+        ? await stopOwnDevTunnel(grant.userId, target.sessionId)
+        : await cancelDevTunnelStart(grant.userId, target.clientKey);
     if (outcome === 'unavailable')
       return res
         .status(503)

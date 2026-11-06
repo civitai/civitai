@@ -85,6 +85,26 @@ const mocks = vi.hoisted(() => ({
   setVisibilityAsModMutate: vi.fn(),
 }));
 
+// The embedded card's creator is the shared `UserAvatar`, which needs a ContentSettingsProvider the
+// component setup does not mount. Stubbed to what this suite reads: the username, the id and that it
+// links to the profile, as the real one does with `linkToProfile`.
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: (props: {
+    user?: { id?: number; username?: string | null };
+    withUsername?: boolean;
+    linkToProfile?: boolean;
+  }) => (
+    <a
+      data-testid="mock-user-avatar"
+      data-user-id={props.user?.id}
+      data-link-to-profile={String(!!props.linkToProfile)}
+      href={`/user/${props.user?.username}`}
+    >
+      {props.user?.username}
+    </a>
+  ),
+}));
+
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
 }));
@@ -356,15 +376,19 @@ describe('AppListingCard', () => {
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
   });
 
-  test('kind + category badges are NOT rendered on the card (round-2 truncation fix)', async () => {
-    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
-    // base()'s category. Neither should render now that the badge column is gone
-    // — the kind signal instead lives in the CTA (Open/View details vs Visit ↗)
-    // and, for off-site, the detail-page disclosure Alert.
+  test('no kind badge on the card; the category is a meta-line link, not a badge', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text. It should not render
+    // now that the badge column is gone — the kind signal instead lives in the CTA
+    // (Open/View details vs Visit ↗) and, for off-site, the detail-page disclosure Alert.
+    // The category came back deliberately, as plain text in the one-line meta line (see
+    // the meta-line suite below), not as the truncating badge this test used to exclude.
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
-    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
+    const category = page.getByText('Utility', { exact: true });
+    await expect.element(category).toBeInTheDocument();
+    expect(category.element().closest('[data-testid="apps-listing-card-meta"]')).not.toBeNull();
+    expect(category.element().closest('.mantine-Badge-root')).toBeNull();
   });
 
   test('no reviews → "No reviews yet"', async () => {
@@ -706,17 +730,15 @@ describe('AppListingCard', () => {
     // viewer actions gone from this surface, the owner and a moderator are the ONLY
     // viewers who get a `⋮` (and therefore a wider action cluster) on a card every
     // other viewer sees without one.
-    //
-    // 🔴 THIS IS ALSO THE SUITE'S "a menu WITHOUT Edit" CASE. It used to be a signed-in
-    // shopper's; that viewer now has no menu at all, and a claim about what is inside a
-    // menu has to be made on a viewer who HAS one.
     mocks.currentUser = MODERATOR;
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await openCardMenu();
     await expect.element(page.getByTestId('apps-listing-mod-message-owner')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-listing-mod-manage')).toBeInTheDocument();
-    // …and still no Edit: they are not the owner.
-    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+    // A moderator may edit any listing, on the listing-keyed editor.
+    await expect
+      .element(page.getByTestId('apps-listing-owner-edit'))
+      .toHaveAttribute('href', '/apps/listing/l1/edit');
   });
 
   test('🔴 `preview` suppresses the whole menu, moderator included', async () => {
@@ -1313,16 +1335,25 @@ describe('AppListingCard — card A layout', () => {
     return header;
   }
 
-  test('🔴 the icon, the title and Open share ONE centre line', async () => {
+  test('🔴 the title and Open share ONE centre line, 10px below the icon centre, and Open clears the cover', async () => {
     const header = await renderCard();
     const icon = header.firstElementChild as HTMLElement;
     const title = page.getByText('My App', { exact: true }).element();
     const open = page.getByRole('link', { name: 'Open', exact: true }).element();
     expect(rect(icon).height).toBe(56);
-    expect(Math.abs(midY(title) - midY(icon)), 'title is off the icon centre').toBeLessThanOrEqual(
-      1
-    );
-    expect(Math.abs(midY(open) - midY(icon)), 'Open is off the icon centre').toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(midY(title) - (midY(icon) + 10)),
+      'title is off the dropped centre line'
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(midY(open) - (midY(icon) + 10)),
+      'Open is off the dropped centre line'
+    ).toBeLessThanOrEqual(1);
+    // The reported defect: Open's top edge touched the cover's bottom edge.
+    expect(
+      rect(open).top - rect(coverBox()).bottom,
+      'Open touches the cover'
+    ).toBeGreaterThanOrEqual(8);
     // Open is on the TITLE's row, to its right, not under it.
     expect(rect(open).left).toBeGreaterThanOrEqual(rect(title).right);
   });
@@ -1487,6 +1518,29 @@ describe('AppListingCard — the beta badge', () => {
   });
 });
 
+describe('AppListingCard — the Official badge', () => {
+  test('renders the Official badge when the moderator flag is set', async () => {
+    renderWithProviders(<AppListingCard card={base({ isOfficial: true })} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-official-badge')).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-testid="apps-listing-official-badge"]')?.textContent
+    ).toContain('Official');
+  });
+
+  test.each([
+    ['false', { isOfficial: false }],
+    ['absent', {}],
+  ])('renders NO Official badge when the flag is %s', async (_label, over) => {
+    renderWithProviders(<AppListingCard card={base(over)} canOpenPage />);
+    // Positive control FIRST: the card really did render.
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-testid="apps-listing-official-badge"]')).toHaveLength(
+      0
+    );
+    expect(document.body.textContent).not.toContain('Official');
+  });
+});
+
 /**
  * The RESTRICTED-VISIBILITY badge ("Testers only" / "Moderators only" / "Unlisted").
  *
@@ -1555,5 +1609,168 @@ describe('AppListingCard — the restricted-visibility badge', () => {
     expect(taglines, 'expected one tagline per card').toHaveLength(2);
     const [a, b] = taglines.map((el) => el.getBoundingClientRect().top);
     expect(Math.abs(a - b), 'the visibility badge pushed the tagline down').toBeLessThan(1);
+  });
+
+  // 🔴 The embedded (sidebar) card. Every assertion below has its grid-card counterpart, so a
+  // test that read "the divider is wider" off a card that never changed could not pass.
+  describe('embedded', () => {
+    const dividerAndFooter = () => ({
+      divider: page.getByTestId('apps-listing-card-divider').element().getBoundingClientRect(),
+      footer: page.getByTestId('apps-listing-card-footer').element().getBoundingClientRect(),
+    });
+
+    test('the divider runs edge to edge, past the footer on both sides; the grid card keeps it inside', async () => {
+      renderWithProviders(
+        <div style={{ width: 340 }}>
+          <AppListingCard card={base({ slug: 'embedded' })} canOpenPage embedded />
+        </div>
+      );
+      await expect.element(page.getByTestId('apps-listing-card-divider')).toBeInTheDocument();
+      const e = dividerAndFooter();
+      expect(e.divider.left, 'embedded divider starts inside the padding').toBeLessThan(
+        e.footer.left - 1
+      );
+      expect(e.divider.right, 'embedded divider ends inside the padding').toBeGreaterThan(
+        e.footer.right + 1
+      );
+    });
+
+    test('the grid card divider also runs edge to edge, past the footer on both sides', async () => {
+      renderWithProviders(
+        <div style={{ width: 340 }}>
+          <AppListingCard card={base({ slug: 'grid' })} canOpenPage />
+        </div>
+      );
+      await expect.element(page.getByTestId('apps-listing-card-divider')).toBeInTheDocument();
+      const g = dividerAndFooter();
+      expect(g.divider.left, 'grid divider starts inside the padding').toBeLessThan(
+        g.footer.left - 1
+      );
+      expect(g.divider.right, 'grid divider ends inside the padding').toBeGreaterThan(
+        g.footer.right + 1
+      );
+    });
+
+    test('a cover badge is pinned over the cover, and only when one is given', async () => {
+      renderWithProviders(
+        <AppListingCard
+          card={base({})}
+          canOpenPage
+          embedded
+          coverBadge={<span data-testid="the-badge">Made with</span>}
+        />
+      );
+      await expect.element(page.getByTestId('the-badge')).toBeInTheDocument();
+      expect(
+        page
+          .getByTestId('apps-listing-card-cover-badge')
+          .element()
+          .contains(page.getByTestId('the-badge').element())
+      ).toBe(true);
+    });
+
+    test('Open carries its glyph on the right on both cards; the embedded one keeps it 4px from the label', async () => {
+      renderWithProviders(
+        <div>
+          <div data-testid="emb">
+            <AppListingCard card={base({ slug: 'emb' })} canOpenPage embedded />
+          </div>
+          <div data-testid="grid">
+            <AppListingCard card={base({ slug: 'grid' })} canOpenPage />
+          </div>
+        </div>
+      );
+      await expect.element(page.getByTestId('grid')).toBeInTheDocument();
+      const section = (id: string) =>
+        document
+          .querySelector(
+            `[data-testid="${id}"] [data-testid="apps-listing-card-header"] .mantine-Button-section`
+          )
+          ?.getAttribute('data-position');
+      expect(section('emb'), 'embedded glyph is not on the right').toBe('right');
+      expect(section('grid'), 'grid glyph is not on the right').toBe('right');
+      const glyph = document.querySelector<HTMLElement>(
+        '[data-testid="emb"] [data-testid="apps-listing-card-header"] .mantine-Button-section'
+      )!;
+      expect(getComputedStyle(glyph).marginInlineStart).toBe('4px');
+    });
+
+    test('no cover badge slot without a badge', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage embedded />);
+      await expect.element(page.getByTestId('apps-listing-card-footer')).toBeInTheDocument();
+      expect(page.getByTestId('apps-listing-card-cover-badge').elements()).toHaveLength(0);
+    });
+
+    test('the creator is the shared avatar with the name, not the grid anchor', async () => {
+      renderWithProviders(<AppListingCard card={base({})} canOpenPage embedded />);
+      const creator = page.getByTestId('apps-listing-card-creator');
+      await expect.element(creator).toBeInTheDocument();
+      expect(creator.element().textContent).toContain('alice');
+      // The grid's creator IS the anchor (data-testid on it); the embedded one is a wrapper around
+      // the shared avatar, whose own link goes to the profile.
+      expect(creator.element().tagName).toBe('DIV');
+      const avatar = page.getByTestId('mock-user-avatar').element();
+      expect(creator.element().contains(avatar)).toBe(true);
+      expect(avatar.getAttribute('data-user-id')).toBe('5');
+      expect(avatar.getAttribute('data-link-to-profile')).toBe('true');
+    });
+  });
+});
+
+/**
+ * The META LINE — the category (display label, linked to the store filtered by it) and a
+ * relative "Updated …" date. Absences are read off `querySelector` / `textContent` after a
+ * positive control (the `.not.toBeInTheDocument()` matcher is inert here — #4197).
+ */
+describe('🔴 AppListingCard — the category and last-updated meta line', () => {
+  const THREE_DAYS_AGO = () => new Date(Date.now() - 3 * 86_400_000).toISOString();
+
+  test('🔴 shows the category label linked to the store filtered by it', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    const link = page.getByTestId('apps-listing-card-category');
+    await expect.element(link).toHaveTextContent('Games');
+    const el = link.element();
+    expect(el.tagName).toBe('A');
+    expect(el.getAttribute('href')).toBe('/apps/store?category=games');
+    // Never the raw stored key, and never the card's own detail link.
+    expect(el.textContent).not.toBe('games');
+  });
+
+  test('🔴 shows "Updated <relative date>" from the listing\'s update time', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    await expect
+      .element(page.getByTestId('apps-listing-card-updated'))
+      .toHaveTextContent('Updated 3 days ago');
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).toBe(
+      'Games · Updated 3 days ago'
+    );
+  });
+
+  test('a category the store cannot filter by is plain text, not a link', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'hats' })} canOpenPage />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('hats');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('in preview the category is not a link (the moderator stays on the review)', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage preview />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('Games');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('no update time → no date, and the line still renders', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage />);
+    // Positive control: the meta line rendered.
+    await expect.element(page.getByTestId('apps-listing-card-category')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-updated"]')).toBeNull();
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).not.toContain(
+      'Updated'
+    );
   });
 });

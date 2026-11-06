@@ -76,10 +76,12 @@ const create = async ({ data }: { data: Partial<Row> & Pick<Row, 'userId'> }) =>
 // The transaction's own client: the lookup, the lock and the update must run on it, not on dbWrite.
 const tx = {
   csamReport: {
-    findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
-      const row = rows.find((r) => matches(r, where));
-      return row ? { id: row.id } : null;
-    }),
+    findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) =>
+      rows
+        .filter((r) => matches(r, where))
+        .sort((a, b) => a.id - b.id)
+        .map(({ id, details }) => structuredClone({ id, details }))
+    ),
     update: vi.fn(async ({ where, data }: { where: { id: number }; data: Partial<Row> }) => {
       const row = rows.find((r) => r.id === where.id)!;
       Object.assign(row, data);
@@ -103,7 +105,7 @@ beforeEach(() => {
   rows = [];
   nextId = 1;
   for (const fn of [
-    tx.csamReport.findFirst,
+    tx.csamReport.findMany,
     tx.csamReport.update,
     tx.csamReport.create,
     tx.$queryRaw,
@@ -113,6 +115,7 @@ beforeEach(() => {
     throw new Error('ran outside the transaction');
   };
   dbMock.dbWrite.csamReport.findFirst.mockReset().mockImplementation(outside as never);
+  dbMock.dbWrite.csamReport.findMany.mockReset().mockImplementation(outside as never);
   dbMock.dbWrite.csamReport.update.mockReset().mockImplementation(outside as never);
   dbMock.dbWrite.$queryRaw.mockReset().mockImplementation(outside as never);
   dbMock.dbWrite.csamReport.create.mockReset().mockImplementation(create as never);
@@ -125,8 +128,8 @@ describe('unsent-report lookup', () => {
   it('fake honours Prisma dropping an undefined where key, so the revert case is reachable', async () => {
     seed({ userId: 101 });
     await expect(
-      tx.csamReport.findFirst({ where: { userId: undefined, reportSentAt: null } })
-    ).resolves.toEqual({ id: 1 });
+      tx.csamReport.findMany({ where: { userId: undefined, reportSentAt: null } })
+    ).resolves.toEqual([{ id: 1, details: {} }]);
   });
 
   it('a report with no account leaves two other accounts’ unsent reports untouched', async () => {
@@ -175,6 +178,22 @@ describe('unsent-report lookup', () => {
     expect(rows).toHaveLength(3);
   });
 
+  it('an account’s report is filed on its own beside an unsent supplemental report', async () => {
+    const supplemental = seed({
+      userId: 101,
+      images: [{ id: 3 }],
+      details: {
+        supplemental: { priorCsamReportId: 1, priorReportNumbers: [900], unreviewedImageIds: [] },
+      },
+    });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows.find((r) => r.id === supplemental.id)).toEqual(supplemental);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ userId: 101, images: [{ id: 4 }] });
+  });
+
   it('locks the report it found, only while it is unsent', async () => {
     const unsent = seed({ userId: 101, images: [{ id: 3 }] });
 
@@ -190,10 +209,10 @@ describe('unsent-report lookup', () => {
   it('a report sent after the lookup is left alone, and the new report filed on its own', async () => {
     const raced = seed({ userId: 101, images: [{ id: 1 }] });
     // The lookup still sees the report unsent; it is sent before the lock.
-    tx.csamReport.findFirst.mockImplementationOnce(async () => {
+    tx.csamReport.findMany.mockImplementationOnce(async () => {
       const row = rows.find((r) => r.id === raced.id)!;
       row.reportSentAt = OLD;
-      return { id: row.id };
+      return [{ id: row.id, details: row.details }];
     });
 
     await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
@@ -343,6 +362,109 @@ describe('a second report folded into an unsent one', () => {
     });
   });
 
+  it('folds preserved generator files by blob id, a preserved copy replacing an unreadable one but not an excluded one', async () => {
+    const evidence = { version: 1, approvedAt: '2026-11-01T00:00:00Z', approvedById: MOD };
+    const first = seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: evidence,
+        generatedImages: [
+          {
+            jobId: 'wf-a',
+            blobs: [
+              { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'old' },
+              { blobId: 'b2', role: 'output', status: 'blocked-unreadable' },
+              { blobId: 'b4', role: 'output', status: 'excluded' },
+            ],
+          },
+        ],
+      },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: { version: 1 },
+        generatedImages: [
+          {
+            jobId: 'wf-a',
+            source: 'workflow',
+            blobs: [
+              { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'new' },
+              { blobId: 'b2', role: 'output', status: 'preserved', sha256: 'b2' },
+              { blobId: 'b3', role: 'input', status: 'preserved', sha256: 'b3' },
+              { blobId: 'b4', role: 'output', status: 'preserved', sha256: 'b4' },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(rows).toHaveLength(1);
+    const details = rows.find((r) => r.id === first.id)?.details as {
+      generatedImages: { blobs: { blobId: string; sha256?: string; status: string }[] }[];
+      generatorEvidence: { approvedAt: unknown };
+    };
+    expect(details.generatedImages[0].blobs.map((b) => [b.blobId, b.sha256, b.status])).toEqual([
+      ['b1', 'old', 'preserved'],
+      ['b2', 'b2', 'preserved'],
+      ['b4', undefined, 'excluded'],
+      ['b3', 'b3', 'preserved'],
+    ]);
+    expect(details.generatorEvidence.approvedAt).toBeNull();
+  });
+
+  it('files a URL-only generated-image report apart from a preserved-evidence report', async () => {
+    seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: { version: 1 },
+        generatedImages: [{ jobId: 'wf-a', blobs: [{ blobId: 'b1', status: 'preserved' }] }],
+      },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: { generatedImages: [{ jobId: 'job-x', blobs: [{ url: 'x' }] }] },
+    });
+
+    expect(rows).toHaveLength(2);
+  });
+
+  it('folds a URL-only generated-image filing into the URL-only report behind a pending evidence report', async () => {
+    seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: {
+        generatorEvidence: { version: 1 },
+        generatedImages: [{ jobId: 'wf-a', blobs: [{ blobId: 'b1', status: 'preserved' }] }],
+      },
+    });
+    const legacy = seed({
+      userId: 101,
+      type: 'GeneratedImage',
+      details: { generatedImages: [{ jobId: 'job-x', blobs: [{ url: 'x' }] }] },
+    });
+
+    await createCsamReport({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage',
+      details: { generatedImages: [{ jobId: 'job-y', blobs: [{ url: 'y' }] }] },
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.id === legacy.id)).toMatchObject({
+      details: { generatedImages: [{ jobId: 'job-x' }, { jobId: 'job-y' }] },
+    });
+  });
+
   it('files training data for another version as its own report, and folds the same version', async () => {
     const v1 = seed({ userId: 101, type: 'TrainingData', details: { modelVersionIds: [7] } });
 
@@ -466,9 +588,9 @@ describe('a report a send run has claimed', () => {
 
   it('takes no filing when the claim lands between the lookup and the lock', async () => {
     const raced = seed({ userId: 101, images: [{ id: 1 }] });
-    tx.csamReport.findFirst.mockImplementationOnce(async () => {
+    tx.csamReport.findMany.mockImplementationOnce(async () => {
       Object.assign(rows.find((r) => r.id === raced.id)!, claimedAgo(0));
-      return { id: raced.id };
+      return [{ id: raced.id, details: raced.details }];
     });
 
     await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });

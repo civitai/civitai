@@ -1,5 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
-
 /* THIS IS A WORK IN PROGRESS */
 
 type EventType = 'progress' | 'complete' | 'abort' | 'error';
@@ -60,7 +58,7 @@ export class FileUpload extends EventTarget {
 
   constructor(file: File, options?: FileUploadOptions) {
     super();
-    this.uuid = uuidv4();
+    this.uuid = crypto.randomUUID();
     this.filename = file.name;
     this.size = file.size;
 

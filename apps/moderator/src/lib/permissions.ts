@@ -66,6 +66,18 @@ export const PERMISSIONS = [
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
   },
+  // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
+  // literal (`ModeratorGrantId`), so rename the two together.
+  {
+    id: 'user.membership.extend',
+    label: 'Extend a member’s Stripe membership by free days, or re-sync it from Stripe',
+  },
+  // Undoing a cancel arms the next renewal charge, so it is granted apart from extend. Also checked by
+  // literal in the main app (`ModeratorGrantId`).
+  {
+    id: 'user.membership.cancel',
+    label: 'Set or undo cancel-at-period-end on a member’s Stripe membership',
+  },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
   // two together.
@@ -132,6 +144,11 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
+  // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
+  // its own call; reading a ticket view is the page grant.
+  { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
+  // Hands a moderation ticket to support, naming the moderator who did it.
+  { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
   // Submits a real scan with the site's system account; the page shows signals only.
   { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },

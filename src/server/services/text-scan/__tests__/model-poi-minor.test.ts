@@ -12,15 +12,22 @@ const { mockSetModelMinor, mockSideEffects, mockCreateNotification, entityChange
     mockCreateNotification: vi.fn(),
     entityChangesMock: vi.fn(),
   }));
+const { mockRestoreOwnerFlagOverride } = vi.hoisted(() => ({
+  mockRestoreOwnerFlagOverride: vi.fn(),
+}));
 
 // Label capture runs on real Postgres in label-capture.rulings.behavior.test.ts; here the flag
-// writer runs on the plain client so its own statement can be read.
+// writer reads on the plain client, so its own statement can be read, and writes on `txExecuteRaw`,
+// so a write that escapes the ruling's transaction lands on `dbWrite.$executeRaw` instead.
+const { txExecuteRaw } = vi.hoisted(() => ({
+  txExecuteRaw: vi.fn(async (..._args: unknown[]) => 1),
+}));
 vi.mock('~/server/services/text-scan/label-capture', async (importOriginal) => {
   const { dbMock } = await import('~/__tests__/mocks/db.mock');
   return {
     ...(await importOriginal<typeof LabelCapture>()),
     writeTextScanRuling: (_ruling: unknown, write: (tx: unknown) => unknown) =>
-      write(dbMock.dbWrite),
+      write({ $queryRaw: dbMock.dbWrite.$queryRaw, $executeRaw: txExecuteRaw }),
   };
 });
 // Hand-listed: the real model.service pulls the whole model graph (meili, prom, redis) at load.
@@ -29,6 +36,7 @@ vi.mock('~/server/services/model.service', () => ({
   setModelMinor: mockSetModelMinor,
   applyModelFlagSideEffects: mockSideEffects,
   clearPoiHashMeta: mockClearPoiHashMeta,
+  restoreOwnerFlagOverride: mockRestoreOwnerFlagOverride,
 }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustPublicModelResponseCache: vi.fn(),
@@ -482,6 +490,17 @@ describe('grantModelTextScanPoi', () => {
     expect(mockClearPoiHashMeta).toHaveBeenCalledWith(MODEL_ID);
   });
 
+  // An owner's override predates the text-scan flag, so the ruling it replaced goes back on top.
+  it("fans out the ruling an owner's override put back", async () => {
+    const restored = { nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] };
+    mockRestoreOwnerFlagOverride.mockResolvedValueOnce(restored);
+    await grantModelTextScanPoi({ modelId: MODEL_ID, userId: 3, grantHash: 'h-current' });
+    expect(mockRestoreOwnerFlagOverride).toHaveBeenCalledWith(MODEL_ID, { revertedFlag: 'poi' });
+    expect(mockSideEffects).toHaveBeenCalledWith(
+      expect.objectContaining({ after: expect.objectContaining({ poi: false, ...restored }) })
+    );
+  });
+
   it('marks nothing when nothing was lifted', async () => {
     mockClearPoiHashMeta.mockClear();
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
@@ -500,6 +519,8 @@ describe('grantModelTextScanPoi', () => {
     expect(text).toContain(`'textHash', ?::text,`);
     expect(call.slice(1)).toEqual(expect.arrayContaining([3, 'h-current', 'appeal', MODEL_ID]));
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    // The kept verdict's revive, in the lift's own transaction.
+    expect(txExecuteRaw).toHaveBeenCalled();
   });
 
   it('records a moderator lift with its reason and note instead of an appeal', async () => {
@@ -590,7 +611,7 @@ describe('stampModelTextScanAppeal', () => {
       labels: ['poi', 'minor'],
       grantHashes: { poi: 'h-main', minor: 'h-search' },
     });
-    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const call = flat(txExecuteRaw.mock.calls[0]);
     const text = sqlOf(call);
     expect(text).toContain('unnest(');
     expect(text).toContain(
@@ -605,7 +626,7 @@ describe('stampModelTextScanAppeal', () => {
   });
 
   it('stamps only the flag whose text hash the caller expects and returns the rows it changed', async () => {
-    dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0);
+    txExecuteRaw.mockResolvedValueOnce(0);
     const changed = await stampModelTextScanAppeal({
       modelId: MODEL_ID,
       userId: 3,
@@ -614,7 +635,7 @@ describe('stampModelTextScanAppeal', () => {
       expectTextHash: 'h-seen',
     });
     expect(changed).toBe(0);
-    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const call = flat(txExecuteRaw.mock.calls[0]);
     expect(sqlOf(call)).toContain(`->'poi')->>'textHash' = ?`);
     expect(call.slice(1)).toContain('h-seen');
   });
@@ -627,7 +648,7 @@ describe('stampModelTextScanAppeal', () => {
       labels: ['poi'],
       grantHashes: { poi: 'h-main' },
     });
-    const call = flat(dbMock.dbWrite.$executeRaw.mock.calls[0]);
+    const call = flat(txExecuteRaw.mock.calls[0]);
     // The hash map is empty for an upheld ruling, so the flagged hash wins.
     expect(call.slice(1)).toContain('{}');
     expect(call.slice(1)).not.toContain(JSON.stringify({ poi: 'h-main' }));

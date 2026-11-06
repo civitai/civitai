@@ -41,6 +41,7 @@ export const FEEDBACK_AREAS = [
   'apps-platform',
   'semantic-image-search',
   'knights',
+  'orchestration',
 ] as const;
 
 /**
@@ -49,6 +50,12 @@ export const FEEDBACK_AREAS = [
  * `context.path` is the only thing that says where the report came from.
  */
 export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
+
+/**
+ * Generation and training failures, filed from a toast or alert's "Report this" action by a caller
+ * that knows the failure is the orchestrator's. Never inferred from an error's text.
+ */
+export const ORCHESTRATION_FEEDBACK_AREA: FeedbackArea = 'orchestration';
 
 /** Private per-app feedback from the App Block chrome — see the `app-block` note on FEEDBACK_AREAS. */
 export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
@@ -138,6 +145,16 @@ export const FEEDBACK_PATH_MAX_LENGTH = 300;
 
 /** Faro session ids are short opaque strings; bounded because it is still client-supplied. */
 export const FEEDBACK_SESSION_ID_MAX_LENGTH = 64;
+
+/**
+ * The reference a masked server fault shows the user, "(ref: <12 hex>)", and the key its full error
+ * is logged under (`getClientSafeError`). Reported so triage can find that log line.
+ */
+export const FEEDBACK_ERROR_REF_PATTERN = /^[0-9a-f]{12}$/;
+/** Orchestrator workflow and job ids, as a reporter's browser claims them. */
+export const FEEDBACK_ORCHESTRATOR_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** Each of the title and message of the toast a report was filed from. */
+export const FEEDBACK_TOAST_TEXT_MAX_LENGTH = 300;
 
 /**
  * Length ceiling on ONE value inside `context.filters`.

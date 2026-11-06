@@ -60,6 +60,50 @@ export function getEcosystemStates(
 }
 
 /**
+ * What the output hubs' `ecosystem` field is built from: the gate split, the
+ * ecosystems this viewer can generate with (compatible minus gated, in workflow
+ * order) and the default — `preferred` when usable, else the first usable.
+ */
+export function getEcosystemField(
+  workflow: string,
+  ext: EcosystemGateExt,
+  { preferred, fallback = preferred }: { preferred: string; fallback?: string }
+) {
+  const { compatibleEcosystems, hiddenEcosystems, ecosystemStates } = getEcosystemStates(
+    workflow,
+    ext
+  );
+  const gatedKeys = ecosystemStates.map((e) => e.key);
+  const gatedSet = new Set(gatedKeys);
+  const usableEcosystems = gatedSet.size
+    ? compatibleEcosystems.filter((key) => !gatedSet.has(key))
+    : compatibleEcosystems;
+  const defaultEcosystem = usableEcosystems.includes(preferred)
+    ? preferred
+    : usableEcosystems[0] ?? compatibleEcosystems[0] ?? fallback;
+  return {
+    compatibleEcosystems,
+    hiddenEcosystems,
+    ecosystemStates,
+    gatedKeys,
+    usableEcosystems,
+    defaultEcosystem,
+  };
+}
+
+/**
+ * Whether the `ecosystem` field's output refuses a key: hidden or gated for this
+ * viewer. The output refine and the client re-pick both use it.
+ */
+export function ecosystemRefusal(
+  hiddenEcosystems: readonly string[],
+  gatedKeys: readonly string[]
+): (key: string) => boolean {
+  const refused = new Set([...hiddenEcosystems, ...gatedKeys]);
+  return (key) => refused.has(key);
+}
+
+/**
  * The workflow→ecosystem sync, as a pure function: an ecosystem that doesn't
  * support the workflow REDIRECTS to the workflow's configured default (txt2img +
  * WanVideo30 resolves to SD1).

@@ -1,4 +1,5 @@
-import { Button, Menu } from '@mantine/core';
+import { Button } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';
 import { rememberManuallyAddedModels } from '~/components/Post/EditV2/PostImageCards/AddedImage';

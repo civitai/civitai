@@ -2,8 +2,9 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import { createHash, timingSafeEqual } from 'crypto';
 import { oauthModel } from '$lib/server/oauth/model';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
-import { mintUserSession } from '$lib/server/auth/session';
+import { mintSession } from '$lib/server/auth/session';
 import { touchAccount } from '$lib/server/auth/device';
+import { addDeviceFamily, markFamilyLive } from '$lib/server/auth/lineage';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -100,18 +101,25 @@ export const POST: RequestHandler = async ({ request }) => {
     typeof authCode.user?.id === 'number' ? authCode.user.id : Number(authCode.user?.id);
   if (!Number.isFinite(userId)) return bad('invalid_grant', 'Invalid code subject');
 
-  // Resolve the rich user (confirms existence) and mint the thin session token. mintUserSession only uses
+  // Resolve the rich user (confirms existence) and mint the thin session token. mintSession only uses
   // user.id (sub + jti + revocation tracking); the spoke re-derives the rich user per request.
   const user = await getOrProduceSessionUser(userId).catch(() => null);
   if (!user) return bad('invalid_grant', 'Unknown user');
-
-  const token = await mintUserSession(user);
 
   // Device set (account switcher): the hub stashed its shared `.civitai.com` device id with the code at
   // /authorize. Register this account under it and hand the SAME id back so the spoke writes it as its own
   // civ-device — so e.g. civitai.red joins the SAME device set as civitai.com and the switcher matches across
   // domains. Best-effort: a missing/redis-less device id just means no switcher entry, never a failed login.
-  const { deviceId } = await consumeOidcContext(code);
+  const ctx = await consumeOidcContext(code);
+  const { deviceId } = ctx;
+  // Minted for the hub session's own user: the same family, sign-in time and impersonation. Otherwise a new
+  // family, recorded against this browser when the hub session that authorized it belongs there.
+  const parent = ctx.family
+    ? { sid: ctx.family, iat0: ctx.iat0, impersonatedBy: ctx.impersonatedBy, impExp: ctx.impExp }
+    : null;
+  const { token, family } = await mintSession(user, { parent });
+  await markFamilyLive(family);
+  if (!parent) await addDeviceFamily(deviceId, family, { proofFamily: ctx.proofFamily });
   if (deviceId) await touchAccount(deviceId, userId);
 
   logOAuthEvent({

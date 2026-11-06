@@ -404,13 +404,13 @@ describe('CACHEABLE_PROCEDURES stays in sync with the routers (batch-skip guard)
   const routersDir = join(process.cwd(), 'src/server/routers');
 
   // Map `<basename>.router.ts` -> tRPC key prefix from the appRouter registration:
-  //   `key: lazy(() => import('.../x.router').then((m) => m.xRouter))`
+  //   `key: () => import('.../x.router').then((m) => m.xRouter)`
   const buildFileToKey = (): Record<string, string> => {
-    // Comment-aware for the same reason as the `edgeCacheIt(` scan: a commented-out `lazy()`
+    // Comment-aware for the same reason as the `edgeCacheIt(` scan: a commented-out
     // registration is not a registered router, and must not mint a key.
     const index = stripTsComments(readFileSync(join(routersDir, 'index.ts'), 'utf8'));
     const map: Record<string, string> = {};
-    const re = /(\w+):\s*lazy\(\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
+    const re = /(\w+):\s*\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(index))) {
       const [, key, importPath] = m;

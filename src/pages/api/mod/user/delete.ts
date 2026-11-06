@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isModerationAccountRow } from '~/server/auth/moderation-account';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
@@ -19,6 +20,7 @@ export default defineModeratorEndpoint('user.delete', {
     '`username` is REQUIRED for any account that has one — it is the only check that catches a mistyped id landing on another live account. Accounts with a null username, and already-deleted rows, do not ask for it.',
     'Refuses an account that is already deleted rather than re-running the scrub.',
     'Refuses an account under a legal hold, with no override.',
+    'App Blocks app data (documents, shared posts, votes in apps) is kept unless you send `removeAppData: true`; then it is deleted 7 days after the deletion, the same grace as images, unless the account is restored or put under a legal hold first. Like `removeImages`, the choice is made at deletion time only.',
     'Images are kept for the 7-day grace period unless you send `removeImages: true`. An erasure asking for immediate removal needs that flag set deliberately, and THE CHOICE IS ONE-SHOT: once the account is deleted this endpoint refuses it. Getting it wrong costs a 7-day delay, not permanent retention — the purge still runs on day 7.',
     'Records a `deleteAccount` ModActivity row against the acting moderator. `auditRecorded: false` means the deletion succeeded and that row did not land.',
   ],
@@ -57,6 +59,11 @@ export default defineModeratorEndpoint('user.delete', {
     removeImages: moderatorBoolean
       .default(false)
       .describe('True deletes the images now. Default keeps them for the 7-day grace period.'),
+    removeAppData: moderatorBoolean
+      .default(false)
+      .describe(
+        "True also deletes the account's data in apps, 7 days after the deletion. Default keeps it."
+      ),
   }),
   async handler(input, ctx) {
     // Checked here as well as in the moderator app's form action, so every caller of this endpoint
@@ -87,6 +94,8 @@ export default defineModeratorEndpoint('user.delete', {
     // correctly deleted. Pinned by the retry case in `delete.test.ts`.
     if (target.deletedAt)
       throw throwBadRequestError(`User ${input.userId} is already deleted; nothing to delete.`);
+    if (isModerationAccountRow(target))
+      throw throwBadRequestError('The shared moderation account cannot be deleted.');
     // 🔴 REQUIRED WHERE IT IS CHECKABLE, NOT MERELY ACCEPTED. A mistyped id that lands on another
     // LIVE account is the one mistake nothing downstream catches — not the unknown-id refusal above,
     // not the already-deleted one — so confirmation cannot be something a caller may quietly omit.
@@ -123,6 +132,7 @@ export default defineModeratorEndpoint('user.delete', {
         username: target.username ?? undefined,
         removeModels: input.removeModels,
         removeImages: input.removeImages,
+        removeAppData: input.removeAppData,
       });
     } catch (e) {
       // No moderator override: a hold is released by Legal, not here.

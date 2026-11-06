@@ -37,6 +37,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { AuctionType, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
@@ -603,6 +604,9 @@ export const createBid = async ({
 
     if (mv.model.poi) throw throwBadRequestError('Invalid model version.');
 
+    if (stopsCreatorEarnings(mv.baseModel))
+      throw throwBadRequestError(notCommerciallyAvailableMessage(mv.baseModel));
+
     const allowedTypeData = getModelTypesForAuction(auctionData.auctionBase);
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) throw throwBadRequestError('Invalid model type for this auction.');
@@ -1154,6 +1158,7 @@ export const moveRecurringBidToLatest = async ({
     if (mv.model.status !== ModelStatus.Published) return false;
     if ((mv.model.meta as ModelMeta | null)?.cannotPromote === true) return false;
     if (mv.model.poi) return false;
+    if (stopsCreatorEarnings(mv.baseModel)) return false;
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) return false;
     if (!!bid.auctionBase.ecosystem && bid.auctionBase.ecosystem !== miscAuctionName) {

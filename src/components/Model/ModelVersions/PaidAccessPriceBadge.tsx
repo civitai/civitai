@@ -1,4 +1,5 @@
-import { Badge, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Badge, Group, Text, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt } from '@tabler/icons-react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';

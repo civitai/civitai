@@ -4,13 +4,13 @@ import {
   Button,
   Center,
   CloseButton,
-  HoverCard,
   Loader,
   Modal,
   Progress,
   Tabs,
   Text,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { Dropzone } from '@mantine/dropzone';
 import {
   IconAlertCircle,

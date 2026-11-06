@@ -106,6 +106,7 @@ const upscaleSelectionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('multiplier'), multiplier: z.number() }),
   z.object({ type: z.literal('resolution'), resolution: z.number() }),
 ]);
+const upscaleSelectionInput = upscaleSelectionSchema.optional();
 
 /** An Upscaler-type resource with a pinned default. */
 const UPSCALER = {
@@ -113,6 +114,8 @@ const UPSCALER = {
   output: resourceSchema,
   default: { id: DEFAULT_UPSCALER.versionId, model: { type: 'Upscaler' } } as ResourceData,
   meta: (value: ResourceData | undefined) => ({
+    // The workflow can't run without one, so the form offers no remove.
+    required: true,
     options: {
       canGenerate: true,
       resources: [{ type: 'Upscaler' }],
@@ -193,7 +196,7 @@ export const imageUpscale = defineGraph<GenerationCtx>()
     };
 
     return {
-      input: upscaleSelectionSchema.optional(),
+      input: upscaleSelectionInput,
       output: upscaleSelectionSchema,
       default: defaultValue,
       // A selection that stopped being useful for every image

@@ -1,0 +1,201 @@
+/**
+ * `_app.getInitialProps` keeps the tRPC routing cookie (`civ-trpc-pool`) in step with the
+ * viewer's `trpcPoolRoute` flag on a full render: set for a signed-in viewer the flag is on for,
+ * cleared once it is off, never set for an anonymous viewer, and left alone when the settings
+ * bootstrap could not say who the viewer is, on a response a shared cache may store, or on one
+ * whose headers are already sent.
+ *
+ * The flag mock answers `true` for EVERY evaluation, with or without a user, so a case where the
+ * cookie is not set is decided by `_app`, not by the flag. The Flipt-outage cases instead run the
+ * REAL `getFeatureFlagsAsync` and stub only Flipt's answer.
+ *
+ * Lives outside `src/pages` deliberately: Next treats every file under there as a route.
+ */
+import type { ServerResponse } from 'node:http';
+import type { AppContext } from 'next/app';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClientModule from '~/server/flipt/client';
+import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
+
+const h = vi.hoisted(() => ({
+  bootstrap: vi.fn<(req: unknown) => Promise<unknown>>(),
+  flagOn: { current: true },
+  realFlags: { current: false },
+  // Flipt's per-flag answer; `null` is what `@civitai/flipt` gives while it is unreachable.
+  flipt: vi.fn<(flag: string) => boolean | null>(),
+}));
+
+// Wholesale on purpose, as in app-settings-bootstrap.test.ts: `_app` uses only this export.
+vi.mock('~/server/services/settings-bootstrap.service', () => ({
+  resolveSettingsBootstrapForRender: h.bootstrap,
+}));
+
+vi.mock('~/server/auth/get-server-auth-session', () => ({
+  getServerAuthSession: vi.fn(async () => null),
+}));
+
+// The outage shape of `@civitai/flipt` (pinned in its own client.test.ts): a failed init is
+// swallowed, so `ensureInitialized` resolves, and `isEnabledSync` answers `null`.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
+  ensureFliptInitialized: vi.fn(async () => undefined),
+  isFliptSync: vi.fn((flag: string) => h.flipt(flag)),
+}));
+
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeatureFlagsService>();
+  return {
+    ...actual,
+    getFeatureFlagsAsync: vi.fn(async (ctx: Parameters<typeof actual.getFeatureFlagsAsync>[0]) =>
+      h.realFlags.current
+        ? actual.getFeatureFlagsAsync(ctx)
+        : h.flagOn.current
+        ? { trpcPoolRoute: true }
+        : {}
+    ),
+  };
+});
+
+import AppWithTRPC from '~/pages/_app';
+
+const getInitialProps = (
+  AppWithTRPC as unknown as { getInitialProps: (c: AppContext) => Promise<unknown> }
+).getInitialProps;
+
+const SIGNED_IN = { session: { user: { id: 4242, username: 'trpc-pool-viewer' } } };
+const ANONYMOUS = { session: null };
+
+const SET = 'civ-trpc-pool=1; Path=/; Max-Age=604800; Secure; HttpOnly; SameSite=Lax';
+const CLEAR = 'civ-trpc-pool=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
+
+async function render({
+  cookie,
+  url = '/models',
+  preset = {},
+  sent = false,
+}: { cookie?: string; url?: string; preset?: Record<string, string>; sent?: boolean } = {}) {
+  const { req, res } = createRealApiPair({
+    url,
+    headers: { host: 'civitai.com', ...(cookie ? { cookie } : {}) },
+  });
+  // `createRealApiPair` gives the request a parsed jar; a page request carries only the header.
+  delete (req as unknown as { cookies?: unknown }).cookies;
+  const response = res as unknown as ServerResponse;
+  // Headers the router writes before the page renders (next.config `headers()`).
+  for (const [name, value] of Object.entries(preset)) response.setHeader(name, value);
+  // A response already sent, as on `_app`'s second run after a redirect, `notFound` or throw.
+  if (sent) response.end();
+  const noop = () => null;
+  await getInitialProps({
+    Component: noop,
+    AppTree: noop,
+    router: {},
+    ctx: { req, res, pathname: url, query: {}, asPath: url, AppTree: noop },
+  } as unknown as AppContext);
+  return ([] as unknown[]).concat(response.getHeader('Set-Cookie') ?? []).map(String);
+}
+
+const poolCookies = (all: string[]) => all.filter((c) => c.startsWith('civ-trpc-pool='));
+
+beforeEach(() => {
+  h.bootstrap.mockReset();
+  h.flagOn.current = true;
+  h.realFlags.current = false;
+  h.flipt.mockReset();
+  h.flipt.mockReturnValue(null);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(null, { status: 503 }))
+  );
+});
+
+describe('_app: the tRPC routing cookie follows the viewer flag', () => {
+  it('signed in, flag on: sets it with the exact attributes', async () => {
+    h.bootstrap.mockImplementation(async () => SIGNED_IN);
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t' }))).toEqual([SET]);
+  });
+
+  it('signed in, flag off, cookie present: clears it', async () => {
+    h.bootstrap.mockImplementation(async () => SIGNED_IN);
+    h.flagOn.current = false;
+    const cookie = '__Secure-civ-token=t; civ-trpc-pool=1';
+    expect(poolCookies(await render({ cookie }))).toEqual([CLEAR]);
+  });
+
+  it('anonymous, flag on for everyone: never set', async () => {
+    h.bootstrap.mockImplementation(async () => ANONYMOUS);
+    expect(poolCookies(await render())).toEqual([]);
+  });
+
+  it('anonymous, cookie left from a signed-in visit: cleared', async () => {
+    h.bootstrap.mockImplementation(async () => ANONYMOUS);
+    expect(poolCookies(await render({ cookie: 'civ-trpc-pool=1' }))).toEqual([CLEAR]);
+  });
+
+  // next.config `headers()` gives `/sitemap(-\\w+)?.xml` this value, and the router writes it onto
+  // the response before `_app` runs.
+  const SITEMAP_CACHE = { 'Cache-Control': 'public, max-age=86400, must-revalidate' };
+
+  it('a sitemap route marked public by next.config: never set', async () => {
+    h.bootstrap.mockImplementation(async () => SIGNED_IN);
+    const all = await render({
+      cookie: '__Secure-civ-token=t',
+      url: '/sitemap-models.xml',
+      preset: SITEMAP_CACHE,
+    });
+    expect(poolCookies(all)).toEqual([]);
+  });
+
+  it('a sitemap route marked public by next.config: never cleared', async () => {
+    h.bootstrap.mockImplementation(async () => ANONYMOUS);
+    const all = await render({
+      cookie: 'civ-trpc-pool=1',
+      url: '/sitemap-models.xml',
+      preset: SITEMAP_CACHE,
+    });
+    expect(poolCookies(all)).toEqual([]);
+  });
+
+  it('headers already sent (a second run on one response): no throw, no Set-Cookie', async () => {
+    h.bootstrap.mockImplementation(async () => SIGNED_IN);
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t', sent: true }))).toEqual([]);
+  });
+
+  it('a degraded bootstrap (viewer unknown): left as it is', async () => {
+    h.bootstrap.mockImplementation(async () => {
+      throw new Error('bootstrap down');
+    });
+    h.flagOn.current = false;
+    const cookie = '__Secure-civ-token=t; civ-trpc-pool=1';
+    expect(poolCookies(await render({ cookie }))).toEqual([]);
+  });
+});
+
+describe('_app: Flipt down, through the real flag evaluation', () => {
+  // The flag evaluation cannot reject on an outage: it resolves with the flag off, the render
+  // completes, and the cookie is cleared. Each case has its own viewer id because the evaluation
+  // memoizes per viewer for a few seconds.
+  const signedIn = (id: number) => ({ session: { user: { id, username: `trpc-pool-${id}` } } });
+
+  beforeEach(() => {
+    h.realFlags.current = true;
+  });
+
+  it('positive control: Flipt on for the viewer sets it', async () => {
+    h.bootstrap.mockImplementation(async () => signedIn(5101));
+    h.flipt.mockImplementation((flag) => (flag === 'trpc-pool-route' ? true : null));
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t' }))).toEqual([SET]);
+  });
+
+  it('Flipt down, cookie present: the render completes and the cookie is cleared', async () => {
+    h.bootstrap.mockImplementation(async () => signedIn(5102));
+    const cookie = '__Secure-civ-token=t; civ-trpc-pool=1';
+    expect(poolCookies(await render({ cookie }))).toEqual([CLEAR]);
+  });
+
+  it('Flipt down, no cookie: never set', async () => {
+    h.bootstrap.mockImplementation(async () => signedIn(5103));
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t' }))).toEqual([]);
+  });
+});

@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as Ledger from '~/server/services/scam-case-ledger';
 import type * as ModeratorService from '~/server/services/moderator.service';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const m = vi.hoisted(() => ({
@@ -9,6 +10,7 @@ const m = vi.hoisted(() => ({
   restoreScamCases: vi.fn(async () => undefined),
   trackModActivity: vi.fn(async () => undefined),
   invalidateSession: vi.fn(async () => undefined),
+  revokeCivitaiUserTokens: vi.fn(async (_: { userId: number | string }) => true),
 }));
 
 vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
@@ -19,6 +21,10 @@ vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: m.trackModActivity,
+}));
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: m.revokeCivitaiUserTokens,
 }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
@@ -39,9 +45,21 @@ const lockedRow = (over: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` keeps a `mockRejectedValue` from an earlier test.
+  m.invalidateSession.mockResolvedValue(undefined);
   lockedRow();
   dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: false });
+});
+
+// `afterAccountStandingChanged` arms a real follow-up timer; held here so one test's cannot fire
+// inside another's assertions.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
 });
 
 describe('releaseUserMute', () => {
@@ -182,7 +200,7 @@ describe('releaseUserMute', () => {
   });
 
   it('does not throw once the unmute has committed', async () => {
-    m.invalidateSession.mockRejectedValueOnce(new Error('redis down'));
+    m.invalidateSession.mockRejectedValue(new Error('redis down'));
     await expect(
       releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' })
     ).resolves.toMatchObject({ released: true });
@@ -197,5 +215,28 @@ describe('setUserMuted', () => {
       { entityType: 'user', entityId: USER, activity: 'unmute' },
       dbMock.dbWrite
     );
+  });
+});
+
+describe('a change of standing reaches the orchestrator', () => {
+  it("an unmute revokes the account's cached orchestrator tokens", async () => {
+    await releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' });
+    expect(m.invalidateSession).toHaveBeenCalledTimes(1);
+    expect(m.revokeCivitaiUserTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
+  });
+
+  it('a moderator mute whose sessions cannot be ended reports it, without throwing', async () => {
+    dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true });
+    m.invalidateSession.mockRejectedValue(new Error('session store down'));
+    await expect(setUserMuted({ userId: USER, muted: true })).resolves.toMatchObject({
+      sessionInvalidated: false,
+    });
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalledOnce();
+  });
+
+  it('a moderator mute revokes them too', async () => {
+    dbMock.dbWrite.user.update.mockResolvedValue({ id: USER, muted: true });
+    await setUserMuted({ userId: USER, muted: true });
+    expect(m.revokeCivitaiUserTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER });
   });
 });

@@ -7,6 +7,7 @@ import { ShopSection } from '~/components/Shop/ShopSection';
 import type { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticShopSort } from '~/server/common/enums';
+import { shopSectionAnchor } from '~/components/Shop/shop-section-anchor';
 import type { RouterOutput } from '~/types/router';
 
 export type OfficialShopSectionData = RouterOutput['cosmeticShop']['getShop'][number];
@@ -59,6 +60,7 @@ export function OfficialShopSection({
 
   return (
     <ShopSection
+      id={shopSectionAnchor(section.id)}
       title={section.title}
       description={section.description}
       imageUrl={section.image?.url}

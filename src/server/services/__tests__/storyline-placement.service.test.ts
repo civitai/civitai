@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PlacementEscrow from '~/server/services/placement-escrow.service';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
@@ -14,6 +15,16 @@ const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn();
 const assertCanContinueStoryline = vi.fn();
 
+// The free tier's display count (`getFreePlacementAllowance`, `hasUsedFreePlacementOn`), a Kysely
+// read. It answers from the same table the fakes below write (`givenTable`).
+const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,
@@ -65,6 +76,11 @@ const matches = (row: Row, where: Where) =>
     if (condition === undefined) return true;
     if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
       const ops = condition as Record<string, unknown>;
+      // A JSON path match on one key, as the team-waived share of a free-tier count asks.
+      if ('path' in ops && 'equals' in ops && Object.keys(ops).length === 2) {
+        const json = row[key] as Record<string, unknown> | null | undefined;
+        return json?.[(ops.path as string[])[0]] === ops.equals;
+      }
       for (const op of Object.keys(ops))
         if (op !== 'gte' && op !== 'in') throw new Error(`fake: unsupported operator ${op}`);
       if ('gte' in ops && !((row[key] as Date) >= (ops.gte as Date))) return false;
@@ -89,6 +105,13 @@ const tx = {
   $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     txLog.push(`raw ${strings.join('?')} [${values.join(',')}]`);
     return 0;
+  }),
+  // Only the storyline lock: the storyline of the chapter on the parent post.
+  $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!/FOR SHARE OF st\s*$/.test(strings.join('?')))
+      throw new Error('fake: unexpected raw query in the submit transaction');
+    txLog.push(`lock storyline of post ${values.join(',')}`);
+    return [{ id: 1 }];
   }),
   placement: {
     count: vi.fn(async ({ where }: { where: Where }) => {
@@ -186,8 +209,8 @@ const givenTable = () => {
     fn(tx)
   );
   // The free tier's display reads, against the same table.
-  dbMock.dbRead.placement.count.mockImplementation(
-    async ({ where }: { where: Where }) => rows.filter((row) => matches(row, where)).length
+  displayCount.mockImplementation(
+    async (_db: unknown, where: Where) => rows.filter((row) => matches(row, where)).length
   );
 };
 
@@ -371,12 +394,20 @@ describe('createStorylinePlacement — the pending cap', () => {
       `raw SELECT pg_advisory_xact_lock(?::int, ?::int) [${PLACER_LOCK_CLASS},${PLACER}]`,
       'count',
       'findFirst',
+      `lock storyline of post ${CHAPTER}`,
       'create',
     ]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.placement.count).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+  // The storyline lock is what makes a delete wait for this submit, or this submit see the
+  // delete: a storyline deleted between the terms check and the insert is refused, not escrowed.
+  it('refuses, taking no Buzz, when the storyline is gone by the time it locks', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([] as never);
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+    expect(tx.placement.create).not.toHaveBeenCalled();
   });
 });
 
@@ -608,6 +639,7 @@ describe('createStorylinePlacement — who may continue', () => {
 });
 
 describe('createStorylinePlacement — the continuation post', () => {
+  // One message for every verdict on purpose: saying which one would let anyone probe the scans.
   it.each([
     ['taken down', { tosViolation: true }],
     ['with a taken-down image', { images: [{ ...SCANNED, tosViolation: true }] }],
@@ -628,7 +660,17 @@ describe('createStorylinePlacement — the continuation post', () => {
   it('refuses a post rated above the storyline', async () => {
     givenAccess({ maxNsfwLevel: 1 });
     givenPost({ nsfwLevel: 4 });
-    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.aboveRating);
+    await expect(submit()).rejects.toThrow(
+      `${STORYLINE_REFUSALS.aboveRating}. This storyline allows up to PG; this post is R`
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  // Blocked is a moderation verdict, not a rating: it is refused like the other verdicts.
+  it('refuses a post at the Blocked level without naming it', async () => {
+    givenAccess({ maxNsfwLevel: 1 });
+    givenPost({ nsfwLevel: 4 | 32 });
+    await expect(submit()).rejects.toThrow(new RegExp(`^${STORYLINE_REFUSALS.cannotSubmit}$`));
     expect(rows).toHaveLength(0);
   });
 

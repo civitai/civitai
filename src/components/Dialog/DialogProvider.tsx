@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, memo, useContext, useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { DialogIdContext, useDialogId } from '~/components/Dialog/dialogId';
 import { dialogStore, useDialogStore, useIsLevelFocused } from '~/components/Dialog/dialogStore';
-import trieMemoize from 'trie-memoize';
+import { useHistoryLayer } from '~/hooks/useHistoryLayer';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 
 type DialogState = {
   opened: boolean;
@@ -20,7 +21,13 @@ const DialogContext = createContext<DialogState>({
 export const useDialogContext = () => useContext(DialogContext);
 export { useDialogId };
 
-const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
+const DialogProviderInner = memo(function DialogProviderInner({
+  dialog,
+  index,
+}: {
+  dialog: Dialog;
+  index: number;
+}) {
   const [opened, setOpened] = useState(false);
   const isTopLevel = useIsLevelFocused();
 
@@ -37,6 +44,10 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
     }, 0);
   }, []);
 
+  // Over the mobile generator, Back closes the dialog first. Routed dialogs have their own entry.
+  const overMobileGenerator = useMobileGeneratorStore((state) => state.showing);
+  useHistoryLayer(opened, onClose, overMobileGenerator && dialog.type !== 'routed-dialog');
+
   return (
     <DialogContext.Provider
       value={{
@@ -52,19 +63,15 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
       </DialogIdContext.Provider>
     </DialogContext.Provider>
   );
-};
+});
 
 export const DialogProvider = () => {
   const dialogs = useDialogStore((state) => state.dialogs);
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <React.Fragment key={dialog.id.toString()}>{createRenderElement(dialog, i)}</React.Fragment>
+        <DialogProviderInner key={dialog.id.toString()} dialog={dialog} index={i} />
       ))}
     </>
   );
 };
-
-const createRenderElement = trieMemoize([WeakMap, {}, {}], (dialog, index) => (
-  <DialogProviderInner dialog={dialog} index={index} />
-));

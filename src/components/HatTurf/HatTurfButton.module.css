@@ -1,0 +1,114 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  pointer-events: auto;
+}
+
+.button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  /* The reaction chips' height: any taller and the card's tip row grows. */
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background-color: var(--mantine-color-gray-6);
+  color: var(--mantine-color-white);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+
+  & svg {
+    filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.4));
+  }
+}
+
+/* The feed card's button sits beside the reaction bar and tip pill, so it takes their corner radius, not the detail view's circle. */
+.feed {
+  width: 26px;
+  border-radius: var(--mantine-radius-sm);
+
+  & svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.invite {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--mantine-color-gray-6);
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
+}
+
+.empty {
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-5));
+  box-shadow: none;
+}
+
+.active {
+  outline: 2px solid var(--mantine-color-white);
+  outline-offset: 1px;
+}
+
+.tick {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--mantine-color-white);
+  border-radius: 50%;
+  background-color: var(--mantine-color-green-8);
+  color: var(--mantine-color-white);
+}
+
+/* Over the button's top-right corner, nudged in so a card's edge never clips it. */
+.gear {
+  position: absolute;
+  top: -6px;
+  right: -5px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background-color: #000;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.18);
+  /*
+   * Its own layer, so the disc and the glyph rasterise together: at a 1.275 devicePixelRatio the
+   * gear was seen a pixel low and right of the disc.
+   */
+  transform: translateZ(0);
+
+  /* Even icon in an even chip: the 2px inset lands on whole CSS pixels. */
+  & svg {
+    display: block;
+  }
+}
+
+/*
+ * A bigger tap target than the 16px it draws. Kept to a 22px circle: any wider and it reaches the
+ * button's centre, which must stay the button's.
+ */
+.gear::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+}
+
+.anchor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

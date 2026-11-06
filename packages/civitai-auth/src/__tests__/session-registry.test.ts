@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createSessionRegistry, type SessionRegistryRedis } from '../session-registry';
+import { createLuaRedis } from '../../../../src/server/utils/__tests__/redis-lua-harness';
 
 // Keys are injected (from @civitai/redis in real usage). Use the real values so the assertions
 // double as a check that the registry composes them correctly.
@@ -167,6 +168,35 @@ describe('createSessionRegistry', () => {
       expect(await reg.isRevoked({ jti: 'root-jti', signedAt: 1 })).toBe(true);
       expect(await reg.isRevoked({ jti: 'child', sid: 'root-jti', signedAt: 1 })).toBe(true);
       expect(await reg.isRevoked({ jti: 'unrelated', sid: 'other', signedAt: 1 })).toBe(false);
+    });
+
+    it('ending a family signs out its root and every descendant, for longer than the 90-day limit', async () => {
+      const ttls = new Map<string, number>();
+      const redis = makeRedis();
+      redis.hExpire = async (key, field, seconds) => void ttls.set(`${key}|${field}`, seconds);
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+      await reg.invalidateFamily('root-jti');
+
+      expect(await reg.isRevoked({ jti: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'child', sid: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(await reg.isRevoked({ jti: 'unrelated', sid: 'other', signedAt: 1 })).toBe(false);
+      expect(ttls.get(`${KEYS.familyState}|root-jti`)).toBe(91 * DAY);
+    });
+
+    it('with a script-capable client, writes the family marker and its TTL in one script', async () => {
+      const lua = createLuaRedis(Date.now());
+      const redis = makeRedis();
+      redis.hSet = async () => {
+        throw new Error('the marker must not be written outside the script');
+      };
+      redis.hGet = async (key, field) => lua.hash(key)?.[field] ?? null;
+      redis.eval = (script, opts) => lua.eval(script, opts);
+      const reg = createSessionRegistry({ redis, keys: KEYS });
+
+      await reg.invalidateFamily('root-jti');
+
+      expect(await reg.isRevoked({ jti: 'child', sid: 'root-jti', signedAt: 1 })).toBe(true);
+      expect(lua.hpttl(KEYS.familyState, 'root-jti')).toBe(91 * DAY * 1000);
     });
 
     it('reads Buffer replies, as the HA sys client returns them', async () => {

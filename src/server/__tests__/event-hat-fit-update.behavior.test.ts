@@ -128,6 +128,50 @@ describe('saving a hat edit in Postgres', () => {
     expect((await stored(HAT_ID)).fit).toStrictEqual(applyHatFitChanges(fit, changes));
   });
 
+  it('a brim correction moves only the brim, keeping the outline and every other field', async () => {
+    await seed(HAT_ID, { ...HAT, fit: { ...SHAPE, size: 45 } });
+    await updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 111, 89] } });
+    expect(await stored(HAT_ID)).toEqual({
+      ...HAT,
+      fit: { ...SHAPE, size: 45, brim: [17, 111, 89] },
+    });
+  });
+
+  it.each([
+    ['right of the canvas', [17, 129, 89]],
+    ['below the canvas', [17, 111, 161]],
+  ])('refuses a brim %s and leaves the hat untouched', async (_, brim) => {
+    await seed(HAT_ID, HAT);
+    await expect(
+      updateEventHatFit({ id: HAT_ID, fit: { brim: brim as [number, number, number] } })
+    ).rejects.toThrow(/inside the art \(128×160\)/);
+    expect(await stored(HAT_ID)).toEqual(HAT);
+    expect(caches.cosmeticCache.refresh).not.toHaveBeenCalled();
+  });
+
+  it("holds a brim inside the hat's own canvas, not the default one", async () => {
+    await seed(HAT_ID, { ...HAT, fit: { ...SHAPE, canvas: [256, 320] } });
+    await updateEventHatFit({ id: HAT_ID, fit: { brim: [40, 220, 300] } });
+    expect(((await stored(HAT_ID)).fit as { brim: number[] }).brim).toEqual([40, 220, 300]);
+  });
+
+  it('takes a brim reaching the edge of the canvas', async () => {
+    await seed(HAT_ID, HAT);
+    await updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 128, 160] } });
+    expect(((await stored(HAT_ID)).fit as { brim: number[] }).brim).toEqual([17, 128, 160]);
+  });
+
+  // Hats measured before canvases were stored have none; their art is the default size.
+  it('holds a brim inside the default canvas when the hat stores none', async () => {
+    const { canvas: _, ...noCanvas } = SHAPE;
+    await seed(HAT_ID, { ...HAT, fit: noCanvas });
+    await expect(updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 129, 89] } })).rejects.toThrow(
+      /inside the art \(128×160\)/
+    );
+    await updateEventHatFit({ id: HAT_ID, fit: { brim: [17, 128, 89] } });
+    expect(((await stored(HAT_ID)).fit as { brim: number[] }).brim).toEqual([17, 128, 89]);
+  });
+
   it('keeps fields set by an earlier save', async () => {
     await seed(HAT_ID, { ...HAT, fit: { ...SHAPE, grow: 1.2 } });
     await updateEventHatFit({ id: HAT_ID, fit: { offset: [3, -4] } });
@@ -235,9 +279,21 @@ describe('what a hat edit may contain', () => {
     expect(updateEventHatFitSchema.safeParse({ id: 0, fit: { tilt: -30 } }).success).toBe(false);
   });
 
-  it("refuses anything that would rewrite the art's shape", () => {
+  it("refuses anything that would rewrite the art's shape, but its brim", () => {
     expect(parse({ outline: [[0, 0]] })).toBe(false);
-    expect(parse({ brim: [0, 10, 20] })).toBe(false);
     expect(parse({ tilt: -30, canvas: [64, 80] })).toBe(false);
+    expect(parse({ bounds: [0, 0, 10, 10] })).toBe(false);
+  });
+
+  // 🔴 To whoever closes the brim again: the measured brim is the art's widest row, which on a hat
+  // with hair, glasses or tentacles below it (black-twintails, 2026-11-03) is the bottom of those,
+  // so the hat rode up off the avatar. A moderator corrects it here; it is never cleared.
+  it('accepts a brim correction, but not a cleared, widthless or negative one', () => {
+    expect(parse({ brim: [23, 118, 89] })).toBe(true);
+    expect(parse({ brim: null })).toBe(false);
+    expect(parse({ brim: [50, 50, 89] })).toBe(false);
+    expect(parse({ brim: [60, 40, 89] })).toBe(false);
+    expect(parse({ brim: [-1, 118, 89] })).toBe(false);
+    expect(parse({ brim: [23, 118] })).toBe(false);
   });
 });

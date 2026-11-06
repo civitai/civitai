@@ -34,6 +34,27 @@ export type ArticleMetadata = {
   unpublishedReason?: string | null;
   customMessage?: string | null;
   unpublishedAt?: string | null;
+  /** Written by the main app when a block moves an article to UnpublishedViolation. */
+  statusBeforeViolation?: string | null;
 } | null;
+
+/**
+ * Where a moderator's restore puts the article: the status the block recorded, so a draft goes
+ * back to its author as it was. A row with none (blocked before it was recorded) is published only
+ * if it had been, since publishing it would publish something its author never did.
+ */
+export function restoreStatus(
+  metadata: ArticleMetadata | undefined,
+  publishedAt: Date | null
+): ArticleStatus {
+  const before = metadata?.statusBeforeViolation;
+  if (
+    before === ArticleStatus.Draft ||
+    before === ArticleStatus.Unpublished ||
+    before === ArticleStatus.Published
+  )
+    return before;
+  return publishedAt ? ArticleStatus.Published : ArticleStatus.Draft;
+}
 
 export const articleUrl = (base: string, id: number) => `${base}/articles/${id}`;

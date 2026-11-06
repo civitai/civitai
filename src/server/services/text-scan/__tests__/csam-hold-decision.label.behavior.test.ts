@@ -7,12 +7,15 @@ import { bootLabelStore } from '~/server/services/__tests__/label-store.fixture'
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const mocks = vi.hoisted(() => ({ toggleBan: vi.fn(), removeV2: vi.fn() }));
+const mocks = vi.hoisted(() => ({ toggleBan: vi.fn(), removeV2: vi.fn(), removeV3: vi.fn() }));
 
 // Hand-listed: only the decision's own SQL runs against the real label store here.
 vi.mock('~/server/services/comment.service', () => ({ bulkSetCommentTosViolation: vi.fn() }));
 vi.mock('~/server/services/commentsv2.service', () => ({
   bulkSetCommentV2TosViolation: mocks.removeV2,
+}));
+vi.mock('~/server/services/commentv3/moderation.service', () => ({
+  bulkSetCommentV3TosViolation: mocks.removeV3,
 }));
 vi.mock('~/server/services/user.service', () => ({
   toggleBan: mocks.toggleBan,
@@ -116,6 +119,25 @@ describe('the csam hold decision record, against the real label store', () => {
       { value: 'csam', reason: 'remove', subjectType: 'comment_v2_text', subjectId: '55' },
     ]);
     expect((await db.pg.query('SELECT * FROM label_store.record_failure')).rows).toEqual([]);
+  });
+
+  // A comment on a CommentV3-write surface is held, and removed, as CommentV3.
+  it('removes a CommentV3 comment through the CommentV3 ToS removal', async () => {
+    await db.pg.exec(`UPDATE "TextScanHold" SET "entityType" = 'CommentV3' WHERE id = 12`);
+    dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({
+      id: 12,
+      status: 'Pending',
+      entityType: 'CommentV3',
+      entityId: 55,
+      userId: 900,
+      text: 'held text',
+      textHash: 'h',
+      meta: null,
+    });
+    mocks.removeV3.mockResolvedValueOnce({ count: 1 });
+    await decide('remove');
+    expect(mocks.removeV3).toHaveBeenCalledWith(expect.objectContaining({ ids: [55] }));
+    expect(mocks.removeV2).not.toHaveBeenCalled();
   });
 
   it('records a dismissal as not csam', async () => {

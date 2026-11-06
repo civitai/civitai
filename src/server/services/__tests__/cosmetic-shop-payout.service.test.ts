@@ -222,26 +222,38 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  it('official Civitai shop attribution (-1) is a platform resale: creator gets 5000 only', async () => {
-    await purchase(-1);
+  // Civitai selling a resellable item from its own shop is not a resale: no
+  // reseller made the sale, so the seller share is the creator's, not the platform's.
+  // A creator can't be their own reseller, even if a resale row names them.
+  it('own-storefront purchase with a resale row under the creator still pays one 7000 leg', async () => {
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
 
-    // The system user has no shop settings worth consulting.
-    expect(mocks.userFindUnique).not.toHaveBeenCalled();
+    await purchase(CREATOR_ID);
+
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 
-  // Every UI surface sends an attribution (-1 or a shop owner id); undefined
-  // still reaches us from direct API calls and stale clients. It must pay the
-  // platform split — if omitting the field paid the full pool, stripping the
-  // attribution would be the spoof.
-  it('unattributed purchase of a sellable item falls back to the platform resale split: creator gets 5000 only', async () => {
+  it('official Civitai shop sale of a resellable item pays the creator the full pool: 7000', async () => {
+    await purchase(-1);
+
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
+    ]);
+    expect(mocks.purchasesUpdate.mock.calls[0][0].data.meta).toEqual({
+      payouts: [{ userId: CREATOR_ID, amount: 7000, color: 'yellow', transactionId: 'tx-1' }],
+      platformCut: 3000,
+    });
+  });
+
+  it('unattributed purchase of a resellable item pays the creator the full pool: 7000', async () => {
     await purchase(undefined);
 
     expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 
@@ -306,14 +318,40 @@ describe('purchaseCosmeticShopItem payouts', () => {
     expect(update.data.meta.platformCut).toBe(3000);
   });
 
-  it('invalid reseller attribution (no resale listing for the item) pays no seller share: creator 5000 only', async () => {
+  it('invalid reseller attribution (no resale listing for the item) pays no seller share: creator 7000', async () => {
     mocks.resaleFindUnique.mockResolvedValue(null);
 
     await purchase(RESELLER_ID);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
+  });
+
+  // The share is credited from the listing row looked up under the attributed
+  // id, so naming someone else can neither take the real reseller's cut nor
+  // stop them being paid on their own sales.
+  it('pays a real reseller their share while a spoofed attribution on the same item gets nothing', async () => {
+    const SPOOF_ID = 300;
+    mocks.resaleFindUnique.mockImplementation(
+      async ({ where }: { where: { userId_shopItemId: { userId: number } } }) =>
+        where.userId_shopItemId.userId === RESELLER_ID ? { sellerShare: 20 } : null
+    );
+
+    await purchase(SPOOF_ID);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
+    ]);
+
+    mocks.createBuzzTransaction.mockClear();
+    await purchase(RESELLER_ID);
+    expect(sellCalls()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+        expect.objectContaining({ toAccountId: RESELLER_ID, amount: 2000 }),
+      ])
+    );
+    expect(sellCalls()).toHaveLength(2);
   });
 
   it('genuine self-resale (buyer resells the item) gets no kickback: creator keeps the full 7000, buyer nothing', async () => {
@@ -326,13 +364,13 @@ describe('purchaseCosmeticShopItem payouts', () => {
     expect(sells.some((s) => s.toAccountId === BUYER_ID)).toBe(false);
   });
 
-  it('bogus self-attribution (buyer does NOT resell the item) is treated as unattributed: creator 5000 only', async () => {
+  it('bogus self-attribution (buyer does NOT resell the item) is treated as unattributed: creator 7000', async () => {
     mocks.resaleFindUnique.mockResolvedValue(null);
 
     await purchase(BUYER_ID);
 
     const sells = sellCalls();
-    expect(sells).toEqual([expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 })]);
+    expect(sells).toEqual([expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 })]);
     expect(sells.some((s) => s.toAccountId === BUYER_ID)).toBe(false);
   });
 
@@ -357,17 +395,17 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  it('sellerShare 70 on a platform resale leaves the creator 0 — no zero-amount payout is created', async () => {
+  it('a reseller listing at 70% leaves the creator 0 — no zero-amount payout is created', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(
       shopItemRow({ meta: { sellableByOthers: true, sellerShare: 70 } })
     );
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 70 });
 
-    await purchase(undefined);
+    await purchase(RESELLER_ID);
 
-    expect(sellCalls()).toHaveLength(0);
-    // The only transaction is the buyer's charge.
-    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
-    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: RESELLER_ID, amount: 7000 }),
+    ]);
     // And the payout block didn't silently blow up either.
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
   });
@@ -423,17 +461,15 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  // Grandfathering is per-reseller: an unattributed sale of a still-resellable
-  // item is a platform resale at the item's CURRENT share, not anyone's terms.
-  it('leaves the platform resale split on the item’s current share', async () => {
+  it('pays the creator the full pool with no reseller, whatever share the item offers', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(
-      shopItemRow({ meta: { sellableByOthers: true, sellerShare: 10 } })
+      shopItemRow({ meta: { sellableByOthers: true, sellerShare: 70 } })
     );
 
-    await purchase(undefined);
+    await purchase(-1);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 6000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 

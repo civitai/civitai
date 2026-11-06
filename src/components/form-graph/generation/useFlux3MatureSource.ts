@@ -3,8 +3,10 @@ import { useMemo, useSyncExternalStore } from 'react';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
 import type { BlobRating } from '~/server/services/orchestrator/blobRatings';
 import { MATURE_SOURCE_ALTERNATIVE } from '~/shared/constants/mature-source.constants';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import {
   flux3SourceImageUrls,
+  galleryRatingToSourceRating,
   hasMatureSource,
 } from '~/shared/form-graph/generation/video/flux3-mature-source';
 import { FLUX3_KEYFRAMES_WORKFLOW } from '~/shared/form-graph/generation/video/flux3-video.graph';
@@ -63,7 +65,7 @@ export function useFlux3MatureSource(store: GenerationStore): {
   const blobIdByUrl = new Map<string, string>();
   for (const url of urls) {
     const blobId = getConsumerBlobId(url);
-    if (blobId && !seeded(url)) blobIdByUrl.set(url, blobId);
+    if (blobId) blobIdByUrl.set(url, blobId);
   }
   const blobIds = [...new Set(blobIdByUrl.values())].sort();
 
@@ -79,9 +81,10 @@ export function useFlux3MatureSource(store: GenerationStore): {
   });
 
   const fetched = new Map(data?.map((r) => [r.blobId, r.nsfwLevel]));
+  // The more severe of the two, so neither a low seed nor a low scan can hide the other.
   const blocked = hasMatureSource(urls, (url) => {
     const blobId = blobIdByUrl.get(url);
-    return seeded(url) ?? (blobId ? fetched.get(blobId) : undefined);
+    return maxNsfwLevel([seeded(url), blobId ? fetched.get(blobId) : undefined]);
   });
   return { blocked, canSwitch: workflow !== FLUX3_KEYFRAMES_WORKFLOW };
 }
@@ -97,4 +100,15 @@ export function switchToMatureSourceAlternative(store: GenerationStore) {
 /** A rating the caller already holds (a generated output's), so the check needs no lookup. */
 export function recordSourceRating(url: string, nsfwLevel: NsfwLevel | undefined) {
   if (nsfwLevel && nsfwLevel !== NsfwLevel.NA) sourceMetadataStore.setMetadata(url, { nsfwLevel });
+}
+
+/** A gallery image's rating, as loaded with that image's record. */
+export function recordGallerySourceRating(url: string, nsfwLevel: number) {
+  recordSourceRating(url, galleryRatingToSourceRating(nsfwLevel));
+}
+
+/** The form re-uploads a source under a new url, and the rating has to follow it. */
+export function transferSourceRating(fromUrl: string, toUrl: string) {
+  const nsfwLevel = sourceMetadataStore.getMetadata(fromUrl)?.nsfwLevel as NsfwLevel | undefined;
+  recordSourceRating(toUrl, nsfwLevel);
 }

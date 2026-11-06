@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import { isSystemAccountMeta } from '@civitai/auth';
-import { v4 as uuidv4 } from 'uuid';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -201,7 +200,7 @@ export const oauthClientRouter = router({
         isModerator: ctx.user.isModerator,
         surface: 'oauth-client',
       });
-      const clientId = uuidv4();
+      const clientId = crypto.randomUUID();
       const clientSecret = input.isConfidential ? generateKey(48) : null;
       const hashedSecret = clientSecret ? generateSecretHash(clientSecret) : null;
 

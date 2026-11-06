@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { shopSectionAnchor } from '~/components/Shop/shop-section-anchor';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
@@ -61,6 +62,8 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
       <HomeBlockHeaderMeta
         metadata={{
           ...metadata,
+          link: metadata.link ?? shopLink(metadata.cosmeticShopSection?.id),
+          linkText: metadata.linkText ?? 'View Shop',
           title: metadata?.title ?? cosmeticShopSection.title,
           description: metadata?.description ?? cosmeticShopSection.description ?? '',
         }}
@@ -84,5 +87,8 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     </div>
   );
 }
+
+const shopLink = (sectionId?: number) =>
+  sectionId == null ? '/shop' : `/shop#${shopSectionAnchor(sectionId)}`;
 
 type Props = { metadata: HomeBlockMetaSchema; showAds?: boolean; homeBlockId: number };

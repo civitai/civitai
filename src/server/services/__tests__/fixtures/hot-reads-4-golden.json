@@ -1,0 +1,476 @@
+{
+  "by-hidden:a missing model, any": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:a missing model, pinned": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:a missing model, unpinned": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:a model with no comments, any": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:a model with no comments, pinned": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:a model with no comments, unpinned": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:a viewer excluding a hidden and a blocked author, any": {
+    "visible": 3,
+    "hidden": 1
+  },
+  "by-hidden:a viewer excluding a hidden and a blocked author, pinned": {
+    "visible": 1,
+    "hidden": 0
+  },
+  "by-hidden:a viewer excluding a hidden and a blocked author, unpinned": {
+    "visible": 2,
+    "hidden": 1
+  },
+  "by-hidden:a viewer with no exclusions, any": {
+    "visible": 6,
+    "hidden": 2
+  },
+  "by-hidden:a viewer with no exclusions, pinned": {
+    "visible": 2,
+    "hidden": 1
+  },
+  "by-hidden:a viewer with no exclusions, unpinned": {
+    "visible": 4,
+    "hidden": 1
+  },
+  "by-hidden:another model, any": {
+    "visible": 1,
+    "hidden": 0
+  },
+  "by-hidden:another model, pinned": {
+    "visible": 0,
+    "hidden": 0
+  },
+  "by-hidden:another model, unpinned": {
+    "visible": 1,
+    "hidden": 0
+  },
+  "by-hidden:no model filter (an undefined Prisma condition), any": {
+    "visible": 7,
+    "hidden": 2
+  },
+  "by-hidden:no model filter (an undefined Prisma condition), pinned": {
+    "visible": 2,
+    "hidden": 1
+  },
+  "by-hidden:no model filter (an undefined Prisma condition), unpinned": {
+    "visible": 5,
+    "hidden": 1
+  },
+  "by-hidden:one author only, which wins over the exclusions, any": {
+    "visible": 2,
+    "hidden": 1
+  },
+  "by-hidden:one author only, which wins over the exclusions, pinned": {
+    "visible": 1,
+    "hidden": 0
+  },
+  "by-hidden:one author only, which wins over the exclusions, unpinned": {
+    "visible": 1,
+    "hidden": 1
+  },
+  "by-hidden:the moderator view (ToS violations included), any": {
+    "visible": 8,
+    "hidden": 3
+  },
+  "by-hidden:the moderator view (ToS violations included), pinned": {
+    "visible": 3,
+    "hidden": 1
+  },
+  "by-hidden:the moderator view (ToS violations included), unpinned": {
+    "visible": 5,
+    "hidden": 2
+  },
+  "count:a missing model, any": 0,
+  "count:a missing model, pinned": 0,
+  "count:a missing model, unpinned": 0,
+  "count:a model with no comments, any": 0,
+  "count:a model with no comments, pinned": 0,
+  "count:a model with no comments, unpinned": 0,
+  "count:a viewer excluding a hidden and a blocked author, any": 3,
+  "count:a viewer excluding a hidden and a blocked author, pinned": 1,
+  "count:a viewer excluding a hidden and a blocked author, unpinned": 2,
+  "count:a viewer with no exclusions, any": 6,
+  "count:a viewer with no exclusions, pinned": 2,
+  "count:a viewer with no exclusions, unpinned": 4,
+  "count:another model, any": 1,
+  "count:another model, pinned": 0,
+  "count:another model, unpinned": 1,
+  "count:no model filter (an undefined Prisma condition), any": 7,
+  "count:no model filter (an undefined Prisma condition), pinned": 2,
+  "count:no model filter (an undefined Prisma condition), unpinned": 5,
+  "count:one author only, which wins over the exclusions, any": 2,
+  "count:one author only, which wins over the exclusions, pinned": 1,
+  "count:one author only, which wins over the exclusions, unpinned": 1,
+  "count:the hidden view, any": 2,
+  "count:the hidden view, pinned": 1,
+  "count:the hidden view, unpinned": 1,
+  "count:the moderator hidden view, any": 3,
+  "count:the moderator hidden view, pinned": 1,
+  "count:the moderator hidden view, unpinned": 2,
+  "count:the moderator view (ToS violations included), any": 8,
+  "count:the moderator view (ToS violations included), pinned": 3,
+  "count:the moderator view (ToS violations included), unpinned": 5,
+  "pinned:a missing model": [],
+  "pinned:a model with no comments": [],
+  "pinned:a viewer excluding a hidden and a blocked author": [
+    {
+      "id": 2603,
+      "createdAt": {
+        "$date": "2026-03-05T00:00:00.005Z"
+      },
+      "nsfw": false,
+      "content": "pinned",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": true,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-02T00:00:00.002Z"
+      },
+      "user": {
+        "id": 2401,
+        "username": "alpha",
+        "deletedAt": null,
+        "image": "a.png"
+      },
+      "reactions": [
+        {
+          "id": 2704,
+          "reaction": "Cry",
+          "user": {
+            "id": 2405,
+            "username": "reactor"
+          }
+        }
+      ],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ],
+  "pinned:a viewer with no exclusions": [
+    {
+      "id": 2604,
+      "createdAt": {
+        "$date": "2026-03-06T00:00:00.006Z"
+      },
+      "nsfw": false,
+      "content": "pinned blocker",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": false,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-03T00:00:00.003Z"
+      },
+      "user": {
+        "id": 2404,
+        "username": "blocker",
+        "deletedAt": null,
+        "image": "b.png"
+      },
+      "reactions": [],
+      "model": {
+        "name": "Parity model"
+      }
+    },
+    {
+      "id": 2603,
+      "createdAt": {
+        "$date": "2026-03-05T00:00:00.005Z"
+      },
+      "nsfw": false,
+      "content": "pinned",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": true,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-02T00:00:00.002Z"
+      },
+      "user": {
+        "id": 2401,
+        "username": "alpha",
+        "deletedAt": null,
+        "image": "a.png"
+      },
+      "reactions": [
+        {
+          "id": 2704,
+          "reaction": "Cry",
+          "user": {
+            "id": 2405,
+            "username": "reactor"
+          }
+        }
+      ],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ],
+  "pinned:another model": [],
+  "pinned:no model filter (an undefined Prisma condition)": [
+    {
+      "id": 2604,
+      "createdAt": {
+        "$date": "2026-03-06T00:00:00.006Z"
+      },
+      "nsfw": false,
+      "content": "pinned blocker",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": false,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-03T00:00:00.003Z"
+      },
+      "user": {
+        "id": 2404,
+        "username": "blocker",
+        "deletedAt": null,
+        "image": "b.png"
+      },
+      "reactions": [],
+      "model": {
+        "name": "Parity model"
+      }
+    },
+    {
+      "id": 2603,
+      "createdAt": {
+        "$date": "2026-03-05T00:00:00.005Z"
+      },
+      "nsfw": false,
+      "content": "pinned",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": true,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-02T00:00:00.002Z"
+      },
+      "user": {
+        "id": 2401,
+        "username": "alpha",
+        "deletedAt": null,
+        "image": "a.png"
+      },
+      "reactions": [
+        {
+          "id": 2704,
+          "reaction": "Cry",
+          "user": {
+            "id": 2405,
+            "username": "reactor"
+          }
+        }
+      ],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ],
+  "pinned:one author only, which wins over the exclusions": [
+    {
+      "id": 2603,
+      "createdAt": {
+        "$date": "2026-03-05T00:00:00.005Z"
+      },
+      "nsfw": false,
+      "content": "pinned",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": true,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-02T00:00:00.002Z"
+      },
+      "user": {
+        "id": 2401,
+        "username": "alpha",
+        "deletedAt": null,
+        "image": "a.png"
+      },
+      "reactions": [
+        {
+          "id": 2704,
+          "reaction": "Cry",
+          "user": {
+            "id": 2405,
+            "username": "reactor"
+          }
+        }
+      ],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ],
+  "pinned:the hidden view": [
+    {
+      "id": 2613,
+      "createdAt": {
+        "$date": "2026-03-12T00:00:00.012Z"
+      },
+      "nsfw": false,
+      "content": "pinned hidden",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": false,
+      "tosViolation": false,
+      "hidden": true,
+      "pinnedAt": {
+        "$date": "2026-04-04T00:00:00.004Z"
+      },
+      "user": {
+        "id": 2403,
+        "username": "hiddenone",
+        "deletedAt": null,
+        "image": null
+      },
+      "reactions": [],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ],
+  "pinned:the moderator hidden view": [
+    {
+      "id": 2613,
+      "createdAt": {
+        "$date": "2026-03-12T00:00:00.012Z"
+      },
+      "nsfw": false,
+      "content": "pinned hidden",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": false,
+      "tosViolation": false,
+      "hidden": true,
+      "pinnedAt": {
+        "$date": "2026-04-04T00:00:00.004Z"
+      },
+      "user": {
+        "id": 2403,
+        "username": "hiddenone",
+        "deletedAt": null,
+        "image": null
+      },
+      "reactions": [],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ],
+  "pinned:the moderator view (ToS violations included)": [
+    {
+      "id": 2604,
+      "createdAt": {
+        "$date": "2026-03-06T00:00:00.006Z"
+      },
+      "nsfw": false,
+      "content": "pinned blocker",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": false,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-03T00:00:00.003Z"
+      },
+      "user": {
+        "id": 2404,
+        "username": "blocker",
+        "deletedAt": null,
+        "image": "b.png"
+      },
+      "reactions": [],
+      "model": {
+        "name": "Parity model"
+      }
+    },
+    {
+      "id": 2603,
+      "createdAt": {
+        "$date": "2026-03-05T00:00:00.005Z"
+      },
+      "nsfw": false,
+      "content": "pinned",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": true,
+      "tosViolation": false,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-02T00:00:00.002Z"
+      },
+      "user": {
+        "id": 2401,
+        "username": "alpha",
+        "deletedAt": null,
+        "image": "a.png"
+      },
+      "reactions": [
+        {
+          "id": 2704,
+          "reaction": "Cry",
+          "user": {
+            "id": 2405,
+            "username": "reactor"
+          }
+        }
+      ],
+      "model": {
+        "name": "Parity model"
+      }
+    },
+    {
+      "id": 2612,
+      "createdAt": {
+        "$date": "2026-02-28T00:00:00.000Z"
+      },
+      "nsfw": false,
+      "content": "pinned tos",
+      "modelId": 2501,
+      "parentId": null,
+      "locked": false,
+      "tosViolation": true,
+      "hidden": false,
+      "pinnedAt": {
+        "$date": "2026-04-01T00:00:00.001Z"
+      },
+      "user": {
+        "id": 2401,
+        "username": "alpha",
+        "deletedAt": null,
+        "image": "a.png"
+      },
+      "reactions": [],
+      "model": {
+        "name": "Parity model"
+      }
+    }
+  ]
+}

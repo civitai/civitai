@@ -1,4 +1,5 @@
-import { HoverCard, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import {
   IconMaximize,
   IconMinimize,
@@ -331,7 +332,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         if (resumeAt !== undefined && Math.abs(resumeAt - videoElem.currentTime) > 0.5) {
           videoElem.currentTime = resumeAt;
         }
-        videoElem.play().catch(() => {
+        // Some iOS Safari versions return undefined from play() instead of a promise.
+        videoElem.play()?.catch(() => {
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });

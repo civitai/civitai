@@ -1,4 +1,5 @@
-import { Anchor, Group, HoverCard, Skeleton, Text } from '@mantine/core';
+import { Anchor, Group, Skeleton, Text } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconSticker } from '@tabler/icons-react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { NextLink as Link } from '~/components/NextLink/NextLink';

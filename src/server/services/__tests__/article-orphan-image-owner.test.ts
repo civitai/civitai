@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,10 @@ import type * as TextScanRoute from '~/server/services/text-scan/route';
 // The Redis-backed post-commit helpers never settle without a live Redis, so they are stubbed.
 const { deleteImageById } = vi.hoisted(() => ({ deleteImageById: vi.fn(async () => undefined) }));
 
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  holdMarkerViewExists: async () => true,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   deleteImageById,
@@ -153,7 +158,7 @@ beforeEach(() => {
   deletedArticleCover = null;
   hold.rows = [{ held: false }];
   dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-    if (!strings.join('?').includes(' AS held')) return undefined;
+    if (!strings.join('?').includes(' AS held')) return [];
     if (!hold.rows) throw new Error('relation "EvidenceHeldUser" does not exist');
     return hold.rows;
   }) as never);
@@ -216,6 +221,7 @@ describe('applyArticleContentChange', () => {
         title: 'A title',
         previousContent: '<p>had images</p>',
         coverId: null,
+        bannerId: null,
         publication: { status: 'Draft' as never, scheduledAt: null },
       },
     });
@@ -262,6 +268,43 @@ describe('deleteArticleById', () => {
       expect(deletedIds()).toEqual([UNUSED_OWN.id]);
     }
   );
+
+  it('removes the comment topic before the article, in the same transaction', async () => {
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    const topicDelete = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('DELETE FROM "CommentTopic"')
+    );
+    expect(topicDelete).toBeGreaterThanOrEqual(0);
+    expect(dbMock.dbWrite.$executeRaw.mock.calls[topicDelete].slice(1)).toEqual([ARTICLE_ID]);
+    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[topicDelete]).toBeLessThan(
+      dbMock.dbWrite.article.delete.mock.invocationCallOrder[0]
+    );
+  });
+
+  // An article saved before shop keys were refused can hold one as the author's own image row.
+  it('keeps an unused image of the author whose key shop artwork uses', async () => {
+    const shopKey = '0a0b0c0d-0000-4000-8000-0000000000aa';
+    dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+      [...UNLINKED, ...COVERS]
+        .filter((row) => matches(row, where))
+        .map((row) => ({
+          id: row.id,
+          url: row.id === UNUSED_OWN.id ? shopKey : `key-${row.id}`,
+        }))) as never);
+    const heldRead = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('unnest(')
+        ? Promise.resolve([{ key: shopKey }])
+        : heldRead?.(strings, ...values)) as never);
+
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    expect(deletedIds()).toEqual([]);
+  });
 
   const deleteWithCover = async (cover: Row) => {
     deleteArticleWithCover(cover);
@@ -471,5 +514,206 @@ describe('ownerUnderSafetyReport over the real hold view', () => {
 
   it('lets an owner with no hold through', async () => {
     expect(await heldOn(FREE)).toBe(false);
+  });
+});
+
+describe('the article banner', () => {
+  const COVER = row(30);
+  const BANNER = row(31);
+  const NEW_BANNER = row(32);
+  const ANOTHER_ARTICLES = row(33, { uses: ['article'] });
+  const FOREIGN = row(34, { userId: SOMEONE_ELSE });
+  const IMAGES = [COVER, BANNER, NEW_BANNER, ANOTHER_ARTICLES, FOREIGN];
+
+  /** The article row as the update left it, so the image predicates see the new cover and banner. */
+  let saved: { coverId: number | null; bannerId: number | null };
+
+  beforeEach(() => {
+    const stored = {
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>had images</p>',
+      coverId: COVER.id,
+      bannerId: BANNER.id,
+      status: 'Draft',
+      scheduledAt: null,
+      publishedAt: null,
+      nsfwLevel: 1,
+      userNsfwLevel: 1,
+      lockedProperties: [],
+      metadata: {},
+    };
+    saved = { coverId: stored.coverId, bannerId: stored.bannerId };
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbWrite.article.update.mockImplementation((async ({ data }: any) => {
+      saved = {
+        coverId: data.coverId === undefined ? stored.coverId : data.coverId,
+        bannerId: data.bannerId === undefined ? stored.bannerId : data.bannerId,
+      };
+      return { ...stored, ...saved };
+    }) as never);
+    dbMock.dbRead.image.findUnique.mockImplementation((async ({ where }: any) => ({
+      userId: IMAGES.find((image) => image.id === where.id)?.userId,
+    })) as never);
+    // The rows the post-commit cleanup reads before its hold filters.
+    // An id-only read is the cleanup's; anything else is the content change's orphan lookup.
+    dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+      Object.keys(where).length === 1
+        ? IMAGES.filter((image) => where.id.in.includes(image.id)).map((image) => ({
+            id: image.id,
+            url: `key-${image.id}`,
+          }))
+        : [...UNLINKED, ...COVERS]
+            .filter((row) => matches(row, where))
+            .map((row) => ({ id: row.id }))) as never);
+    dbMock.dbWrite.image.findFirst.mockImplementation((async ({ where }: any) => {
+      const { id, ...rest } = where;
+      const image = IMAGES.find((candidate) => candidate.id === id);
+      if (!image) return null;
+      const uses = [
+        ...image.uses,
+        ...(saved.coverId === image.id ? ['article'] : []),
+        ...(saved.bannerId === image.id ? ['articleBanner'] : []),
+      ];
+      return matches({ ...image, uses }, rest) ? { id: image.id } : null;
+    }) as never);
+  });
+
+  const save = (images: { coverImage?: Row; bannerImage?: Row | null }) =>
+    upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+      ...(images.coverImage ? { coverImage: { id: images.coverImage.id, url: 'u' } } : {}),
+      ...(images.bannerImage !== undefined
+        ? { bannerImage: images.bannerImage && { id: images.bannerImage.id, url: 'u' } }
+        : {}),
+    } as never);
+
+  it("refuses someone else's image as the banner", async () => {
+    await expect(save({ coverImage: COVER, bannerImage: FOREIGN })).rejects.toThrow(
+      'Invalid banner image'
+    );
+  });
+
+  it('keeps the banner when the save does not mention it', async () => {
+    await save({ coverImage: COVER });
+
+    expect(saved.bannerId).toBe(BANNER.id);
+    expect(deletedIds()).not.toContain(BANNER.id);
+  });
+
+  it('clears and deletes the banner on null', async () => {
+    await save({ coverImage: COVER, bannerImage: null });
+
+    expect(saved.bannerId).toBeNull();
+    expect(deletedIds()).toContain(BANNER.id);
+  });
+
+  it('deletes the replaced banner', async () => {
+    await save({ coverImage: COVER, bannerImage: NEW_BANNER });
+
+    expect(saved.bannerId).toBe(NEW_BANNER.id);
+    expect(deletedIds()).toContain(BANNER.id);
+  });
+
+  it('deletes nothing when the cover and banner swap places', async () => {
+    await save({ coverImage: BANNER, bannerImage: COVER });
+
+    expect(saved).toEqual({ coverId: BANNER.id, bannerId: COVER.id });
+    expect(deletedIds()).toEqual([]);
+  });
+
+  it("keeps a replaced banner that is another article's cover", async () => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+      bannerId: ANOTHER_ARTICLES.id,
+    } as never);
+
+    await save({ coverImage: COVER, bannerImage: NEW_BANNER });
+
+    expect(deletedIds()).not.toContain(ANOTHER_ARTICLES.id);
+  });
+
+  it("deletes a replaced cover, and keeps one that is another article's banner", async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+    await save({ coverImage: NEW_BANNER });
+    expect(deletedIds()).toContain(COVER.id);
+
+    deleteImageById.mockClear();
+    dbMock.dbWrite.article.count.mockImplementation((async ({ where }: any) =>
+      where.OR.some((c: any) => c.bannerId === COVER.id) && where.id.not === ARTICLE_ID
+        ? 1
+        : 0) as never);
+    await save({ coverImage: NEW_BANNER });
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
+  it('keeps a replaced banner and cover while the owner has a safety report on file', async () => {
+    dbMock.dbWrite.csamReport.count.mockImplementation((async ({ where }: any) =>
+      where.userId === AUTHOR ? 1 : 0) as never);
+
+    await save({ coverImage: NEW_BANNER, bannerImage: null });
+
+    expect(saved).toEqual({ coverId: NEW_BANNER.id, bannerId: null });
+    expect(deletedIds()).toEqual([]);
+  });
+
+  it('clears a cover saved as null even when another article shows it', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(1 as never);
+
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+      coverImage: null,
+    } as never);
+
+    expect(saved.coverId).toBeNull();
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
+  it('still applies the content change when deleting the replaced banner fails', async () => {
+    deleteImageById.mockImplementation((async ({ id }: { id: number }) => {
+      if (id === BANNER.id) throw new Error('storage down');
+    }) as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      upsertArticle({
+        id: ARTICLE_ID,
+        userId: AUTHOR,
+        title: 'A title',
+        content: '<p>no images left</p>',
+        status: 'Draft',
+        coverImage: { id: COVER.id, url: 'u' },
+        bannerImage: { id: NEW_BANNER.id, url: 'u' },
+      } as never)
+    ).resolves.toBeTruthy();
+
+    // The content change, which runs after the cleanup, links the new body's image urls.
+    const linkedContent = dbMock.dbWrite.image.findMany.mock.calls.some(
+      ([arg]: any) => 'url' in arg.where
+    );
+    expect(linkedContent).toBe(true);
+    deleteImageById.mockImplementation((async () => undefined) as never);
+  });
+
+  it("deletes the author's own unused banner with the article", async () => {
+    dbMock.dbWrite.article.delete.mockResolvedValue({
+      coverId: null,
+      bannerId: BANNER.id,
+    } as never);
+    dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+      [...UNLINKED, BANNER].filter((r) => matches(r, where)).map((r) => ({ id: r.id }))) as never);
+
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    expect(deletedIds()).toContain(BANNER.id);
   });
 });

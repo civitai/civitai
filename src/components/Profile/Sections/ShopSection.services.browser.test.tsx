@@ -38,7 +38,15 @@ const shop = (over: Record<string, unknown> = {}) => ({
   featured: [],
   cosmetics: [],
 });
-const offering = { id: 1, title: 'Custom portrait', deliveryDays: 5, revisionsIncluded: 2 };
+const offering = {
+  id: 1,
+  title: 'Custom portrait',
+  description: 'A painted portrait of your character',
+  price: 1500,
+  deliveryDays: 5,
+  revisionsIncluded: 2,
+  maxNsfwLevel: 1,
+};
 
 const renderSection = async () => {
   renderWithProviders(<ShopSection user={user} />);
@@ -56,8 +64,11 @@ describe('ShopSection services', () => {
     state.offerings = [offering];
     const text = await renderSection();
     expect(text).toContain('Custom portrait');
+    expect(text).toContain('1,500');
+    expect(text).toContain('Delivered in ~5 days');
     expect(document.querySelectorAll('[data-testid="card"]')).toHaveLength(0);
-    expect(document.querySelector('a[href="/user/mira/shop#shop-services"]')).not.toBeNull();
+    const button = document.querySelector('a[href="/user/mira/shop#shop-services"]');
+    expect(button?.textContent).toBe('View service');
   });
 
   test('cosmetics still show alongside services', async () => {

@@ -11,6 +11,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'Appeal',
   'Article',
   'ArticleReaction',
+  'ArticleShareCheck',
   'Blocklist',
   'Blurb',
   'Bounty',

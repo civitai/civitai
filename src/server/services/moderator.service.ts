@@ -22,6 +22,10 @@ type ModelModActivity = {
     | 'setPoiAutoHash'
     | 'revertPoiAutoHash'
     | 'dismissPoiHashMatch'
+    | 'approveLockReview'
+    | 'rejectLockReview'
+    // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
+    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -78,6 +82,15 @@ type UserModActivity = {
     | 'unmute'
     | 'revokeTimedMute'
     | 'createSystemAccount'
+    | 'mintSystemAccountApiKey'
+    | 'setSystemAccountProfile'
+    // A moderator gave a Stripe member free days (membership-extend.service). Counts toward its cooldown.
+    | 'extendMembership'
+    // A moderator set or undid cancel-at-period-end on a member's Stripe membership (membership-cancel.service).
+    | 'setMembershipCancel'
+    | 'undoMembershipCancel'
+    // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
+    | 'resyncMembership'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -157,7 +170,14 @@ export type StorylineModActivity = {
     | 'moveChapter'
     | 'linkChapter'
     | 'setCanon'
-    | 'removeCollaborator';
+    | 'removeCollaborator'
+    | 'removeChapter'
+    | 'delete';
+};
+
+type CrucibleModActivity = {
+  entityType: 'crucible';
+  activity: 'takeDown';
 };
 
 type SiteAlertModActivity = {
@@ -165,9 +185,15 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type CsamReportModActivity = {
+  entityType: 'csamReport';
+  activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
   | ImageTagModActivity
@@ -177,6 +203,7 @@ type ModActivity = {
   | ImpersonateModActivity
   | UserModActivity
   | ComicProjectModActivity
+  | CrucibleModActivity
   | PlacementModActivity
   | FeedbackModActivity
   | BountyEntryModActivity

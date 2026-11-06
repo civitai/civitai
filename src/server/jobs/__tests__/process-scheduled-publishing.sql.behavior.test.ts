@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -7,7 +8,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // The job's own SQL, run against an in-process Postgres: what a run publishes, and what it engages.
 
-const { mockProcessEngagement } = vi.hoisted(() => ({ mockProcessEngagement: vi.fn() }));
+const { mockProcessEngagement, mockSparkRestored } = vi.hoisted(() => ({
+  mockProcessEngagement: vi.fn(),
+  mockSparkRestored: vi.fn(),
+}));
 
 // Hand-listed rather than spread via importOriginal, as in process-scheduled-publishing.rewards.test:
 // the real modules build query caches from the db client at import time.
@@ -18,6 +22,7 @@ vi.mock('~/server/rewards/active/firstDailyPost.reward', () => ({
   getFirstDailyPostRewardedIds: vi.fn(async () => new Set<number>()),
 }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: mockProcessEngagement } }));
+vi.mock('~/server/events/points/hooks', () => ({ onStorySparkPostsRestored: mockSparkRestored }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   userImageVideoCountCaches: { refresh: vi.fn() },
@@ -68,7 +73,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL,
       "publishedAt" timestamp(3), availability text
     );
-    CREATE TABLE "ModelFile" (id serial PRIMARY KEY, "modelVersionId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id serial PRIMARY KEY, "modelVersionId" int NOT NULL,
+      "pickleScanResult" text NOT NULL DEFAULT 'Success',
+      "virusScanResult" text NOT NULL DEFAULT 'Success'
+    );
     CREATE TABLE "PaidAccess" (
       "entityType" text, "entityId" int, "timeframeDays" int, "endsAt" timestamp(3)
     );
@@ -91,11 +100,11 @@ beforeAll(async () => {
     try {
       await beforeTx?.();
       const logged =
-        (run: (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown>) =>
-        async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        (run: (s: TemplateStringsArray | Prisma.Sql, ...v: unknown[]) => Promise<unknown>) =>
+        async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
           const result = await run(strings, ...values);
           txLog.push({
-            sql: strings.join('?'),
+            sql: (Array.isArray(strings) ? strings : (strings as Prisma.Sql).strings).join('?'),
             rows: Array.isArray(result) ? (result as Record<string, unknown>[]) : [],
           });
           return result;
@@ -120,6 +129,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   mockProcessEngagement.mockReset();
+  mockSparkRestored.mockReset();
   beforeTx = undefined;
   txLog.length = 0;
   await pg.db.exec(`TRUNCATE "Model", "ModelVersion", "ModelFile", "Post"`);
@@ -183,9 +193,10 @@ describe('processScheduledPublishing :: a version still waiting on its files', (
     await scheduled({ withFile: false });
     const raw = pgliteRaw(pg.db);
     dbMock.dbWrite.$queryRaw.mockImplementation((async (...args: unknown[]) => {
-      const [strings] = args as [TemplateStringsArray];
+      const [sql] = args as [TemplateStringsArray | Prisma.Sql];
       const rows = await raw.queryRaw(...(args as [TemplateStringsArray]));
-      if (strings.join('').includes("'hasEarlyAccess'")) await addFile();
+      const text = Array.isArray(sql) ? sql.join('') : (sql as Prisma.Sql).text;
+      if (text.includes("'hasEarlyAccess'")) await addFile();
       return rows;
     }) as never);
     try {
@@ -283,5 +294,38 @@ describe('processScheduledPublishing :: lock order', () => {
     expect(ids(0)).toEqual([2, 3]);
     expect(locking[1]?.sql).toMatch(/FROM "ModelVersion"[\s\S]*FOR NO KEY UPDATE/);
     expect(ids(1)).toEqual([20, 30]);
+  });
+});
+
+describe('processScheduledPublishing :: story spark', () => {
+  const sparkPostIds = () => mockSparkRestored.mock.calls.flatMap(([by]) => by.postIds);
+
+  // A moderator's unpublish stamps prevPublishedAt; the owner's scheduled version re-publishes it.
+  it('gives back the spark of a hidden post re-published with its scheduled version', async () => {
+    await scheduled({ withFile: true });
+    await pg.db.query(
+      `UPDATE "Post" SET metadata = jsonb_build_object('prevPublishedAt', $1::text,
+        'unpublishedAt', $1::text) WHERE id = 100`,
+      [PAST.toISOString()]
+    );
+    await runJob();
+    expect((await state()).postLive).toBe(true);
+    expect(sparkPostIds()).toEqual([100]);
+  });
+
+  // A standalone post re-published for a time in the past hour goes live by the clock, with no write.
+  it('gives back the spark of a post re-published on its own schedule', async () => {
+    await pg.db.query(
+      `INSERT INTO "Post" (id, "userId", "publishedAt", "createdAt") VALUES (200, $1, $2, $3)`,
+      [OWNER, new Date(Date.now() - 1000), new Date(Date.now() - 7 * 24 * 60 * 60_000)]
+    );
+    await runJob();
+    expect(sparkPostIds()).toEqual([200]);
+  });
+
+  it('gives nothing back for a post still waiting on its version', async () => {
+    await scheduled({ withFile: false });
+    await runJob();
+    expect(mockSparkRestored).not.toHaveBeenCalled();
   });
 });

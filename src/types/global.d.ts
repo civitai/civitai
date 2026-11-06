@@ -81,7 +81,7 @@ declare global {
   type IsUnknown<Type> = IsAny<Type> extends true ? false : unknown extends Type ? true : false;
 
   // eslint-disable-next-line no-var, vars-on-top
-  var navigation: { currentEntry: { index: number } };
+  var navigation: { currentEntry: { index: number }; entries(): { url: string | null }[] };
 
   type TrackedFile = {
     file: File;

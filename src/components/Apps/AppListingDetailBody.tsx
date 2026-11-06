@@ -16,24 +16,27 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
-  IconAlertTriangle,
   IconApps,
   IconArrowLeft,
-  IconCheck,
+  IconCategory,
   IconClock,
+  IconCode,
   IconDownload,
   IconEyeOff,
   IconFlask,
   IconInfoCircle,
+  IconPlayerPlay,
   IconPlugConnected,
+  IconShield,
   IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useCallback, useState } from 'react';
@@ -42,15 +45,16 @@ import {
   appInitial,
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
-import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import { ListingPermissionsDisclosure } from '~/components/Apps/ListingPermissionsDisclosure';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
 import {
-  SCOPE_DESCRIPTIONS,
-  SCOPE_PLAIN_TITLES,
-} from '~/server/services/blocks/scope-descriptions.constants';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
-import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+  buildListingDetailRows,
+  type ListingDetailRow,
+} from '~/components/Apps/appListingDetailRows';
+import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
 import {
@@ -60,6 +64,7 @@ import {
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
+import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
@@ -68,7 +73,11 @@ import {
   withBrokenIndex,
   type BrokenScreenshotIndexes,
 } from '~/components/Apps/appListingScreenshotNav';
-import { RelatedListings } from '~/components/Apps/RelatedListings';
+import { RelatedListings, useRelatedRail } from '~/components/Apps/RelatedListings';
+import {
+  RELATED_RAIL_NEUTRAL_HEADING,
+  relatedRailFirstHeading,
+} from '~/components/Apps/related-listings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
@@ -77,6 +86,11 @@ import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
+import {
+  ReviewListingModal,
+  ReviewListingTrigger,
+  useCanReviewListing,
+} from '~/components/Apps/ReviewListingButton';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -306,7 +320,7 @@ function HeroCover({
 
 /**
  * Header STAT CHIPS — the model page's `IconBadge` + `StatHoverCard` row, over the two
- * public aggregates a listing has: recommendations and installs.
+ * public aggregates a listing shows: recommendations and plays.
  *
  * 🔴 Each chip carries `data-listing-stat="<key>"` AND an `aria-label`. The attribute
  * is what the a11y test asserts on: a chip's visible text is a bare number, which any
@@ -338,6 +352,7 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
 
   const glyph: Record<ListingStatChip['key'], ReactNode> = {
     recommend: <IconThumbUp size={18} />,
+    plays: <IconPlayerPlay size={18} />,
     installs: <IconDownload size={18} />,
   };
 
@@ -431,6 +446,9 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
  * standard pairing. The descriptive fallback stays for a captionless shot, where
  * nothing else names the tile.
  */
+/** Tall screenshots would otherwise run the tile as tall as the image; the viewer shows them full size. */
+const SCREENSHOT_MAX_HEIGHT_PX = 360;
+
 function ScreenshotTile({
   shot,
   name,
@@ -480,7 +498,13 @@ function ScreenshotTile({
           alt={shot.caption ? '' : `${name} screenshot ${index + 1}`}
           loading="lazy"
           onError={onBroken}
-          style={{ width: '100%', height: 'auto', display: 'block' }}
+          style={{
+            width: '100%',
+            height: 'auto',
+            maxHeight: SCREENSHOT_MAX_HEIGHT_PX,
+            objectFit: 'contain',
+            display: 'block',
+          }}
         />
         {shot.caption && (
           <Text size="xs" c="dimmed" p="xs" lineClamp={2}>
@@ -638,66 +662,6 @@ function ScreenshotGallery({
   );
 }
 
-/**
- * The live page's permission disclosure, in plain language: one sentence per permission, a marker
- * on the sensitive ones, no scope ids. The moderator preview keeps the id-level `BlockScopeList`
- * (a moderator is approving the ids themselves).
- *
- * A scope with no plain title falls back to its description, then to the id, so a new scope is
- * never silently dropped from the disclosure.
- */
-function PermissionsCard({ scopes }: { scopes: string[] }) {
-  return (
-    <Card withBorder data-testid="apps-listing-permissions">
-      <Group gap="xs" mb="sm">
-        <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-          <IconShieldCheck size={14} />
-        </ThemeIcon>
-        <Title order={4}>This app can…</Title>
-      </Group>
-      <Stack gap="sm">
-        {scopes.map((scope) => {
-          const title = SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? scope;
-          const detailLine = SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined;
-          const sensitive = isSensitiveBlockScope(scope);
-          return (
-            <Group
-              key={scope}
-              gap="sm"
-              wrap="nowrap"
-              align="flex-start"
-              data-permission-row={scope}
-            >
-              <ThemeIcon
-                variant="light"
-                color={sensitive ? 'orange' : 'green'}
-                size="sm"
-                radius="xl"
-                mt={2}
-              >
-                {sensitive ? <IconAlertTriangle size={12} /> : <IconCheck size={12} />}
-              </ThemeIcon>
-              <Stack gap={2} style={{ minWidth: 0 }}>
-                <Group gap="xs" wrap="wrap">
-                  <Text size="sm" fw={500}>
-                    {title}
-                  </Text>
-                  {sensitive && <SensitiveScopeBadge size="sm" />}
-                </Group>
-                {detailLine && (
-                  <Text size="xs" c="dimmed">
-                    {detailLine}
-                  </Text>
-                )}
-              </Stack>
-            </Group>
-          );
-        })}
-      </Stack>
-    </Card>
-  );
-}
-
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
@@ -807,6 +771,8 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   );
 }
 
+const RELATED_RAIL_ANCHOR_ID = 'app-listing-related';
+
 /**
  * The "Details" accordion in the right rail — the model page's version-details panel,
  * over the listing's scalars. Rows come from the PURE `buildListingDetailRows`, so the
@@ -817,14 +783,50 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
  * `ModelVersionDetails.module.scss`, not copied: two copies of a border colour is
  * exactly how two surfaces stop matching.
  */
+/**
+ * One leading glyph per Details row, dimmed like the model page's details icons. A
+ * `Record` over the row-key union, so a new row key fails to typecheck until it has one.
+ */
+const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
+  kind: IconApps,
+  category: IconCategory,
+  rating: IconShield,
+  source: IconCode,
+  reviews: IconThumbUp,
+  plays: IconPlayerPlay,
+  installs: IconDownload,
+  updated: IconClock,
+};
+
+function DetailRowIcon({ rowKey }: { rowKey: ListingDetailRow['key'] }) {
+  const RowIcon = DETAIL_ROW_ICONS[rowKey];
+  return (
+    <RowIcon
+      size={16}
+      style={{ opacity: 0.5, flexShrink: 0 }}
+      aria-hidden
+      data-listing-detail-icon={rowKey}
+    />
+  );
+}
+
 function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
   const rows = buildListingDetailRows(detail, { preview, formatDate: (iso) => formatDate(iso) });
   return (
     <Accordion
-      variant="contained"
+      variant="separated"
       defaultValue="listing-details"
       data-testid="apps-listing-details-accordion"
-      styles={{ content: { padding: 0 } }}
+      styles={(theme) => ({
+        content: { padding: 0 },
+        label: { padding: 0 },
+        item: {
+          overflow: 'hidden',
+          borderColor: 'light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+          boxShadow: theme.shadows.sm,
+        },
+        control: { padding: theme.spacing.sm, gap: theme.spacing.md },
+      })}
     >
       <Accordion.Item value="listing-details">
         <Accordion.Control>Details</Accordion.Control>
@@ -836,7 +838,10 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 className={detailClasses.detailRow}
                 data-listing-detail-row={row.key}
               >
-                <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                <Group gap={6} wrap="nowrap">
+                  <DetailRowIcon rowKey={row.key} />
+                  <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                </Group>
                 {row.href ? (
                   // 🔴 `rel="noopener noreferrer"` is NOT optional on a `target="_blank"`
                   // link to a third-party page. Without `noopener` the opened tab holds a
@@ -884,6 +889,31 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                   >
                     {row.value}
                   </Anchor>
+                ) : row.storeHref ? (
+                  // SAME-SITE store link (the category row → `/apps` filtered to it): a
+                  // client-side `Link`, no new tab. See `storeHref` in
+                  // `appListingDetailRows.ts` for why it is not `href`. Its own data
+                  // attribute too: `data-listing-detail-link` means the OUTBOUND link.
+                  <Anchor
+                    component={Link}
+                    size="sm"
+                    href={row.storeHref}
+                    underline="always"
+                    data-listing-detail-store-link={row.key}
+                  >
+                    {row.value}
+                  </Anchor>
+                ) : row.pillColor ? (
+                  // The content rating as a coloured pill, in the site's browsing-level
+                  // colours (`offsiteContentRatingColor`).
+                  <Badge
+                    size="sm"
+                    variant="filled"
+                    color={row.pillColor}
+                    data-listing-detail-pill={row.key}
+                  >
+                    {row.value}
+                  </Badge>
                 ) : (
                   <Text
                     size="sm"
@@ -895,10 +925,41 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 )}
               </div>
             ))}
+            {/* Not a `data-listing-detail-row`: it is navigation, not a listing fact. */}
+            {!preview && <RelatedRailLink detail={detail} />}
           </Stack>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>
+  );
+}
+
+/**
+ * The Details panel's jump to the related rail. 🔴 Its text is the rail's FIRST rendered
+ * heading, read from the rail's own data (`useRelatedRail` — the same queries, deduped), so
+ * it never says "More in <category>" over a rail that leads with "Popular apps". Until the
+ * rail has loaded it reads the neutral {@link RELATED_RAIL_NEUTRAL_HEADING}, which cannot be
+ * wrong about what it lands on.
+ */
+function RelatedRailLink({ detail }: { detail: ListingDetail }) {
+  const { sections, loading } = useRelatedRail({
+    listingId: detail.id,
+    category: detail.category,
+  });
+  const heading =
+    relatedRailFirstHeading({ category: detail.category, sections, loading }) ??
+    RELATED_RAIL_NEUTRAL_HEADING;
+  return (
+    <div className={detailClasses.detailRow}>
+      <Anchor
+        size="sm"
+        href={`#${RELATED_RAIL_ANCHOR_ID}`}
+        underline="always"
+        data-testid="apps-listing-details-related-link"
+      >
+        {`${heading} →`}
+      </Anchor>
+    </div>
   );
 }
 
@@ -923,7 +984,7 @@ export interface AppListingDetailBodyProps {
    *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
-   *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
+   *   - the header STAT CHIPS (recommendations + plays are usage aggregates a
    *     shadow listing structurally does not have — zeros there would read as facts
    *     about the app rather than about the posture),
    *   - the `⋮` overflow MENU and everything in it (owner edit, review, report, and
@@ -984,7 +1045,8 @@ export function AppListingDetailBody({
   // the old block explained — why the modals are siblings of the `Menu` rather
   // than of a `Menu.Item`, why the report affordance's two prop bags must both be
   // spread, why the mod set is an intersection rather than a hand-rolled list —
-  // moved with the code and is documented there.
+  // moved with the code and is documented there. The ONE exception is the review
+  // modal: this body owns it (see `canReview` below) and the menu hands its item to it.
   //
   // What stays here is only what is TRUE OF THIS SURFACE: the trigger's geometry
   // (Mantine's default size + a 20px glyph, `variant="light"`), and `preview`.
@@ -1012,6 +1074,17 @@ export function AppListingDetailBody({
       ? primaryAction.href
       : null;
   const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
+  const categoryHref = appsStoreCategoryHref(detail.category);
+
+  // REVIEW ENTRY POINTS: the `⋮` item, the Reviews-heading button and the empty-state
+  // CTA all open THIS one modal, so the page never holds two review forms. Same gate as
+  // the menu's item (`useCanReviewListing`; the detail surface admits viewer actions).
+  const canReview = useCanReviewListing({
+    ownerUserId: detail.creator?.id ?? null,
+    listingKind: detail.kind,
+  });
+  const [reviewOpened, reviewModal] = useDisclosure(false);
+  const showReviewCta = !preview && canReview;
 
   return (
     <Stack gap="lg">
@@ -1030,7 +1103,7 @@ export function AppListingDetailBody({
         {!preview && (
           <ActionIcon
             component={Link}
-            href="/apps/store-preview"
+            href={APPS_STORE_HREF}
             aria-label="Back to store"
             variant="filled"
             color="dark"
@@ -1055,6 +1128,7 @@ export function AppListingDetailBody({
             }}
             surface="detail"
             preview={preview}
+            onOpenReview={reviewModal.open}
           />
         </Box>
       </Box>
@@ -1063,74 +1137,81 @@ export function AppListingDetailBody({
           one-line meta row sit beneath it. */}
       <Stack gap={4}>
         <Stack gap="xs" style={{ minWidth: 0 }}>
-          <Avatar
-            src={detail.iconUrl ?? undefined}
-            alt=""
-            radius="md"
-            size={88}
-            style={{
-              marginTop: -44,
-              marginLeft: 16,
-              border: '4px solid var(--mantine-color-body)',
-            }}
-            data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
-            styles={{
-              placeholder: {
-                background: listingPlaceholderGradient({
-                  slug: detail.slug,
-                  category: detail.category,
-                  surface: 'icon',
-                }),
-                color: 'var(--mantine-color-white)',
-                fontWeight: 700,
-              },
-            }}
-          >
-            {appInitial(detail.name, detail.slug)}
-          </Avatar>
-          <Stack gap={6} style={{ minWidth: 0 }}>
-            {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
-                  badge — which is where it would naturally go, and which would be wrong
-                  here. That whole Group is `!preview`-gated (its `Updated:` date is the
-                  publish request's submission time in preview, not a listing's
-                  `updated_at`), so a beta badge placed there would inherit an omission
-                  decided for a completely unrelated reason and vanish from the moderator
-                  preview. See the `preview` prop's omission ledger: the beta notice is
-                  explicitly KEPT. Here it is part of the identity block, which preview
-                  renders. */}
-            <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
-              <Title order={2} className="line-clamp-2">
-                {detail.name}
-              </Title>
-              {detail.isBeta && (
-                <Badge
-                  color="violet"
-                  variant="light"
-                  size="sm"
-                  style={{ flexShrink: 0 }}
-                  data-testid="apps-listing-beta-badge"
-                >
-                  Beta
-                </Badge>
-              )}
-              {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
-                    reason Beta is here: preview renders this block. `restrictedAudience` is
-                    already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
-              {visibilityBadge && (
-                <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+          {/* Icon and title share one row: the icon overlaps the cover's bottom edge, so
+              its visible half sits level with the title instead of stacking above it. */}
+          <Group gap="md" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+            <Avatar
+              src={detail.iconUrl ?? undefined}
+              alt=""
+              radius="md"
+              size={88}
+              style={{
+                marginTop: -44,
+                marginLeft: 16,
+                border: '4px solid var(--mantine-color-body)',
+              }}
+              data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
+              styles={{
+                placeholder: {
+                  background: listingPlaceholderGradient({
+                    slug: detail.slug,
+                    category: detail.category,
+                    surface: 'icon',
+                  }),
+                  color: 'var(--mantine-color-white)',
+                  fontWeight: 700,
+                },
+              }}
+            >
+              {appInitial(detail.name, detail.slug)}
+            </Avatar>
+            <Box style={{ minWidth: 0, flex: 1 }}>
+              {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
+                    badge — which is where it would naturally go, and which would be wrong
+                    here. That whole Group is `!preview`-gated (its `Updated:` date is the
+                    publish request's submission time in preview, not a listing's
+                    `updated_at`), so a beta badge placed there would inherit an omission
+                    decided for a completely unrelated reason and vanish from the moderator
+                    preview. See the `preview` prop's omission ledger: the beta notice is
+                    explicitly KEPT. Here it is part of the identity block, which preview
+                    renders. */}
+              <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+                <Title order={2} className="line-clamp-2">
+                  {detail.name}
+                </Title>
+                {detail.isOfficial && <AppListingOfficialBadge />}
+                {detail.isBeta && (
                   <Badge
-                    color="gray"
+                    color="violet"
                     variant="light"
                     size="sm"
-                    leftSection={<IconEyeOff size={12} aria-hidden />}
-                    style={{ flexShrink: 0, cursor: 'help' }}
-                    data-testid="apps-listing-detail-visibility"
+                    style={{ flexShrink: 0 }}
+                    data-testid="apps-listing-beta-badge"
                   >
-                    {visibilityBadge.label}
+                    Beta
                   </Badge>
-                </Tooltip>
-              )}
-            </Group>
+                )}
+                {/* RESTRICTED VISIBILITY — beside Beta, in the identity block, for the same
+                      reason Beta is here: preview renders this block. `restrictedAudience` is
+                      already viewer-scoped server-side; `visibilityBadgeFor` owns the copy. */}
+                {visibilityBadge && (
+                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={240}>
+                    <Badge
+                      color="gray"
+                      variant="light"
+                      size="sm"
+                      leftSection={<IconEyeOff size={12} aria-hidden />}
+                      style={{ flexShrink: 0, cursor: 'help' }}
+                      data-testid="apps-listing-detail-visibility"
+                    >
+                      {visibilityBadge.label}
+                    </Badge>
+                  </Tooltip>
+                )}
+              </Group>
+            </Box>
+          </Group>
+          <Stack gap={6} style={{ minWidth: 0 }}>
             {detail.tagline && (
               <Text c="dimmed" size="sm" className="line-clamp-2">
                 {detail.tagline}
@@ -1171,13 +1252,29 @@ export function AppListingDetailBody({
                 {detail.category && (
                   <>
                     <Divider orientation="vertical" />
-                    {/* Plain badge, NOT a link. The model page links its category to
-                      `/tag/<name>`; the store has no category-filtered ROUTE — `/apps`
-                      holds its category filter in client state, not in the URL — so a
-                      link here would either 404 or land on an unfiltered grid. */}
-                    <Badge size="sm" color="blue" data-testid="apps-listing-category">
-                      {marketplaceCategoryLabel(detail.category)}
-                    </Badge>
+                    {/* A LINK to the store filtered to this category, the way the model
+                      page links its category to `/tag/<name>`. The store keeps its
+                      filters in the URL (`appsStoreQueryParams.ts`), and
+                      `appsStoreCategoryHref` builds exactly the URL the store's own
+                      category filter writes. A category the store cannot filter by gets
+                      no href and stays a plain badge — a link there would land on the
+                      unfiltered grid. */}
+                    {categoryHref ? (
+                      <Badge
+                        component={Link}
+                        href={categoryHref}
+                        size="sm"
+                        color="blue"
+                        style={{ cursor: 'pointer' }}
+                        data-testid="apps-listing-category"
+                      >
+                        {marketplaceCategoryLabel(detail.category)}
+                      </Badge>
+                    ) : (
+                      <Badge size="sm" color="blue" data-testid="apps-listing-category">
+                        {marketplaceCategoryLabel(detail.category)}
+                      </Badge>
+                    )}
                   </>
                 )}
               </>
@@ -1372,10 +1469,11 @@ export function AppListingDetailBody({
                 contradictory security claims stacked on one public page. The projection
                 now gates on the client's presence too; read its comment before
                 loosening either side.
-                🔴 It renders the SHARED `ConnectScopeRow`, so the sensitive-risk
-                emphasis reads identically here and on the moderator review surface. It
-                cannot render `connectScopeJustifications` — see its docblock; that is
-                structural, not a convention. */}
+                🔴 It renders through the SHARED `ListingPermissionsDisclosure`, the same
+                component as the on-site section below, so the two listing shapes group
+                and order their permissions identically. It cannot render
+                `connectScopeJustifications` — see its docblock; that is structural, not
+                a convention. */}
             {detail.connectScopes.length > 0 && (
               <ConnectScopesDisclosure scopes={detail.connectScopes} preview={preview} />
             )}
@@ -1449,24 +1547,16 @@ export function AppListingDetailBody({
                   <BlockScopeList scopes={detail.scopes} />
                 </Stack>
               ) : (
-                <PermissionsCard scopes={detail.scopes} />
+                // Same renderer as the connect disclosure; do not reintroduce a flat path.
+                <ListingPermissionsDisclosure
+                  permissions={blockScopePermissions(detail.scopes)}
+                  title="This app can…"
+                  testId="apps-listing-permissions"
+                />
               ))}
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>
-
-      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link.
-          Placed AFTER the two-column body but BEFORE the reviews/comments: those
-          threads are unbounded, so a rail below them would be buried behind an
-          arbitrary amount of scrolling for the viewers most likely to want it (the
-          ones who read the listing and didn't convert). Omitted in read-only preview —
-          it is a live, tRPC-backed surface. */}
-      {!preview && (
-        <>
-          <Divider />
-          <RelatedListings listingId={detail.id} category={detail.category} />
-        </>
-      )}
 
       {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text).
           Full-width below the grid, with the model page's `Title order={2}` section
@@ -1482,18 +1572,37 @@ export function AppListingDetailBody({
         // with middle-click, and before hydration, and it survives being copied.
         <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
-          <Title order={2}>Reviews</Title>
-          <AppListingReviews appListingId={detail.id} />
+          <Group justify="space-between" align="center" gap="sm">
+            <Title order={2}>Reviews</Title>
+            {showReviewCta && (
+              <ReviewListingTrigger appListingId={detail.id} onOpen={reviewModal.open} />
+            )}
+          </Group>
+          <AppListingReviews
+            appListingId={detail.id}
+            onLeaveReview={showReviewCta ? reviewModal.open : undefined}
+          />
         </Stack>
       )}
+      {showReviewCta && (
+        <ReviewListingModal
+          appListingId={detail.id}
+          opened={reviewOpened}
+          onClose={reviewModal.close}
+        />
+      )}
 
-      {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
-          on the listing's Thread (`entityType="appListing"`, integer surrogate).
-          Additive + separate from the recommend-style reviews above. Only reached
-          for an APPROVED listing (getListingDetail is approved-only) — omitted in
-          preview (a shadow listing has no thread; loading it would 404/N+1). */}
+      {/* Not in preview: a shadow listing has no comments to load. */}
       {!preview && (
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+      )}
+
+      {/* `id` is the target of the Details panel's related-rail link (RELATED_RAIL_ANCHOR_ID). Omitted in preview: live, tRPC-backed surface. */}
+      {!preview && (
+        <Stack gap="lg" id={RELATED_RAIL_ANCHOR_ID}>
+          <Divider />
+          <RelatedListings listingId={detail.id} category={detail.category} />
+        </Stack>
       )}
     </Stack>
   );

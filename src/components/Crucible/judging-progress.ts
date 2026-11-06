@@ -1,8 +1,10 @@
 /**
- * What the judging footer shows. `totalPairs` is stable across votes, so "to go" falls by one per
- * vote. `votesUsedUp` (the server's "no pairs left among entries you can see") collapses the total
- * to what the judge voted, rather than leaving a count that can't be cleared. Zero pairs because the
- * browsing level hides entries is not that, so it stays unfinished.
+ * What the judging footer shows. `totalPairs` is the most pairs the judge can reach, less those
+ * their votes settled, so "to go" falls by one per vote, or by more when a vote settles other pairs,
+ * and stays above zero while pairs are still served. `votesUsedUp` (the server's "no pairs left
+ * among entries you can see") collapses the total to what the judge voted, rather than leaving a
+ * count that can't be cleared. Zero pairs because the browsing level hides entries is not that, so
+ * it stays unfinished.
  */
 export function getPairProgress({
   judgedPairs,

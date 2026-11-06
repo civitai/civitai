@@ -18,21 +18,35 @@ vi.mock('$lib/server/users.service', async (importOriginal) => ({
 const A = '192.0.2.1';
 const B = '198.51.100.7';
 const peerQueries: string[] = [];
+// Logins and reactions answer differently, so an answer read under the wrong source shows.
+const answers = {
+  login: {
+    peers: [
+      { uid: '7', clusters: [A, B], last: '2026-10-20 00:00:00', total: '2' },
+      { uid: '8', clusters: [B], last: '2026-10-19 00:00:00', total: '2' },
+    ],
+    breadth: [
+      { cluster: A, accounts: '1' },
+      { cluster: B, accounts: '2' },
+    ],
+  },
+  reaction: {
+    peers: [{ uid: '9', clusters: [A], last: '2026-10-18 00:00:00', total: '1' }],
+    breadth: [
+      { cluster: A, accounts: '4' },
+      { cluster: B, accounts: '0' },
+    ],
+  },
+};
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     $query: async (sql: string) => {
+      const source = sql.includes('default.userActivities') ? answers.login : answers.reaction;
       if (sql.includes('groupUniqArray(50)(cluster)')) {
         peerQueries.push(sql);
-        return [
-          { uid: '7', clusters: [A, B], last: '2026-10-20 00:00:00', total: '2' },
-          { uid: '8', clusters: [B], last: '2026-10-19 00:00:00', total: '2' },
-        ];
+        return source.peers;
       }
-      if (sql.includes('uniqExact(uid)'))
-        return [
-          { cluster: A, accounts: '1' },
-          { cluster: B, accounts: '2' },
-        ];
+      if (sql.includes('uniqExact(uid)')) return source.breadth;
       return [];
     },
   }),
@@ -55,17 +69,31 @@ describe('getAccountsOnAddresses', () => {
     }
   });
 
+  // The outer query groups by account alone: grouped by account and address, an account on two of
+  // the addresses would come back as two rows, each with one address.
   it('lists an account seen on several of the addresses once, with each of them', async () => {
     const { linked } = await getAccountsOnAddresses([A, B]);
-    expect(linked!.accounts.map((a) => a.userId)).toEqual([7, 8]);
-    expect(linked!.accounts[0].login).toEqual([A, B]);
+    for (const q of peerQueries)
+      expect(q).toMatch(/groupUniqArray\(50\)\(cluster\)[\s\S]*GROUP BY uid\s*\)/);
+    const seven = linked!.accounts.find((a) => a.userId === 7)!;
+    expect(seven.login).toEqual([A, B]);
+    expect(linked!.accounts.filter((a) => a.userId === 7)).toHaveLength(1);
   });
 
-  it('keeps the count of accounts per address', async () => {
+  it('keeps each source to its own accounts and addresses', async () => {
     const { linked } = await getAccountsOnAddresses([A, B]);
-    expect(linked!.addresses.filter((a) => a.source === 'login')).toEqual([
+    const byId = new Map(linked!.accounts.map((a) => [a.userId, a]));
+    expect(byId.get(7)).toMatchObject({ login: [A, B], reaction: [] });
+    expect(byId.get(9)).toMatchObject({ login: [], reaction: [A] });
+  });
+
+  it('keeps the count of accounts per address, per source', async () => {
+    const { linked } = await getAccountsOnAddresses([A, B]);
+    expect(linked!.addresses).toEqual([
       { cluster: A, source: 'login', accounts: 1 },
+      { cluster: A, source: 'reaction', accounts: 4 },
       { cluster: B, source: 'login', accounts: 2 },
+      { cluster: B, source: 'reaction', accounts: 0 },
     ]);
   });
 
@@ -80,6 +108,12 @@ describe('getAccountsOnAddresses', () => {
     expect(linked!.addresses.filter((a) => a.source === 'login').map((a) => a.cluster)).toEqual([
       prefix,
     ]);
+  });
+
+  // No stored address has a zero-padded octet, so one would read as an address with no accounts.
+  it('names a zero-padded IPv4 address back instead of reading it', async () => {
+    const { invalid } = await getAccountsOnAddresses([A, '01.2.3.4', '192.0.2.010', '10.0.0.1']);
+    expect(invalid).toEqual(['01.2.3.4', '192.0.2.010']);
   });
 
   it('names what is not an address, and reads nothing when none is', async () => {

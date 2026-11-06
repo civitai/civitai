@@ -2,6 +2,8 @@ import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
+import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
+import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { DrawnMediaHat } from '~/components/Cosmetics/EventDecoration/DrawnMediaHat';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
@@ -16,6 +18,7 @@ import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import { imageDetailMediaProps } from '~/components/Image/DetailV2/image-detail-main-media';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
@@ -64,7 +67,7 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
 // VIDEO is here so arrow keys still seek a focused player with native controls
 const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
 
-function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
+export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
     return false;
   const target = event.target;
@@ -72,6 +75,8 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
   if (target.isContentEditable) return false;
   if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
   if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // An element that uses the arrows itself (a sticker being nudged into place).
+  if (target.closest('[data-arrow-keys]')) return false;
   // A dialog stacked on top of the detail view (report, add-to-collection) owns
   // its own arrow handling. The detail view's own modal shell is also a dialog,
   // but it contains the carousel, which is what tells the two apart.
@@ -171,9 +176,8 @@ export function ImageDetailCarousel({
   // what makes the swipe stutter on mobile. Embla emits 'settle' once the
   // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
-  // The hat is drawn in a layer outside embla's clipping viewport, so it cannot ride a moving slide.
+  // The hat is drawn in a layer outside embla's clipping viewport, and follows its slide from there.
   const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
-  const [moving, setMoving] = useState(false);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
 
@@ -187,7 +191,6 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
-      setMoving(false);
       setSettledIndex(current);
       onSettleRef.current?.(current);
     };
@@ -201,20 +204,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    const startMoving = () => setMoving(true);
-
-    embla
-      .on('settle', commit)
-      .on('reInit', commit)
-      .on('select', armFallback)
-      .on('scroll', startMoving);
+    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla
-        .off('settle', commit)
-        .off('reInit', commit)
-        .off('select', armFallback)
-        .off('scroll', startMoving);
+      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
     };
   }, [embla]);
 
@@ -252,8 +245,8 @@ export function ImageDetailCarousel({
                     <ImageContent
                       image={image}
                       active={index === i}
-                      hatLayer={index === i ? hatLayer : null}
-                      hatHidden={moving}
+                      hatLayer={hatLayer}
+                      embla={embla}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
@@ -275,13 +268,13 @@ function ImageContent({
   videoRef,
   active = true,
   hatLayer,
-  hatHidden,
+  embla,
   ...connect
 }: {
   image: ImageProps;
   active?: boolean;
   hatLayer: HTMLElement | null;
-  hatHidden: boolean;
+  embla: EmblaCarouselType | null;
 } & ConnectProps &
   ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
@@ -339,10 +332,11 @@ function ImageContent({
             </div>
           ) : (
             <EdgeMedia
-              src={image.url}
-              name={image.name ?? image.id.toString()}
+              // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
+              // shared with the shell's preload of this image (see `image-detail-main-media`) so
+              // the two cannot ask for different URLs.
+              {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
-              type={image.type}
               imageId={image.id}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
               wrapperProps={{
@@ -354,11 +348,8 @@ function ImageContent({
                 },
               }}
               // No `width`: EdgeImage turns one into an inline `maxWidth` that beats `max-w-full`,
-              // and the aspect-ratio wrapper then clips the image's height.
-              // `anim` and `original` feed the CDN URL — an inactive slide has to
-              // request the same URL the active one will, or it warms nothing
-              anim
-              original={isVideo ? true : undefined}
+              // and the aspect-ratio wrapper then clips the image's height. A `width` would also
+              // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
                 active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
@@ -390,9 +381,10 @@ function ImageContent({
             imageId={image.id}
             decoration={image.eventDecoration}
             layer={hatLayer}
-            hidden={hatHidden}
+            embla={embla}
           />
-          {safe && <ImageStickerOverlay imageId={image.id} />}
+          {safe && <ImageStickerOverlay imageId={image.id} wearsHat={!!image.eventDecoration} />}
+          {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}
     </ImageGuardContent>

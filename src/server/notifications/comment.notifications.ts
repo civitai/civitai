@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import { isEmpty } from 'lodash-es';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NotificationCategory } from '~/server/common/enums';
@@ -10,10 +11,14 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
+import { withDefiniteArticle } from '~/utils/string-helpers';
 
-/** A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify. */
+/**
+ * A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify, and
+ * neither does a row hidden for ToS.
+ */
 export const liveV3Since = (lastSent: string) =>
-  `c."deletedAt" IS NULL AND c."createdAt" > '${lastSent}'`;
+  `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;
 
 /**
  * The id the model page's dialog addresses a comment by: its old Comment id. Every v1-shaped row has
@@ -32,8 +37,18 @@ export const isV1Shaped = (alias: string) =>
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
 /**
+ * The comment whose replies a notification opens. A v3 section lists a comment's direct replies,
+ * where a clamped reply hangs off its parent; a v2 section opens the answered comment's thread.
+ */
+export const deepLinkParentId = (alias: string) =>
+  `CASE WHEN ${alias}."entityType"::text = ANY(ARRAY[${constants.comments.v3ReadSurfaces
+    .map((t) => `'${t}'`)
+    .join(', ')}])
+     THEN ${alias}."parentId" ELSE ${answeredId(alias)} END`;
+
+/**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
- * project, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
+ * project and position, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
  * nowhere in the URL). LEFT joins, paired with `v3AppListingResolved`: an app-listing comment whose
  * listing does not resolve is dropped rather than emitted with a `/apps/store-preview/undefined` link.
  */
@@ -61,8 +76,8 @@ export const v3ThreadParentId = (alias: string) =>
 
 /**
  * The details a thread-addressed notification carries; `extra` is more `'key', value,` pairs.
- * `commentParent*` is what lets the page open the conversation the comment is in: a reply names the
- * comment it answers, a top-level comment its entity.
+ * `commentParent*` is what lets the page open the conversation the comment is in: a reply names that
+ * conversation's comment (`deepLinkParentId`), a top-level comment its entity.
  */
 export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'version', 3,
@@ -70,7 +85,8 @@ export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'threadParentId', ${v3ThreadParentId('c')},
             'threadType', ${v3ThreadType('c')},
             'appListingSlug', al.slug,
-            'commentParentId', COALESCE(${answeredId('c')}, ${v3ThreadParentId('c')}),
+            'comicChapterPosition', cch.position,
+            'commentParentId', COALESCE(${deepLinkParentId('c')}, ${v3ThreadParentId('c')}),
             'commentParentType', CASE WHEN c."parentId" IS NULL THEN ${v3ThreadType(
               'c'
             )} ELSE 'comment' END,
@@ -164,6 +180,11 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     commentParentId: details.commentParentId,
     threadId: details.threadId,
   });
+  // The reader takes the chapter from the second path segment and ignores the slug before it.
+  const comicUrl =
+    details.comicChapterPosition != null
+      ? `/comics/${threadParentId}/comic/${details.comicChapterPosition + 1}?${queryString}`
+      : `/comics/${threadParentId}?${queryString}`;
 
   return {
     model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,
@@ -176,8 +197,8 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     challenge: `/challenges/${threadParentId}?${queryString}`,
     crucible: `/crucibles/${threadParentId}?${queryString}`,
     storyline: `${storylineUrl(threadParentId)}?${queryString}`,
-    comicChapter: `/comics/${threadParentId}?${queryString}`,
-    comicProject: `/comics/${threadParentId}?${queryString}`,
+    comicChapter: comicUrl,
+    comicProject: comicUrl,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
     // The one SLUG-addressed entry — see `v3EntityJoins`. `threadParentId` is NOT the
     // address here (it is `app_listings.serial_id`, which the URL never contains), so this
@@ -191,8 +212,6 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     appListing: details.appListingSlug
       ? `${getListingDetailHref(details.appListingSlug)}?${queryString}`
       : undefined,
-    // question: `/questions/${threadParentId}?highlight=${details.commentId}#comments`,
-    // answer: `/questions/${threadParentId}?highlight=${details.commentId}#answer-`,
   }[threadType as string] as string;
 };
 
@@ -225,8 +244,9 @@ export const commentDedupeKeyByShape = `concat('comment:', case when details->>'
  *
  * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
  * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
- * key deliberately (see `comics.router.ts`), and is inserted synchronously at comment-creation, so its
- * `PendingNotification` is drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
+ * key deliberately (see `notifyComicOwner` in `commentv3/surfaces.ts`), and is queued at comment
+ * creation (after the commit, not awaited), ahead of the cron sweeps, so its `PendingNotification`
+ * is normally drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
  * gets the one deep-linked comic notification; a non-owner thread participant, whom `new-comic-comment`
  * never targets, gets this working `/comics/<project>` link instead of the dead one it used to render.
  *
@@ -262,7 +282,8 @@ export const CommentNotificationPriority = {
  */
 const siblingAuthors = (sameParent: string) => `(SELECT ARRAY_AGG(s."userId") FROM (
                      SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-                     WHERE ${sameParent} AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+                     WHERE ${sameParent} AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+                       AND cu."userId" != c."userId"
                    ) s
                    WHERE ${notBlockedBetween('s."userId"', 'c."userId"')}
                      AND ${notCommentMuted('s."userId"', 'c')})`;
@@ -314,7 +335,9 @@ export const commentNotifications = createNotificationProcessor({
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => ({
-      message: `${details.username} responded to your comment on the ${details.modelName} model`,
+      message: `${details.username} responded to your comment on ${withDefiniteArticle(
+        details.modelName
+      )} model`,
       url: getModelCommentThreadUrl({
         modelId: details.modelId,
         commentId: details.parentId ?? details.commentId,
@@ -445,7 +468,9 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (!details.threadType) {
         return {
-          message: `${details.username} responded to the ${details.parentType} thread on the ${details.modelName} model`,
+          message: `${details.username} responded to the ${
+            details.parentType
+          } thread on ${withDefiniteArticle(details.modelName)} model`,
           url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
         };
       }
@@ -509,13 +534,17 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (!details.version) {
         return {
-          message: `${details.username} responded to your review on the ${details.modelName} model`,
+          message: `${details.username} responded to your review on ${withDefiniteArticle(
+            details.modelName
+          )} model`,
           url: `/models/${details.modelId}?dialog=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
         };
       }
 
       return {
-        message: `${details.username} responded to your review on the ${details.modelName} model`,
+        message: `${details.username} responded to your review on ${withDefiniteArticle(
+          details.modelName
+        )} model`,
         url: `/reviews/${details.reviewId}?highlight=${details.commentId}`,
       };
     },
@@ -561,14 +590,15 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (details.version) {
         let message = `${details.username} commented on your image`;
-        if (details.modelName) message += ` posted to the ${details.modelName} model`;
+        if (details.modelName)
+          message += ` posted to ${withDefiniteArticle(details.modelName)} model`;
         const url = `/images/${details.imageId}?highlight=${details.commentId}`;
         return { message, url };
       }
       // Prep message
       const message = `${details.username} commented on your ${
         details.reviewId ? 'review image' : 'example image'
-      } posted to the ${details.modelName} model`;
+      } posted to ${withDefiniteArticle(details.modelName)} model`;
       // Prep URL
       const searchParams: Record<string, string> = {
         model: details.modelId,
@@ -640,7 +670,7 @@ export const commentNotifications = createNotificationProcessor({
       // Untitled is the common case for model-gallery posts, and without a disambiguator a creator
       // gets a run of identical rows. Same fallback new-image-comment uses.
       let message = `${details.username} commented on your post`;
-      if (details.modelName) message += ` on the ${details.modelName} model`;
+      if (details.modelName) message += ` on ${withDefiniteArticle(details.modelName)} model`;
       return { message, url: `/posts/${details.postId}?highlight=${details.commentId}` };
     },
     prepareQuery: ({ lastSent }) => `

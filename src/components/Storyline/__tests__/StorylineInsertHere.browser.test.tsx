@@ -18,6 +18,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
   useMoveStorylineChapter: () => ({ isPending: false, error: null, mutate: vi.fn() }),
+  useRemoveStorylineChapter: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,

@@ -5,6 +5,7 @@ import type { MouseEventHandler } from 'react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useFollowButtonState } from '~/components/FollowUserButton/useFollowsYou';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function FollowUserButton({
@@ -50,7 +51,8 @@ export function FollowUserButton({
 
       return { prevFollowing, prevCreator };
     },
-    onError(_error, _variables, context) {
+    onError(error, _variables, context) {
+      showErrorNotification({ error: new Error(error.message) });
       queryUtils.user.getFollowingUsers.setData(undefined, context?.prevFollowing);
       queryUtils.user.getCreator.setData({ id: userId }, context?.prevCreator);
     },

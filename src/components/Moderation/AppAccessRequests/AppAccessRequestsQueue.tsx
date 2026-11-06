@@ -45,7 +45,12 @@ export function AppAccessRequestsQueue() {
     { getNextPageParam: (last) => last.nextCursor ?? undefined }
   );
   const decide = trpc.appAccessRequest.decide.useMutation({
-    onSuccess: () => utils.appAccessRequest.list.invalidate(),
+    // `countPending` is the /apps/review tab badge, so it moves with the decision too.
+    onSuccess: () =>
+      Promise.all([
+        utils.appAccessRequest.list.invalidate(),
+        utils.appAccessRequest.countPending.invalidate(),
+      ]),
     onError: (error) =>
       showErrorNotification({
         title: 'Could not record the decision',

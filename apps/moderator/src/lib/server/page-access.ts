@@ -10,7 +10,7 @@ import {
   storeUnavailableMessage,
   type ModeratorDbStatus,
 } from '$lib/moderator-db-status';
-import { APP } from './access';
+import { APP, isAppRole } from './access';
 import { dbRead, dbWrite } from './db';
 import { getModeratorDb } from './moderator-db';
 import type {
@@ -142,23 +142,36 @@ export async function changePageRoles(input: {
   /** Compare-and-set: each path's roles as the caller last read them. */
   expect?: Record<string, string[]>;
   /**
-   * Compare `expect` against the stored roles narrowed to these. `/admin` reads grants through the live
-   * role catalogue, so a retired role still stored would otherwise fail every comparison.
+   * The roles the caller edits: `/admin`'s live catalogue. Each entry then states only these, and `expect`
+   * is compared against the stored roles narrowed to them. Every other stored role is the server's to
+   * carry: kept, unless it is a retired role of this app's own (`isAppRole`), which is dropped. Taken from
+   * the stored row rather than the page, which cannot show them and would otherwise erase them.
    */
-  expectAmong?: readonly string[];
+  manages?: readonly string[];
 }): Promise<{ changed: { path: string; before: string[]; after: string[] }[] }> {
   const stored = await getPageAccessGrants(dbWrite, APP);
   const before = (path: string) => stored[path] ?? [];
+  const { manages } = input;
+  const unmanaged = (roles: string[]) =>
+    manages ? [...new Set(roles)].filter((r) => !manages.includes(r)) : [];
+  const carried = (path: string) => unmanaged(before(path)).filter((r) => !isAppRole(r));
+  const dropped = (path: string) => unmanaged(before(path)).filter(isAppRole);
   const comparable = (roles: string[]) =>
-    input.expectAmong ? roles.filter((r) => input.expectAmong?.includes(r)) : roles;
+    manages ? roles.filter((r) => manages.includes(r)) : roles;
   for (const [path, roles] of Object.entries(input.expect ?? {}))
     if (!sameRoles(comparable(before(path)), roles))
       throw new GrantConflictError(path, before(path));
 
   const changed = input.entries
-    .filter((entry) => !sameRoles(before(entry.path), entry.roles))
-    .map((entry) => ({ path: entry.path, before: before(entry.path), after: entry.roles }));
-  if (!changed.length) return { changed };
+    .map((entry) => ({
+      path: entry.path,
+      before: before(entry.path),
+      after: [...new Set([...entry.roles, ...carried(entry.path)])],
+      carried: carried(entry.path),
+      dropped: dropped(entry.path),
+    }))
+    .filter((c) => !sameRoles(c.before, c.after));
+  if (!changed.length) return { changed: [] };
 
   let ids: string[];
   try {
@@ -172,6 +185,8 @@ export async function changePageRoles(input: {
           path: c.path,
           roles_before: c.before,
           roles_after: c.after,
+          roles_carried: c.carried,
+          roles_dropped: c.dropped,
           reason: input.reason ?? null,
         }))
       )
@@ -209,7 +224,7 @@ export async function changePageRoles(input: {
   // The grant is committed; failing the request now would invite a retry the compare-and-set refuses.
   await setOutcome(ids, 'applied');
   await refreshCache();
-  return { changed };
+  return { changed: changed.map(({ path, before, after }) => ({ path, before, after })) };
 }
 
 export type PageAccessChange = {

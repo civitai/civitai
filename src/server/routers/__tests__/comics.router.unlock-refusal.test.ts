@@ -66,6 +66,15 @@ const orchestratorRefuses = (status: number, detail: string) =>
   } as never);
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   vi.mocked(handleError).mockImplementation((error) => (error as { detail: string }).detail);
   const panel = {

@@ -296,8 +296,11 @@ test.describe('SSR-injected announcements (logged-in)', () => {
   // client-sent `domain` (its middleware overrides it with the host's
   // getRequestDomainColor), so we can send any non-empty domain in the input —
   // it must just be PRESENT, because the middleware writes `input.domain` and
-  // would throw on an undefined input. The result reflects the host domain on
-  // both the seed and the live fetch, so they match regardless.
+  // would throw on an undefined input. Like-for-like: the live fetch is
+  // same-origin, so it resolves the domain of the page's host, and so must the
+  // seed. A seed resolved for any other host (the server's internal one, say)
+  // reads a different cache entry: it drops that domain's announcements and goes
+  // stale on its own schedule, and this comparison fails whenever the two differ.
   test('SSR seed byte-equals a live fetch', async ({ page }) => {
     await page.goto(AUTHED_LANDING, { waitUntil: 'domcontentloaded' });
 

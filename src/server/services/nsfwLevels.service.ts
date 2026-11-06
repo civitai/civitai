@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
-import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  ImageConnectionType,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
@@ -21,6 +26,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { notifyPostFloorRaises } from '~/server/services/text-scan/post-floor-notice';
 
 // Postgres caps a prepared statement at 32767 bind variables, and an `in` list
 // spends one per id. A backlogged JobQueue easily exceeds that, which fails the
@@ -45,7 +51,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     ),
     idQueryLimiter().process(imageIds, (ids) =>
       dbRead.article.findMany({
-        where: { coverId: { in: ids } },
+        where: { OR: [{ coverId: { in: ids } }, { bannerId: { in: ids } }] },
         select: { id: true },
       })
     ),
@@ -276,7 +282,9 @@ export async function updateNsfwLevels({
   comicProjectIds?: number[];
   model3dIds?: number[];
 }) {
-  const updatePosts = batcher(postIds, updatePostNsfwLevels);
+  const updatePosts = batcher(postIds, async (ids) =>
+    notifyPostFloorRaises(await updatePostNsfwLevels(ids))
+  );
   const updateArticles = batcher(articleIds, updateArticleNsfwLevels);
   const updateBounties = batcher(bountyIds, updateBountyNsfwLevels);
   const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
@@ -312,12 +320,16 @@ export async function updateNsfwLevels({
   }
 }
 
-export async function updatePostNsfwLevels(postIds: number[]) {
-  if (!postIds.length) return;
-  await dbWrite.$queryRaw(Prisma.sql`
+export type PostNsfwLevelChange = { id: number; before: number; after: number };
+
+/** Returns the posts whose level changed. */
+export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwLevelChange[]> {
+  if (!postIds.length) return [];
+  const changes = await dbWrite.$queryRaw<PostNsfwLevelChange[]>(Prisma.sql`
     WITH next AS (
       SELECT
         p.id,
+        p."nsfwLevel" "before",
         COALESCE(p."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql('Post', 'p')}) "nsfwLevel"
       FROM "Post" p
       WHERE p.id IN (${Prisma.join(postIds)})
@@ -326,8 +338,16 @@ export async function updatePostNsfwLevels(postIds: number[]) {
     UPDATE "Post" p
     SET "nsfwLevel" = next."nsfwLevel"
     FROM next
-    WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel";
+    WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"
+    RETURNING p.id, next."before", p."nsfwLevel" "after";
   `);
+  // A story's chapter 1 is not shown while its post is Blocked or unrated.
+  const unshown = (level: number) => level === 0 || level === NsfwLevel.Blocked;
+  const hidden = changes.filter((c) => unshown(c.after));
+  const shown = changes.filter((c) => unshown(c.before) && !unshown(c.after));
+  if (hidden.length) void onStorySparkPostsHidden({ postIds: hidden.map((c) => c.id) });
+  if (shown.length) void onStorySparkPostsRestored({ postIds: shown.map((c) => c.id) });
+  return changes;
 }
 
 export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.TransactionClient) {
@@ -342,8 +362,9 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         SELECT
           a.id,
           GREATEST(
-            -- Cover is a single row per article, so max() is effectively identity.
+            -- Cover and banner are a single row per article, so max() is effectively identity.
             COALESCE(max(cover."nsfwLevel"), 0),
+            COALESCE(max(banner."nsfwLevel"), 0),
             -- Content images can be many-per-article. Take the highest rating
             -- rather than bit_or'ing them: image nsfwLevel values are powers of
             -- 2 (PG=1, PG13=2, R=4, X=8, XXX=16), so integer max == highest
@@ -363,6 +384,11 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         LEFT JOIN "Image" cover
           ON a."coverId" = cover.id
           AND cover."ingestion" IN ('Scanned', 'Blocked')
+
+        -- Banner image: same rule as the cover.
+        LEFT JOIN "Image" banner
+          ON a."bannerId" = banner.id
+          AND banner."ingestion" IN ('Scanned', 'Blocked')
 
         -- Content images (left join - may not exist)
         LEFT JOIN "ImageConnection" ic

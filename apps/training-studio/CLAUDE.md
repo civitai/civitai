@@ -87,6 +87,11 @@ Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
   `hooks.server.ts` sends an unauthenticated request to the hub login and a forbidden one to
   civitai.com.
 
+- **No form actions.** The flow UI also ships as a web component embedded in the main app, so every
+  read and write goes through the `StudioBackend` seam (`$lib/backend.ts`; the shell's `/api` routes
+  or the element host), never `use:enhance`. Flow code imports host concerns from `$lib/host.ts`, never
+  `$app/*` or `$env/*`. The three review agents know this delta.
+
 ## Non-negotiables
 
 Duplicated in every SvelteKit app's `CLAUDE.md` because this file always loads and the standard is one

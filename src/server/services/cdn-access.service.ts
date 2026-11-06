@@ -9,6 +9,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
 import { CloudflarePurgeBusyError, purgeUrlsOrThrow } from '~/server/cloudflare/client';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
+import { keyIn, keyIssueRecords } from '~/server/services/image-url-ownership';
 import { holdMarkerSql } from '~/server/services/legal-hold.service';
 import {
   HELD_BACK,
@@ -74,7 +75,10 @@ export type ImageAccessFacts = {
   post: PostAccessFacts | null;
 };
 
-/** A moderator-app hard delete of an image on the url; its row is gone. Always a takedown. */
+/**
+ * A moderator-app hard delete of an image on the url (its row is gone), or a Creator Shop takedown of
+ * artwork stored under the url's key. Always a takedown.
+ */
 export type ModeratorDeleteFacts = { ownerId: number | null; held: boolean };
 
 export type UrlAccessFacts = { images: ImageAccessFacts[]; deletes: ModeratorDeleteFacts[] };
@@ -302,11 +306,113 @@ type FactsRow = {
 
 type DeleteRow = { imageId: number; url: string; userId: number | null; csamReview: boolean };
 
-/** Every image row and moderator delete on these urls, with what `desiredUrlAccess` needs. Reads the primary. */
+type ShopArtworkRow = { key: string | null; userId: number | null; inUse: boolean };
+
+/** What a takedown did with its listing's artwork keys: `queued` were recorded; the rest were not. */
+export type ShopTakedownArtwork = {
+  queued: number;
+  unproven: number;
+  otherOwner: number;
+  inUse: number;
+};
+
+/**
+ * Records the artwork keys of a listing just taken down, so every later look at those urls sees the
+ * takedown, and queues them for the drain: the cosmetic's art and the listing's own cover. It records
+ * the keys an issue record attributes to the owner (the cosmetic's creator, or the lister); any
+ * others are referred to a moderator. A failed lookup throws once the rest is recorded, so the
+ * takedown reports it and a retry records the rest.
+ *
+ * `JobQueue` is keyed by entity, and a listing has no `EntityType`: it queues as an `Image` under its
+ * id negated, which no image has.
+ */
+export async function recordShopTakedownArtwork(shopItemId: number): Promise<ShopTakedownArtwork> {
+  const art = await dbWrite.$queryRaw<ShopArtworkRow[]>`
+    WITH art AS (
+      SELECT c."data"->>'url' AS stored, ${keyIn(`c."data"->>'url'`)} AS key,
+        COALESCE(c."createdById", s."addedById") AS "userId"
+      FROM "CosmeticShopItem" s JOIN "Cosmetic" c ON c.id = s."cosmeticId"
+      WHERE s.id = ${shopItemId}
+      UNION
+      SELECT s."meta"->>'coverUrl', ${keyIn(`s."meta"->>'coverUrl'`)}, s."addedById"
+      FROM "CosmeticShopItem" s WHERE s.id = ${shopItemId}
+    )
+    SELECT a.key, a."userId",
+      EXISTS (
+        SELECT 1 FROM "Cosmetic" c JOIN "CosmeticShopItem" o ON o."cosmeticId" = c.id
+        WHERE ${keyIn(`c."data"->>'url'`)} = a.key
+          AND o.id <> ${shopItemId} AND NOT o.meta ? 'takedown'
+      ) OR EXISTS (
+        SELECT 1 FROM "CosmeticShopItem" o
+        WHERE ${keyIn(`o."meta"->>'coverUrl'`)} = a.key
+          AND o.id <> ${shopItemId} AND NOT o.meta ? 'takedown'
+      ) OR EXISTS (
+        SELECT 1 FROM "ItemDefinition" d WHERE ${keyIn(`d."imageUrl"`)} = a.key
+      ) OR EXISTS (
+        SELECT 1 FROM "Image" i WHERE i.url = a.key AND i."userId" IS DISTINCT FROM a."userId"
+      ) AS "inUse"
+    FROM art a WHERE a.stored IS NOT NULL
+  `;
+
+  const result: ShopTakedownArtwork = { queued: 0, unproven: 0, otherOwner: 0, inUse: 0 };
+  const proven: { key: string; userId: number }[] = [];
+  let lookupFailed = 0;
+  for (const row of art) {
+    if (row.inUse) result.inUse++;
+    else if (row.key === null || row.userId === null) result.unproven++;
+    else {
+      // Only a record counts: an image row of the owner's is no proof the key was theirs.
+      const records = await keyIssueRecords([row.key]).catch(() => null);
+      const owner = records?.owners.get(row.key);
+      if (!records || records.failed) lookupFailed++;
+      if (owner !== undefined && owner !== row.userId) result.otherOwner++;
+      else if (owner === undefined || !records || records.failed) result.unproven++;
+      else proven.push({ key: row.key, userId: row.userId });
+    }
+  }
+
+  // One statement: a key is never recorded without being queued.
+  await dbWrite.$queryRaw`
+    WITH recorded AS (
+      INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId")
+      SELECT k, ${shopItemId}::int, o
+      FROM unnest(${proven.map((p) => p.key)}::text[], ${proven.map((p) => p.userId)}::int[])
+        AS t(k, o)
+      ON CONFLICT DO NOTHING
+      RETURNING url
+    )
+    SELECT queue_cdn_access_sync(${-shopItemId}::int, 'Image',
+      jsonb_build_object('shopTakedown', true, 'urls', jsonb_agg(url)))::text AS queued
+    FROM recorded
+    HAVING count(*) > 0
+  `;
+  // Then every key the listing has recorded, read after that commit: a retry that proves fewer keys,
+  // or a takedown running alongside this one, must not leave a recorded key off the queue row.
+  await dbWrite.$queryRaw`
+    SELECT queue_cdn_access_sync(${-shopItemId}::int, 'Image',
+      jsonb_build_object('shopTakedown', true, 'urls', jsonb_agg(url)))::text AS queued
+    FROM "ImageCdnShopTakedown" WHERE "shopItemId" = ${shopItemId}
+    HAVING count(*) > 0
+  `;
+  result.queued = proven.length;
+  if (result.unproven || result.otherOwner || result.inUse)
+    await logToAxiom({
+      type: 'warning',
+      name: 'shop-takedown-artwork-left-serving',
+      message: 'takedown artwork referred to a moderator',
+      shopItemId,
+      ...result,
+      lookupFailed,
+    }).catch(() => undefined);
+  if (lookupFailed) throw new Error(`artwork ownership lookup failed for ${lookupFailed} key(s)`);
+  return result;
+}
+
+/** Every image row and takedown on these urls, with what `desiredUrlAccess` needs. Reads the primary. */
 async function loadFacts(urls: string[]) {
   const byUrl = new Map<string, UrlAccessFacts>();
   if (!urls.length) return byUrl;
-  const [rows, deleteRows] = await Promise.all([
+  const [rows, deleteRows, shopRows] = await Promise.all([
     dbWrite.$queryRaw<FactsRow[]>`
       SELECT
         i.id, i.url, i."userId", i.ingestion::text AS ingestion, i."blockedFor",
@@ -343,11 +449,14 @@ async function loadFacts(urls: string[]) {
       SELECT "imageId", url, "userId", "csamReview"
       FROM "ImageCdnModeratorDelete" WHERE url = ANY(${urls})
     `,
+    dbWrite.$queryRaw<{ url: string; userId: number | null }[]>`
+      SELECT url, "userId" FROM "ImageCdnShopTakedown" WHERE url = ANY(${urls})
+    `,
   ]);
   const [holds, covered] = await Promise.all([
     ownerHolds([
       ...rows.map((r) => r.userId),
-      ...deleteRows.flatMap((r) => (r.userId === null ? [] : [r.userId])),
+      ...[...deleteRows, ...shopRows].flatMap((r) => (r.userId === null ? [] : [r.userId])),
     ]),
     reportCoverage([
       ...rows.map((r) => ({ imageId: r.id, userId: r.userId })),
@@ -397,6 +506,12 @@ async function loadFacts(urls: string[]) {
         row.userId === null ||
         holds.held(row.userId) ||
         (!covered(row.imageId, row.userId) && (row.csamReview || holds.reported(row.userId))),
+    });
+  // The delete rule with no image a report could cover: a reported owner holds.
+  for (const row of shopRows)
+    entry(row.url).deletes.push({
+      ownerId: row.userId,
+      held: row.userId === null || holds.held(row.userId) || holds.reported(row.userId),
     });
   return byUrl;
 }
@@ -631,16 +746,19 @@ type UrlImage = { id: number | null; name: string | null; type: MediaType | null
 const PERSIST_RETRY_BATCH = 100;
 
 async function imagesOnUrl(url: string) {
-  const [images, deletes] = await Promise.all([
+  const [images, deletes, shopTakedowns] = await Promise.all([
     dbWrite.$queryRaw<(UrlImage & { id: number })[]>`
       SELECT id, name, type::text AS type FROM "Image" WHERE url = ${url}`,
     dbWrite.$queryRaw<{ id: number }[]>`
       SELECT "imageId" AS id FROM "ImageCdnModeratorDelete" WHERE url = ${url}`,
+    // A shop takedown has no image: its retry is keyed by its own row id, negated.
+    dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT -id AS id FROM "ImageCdnShopTakedown" WHERE url = ${url}`,
   ]);
   return {
     // A moderator delete's row is gone, so only its key and id are left to name it by.
     images: [...images, ...deletes.map(({ id }) => ({ id, name: null, type: null }))],
-    imageIds: uniq([...images, ...deletes].map((x) => x.id)),
+    imageIds: uniq([...images, ...deletes, ...shopTakedowns].map((x) => x.id)),
   };
 }
 
@@ -943,6 +1061,7 @@ async function retryTakedownPersist(
           SELECT
             EXISTS (SELECT 1 FROM "ImageCdnAccess" WHERE url = ${url} AND state = 'Retracted')
               OR EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" WHERE url = ${url})
+              OR EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" WHERE url = ${url})
               AS "denyStands",
             NOT EXISTS (SELECT 1 FROM "Image" WHERE url = ${url}) AS "gone"
         `;
@@ -1117,7 +1236,15 @@ type QueueRow = {
   entityType: 'Image' | 'Post';
   entityId: number;
   createdAt: Date;
-  data: { url?: string; moderatorDelete?: boolean; userId?: number; csamReview?: boolean } | null;
+  data: {
+    url?: string;
+    moderatorDelete?: boolean;
+    userId?: number;
+    csamReview?: boolean;
+    /** Queued by `recordShopTakedownArtwork`, with the listing's artwork keys. */
+    shopTakedown?: boolean;
+    urls?: string[];
+  } | null;
 };
 
 export const CDN_ACCESS_SYNC_BATCH = 500;
@@ -1152,6 +1279,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   const urlByImage = new Map(imageRows.map((r) => [r.id, r.url]));
 
   const urlsFor = (q: QueueRow): string[] => {
+    if (q.data?.shopTakedown) return q.data.urls ?? [];
     if (q.entityType === 'Post')
       return postImageRows.filter((r) => r.postId === q.entityId).map((r) => r.url);
     const url = urlByImage.get(q.entityId);
@@ -1327,7 +1455,8 @@ async function syncQueued(url: string) {
       ) OR EXISTS (
         SELECT 1 FROM "JobQueue" q
         WHERE q.type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
-          AND q."entityType" = ${EntityType.Image}::"EntityType" AND q.data->>'url' = ${url}
+          AND q."entityType" = ${EntityType.Image}::"EntityType"
+          AND (q.data->>'url' = ${url} OR q.data->'urls' ? ${url})
       ) AS queued
   `;
   return !!row?.queued;
@@ -1387,6 +1516,7 @@ export async function reconcileCdnAccess({
             WHERE a.url = ${row.url}
               AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.url = a.url)
               AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" d WHERE d.url = a.url)
+              AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" t WHERE t.url = a.url)
           `;
           return;
         }

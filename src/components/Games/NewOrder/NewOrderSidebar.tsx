@@ -1,4 +1,5 @@
-import { Group, Alert, Popover, ThemeIcon, Card } from '@mantine/core';
+import { Group, Alert, ThemeIcon, Card } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import {
   IconBubbleText,
   IconChevronDown,

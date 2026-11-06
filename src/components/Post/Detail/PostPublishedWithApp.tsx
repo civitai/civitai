@@ -1,4 +1,4 @@
-import { Anchor, Avatar, Text } from '@mantine/core';
+import { Anchor, Avatar, Badge, Text } from '@mantine/core';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -37,17 +37,23 @@ export function PostPublishedWithApp({ app }: { app?: PostAppChip | null }) {
 
   return (
     <div className="flex min-w-0 flex-col gap-1" data-testid="post-published-with-app">
-      <Text size="sm" c="dimmed" className="px-1">
-        Made with
-        {app.item && (
-          <>
-            {' '}
-            <ChipItemName item={app.item} /> on
-          </>
-        )}
-      </Text>
       {app.slug ? <LinkedApp app={app} slug={app.slug} /> : <AppName app={app} />}
     </div>
+  );
+}
+
+/** "Made with" (+ "<item> on" when the post came from an app's sub-listing), as one string of text. */
+function MadeWithLabel({ app }: { app: PostAppChip }) {
+  return (
+    <>
+      Made with
+      {app.item && (
+        <>
+          {' '}
+          <ChipItemName item={app.item} /> on
+        </>
+      )}
+    </>
   );
 }
 
@@ -62,13 +68,47 @@ function LinkedApp({ app, slug }: { app: PostAppChip; slug: string }) {
   // The card sets its title in white, which only reads on a dark card; the store grid has the
   // same assumption. Scoping the dark scheme here keeps the title legible in the light theme.
   return (
-    <div data-mantine-color-scheme="dark" className="rounded-md">
-      <AppListingCard card={card} canOpenPage={features.appBlocksPages} />
+    <div
+      data-mantine-color-scheme="dark"
+      className="w-full rounded-md"
+      // `data-mantine-color-scheme` switches Mantine's variables but not CSS `light-dark()`, which
+      // follows `color-scheme`: without this the title reads black on the card.
+      style={{ colorScheme: 'dark' }}
+    >
+      <AppListingCard
+        card={card}
+        canOpenPage={features.appBlocksPages}
+        embedded
+        coverBadge={
+          <Badge
+            variant="filled"
+            color="dark"
+            size="md"
+            radius="sm"
+            tt="none"
+            className="pointer-events-auto max-w-full"
+            data-testid="post-published-with-app-label"
+          >
+            <MadeWithLabel app={app} />
+          </Badge>
+        }
+      />
     </div>
   );
 }
 
 function AppName({ app, slug }: { app: PostAppChip; slug?: string }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <Text size="sm" c="dimmed" className="px-1">
+        <MadeWithLabel app={app} />
+      </Text>
+      <AppNameRow app={app} slug={slug} />
+    </div>
+  );
+}
+
+function AppNameRow({ app, slug }: { app: PostAppChip; slug?: string }) {
   return (
     <div className="flex min-w-0 items-center gap-2 px-1">
       {app.iconUrl && (

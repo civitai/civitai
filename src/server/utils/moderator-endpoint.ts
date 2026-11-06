@@ -1,6 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
@@ -282,9 +283,10 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
       void tracker.retoolAudit({
         action: name,
         privileged: Boolean(def.privileged),
-        outcome: 'error',
+        outcome: e instanceof CommittedRetryableError ? 'warning' : 'error',
         errorMsg: err.message ?? String(e),
         payload: auditPayload,
+        affected: e instanceof CommittedRetryableError ? e.affected : undefined,
       });
       return handleEndpointError(res, e);
     }
@@ -293,6 +295,16 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
   // The catalog reads `spec` off the exported handler — same trick the spoke uses, so neither side has
   // a documentation list that can disagree with the code.
   return Object.assign(handle, { spec, endpointName: name });
+}
+
+/**
+ * Thrown by a handler whose write committed but whose follow-up step failed, so repeating the call is
+ * safe. Answers 503, and is audited as a `warning` rather than an `error`: the action took.
+ */
+export class CommittedRetryableError extends TRPCError {
+  constructor(message: string, readonly affected?: Record<string, unknown>) {
+    super({ code: 'SERVICE_UNAVAILABLE', message });
+  }
 }
 
 export type ModeratorEndpointDoc = {

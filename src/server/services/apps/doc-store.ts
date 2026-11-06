@@ -9,18 +9,25 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// There are TWO exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are THREE exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
 // admit — review namespaces only, read and delete only.
 //
-// The other exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
+// The second exception is the ACCOUNT WIPE's enumeration (`listAccountNamespaces`): one
 // SELECT keyed on `user_id = $1` over `usage_user` and `doc_mark`, run only inside
 // `accountWipeTx`, whose transaction-local `appdata.account_wipe_uid` setting the
 // migration's wipe policy admits for that ONE user's rows of those two tables, read only.
 // It returns (app, ns) pairs; the wipe of each runs in an ordinary `withTx`, keyed and
-// scoped like any viewer call.
+// scoped like any viewer call. The viewer-data listing (`listViewerUsage`) is a second SELECT
+// of that shape, on `usage_user` alone, in the same transaction kind.
+//
+// The third is the APP PURGE's enumeration (`listAppNamespaces`): one SELECT keyed on
+// `app_id = $1` with `ns > $2` (a keyset cursor) over `usage_app` and `doc`, run only inside
+// `appPurgeTx`, whose transaction-local `appdata.app_purge_id` setting the app-purge migration's
+// policy admits for that ONE app's rows of those two tables, read only. It returns namespaces;
+// the purge of each runs in ordinary `withTx` transactions, like the account wipe.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -39,6 +46,9 @@
 //   - a collection's `ownedModelVersions` rule on create and put (`doc-store-ownership.ts`);
 //   - map `DocStoreError` codes to HTTP statuses and envelopes;
 //   - resolve `author.uid` to a username (and never forward the uid).
+//
+// A collection's declared `schema` it DOES check, on every document write (put and create;
+// counters and marks are not document bodies): `doc-store-schema.ts`.
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
@@ -86,6 +96,8 @@ import { escapeLiteral } from 'pg';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { newUlid } from '~/server/utils/app-block-ids';
+import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import type { StorageHoldings } from '~/shared/utils/app-storage-usage';
 import type {
   AccountWipeNamespaceResult,
   AccountWipeResult,
@@ -103,6 +115,8 @@ import {
   DEFAULT_DOC_STORE_LIMITS,
   DOC_STORE_BOUNDS as B,
   DocStoreError,
+  DocStoreMigrationPendingError,
+  isDocStoreError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
 
@@ -598,6 +612,38 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
   ORDER BY d.coll
   LIMIT 2`;
 
+// REGISTRY FEED (`createDocStoreFeed`): the SHARED documents (`scope_uid = 0`) of one collection
+// of one app namespace, read by seq range, read only. Private documents are never selected: the
+// key space is a literal here, never a parameter. Hidden rows come back flagged from the seq read
+// (a hide writes a tombstone and leaves the row), and are left out of the full read.
+// $1 app, $2 ns
+const SQL_FEED_HEAD = `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2`;
+// $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
+const SQL_FEED_DOCS_SINCE = `SELECT d.key, d.data, d.version, d.seq, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
+const SQL_FEED_TOMBS_SINCE = `SELECT tb.key, tb.seq FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0
+    AND tb.seq > $4::bigint AND tb.seq <= $5::bigint
+  ORDER BY tb.seq
+  LIMIT $6::int`;
+// Every visible shared document, keyset by key. $1 app, $2 ns, $3 coll, $4 after key, $5 up to
+// seq (inclusive), $6 limit
+const SQL_FEED_DOCS_ALL = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
+
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
 const SQL_INCREMENT = `INSERT INTO appdata.doc_tally AS t (app_id, ns, coll, key, kind, name, count)
@@ -775,6 +821,126 @@ const SQL_WIPE_PRIVATE_TOMBS = `DELETE FROM appdata.doc_tomb tb
 // documents now charge no user).
 const SQL_WIPE_USAGE_USER = `DELETE FROM appdata.usage_user u
   WHERE u.app_id = $1 AND u.ns = $2 AND u.user_id = $3::int`;
+
+// APP PURGE (see the module header and `purgeApp`).
+//
+// Whether the app-purge policy (migration `20261102120000_appdata_app_purge.sql`) is installed on
+// both tables the enumeration reads. Without it the enumeration's setting matches no policy and
+// reads as "this app has no namespaces", which would let a purge report an app done while every
+// row of it is still there; `listAppNamespaces` refuses instead.
+const SQL_APP_PURGE_POLICY = `SELECT count(*)::int AS n FROM pg_catalog.pg_policies pp
+  WHERE pp.policyname = 'appdata_app_purge_read' AND pp.tablename IN ('doc', 'usage_app')`;
+// The namespaces one app has rows in, in key order after a keyset cursor. Two sources suffice for
+// the reason `SQL_REVIEW_APP_IDS` gives: every write takes its namespace's `usage_app` row, and a
+// document outlives that row only when its write overlapped a namespace delete; tallies, marks
+// and index rows exist only beside a document. Run only inside `appPurgeTx`. $1 app id, $2 ns of
+// the cursor (exclusive), $3 limit.
+const SQL_APP_NAMESPACES = `SELECT p.ns FROM (
+    SELECT pu.ns FROM appdata.usage_app pu WHERE pu.app_id = $1 AND pu.ns > $2::text
+    UNION
+    SELECT pd.ns FROM appdata.doc pd WHERE pd.app_id = $1 AND pd.ns > $2::text
+  ) p ORDER BY p.ns LIMIT $3::int`;
+// One batch of an app purge's delete of one (app, ns), in an ordinary scoped transaction: at most
+// $3 rows of one table. Documents first (their index rows go by the cascade), then the rows that
+// sit beside documents; `SQL_WIPE_NAMESPACE` then removes what is left, usage rows included, in
+// one last transaction. $1 app, $2 ns, $3 batch size.
+const SQL_APP_PURGE_BATCH = [
+  `WITH gone AS (DELETE FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2
+    AND d.ctid = ANY (ARRAY(SELECT bd.ctid FROM appdata.doc bd
+      WHERE bd.app_id = $1 AND bd.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_mark mk WHERE mk.app_id = $1 AND mk.ns = $2
+    AND mk.ctid = ANY (ARRAY(SELECT bm.ctid FROM appdata.doc_mark bm
+      WHERE bm.app_id = $1 AND bm.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tally t WHERE t.app_id = $1 AND t.ns = $2
+    AND t.ctid = ANY (ARRAY(SELECT bt.ctid FROM appdata.doc_tally bt
+      WHERE bt.app_id = $1 AND bt.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+  `WITH gone AS (DELETE FROM appdata.doc_tomb tb WHERE tb.app_id = $1 AND tb.ns = $2
+    AND tb.ctid = ANY (ARRAY(SELECT bb.ctid FROM appdata.doc_tomb bb
+      WHERE bb.app_id = $1 AND bb.ns = $2 LIMIT $3::int))
+    RETURNING 1) SELECT count(*)::int AS n FROM gone`,
+] as const;
+
+// SCHEMA MIGRATION (see `migrateDocuments`). Ordinary (app, ns)-scoped statements, run in
+// ordinary `withTx` transactions bound to the app's production namespace.
+//
+// One page of a collection's documents — every key space (private and shared), hidden ones
+// included — in (scope_uid, key) order after a keyset cursor. Keys only: each document is then
+// re-read under its own lock. $1 app, $2 ns, $3 coll, $4 scope_uid and $5 key of the cursor
+// (exclusive), $6 limit.
+const SQL_MIGRATE_PAGE = `SELECT d.scope_uid, d.key FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3
+    AND (d.scope_uid, d.key) > ($4::int, $5::text COLLATE "C")
+  ORDER BY d.scope_uid, d.key LIMIT $6::int`;
+// One document with what its migration needs, locked (LOCK ORDER (1)).
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key
+const SQL_MIGRATE_LOCK_DOC = `SELECT d.data, d.size_bytes, d.author_uid, d.author_kind
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  FOR UPDATE`;
+// The migrated body. A new version (a client holding the old one gets `version_conflict`), and
+// the last writer is kept: no viewer wrote this. $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key,
+// $6 data
+const SQL_MIGRATE_DOC = `UPDATE appdata.doc d
+  SET data = $6::jsonb, version = d.version + 1, updated_at = now()
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING d.size_bytes`;
+
+// VIEWER DATA (see `createDocStoreViewerData`).
+//
+// One user's PRODUCTION usage rows, in app order after a keyset cursor: the apps the user holds
+// documents in, for their account settings. The account-wipe enumeration's shape (read only,
+// `usage_user` only, keyed on the user) in the same `accountWipeTx`, whose policy admits that
+// one user's rows and nothing else. `usage_user_user_idx` (the optional migration 20261102120000)
+// serves the key once applied; every document a user owns is charged to this row (`assertUsageConsistent`), so a row
+// with no documents holds none. `'prod'` is `PUBLISHED_NS`. $1 user id, $2 app id of the cursor
+// (exclusive), $3 limit.
+const SQL_VIEWER_PROD_USAGE = `SELECT vu.app_id, vu.bytes, vu.docs FROM appdata.usage_user vu
+  WHERE vu.user_id = $1::int AND vu.ns = 'prod' AND vu.docs > 0 AND vu.app_id > $2::text
+  ORDER BY vu.app_id LIMIT $3::int`;
+
+// Emptying one viewer's data in one (app, ns), in an ordinary scoped transaction. $1 app, $2 ns,
+// $3 the viewer.
+// Their private documents (index rows go by the cascade; private documents have no tallies or
+// marks), returning what the tombstones and the refund need.
+const SQL_EMPTY_PRIVATE_DOCS = `WITH gone AS (DELETE FROM appdata.doc d
+    WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = $3::int
+    RETURNING d.coll, d.key, d.size_bytes)
+  SELECT gone.coll, gone.key, gone.size_bytes FROM gone ORDER BY gone.coll, gone.key`;
+// The visible shared documents the viewer authored, locked in one ordered statement before
+// anything is deleted (LOCK ORDER (1)). A hidden one is left for moderation, as an author
+// delete leaves it (`remove` answers `not_found`); a counter document is nobody's to delete.
+const SQL_EMPTY_LOCK_AUTHORED = `SELECT d.coll, d.key, d.size_bytes, d.author_uid
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.scope_uid = 0 AND d.author_kind = 'user'
+    AND d.author_uid = $3::int AND ${VISIBLE}
+  ORDER BY d.coll, d.key
+  FOR UPDATE OF d`;
+// What one viewer's usage in one (app, ns) is made of, by what an empty does with it, in an
+// ordinary scoped transaction. $1 app, $2 ns, $3 the viewer. Exactly the documents charged to
+// their usage row (`assertUsageConsistent`): their private documents (`private`, every empty
+// deletes them), the shared documents they authored (`shared` when visible, deleted on request;
+// `hidden` when moderation hid them, which an empty leaves) and the counter documents their
+// increment created (`counter`, which an empty leaves).
+const SQL_VIEWER_HOLDINGS = `SELECT
+    CASE WHEN d.scope_uid = $3::int THEN 'private'
+      WHEN d.author_kind = 'counter' THEN 'counter'
+      WHEN ${VISIBLE} THEN 'shared'
+      ELSE 'hidden' END AS part,
+    count(*)::int AS docs, COALESCE(sum(d.size_bytes), 0)::bigint AS bytes
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2
+    AND (d.scope_uid = $3::int
+      OR (d.scope_uid = 0 AND d.author_kind IN ('user', 'counter') AND d.author_uid = $3::int))
+  GROUP BY 1`;
+// One tombstone per deleted key, all at one seq. $1 app, $2 ns, $3 scope_uid, $4 seq,
+// $5 collections, $6 keys (parallel arrays).
+const SQL_TOMBSTONE_MANY = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, scope_uid, key, seq)
+  SELECT $1, $2, g.coll, $3::int, g.key, $4::bigint FROM unnest($5::text[], $6::text[]) AS g(coll, key)
+  ON CONFLICT (app_id, ns, coll, scope_uid, key)
+  DO UPDATE SET seq = EXCLUDED.seq, deleted_at = now()`;
 
 // List fragments. Aliases are fixed so every fragment's predicates are visible
 // to the static isolation scan; only parameter placeholders are interpolated.
@@ -998,10 +1164,11 @@ export function createDocStoreModeration(deps: DocStoreDeps) {
 }
 
 /**
- * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`) and account
- * deletion (`wipeAccount`) — as a separate object from the viewer store: the first runs with the
- * setting that reaches every `rev:` row of a request, the second with the one that reads one
- * user's rows in every app, so nothing holding the block-token routes' store may reach either.
+ * MAINTENANCE — review-namespace deletion (`purgeReview`, `listReviewAppIds`), account deletion
+ * (`wipeAccount`) and app deletion (`purgeApp`) — as a separate object from the viewer store: the
+ * first runs with the setting that reaches every `rev:` row of a request, the second with the one
+ * that reads one user's rows in every app, the third with the one that reads one app's rows in
+ * every namespace, so nothing holding the block-token routes' store may reach any of them.
  * Only `doc-store-maintenance.instance.ts` builds one in production; its importers are pinned by
  * a ledger test (`__tests__/doc-store-maintenance.ledger.test.ts`).
  */
@@ -1018,6 +1185,90 @@ export function createDocStoreLookup(deps: DocStoreDeps) {
   return buildDocStore(deps).lookup;
 }
 export type DocStoreLookup = ReturnType<typeof createDocStoreLookup>;
+
+/**
+ * REGISTRY FEED — the shared documents of one app's production namespace, by seq, read only, for
+ * the registry adapter. Private documents and every other namespace are out of its reach: each
+ * statement fixes `scope_uid = 0`, and the context fixes the production namespace.
+ */
+export function createDocStoreFeed(deps: DocStoreDeps) {
+  return buildDocStore(deps).feed;
+}
+export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
+
+/** Most rows one feed page may ask for. */
+export const FEED_MAX_PAGE = 1000;
+
+/** A shared document as the feed reads it. */
+export type FeedDocument = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  seq: number;
+};
+
+/** One page of `feedChanges`. */
+export type FeedChangesPage = {
+  docs: Array<FeedDocument & { hidden: boolean }>;
+  tombs: Array<{ key: string; seq: number }>;
+};
+
+/**
+ * VIEWER DATA — a signed-in user's own production data across apps, for their account settings:
+ * the apps they hold documents in (`listViewerUsage`), what an empty would do with each app's
+ * figure (`viewerHoldings`) and emptying one of them (`emptyViewerData`). A separate object because the listing reads one user's usage rows in
+ * every app (the account-wipe enumeration's setting), which nothing holding the block-token
+ * routes' store may reach. The caller passes the SESSION user's id, never request input. Only
+ * `doc-store-viewer-data.instance.ts` builds one in production; its importers are pinned by
+ * `__tests__/doc-store-viewer-data.ledger.test.ts`.
+ */
+export function createDocStoreViewerData(deps: DocStoreDeps) {
+  return buildDocStore(deps).viewerData;
+}
+export type DocStoreViewerData = ReturnType<typeof createDocStoreViewerData>;
+
+/** One app's stored production usage for one user (`listViewerUsage`). */
+export type ViewerAppUsage = { appId: string; bytes: number; docs: number };
+
+/**
+ * One user's figure in one app (`viewerHoldings`), split by what `emptyViewerData` does with it:
+ * `private` always goes, `shared` (visible posts they authored) goes when asked for, `hidden`
+ * (their posts moderation hid) and `counters` (counter documents their increment created) stay.
+ */
+export type ViewerAppHoldings = StorageHoldings;
+
+/** What `emptyViewerData` deleted. */
+export type ViewerDataEmptyResult = {
+  privateDocs: number;
+  privateBytes: number;
+  /** Zero unless the shared documents were asked for. */
+  sharedDocs: number;
+  sharedBytes: number;
+};
+
+/** Where a schema migration's page of documents ends: the last (key space, key) it read. */
+export type MigrationCursor = { scopeUid: number; key: string };
+
+/** Failures sampled per page by `migrateDocuments` (the count is always exact). */
+const MIGRATION_FAILURE_SAMPLES = 5;
+
+/** What one `migrateDocuments` page did. */
+export type MigrateDocumentsResult = {
+  /** Documents read under lock (one deleted between the page read and its lock is not counted). */
+  scanned: number;
+  /** Rewritten by the transform. */
+  migrated: number;
+  /** The transform changed nothing. */
+  unchanged: number;
+  /** The rewrite was refused (size cap, index value, quota) and the document left as it was. */
+  failed: number;
+  /** Changed or not, still not matching the collection's schema afterwards. */
+  invalid: number;
+  /** Up to {@link MIGRATION_FAILURE_SAMPLES} failed documents, with the refusal's code. */
+  failures: { scopeUid: number; key: string; code: string }[];
+  /** The cursor of the next page, or null when there is none. */
+  next: MigrationCursor | null;
+};
 
 /** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
 export const PUBLISHED_NS = 'prod';
@@ -1107,8 +1358,8 @@ function buildDocStore(deps: DocStoreDeps) {
    * An ACCOUNT-WIPE ENUMERATION transaction: no app or namespace bound, and
    * `appdata.account_wipe_uid` set to one validated user id — which the migration's wipe policy
    * admits for that user's `usage_user` and `doc_mark` rows only, read only. Transaction-local like
-   * every other setting. 🔴 Called by `listAccountNamespaces` ONLY (pinned by
-   * `doc-store.sql-isolation.test.ts`).
+   * every other setting. 🔴 Called by `listAccountNamespaces` and `listViewerUsage` ONLY (pinned
+   * by `doc-store.sql-isolation.test.ts`).
    */
   async function accountWipeTx<T>(
     userId: number,
@@ -1117,6 +1368,22 @@ function buildDocStore(deps: DocStoreDeps) {
     assertWipeUserId(userId);
     return runTx(
       `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.account_wipe_uid', '${userId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
+   * An APP-PURGE ENUMERATION transaction: no app or namespace bound, and `appdata.app_purge_id`
+   * set to one validated app id — which the app-purge migration's policy admits for that app's
+   * `doc` and `usage_app` rows only, read only. Transaction-local like every other setting.
+   * 🔴 Called by `listAppNamespaces` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
+   */
+  async function appPurgeTx<T>(appId: string, fn: (c: DocStoreClient) => Promise<T>): Promise<T> {
+    if (!APP_ID_SHAPE.test(appId)) throw new Error('doc-store: malformed app id');
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.app_purge_id', ${escapeLiteral(
+        appId
+      )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
       fn
     );
   }
@@ -1254,6 +1521,9 @@ function buildDocStore(deps: DocStoreDeps) {
       throw invalid('ifVersion must be a non-negative integer');
     }
     const json = serializeData(data);
+    // Here, not only in the REST layer, so that every write of a document body is checked
+    // whoever calls the store. `data` is the whole body the row will hold.
+    validateDocAgainstCollectionSchema(ctx, coll, data);
     const indexRows = indexRowsFor(coll, data as Record<string, unknown>);
     const scope = scopeUid(ctx, coll);
     const base = [ctx.appId, ctx.ns, coll.name, scope, key];
@@ -1871,11 +2141,20 @@ function buildDocStore(deps: DocStoreDeps) {
    * Idempotent: a re-run finds nothing left that names the user. A namespace whose transaction
    * fails is reported in `failures` (it rolled back in full) and the rest continue; a disabled
    * store throws `storage_disabled`.
+   *
+   * `proceed` is awaited before EVERY namespace; false stops the wipe there (`stopped`), which is
+   * how a caller re-checks that the wipe is still wanted (the account was not restored or put
+   * under a hold meanwhile). The namespaces already wiped stay wiped. `doc-store-purge.ts` is the
+   * server's one entry point.
    */
-  async function wipeAccount(userId: number): Promise<AccountWipeResult> {
+  async function wipeAccount(
+    userId: number,
+    opts: { proceed?: () => Promise<boolean> } = {}
+  ): Promise<AccountWipeResult> {
     assertWipeUserId(userId);
-    const result: AccountWipeResult = { userId, namespaces: [], failures: [] };
+    const result: AccountWipeResult = { userId, namespaces: [], failures: [], stopped: false };
     for (const { appId, ns } of await listAccountNamespaces(userId)) {
+      if (opts.proceed && !(await opts.proceed())) return { ...result, stopped: true };
       try {
         result.namespaces.push(await wipeAccountNamespace(userId, appId, ns));
       } catch (err) {
@@ -1888,6 +2167,333 @@ function buildDocStore(deps: DocStoreDeps) {
       }
     }
     return result;
+  }
+
+  /** Namespaces enumerated per page by an app purge. */
+  const APP_PURGE_PAGE = 500;
+
+  /** Every namespace `appId` has rows in, in key order, all pages. Refuses without the policy. */
+  async function listAppNamespaces(appId: string): Promise<string[]> {
+    const out: string[] = [];
+    let after = '';
+    for (;;) {
+      const page = await appPurgeTx(appId, async (c) => {
+        const policies = Number((await c.query(SQL_APP_PURGE_POLICY)).rows[0]?.n ?? 0);
+        if (policies !== 2) {
+          throw new DocStoreMigrationPendingError(
+            '20261102120000_appdata_app_purge.sql',
+            'doc-store: the app-purge policy is not installed (apply migration 20261102120000_appdata_app_purge.sql)'
+          );
+        }
+        return (await c.query(SQL_APP_NAMESPACES, [appId, after, APP_PURGE_PAGE])).rows.map(
+          (r) => r.ns as string
+        );
+      });
+      out.push(...page);
+      if (page.length < APP_PURGE_PAGE) return out;
+      after = page[page.length - 1];
+    }
+  }
+
+  /**
+   * APP PURGE (the deleted-app reaper, `jobs/reap-deleted-app-storage.ts`): delete every row of
+   * one app, in every namespace it has rows in, every user's data included. Namespaces come from
+   * the app-purge enumeration (`listAppNamespaces`); each is then deleted in ordinary
+   * (app, ns)-scoped transactions of at most `batchRows` rows of one table each
+   * (`SQL_APP_PURGE_BATCH`), and finished by `SQL_WIPE_NAMESPACE`, which deletes what is left,
+   * usage rows included. Until that last transaction a namespace's usage rows still count the
+   * documents a batch already deleted; the app is not served by then, and the rows go with it.
+   *
+   * `proceed` is awaited before EVERY transaction; false stops the purge where it is (`stopped`),
+   * which is how a caller re-checks, between batches, that the app is still deleted. At most
+   * `maxRows` rows are deleted per call (`done: false` when the budget ran out first).
+   * `done: true` only when a second enumeration after the pass finds nothing: a namespace that
+   * received its first write after the first enumeration returns `done: false`, and the next call
+   * deletes it. Idempotent and resumable: a re-run finds only what is left. A disabled store throws
+   * `storage_disabled`, a missing app-purge policy `DocStoreMigrationPendingError`; a failed
+   * transaction throws, having rolled back only its own batch.
+   */
+  async function purgeApp(
+    appId: string,
+    opts: { batchRows?: number; maxRows?: number; proceed?: () => Promise<boolean> } = {}
+  ): Promise<{ appId: string; namespaces: number; rows: number; done: boolean; stopped: boolean }> {
+    const batchRows = opts.batchRows ?? 1000;
+    const maxRows = opts.maxRows ?? Number.POSITIVE_INFINITY;
+    if (!Number.isSafeInteger(batchRows) || batchRows < 1 || batchRows > 10_000) {
+      throw new Error('doc-store: batchRows must be 1–10000');
+    }
+    const proceed = opts.proceed ?? (async () => true);
+    const namespaces = await listAppNamespaces(appId);
+    const result = { appId, namespaces: namespaces.length, rows: 0, done: false, stopped: false };
+    const n = (res: DocStoreQueryResult) => Number(res.rows[0]?.n ?? 0);
+    for (const ns of namespaces) {
+      const ctx: DocStoreContext = { appId, ns, viewerUid: null };
+      for (const sql of SQL_APP_PURGE_BATCH) {
+        for (;;) {
+          if (result.rows >= maxRows) return result;
+          if (!(await proceed())) return { ...result, stopped: true };
+          const deleted = await withTx(ctx, async (c) =>
+            n(await c.query(sql, [appId, ns, batchRows]))
+          );
+          result.rows += deleted;
+          if (deleted < batchRows) break;
+        }
+      }
+      if (!(await proceed())) return { ...result, stopped: true };
+      result.rows += await withTx(ctx, async (c) => {
+        let rows = 0;
+        for (const sql of SQL_WIPE_NAMESPACE) rows += n(await c.query(sql, [appId, ns]));
+        return rows;
+      });
+    }
+    if (namespaces.length > 0 && (await listAppNamespaces(appId)).length > 0) return result;
+    return { ...result, done: true };
+  }
+
+  /**
+   * SCHEMA MIGRATION (`storage-migration-run.service.ts`): run `transform` over ONE PAGE of one
+   * collection's PRODUCTION documents — every key space, hidden documents included — after
+   * `opts.after` (exclusive), and store what it returns. Development (`dev:`) and review (`rev:`)
+   * namespaces are not touched: they hold test data, which the developer resets.
+   *
+   * Each document is its own transaction: re-read under its row lock, transformed, and written
+   * only when `transform` returns a body (null = unchanged). So a viewer's write that lands
+   * between the page read and the lock is what gets transformed: the transform must leave a
+   * document already in the new shape unchanged (the migration ops do — `applyMigrationOps`), and
+   * then a write racing the run, or a re-run of the same page, is safe. A changed document gets a new version
+   * and seq, its index rows are re-derived, and its size delta is charged exactly as a write
+   * would charge it (the app's ceiling for a shared document, and the user the document is
+   * charged to: its viewer for a private one, its author or counter creator for a shared one).
+   * A document the write would refuse — over the size cap, an index value of the wrong type, a
+   * ceiling it no longer fits under — is left as it was and counted in `failed`.
+   *
+   * `invalid` counts the documents (changed or not) that still do not match the collection's
+   * schema afterwards — what an `acknowledge` op accepted. `next` is the cursor of the next page,
+   * or null when this one was the last.
+   */
+  async function migrateDocuments(
+    appId: string,
+    coll: DocCollection,
+    transform: (data: Record<string, unknown>) => Record<string, unknown> | null,
+    opts: { after?: MigrationCursor | null; limit?: number } = {}
+  ): Promise<MigrateDocumentsResult> {
+    assertCollection(coll);
+    const limit = opts.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new Error('doc-store: limit must be 1–1000');
+    }
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const after = opts.after ?? { scopeUid: -1, key: '' };
+    const page = await withTx(ctx, async (c) =>
+      (
+        await c.query(SQL_MIGRATE_PAGE, [
+          appId,
+          ctx.ns,
+          coll.name,
+          after.scopeUid,
+          after.key,
+          limit,
+        ])
+      ).rows.map((r) => ({ scopeUid: Number(r.scope_uid), key: r.key as string }))
+    );
+    const result: MigrateDocumentsResult = {
+      scanned: 0,
+      migrated: 0,
+      unchanged: 0,
+      failed: 0,
+      invalid: 0,
+      failures: [],
+      next: page.length < limit ? null : page[page.length - 1],
+    };
+    const stillInvalid = (data: unknown) => {
+      try {
+        validateDocAgainstCollectionSchema(ctx, coll, data);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    for (const { scopeUid: scope, key } of page) {
+      const base = [appId, ctx.ns, coll.name, scope, key];
+      try {
+        const migrateOne = () =>
+          withTx(ctx, async (c) => {
+            const row = (await c.query(SQL_MIGRATE_LOCK_DOC, base)).rows[0];
+            if (!row) return null; // deleted since the page was read
+            const before = row.data as Record<string, unknown>;
+            const next = transform(before);
+            if (next === null) return { changed: false, invalid: stillInvalid(before) };
+            const json = serializeData(next);
+            const indexRows = indexRowsFor(coll, next);
+            const res = await c.query(SQL_MIGRATE_DOC, [...base, json]);
+            const delta = Number(res.rows[0].size_bytes) - Number(row.size_bytes);
+            const owner =
+              scope !== 0
+                ? scope
+                : (row.author_kind === 'user' || row.author_kind === 'counter') &&
+                  row.author_uid !== null &&
+                  row.author_uid !== undefined
+                ? Number(row.author_uid)
+                : null;
+            await c.query(SQL_SYNC_INDEX, [
+              appId,
+              ctx.ns,
+              coll.name,
+              scope,
+              key,
+              indexRows.map((r) => r.name),
+              indexRows.map((r) => r.vText),
+              indexRows.map((r) => r.vNum),
+              indexRows.map((r) => r.type),
+            ]);
+            const seq = await charge(
+              c,
+              ctx,
+              appDelta(scope, { bytes: delta, docs: 0 }),
+              owner === null
+                ? { uid: 0, bytes: 0, docs: 0, ceiling: 'author' }
+                : {
+                    uid: owner,
+                    bytes: delta,
+                    docs: 0,
+                    ceiling: scope !== 0 ? 'viewer' : 'author',
+                  }
+            );
+            await c.query(SQL_STAMP_SEQ, [...base, seq, null]);
+            return { changed: true, invalid: stillInvalid(next) };
+          });
+        // A lock wait that timed out (a burst of writes to this app) is retried once; the
+        // transform is idempotent, so a second pass over a document is safe.
+        const outcome = await migrateOne().catch((err) => {
+          if (isDocStoreError(err, 'rate_limited')) return migrateOne();
+          throw err;
+        });
+        result.scanned += 1;
+        if (outcome === null) continue;
+        if (outcome.changed) result.migrated += 1;
+        else result.unchanged += 1;
+        if (outcome.invalid) result.invalid += 1;
+      } catch (err) {
+        // A disabled or unreachable store fails every document alike: stop the page.
+        if (
+          isDocStoreError(err, 'storage_disabled') ||
+          isDocStoreError(err, 'service_unavailable')
+        ) {
+          throw err;
+        }
+        result.scanned += 1;
+        result.failed += 1;
+        if (result.failures.length < MIGRATION_FAILURE_SAMPLES) {
+          result.failures.push({
+            scopeUid: scope,
+            key,
+            code: err instanceof DocStoreError ? err.code : 'internal',
+          });
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * The apps in which `userId` holds production documents, with their stored usage — the same
+   * figure the per-viewer ceiling (`userBytes` / `userDocs`) is checked against: their private
+   * documents, the shared documents they authored and the counter documents their increment
+   * created. One indexed read per page, never a read per app.
+   */
+  async function listViewerUsage(userId: number): Promise<ViewerAppUsage[]> {
+    assertWipeUserId(userId);
+    const out: ViewerAppUsage[] = [];
+    let after = '';
+    for (;;) {
+      const page = await accountWipeTx(userId, async (c) =>
+        (
+          await c.query(SQL_VIEWER_PROD_USAGE, [userId, after, ACCOUNT_WIPE_PAGE])
+        ).rows.map((r) => ({
+          appId: r.app_id as string,
+          bytes: Number(r.bytes),
+          docs: Number(r.docs),
+        }))
+      );
+      out.push(...page);
+      if (page.length < ACCOUNT_WIPE_PAGE) return out;
+      after = page[page.length - 1].appId;
+    }
+  }
+
+  /**
+   * What `userId`'s production figure in one app is made of, by what `emptyViewerData` does with
+   * each part (`ViewerAppHoldings`). One aggregate read in a scoped transaction; the parts sum to
+   * the stored usage (`listViewerUsage`).
+   */
+  async function viewerHoldings(userId: number, appId: string): Promise<ViewerAppHoldings> {
+    assertWipeUserId(userId);
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_VIEWER_HOLDINGS, [appId, PUBLISHED_NS, userId])).rows
+    );
+    const part = (name: string) => {
+      const r = rows.find((row) => row.part === name);
+      return { bytes: Number(r?.bytes ?? 0), docs: Number(r?.docs ?? 0) };
+    };
+    return {
+      private: part('private'),
+      shared: part('shared'),
+      hidden: part('hidden'),
+      counters: part('counter'),
+    };
+  }
+
+  /**
+   * Empty what one viewer holds in one app's PRODUCTION namespace, in ONE scoped transaction:
+   *   - always: their private documents (index rows with them), each refunded to their own usage
+   *     (the app's never carried them, `appDelta`) and tombstoned, as `remove` does;
+   *   - with `shared`: also the VISIBLE shared documents they authored, deleted exactly as an
+   *     author or moderator delete does (`deleteLockedSharedDocs`: index rows, tallies, every
+   *     viewer's marks, app and author refunds, tombstones). A hidden one stays for moderation.
+   * Counter documents their increment created, and their marks on other documents, stay.
+   * Idempotent: a re-run finds nothing and writes nothing.
+   */
+  async function emptyViewerData(
+    userId: number,
+    appId: string,
+    opts: { shared: boolean }
+  ): Promise<ViewerDataEmptyResult> {
+    assertWipeUserId(userId);
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: userId };
+    const args = [appId, PUBLISHED_NS, userId];
+    return withTx(ctx, async (c) => {
+      const authored = opts.shared
+        ? (await c.query(SQL_EMPTY_LOCK_AUTHORED, args)).rows.map(toLockedSharedDoc)
+        : [];
+      const priv = (await c.query(SQL_EMPTY_PRIVATE_DOCS, args)).rows;
+      const privateBytes = priv.reduce((sum, r) => sum + Number(r.size_bytes), 0);
+      await deleteLockedSharedDocs(c, ctx, charge, authored);
+      if (priv.length > 0) {
+        const seq = await charge(
+          c,
+          ctx,
+          // Their key space is `scope_uid = userId` (`SQL_EMPTY_PRIVATE_DOCS`).
+          appDelta(userId, { bytes: -privateBytes, docs: -priv.length }),
+          { uid: userId, bytes: -privateBytes, docs: -priv.length, ceiling: 'viewer' }
+        );
+        await c.query(SQL_TOMBSTONE_MANY, [
+          appId,
+          PUBLISHED_NS,
+          userId,
+          seq,
+          priv.map((r) => r.coll as string),
+          priv.map((r) => r.key as string),
+        ]);
+      }
+      return {
+        privateDocs: priv.length,
+        privateBytes,
+        sharedDocs: authored.length,
+        sharedBytes: authored.reduce((sum, d) => sum + d.sizeBytes, 0),
+      };
+    });
   }
 
   const store = {
@@ -1928,11 +2534,123 @@ function buildDocStore(deps: DocStoreDeps) {
     }));
   }
 
+  /**
+   * The registry feed's context: the production namespace of one app, no viewer. Collection
+   * names, keys and seq bounds are checked here, before any of them reaches SQL.
+   */
+  function feedCtx(appId: string, coll: string): DocStoreContext {
+    if (!B.collectionName.test(coll)) throw invalid('feed: malformed collection name');
+    return { appId, ns: PUBLISHED_NS, viewerUid: null };
+  }
+  const feedSeq = (n: number) => {
+    if (!Number.isSafeInteger(n) || n < 0) throw invalid('feed: malformed seq');
+    return n;
+  };
+  const feedLimit = (n: number) => {
+    if (!Number.isSafeInteger(n) || n < 1 || n > FEED_MAX_PAGE)
+      throw invalid('feed: bad page size');
+    return n;
+  };
+  const seqOf = (v: unknown) => Number(v);
+
+  /** The namespace's newest seq, or 0 when it has no usage row (nothing was ever written). */
+  async function feedHead(appId: string): Promise<number> {
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const row = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_FEED_HEAD, [ctx.appId, ctx.ns])).rows[0]
+    );
+    return row ? seqOf(row.last_seq) : 0;
+  }
+
+  /**
+   * One page of what changed in a shared collection in the seq range (`after`, `upTo`]:
+   * documents written (hidden ones flagged) and tombstones, each in seq order. One transaction,
+   * one app namespace.
+   */
+  async function feedChanges(
+    appId: string,
+    coll: string,
+    after: number,
+    upTo: number,
+    limit: number
+  ): Promise<FeedChangesPage> {
+    const ctx = feedCtx(appId, coll);
+    const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
+    return withTx(ctx, async (c) => {
+      const docs = (await c.query(SQL_FEED_DOCS_SINCE, params)).rows;
+      const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
+      return {
+        docs: docs.map((r) => ({
+          key: r.key as string,
+          data: r.data as Record<string, unknown>,
+          version: Number(r.version),
+          seq: seqOf(r.seq),
+          hidden: r.hidden === true,
+        })),
+        tombs: tombs.map((r) => ({ key: r.key as string, seq: seqOf(r.seq) })),
+      };
+    });
+  }
+
+  /** One page of a shared collection's visible documents at or below `upTo`, by key. */
+  async function feedDocuments(
+    appId: string,
+    coll: string,
+    afterKey: string,
+    upTo: number,
+    limit: number
+  ): Promise<FeedDocument[]> {
+    const ctx = feedCtx(appId, coll);
+    if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    const rows = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(SQL_FEED_DOCS_ALL, [
+            ctx.appId,
+            ctx.ns,
+            coll,
+            afterKey,
+            feedSeq(upTo),
+            feedLimit(limit),
+          ])
+        ).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      data: r.data as Record<string, unknown>,
+      version: Number(r.version),
+      seq: seqOf(r.seq),
+    }));
+  }
+
+  /** Where one shared key stands now: its document's seq and its tombstone's, each or null. */
+  async function feedWitness(
+    appId: string,
+    coll: string,
+    key: string
+  ): Promise<{ docSeq: number | null; tombSeq: number | null }> {
+    const ctx = feedCtx(appId, coll);
+    if (!B.key.test(key)) throw invalid('feed: malformed key');
+    return withTx(ctx, async (c) => {
+      const params = [ctx.appId, ctx.ns, coll, key];
+      const doc = (await c.query(SQL_FEED_WITNESS_DOC, params)).rows[0];
+      const tomb = (await c.query(SQL_FEED_WITNESS_TOMB, params)).rows[0];
+      return {
+        docSeq: doc ? seqOf(doc.seq) : null,
+        tombSeq: tomb ? seqOf(tomb.seq) : null,
+      };
+    });
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
+    feed: { feedHead, feedChanges, feedDocuments, feedWitness },
     moderation: createModeration({ withTx, charge }),
-    maintenance: { purgeReview, listReviewAppIds, wipeAccount },
+    maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
+    viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
   };
 }
 

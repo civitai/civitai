@@ -22,9 +22,26 @@ export interface SandboxTunnelStatus {
 export async function fetchSandboxTunnelStatus(
   mcpUrl: string,
   getToken: (opts?: { refresh?: boolean }) => Promise<string>,
-  fetchImpl: typeof fetch = (...args) => fetch(...args),
-  refresh = false
+  fetchImpl: typeof fetch = (...args) => fetch(...args)
 ): Promise<SandboxTunnelStatus | null> {
+  const body = await callSandboxTool(mcpUrl, getToken, 'tunnel_status', {}, fetchImpl);
+  return body === null ? null : tunnelStatusOf(body);
+}
+
+/**
+ * Calls one tool of the app's sandbox (its MCP endpoint, `mcpUrl`, with the user's sandbox token) as
+ * a single stateless `tools/call`, and answers the response body; `null` when the sandbox did not
+ * answer in time or answered with an error status. Asks for a fresh token once after a 401. Any
+ * authorised request counts as activity for the sandbox's idle clock: call only while the user is there.
+ */
+export async function callSandboxTool(
+  mcpUrl: string,
+  getToken: (opts?: { refresh?: boolean }) => Promise<string>,
+  name: string,
+  args: Record<string, unknown>,
+  fetchImpl: typeof fetch = (...a) => fetch(...a),
+  refresh = false
+): Promise<string | null> {
   let res: Response;
   try {
     const token = await getToken(refresh ? { refresh } : undefined);
@@ -37,9 +54,9 @@ export async function fetchSandboxTunnelStatus(
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
-        id: 'tunnel-status',
+        id: name,
         method: 'tools/call',
-        params: { name: 'tunnel_status', arguments: {} },
+        params: { name, arguments: args },
       }),
       signal: AbortSignal.timeout(TUNNEL_STATUS_TIMEOUT_MS),
     });
@@ -47,10 +64,23 @@ export async function fetchSandboxTunnelStatus(
     return null;
   }
   if (res.status === 401 && !refresh)
-    return fetchSandboxTunnelStatus(mcpUrl, getToken, fetchImpl, true);
+    return callSandboxTool(mcpUrl, getToken, name, args, fetchImpl, true);
   if (!res.ok) return null;
-  const text = await res.text().catch(() => '');
-  return tunnelStatusOf(text);
+  return res.text().catch(() => null);
+}
+
+/**
+ * A `tools/call` answer, as JSON or as one server-sent event: whether the tool failed and its text;
+ * `null` when the body is not such an answer.
+ */
+export function toolResultOf(body: string): { isError: boolean; text: string | undefined } | null {
+  const message = parseJson(body) ?? parseJson(lastEventData(body));
+  const result = (message as { result?: { isError?: unknown; content?: unknown } } | null)?.result;
+  if (!result || !Array.isArray(result.content)) return null;
+  const text = (result.content as { type?: unknown; text?: unknown }[]).find(
+    (part) => part?.type === 'text' && typeof part.text === 'string'
+  )?.text as string | undefined;
+  return { isError: result.isError === true, text };
 }
 
 /**
@@ -58,13 +88,9 @@ export async function fetchSandboxTunnelStatus(
  * the answer is an error or does not say.
  */
 export function tunnelStatusOf(body: string): SandboxTunnelStatus | null {
-  const message = parseJson(body) ?? parseJson(lastEventData(body));
-  const result = (message as { result?: { isError?: unknown; content?: unknown } } | null)?.result;
-  if (!result || result.isError === true || !Array.isArray(result.content)) return null;
-  const text = (result.content as { type?: unknown; text?: unknown }[]).find(
-    (part) => part?.type === 'text' && typeof part.text === 'string'
-  )?.text as string | undefined;
-  const status = text === undefined ? null : parseJson(text);
+  const result = toolResultOf(body);
+  if (!result || result.isError) return null;
+  const status = result.text === undefined ? null : parseJson(result.text);
   if (!status || typeof status !== 'object') return null;
   const { running, host } = status as { running?: unknown; host?: unknown };
   if (typeof running !== 'boolean') return null;

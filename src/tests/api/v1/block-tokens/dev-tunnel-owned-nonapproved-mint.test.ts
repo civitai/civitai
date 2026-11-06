@@ -254,6 +254,15 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(res._body.buzzBudget).toBe(minted);
   });
 
+  it('a restricted owner mints without the spend scope or a budget', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null, muted: true });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    const arg = mockTokenService.sign.mock.calls[0][0] as any;
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.buzzBudget).toBeUndefined();
+  });
+
   it('owner + SUSPENDED app + active tunnel + flags → mints a self-bound token (real ids, dev:true, forced-SFW)', async () => {
     const res = await invoke(DEV_BODY());
     expect(res._status).toBe(200);

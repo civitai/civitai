@@ -22,7 +22,7 @@ it.
   moderators (`MESSAGE_AS_CIVITAI_DAILY_CAP`, default 5). A reply from the user resets the count.
 - **Attribution.** Each message writes a `ModActivity` row (`entityType` `chatMessage`, activity
   `message-as-civitai`, the moderator as `userId`). A message sent from a report also writes a row
-  linking the report. The moderator chat audit views and the moderator app's transcripts show the
+  linking the report, when the report is about the recipient. The moderator chat audit views and the moderator app's transcripts show the
   moderator next to each Civitai Moderation message.
 
 ## Where

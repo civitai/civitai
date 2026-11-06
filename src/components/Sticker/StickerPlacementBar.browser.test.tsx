@@ -5,6 +5,8 @@ import type * as PlacementUtil from '~/components/Sticker/placement.util';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
+import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
+import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -480,6 +482,26 @@ describe('StickerPlacementBar — free slots', () => {
     // The button is still there and still opens the tray, which is where the
     // reason lives now.
     expect(page.getByRole('button', { name: /^Place a sticker/ }).elements()).toHaveLength(1);
+  });
+
+  test('leaves a Hat Turf player alone', async () => {
+    localStorage.removeItem('sticker-free-hint-dismissed');
+    Object.assign(queryState, settled, {
+      freeSlots: 4,
+      freeSlotsRemaining: 2,
+      allowanceRemaining: 1,
+    });
+    renderWithProviders(
+      <TurfSummaryContext.Provider value={{ joined: true } as TurfSummaries}>
+        <StickerPlacementBar imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
+      </TurfSummaryContext.Provider>
+    );
+
+    // The free placement is still on offer, so the hint's own condition holds.
+    await expect
+      .element(page.getByRole('button', { name: 'Place a sticker · 1 free' }))
+      .toBeInTheDocument();
+    expect(page.getByText('Daily free sticker').elements()).toHaveLength(0);
   });
 
   test('stays dismissed for the day it is about', async () => {

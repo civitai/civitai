@@ -14,7 +14,9 @@ const {
   mockRateLimit,
   mockGetRegion,
   mockIsRegionRestricted,
+  mockWithServableCovers,
 } = vi.hoisted(() => ({
+  mockWithServableCovers: vi.fn(),
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
   mockGetUserCollectionPermissionsById: vi.fn(),
@@ -31,6 +33,10 @@ vi.mock('~/server/services/collection.service', () => ({
   getCollectionItemCount: mockGetCollectionItemCount,
   getUserCollectionPermissionsById: mockGetUserCollectionPermissionsById,
   getCollectionById: mockGetCollectionById,
+}));
+
+vi.mock('~/server/services/collection-cover-visibility', () => ({
+  withServableCovers: mockWithServableCovers,
 }));
 
 vi.mock('~/server/utils/public-api-rate-limit', () => ({
@@ -124,6 +130,7 @@ beforeEach(() => {
   mockGetRegion.mockReturnValue({});
   mockIsRegionRestricted.mockReturnValue(false);
   mockImageFindUnique.mockResolvedValue({ poi: false, minor: false });
+  mockWithServableCovers.mockImplementation(async (rows: unknown[]) => rows);
 });
 
 describe('GET /api/v1/collections (list)', () => {
@@ -236,8 +243,21 @@ describe('GET /api/v1/collections (list)', () => {
       await listHandler(req, res);
 
       expect(mockGetAllCollections.mock.calls[0][0].select.image).toEqual({
-        select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true },
+        select: { id: true, url: true, type: true, nsfwLevel: true, poi: true, minor: true },
       });
+    });
+
+    it('nulls a cover a stranger may not see, judged with no viewer', async () => {
+      mockGetAllCollections.mockResolvedValue([listRow({ poi: false, minor: false })]);
+      mockWithServableCovers.mockImplementation(async (rows: { image: unknown }[]) =>
+        rows.map((r) => ({ ...r, image: null }))
+      );
+      const { req, res } = createMocks({ query: {} });
+
+      await listHandler(req, res);
+
+      expect(mockWithServableCovers).toHaveBeenCalledWith([expect.objectContaining({ id: 10 })]);
+      expect(res._getJSONData().items[0].coverImageUrl).toBeNull();
     });
 
     it('keeps a cover with neither flag', async () => {

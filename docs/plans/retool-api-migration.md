@@ -235,7 +235,7 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 
 | Action | Privileged | Bulk? | Input |
 |---|---|---|---|
-| `clearProfile` | no | no | `{ userId, fields?: ('location'\|'bio'\|'message')[] }` defaults all |
+| `clearProfile` | no | no | `{ userId, fields?: ('location'\|'bio'\|'message'\|'showcaseSections')[] }` defaults all |
 | `mute` | no | no | `{ userId, until?: ISO, reason? }` — call existing mod-actions service |
 | `unmute` | no | no | `{ userId }` |
 | `updateIdentity` | **yes** | no | `{ userId, username?, email?, name? }` — enforce uniqueness in service, send change notification |
@@ -267,7 +267,7 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 
 Comment stays in DB; hidden from public views via `where: { tosViolation: false }` filter.
 
-**CommentV2 — column exists, no endpoint.** `tosViolation` column on CommentV2; no handler in `commentv2.router.ts`. Reports reference it for display only.
+**CommentV2 — column exists, no endpoint.** `tosViolation` column on CommentV2. The `commentv2` router that later held `setTosViolation` was deleted 2026-11-05 (release 2 of the CommentV3 write flip, not deployed); the endpoint is now `commentv3.setTosViolation`. Reports reference it for display only.
 
 **`removeAsTos` action implementation:**
 - Bulk over `{ commentIds?: number[], commentV2Ids?: number[] }`

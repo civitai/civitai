@@ -2,6 +2,7 @@ import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
@@ -133,6 +134,11 @@ import {
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  decidePayoutReview,
+  openPayoutHold,
+} from '~/server/services/creator-program-prepayout-review/hold';
+import { installPayoutReviewTable } from '~/server/services/creator-program-prepayout-review/__tests__/payout-review-fake';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -600,10 +606,21 @@ describe('bankBuzz', () => {
       const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:creator-program:bank:${userId}`;
       const { set, eval: evalScript } = redisMock.redis;
       const acquire = set.mock.calls.findIndex(([key]: [string]) => key === lockKey);
-      const release = evalScript.mock.calls.findIndex(
-        ([script, opts]: [string, { keys: string[] }]) =>
-          script.includes('"del"') && opts.keys[0] === lockKey
-      );
+      // The release is the script on the lock's key that, run for real against a lock held with
+      // its own value, deletes it (a renewal on the same key leaves it).
+      let release = -1;
+      for (const [i, [script, opts]] of (
+        evalScript.mock.calls as [string, { keys: string[]; arguments: string[] }][]
+      ).entries()) {
+        if (opts.keys[0] !== lockKey) continue;
+        const lua = createLuaRedis(0);
+        lua.setString(lockKey, opts.arguments[0]!);
+        await lua.eval(script, opts);
+        if (lua.string(lockKey) === undefined) {
+          release = i;
+          break;
+        }
+      }
       expect(acquire, 'lock acquired under the per-user key').toBeGreaterThanOrEqual(0);
       expect(release, 'lock released under the per-user key').toBeGreaterThanOrEqual(0);
       const acquiredAt = set.mock.invocationCallOrder[acquire];
@@ -1162,6 +1179,53 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('with a payout-review hold', () => {
+    let table: ReturnType<typeof installPayoutReviewTable>;
+    beforeEach(() => {
+      table = installPayoutReviewTable();
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: userId });
+      mockCachedObject.fetch.mockResolvedValue({
+        [userId]: {
+          id: userId,
+          status: 'ready',
+          ready: 100000,
+          pending: 0,
+          withdrawn: 0,
+          paymentMethod: 'ACH',
+        },
+      });
+      // WITHDRAWAL_FEES has no 'Wire' entry, so the success half needs a supported method.
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockPayToTipaltiAccount.mockResolvedValue({ paymentBatchId: 'b-1', paymentRefCode: 'r-1' });
+    });
+    afterEach(() => table.uninstall());
+
+    it('refuses while the hold is open and pays out once it is cleared', async () => {
+      const hold = await openPayoutHold(
+        { userId, ground: 'investigation', reason: 'test hold' },
+        'user:1'
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('on hold');
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+      expect(mockDbWrite.cashWithdrawal.create).not.toHaveBeenCalled();
+      expect(mockPayToTipaltiAccount).not.toHaveBeenCalled();
+
+      await decidePayoutReview(
+        { id: hold.id, userId, period: hold.period, action: 'clear', version: hold.version },
+        'user:1'
+      );
+
+      await withdrawCash(userId, 10000);
+      expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledTimes(1);
+      expect(mockPayToTipaltiAccount).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('when the Tipalti payment fails after the burn', () => {

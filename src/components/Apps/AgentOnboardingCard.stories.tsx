@@ -2,11 +2,10 @@ import { Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/c
 import { useDisclosure } from '@mantine/hooks';
 import { IconArrowRight, IconChevronDown, IconTerminal2 } from '@tabler/icons-react';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
-import { GetStartedBody } from '~/components/Apps/GetStartedBody';
-import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 
 /**
- * Ladle previews for `AgentOnboardingCard` in each of `/apps/build`'s three placements.
+ * Ladle previews for `AgentOnboardingCard` in each of `/apps/build`'s two placements
+ * (`first-app` and the workbench strip; the public pitch does not carry the card).
  *
  * KEPT RATHER THAN DELETED AFTER THE REVIEW SHOOT, which is the opposite of the
  * `component-preview` skill's default ("stories for one-off reviews can be deleted after;
@@ -32,23 +31,15 @@ import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualS
  * against this panel's text box, so that specific defect no longer depends on somebody
  * looking at a screenshot. The frames are still the only check on whether it looks GOOD.
  *
- * State A mounts the real `GetStartedBody`, which is props-only. The contexts for B and C are
- * reproduced here rather than mounting `AppsBuildBody`, which would need the tRPC and session
- * providers the Ladle global provider does not supply.
+ * The contexts for B and C are reproduced here rather than mounting `AppsBuildBody`, which
+ * would need the tRPC and session providers the Ladle global provider does not supply.
  */
 
 const Frame = ({ children }: { children: React.ReactNode }) => (
   <div style={{ width: 720 }}>{children}</div>
 );
 
-/** A · pitch — the real body: hero, the prominent card, banner, pitch, closed manual setup. */
-export const Pitch = () => (
-  <Frame>
-    <GetStartedBody />
-  </Frame>
-);
-
-/** B · first-app — the prominent card leads, the manual setup is closed below it. */
+/** B · first-app — the prominent card leads, with "Create your first app" below it. */
 export const FirstApp = () => (
   <Frame>
     <Stack gap="lg">
@@ -61,7 +52,6 @@ export const FirstApp = () => (
         </Text>
       </Stack>
       <AgentOnboardingCard tone="prominent" />
-      <ManualSetupCollapse />
       <Group>
         <Button variant="default" rightSection={<IconArrowRight size={16} />}>
           Create your first app
@@ -90,10 +80,7 @@ export const WorkbenchStripOpen = () => {
           {opened ? 'Hide developer resources' : 'Developer resources'}
         </Button>
         <Collapse in={opened}>
-          <Stack gap="sm">
-            <AgentOnboardingCard tone="inline" animated={false} />
-            <ManualSetupSteps />
-          </Stack>
+          <AgentOnboardingCard tone="inline" animated={false} />
         </Collapse>
       </Stack>
     </Frame>
@@ -107,7 +94,7 @@ export const WorkbenchStripOpen = () => {
  * component has one static branch, taken by either trigger — so this is what a viewer who has
  * opted out of motion sees, without needing the screenshot run to set the media feature.
  */
-export const PitchProminentStatic = () => (
+export const ProminentStatic = () => (
   <Frame>
     <AgentOnboardingCard tone="prominent" animated={false} />
   </Frame>

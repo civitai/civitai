@@ -55,6 +55,10 @@ vi.mock('~/server/orchestrator/orchestrator-token-cache', () => ({
   getOrMintCachedToken: mockGetOrMint,
 }));
 vi.mock('~/server/services/api-key.service', () => ({ getTemporaryUserApiKey: mockGetTempKey }));
+// The standing check has its own tests (generation-token-restricted.test.ts); an account in good standing here.
+vi.mock('~/server/services/account-standing.service', () => ({
+  getAccountStanding: async () => ({ muted: false, banned: false, exists: true }),
+}));
 vi.mock('~/server/orchestrator/orchestrator-identity-metrics', () => ({
   observeTokenIdentityMismatch: mockObserveMismatch,
 }));
@@ -114,7 +118,12 @@ describe('getOrchestratorToken — sysRedis read soft-dependency', () => {
     expect(token).not.toContain('someone-elses-token');
     // The re-mint must be for the CALLER, not the owner the poisoned value named — the last
     // remaining way this function could hand back a stranger's identity.
-    expect(mockGetOrMint).toHaveBeenCalledWith(1001, expect.any(Function));
+    // A healthy read found the poisoned value, so the per-pod cache is not consulted either.
+    expect(mockGetOrMint).toHaveBeenCalledWith(
+      1001,
+      expect.any(Function),
+      expect.objectContaining({ readCache: false })
+    );
     expect(mockObserveMismatch).toHaveBeenCalledTimes(1);
     expect(mockObserveMismatch).toHaveBeenCalledWith('redis');
     expect(mockLogToAxiom).toHaveBeenCalledWith(

@@ -8,8 +8,10 @@ import format from 'pg-format';
 import { chunk } from 'lodash-es';
 import type {
   CreateNotificationRow,
+  MarkReadByKeysInput,
   MarkReadInput,
   NotificationCategory,
+  NotificationListCursor,
   NotificationRow,
 } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
@@ -75,7 +77,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
 export async function queryNotifications(input: {
   userId: number;
   limit: number;
-  cursor?: Date;
+  cursor?: NotificationListCursor | Date;
   category?: NotificationCategory | null;
   unread?: boolean;
 }): Promise<NotificationRow[]> {
@@ -87,19 +89,27 @@ export async function queryNotifications(input: {
     params.push(category);
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
-  if (cursor) {
+  if (cursor instanceof Date) {
+    // Legacy cursor: strict, because `<=` would refetch the same page forever once equal timestamps
+    // fill one.
     params.push(cursor);
     where.push(`un."createdAt" < $${params.length}`);
+  } else if (cursor) {
+    params.push(cursor.createdAt, cursor.id);
+    const [at, id] = [`$${params.length - 1}::timestamp`, `$${params.length}::bigint`];
+    // The bare `<=` lets the ("userId", "createdAt" DESC) index bound the scan.
+    where.push(`un."createdAt" <= ${at} AND (un."createdAt" < ${at} OR un.id < ${id})`);
   }
   params.push(limit);
 
   const db = await getNotifDbWithoutLag(userId);
   const query = await db.cancellableQuery<NotificationRow>(
-    `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read
+    `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read,
+       to_char(un."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "cursorAt"
      FROM "UserNotification" un
        JOIN "Notification" n ON n."id" = un."notificationId"
      WHERE ${where.join(' AND ')}
-     ORDER BY un."createdAt" DESC
+     ORDER BY un."createdAt" DESC, un.id DESC
      LIMIT $${params.length}`,
     params
   );
@@ -395,6 +405,32 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
   }
 }
 
+// Synchronous, unlike markNotificationsRead: the caller corrects its badge from the returned counts.
+export async function markNotificationsReadByKeys({
+  userId,
+  keys,
+}: MarkReadByKeysInput): Promise<Array<{ category: NotificationCategory; count: number }>> {
+  const write = notifDbWrite();
+  const { rows } = await write.query<{ category: NotificationCategory }>(
+    `UPDATE "UserNotification" un SET viewed = TRUE
+     FROM "Notification" n
+     WHERE un."notificationId" = n.id AND un."userId" = $1 AND un.viewed IS FALSE
+       AND n.key = ANY($2::text[])
+     RETURNING n.category`,
+    [userId, keys]
+  );
+  if (!rows.length) return [];
+
+  const counts = new Map<NotificationCategory, number>();
+  for (const { category } of rows) counts.set(category, (counts.get(category) ?? 0) + 1);
+  for (const [category, count] of counts)
+    notificationCache.decrementUser(userId, category, count).catch(() => null);
+  // The write has committed: a failed lag mark must not turn it into a 500, whose retry finds nothing
+  // unread and returns [], leaving both badge caches high.
+  await preventReplicationLag(userId).catch(() => null);
+  return [...counts].map(([category, count]) => ({ category, count }));
+}
+
 async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<void> {
   const { id, userId, all, category } = input;
   const write = notifDbWrite();
@@ -422,8 +458,8 @@ async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<vo
   }
 
   const resp = await write.query(
-    `UPDATE "UserNotification" un SET viewed = TRUE WHERE id = $1 AND viewed IS FALSE`,
-    [id]
+    `UPDATE "UserNotification" un SET viewed = TRUE WHERE id = $1 AND "userId" = $2 AND viewed IS FALSE`,
+    [id, userId]
   );
   if (resp.rowCount) {
     await preventReplicationLag(userId);

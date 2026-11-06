@@ -27,9 +27,9 @@ import {
 } from '../shared';
 
 /**
- * MiniMax H3. Four builds behind one version picker: MiniMax's API build (no
- * extra knobs), the comfy build (LoRAs, seed, a turbo toggle that reshapes the
- * steps range), H3 Max through FAL (Max or Max Turbo, resolution, seed) and
+ * MiniMax H3. Four builds behind one version picker: MiniMax's API build
+ * (Standard, Highspeed or Lite tiers), the comfy build (LoRAs, seed, a turbo toggle that
+ * reshapes the steps range), H3 Max through FAL (Max or Max Turbo, resolution, seed) and
  * HeyGen Video 1 (resolution, seed; first frame only). Prompt is required even
  * with images (H3 rejects text-less requests). No negative prompt.
  */
@@ -71,6 +71,7 @@ const minimaxMaxResolutions = [
 const heygenResolutions = [
   { label: '480p', value: '480p' },
   { label: '768p', value: '768p' },
+  { label: '2K', value: '2K' },
 ] as const;
 
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
@@ -91,7 +92,42 @@ const minimaxDurationMin: Record<MinimaxVariant, number> = {
   heygen: 5,
 };
 
-const api = defineGraph<FamilyExt>();
+const minimaxApiModels = [
+  { label: 'Standard', value: 'standard' },
+  { label: 'Highspeed', value: 'highspeed' },
+  { label: 'Lite', value: 'lite' },
+] as const;
+
+export type MinimaxApiModel = (typeof minimaxApiModels)[number]['value'];
+
+/** The orchestrator rejects any other model/resolution pair. */
+const minimaxApiResolutions: Record<MinimaxApiModel, { label: string; value: string }[]> = {
+  standard: [
+    { label: '768p', value: '768P' },
+    { label: '2K', value: '2K' },
+  ],
+  highspeed: [{ label: '768p', value: '768P' }],
+  lite: [
+    { label: '480p', value: '480P' },
+    { label: '768p', value: '768P' },
+  ],
+};
+
+const api = defineGraph<FamilyExt>()
+  .field('mode', {
+    ...enumDef({ options: minimaxApiModels, default: 'standard' }),
+    meta: {
+      options: minimaxApiModels,
+      info: 'Highspeed and Lite generate faster and cost less. Standard has the highest quality and is the only one offering 2K.',
+    },
+  })
+  .field('resolution', ({ mode }) => ({
+    ...enumDef({
+      options: minimaxApiResolutions[mode],
+      default: mode === 'standard' ? '2K' : '768P',
+    }),
+    scope: `api-${mode}`,
+  }));
 
 const max = defineGraph<FamilyExt>()
   .field('seed', SEED)

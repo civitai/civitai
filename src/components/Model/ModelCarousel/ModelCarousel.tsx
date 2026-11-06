@@ -30,7 +30,10 @@ import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import classes from './ModelCarousel.module.css';
 import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
-import { getEventDecorationClearLeft } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import {
+  getEventDecorationClearLeftCss,
+  HAT_PLAIN_CARD_NUDGE,
+} from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import clsx from 'clsx';
 import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
@@ -95,6 +98,8 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
       slidesToScroll={1}
       withControls={hasMultipleSlides ? true : false}
       controlSize={mobile ? 32 : 56}
+      hatLayer
+      className="[--event-decoration-allowance-top:36px] [--event-decoration-allowance:16px] md:[--event-decoration-allowance:36px]"
       loop
       // initialHeight={mobile ? 300 : 600}
     >
@@ -117,10 +122,11 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                       {
                         aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
                         ...(image.eventDecoration && {
-                          '--event-decoration-clear-left': `${getEventDecorationClearLeft(
+                          '--event-decoration-clear-left': getEventDecorationClearLeftCss(
                             image.eventDecoration.data,
-                            'inside'
-                          )}px`,
+                            'corner',
+                            HAT_PLAIN_CARD_NUDGE
+                          ),
                         }),
                       } as React.CSSProperties
                     }
@@ -128,11 +134,10 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                     <ImpressionSentinel
                       impressions={[{ entityType: 'Image', entityId: image.id }]}
                     />
-                    {/* The carousel viewport clips at the slide's edge, so the hat stays inside. */}
                     {image.eventDecoration && (
                       <EventDecorationOverlay
                         decoration={image.eventDecoration.data}
-                        placement="inside"
+                        placement="corner"
                         wornOn={{ entityType: 'Image', entityId: image.id }}
                       />
                     )}

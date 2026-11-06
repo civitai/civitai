@@ -209,7 +209,7 @@ describe('createCachedObject { compress: true } — write path', () => {
     expect(store.has(`${KEY}:7`)).toBe(true);
   });
 
-  it('a COMPRESSED notFound marker (as invalidate() rewrites it) still reads as a negative hit', async () => {
+  it('a COMPRESSED notFound marker (left in Redis by invalidate() before it swapped markers for debounce) still reads as a negative hit', async () => {
     const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
     const { cache } = buildCache({ compress: true }, lookupFn);
     const compressedMarker = await compressPacked(
@@ -287,6 +287,22 @@ describe('createCachedObject { compress: true } — symmetry across bust / refre
     expect(after!.equals(before)).toBe(false); // it really rewrote the entry
   });
 
+  it('bust() on an SWR cache swaps a notFound marker for a debounce marker on the compressed path', async () => {
+    const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
+    const { cache } = buildCache({ compress: true, staleWhileRevalidate: true }, lookupFn);
+    await cache.fetch([12]); // negatively cached
+
+    await cache.bust(12);
+    const raw = stored(12);
+    expect(raw, 'marker was evicted — invalidate read it on the non-compress path').toBeDefined();
+    expect(raw![0]).toBe(PACKED_BROTLI_SENTINEL);
+    expect(unpack(await decompressPacked(raw!))).toMatchObject({ id: 12, debounce: true });
+
+    // Read back as a debounce marker, so the next fetch goes to origin.
+    await cache.fetch([12]);
+    expect(lookupFn).toHaveBeenCalledTimes(2);
+  });
+
   it('update() reads and rewrites a compressed entry', async () => {
     const { cache } = buildCache({ compress: true, staleWhileRevalidate: false });
     await cache.fetch([6]);
@@ -362,8 +378,8 @@ describe('default / compress:false is byte-for-byte unchanged', () => {
 });
 
 describe('SEAM LEDGER: every redis.packed read in cached-array.ts is compress-aware; only the notFound write is not', () => {
-  // The behavioural tests above cover all NINE call sites as they exist today. This ledger is
-  // what catches the TENTH: a new redis.packed READ without `packedOptions` would be silently
+  // The behavioural tests above cover all TEN call sites as they exist today. This ledger is
+  // what catches the ELEVENTH: a new redis.packed READ without `packedOptions` would be silently
   // asymmetric on a compressed cache, and the exact set below also forces any new uncompressed
   // write to be added on purpose. Asserted as an exact COUNT in both directions — a shrinking set
   // means the detector went blind, which passes an additions-only check while reporting a clean
@@ -386,15 +402,15 @@ describe('SEAM LEDGER: every redis.packed read in cached-array.ts is compress-aw
     calls.push({ op: m[1], args: src.slice(i + 1, end) });
   }
 
-  // INVARIANT GUARD (green at origin/main too): the nine call sites exist there as well. Its job
+  // INVARIANT GUARD: the ten call sites exist. Its job
   // is to keep the ledger below honest — a detector that goes blind fails HERE rather than
   // reporting zero violations over zero call sites.
-  it('finds exactly the 9 known redis.packed call sites', () => {
+  it('finds exactly the 10 known redis.packed call sites', () => {
     // POSITIVE CONTROL on the detector: if the matcher stops matching, the count drops and the
     // whole ledger fails loudly rather than reporting zero violations over zero call sites.
-    expect(calls.length).toBe(9);
+    expect(calls.length).toBe(10);
     expect(calls.filter((c) => c.op === 'mGet').length).toBe(3);
-    expect(calls.filter((c) => c.op === 'set').length).toBe(6);
+    expect(calls.filter((c) => c.op === 'set').length).toBe(7);
   });
 
   // Every READ must be compress-aware. Every write passes packedOptions EXCEPT the notFound marker,

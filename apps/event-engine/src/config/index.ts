@@ -25,7 +25,7 @@ export const config = {
   },
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
-    metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents',
+    metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
   },
   redis: {
     url: process.env.REDIS_URL!,
@@ -56,6 +56,7 @@ export const config = {
       'public.CollectionItem',
       'public.Comment',
       'public.CommentV2',
+      'public.CommentV3',
       'public.ImageResourceNew',
       'public.BuzzTip',
       'public.TagEngagement',
@@ -73,13 +74,16 @@ export const config = {
       'public.TagsOnBounty',
       'public.Bounty',
       'public.Article',
-      'public.ComicProjectEngagement'
+      'public.ComicProjectEngagement',
     ],
 
     // Streamed by the connector but not consumed by the metrics watcher (only by
     // vector-sync). Adding a table here changes the Debezium publication, and the
     // watcher recreates the connector on startup, so each entry is opt-in.
-    cdcOnlyTables: process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : [],
+    cdcOnlyTables: [
+      ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
+      ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
+    ],
 
     // ClickHouse topics streamed directly to Kafka
     clickhouseTopics: [
@@ -117,17 +121,17 @@ export const config = {
   },
   cache: {
     queryCache: {
-      maxSize: parseInt(process.env.QUERY_CACHE_MAX_SIZE ?? (250 * 1024 * 1024)+''), // max size in bytes
+      maxSize: parseInt(process.env.QUERY_CACHE_MAX_SIZE ?? 250 * 1024 * 1024 + ''), // max size in bytes
       syncEnabled: process.env.QUERY_CACHE_SYNC_ENABLED !== 'false', // default: true
       backupKey: process.env.QUERY_CACHE_BACKUP_KEY ?? 'query-cache:backup', // Redis key for backup
       chunkSize: parseInt(process.env.QUERY_CACHE_CHUNK_SIZE ?? '500000'), // entries per chunk (500k ~= 25-50MB uncompressed)
       // When sync is enabled: backup every 30min (cache is shared across instances)
       // When sync is disabled: backup every 5min (need frequent snapshots)
       get backupIntervalMs() {
-        const envInterval = process.env.QUERY_CACHE_BACKUP_INTERVAL
-        if (envInterval) return parseInt(envInterval) * 1000
-        return this.syncEnabled ? 30 * 60 * 1000 : 5 * 60 * 1000
-      }
+        const envInterval = process.env.QUERY_CACHE_BACKUP_INTERVAL;
+        if (envInterval) return parseInt(envInterval) * 1000;
+        return this.syncEnabled ? 30 * 60 * 1000 : 5 * 60 * 1000;
+      },
     },
     pgPoolMaxConnections: parseInt(process.env.PG_POOL_MAX_CONNECTIONS ?? '20'),
   },
@@ -138,7 +142,8 @@ export const config = {
   spine: {
     url: process.env.SPINE_URL ?? '',
     apiKey: process.env.SPINE_API_KEY ?? '',
-    kafkaCallbackUrl: process.env.SPINE_KAFKA_CALLBACK_URL ?? 'https://orchestrator-kafka.civitai.com/callback',
+    kafkaCallbackUrl:
+      process.env.SPINE_KAFKA_CALLBACK_URL ?? 'https://orchestrator-kafka.civitai.com/callback',
   },
   s3: {
     accessKey: process.env.S3_ACCESS_KEY ?? '',
@@ -147,6 +152,7 @@ export const config = {
   // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
   vectorSync: {
     consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
+    modelConsumerGroup: process.env.VECTOR_MODEL_CONSUMER_GROUP ?? 'model-vector-sync',
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
@@ -160,6 +166,9 @@ export const config = {
     // collection while the old one keeps serving.
     collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
     alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Semantic model search, the same way: the search service reads the alias.
+    modelCollection: process.env.VECTOR_MODEL_COLLECTION ?? 'models_wemm2b_256_v1',
+    modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
@@ -183,11 +192,7 @@ export const config = {
 };
 
 export function validateConfig() {
-  const required = [
-    'DATABASE_URL',
-    'CLICKHOUSE_URL',
-    'REDIS_URL',
-  ];
+  const required = ['DATABASE_URL', 'CLICKHOUSE_URL', 'REDIS_URL'];
 
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length > 0) {

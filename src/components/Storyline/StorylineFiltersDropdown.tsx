@@ -1,10 +1,12 @@
-import { Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
+import { Divider, Drawer, Group, Indicator, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 export const STORYLINE_FEED_FILTERS = [
@@ -12,6 +14,9 @@ export const STORYLINE_FEED_FILTERS = [
   { value: 'ongoing', label: 'Ongoing' },
   { value: 'complete', label: 'Complete' },
   { value: 'open', label: 'Open for continuations' },
+  { value: 'mine', label: 'My storylines' },
+  { value: 'participated', label: 'Participated' },
+  { value: 'following', label: 'Following' },
 ] as const;
 export type StorylineFeedFilter = (typeof STORYLINE_FEED_FILTERS)[number]['value'];
 
@@ -27,6 +32,7 @@ export function StorylineFiltersDropdown({
   onChange: (value: StorylineFeedFilter) => void;
 }) {
   const mobile = useIsMobile();
+  const currentUser = useCurrentUser();
   const committed = useMemo(() => ({ filter: value }), [value]);
   const {
     opened,
@@ -81,6 +87,12 @@ export function StorylineFiltersDropdown({
       {chips(['all', 'ongoing', 'complete'])}
       <Divider label="Continuing" className="text-sm font-bold" />
       {chips(['open'])}
+      {currentUser && (
+        <>
+          <Divider label="Yours" className="text-sm font-bold" />
+          {chips(['mine', 'participated', 'following'])}
+        </>
+      )}
     </Stack>
   );
 

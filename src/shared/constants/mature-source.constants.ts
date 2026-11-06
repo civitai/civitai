@@ -14,3 +14,7 @@ export const FLUX3_MATURE_SOURCE_MESSAGE = `Flux 3 Video can't animate images ra
 
 /** Added to a provider refusal, which does not say whether the image, the prompt or the output tripped it. */
 export const MATURE_SOURCE_HINT = `If your source image is rated above PG-13, try ${MATURE_SOURCE_ALTERNATIVE.label} instead.`;
+
+/** Shown when a run is limited to PG-13 because of its source image. */
+export const UNMARKED_SOURCE_IMAGE_MESSAGE =
+  "We couldn't confirm this source image was generated, so results are limited to PG-13. If it's a Civitai image, use its Download button or drag it in from the site.";

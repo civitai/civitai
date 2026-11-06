@@ -158,6 +158,14 @@ describe('threadUrlMap — appListing resolves by slug', () => {
     });
   });
 
+  it('opens a comic comment on its chapter when the details carry its position', () => {
+    // Position 0 is the first chapter, and falsy: a truthiness check would drop it to the project.
+    for (const threadType of ['comicChapter', 'comicProject'])
+      expect(threadUrlMap(details({ threadType, comicChapterPosition: 0 }))).toBe(
+        `/comics/3310/comic/1?${QUERY}`
+      );
+  });
+
   it('REGRESSION: an appListing payload does not disturb a sibling type on the same details', () => {
     // A stale-binding mutant (reading `appListingSlug` unconditionally) would corrupt these.
     expect(threadUrlMap(details({ threadType: 'model', appListingSlug: SLUG }))).toBe(
@@ -271,13 +279,11 @@ describe('prepareMessage — an appListing thread produces a linked notification
  */
 describe('thread naming is one rule shared by all three consumers', () => {
   /**
-   * Every `threadType` the notification SQL can emit: the twelve CASE arms plus the `comment`
-   * fallback. `question`/`answer` are filtered out of the thread-response and mention queries
-   * but survive in new-comment-reply's CASE, so they are reachable and belong here.
+   * Every `threadType` the notification SQL can emit.
    *
    * The expected noun is the entity key VERBATIM except the four the map translates, so this
-   * table doubles as the negative control on the map: nine of the thirteen must come back
-   * untouched, which is what stops "translate `appListing`" turning into "translate everything".
+   * table doubles as the negative control on the map: the rest must come back untouched, which
+   * is what stops "translate `appListing`" turning into "translate everything".
    *
    * 🔴 `model3d → "3D model"` is a REORDERING, and it is the one label starting with a DIGIT.
    * The article is picked from the noun, and `'3'` is not in the vowel set, so `a 3D model` is
@@ -288,8 +294,6 @@ describe('thread naming is one rule shared by all three consumers', () => {
     image: 'an image',
     model: 'a model',
     post: 'a post',
-    question: 'a question',
-    answer: 'an answer',
     review: 'a review',
     article: 'an article',
     bounty: 'a bounty',
@@ -439,7 +443,9 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(COALESCE(c."replyToId", c."parentId"), CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'comicChapterPosition', cch.position,
+      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
+      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -454,7 +460,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
       WHERE NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL)
-      AND c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND c."userId" != pc."userId"
       AND NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -496,7 +502,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       UNNEST(CASE
       WHEN c."parentId" IS NULL THEN (SELECT ARRAY_AGG(s."userId") FROM (
       SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+      AND cu."userId" != c."userId"
       ) s
       WHERE NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -516,7 +523,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       )))
       ELSE (SELECT ARRAY_AGG(s."userId") FROM (
       SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-      WHERE ((cu."parentId" = COALESCE(c."replyToId", c."parentId") AND cu."replyToId" IS NULL) OR cu."replyToId" = COALESCE(c."replyToId", c."parentId")) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      WHERE ((cu."parentId" = COALESCE(c."replyToId", c."parentId") AND cu."replyToId" IS NULL) OR cu."replyToId" = COALESCE(c."replyToId", c."parentId")) AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+      AND cu."userId" != c."userId"
       ) s
       WHERE NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -554,7 +562,9 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(COALESCE(c."replyToId", c."parentId"), CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'comicChapterPosition', cch.position,
+      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
+      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
@@ -569,7 +579,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "Model" m ON (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) AND m.id = c."entityId"
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
-      WHERE c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      WHERE c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR c."parentId" IS NOT NULL)
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )
@@ -614,7 +624,9 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ELSE c."entityType"::text
       END,
       'appListingSlug', al.slug,
-      'commentParentId', COALESCE(COALESCE(c."replyToId", c."parentId"), CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
+      'comicChapterPosition', cch.position,
+      'commentParentId', COALESCE(CASE WHEN c."entityType"::text = ANY(ARRAY['article', 'post', 'image', 'review', 'bounty', 'bountyEntry', 'challenge', 'crucible', 'storyline', 'model3d', 'appListing', 'comicChapter'])
+      THEN c."parentId" ELSE COALESCE(c."replyToId", c."parentId") END, CASE c."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE c."entityId" END),
       'commentParentType', CASE WHEN c."parentId" IS NULL THEN CASE c."entityType"::text
       WHEN 'comicChapter' THEN 'comicProject'
       WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END

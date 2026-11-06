@@ -22,5 +22,15 @@ export const PREVIEW_USERS: Record<
   restricted: { id: 2000000003, username: 'ci-smoke-restricted', isModerator: false },
 };
 
+/**
+ * Lifetime of the session cookies preview-auth.setup.ts mints, in seconds. Sized to ONE
+ * smoke run, not to a real login: the setup re-mints every run (every spec depends on
+ * the `preview-setup` project), the suite takes minutes, and the CI run hosting it is
+ * capped at 2h. Short on purpose, so any copy that escapes the log masking
+ * (tests/preview-redact.ts) is dead soon after the run. Pinned by
+ * scripts/__tests__/preview-smoke-log-redaction.test.ts.
+ */
+export const PREVIEW_SESSION_MAX_AGE_S = 2 * 60 * 60;
+
 export const storageStatePath = (role: PreviewRole) =>
   path.join('tests/auth', `.preview-${role}.json`);

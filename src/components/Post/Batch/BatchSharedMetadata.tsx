@@ -1,4 +1,5 @@
-import { Badge, Button, Checkbox, CloseButton, Popover, Text } from '@mantine/core';
+import { Badge, Button, Checkbox, CloseButton, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconLock, IconPlus } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';

@@ -16,6 +16,7 @@ import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay'
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
@@ -30,9 +31,14 @@ import {
   ImageMediaHat,
   imageMediaHatClearLeft,
 } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { HatLayerHost } from '~/components/Cosmetics/EventDecoration/HatLayer';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
+
+// Width at which the media's height equals the space below the header, so the whole image fits on screen.
+const fitToScreenWidth = (width: number, height: number) =>
+  `calc((100dvh - var(--header-height) - 16px) * ${width} / ${height})`;
 export function PostImages({
   postId,
   images,
@@ -51,6 +57,7 @@ export function PostImages({
   const [showMore, setShowMore] = useState(false);
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const features = useFeatureFlags();
+  const { fitPostImagesToScreen } = useCurrentUserSettings();
 
   // Every image in the post, not the `_images` slice below: the batch provider
   // keys its chunks on the joined id string, so handing it a slice that grows on
@@ -98,147 +105,160 @@ export function PostImages({
               <Paper
                 key={image.id}
                 radius="md"
-                className="relative overflow-hidden"
+                className="relative [--event-decoration-allowance:12px] md:[--event-decoration-allowance:36px]"
                 shadow="md"
                 mx="auto"
                 style={{
                   maxWidth: '100%',
-                  width: width < maxWidth ? width : maxWidth,
+                  width:
+                    fitPostImagesToScreen && image.width && image.height
+                      ? `min(${Math.min(width, maxWidth)}px, ${fitToScreenWidth(
+                          image.width,
+                          image.height
+                        )})`
+                      : width < maxWidth
+                      ? width
+                      : maxWidth,
                 }}
               >
-                <ImageGuard2 image={image} connectType="post" connectId={postId}>
-                  {(safe) => (
-                    <>
-                      <div
-                        className="relative"
-                        style={{
-                          aspectRatio:
-                            image.width && image.height
-                              ? `${image.width}/${image.height}`
-                              : undefined,
-                        }}
-                      >
-                        <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
-                        <Group
-                          gap={4}
-                          className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
-                          style={imageMediaHatClearLeft(image.eventDecoration)}
-                        >
-                          <ImageGuard2.BlurToggle />
-                          {features.stickerPlacement && (
-                            <StickerPlacementCardBadge imageId={image.id} />
-                          )}
-                          {showImageCollectionBadge && (
-                            <Badge variant="filled" color="gray">
-                              {imageCollectionItem?.tag?.name}
-                            </Badge>
-                          )}
-                        </Group>
-                        <div
-                          className={clsx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
-                            'right-10 top-2.5': !!vimeoVideoId,
-                          })}
-                        >
-                          <ImageContextMenu image={image} />
-                          {features.imageGeneration && isRemixMenuVisible(image) && (
-                            <RemixMenu image={image} source="remix:post-image-card">
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:post-image-card"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            </RemixMenu>
-                          )}
-                        </div>
-                        <RoutedDialogLink
-                          name="imageDetail"
-                          state={{
-                            imageId: image.id,
-                            images,
-                            collectionId: imageCollectionItem?.collection?.id,
-                          }}
-                          // A link drags by default, so a press-and-move on the video controls
-                          // becomes a link drag that eats the click. Media opts into its own drag.
-                          draggable={!showsControlStrip}
-                          onClick={() => {
-                            if (videoRef.current) videoRef.current.stop();
-                          }}
-                        >
-                          {!safe ? (
+                {/* Host sits outside the clip so hats can overhang the rounded corner. */}
+                <HatLayerHost>
+                  <div className="overflow-hidden" style={{ borderRadius: 'inherit' }}>
+                    <ImageGuard2 image={image} connectType="post" connectId={postId}>
+                      {(safe) => (
+                        <>
+                          <div
+                            className="relative"
+                            style={{
+                              aspectRatio:
+                                image.width && image.height
+                                  ? `${image.width}/${image.height}`
+                                  : undefined,
+                            }}
+                          >
+                            <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+                            <Group
+                              gap={4}
+                              className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+                              style={imageMediaHatClearLeft(image.eventDecoration, true)}
+                            >
+                              <ImageGuard2.BlurToggle />
+                              {features.stickerPlacement && (
+                                <StickerPlacementCardBadge imageId={image.id} />
+                              )}
+                              {showImageCollectionBadge && (
+                                <Badge variant="filled" color="gray">
+                                  {imageCollectionItem?.tag?.name}
+                                </Badge>
+                              )}
+                            </Group>
                             <div
-                              style={{
-                                position: 'absolute',
-                                top: 0,
-                                bottom: 0,
-                                aspectRatio: (image.width ?? 1) / (image.height ?? 1),
+                              className={clsx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
+                                'right-10 top-2.5': !!vimeoVideoId,
+                              })}
+                            >
+                              <ImageContextMenu image={image} />
+                              {features.imageGeneration && isRemixMenuVisible(image) && (
+                                <RemixMenu image={image} source="remix:post-image-card">
+                                  <HoverActionButton
+                                    label="Remix"
+                                    size={30}
+                                    color="white"
+                                    variant="filled"
+                                    data-activity="remix:post-image-card"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                    }}
+                                  >
+                                    <IconBrush stroke={2.5} size={16} />
+                                  </HoverActionButton>
+                                </RemixMenu>
+                              )}
+                            </div>
+                            <RoutedDialogLink
+                              name="imageDetail"
+                              state={{
+                                imageId: image.id,
+                                images,
+                                collectionId: imageCollectionItem?.collection?.id,
+                              }}
+                              // A link drags by default, so a press-and-move on the video controls
+                              // becomes a link drag that eats the click. Media opts into its own drag.
+                              draggable={!showsControlStrip}
+                              onClick={() => {
+                                if (videoRef.current) videoRef.current.stop();
                               }}
                             >
-                              <MediaHash {...image} />
-                            </div>
-                          ) : (
-                            <EdgeMedia
-                              src={image.url}
-                              name={image.name}
-                              alt={image.name ?? undefined}
-                              type={image.type}
-                              imageId={image.id}
-                              width={width < maxWidth ? width : maxWidth}
-                              hiDpi={features.hiDpiPreviews}
-                              sourceWidth={image.width}
-                              original={image.type === 'video'}
-                              anim={safe}
-                              html5Controls={showsControlStrip}
-                              // Fullscreen belongs to the image detail view, which this media
-                              // links to. Chromium-only; other browsers still show the button,
-                              // which EdgeVideo's fullscreen guards keep usable.
-                              videoProps={{ controlsList: 'nofullscreen' }}
-                              videoRef={videoRef}
-                              vimeoVideoId={vimeoVideoId}
-                            />
-                          )}
-                        </RoutedDialogLink>
-                        {safe && features.stickerPlacement && (
-                          <PostStickerOverlay imageId={image.id} />
-                        )}
-                      </div>
-                      <div className="flex items-center justify-between gap-2 p-2 empty:hidden">
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metricsUnknown={image.stats?.statsUnknown}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                          }}
-                          targetUserId={image.user.id}
-                          readonly={!safe}
-                          disableBuzzTip={image.poi}
-                        />
-                        {image.hasMeta && (
-                          <div className="ml-auto">
-                            <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                              <LegacyActionIcon size="md" component="span">
-                                <IconInfoCircle strokeWidth={2.5} size={20} />
-                              </LegacyActionIcon>
-                            </ImageMetaPopover2>
+                              {!safe ? (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    bottom: 0,
+                                    aspectRatio: (image.width ?? 1) / (image.height ?? 1),
+                                  }}
+                                >
+                                  <MediaHash {...image} />
+                                </div>
+                              ) : (
+                                <EdgeMedia
+                                  src={image.url}
+                                  name={image.name}
+                                  alt={image.name ?? undefined}
+                                  type={image.type}
+                                  imageId={image.id}
+                                  width={width < maxWidth ? width : maxWidth}
+                                  hiDpi={features.hiDpiPreviews}
+                                  sourceWidth={image.width}
+                                  original={image.type === 'video'}
+                                  anim={safe}
+                                  html5Controls={showsControlStrip}
+                                  // Fullscreen belongs to the image detail view, which this media
+                                  // links to. Chromium-only; other browsers still show the button,
+                                  // which EdgeVideo's fullscreen guards keep usable.
+                                  videoProps={{ controlsList: 'nofullscreen' }}
+                                  videoRef={videoRef}
+                                  vimeoVideoId={vimeoVideoId}
+                                />
+                              )}
+                            </RoutedDialogLink>
+                            {safe && features.stickerPlacement && (
+                              <PostStickerOverlay imageId={image.id} />
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </ImageGuard2>
+                          <div className="flex items-center justify-between gap-2 p-2 empty:hidden">
+                            <Reactions
+                              entityId={image.id}
+                              entityType="image"
+                              reactions={image.reactions}
+                              metricsUnknown={image.stats?.statsUnknown}
+                              metrics={{
+                                likeCount: image.stats?.likeCountAllTime,
+                                dislikeCount: image.stats?.dislikeCountAllTime,
+                                heartCount: image.stats?.heartCountAllTime,
+                                laughCount: image.stats?.laughCountAllTime,
+                                cryCount: image.stats?.cryCountAllTime,
+                              }}
+                              targetUserId={image.user.id}
+                              readonly={!safe}
+                              disableBuzzTip={image.poi}
+                            />
+                            {image.hasMeta && (
+                              <div className="ml-auto">
+                                <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                                  <LegacyActionIcon size="md" component="span">
+                                    <IconInfoCircle strokeWidth={2.5} size={20} />
+                                  </LegacyActionIcon>
+                                </ImageMetaPopover2>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </ImageGuard2>
+                  </div>
+                </HatLayerHost>
               </Paper>
               {i > 0 && (i - 1) % 3 === 0 && <AdUnitTop maxWidth={760} preserveLayout={false} />}
             </Fragment>

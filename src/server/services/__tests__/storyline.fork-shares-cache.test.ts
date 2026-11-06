@@ -67,7 +67,19 @@ beforeEach(() => {
     tosViolation: false,
     createdAt: new Date('2026-10-01'),
     user: { id: 1, username: 'owner', bannedAt: null, deletedAt: null },
-    chapters: [{ id: 1, postId: 101, post: { nsfwLevel: NsfwLevel.PG } }],
+    chapters: [
+      {
+        id: 1,
+        postId: 101,
+        removedAt: null,
+        post: {
+          nsfwLevel: NsfwLevel.PG,
+          publishedAt: new Date(0),
+          tosViolation: false,
+          user: { bannedAt: null, deletedAt: null },
+        },
+      },
+    ],
   } as never);
   w.storylineChapterEdge.findUnique.mockResolvedValue({ chapterId: 12 } as never);
 });

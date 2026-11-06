@@ -8,13 +8,13 @@ export const UNRESOLVED_THREAD_CHAIN_MESSAGE = 'comment thread is no longer avai
  * link upward is gone while its replies remain. A column missing from this list turns that
  * entity's threads into apparent orphans and refuses writes on them, so it must stay complete.
  * `threadContentSelect` in `block-check.service.ts` lists the same owners, minus `clubPostId`, which
- * has no owner lookup.
+ * has no owner lookup. `questionId` and `answerId` are left out on purpose: Q&A threads are kept as
+ * data and refuse writes, so anything that purges or repairs "orphans" off this must exempt them.
  */
 export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
-  ${Prisma.raw(alias)}."questionId", ${Prisma.raw(alias)}."answerId", ${Prisma.raw(
+  ${Prisma.raw(alias)}."imageId", ${Prisma.raw(alias)}."postId", ${Prisma.raw(
   alias
-)}."imageId",
-  ${Prisma.raw(alias)}."postId", ${Prisma.raw(alias)}."reviewId", ${Prisma.raw(alias)}."modelId",
+)}."reviewId", ${Prisma.raw(alias)}."modelId",
   ${Prisma.raw(alias)}."articleId", ${Prisma.raw(alias)}."bountyId",
   ${Prisma.raw(alias)}."bountyEntryId", ${Prisma.raw(alias)}."clubPostId",
   ${Prisma.raw(alias)}."comicProjectId", ${Prisma.raw(alias)}."challengeId",
@@ -24,9 +24,9 @@ export const threadIsRooted = (alias: string) => Prisma.sql`num_nonnulls(
 ) > 0`;
 
 /**
- * Both a cycle backstop and a ceiling on how deep the old thread-chain walkers (the lock check, the
- * block guard, the block hide sweep) climb. `throwIfThreadChainLocked` treats the cap as "could not
- * resolve" and REFUSES the write: a walk that ran out of road has not proved the absence of a lock.
+ * Both a cycle backstop and a ceiling on how deep the old thread-chain walkers (the block guard, the
+ * block hide sweep) climb. A walker in `refuse` mode treats the cap as "could not resolve" and
+ * REFUSES: a walk that ran out of road has not proved the absence of what it looked for.
  * Real chains run past it (measurements: docs/comments-consolidation.md, Thread mute), so it bounds
  * the work; it is not a proof.
  */
@@ -34,7 +34,7 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
 
 /**
  * The ancestor walk up the old thread chain, for the block guard. Climbs `Thread.commentId ->
- * CommentV2.threadId` ONLY, the edge `throwIfThreadChainLocked` uses, never `Thread.parentThreadId`,
+ * CommentV2.threadId` ONLY, the edge the stored chain holds, never `Thread.parentThreadId`,
  * which older rows took from client input on the first reply.
  *
  * `UNION ALL` because the depth cap, not a dedupe, bounds it: `depth` is projected, so no row is a

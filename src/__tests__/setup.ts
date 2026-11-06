@@ -1,11 +1,16 @@
 import promClient from 'prom-client';
-import { vi } from 'vitest';
+import { afterAll, afterEach, vi } from 'vitest';
 import { getTestRsaKeyPair } from './rsa-test-key';
 import { dbMock } from './mocks/db.mock';
 import { redisMock } from './mocks/redis.mock';
 import { loggingMock } from './mocks/logging.mock';
 import { env, loadSchemaDefaults, setEnvDefaults } from './mocks/env.mock';
 import { resetSharedMocks } from './mocks';
+import {
+  createNotificationsClientStub,
+  takeUnmockedNotificationCalls,
+  UnmockedNotificationsCallError,
+} from './mocks/notifications-client.mock';
 
 // Canonical shared-module mocks. Registered here, for every test file, rather than per
 // file — see docs/testing/shared-module-mocks.md. Under `isolate: false` a source module
@@ -163,6 +168,23 @@ process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
 process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
 process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
 
+// The notifications client falls back to these when ~/env/server has none, so a run from a shell
+// holding real ones would send real notifications. Deleted, not defaulted: no test may reach it.
+delete process.env.NOTIFICATIONS_ENDPOINT;
+delete process.env.NOTIFICATIONS_TOKEN;
+delete process.env.NOTIFICATIONS_NOTICES_TOKEN;
+vi.mock('~/server/notifications/client', () => ({
+  notifications: createNotificationsClientStub(),
+}));
+// Callers such as createNotification swallow client errors, so the rejection alone is silent.
+// afterAll too: a call from a file's own afterAll has no afterEach after it.
+const failOnUnmockedNotificationCalls = () => {
+  const calls = takeUnmockedNotificationCalls();
+  if (calls.length) throw new UnmockedNotificationsCallError(calls.join('(), '));
+};
+afterEach(failOnUnmockedNotificationCalls);
+afterAll(failOnUnmockedNotificationCalls);
+
 // The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
 // removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
 // suites exercising those stores do not all flip on that date; the shutdown's own suites mock or
@@ -201,6 +223,7 @@ const promMetricStub = () => {
     zero: vi.fn(),
     startTimer: vi.fn(() => vi.fn()),
     labels: vi.fn(() => child),
+    reset: vi.fn(),
   };
 };
 

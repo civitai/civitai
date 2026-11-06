@@ -38,6 +38,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/bounty.service', () => ({
   settleBountyPayout: mockSettle,
   retryUnsettledBountyPayouts: vi.fn(),
+  deleteSettledKeptBounties: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({ bountiesSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/email/templates', () => ({
@@ -48,8 +49,12 @@ vi.mock('~/server/email/templates', () => ({
 }));
 
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const mockDbWrite = dbMock.dbWrite;
 const runPrepareBounties = bountyJobs[0] as unknown as () => Promise<void>;
@@ -119,9 +124,11 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
     ).toBe(false);
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "refunded" = true, "payoutRecordedAt" = NOW\(\) WHERE b.id = 7/.test(
-          sql
-        )
+        new RegExp(
+          `"complete" = true, "refunded" = true, "payoutRecordedAt" = ${escapeRegExp(
+            NEXT_PAYOUT_RECORDED_AT_SQL
+          )} WHERE b.id = 7`
+        ).test(sql)
       ),
       `expected the refunded claim for bounty 7; executed:\n${executedStatements.join('\n')}`
     ).toBe(true);

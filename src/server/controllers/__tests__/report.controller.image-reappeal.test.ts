@@ -28,7 +28,11 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 
 import { createEntityAppealHandler } from '../report.controller';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_DECIDED, APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
+import {
+  APPEAL_ALREADY_DECIDED,
+  APPEAL_ALREADY_PENDING,
+  IMAGE_NOT_APPEALABLE,
+} from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const OWNER = 602767;
@@ -125,8 +129,14 @@ beforeEach(() => {
 
   // The image row the appeal flags; refusing a flagged image is image-appeal-review-flag's subject.
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
-  // No hold marker on the owner or the image.
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ blocked: false }] as never);
+  // No hold marker on the owner or the image (one row per image asked about), and the appeal flow
+  // excludes neither the image nor its owner.
+  dbMock.dbWrite.$queryRaw.mockImplementation(((sql: TemplateStringsArray, ...values: unknown[]) =>
+    Promise.resolve(
+      /"CsamReport"|"UserReport"/.test(sql.join(''))
+        ? []
+        : ((values.find(Array.isArray) ?? []) as number[]).map((id) => ({ id, blocked: false }))
+    )) as never);
 
   mockCharge.mockResolvedValue({ transactionCount: 1 });
   mockRefund.mockResolvedValue(undefined);
@@ -250,7 +260,7 @@ describe('a second appeal on the same image', () => {
 
     await expect(appeal()).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: 'Only an image blocked by moderators can be appealed',
+      message: IMAGE_NOT_APPEALABLE,
     });
 
     expect(mockCharge).not.toHaveBeenCalled();

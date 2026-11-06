@@ -1,4 +1,5 @@
-import { Button, Loader, Menu, useComputedColorScheme } from '@mantine/core';
+import { Button, Loader, useComputedColorScheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconBan,
   IconDotsVertical,

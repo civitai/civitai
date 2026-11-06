@@ -3,8 +3,7 @@ import { hydrate, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { getCookies } from 'cookies-next';
 import { useRouter } from 'next/router';
-import type { ReactNode } from 'react';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useState } from 'react';
 import type { ShellPageData } from '~/components/Shell/shell-page-data';
 import {
   adoptShellPageData,
@@ -12,6 +11,8 @@ import {
   shellNavigation,
 } from '~/components/Shell/shell-page-data';
 import { routeQueryPending, syncShellRouteQuery } from '~/components/Shell/shell-route-query';
+import type { ShellStatus } from '~/components/Shell/shell-bootstrap-context';
+import { ShellBootstrapContext } from '~/components/Shell/shell-bootstrap-context';
 import type { AppShellUpgrade } from '~/providers/AppProvider';
 import type { FeatureFlagsSeed } from '~/providers/FeatureFlagsProvider';
 import type { SessionSeed } from '~/providers/SessionProvider';
@@ -21,27 +22,8 @@ import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { pauseRum } from '~/utils/faro/pauseRum';
 import { trpc } from '~/utils/trpc';
 
-export type ShellStatus = 'pending' | 'ready' | 'failed';
-
-const ShellBootstrapContext = createContext<{ status: ShellStatus } | null>(null);
-
-/** Mounted by `_app` only for an app that booted on a shell page. */
-export function ShellBootstrapProvider({
-  status,
-  children,
-}: {
-  status: ShellStatus;
-  children: ReactNode;
-}) {
-  const value = useMemo(() => ({ status }), [status]);
-  return <ShellBootstrapContext.Provider value={value}>{children}</ShellBootstrapContext.Provider>;
-}
-
-/** False only while a shell boot is still waiting for (or failed to get) its page data. */
-export function useShellReady() {
-  const context = useContext(ShellBootstrapContext);
-  return !context || context.status === 'ready';
-}
+export type { ShellStatus } from '~/components/Shell/shell-bootstrap-context';
+export { ShellBootstrapProvider, useShellReady } from '~/components/Shell/shell-bootstrap-context';
 
 /**
  * For a page with a route-level shell: true while it must keep showing its skeleton — the page

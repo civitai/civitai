@@ -10,6 +10,10 @@ const { fetchDocumentsAbortableMock, recordMock } = vi.hoisted(() => ({
   recordMock: vi.fn(async () => undefined),
 }));
 
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('~/server/meilisearch/client', async (importOriginal) => {
   const actual = await importOriginal<typeof MeilisearchClient>();
   return {

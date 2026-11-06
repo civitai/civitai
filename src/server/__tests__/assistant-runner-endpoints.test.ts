@@ -409,7 +409,7 @@ describe('GET /api/apps/assistant/run-grant', () => {
     expect(consentMock).not.toHaveBeenCalled();
   });
 
-  it('signs a two-minute preview grant for purpose=preview, never with subagents', async () => {
+  it('signs a seven-minute preview grant for purpose=preview, never with subagents', async () => {
     featuresMock.mockResolvedValue({ appAssistantRemoteRunner: true, appAssistantSubagents: true });
     const preview = {
       conversationId: 'preview:my-shop',
@@ -431,7 +431,7 @@ describe('GET /api/apps/assistant/run-grant', () => {
       use: 'preview',
     });
     expect(claims).not.toHaveProperty('subagents');
-    expect((claims.exp as number) - (claims.iat as number)).toBe(120);
+    expect((claims.exp as number) - (claims.iat as number)).toBe(420);
     // The runner's internal endpoints read it as any run grant (the runner decides what it is for).
     expect(await verifyRunGrant(token)).toMatchObject({
       userId: 42,

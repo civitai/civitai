@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 // Pure string helpers, no module graph — safe to import statically above the vi.mock below.
-import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
-
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { norm, renderTag } from './sql-shape.test-utils';
 
 /**
  * THE MODELS DELTA SCAN MUST NOT LOSE A ROW WHEN IT PAGES.
@@ -12,10 +10,10 @@ import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
  * That set is re-evaluated on every page and it is not stable: an edit that unpublishes a model,
  * or flips it to Unsearchable, takes a row OUT of it mid-scan.
  *
- * This needs MORE THAN ONE PAGE to bite, which the steady state does not reach - the models
- * sync runs every 15 minutes, and at ~1,659 published edits a day a window holds about 17 rows
- * against a 2,000-row page. (No cron string here on purpose: the slash-star-slash in one closes
- * this comment, which is how this paragraph first shipped broken.)
+ * This needs MORE THAN ONE PAGE to bite - over 2,000 edited models inside one 15-minute window -
+ * which the steady state does not reach; the edit rate that showed it is in #4938's commit
+ * message, where a measurement can carry its date. (No cron string here on purpose: the
+ * slash-star-slash in one closes this comment, which is how this paragraph first shipped broken.)
  * It bites on a wide window: a stale watermark after an outage or deploy gap, a rebuild, or a
  * bulk write touching `updatedAt` on more than 2,000 rows. Inside such a run the skip does not
  * need a concurrent edit at all - the old query had no `ORDER BY` over a parallel seq scan, and
@@ -65,13 +63,13 @@ type PagingFake = {
   ctx: Parameters<typeof prepareModelsBatches>[0];
   /** Page queries only — the MIN/MAX bounds query is not counted. */
   pageQueries: () => number;
-  /** Rendered by {@link renderTag}, so bind VALUES appear as `?` — see `pageValues`. */
+  /**
+   * Rendered by {@link renderTag}, so bind VALUES appear as `?`. The page query's values are
+   * pinned in `model-index-eligibility.test.ts`.
+   */
   pageSql: () => string[];
-  /** The bind values of each page query, in order. The half `pageSql` cannot show. */
-  pageValues: () => unknown[][];
   /** The MIN/MAX bounds statement, which produces the `startId`/`endId` the rebuild pages over. */
   boundsSql: () => string[];
-  boundsValues: () => unknown[][];
 };
 
 /**
@@ -91,9 +89,7 @@ type PagingFake = {
 const makeFake = (members: Set<number>, onPage?: (page: number) => void): PagingFake => {
   let pages = 0;
   const sql: string[] = [];
-  const binds: unknown[][] = [];
   const boundsSql: string[] = [];
-  const boundsBinds: unknown[][] = [];
 
   const $queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = renderTag(strings, values);
@@ -102,7 +98,6 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
       // query invisible: swapping its MIN/MAX aliases, or deleting it outright, left every case
       // green while production stopped indexing newly created models.
       boundsSql.push(text);
-      boundsBinds.push(values);
       const ids = [...members];
       // Answer the aggregate the statement ASKED for. Returning a constant row, or even the
       // right numbers under fixed names, cannot see a swapped MIN/MAX alias - and that swap
@@ -125,7 +120,6 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
       );
     }
     sql.push(text);
-    binds.push(values);
 
     // strings[i] is the SQL immediately before values[i], so a fragment's trailing text names it.
     const valueBefore = (marker: RegExp) => {
@@ -161,9 +155,7 @@ const makeFake = (members: Set<number>, onPage?: (page: number) => void): Paging
     ctx: { db: { $queryRaw }, logger: () => undefined } as never,
     pageQueries: () => pages,
     pageSql: () => sql,
-    pageValues: () => binds,
     boundsSql: () => boundsSql,
-    boundsValues: () => boundsBinds,
   };
 };
 
@@ -218,50 +210,22 @@ describe('prepareModelsBatches paging', () => {
     // the table and re-select nearly the same rows forever, and `/ORDER BY id/` alone matches it.
     expect(first).toMatch(/ORDER BY id\s+LIMIT/);
     expect(first).not.toMatch(/DESC/i);
-    expect(first).toMatch(/AND id > /);
+    expect(first).toMatch(/AND m\.id > /);
     expect(first).not.toMatch(/OFFSET/);
   });
 
   /**
-   * The fake models membership as an opaque set of ids, so it cannot see WHICH rows the predicates
-   * select: the paging cases above stay green under any change to the WHERE clause. Dropping the
-   * `updatedAt` bound turns the delta scan into a full scan of every published model, every 15
-   * minutes; dropping the availability bound puts Unsearchable models into the public index.
-   *
-   * 🔴 THE WHOLE CLAUSE, WITH `toBe`, NOT SUBSTRINGS. A substring assertion is satisfied by a
-   * statement that merely mentions the predicate, so a WIDENING mutation passes it: appending
-   * `OR availability = 'Unsearchable'` leaves every fragment present while `AND` binding tighter
-   * than `OR` returns every Unsearchable model on every page. The sibling file next door carries
-   * the same rule for the same reason — see `sql-shape.test-utils`.
-   *
-   * The price is that a reword of the clause fails here and must be updated in the same commit.
+   * The fake models membership as an opaque set of ids, so it cannot see WHICH rows the WHERE
+   * selects. The page query's WHERE and bind values are pinned whole in
+   * `model-index-eligibility.test.ts`; only the table, outside any WHERE, is asserted here.
    */
-  it('scopes the page query to exactly the eligible set', async () => {
+  it('reads the page from the Model table', async () => {
     const fake = makeFake(new Set(range(1, 100)));
 
     await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
 
     const [first] = fake.pageSql();
-    expect(norm(first)).toContain('SELECT id FROM "Model"');
-    expect(whereClausesOf(first)).toEqual([
-      'status = ?::"ModelStatus" AND availability != ?::"Availability" AND "updatedAt" >= ? AND id > ?',
-    ]);
-  });
-
-  /**
-   * `renderTag` renders a bind param as `?`, so the clause pinned above is blind to the VALUES —
-   * `availability != ${Availability.Private}` is byte-identical to the Unsearchable form there,
-   * and would put Unsearchable models into the public index with the case above still green.
-   * Corruption of a predicate is a cheaper typo than deletion of one, so the values are pinned too.
-   */
-  it('binds the page query to Published, not-Unsearchable, and the caller watermark', async () => {
-    const fake = makeFake(new Set(range(1, 100)));
-
-    await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
-
-    expect(fake.pageValues()).toEqual([
-      [ModelStatus.Published, Availability.Unsearchable, LAST_UPDATED_AT, 0, READ_BATCH_SIZE],
-    ]);
+    expect(norm(first)).toContain('SELECT id FROM "Model" m WHERE');
   });
 
   /**
@@ -312,33 +276,18 @@ describe('prepareModelsBatches paging', () => {
     expect(endId).toBe(90);
   });
 
-  it('scopes the bounds query to the eligible set and the caller watermark', async () => {
+  it('bounds the Model table, not another entity', async () => {
     const fake = makeFake(new Set(range(5, 90)));
 
     await prepareModelsBatches(fake.ctx, LAST_UPDATED_AT);
 
     expect(fake.boundsSql()).toHaveLength(1);
     const [bounds] = fake.boundsSql();
-    // `whereClausesOf` starts at WHERE, so the table and the aggregates are outside everything
-    // else here asserts: `FROM "ModelVersion"` would bound a different entity's ids, silently.
-    expect(norm(bounds)).toContain('SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"');
-    expect(whereClausesOf(bounds)).toEqual([
-      'status = ?::"ModelStatus" AND availability != ?::"Availability" AND "createdAt" >= ? ;',
-    ]);
-    // `"createdAt"` here against `"updatedAt"` on the page query is deliberate and pre-existing:
-    // the bounds describe the newly-created span, the page query the edited set. Pinned so a
-    // one-word change between the two statements cannot pass unnoticed.
-    // The watermark reaches this statement inside a conditional `Prisma.sql` fragment, not as a
-    // bare scalar - so it is asserted through that shape. Drop the fragment and there is no third
-    // bind to destructure, which is the failure this is here to produce.
-    const [status, availability, createdAt] = fake.boundsValues()[0] as [
-      string,
-      string,
-      { values: unknown[] }
-    ];
-    expect(status).toBe(ModelStatus.Published);
-    expect(availability).toBe(Availability.Unsearchable);
-    expect(createdAt.values).toEqual([LAST_UPDATED_AT]);
+    // The WHERE and its values are pinned in `model-index-eligibility.test.ts`. The table and the
+    // aggregates sit outside it: `FROM "ModelVersion"` would bound another entity's ids, silently.
+    expect(norm(bounds)).toContain(
+      'SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model" m WHERE'
+    );
   });
 
   it('issues no page query at all on a full rebuild', async () => {
@@ -366,20 +315,5 @@ describe('prepareModelsBatches paging', () => {
     expect(startId).toBe(5);
     expect(endId).toBe(90);
     expect(fake.boundsSql()).toHaveLength(1);
-    // No watermark, so the conditional fragment is the EMPTY `Prisma.sql` - still passed as a
-    // bind, contributing no text and no values of its own. Asserted through that shape rather
-    // than trimmed away, because "the fragment is empty" and "the fragment is gone" are the two
-    // states this case exists to tell apart.
-    expect(whereClausesOf(fake.boundsSql()[0])).toEqual([
-      'status = ?::"ModelStatus" AND availability != ?::"Availability" ;',
-    ]);
-    const [status, availability, watermark] = fake.boundsValues()[0] as [
-      string,
-      string,
-      { values: unknown[] }
-    ];
-    expect(status).toBe(ModelStatus.Published);
-    expect(availability).toBe(Availability.Unsearchable);
-    expect(watermark.values).toEqual([]);
   });
 });

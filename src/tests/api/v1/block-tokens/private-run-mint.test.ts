@@ -113,7 +113,13 @@ vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => ['civitai.com'],
   getRequestDomainColor: () => undefined,
   isHostForColor: () => false,
-  isMatureContentRating: () => false,
+  // The site gate the private-run page uses: mature (r/x) needs civitai.red.
+  ratingAllowedOnHost: (rating: unknown, host: string) =>
+    !(typeof rating === 'string' && ['r', 'x'].includes(rating.toLowerCase())) ||
+    host === 'civitai.red',
+  // The real mature-rating rule (r/x), so the browsing-level cases below are observable.
+  isMatureContentRating: (rating: unknown) =>
+    typeof rating === 'string' && (rating.toLowerCase() === 'r' || rating.toLowerCase() === 'x'),
 }));
 vi.mock('~/server/services/feature-flags.service', () => mockFlags);
 vi.mock('~/server/services/app-blocks-flag', () => mockAppBlocksFlag);
@@ -132,10 +138,10 @@ vi.mock('~/server/services/blocks/private-run-access.service', async (importOrig
 }));
 vi.mock('~/server/logging/mint-audit-stdout', () => mockStdoutAudit);
 
-function makeReq(body: unknown): NextApiRequest & { log?: any } {
+function makeReq(body: unknown, host?: string): NextApiRequest & { log?: any } {
   return {
     method: 'POST',
-    headers: { origin: 'https://civitai.com' },
+    headers: { origin: 'https://civitai.com', ...(host ? { host } : {}) },
     body,
     socket: { remoteAddress: '127.0.0.1' },
     query: {},
@@ -217,10 +223,10 @@ const BODY = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-async function invoke(body: unknown) {
+async function invoke(body: unknown, host?: string) {
   const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
   const res = makeRes();
-  await handler(makeReq(body), res);
+  await handler(makeReq(body, host), res);
   return res;
 }
 
@@ -294,6 +300,21 @@ describe('PHASE 3 private-run mint — the grant path [REG]', () => {
       expect(signed.dev, 'a private-run token must NEVER be a dev token').not.toBe(true);
       expect(signed.reviewRunForReal).not.toBe(true);
     }
+  });
+
+  it('a restricted viewer mints without the spend scope or a budget', async () => {
+    mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'owner',
+      block: BLOCK(),
+      viewerMuted: true,
+    });
+    const res = await invoke(BODY());
+    expect(res._status).toBe(200);
+    const signed = mockTokenService.sign.mock.calls[0][0];
+    expect(signed.scopes).not.toContain('ai:write:budgeted');
+    expect(signed.scopes).toContain('models:read:self');
+    expect(signed.buzzBudget).toBeUndefined();
   });
 
   it('SCOPES come from the approved SNAPSHOT through the private-run clamp', async () => {
@@ -666,5 +687,74 @@ describe('PHASE 3 refuses before it resolves anything [REG]', () => {
     expect(mockPrivateRunAccess.resolvePrivateRunAccess).toHaveBeenCalledWith(
       expect.objectContaining({ db: 'write', by: { appBlockId: APP_BLOCK } })
     );
+  });
+});
+
+/**
+ * 🔴 THE PRIVATE-RUN MINT FOLLOWS THE VIEWER'S BROWSING LEVEL, as the private-run page does:
+ * an owner or moderator whose level excludes the app's R/X rating gets the hidden state there,
+ * so no token here. Refused with the mint's 403 shape for a disallowed rating.
+ */
+describe("PHASE 3 private-run mint — R/X apps follow the viewer's browsing level", () => {
+  const asViewer = (browsingLevel: number) => {
+    mockSession.value = {
+      user: { id: MOD, isModerator: true, bannedAt: null, showNsfw: true, browsingLevel },
+    };
+    mockFlags.getFeatureFlags.mockImplementation(({ user }: any) => ({
+      appBlocks: !!user,
+      appBlocksPages: !!user,
+      canViewNsfw: true,
+    }));
+  };
+  const allow = (contentRating: string) =>
+    mockPrivateRunAccess.resolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK({ contentRating }),
+    });
+
+  it('🔴 a PG-only moderator is refused an R app — no token', async () => {
+    asViewer(1);
+    allow('r');
+    const res = await invoke(BODY(), 'civitai.red');
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(res._body).not.toHaveProperty('token');
+  });
+
+  it('an R-enabled moderator gets the token', async () => {
+    asViewer(7);
+    allow('r');
+    const res = await invoke(BODY(), 'civitai.red');
+    expect(res._status).toBe(200);
+    expect(res._body.token).toBe('jwt.privaterun.signed');
+  });
+
+  it('🔴 X needs X: an R-enabled moderator is refused an X app', async () => {
+    asViewer(7);
+    allow('x');
+    const res = await invoke(BODY(), 'civitai.red');
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('🔴 off a red-capable host an R app is refused by the SITE gate, even with R in the level', async () => {
+    asViewer(7);
+    allow('r');
+    for (const host of ['civitai.com', undefined]) {
+      mockTokenService.sign.mockClear();
+      const res = await invoke(BODY(), host);
+      expect(res._status, `host=${host}`).toBe(403);
+      expect(res._body).toEqual({ error: 'This app is only available on civitai.red.' });
+      expect(mockTokenService.sign).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a PG-13 app still mints for a PG-only moderator', async () => {
+    asViewer(1);
+    allow('pg13');
+    expect((await invoke(BODY(), 'civitai.red'))._status).toBe(200);
   });
 });

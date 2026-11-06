@@ -55,6 +55,7 @@ import {
   dealViewerRole,
   nextDealDeadline,
 } from '~/shared/utils/creator-service-deal-view';
+import { dealAcceptedChatLine } from '~/shared/utils/creator-service-deal-chat-line';
 
 /**
  * The Creator Services deal state machine. Every transition is ONE conditional UPDATE whose WHERE
@@ -516,10 +517,11 @@ async function openDealChat(dealId: number) {
     userId: -1,
     chatId: chat.id,
     contentType: 'Markdown',
-    content: `Deal accepted: **${deal.title.replace(
-      /[\\*_[\]`]/g,
-      ''
-    )}**. [Open the deal](/services/deals/${dealId})`,
+    content: dealAcceptedChatLine({
+      dealId,
+      sellerName: deal.sellerName,
+      title: deal.title,
+    }),
   });
 }
 
@@ -969,6 +971,7 @@ export async function listMyServiceDeals({
     items: page.map(({ offering: { removedReason, ...offering }, ...deal }) => ({
       id: deal.id,
       status: deal.status,
+      disputeResolution: deal.disputeResolution,
       maxNsfwLevel: deal.maxNsfwLevel,
       offering,
       offeringTakenDown: role === 'seller' && removedReason != null,

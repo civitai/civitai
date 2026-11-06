@@ -5,6 +5,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -16,6 +20,8 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readModelVersionIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
@@ -655,6 +661,7 @@ export const updateUserHandler = async ({
       id,
       select: {
         username: true,
+        image: true,
         profilePictureId: true,
         profilePicture: { select: { userId: true } },
       },
@@ -667,6 +674,9 @@ export const updateUserHandler = async ({
       profilePicture && profilePicture.id !== user.profilePictureId
         ? { ...profilePicture, id: undefined }
         : undefined;
+    const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
+    await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
+    await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -890,10 +900,7 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { modelId: input.id },
-    select: { id: true },
-  });
+  const versions = await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id);
   const modelVersionIds = versions.map((x) => x.id);
 
   try {
@@ -1196,7 +1203,6 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             downloadCountAllTime: true,
             thumbsUpCountAllTime: true,
             uploadCountAllTime: true,
-            answerCountAllTime: true,
           },
         },
         cosmetics: {

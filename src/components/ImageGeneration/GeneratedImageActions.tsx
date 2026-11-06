@@ -1,4 +1,5 @@
-import { Button, Checkbox, Menu, Tooltip } from '@mantine/core';
+import { Button, Checkbox } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash, IconWand } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -36,9 +37,15 @@ import {
 export function GeneratedImageActions({
   actionIconSize = 'lg',
   iconSize = 20,
+  compact,
 }: {
   actionIconSize?: MantineSpacing;
   iconSize?: number;
+  /**
+   * For the mobile generator's header: sort and filters as icons, and while images are selected
+   * only the selection's actions.
+   */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const showCreatePostError = useShowCreatePostError();
@@ -132,7 +139,7 @@ export function GeneratedImageActions({
       });
       deselect();
     } catch (e) {
-      showCreatePostError((e as Error).message);
+      showCreatePostError(e as Error);
     }
   };
 
@@ -162,8 +169,10 @@ export function GeneratedImageActions({
 
   return (
     <div className="flex items-center justify-end gap-2">
-      <SortFilter type="generation" ignoreNsfwLevel />
-      {!selectedCount && <MarkerFiltersDropdown />}
+      {!(compact && hasSelected) && (
+        <SortFilter type="generation" ignoreNsfwLevel iconOnly={compact} />
+      )}
+      {!selectedCount && <MarkerFiltersDropdown iconOnly={compact} />}
       {hasSelected && (
         <div className="flex gap-2">
           <BulkWorkflowMenu

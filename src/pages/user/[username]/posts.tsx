@@ -1,8 +1,9 @@
-import { Box, Button, Group, Stack } from '@mantine/core';
+import { Box, Button, Center, Group, Loader, Stack } from '@mantine/core';
 import { IconCalendarEvent } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -13,7 +14,8 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
-import { postgresSlugify } from '~/utils/string-helpers';
+import { isViewer } from '~/utils/is-viewer';
+import { trpc } from '~/utils/trpc';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
@@ -22,14 +24,14 @@ import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { jumpToEmptyMessage } from '~/shared/utils/jump-to-month';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const username = ctx.query.username as string;
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
 
     if (user?.bannedAt)
       return {
@@ -44,6 +46,28 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function UserPostsPage() {
+  const router = useRouter();
+  const username = (router.query.username as string) ?? '';
+  // The account the profile header shows, looked up by the name as stored. The posts query
+  // takes its id: the slug of some older usernames names no account.
+  const { data: user, isLoading } = trpc.userProfile.get.useQuery(
+    { username },
+    { enabled: !!username }
+  );
+
+  if (!username) return <NotFound />;
+  if (isLoading)
+    return (
+      <Center p="xl">
+        <Loader />
+      </Center>
+    );
+  if (!user) return <NotFound />;
+
+  return <UserPostsFeed profileUserId={user.id} />;
+}
+
+function UserPostsFeed({ profileUserId }: { profileUserId: number }) {
   const currentUser = useCurrentUser();
   const {
     replace,
@@ -52,10 +76,7 @@ function UserPostsPage() {
   // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const sort = query.sort ?? PostSort.Newest;
-  const selfView =
-    !!currentUser &&
-    !!query.username &&
-    postgresSlugify(currentUser.username) === postgresSlugify(query.username);
+  const selfView = isViewer(currentUser, profileUserId);
   // A moderator sees anything the creator can see of their own. Matches the
   // images and videos tabs; the server authorizes this independently in
   // `post.service.ts` and does not trust the control being rendered.
@@ -67,8 +88,6 @@ function UserPostsPage() {
   );
   const viewingDraft = section === 'draft';
   const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
-
-  if (!query.username) return <NotFound />;
 
   return (
     <Box mt="md">
@@ -125,6 +144,8 @@ function UserPostsPage() {
             <PostsInfinite
               filters={{
                 ...query,
+                username: undefined,
+                userId: profileUserId,
                 followed,
                 period,
                 sort,

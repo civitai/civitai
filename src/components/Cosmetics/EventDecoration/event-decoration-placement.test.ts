@@ -262,7 +262,7 @@ it("home blocks hold the cards past the right edge out of a hat's reach", () => 
 it.each([
   [
     'src/components/Profile/Sections/ShowcaseGrid.module.scss',
-    '--event-decoration-allowance: 8px;',
+    '--event-decoration-allowance: 36px;',
   ],
   ['src/components/Profile/Sections/ShowcaseGrid.module.scss', '--event-decoration-grow: 1;'],
   ['src/components/HomeBlocks/HomeBlock.module.scss', '--event-decoration-grow: 1;'],
@@ -287,9 +287,11 @@ it('the hat picker makes room above each preview card, declares it, and stops gr
     );
 });
 
-it('masonry carousels give hats no room and no growth', () => {
-  const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
-  expect(source).toMatch(/'\[--event-decoration-allowance:0px\] \[--event-decoration-grow:1\]'/);
+it('a container can declare more room above than beside its cards', () => {
+  expect(hatShiftCss(-40, 'top')).toContain(
+    'var(--event-decoration-allowance-top, var(--event-decoration-allowance,'
+  );
+  expect(hatShiftCss(-40, 'left')).not.toContain('allowance-top');
 });
 
 // Chosen by Justin in the hat tuner on his phone (2026-10-09): 4px further up and left on cards

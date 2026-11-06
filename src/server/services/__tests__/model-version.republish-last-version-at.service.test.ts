@@ -9,6 +9,15 @@ const { mockUpdateModelLastVersionAt } = vi.hoisted(() => ({
   mockUpdateModelLastVersionAt: vi.fn(),
 }));
 
+const { onStorySparkPostsHidden, onStorySparkPostsRestored } = vi.hoisted(() => ({
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+}));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 vi.mock('~/server/utils/url-helpers', () => ({
   getBaseUrl: () => 'https://civitai.com',
@@ -149,5 +158,29 @@ describe('Model.lastVersionAt across a version publish lifecycle', () => {
       .map(([strings]) => (strings as TemplateStringsArray).join('?'))
       .find((sql) => /UPDATE "ModelVersion"\s+SET "publishedAt"/.test(sql));
     expect(publishedAtWrite).toMatch(/"publishedAt" IS NULL OR "publishedAt" > NOW\(\)/);
+  });
+});
+
+describe('story sparks across a version publish lifecycle', () => {
+  it("unpublishing forfeits the spark of each of the owner's posts on the version", async () => {
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({
+      id: VERSION_ID,
+      model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
+    });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
+    dbMock.dbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: { id: OWNER_ID } as never });
+
+    expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({ postIds: [5, 6] });
+  });
+
+  it('republishing gives those sparks back', async () => {
+    dbMock.dbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false, republishing: true });
+
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [5, 6] });
   });
 });

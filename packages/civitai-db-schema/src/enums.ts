@@ -837,6 +837,14 @@ export const CsamReportType = {
 
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];
 
+export const CsamQueueSetAsideOutcome = {
+  AfterReport: 'AfterReport',
+  Dismissed: 'Dismissed',
+} as const;
+
+export type CsamQueueSetAsideOutcome =
+  (typeof CsamQueueSetAsideOutcome)[keyof typeof CsamQueueSetAsideOutcome];
+
 export const Availability = {
   Public: 'Public',
   Unsearchable: 'Unsearchable',
@@ -1310,6 +1318,14 @@ export const StorylineWhoCanContinue = {
 
 export type StorylineWhoCanContinue =
   (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
+
+export const StorylineFollowScope = {
+  Canon: 'Canon',
+  Endorsed: 'Endorsed',
+  Everything: 'Everything',
+} as const;
+
+export type StorylineFollowScope = (typeof StorylineFollowScope)[keyof typeof StorylineFollowScope];
 
 export const ServiceOfferingStatus = {
   Draft: 'Draft',

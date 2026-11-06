@@ -3,7 +3,7 @@ import { Container, Paper, Title, Stack, Text, Anchor } from '@mantine/core';
 import { Meta } from '~/components/Meta/Meta';
 import Image from 'next/image';
 import fs from 'fs';
-import matter from 'gray-matter';
+import { parseFrontmatter } from '~/utils/frontmatter';
 import type { InferGetServerSidePropsType } from 'next';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -38,7 +38,7 @@ export const getServerSideProps = createServerSideProps({
         ? `${region.countryCode.toLowerCase()}-region-block.md`
         : 'gb-region-block.md';
       const fileName = fs.readFileSync(`${contentRoot}/${contentFileName}`, 'utf-8');
-      const { data, content } = matter(fileName);
+      const { data, content } = parseFrontmatter(fileName);
 
       return {
         props: { frontMatter: data, content },
@@ -46,7 +46,7 @@ export const getServerSideProps = createServerSideProps({
     } catch (error) {
       // Fallback if specific file doesn't exist
       const fileName = fs.readFileSync(`${contentRoot}/gb-region-block.md`, 'utf-8');
-      const { data, content } = matter(fileName);
+      const { data, content } = parseFrontmatter(fileName);
 
       return {
         props: { frontMatter: data, content },

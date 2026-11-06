@@ -13,6 +13,7 @@ import {
   getActiveSlot,
   getVotingRateLimitConfig,
   pendingBuzzCounter,
+  clearImageRatings,
   poolCounters,
   recentlyGrantedBuzzCounter,
   setActiveSlot,
@@ -174,12 +175,47 @@ export async function runGrantBlessedBuzz() {
           userId: { in: judgments.map((j) => j.userId) },
           rankType: { not: NewOrderRankType.Acolyte },
         },
-        select: playerPayoutSelect,
+        select: { ...playerPayoutSelect, startAt: true },
       })
     ).filter(isPayablePlayer);
+    const startAtByUser = new Map(players.map((p) => [p.userId, p.startAt]));
 
-    const payable = new Set(players.map((p) => p.userId));
-    const validPlayers = judgments.filter((j) => payable.has(j.userId));
+    // Judgments cast before a player's last career reset (startAt) are forfeited.
+    // Only a reset inside the paid day needs a second look at ClickHouse.
+    const midDayResets = players.filter((p) => p.startAt > startDate && p.startAt <= endDate);
+    const midDayTotals = new Map<number, { userId: number; balance: number; totalExp: number }>();
+    if (midDayResets.length) {
+      const resetConditions = midDayResets
+        .map(
+          (p) =>
+            `(userId = ${
+              p.userId
+            } AND createdAt >= parseDateTimeBestEffort('${p.startAt.toISOString()}'))`
+        )
+        .join(' OR ');
+      const rows = await clickhouse.$query<{ userId: number; balance: number; totalExp: number }>`
+        SELECT
+          userId,
+          floor(SUM(grantedExp * multiplier) * ${newOrderConfig.blessedBuzzConversionRatio}) as balance,
+          SUM(grantedExp * multiplier) as totalExp
+        FROM knights_new_order_image_rating FINAL
+        WHERE createdAt BETWEEN ${startDate} AND ${endDate}
+          AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+          AND (${resetConditions})
+        GROUP BY userId
+      `;
+      for (const row of rows) midDayTotals.set(row.userId, row);
+    }
+
+    const validPlayers = judgments
+      .filter((j) => startAtByUser.has(j.userId))
+      .map((j) => {
+        const startAt = startAtByUser.get(j.userId)!;
+        if (startAt <= startDate) return j;
+        // Reset after the day: everything that day is forfeited. Zero rows keep the
+        // player in the pending-counter reset path without paying or decrementing.
+        return midDayTotals.get(j.userId) ?? { userId: j.userId, balance: 0, totalExp: 0 };
+      });
 
     if (validPlayers.length) {
       await grantBatches(
@@ -454,6 +490,7 @@ const newOrderCleanupQueues = createJob('new-order-cleanup-queues', '*/10 * * * 
         await Promise.all(
           poolCounters[rank][slot].map((pool) => pool.reset({ id: imageIdsToRemove }))
         );
+        await clearImageRatings(imageIdsToRemove);
       }
     }
   }
@@ -563,6 +600,7 @@ const newOrderChangeRateTarget = createJob(
 
         // Clear all pools in the old slot
         await Promise.all(poolCounters[rank][currentSlot].map((pool) => pool.reset({ all: true })));
+        await clearImageRatings(imagesToPurge);
 
         log(`ChangeRateTarget :: ${rank} - Cleared all pools in slot ${currentSlot}`);
       } else {

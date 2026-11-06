@@ -64,6 +64,7 @@ vi.mock('$lib/server/oauth/model', () => ({
 }));
 
 import { GET, POST } from '../+server';
+import { storeOidcContext } from '$lib/server/oauth/oidc-nonce';
 
 function approve(
   scope: number,
@@ -100,7 +101,8 @@ beforeEach(() => {
 
 /** A sign-in starting at /authorize (no approval yet). Returns the response, or the redirect it throws. */
 async function start(
-  overrides: Record<string, string> = {}
+  overrides: Record<string, string> = {},
+  locals: Record<string, unknown> = { user: { id: 7 } }
 ): Promise<{ status: number; location?: string }> {
   const url = new URL('https://auth.civitai.com/api/auth/oauth/authorize');
   for (const [k, v] of Object.entries({
@@ -118,7 +120,7 @@ async function start(
     const res = await GET({
       request: new Request(url),
       url,
-      locals: { user: { id: 7 } },
+      locals,
       getClientAddress: () => '203.0.113.9',
       cookies: { get: () => undefined, set: () => undefined },
     } as never);
@@ -259,6 +261,42 @@ describe('authorize — skipConsent needs the exact registered redirect', () => 
   });
 });
 
+describe('authorize — family', () => {
+  beforeEach(() => {
+    h.skipConsent = true;
+    h.isFirstParty = true;
+    h.authorize.mockResolvedValue({ authorizationCode: 'the-code' });
+    vi.mocked(storeOidcContext).mockClear();
+  });
+
+  it("hands the hub session's family to the site's session", async () => {
+    const session = { sub: '7', jti: 'j', sid: 'family-a', iat0: 5 };
+    await start({}, { user: { id: 7 }, session });
+    expect(storeOidcContext).toHaveBeenCalledWith(
+      'the-code',
+      expect.objectContaining({ family: 'family-a', iat0: 5 })
+    );
+  });
+
+  it('hands over no family when the code is for a different account than the hub session', async () => {
+    const session = { sub: '8', jti: 'j', sid: 'family-b', iat0: 5 };
+    await start({}, { user: { id: 7 }, session });
+    expect(storeOidcContext).toHaveBeenCalledWith(
+      'the-code',
+      expect.objectContaining({ family: undefined, iat0: undefined, proofFamily: 'family-b' })
+    );
+  });
+
+  it("hands an impersonation hub session's impersonation to the site's session", async () => {
+    const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    await start({}, { user: { id: 7 }, session, impersonatedBy: 100 });
+    expect(storeOidcContext).toHaveBeenCalledWith(
+      'the-code',
+      expect.objectContaining({ family: 'family-a', impersonatedBy: 100, impExp: 999 })
+    );
+  });
+});
+
 describe('authorize — scope in a JSON body', () => {
   it.each([[['ModelsRead']], [5]])('answers invalid_scope for %j', async (scope) => {
     const url = new URL('https://auth.civitai.com/api/auth/oauth/authorize');
@@ -282,5 +320,18 @@ describe('authorize — scope in a JSON body', () => {
       cookies: { get: () => undefined, set: () => undefined },
     } as never);
     expect(await redirectedError(pending)).toBe('invalid_scope');
+  });
+});
+
+describe('authorize — during impersonation', () => {
+  beforeEach(() => {
+    h.authorize.mockRejectedValue(new Error('code issued'));
+  });
+
+  it('refuses a registered app and issues nothing', async () => {
+    const res = await start({}, { user: { id: 7 }, impersonatedBy: 5 });
+    expect(res.status).toBe(303);
+    expect(res.location).toContain('error=access_denied');
+    expect(h.authorize).not.toHaveBeenCalled();
   });
 });

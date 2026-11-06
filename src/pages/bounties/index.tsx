@@ -20,7 +20,7 @@ function BountiesPage() {
   const { query, replace } = useBountyQueryParams();
 
   const handleEngagementChange = (value: string) => {
-    replace({ engagement: value as BountyEngagementTypeQueryParam }, '/bounties');
+    replace({ engagement: value as BountyEngagementTypeQueryParam });
   };
 
   return (

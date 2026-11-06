@@ -1,11 +1,13 @@
 import type { ActionIconProps } from '@mantine/core';
-import { ActionIcon, Loader, Menu } from '@mantine/core';
+import { ActionIcon, Loader } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconBan,
   IconDotsVertical,
   IconFlag,
+  IconLink,
   IconPencil,
   IconRadar2,
   IconTrash,
@@ -13,6 +15,7 @@ import {
 import { useRouter } from 'next/router';
 import dynamic from 'next/dynamic';
 
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -23,7 +26,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { IconLock, IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
@@ -252,6 +255,20 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             >
               Edit
             </Menu.Item>
+            {isOwner &&
+              (article.status === ArticleStatus.Draft ||
+                article.status === ArticleStatus.Unpublished) && (
+                <Menu.Item
+                  leftSection={<IconLink size={14} stroke={1.5} />}
+                  onClick={(e: React.MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openArticleShareDraftModal(article.id);
+                  }}
+                >
+                  Share draft
+                </Menu.Item>
+              )}
             {atDetailsPage && features.articleImageScanning && (
               <Menu.Item
                 leftSection={

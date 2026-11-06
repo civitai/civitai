@@ -16,6 +16,7 @@ import { useRef, useState } from 'react';
 import { roundLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
   buyerRoundFinalsState,
+  deliverNeeds,
   deliverWait,
   filesByRound,
   filesPollMs,
@@ -153,6 +154,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
   const finalSlots = uploadSlotsLeft('Final', deal.previewKind, files, round);
   const takesPreview = deal.previewKind !== 'None';
   const waiting = deliverWait(files, round);
+  const needs = deliverNeeds(files, round, deal.previewKind);
 
   return (
     <Stack gap="sm">
@@ -196,7 +198,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
         <Button
           color="yellow"
           loading={deliver.isPending}
-          disabled={busy.length > 0 || !!waiting}
+          disabled={busy.length > 0 || !!waiting || !!needs}
           onClick={() => deliver.mutate({ dealId: deal.id })}
         >
           Deliver
@@ -209,6 +211,11 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
             {waiting} Deliver unlocks when they pass.
           </Text>
         </Group>
+      )}
+      {needs && !waiting && busy.length === 0 && (
+        <Text size="sm" c="dimmed">
+          {needs}
+        </Text>
       )}
       {busy.length > 0 && (
         <Text size="sm" c="dimmed">

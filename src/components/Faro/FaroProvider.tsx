@@ -10,6 +10,7 @@ import {
   ViewInstrumentation,
   WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
+import { useShellReady } from '~/components/Shell/shell-bootstrap-context';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
@@ -54,7 +55,12 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  *     ramped. Never flip it 100%-at-once; bump the Flipt % rollout and watch the faro-rum stream
  *     bytes stay under the 10 MB/s per-stream ceiling.
  * The cohort boolean is read once at first-init (threaded in via `initFaro`, same model as the
- * `features.faro` gate on the whole SDK) — a flag change applies on the next page load.
+ * `features.faro` gate on the whole SDK) — a flag change applies on the next page load. The one
+ * exception is a static shell boot, whose flags are user-less until its page data arrives: there
+ * the cohort is undecided until then, and the instrumentation is attached late if the viewer is in
+ * it (`useShellReady`, `attachResourceTiming`). The `exp_*` session attributes
+ * (`experimentAttributes`) are built once at init, so on a shell boot they use the user-less boot
+ * flags for the session.
  * See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
@@ -76,13 +82,16 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * ~75% non-actionable noise.
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
- * `IsClientProvider` (client-only, high in the tree).
+ * `IsClientProvider` (client-only, high in the tree), and on a shell boot inside
+ * `ShellBootstrapProvider` (for `useShellReady`).
  */
 
 // Module + window guards make init idempotent across React StrictMode double-mount
 // and Next.js Fast-Refresh (HMR), where the module state can reset but the global
 // Faro instance persists.
 let faroInitStarted = false;
+/** `ResourceTimingInstrumentation` is on this module's Faro, from init or `attachResourceTiming`. */
+let resourceTimingAttached = false;
 const WINDOW_GUARD_KEY = '__civitaiFaroInitialized__';
 
 /**
@@ -248,6 +257,9 @@ function initFaro({
     }
   }
 
+  const resourceTimingInstrumentations = resourceTimingFor(resourceTimingCohort);
+  resourceTimingAttached = resourceTimingInstrumentations.length > 0;
+
   initializeFaro({
     url: collectorUrl,
     app: {
@@ -318,12 +330,7 @@ function initFaro({
       // ramped. The volume knobs (sample rate + per-client cap) are env-tunable, resolved here
       // with a safe fallback to the defaults (sample rate 0.05 keeps the shared faro-rum Loki
       // stream under its 10 MB/s ceiling at 100k concurrent). See ResourceTimingInstrumentation.
-      ...buildResourceTimingInstrumentations({
-        buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
-        cohortEnabled: resourceTimingCohort,
-        sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
-        maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
-      }),
+      ...resourceTimingInstrumentations,
     ],
     // Defensive outer wrapper: processBeacon (redact + exception classify/tag) already fails
     // closed, but guarantee that any unexpected throw still drops the beacon (null) rather than
@@ -338,6 +345,31 @@ function initFaro({
   });
 }
 
+/** The resource-timing instrumentations under the build-arg and env knobs, for this cohort. */
+function resourceTimingFor(cohortEnabled: boolean) {
+  return buildResourceTimingInstrumentations({
+    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+    cohortEnabled,
+    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
+  });
+}
+
+/**
+ * Adds `ResourceTimingInstrumentation` to an already-initialised Faro, for a viewer whose cohort
+ * only became known after init (a shell boot; see `FaroProvider`). A no-op when Faro is not ours
+ * to extend or the instrumentation is already on. Faro's `add` initialises it, and its
+ * `buffered: true` observer then drains the `/api` entries recorded before it, the page-data
+ * request included.
+ */
+function attachResourceTiming() {
+  if (!faroInitStarted || resourceTimingAttached) return;
+  const instrumentations = resourceTimingFor(true);
+  if (!instrumentations.length || !faro?.instrumentations) return;
+  resourceTimingAttached = true;
+  faro.instrumentations.add(...instrumentations);
+}
+
 export function FaroProvider({
   region,
   shell,
@@ -349,13 +381,17 @@ export function FaroProvider({
   signedIn: boolean;
 }) {
   const features = useFeatureFlags();
+  const viewerFlagsReady = useShellReady();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
+  // Per-user Flipt cohort: user-less shell boot flags can't decide it; stays false until ready,
+  // then attached late.
+  const resourceTimingCohort = viewerFlagsReady && !!features.faroResourceTiming;
 
   useEffect(() => {
     try {
       if (enabled) {
         initFaro({
-          resourceTimingCohort: !!features.faroResourceTiming,
+          resourceTimingCohort,
           experimentAttributes: buildRumExperimentAttributes(features),
           geoAttributes: buildRumGeoAttributes(region),
           pageAttributes: buildRumPageAttributes({ shell, signedIn }),
@@ -373,6 +409,15 @@ export function FaroProvider({
       // Never let RUM bootstrap / teardown break the app.
     }
   }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled || !resourceTimingCohort) return;
+    try {
+      attachResourceTiming();
+    } catch {
+      // Never let RUM bootstrap break the app.
+    }
+  }, [enabled, resourceTimingCohort]);
 
   return null;
 }

@@ -11,6 +11,8 @@ import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { syncSearchIndexBulk } from './search-index';
 import { logAxiomError } from './axiom';
+import { imageDeleteHeldSqlText, imageDeleteHoldLegs } from './delete-hold-sql';
+import type { ImageKeptReason, KeptImage } from '$lib/image-kept-reasons';
 
 type DeletedImage = {
   id: number;
@@ -23,25 +25,73 @@ export type DeletedImageRows = {
   deleted: DeletedImage[];
   notReturned: number[];
   avatarUserIds: number[];
+  /**
+   * Not deleted. An `evidence` image was blocked by the hold marker's delete trigger; every other
+   * one is left exactly as it was, stored file included.
+   */
+  refused: KeptImage[];
 };
+
+const legs = imageDeleteHoldLegs('"Image"');
+const imageHeld = sql<boolean>`${sql.raw(imageDeleteHeldSqlText('"Image"'))}`;
+const ownerMarked = sql<boolean>`EXISTS (
+  SELECT 1 FROM "EvidenceHeldUser" marker WHERE marker."userId" = "Image"."userId"
+)`;
+const reviewHeld = sql<boolean>`${sql.raw(`(${legs.review} OR ${legs.block} OR ${legs.listed})`)}`;
+// A marked owner's image still goes to the DELETE: the marker's trigger keeps the evidence and
+// blocks the image, which a refusal alone would leave live.
+const deletable = sql<boolean>`(NOT ${imageHeld} OR ${ownerMarked})`;
+
+async function heldImages(trx: Kysely<DB>, ids: number[]): Promise<KeptImage[]> {
+  if (!ids.length) return [];
+  const rows = await trx
+    .selectFrom('Image')
+    .select(['id', ownerMarked.as('marked'), reviewHeld.as('reviewHeld')])
+    .where('id', 'in', ids)
+    .where(imageHeld)
+    .execute();
+  const reasons = new Map(
+    rows.map((row): [number, ImageKeptReason] => [
+      row.id,
+      row.marked ? 'evidence' : row.reviewHeld ? 'review' : 'account',
+    ])
+  );
+  return ids.flatMap((id) => {
+    const reason = reasons.get(id);
+    return reason ? [{ id, reason }] : [];
+  });
+}
 
 /**
  * The database half of a delete, run in the caller's transaction. A follow-up that cannot be queued
  * throws, so the transaction rolls back and the image stays.
  */
 export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<DeletedImageRows> {
-  const avatarUserIds = await profilePictureUserIds(ids, trx);
+  // A hold written to one of these rows now waits for this delete rather than landing between its
+  // statements; a new report listing one is still caught by the guards below.
+  if (ids.length)
+    await trx.selectFrom('Image').select('id').where('id', 'in', ids).forUpdate().execute();
+  const untouched = (await heldImages(trx, ids)).filter((image) => image.reason !== 'evidence');
+  const skip = new Set(untouched.map((image) => image.id));
+  const toDelete = ids.filter((id) => !skip.has(id));
+  const avatarUserIds = await profilePictureUserIds(toDelete, trx);
   const deleted: DeletedImage[] = [];
-  // No row came back: already gone, or kept by a hold marker, whose delete trigger blocks the image
-  // instead. Neither is live, so both leave search with the deleted ones.
+  // No row came back: already gone, kept by a hold marker's trigger, or held since the check.
   const notReturned: number[] = [];
-  for (const id of ids) {
-    await trx.deleteFrom('CollectionItem').where('imageId', '=', id).execute();
+  for (const id of toDelete) {
+    // The guard is re-checked here, so a hold placed after the check above still keeps the image.
     const image = await trx
       .deleteFrom('Image')
       .where('id', '=', id)
+      .where(deletable)
       .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
       .executeTakeFirst();
+    // Only once the row is gone (no foreign key cascades these), so a kept image keeps its collections.
+    await trx
+      .deleteFrom('CollectionItem')
+      .where('imageId', '=', id)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id})`)
+      .execute();
     if (!image) {
       notReturned.push(id);
       continue;
@@ -56,7 +106,17 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
       });
     deleted.push({ id, url: image.url, postId: image.postId, parentId: image.parentId });
   }
-  return { deleted, notReturned, avatarUserIds };
+  const heldLate = await heldImages(trx, notReturned);
+  // An untouched image keeps its search entry; one the trigger blocked leaves search.
+  const untouchedLate = new Set(
+    heldLate.filter((image) => image.reason !== 'evidence').map((image) => image.id)
+  );
+  return {
+    deleted,
+    notReturned: notReturned.filter((id) => !untouchedLate.has(id)),
+    avatarUserIds,
+    refused: [...untouched, ...heldLate],
+  };
 }
 
 /** Everything after the rows are gone: storage, caches, search, post levels. Best-effort. */
@@ -64,7 +124,7 @@ export async function finishImageDeletes({
   deleted,
   notReturned,
   avatarUserIds,
-}: DeletedImageRows): Promise<void> {
+}: Omit<DeletedImageRows, 'refused'>): Promise<void> {
   const affectedPostIds = new Set<number>();
   for (const image of deleted) {
     if (image.postId != null) affectedPostIds.add(image.postId);

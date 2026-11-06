@@ -49,7 +49,7 @@ to XXX" is answerable for the Retool era and not for ours.
 ## User Lookup v2 — 14 findings, 12 fixed (reconciled 2026-08-10)
 
 - [x] **Account history was logins only.** Retool filtered `AND NOT type = 14`; the port dropped it.
-      31.6M Login rows against 62k Muted / 48.6k Banned, so a 50-row window is ~49 logins and a
+      Logins vastly outnumber mutes and bans, so a 50-row window is almost all logins and a
       thrice-muted account showed no enforcement history at all.
 - [x] **The ban confirmation claimed images are removed. They are not.** `toggleBan` blocks media only
       when `removeMedia === true` or the reason is `SexualMinor`; the port never sends it. Copy
@@ -119,7 +119,7 @@ to XXX" is answerable for the Retool era and not for ours.
 
 - [x] **Message-content search was unreachable for most spam terms.** `USERNAME_SHAPE`
       (`^[\w.-]{3,50}$`) classified `discord.gg`, `telegram`, `onlyfans`, `bitcoin` as usernames →
-      0 rows → "No chats matched", where the same term matches ~4,774 chats. Now falls through to
+      0 rows → "No chats matched", where the same term matches thousands of chats. Now falls through to
       content search when the username does not exist.
 - [x] **"Open reports" counted every chat report in history.** No `statuses`/`reasons` passed to
       `getReports`, under copy claiming the same definition of open as `/reports`; Retool's
@@ -223,7 +223,7 @@ looked at. Its 13 screenshots are the first look at pages other than Buzz.
 Confirmed by screenshot, already logged above, now with evidence:
 
 - **Reports** is two tabs, `Reports Received` / `Reports Submitted`, with a **Status filter** and
-  **803 rows** for one account. Ours has no filter, a hard 50-row cap, and one merged list.
+  hundreds of rows for one account. Ours has no filter, a hard 50-row cap, and one merged list.
 - **View Buzz** is **Payments | Receipts side by side** — the ticket's "buzz needs to be split into
   received/sent out" — each with its own type filter, plus a Description filter, an *After date*
   picker, and a **Color** column per transaction. Ours is a single unfiltered list. The ticket also
@@ -297,8 +297,7 @@ Every claim below was checked against the code before being recorded; several of
 
 - [x] **Image Lookup — a pasted CDN URL could never match a full-URL row.** `where('url', '=', uuid ?? value)`:
       a full URL contains a UUID, so `uuid` was always truthy and the raw string was never tried — the
-      exact case the adjacent comment said the fallback existed for. Such rows are ~0.003% of `Image`
-      (2 of 57,852 sampled), and they reported "no image matches", which on that page reads as *deleted*.
+      exact case the adjacent comment said the fallback existed for. Such rows are rare, and they reported "no image matches", which on that page reads as *deleted*.
       Now tries both spellings.
 - [x] **Image Lookup — the POI/minor write was gated on the page's own path**, which `hooks.server.ts`
       has already checked, so it was no gate at all. Bulk Image Manager and User Reports gate the identical
@@ -319,10 +318,10 @@ Every claim below was checked against the code before being recorded; several of
       so there was no way to find the spam string. `ListFilterBar` added, matching the sibling panel.
       Filtering reveals no text: a match still needs "Show message text".
 - [x] **Article Lookup — `Article.cover` dropped, so legacy-cover articles showed "Cover image —".**
-      Two cover columns exist; the port selected only `coverId`. 7 of 26,505 articles carry only the old
+      Two cover columns exist; the port selected only `coverId`. A few articles carry only the old
       one, and for those the page denied the existence of the image its headline badge derives from. Two
       other services in this repo already treat `cover` as a live fallback.
-- [x] **Article Lookup — `moderatorNsfwLevelBasis` dropped** (set on 360 articles). It is what says whether
+- [x] **Article Lookup — `moderatorNsfwLevelBasis` dropped** (set on some articles). It is what says whether
       an override may be auto-cleared. Now shown, but only under an active override.
 
 ## Chat reports — resolved, with a third answer
@@ -336,18 +335,16 @@ Every claim below was checked against the code before being recorded; several of
 
       Why the two obvious answers are both wrong, and why this one is not:
 
-      | Reading | Result on production |
+      | Reading | Result |
       | --- | --- |
-      | `Chat.ownerId` (what shipped) | Wrong for **118** reports where the owner is the reporter — the complainant was credited and the account complained about showed zero. Also counted `Automated` reports, which the rows list filters out. |
+      | `Chat.ownerId` (what shipped) | Wrong whenever the owner is the reporter — the complainant was credited and the account complained about showed zero. Also counted `Automated` reports, which the rows list filters out. |
       | Any message author (Retool `query152`) | Always includes the reporter, so every harassment report also marks the **victim** as having reported content. |
-      | Non-reporter participant, two-party only | **2,219 of 2,241** human-filed reports (99.0%) resolve to exactly one account — verified one accused per report, no double counting. The 17 group-chat reports are deliberately unattributed. |
+      | Non-reporter participant, two-party only | Nearly every human-filed report resolves to exactly one account — one accused per report, no double counting. Group-chat reports are deliberately unattributed. |
 
-      The scale of the old bug is larger than the mis-attribution alone: **11,056 accounts were
-      over-counted** (worst by 269), because the tile counted the 59,555 `Automated` reports (96% of all
-      chat reports, filed by user `-1`) that the rows list never showed — the exact count/rows
-      disagreement that function's comment says it exists to prevent. **93 accounts were under-counted.**
-
-      All figures measured against production 2026-08-20 and recorded in the function's docstring.
+      The old bug was larger than the mis-attribution alone: the tile also counted the `Automated`
+      reports (filed by user `-1`, most of all chat reports) that the rows list never showed — the exact
+      count/rows disagreement that function's comment says it exists to prevent — so many accounts were
+      over-counted and some under-counted.
 
 ## Open — real gaps, not yet built
 
@@ -504,10 +501,9 @@ verified against the code or production before acting.
 🔴 **The chat-report predicate shipped wrong and is now fixed.** `chatReportSubject` required the
 subject to be a non-reporting member of a two-party chat but **never required the reporter to be a
 member at all**. `Automated` reports are filed by user `-1`, who is in no chat, so both parties passed
-every clause — and those are 96% of the table. Measured: **121,148 attributions across 20,452 accounts**
-instead of 2,226 across 1,186. Every account that had merely *received* an auto-flagged DM read as
-having reported content — the exact harm the predicate was written to avoid, at fifty times the scale of
-the bug it replaced. The docstring asserted the opposite ("they match nobody here") and that assertion
+every clause — and those are most of the table. Every account that had merely *received* an
+auto-flagged DM read as having reported content — the exact harm the predicate was written to avoid, at
+far larger scale than the bug it replaced. The docstring asserted the opposite ("they match nobody here") and that assertion
 was never tested. One extra `EXISTS` fixes it; the clause is now marked as load-bearing so it is not
 dropped as redundant.
 
@@ -579,26 +575,19 @@ that every `sendModNotification` call site omitted `url` when User Lookup passes
       `None/Soft/Mature/X/Blocked`, whose `X` is not today's X.
 
 ⚠️ **Do not narrow `chatReportSubject` to `ChatMember.status = 'Joined'`.** It looks like a tightening
-and drops the result from 2,226 to 751: the recipient of an unsolicited DM is usually `Invited`,
+and drops most of the attributions: the recipient of an unsolicited DM is usually `Invited`,
 `Ignored` or `Left`, which is exactly the harassment case the predicate exists to find. Recorded in the
 docstring.
 
 ### `getRetoolActivity` matched image counts, not just user ids — fixed 2026-08-20
 
-`ReToolActions.ActionType` is free text and **56% of its 132,041 rows carry more than one number**
+`ReToolActions.ActionType` is free text and **many of its rows carry more than one number**
 (`ToS 5 images from <id>`, `Strike 2 on user <id>`, `Banned 47 accounts`, `ToS N images from modelId
 <id>`). The predicate was a bare word-boundary match on the id, so every image count and strike number
-was attributed to whichever account shared that value:
+was attributed to whichever account shared that value. A low id such as 1 or 5 matched thousands of rows, while anchoring on the subject matches none of them
+and leaves real subject ids unchanged.
 
-| Probe user id | Rows matched (bare `\y<id>\y`) | Rows matched (subject-anchored) |
-| --- | --- | --- |
-| 1 | 22,130 | 0 |
-| 2 | 7,289 | 0 |
-| 5 | 2,331 — 2,204 of them `ToS 5 images…` | 0 |
-| 100 | 438 | 0 |
-| real 6–7 digit subject ids | 7 / 5 / 6 | 7 / 5 / 6 — identical |
-
-**101 accounts have an id under 100**, and this session had just put the result on the User Reports
+**Accounts with small ids exist**, and this session had just put the result on the User Reports
 strike screen and folded it into the "Moderation activity" count. The id must now follow a subject label
 (`from `, `User `, `UserID `, `on user `, `for user `, `to (`). `from ` requires digits immediately
 after, which is what excludes `from modelId <id>` — a model, not the account.

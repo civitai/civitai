@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -71,13 +72,10 @@ const VERSION_ID = 4242;
 
 /** Whether the version's own DELETE ran. */
 function versionDeleted() {
-  return vi
-    .mocked(mockDbWrite.$executeRaw)
-    .mock.calls.some(
-      ([sql, id]) =>
-        (sql as unknown as string[]).join('?').includes('DELETE FROM "ModelVersion"') &&
-        id === VERSION_ID
-    );
+  return vi.mocked(mockDbWrite.$executeRaw).mock.calls.some(([strings, ...values]) => {
+    const sql = Prisma.sql(strings as unknown as string[], ...(values as never[]));
+    return sql.text.includes('DELETE FROM "ModelVersion"') && sql.values.includes(VERSION_ID);
+  });
 }
 
 function stubVersion(trainingStatus: string | null) {

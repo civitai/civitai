@@ -113,6 +113,18 @@ export async function listAppAccessRequests(
   return { items, nextCursor: hasMore ? items[items.length - 1].id : null };
 }
 
+/**
+ * How many requests are waiting for a decision — the `/apps/review` tab badge. A count rather than
+ * a page of rows, because the badge polls on every tab. `::int` because Postgres `COUNT` is a
+ * bigint, which the driver hands back as a `BigInt` rather than the `number` the badge renders.
+ */
+export async function countPendingAppAccessRequests(): Promise<number> {
+  const [row] = await dbWrite.$queryRaw<{ count: number }[]>(Prisma.sql`
+    SELECT COUNT(*)::int AS "count" FROM "AppAccessRequest" WHERE "status" = 'pending'
+  `);
+  return row?.count ?? 0;
+}
+
 /** The statuses each decision may replace. Declining an approved row is the revoke. */
 const DECIDABLE_FROM: Record<DecideAppAccessRequestInput['decision'], AppAccessRequestStatus[]> = {
   approved: ['pending'],

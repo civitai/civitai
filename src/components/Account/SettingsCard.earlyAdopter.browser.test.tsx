@@ -38,6 +38,8 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: vi.fn(),
   showSuccessNotification: vi.fn(),
 }));
+// Its own test covers it (HatTurfOwnerToggle.browser.test.tsx); it reads hatTurf, which the trpc mock below lacks.
+vi.mock('~/components/HatTurf/HatTurfOwnerToggle', () => ({ HatTurfOwnerToggle: () => null }));
 // Capture the options `useMutateUserSettings` passes through so the onSuccess wiring can be
 // asserted, and serve the settings the card reads. Everything else keeps its real export.
 vi.mock('~/utils/trpc', async (importOriginal) => ({

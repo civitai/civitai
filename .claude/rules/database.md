@@ -28,7 +28,14 @@ Event and activity records (downloads, views, accesses, clicks: anything appende
 
 - Migration files live in `packages/civitai-db-schema/prisma/migrations/` for review/history and are never auto-run. It is the only directory Prisma reads; the root `prisma/migrations/` path predates the monorepo, no longer exists, and CI blocks re-creating it.
 - A human applies each environment's SQL directly (psql, retool, etc.). The `_prisma_migrations` table is not the source of truth; don't rely on it.
-- The Comment v3 tables (`CommentV3`, `CommentTopic` and their reaction, report and mute tables) are declared in `schema.full.prisma` for type generation only. prisma-kysely drops `Unsupported` columns, so query them through `kyselyV3Read`/`kyselyV3Write` (`src/server/db/kyselyDb.ts`), which add `path` and make `rootId`/`depth` select-only. Their partial and GiST indexes live only in the migration.
+- **After writing a migration, list these steps for the human applier**, per writable environment (procedure, flags and limits: "After applying a migration" in `packages/civitai-db-schema/src/schema-drift/README.md`):
+  1. Dry run: the migration inside `BEGIN; … ROLLBACK;` against the target.
+  2. Apply it.
+  3. Scoped drift check, read-only: `DATABASE_URL=<target, read-only role> pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql`. Exit 2 means it could not vouch for the scope (unclassifiable statements, or a table missing from the schema or database); see the README for `--allow-unparsed --tables`.
+  4. Clean, or fix it. A remaining delta that is intended is accepted in a PR with `pnpm --filter @civitai/db-schema drift:baseline --reason "<specific why>" --ref "#<PR>"`.
+
+  The drift check does not cover indexes, defaults, types, check constraints or views, so verify those directly.
+- The Comment v3 tables (`CommentV3`, `CommentTopic` and their reaction, report and mute tables) are declared in `schema.full.prisma` for type generation only. prisma-kysely drops `Unsupported` columns, so read them through `kyselyV3Read` (`src/server/db/kyselyDb.ts`), which adds `path` and makes `rootId`/`depth` select-only; `kyselyV3Write` has the same typing for backfill and tooling. Write comments through `commentv3/write.service.ts`, raw SQL that runs inside the caller's Prisma transaction. Their partial and GiST indexes live only in the migration.
 
 ## Adding an enum value: deploy first, then migrate, then write
 

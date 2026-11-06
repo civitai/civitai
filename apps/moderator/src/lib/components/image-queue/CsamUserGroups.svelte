@@ -7,7 +7,7 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { csamReportUrl } from '$lib/entity-url';
+  import { csamReportUrl, csamSupplementalReportUrl } from '$lib/entity-url';
   import { holdLegLabels } from '$lib/csam-hold-legs';
   import { dateTime, num, LINK_CLASS } from '$lib/format';
   import type { CsamQueueUser } from '$lib/server/image-review.service';
@@ -32,7 +32,7 @@
 
   const queueHref = (userId: number) => `/images/csam?userId=${userId}&level=${data.level}`;
 
-  // Users whose every flagged image a sent report covers are done; they stay listed, apart.
+  // Users with nothing pending (reported or dismissed) stay listed, apart.
   const open = $derived(data.users.filter((u) => u.pending > 0));
   const reported = $derived(data.users.filter((u) => u.pending === 0));
 
@@ -109,31 +109,46 @@
             rel="noreferrer"
             class={LINK_CLASS}>Report page</a
           >
+          {#if user.latestSentImageReportId && user.pending > 0}
+            <span class="text-dark-4">·</span>
+            <a
+              href={csamSupplementalReportUrl(
+                data.civitaiUrl,
+                user.userId,
+                user.latestSentImageReportId
+              )}
+              target="_blank"
+              rel="noreferrer"
+              class={LINK_CLASS}>Supplemental report</a
+            >
+          {/if}
         </TableCell>
         <TableCell class="whitespace-nowrap text-sm">
-          {#if user.heldBy.length}
-            <span class="text-xs text-dark-2">
-              Held: {holdLegLabels(user.heldBy)} · review one by one
-            </span>
-          {:else if user.removed > 0}
-            <form
-              method="POST"
-              action="?/dismissUserFlags"
-              class="flex items-center gap-2"
-              use:enhance={clearSubmit(user.userId)}
-            >
-              <input type="hidden" name="userId" value={user.userId} />
-              <input type="hidden" name="expectedCount" value={user.removed} />
-              <ConfirmSubmit
-                label="Clear"
-                name="op"
-                value="clear"
-                count={user.removed}
-                noun="removed-image flag"
-                submitting={clearing === user.userId}
-              />
-            </form>
-          {/if}
+          <div class="flex items-center gap-2">
+            {#if user.heldBy.length}
+              <span class="text-xs text-dark-2">Held: {holdLegLabels(user.heldBy)}</span>
+            {/if}
+            {#if user.removed > 0}
+              <form
+                method="POST"
+                action="?/dismissUserFlags"
+                class="flex items-center gap-2"
+                use:enhance={clearSubmit(user.userId)}
+              >
+                <input type="hidden" name="userId" value={user.userId} />
+                <input type="hidden" name="expectedCount" value={user.removed} />
+                <input type="hidden" name="version" value={user.removedVersion} />
+                <ConfirmSubmit
+                  label="Dismiss, keep removed"
+                  name="op"
+                  value="dismiss"
+                  count={user.removed}
+                  noun="removed image"
+                  submitting={clearing === user.userId}
+                />
+              </form>
+            {/if}
+          </div>
         </TableCell>
       </TableRow>
     {/each}
@@ -147,12 +162,12 @@
   {#if open.length}
     {@render userTable(open)}
   {:else}
-    <p class="text-sm text-dark-2">Every user here has a sent CSAM report covering their images.</p>
+    <p class="text-sm text-dark-2">No user here has an image left to review.</p>
   {/if}
   {#if reported.length}
     <details class="mt-6">
       <summary class="cursor-pointer text-sm text-dark-2">
-        Reported ({num(reported.length)}): covered by a sent CSAM report
+        Nothing pending ({num(reported.length)}): reported or dismissed
       </summary>
       <div class="mt-2">{@render userTable(reported)}</div>
     </details>

@@ -313,7 +313,7 @@ function ReceivedTab({
 
       {rows.map((row) => (
         <Card key={row.id} withBorder p="sm">
-          <Group align="start" wrap="nowrap" gap="sm">
+          <Group align="start" wrap="nowrap" gap="sm" className="max-sm:flex-wrap">
             <Checkbox
               checked={selected.includes(row.id)}
               onChange={() => toggle(row.id)}
@@ -323,9 +323,9 @@ function ReceivedTab({
             <PlacementThumb image={row.image} withheldHref={withheldHref} />
             <StickerArt art={sticker.get(row.data.cosmeticId)} data={row.data} />
 
-            <Stack gap={2} className="flex-1">
+            <Stack gap={2} className="min-w-0 flex-1">
               <Text size="sm">
-                <Text span fw={600}>
+                <Text span fw={600} className="break-words">
                   {row.placer?.username ?? 'Someone'}
                 </Text>{' '}
                 {/* Both arms in `payout-copy`, not a ternary here: this is the
@@ -446,7 +446,7 @@ function PlacedTab({
               <PlacementThumb image={row.image} withheldHref={withheldHref} />
               <StickerArt art={sticker.get(row.data.cosmeticId)} data={row.data} />
 
-              <Stack gap={2} className="flex-1">
+              <Stack gap={2} className="min-w-0 flex-1">
                 <Group gap="xs">
                   <Badge
                     size="sm"

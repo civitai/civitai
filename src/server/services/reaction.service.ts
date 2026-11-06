@@ -1,16 +1,12 @@
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite } from '~/server/db/client';
-import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import {
-  answerMetrics,
-  articleMetrics,
-  bountyEntryMetrics,
-  postMetrics,
-  questionMetrics,
-} from '~/server/metrics';
+import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
+import { readImageReactionIdViaKysely } from '~/server/services/hot-reads-5.reads';
+import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
+import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
 import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
@@ -73,6 +69,8 @@ export const toggleReaction = async ({
   eventPoints?: boolean;
 }) => {
   if (!(await claimToggleWindow({ entityType, entityId, userId, reaction }))) return 'ignored';
+  if (entityType === 'comment' && (await isV3WriteComment(entityId)))
+    return toggleCommentV3Reaction({ entityId, userId, reaction, isModerator });
 
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
@@ -88,6 +86,52 @@ export const toggleReaction = async ({
   }
 };
 
+/** Whether a comment's reactions live in CommentV3Reaction only; a deleted one takes none. */
+async function isV3WriteComment(commentId: number) {
+  const [row] = await dbWrite.$queryRaw<{ entityType: string; deletedAt: Date | null }[]>`
+    SELECT "entityType"::text AS "entityType", "deletedAt" FROM "CommentV3" WHERE id = ${commentId}
+  `;
+  if (!row || !isV3WriteSurface(row.entityType)) return false;
+  if (row.deletedAt) throw throwNotFoundError();
+  return true;
+}
+
+/**
+ * A reaction on a comment of a surface that writes CommentV3: removed if the user has it, else
+ * added. The `commentv3_reaction_count` trigger keeps the comment's count.
+ */
+async function toggleCommentV3Reaction({
+  entityId,
+  userId,
+  reaction,
+  isModerator,
+}: {
+  entityId: number;
+  userId: number;
+  reaction: ReviewReactions;
+  isModerator?: boolean;
+}) {
+  const removed = await dbWrite.$executeRaw`
+    DELETE FROM "CommentV3Reaction"
+    WHERE "commentId" = ${entityId} AND "userId" = ${userId} AND reaction = ${reaction}::"ReviewReactions"
+  `;
+  if (removed > 0) return 'removed' as const;
+  // Enforce on create only — a user blocked after reacting can still un-react.
+  await throwIfBlockedByEntityOwner({ userId, entityType: 'comment', entityId, isModerator });
+  // KEY SHARE waits out a delete holding the row, then re-reads it, so a comment deleted since the
+  // check above takes no reaction.
+  const added = await dbWrite.$executeRaw`
+    INSERT INTO "CommentV3Reaction" ("commentId", "userId", reaction)
+    SELECT c.id, ${userId}, ${reaction}::"ReviewReactions" FROM "CommentV3" c
+    WHERE c.id = ${entityId} AND c."deletedAt" IS NULL
+    FOR KEY SHARE
+    ON CONFLICT ("commentId", "userId", reaction) DO NOTHING
+  `;
+  if (added > 0) return 'created' as const;
+  if (!(await isV3WriteComment(entityId))) throw throwNotFoundError();
+  return 'noop' as const;
+}
+
 const getReaction = async ({
   entityType,
   entityId,
@@ -102,16 +146,6 @@ const getReaction = async ({
   // A stale hit is handled downstream: deleteReaction reports 0 rows.
   const db = await getDbWithoutLag();
   switch (entityType) {
-    case 'question':
-      return await db.questionReaction.findFirst({
-        where: { userId, reaction, questionId: entityId },
-        select: { id: true },
-      });
-    case 'answer':
-      return await db.answerReaction.findFirst({
-        where: { userId, reaction, answerId: entityId },
-        select: { id: true },
-      });
     case 'commentOld':
       return await db.commentReaction.findFirst({
         where: { userId, reaction, commentId: entityId },
@@ -123,9 +157,10 @@ const getReaction = async ({
         select: { id: true },
       });
     case 'image':
-      return await db.imageReaction.findFirst({
-        where: { userId, reaction, imageId: entityId },
-        select: { id: true },
+      return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
+        userId,
+        reaction,
+        imageId: entityId,
       });
     case 'post':
       return await db.postReaction.findFirst({
@@ -169,20 +204,6 @@ const deleteReaction = async ({
   userId: number;
 }) => {
   switch (entityType) {
-    case 'question': {
-      const { count } = await dbWrite.questionReaction.deleteMany({
-        where: { questionId: entityId, userId, reaction },
-      });
-      if (count > 0) await questionMetrics.queueUpdate(entityId);
-      return count;
-    }
-    case 'answer': {
-      const { count } = await dbWrite.answerReaction.deleteMany({
-        where: { answerId: entityId, userId, reaction },
-      });
-      if (count > 0) await answerMetrics.queueUpdate(entityId);
-      return count;
-    }
     case 'commentOld': {
       const { count } = await dbWrite.commentReaction.deleteMany({
         where: { commentId: entityId, userId, reaction },
@@ -239,16 +260,6 @@ const createReaction = async ({
   ...data
 }: ToggleReactionInput & { userId: number }) => {
   switch (entityType) {
-    case 'question':
-      return await dbWrite.questionReaction.create({
-        data: { ...data, questionId: entityId },
-        select: { reaction: true },
-      });
-    case 'answer':
-      return await dbWrite.answerReaction.create({
-        data: { ...data, answerId: entityId },
-        select: { reaction: true },
-      });
     case 'commentOld':
       return await dbWrite.commentReaction.create({
         data: { ...data, commentId: entityId },

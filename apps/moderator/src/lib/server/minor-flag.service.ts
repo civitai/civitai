@@ -1,6 +1,7 @@
 import { bustMinorQueueCounts } from './minor-hash.service';
 import type { checkedResolutionReason } from './resolution-reason';
 import { callModEndpoint, type ActionResult, type JsonResult } from './user-actions.service';
+import { RULING_LABEL, type RestrictedVerdictRuling } from '$lib/minor-flags/restricted-verdicts';
 
 /**
  * The write half of the minor-flag queues. Every verdict goes to the main app's
@@ -23,12 +24,16 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
-/** The real-person half: set-poi applies the flag with every restriction it carries (and takes the
- *  model off the match queue); the hash flag's own endpoints sign it off, roll it back and drop a lead.
- *  Those three answer 200 with a 0 count when there was nothing to act on, which is reported as a
- *  failure rather than as done. */
+/** The real-person half: flag-match applies the flag to a model still waiting on a match (and takes
+ *  it off the queue); the hash flag's own endpoints sign it off, roll it back and drop a lead. All four
+ *  answer 200 with a 0 count when there was nothing to act on, which is reported as a failure rather
+ *  than as done. */
 export const setModelPoiFlag = (modelId: number): Promise<ActionResult> =>
-  toResult(callModEndpoint('model/set-poi', { modelId, poi: true }, 'Flag as real person'));
+  toCountedResult(
+    callModEndpoint('poi-flag/flag-match', { modelId }, 'Flag as real person'),
+    'flagged',
+    'Nothing was flagged: this model is no longer waiting on a real-person match. Reload the queue.'
+  );
 
 export const confirmPoiFlag = (modelId: number): Promise<ActionResult> =>
   toCountedResult(
@@ -82,6 +87,29 @@ export const resolveMinorFlagAppealPerLabel = (
     )
   );
 
+export type LockReviewResult = { ok: true; unlocked: string[] } | { ok: false; error: string };
+
+/** Rules on an owner's request to unlock settings; the main app unlocks only what is still locked. */
+export async function resolveLockReview(
+  appealId: number,
+  modelId: number,
+  approve: boolean,
+  reason: RulingReason
+): Promise<LockReviewResult> {
+  const result = await callModEndpoint(
+    'model/resolve-lock-review',
+    { appealId, modelId, approve, ...reason },
+    approve ? 'Unlock settings' : 'Keep settings locked'
+  );
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  const unlocked = result.body.unlocked;
+  return {
+    ok: true,
+    unlocked: Array.isArray(unlocked) ? unlocked.filter((k) => typeof k === 'string') : [],
+  };
+}
+
 export type RedetectionOutcome = 'kept' | 'dismissed' | 'closed';
 export type RedetectionResult =
   | { ok: true; resolved: RedetectionOutcome }
@@ -112,7 +140,7 @@ export async function resolveRedetection(
 }
 
 export type FlagRulingResult =
-  | { ok: true; ruled: 'kept' | 'lifted'; label: 'minor' | 'poi'; modelId: number }
+  | { ok: true; ruled: 'kept' | 'lifted' | 'keptMinor'; label: 'minor' | 'poi'; modelId: number }
   | { ok: false; error: string };
 
 /** Rules on a standing text-scan flag outside an appeal, for the text the moderator was shown
@@ -137,7 +165,13 @@ export async function ruleTextScanFlag({
   );
   if (!result.ok) return result;
   await bustMinorQueueCounts();
-  return { ok: true, ruled: result.body.ruled === 'lifted' ? 'lifted' : 'kept', label, modelId };
+  const ruled = result.body.ruled;
+  return {
+    ok: true,
+    ruled: ruled === 'lifted' || ruled === 'keptMinor' ? ruled : 'kept',
+    label,
+    modelId,
+  };
 }
 
 /**
@@ -154,6 +188,15 @@ export async function revertMinorFlag(modelId: number): Promise<ActionResult> {
   if (reverted > 0) {
     await bustMinorQueueCounts();
     return { ok: true };
+  }
+  if (Number(result.body.keptMinor ?? 0) > 0) {
+    await bustMinorQueueCounts();
+    return {
+      ok: true,
+      keptMinor: true,
+      warning:
+        'The automated flag was undone, but the model stays minor: its state before the flag marks it minor. Unset it by hand if that is wrong.',
+    };
   }
   return {
     ok: false,
@@ -189,3 +232,20 @@ const toCountedResult = async (
   await bustMinorQueueCounts();
   return { ok: true };
 };
+
+export type RestrictedVerdictResult = { ok: true } | { ok: false; error: string };
+
+/** The main app owns the write and every refusal (Rate NSFW on minor/POI, a minor dismiss with no
+ *  reason); this only carries the moderator's session. */
+export async function ruleRestrictedVerdict(
+  modelId: number,
+  ruling: RestrictedVerdictRuling,
+  reason: string | undefined
+): Promise<RestrictedVerdictResult> {
+  const result = await callModEndpoint(
+    'model/resolve-restricted-nsfw-verdict',
+    { modelId, ruling, ...(reason ? { reason } : {}) },
+    RULING_LABEL[ruling]
+  );
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
+}

@@ -72,38 +72,32 @@ const deliverableSource = Prisma.sql`NOT (
   ingestion = ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus" AND NOT "hideMeta"
 )`;
 
+// The origin statement. Several rows can share a url (a copied image keeps its source's url);
+// rows sharing a url resolve to the most restrictive setting, hence the ORDER BY.
+// Exported for the parity test, which pins it against the `image_delivery_lookup(url)` SQL function.
+export const imageDeliveryStatement = (url: string) => Prisma.sql`
+  SELECT
+    id,
+    url,
+    "hideMeta",
+    type,
+    "mimeType"
+  FROM "Image"
+  WHERE url = ${url}
+    AND ${deliverableSource}
+  ORDER BY "hideMeta" DESC
+  LIMIT 1
+`;
+
 // Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
-// resolves. Several rows can share a url (a copied image keeps its source's url); rows sharing a
-// url resolve to the most restrictive setting, hence the ORDER BY.
+// resolves. Only an error falls back: an empty result from the replica is a not-found.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
-  const [image] = await dbRead.$queryRaw<ImageDeliveryMetadataRow[]>`
-      SELECT
-        id,
-        url,
-        "hideMeta",
-        type,
-        "mimeType"
-      FROM "Image"
-      WHERE url = ${url}
-        AND ${deliverableSource}
-      ORDER BY "hideMeta" DESC
-      LIMIT 1
-    `.catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
-    return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>`
-        SELECT
-          id,
-          url,
-          "hideMeta",
-          type,
-          "mimeType"
-        FROM "Image"
-        WHERE url = ${url}
-          AND ${deliverableSource}
-        ORDER BY "hideMeta" DESC
-        LIMIT 1
-      `;
-  });
+  const [image] = await dbRead
+    .$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url))
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
+      return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url));
+    });
 
   if (!image) return null;
 

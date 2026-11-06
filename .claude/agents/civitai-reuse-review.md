@@ -31,13 +31,19 @@ code is usually *correct* — just redundant, and destined to diverge.
 
 ## Search before you conclude anything is novel
 
-Do not reason about whether something probably exists. Grep. For each new function, component or hook
-in the diff, run the search **before** deciding:
+Do not reason about whether something probably exists. Grep. 🔴 **This is mandatory, not advice** — as
+advice it has missed real duplicates. For **each new function, component or hook** in the diff, run
+the search **before** deciding, and include at least one **same-shape** search: one that targets what
+it does (same inputs, same output, same behaviour), not what it is called. For a **server-side
+function, or anything that fetches data** (a data-loading hook included), that search must cover
+`src/server/services/`; a purely client-side UI helper does not need one there. Record every command
+in `checks.searches` (see Report). **An existing function of the same shape is a finding**, or a
+one-line `reason` it differs; a grep hit is only a lead, and needs no reason of its own.
 
 ```bash
 git diff --stat main...HEAD -- src/
 grep -rn "getMyImages\|getAllImages" src/server/services/image.service.ts   # exact name
-grep -rniE "function (get|fetch|load)[A-Za-z]*Images" src/server/services/  # shape
+grep -rnE 'image\.findMany|FROM "Image"' src/server/services/               # shape: same table, same read
 ls src/components/ | grep -i carousel                                       # component by concept
 ```
 
@@ -170,6 +176,69 @@ need different work from the fixer.
 that is the bulk of a long report and none of it is actionable. Say plainly if the segment is clean —
 "nothing rebuilt" is a real and common outcome. Two exceptions, one line each: a duplicate you decided
 was *deliberate* and why, and an existing helper the segment should watch for on its next consumer.
+
+### The `checks` block — required, findings or not
+
+The one structured exception to "findings only": it records the method, so a reader can tell a lane that
+searched from one that skipped. **One entry per search command run**: `symbol` is the new function,
+component or hook it was for, `command` is the command as run, and `hits` is the integer count of
+matching lines it returned. **Every new symbol has at least one entry, and at least one of its entries
+is a same-shape search**; a symbol without one was not checked. When the search found an existing
+function of the same shape that you judged different, put why in an optional `reason` on that entry;
+it is then not a finding. An empty list means the diff adds no functions, components or hooks; never
+omit the key. When your invoker gives you a JSON result contract, put its `checks` object in that
+result; otherwise end your report with this block as a fenced `json` block:
+
+```json
+{
+  "checks": {
+    "searches": [
+      { "symbol": "getThingsForUser", "command": "grep -rn 'thing.findMany' src/server/services/", "hits": 3 },
+      {
+        "symbol": "getThingsForUser",
+        "command": "grep -rn 'getThings' src/server/services/",
+        "hits": 1,
+        "reason": "getThings filters by collection, not owner"
+      }
+    ]
+  }
+}
+```
+
+### Facts on every finding — required
+
+<!-- pr-review-gate:facts -->
+Still give your own best severity; the gate may recompute it from these facts. Report all three on
+every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
+otherwise end each finding with them as `impact / reach / evidence`, e.g.
+`money / unusual-state / traced src/server/services/x.service.ts:42`.
+
+- `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
+  user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
+  moderation, NSFW gating), `data-loss` (rows or files destroyed or corrupted), `privacy` (PII or private
+  content shown to the wrong person), `wrong-for-user` (a visible wrong result, nothing lost: a wrong
+  count, a dead button), `internal` (cost only we see: an extra query, log noise), `maintainability`
+  (nothing wrong yet: a duplicate, a misleading comment).
+- `reach`, when it happens: `normal-use` (an ordinary request on the main path), `unusual-state` (a rare
+  but real state: a retry, a webhook delivered twice, a race), `theoretical` (you found no path to it).
+- `evidence`, `{kind, ref}`: `traced` (you followed the path; `ref` is the `file:line` that does it),
+  `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
+  `ref` is the `file:line` you reasoned from).
+
+Report the reach you can show, not the worst you can imagine. The allowed values, for tools:
+
+```json
+{
+  "impact": ["money", "access", "data-loss", "privacy", "wrong-for-user", "internal", "maintainability"],
+  "reach": ["normal-use", "unusual-state", "theoretical"],
+  "evidence.kind": ["traced", "reproduced", "inferred"]
+}
+```
+<!-- /pr-review-gate:facts -->
+
+Example: a hand-rolled price formatter beside the existing helper is `maintainability / normal-use /
+traced`; if the copy already diverges (it misses a filter the helper applies), report the divergence's
+impact instead.
 
 ## Delivering your report
 

@@ -3,6 +3,7 @@ paths:
   - "apps/moderator/**"
   - "apps/auth/**"
   - "apps/creator-studio/**"
+  - "apps/training-studio/**"
 ---
 
 # SvelteKit apps

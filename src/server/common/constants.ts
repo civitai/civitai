@@ -12,7 +12,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
@@ -57,6 +57,29 @@ function chatCivHosts() {
  */
 const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
+/** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
+const v3PageBudgetOverrides: Record<string, number> = {
+  image: 10,
+  bountyEntry: 10,
+  review: 10,
+  post: 15,
+};
+const v3PageBudget = 40;
+const v3ReadSurfaces: string[] = [
+  'article',
+  'post',
+  'image',
+  'review',
+  'bounty',
+  'bountyEntry',
+  'challenge',
+  'crucible',
+  'storyline',
+  'model3d',
+  'appListing',
+  'comicChapter',
+];
+
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
   if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
@@ -93,11 +116,6 @@ export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
     period: MetricTimeframe.AllTime,
-  },
-  questionFilterDefaults: {
-    sort: QuestionSort.MostLiked,
-    period: MetricTimeframe.AllTime,
-    limit: 50,
   },
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,
@@ -404,6 +422,9 @@ export const constants = {
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
+    // 4:1, shown full width across the top of the article page.
+    bannerImageHeight: 600,
+    bannerImageWidth: 2400,
   },
   profanity: {
     thresholds: {
@@ -433,6 +454,28 @@ export const constants = {
      */
     autoExpandBudget: 40,
     replyPageSize: 5,
+    /**
+     * The v3 suite's page, in rendered comments, replies included: top-level comments are added
+     * until the next would pass it, so one with a large thread costs its share and fewer load.
+     */
+    v3PageBudget,
+    getV3PageBudget({ entityType }: { entityType: string }) {
+      return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
+    },
+    /**
+     * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
+     * it here and mounts `CommentSection`; notifications build their deep links from this list.
+     */
+    v3ReadSurfaces,
+    /**
+     * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
+     * on one exists only there. A surface read-flipped ahead of its write flip must be left out.
+     */
+    v3WriteSurfaces: [...v3ReadSurfaces],
+    /** Most replies the v3 suite opens up front under one top-level comment. */
+    v3RepliesPerRoot: 10,
+    /** Replies per "show more" page in the v3 suite. */
+    v3ReplyPageSize: 10,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
@@ -602,6 +645,7 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
+export const POST_TITLE_MAX_LENGTH = 255;
 // The scheduling window lives in @civitai/shared so the planner element and Creator Studio read the
 // same numbers; re-exported here for the many existing importers.
 export {
@@ -654,28 +698,17 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'sdxl 0.9': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL0.9',
+    notice:
+      'SDXL 0.9 is licensed under the SDXL Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     name: 'SDXL 0.9 research license',
   },
   'openrail++': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL1.0',
     name: 'CreativeML Open RAIL++-M',
   },
-  'sdxl turbo': {
-    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
-    name: 'Stability AI Non-Commercial Research Community License',
-    notice:
-      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-  },
-  svd: {
-    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
-    name: 'Stable Video Diffusion Non-Commercial Research Community License',
-    notice:
-      'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-  },
   'playground v2': {
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
+    notice: 'Playground v2 is licensed under the Playground v2 Community License.',
     name: 'Playground v2 Community License',
   },
   agpl: {
@@ -684,13 +717,14 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'SAI NC RC': {
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
-    name: 'SAI NC RC',
+    name: 'Stability AI Non-Commercial Research Community License',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    nonCommercial: true,
   },
   'SAI CLA': {
-    url: '',
+    url: 'https://stability.ai/community-license-agreement',
     name: 'Stability AI Community License Agreement',
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
@@ -699,6 +733,9 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
+    notice:
+      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of “Tencent Hunyuan” are owned by Tencent or its affiliate.',
+    poweredBy: 'Powered by Tencent Hunyuan',
     name: 'Tencent Hunyuan Community License Agreement',
   },
   'hunyuan video': {
@@ -720,9 +757,43 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
     name: 'FLUX.1 [dev] Non-Commercial License',
     notice:
-      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    requiresSameLicense: true,
+  },
+  // flux1D, flagged non-commercial for Krea and Kontext; Flux.1 D keeps the unflagged entry.
+  'flux1D nc': {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  'flux2 dev nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  'flux nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
@@ -730,39 +801,43 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'ltxv license': {
     url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
-    name: 'LTX Video License',
+    name: 'LTXV Open Weights License 0.X',
   },
   'cogvideox license': {
-    url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
-    name: 'CogVideoX License',
+    url: 'https://huggingface.co/zai-org/CogVideoX-5b/blob/main/LICENSE',
+    name: 'The CogVideoX License',
   },
   noobAi: {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
-    name: 'NoobAI License',
+    name: 'Fair AI Public License 1.0-SD (NoobAI terms)',
+    requiresSameLicense: true,
   },
   mit: {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
     name: 'MIT',
   },
   openai: {
-    url: 'https://openai.com/policies/',
-    name: 'OpenAI',
+    url: 'https://openai.com/policies/services-agreement/',
+    name: 'OpenAI Services Agreement',
   },
   imagen4: {
-    url: 'https://deepmind.google/about/responsibility-safety/',
-    name: 'Imagen4',
+    url: 'https://ai.google.dev/gemini-api/terms',
+    name: 'Gemini API Additional Terms of Service',
   },
   veo3: {
-    url: 'https://policies.google.com/terms',
-    name: 'Veo 3',
+    url: 'https://ai.google.dev/gemini-api/terms',
+    name: 'Gemini API Additional Terms of Service',
   },
   seedream: {
-    url: 'https://seed.bytedance.com/en/user-agreement',
-    name: 'Seedream',
+    url: 'https://docs.byteplus.com/en/docs/ModelArk/Terms_and_Conditions',
+    name: 'BytePlus ModelArk Terms and Conditions',
   },
   ponyV7: {
     url: 'https://purplesmart.ai/license',
-    name: 'Pony',
+    name: 'Pony License',
+    notice: 'This Model is licensed under the Pony License. All Rights Reserved.',
+    poweredBy: 'Powered by PurpleSmartAI, INC',
+    requiresSameLicense: true,
   },
   ltxv2: {
     // Permalinked to the Jan 5 2026 revision these weights shipped under. Not
@@ -784,45 +859,46 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   anima: {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
-    name: 'Anima',
+    name: 'CircleStone Labs Non-Commercial License v1.2',
     notice:
-      'The Anima Model is licensed by CircleStone Labs LLC. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
     poweredBy: 'Built on NVIDIA Cosmos',
   },
   kling: {
-    url: 'https://klingai.com/terms-of-service',
-    name: 'Kling',
+    url: 'https://kling.ai/docs/user-policy',
+    name: 'Kling AI Terms of Service',
   },
   vidu: {
     url: 'https://www.vidu.com/terms',
-    name: 'Vidu Q1',
+    name: 'Vidu Terms of Service',
   },
   'ideogram nc': {
-    // Public blob page — the nf4 `raw` URL is gated and 401s.
-    url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
+    // Ideogram’s own ungated copy; the Hugging Face files are gated.
+    url: 'https://ideogram.ai/legal/non-commercial-model-agreement/',
     name: 'Ideogram Non-Commercial Model Agreement',
-    // Section 3(iii) attribution wording; the URL lives on the linked license name
-    // shown above the notice, so we omit the bare URL here.
+    // Section 3(iii) wording, URL included: the licence’s own link drops /blob/main/ and 404s.
     notice:
-      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://github.com/ideogram-oss/ideogram4/blob/main/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL. All rights reserved. Copyright © Ideogram, Inc.',
     // License AUP bars pornographic/obscene content. `disableMature` auto-derives
     // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
     disableMature: true,
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
+    // Redistribution must be on terms no less restrictive.
+    requiresSameLicense: true,
   },
   'bfl tos': {
-    url: 'https://bfl.ai/legal/terms-of-service',
-    name: 'Black Forest Labs Terms of Service',
+    url: 'https://bfl.ai/legal/developer-terms-of-service',
+    name: 'Black Forest Labs Developer Terms of Service',
   },
   'ideogram tos': {
-    url: 'https://ideogram.ai/legal/tos',
-    name: 'Ideogram Terms of Service',
-    // The ToS bars sexually explicit output.
+    url: 'https://ideogram.ai/legal/api-tos',
+    name: 'Ideogram Developer API Agreement and Policy',
+    // The agreement bars sexually explicit output.
     disableMature: true,
   },
   'qwen research': {
-    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/f52e6a529129fff6a994469561673ea45a84043d/LICENSE',
     name: 'Qwen Research License Agreement',
     notice:
       'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
@@ -834,12 +910,13 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     name: 'MiniMax H3 Community License Agreement',
     notice:
-      'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+      'MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
     // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
     // header and ecosystem label both render it, so no `attribution` line is
     // needed under the generate button. "Powered by MiniMax H3" is the separate,
     // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
+    requiresSameLicense: true,
   },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
@@ -854,6 +931,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
   'krea 2 community': {
     // The licence link on the Hugging Face model cards, pinned to a commit.
     url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    notice:
+      'Krea 2 is licensed under the Krea 2 Community License Agreement. For more information, visit https://krea.ai/krea-2-licensing.',
+    // Section 3.1(a) binds every recipient of the model or a derivative to the Agreement.
+    requiresSameLicense: true,
     name: 'Krea 2 Community License Agreement',
   },
   'flux kommunity': {
@@ -871,6 +952,67 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Section 2(a) applies every restriction to derivatives, and 3(a) makes them carry it.
     requiresSameLicense: true,
   },
+  'pony faipl': {
+    // Pony Diffusion V6 XL’s card: a modified FAIPL that bars inference on paid services.
+    // Civitai holds explicit permission for commercial inference, derivatives included.
+    url: 'https://civitai.com/models/257749',
+    name: 'Fair AI Public License 1.0-SD (Pony Diffusion terms)',
+  },
+  'xai enterprise': {
+    url: 'https://x.ai/legal/terms-of-service-enterprise',
+    name: 'xAI Terms of Service - Enterprise',
+  },
+  'alibaba cloud': {
+    // Model Studio, which serves HappyHorse and the API-only Qwen 2 and 3, sells under these.
+    url: 'https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service-v-3-8-0',
+    name: 'Alibaba Cloud International Website Product Terms of Service',
+  },
+  'krea tos': {
+    url: 'https://www.krea.ai/terms',
+    name: 'Krea Terms of Use',
+  },
+  'microsoft product terms': {
+    // Azure sells the MAI models as Foundry Models.
+    url: 'https://www.microsoft.com/licensing/terms/productoffering/MicrosoftAzure/MCA',
+    name: 'Microsoft Product Terms',
+  },
+  'reve tos': {
+    url: 'https://app.reve.com/terms',
+    name: 'Reve AI Terms of Service',
+  },
+  'meta model api': {
+    // Muse Image ships API-only, through Meta’s Model API.
+    url: 'https://dev.meta.ai/legal/terms-of-service',
+    name: 'Meta Model API Terms of Service',
+  },
+  'wan tos': {
+    url: 'https://wan.video/policy/termsofService',
+    name: 'Wan Terms of Service',
+  },
+  'cc by-nc 4.0': {
+    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+    name: 'CC BY-NC 4.0',
+  },
+  'sonilo tos': {
+    url: 'https://sonilo.com/terms',
+    name: 'Sonilo Terms of Service',
+  },
+  'meshy tos': {
+    // PolyGen is Meshy’s API, through fal.
+    url: 'https://www.meshy.ai/terms-of-use',
+    name: 'Meshy Terms of Service',
+  },
+  'tripo terms': {
+    url: 'https://www.tripo3d.ai/terms',
+    name: 'Tripo Terms of User Agreement',
+  },
+  'hunyuan3d 2.1': {
+    // v2 and v2-mini carry the 2.0 Community License, which has the same terms.
+    url: 'https://huggingface.co/tencent/Hunyuan3D-2.1/blob/main/LICENSE',
+    name: 'Tencent Hunyuan 3D 2.1 Community License Agreement',
+    notice:
+      'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -878,11 +1020,11 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 1.5': baseLicenses['openrail'],
   'SD 1.5 LCM': baseLicenses['openrail++'],
   'SD 1.5 Hyper': baseLicenses['openrail++'],
-  'SD 2.0': baseLicenses['openrail'],
-  'SD 2.0 768': baseLicenses['openrail'],
-  'SD 2.1': baseLicenses['openrail'],
-  'SD 2.1 768': baseLicenses['openrail'],
-  'SD 2.1 Unclip': baseLicenses['openrail'],
+  'SD 2.0': baseLicenses['openrail++'],
+  'SD 2.0 768': baseLicenses['openrail++'],
+  'SD 2.1': baseLicenses['openrail++'],
+  'SD 2.1 768': baseLicenses['openrail++'],
+  'SD 2.1 Unclip': baseLicenses['openrail++'],
   'SD 3': baseLicenses['SAI CLA'],
   'SD 3.5': baseLicenses['SAI CLA'],
   'SD 3.5 Medium': baseLicenses['SAI CLA'],
@@ -892,11 +1034,11 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
   'SDXL Distilled': baseLicenses['openrail++'],
-  'SDXL Turbo': baseLicenses['sdxl turbo'],
+  'SDXL Turbo': baseLicenses['SAI CLA'],
   'SDXL Lightning': baseLicenses['openrail++'],
   'SDXL Hyper': baseLicenses['openrail++'],
-  SVD: baseLicenses['svd'],
-  'SVD XT': baseLicenses['svd'],
+  SVD: baseLicenses['SAI CLA'],
+  'SVD XT': baseLicenses['SAI CLA'],
   'Playground v2': baseLicenses['playground v2'],
   'PixArt a': baseLicenses['openrail++'],
   'PixArt E': baseLicenses['openrail++'],
@@ -905,22 +1047,22 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Lumina: baseLicenses['apache 2.0'],
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
-  Pony: baseLicenses['openrail++'],
+  Pony: baseLicenses['pony faipl'],
   'Pony V7': baseLicenses['ponyV7'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
-  'Flux.1 Krea': baseLicenses['flux1D'],
-  'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.1 Krea': baseLicenses['flux1D nc'],
+  'Flux.1 Kontext': baseLicenses['flux1D nc'],
   'Flux.3': baseLicenses['bfl tos'],
   'Flux.3 Klein': baseLicenses['flux kommunity'],
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
   'Flux 3 Video': baseLicenses['bfl tos'],
-  'Flux.2 D': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux2 dev nc'],
+  'Flux.2 Klein 9B': baseLicenses['flux nc'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux nc'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
   'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
@@ -946,8 +1088,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.2 I2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 T2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 TI2V-5B': baseLicenses['apache 2.0'],
-  'Wan Video 2.5 T2V': baseLicenses['apache 2.0'],
-  'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
+  'Wan Video 2.5 T2V': baseLicenses['wan tos'],
+  'Wan Video 2.5 I2V': baseLicenses['wan tos'],
   Qwen: baseLicenses['apache 2.0'],
   'Qwen 2.1': baseLicenses['qwen research'],
   Seedream: baseLicenses['seedream'],
@@ -964,6 +1106,32 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'MiniMax Music 3': baseLicenses['minimax music 3'],
   'Krea 2': baseLicenses['krea 2 community'],
   'Krea 2 Turbo': baseLicenses['krea 2 community'],
+  Ernie: baseLicenses['apache 2.0'],
+  Boogu: baseLicenses['apache 2.0'],
+  'HiDream-O1': baseLicenses['mit'],
+  MageFlow: baseLicenses['mit'],
+  'Ming Image Design 0.1': baseLicenses['mit'],
+  'Ming Image Design Layer 0.1': baseLicenses['mit'],
+  'ACE Audio': baseLicenses['mit'],
+  Lens: baseLicenses['mit'],
+  Pixal3D: baseLicenses['mit'],
+  'Trellis.2': baseLicenses['mit'],
+  Grok: baseLicenses['xai enterprise'],
+  HappyHorse: baseLicenses['alibaba cloud'],
+  'Qwen 2': baseLicenses['alibaba cloud'],
+  'Qwen 3': baseLicenses['alibaba cloud'],
+  'Krea 3': baseLicenses['krea tos'],
+  MAI: baseLicenses['microsoft product terms'],
+  Reve: baseLicenses['reve tos'],
+  'Muse Image': baseLicenses['meta model api'],
+  'Wan Image 2.7': baseLicenses['wan tos'],
+  'Wan Video 2.7': baseLicenses['wan tos'],
+  'Wan Video 3.0': baseLicenses['wan tos'],
+  YuE2: baseLicenses['cc by-nc 4.0'],
+  Sonilo: baseLicenses['sonilo tos'],
+  PolyGen: baseLicenses['meshy tos'],
+  Tripo: baseLicenses['tripo terms'],
+  Hunyuan3D: baseLicenses['hunyuan3d 2.1'],
 };
 
 type CivitaiLicenseAgreement = {
@@ -1055,6 +1223,18 @@ export const nonCommercialBaseModels: BaseModel[] = Object.entries(baseModelLice
 
 export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
   return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
+}
+
+// Creator compensation, tips and promotion stop on every non-commercial license. Kept apart from
+// isNonCommercialBaseModel so the earnings rule can diverge from the purchase/fee rule again.
+export function stopsCreatorEarnings(baseModel?: string | null): boolean {
+  return isNonCommercialBaseModel(baseModel);
+}
+
+export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+
+export function notCommerciallyAvailableMessage(baseModel: string) {
+  return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
 }
 
 // Effective commercial-use permissions for a resource given its base model.

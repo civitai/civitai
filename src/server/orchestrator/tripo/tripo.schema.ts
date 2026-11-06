@@ -68,6 +68,7 @@ export function toTripoPolyGenInput(data: TripoGenerationSchema): TripoFalPolyGe
   return dropUndefined({
     engine: 'fal' as const,
     model: 'tripo' as const,
+    version: 'v2.5' as const,
     imageUrl: data.sourceImage.url,
     texture: data.texture,
     pbr: data.pbr,

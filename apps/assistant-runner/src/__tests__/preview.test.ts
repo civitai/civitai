@@ -17,6 +17,7 @@ import {
   autoPreviewFailed,
 } from '../app-assistant/provider';
 import type { OpenTools } from '../core/interfaces';
+import { chosenApp } from '../test-support/chosen-app';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
@@ -88,6 +89,8 @@ async function open() {
     runId: 'run-1',
     conversationId: 'conv-1',
     page: { app: 'my-app' },
+    // A chat that chose the open app: its dev server starts are not refused.
+    history: chosenApp('my-app'),
     signal: new AbortController().signal,
     report: (result) => reported.push(result),
   });
@@ -495,7 +498,12 @@ describe('CivitaiDevTunnels', () => {
     for (const { init } of sent)
       expect(new Headers(init.headers).get('authorization')).toBe(`Bearer ${SECRET}`);
     expect(sent.map((s) => JSON.parse(String(s.init.body)))).toEqual([
-      { grant: GRANT, blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY },
+      {
+        grant: GRANT,
+        blockId: 'my-app',
+        sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY,
+        clientKey: expect.any(String),
+      },
       { grant: GRANT, host: HOST },
       { grant: GRANT, sessionId: SESSION },
     ]);
@@ -513,12 +521,271 @@ describe('CivitaiDevTunnels', () => {
     expect(error).toMatchObject({ status: 404, code: 'NOT_FOUND' });
   });
 
+  describe('a start the runner gives up on is closed at civitai by its own key', () => {
+    /** civitai holds every start until the call is aborted, and answers a stop. */
+    function holding() {
+      return client((url, init) =>
+        url.endsWith('/start')
+          ? new Promise<Response>((_, reject) => {
+              const signal = init.signal as AbortSignal;
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            })
+          : Response.json({ stopped: false })
+      );
+    }
+    const bodies = (sent: { init: RequestInit }[]) =>
+      sent.map((s) => JSON.parse(String(s.init.body)) as Record<string, unknown>);
+
+    it('the caller cancels (a Stop, the reply ending): a stop by the start’s key, with its grant', async () => {
+      const { sent, tunnels } = holding();
+      // The reply's grant is deleted as it ends: the cleanup still carries the start's own.
+      let grant: string | null = GRANT;
+      const run = tunnels.forRun(async () => grant);
+      const caller = new AbortController();
+      const start = run
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY }, caller.signal)
+        .catch((error: unknown) => error);
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      grant = null;
+      caller.abort();
+      // The caller's own abort, as before: the cleanup does not change what the caller hears.
+      expect(await start).toBe(caller.signal.reason);
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      const [started, stopped] = bodies(sent);
+      expect(sent[1]!.url).toBe(`https://civitai.example/${DEV_TUNNEL_PATH}/stop`);
+      expect(typeof started!.clientKey).toBe('string');
+      expect(started!.clientKey).not.toBe('');
+      expect(stopped).toEqual({ grant: GRANT, clientKey: started!.clientKey });
+    });
+
+    it('civitai failed the start (5xx, or out of reach): stopped by its key; a refusal is not', async () => {
+      for (const [answer, stops] of [
+        [() => Response.json({ error: 'later', code: 'unavailable' }, { status: 503 }), 1],
+        [
+          () => {
+            throw new TypeError('fetch failed');
+          },
+          1,
+        ],
+        [() => Response.json({ error: 'No such app', code: 'NOT_FOUND' }, { status: 404 }), 0],
+        [() => Response.json({ error: 'Too many', code: 'TOO_MANY_REQUESTS' }, { status: 429 }), 0],
+      ] as const) {
+        const { sent, tunnels } = client((url) =>
+          url.endsWith('/start') ? answer() : Response.json({ stopped: false })
+        );
+        const run = tunnels.forRun(async () => GRANT);
+        await run
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        // A call made after the start failed: a cleanup the start began is already on its way
+        // ahead of it, so what reached civitai before this marker is all the start sent.
+        await run.keepalive({ host: HOST });
+        expect(
+          sent.map((s) => s.url.split('/').pop()),
+          String(answer)
+        ).toEqual(stops ? ['start', 'stop', 'keepalive'] : ['start', 'keepalive']);
+        const stopsSent = sent.filter((s) => s.url.endsWith('/stop'));
+        if (stops)
+          expect(JSON.parse(String(stopsSent[0]!.init.body))).toEqual({
+            grant: GRANT,
+            clientKey: JSON.parse(String(sent[0]!.init.body)).clientKey,
+          });
+      }
+    });
+
+    it('a start that succeeded is not stopped, and each start has its own key', async () => {
+      const { sent, tunnels } = client(() =>
+        Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY })
+      );
+      const run = tunnels.forRun(async () => GRANT);
+      await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY });
+      await run.start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY });
+      // The marker, as above: no stop went ahead of it.
+      await run.keepalive({ host: HOST });
+      expect(sent.map((s) => s.url.split('/').pop())).toEqual(['start', 'start', 'keepalive']);
+      const [a, b] = bodies(sent);
+      expect(a!.clientKey).not.toBe(b!.clientKey);
+    });
+  });
+
   it('a run with no live grant asks civitai nothing', async () => {
     const { sent, tunnels } = client(() => Response.json({}));
     await expect(tunnels.forRun(async () => null).keepalive({ host: HOST })).rejects.toMatchObject({
       code: 'invalid_grant',
     });
     expect(sent).toEqual([]);
+  });
+
+  describe('how long a call waits for civitai', () => {
+    // `AbortSignal.timeout` runs on Node's own timers, which fake timers do not reach: each one
+    // is swapped for an abort on the faked `setTimeout`, so the virtual clock drives the deadline.
+    let deadlines: number[];
+    beforeEach(() => {
+      vi.useFakeTimers();
+      deadlines = [];
+      vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+        deadlines.push(ms);
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+        return controller.signal;
+      });
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    /** civitai answers each call after `ms`, or never; an aborted call fails as fetch does. */
+    function answeringAfter(ms: number | null, answer: () => Response) {
+      return client(
+        (_url, init) =>
+          new Promise<Response>((resolve, reject) => {
+            const signal = init.signal as AbortSignal;
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            if (ms !== null) setTimeout(() => resolve(answer()), ms);
+          })
+      );
+    }
+    const started = () =>
+      Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY });
+
+    it('a start civitai answers 185 s in (its route takes up to 180 s) is still the start', async () => {
+      // civitai's start waits for the tunnel's route to be applied (up to 180 s) before it answers,
+      // and keeps the tunnel it opened. A runner that gives up sooner never connects the sandbox to
+      // a tunnel civitai then lists as live: the page shows it, and it can only fail to load.
+      const { tunnels } = answeringAfter(185_000, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+      await vi.advanceTimersByTimeAsync(185_000);
+      expect(await start).toEqual({
+        value: { sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY },
+      });
+      // The control: the call did run on a deadline this test drives.
+      expect(deadlines).toHaveLength(1);
+    });
+
+    it('a start civitai never answers still fails, as `unavailable`', async () => {
+      const { tunnels } = answeringAfter(null, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(await start).toMatchObject({ status: 503, code: 'unavailable' });
+    });
+
+    it('a start that timed out at 200 s (civitai answers by 185 s) is stopped by its key', async () => {
+      const { sent, tunnels } = answeringAfter(null, started);
+      const start = tunnels
+        .forRun(async () => GRANT)
+        .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(199_000);
+      expect(sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await start).toMatchObject({ status: 503, code: 'unavailable' });
+      await vi.waitFor(() => expect(sent).toHaveLength(2));
+      expect(sent.map((s) => s.url.split('/').pop())).toEqual(['start', 'stop']);
+      expect(JSON.parse(String(sent[1]!.init.body))).toEqual({
+        grant: GRANT,
+        clientKey: JSON.parse(String(sent[0]!.init.body)).clientKey,
+      });
+      // The stop waits on a stop's own 15 s, not on the start's 200 s.
+      expect(deadlines).toEqual([200_000, 15_000]);
+    });
+
+    describe('the stop by key, when civitai says to ask again', () => {
+      /** The start fails on civitai's side; each stop answers the next of `stops`, in turn. */
+      function failingStart(stops: (() => Response)[]) {
+        let next = 0;
+        return client((url) =>
+          url.endsWith('/start')
+            ? Response.json({ error: 'later', code: 'unavailable' }, { status: 503 })
+            : (stops[Math.min(next++, stops.length - 1)] ?? (() => Response.json({})))()
+        );
+      }
+      const unavailable = () =>
+        Response.json({ error: 'later', code: 'unavailable' }, { status: 503 });
+      const stopped = () => Response.json({ stopped: true });
+      async function startAndWait(tunnels: CivitaiDevTunnels) {
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        // Long past any retry the runner makes: what was sent by then is all it sends.
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+      }
+      const stopsOf = (sent: { url: string; init: RequestInit }[]) =>
+        sent.filter((s) => s.url.endsWith('/stop'));
+
+      it('a stop civitai answers `unavailable` is asked again, with the same key, until it is done', async () => {
+        const { sent, tunnels } = failingStart([unavailable, unavailable, stopped]);
+        await startAndWait(tunnels);
+        const stops = stopsOf(sent);
+        expect(stops).toHaveLength(3);
+        const key = JSON.parse(String(sent[0]!.init.body)).clientKey;
+        for (const stop of stops)
+          expect(JSON.parse(String(stop.init.body))).toEqual({ grant: GRANT, clientKey: key });
+      });
+
+      it('a stop civitai keeps answering `unavailable` is asked a bounded number of times', async () => {
+        const { sent, tunnels } = failingStart([unavailable]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(3);
+      });
+
+      it('asks again 5 s after a stop civitai answered `unavailable`, not sooner', async () => {
+        const { sent, tunnels } = failingStart([unavailable, stopped]);
+        await tunnels
+          .forRun(async () => GRANT)
+          .start({ blockId: 'my-app', sshPublicKey: FAKE_TUNNEL_PUBLIC_KEY })
+          .catch(() => undefined);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(4_999);
+        expect(stopsOf(sent)).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop that could not reach civitai at all is asked again too', async () => {
+        const { sent, tunnels } = failingStart([
+          () => {
+            throw new TypeError('fetch failed');
+          },
+          stopped,
+        ]);
+        await startAndWait(tunnels);
+        expect(stopsOf(sent)).toHaveLength(2);
+      });
+
+      it('a stop civitai refuses (4xx), or answers, is not asked again', async () => {
+        for (const answer of [
+          stopped,
+          () => Response.json({ error: 'no', code: 'invalid_grant' }, { status: 401 }),
+          () => Response.json({ error: 'bad' }, { status: 400 }),
+        ]) {
+          const { sent, tunnels } = failingStart([answer]);
+          await startAndWait(tunnels);
+          expect(stopsOf(sent), String(answer)).toHaveLength(1);
+        }
+      });
+    });
+
+    it('a keep-alive or stop civitai does not answer fails within 16 s', async () => {
+      const { tunnels } = answeringAfter(null, () => Response.json({}));
+      const run = tunnels.forRun(async () => GRANT);
+      const keepalive = run.keepalive({ host: HOST }).catch((error: unknown) => error);
+      const stop = run.stop(SESSION).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(await keepalive).toMatchObject({ status: 503, code: 'unavailable' });
+      expect(await stop).toMatchObject({ status: 503, code: 'unavailable' });
+    });
   });
 
   it('civitai out of reach, or answering a start oddly, is `unavailable`', async () => {
@@ -744,6 +1011,7 @@ describe('the preview opens by itself once the dev server starts', () => {
       runId: 'run-1',
       conversationId: 'conv-1',
       page: { app: 'my-app' },
+      history: chosenApp('my-app'),
       signal: new AbortController().signal,
     });
     opened.push(tools);

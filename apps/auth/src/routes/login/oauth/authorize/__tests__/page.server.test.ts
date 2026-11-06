@@ -25,6 +25,7 @@ vi.mock('$lib/server/db/db', () => ({
 vi.mock('$lib/server/auth/device', () => ({
   getDeviceId: () => undefined,
   isLinkedAndFresh: vi.fn(),
+  canSwitch: vi.fn(),
   listAccounts: vi.fn(async () => []),
   rollDeviceCookie: vi.fn(),
   touchAccount: vi.fn(),

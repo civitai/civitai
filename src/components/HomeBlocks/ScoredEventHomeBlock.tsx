@@ -5,6 +5,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
+import { useMyTeamHatUrl } from '~/components/Events/ScoredEvent/useMyTeamHatUrl';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import {
   MyHatsLivePoints,
@@ -103,6 +104,8 @@ export function ScoredEventHomeBlock({
   const eventHref = `/events/${event}`;
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
   const hatOf = (t: string) => standings?.teamHats.find((h) => h.team === t)?.url ?? undefined;
+  // Your own panel shows the hat your avatar does; the standings rows keep each team's cap.
+  const myHat = useMyTeamHatUrl(event, team, team && hatOf(team));
 
   const join = async () => {
     try {
@@ -249,14 +252,9 @@ export function ScoredEventHomeBlock({
               {copy.eyebrow}
             </Text>
             {headline}
-            <div className="mt-3 flex items-center gap-2.5">
-              {hatOf(view.team) && (
-                <EdgeMedia
-                  src={hatOf(view.team)!}
-                  width={80}
-                  alt=""
-                  className="w-[34px] drop-shadow-lg"
-                />
+            <div className="mt-3 flex items-center gap-2.5" data-testid="event-home-block-my-team">
+              {myHat && (
+                <EdgeMedia src={myHat} width={80} alt="" className="w-[34px] drop-shadow-lg" />
               )}
               <div>
                 <Text size="10px" fw={700} tt="uppercase" lts={0.5} c="gray.5">
