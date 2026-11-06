@@ -20,13 +20,18 @@ const STATIC_PREFIX = '/_next/static/';
 const STATIC_MAX_ENTRIES = 200;
 
 self.addEventListener('install', (event) => {
-  // A failed or redirected fetch (e.g. a region redirect) fails the install and leaves the previous
-  // worker (or none) in charge, i.e. today's behavior.
+  // Never fails the install: push opt-in waits on this worker becoming ready, so a missing offline
+  // page (network blip, region redirect) only costs the fallback, not push.
   event.waitUntil(
     (async () => {
-      const response = await fetch(OFFLINE_URL, { cache: 'reload' });
-      if (!response.ok || response.redirected) throw new Error(`offline page: ${response.status}`);
-      await (await caches.open(SHELL_CACHE)).put(OFFLINE_URL, response);
+      try {
+        const response = await fetch(OFFLINE_URL, { cache: 'reload' });
+        if (response.ok && !response.redirected) {
+          await (await caches.open(SHELL_CACHE)).put(OFFLINE_URL, response);
+        }
+      } catch {
+        // fall through: no offline page cached
+      }
       await self.skipWaiting();
     })()
   );

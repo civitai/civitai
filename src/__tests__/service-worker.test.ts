@@ -267,18 +267,22 @@ describe('static asset cache', () => {
 });
 
 describe('install and activate', () => {
-  it('a failed offline-page precache fails the install and does not skip waiting', async () => {
-    sandbox.fetch.mockResolvedValue(new Response('nope', { status: 500 }));
+  // DECISION: install must succeed even when the offline page cannot be cached, because push opt-in
+  // waits on this worker becoming ready. Do not "fail closed" here without moving push off it.
+  it.each([
+    ['an HTTP 500', () => sandbox.fetch.mockResolvedValue(new Response('nope', { status: 500 }))],
+    [
+      'a redirected response (region redirect)',
+      () =>
+        sandbox.fetch.mockResolvedValue(basic('<html>blocked</html>', 200, { redirected: true })),
+    ],
+    ['a network failure', () => sandbox.fetch.mockRejectedValue(new TypeError('Failed to fetch'))],
+  ])('install still succeeds and caches nothing on %s', async (_label, arrange) => {
+    arrange();
     const out = await fire('install');
-    await expect(out.settle()).rejects.toThrow(/offline page: 500/);
-    expect(sandbox.self.skipWaiting).not.toHaveBeenCalled();
-  });
-
-  it('a redirected offline page (e.g. a region redirect) fails the install', async () => {
-    sandbox.fetch.mockResolvedValue(basic('<html>blocked</html>', 200, { redirected: true }));
-    const out = await fire('install');
-    await expect(out.settle()).rejects.toThrow(/offline page/);
+    await out.settle();
     expect(sandbox.caches.stores.get('civitai-shell-v1')?.size ?? 0).toBe(0);
+    expect(sandbox.self.skipWaiting).toHaveBeenCalledTimes(1);
   });
 
   it('a good install caches the offline page and takes over without waiting for tabs to close', async () => {
