@@ -24,6 +24,10 @@ stored file's extension. The in-repo S3 links build their header with
 `attachmentContentDisposition` (`src/utils/content-disposition.ts`), an ASCII `filename` plus an
 RFC 5987 `filename*`.
 
+A trained file nobody named still downloads readably: `resolveModelFileName` treats the stored
+blob-id name (`<26-char id>[.<8-char token>].safetensors`, nothing looser) as generic, so a LoRA
+falls back to `<model>_<version>.safetensors` instead of keeping it.
+
 **Not built:** a rename input inside `TrainingSelectFile`'s epoch-publish dialog, so a creator
 names the file one screen later than planned. Also unbuilt: an architecture segment on the
 published name — the pre-publish artifacts get one from `src/shared/utils/training-file-names.ts`,

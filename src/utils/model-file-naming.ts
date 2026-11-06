@@ -43,7 +43,9 @@ function computeFileName({
   // A LoRA keeps the name its creator uploaded — creators encode the base model, the variant or the
   // character there, and `<model>_<version>` cannot carry any of it.
   const keepsUploadedName =
-    model.type === ModelType.LORA || model.type === ModelType.LoCon || modelName.length === 0;
+    ((model.type === ModelType.LORA || model.type === ModelType.LoCon) &&
+      !isTrainerBlobFileName(file.name)) ||
+    modelName.length === 0;
   if (keepsUploadedName) return fileName;
 
   const ext = file.name.split('.').pop();
@@ -106,6 +108,16 @@ const genericNamePatterns = [
   /^\d+$/,
 ];
 
+/**
+ * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID), and since
+ * #6243 the 8-character key token `uniqueAssetKey` adds. Deliberately this exact shape and nothing
+ * looser, so no name a creator typed is ever replaced.
+ */
+const trainerBlobFileName = /^[0-9A-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
+export function isTrainerBlobFileName(fileName: string) {
+  return trainerBlobFileName.test(fileName);
+}
+
 export function isGenericFileName(fileName: string) {
   const dot = fileName.lastIndexOf('.');
   const basename = (dot > 0 ? fileName.slice(0, dot) : fileName)
@@ -125,7 +137,9 @@ function preferredFileName(args: Parameters<typeof computeFileName>[0]) {
   // workflow tool, so both keep the scheme.
   if (model.type === ModelType.TextualInversion || file.type === 'Training Data')
     return computeFileName(args);
-  return isGenericFileName(file.name) ? computeFileName(args) : file.name;
+  return isGenericFileName(file.name) || isTrainerBlobFileName(file.name)
+    ? computeFileName(args)
+    : file.name;
 }
 
 /** Windows and macOS file systems ignore case, so names equal in any case overwrite each other. */

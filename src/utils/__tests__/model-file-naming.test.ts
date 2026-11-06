@@ -439,6 +439,33 @@ describe('resolveModelFileName', () => {
       ).toBe('pytorch_lora_weights.safetensors');
     });
 
+    describe('a trainer publish that was never named', () => {
+      // The stored name is the orchestrator blob id: unreadable, and identical in shape for every
+      // trained LoRA, so the download falls back to `<model>_<version>`.
+      it.each([
+        ['with the key token', 'X40F7C8WA9TN0XW80MTTCT2TT0.aB3dE6gH.safetensors'],
+        ['before the key token existed', jobIdName],
+      ])('gets a readable default %s', (_label, name) => {
+        const file = { id: 1, name, type: 'Model' };
+        expect(
+          resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
+        ).toBe('bbBunny_v1.safetensors');
+      });
+
+      it.each([
+        'AshleyGraves_Krea2_byKonan.safetensors',
+        'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors.bak',
+        'x40f7c8wa9tn0xw80mttct2tt0.safetensors',
+        'X40F7C8WA9TN0XW80MTTCT2TT0_v2.safetensors',
+        'MYCHARACTERLORAFORFLUXDEV1.safetensors.safetensors',
+      ])('keeps a name that only resembles one: %s', (name) => {
+        const file = { id: 1, name, type: 'Model' };
+        expect(
+          resolveModelFileName({ model: lora, modelVersion: version, file, versionFiles: [file] })
+        ).toBe(name);
+      });
+    });
+
     it('separates LoRA files whose names differ only in case', () => {
       const upper = { id: 1, name: 'B.safetensors', type: 'Model', metadata: {} };
       const lower = { id: 2, name: 'b.safetensors', type: 'Model', metadata: {} };
