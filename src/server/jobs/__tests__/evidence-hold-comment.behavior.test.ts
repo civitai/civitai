@@ -31,6 +31,7 @@ const SUBJECT = 106; // the subject of that report
 const SECONDARY_366 = 107; // secondary user on a report sent and archived 366 days ago
 const MARKER = 108; // manual hold marker, no report
 const NOBODY = 109; // no report, no marker
+const UNSENT_ARCHIVED = 110; // report archived but never sent
 const ALL = [
   PENDING,
   UNARCHIVED,
@@ -41,8 +42,10 @@ const ALL = [
   SECONDARY_366,
   MARKER,
   NOBODY,
+  UNSENT_ARCHIVED,
 ];
-const HELD = [PENDING, UNARCHIVED, SENT_364, SECONDARY, SUBJECT, MARKER];
+// Ascending, as the queries return them.
+const HELD = [PENDING, UNARCHIVED, SENT_364, SECONDARY, SUBJECT, MARKER, UNSENT_ARCHIVED];
 const REPORT_HELD = HELD.filter((id) => id !== MARKER);
 
 // The tables the hold migration's triggers attach to, as far as it needs them.
@@ -113,6 +116,7 @@ beforeEach(async () => {
   await db.exec(`
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
       (${PENDING}, NULL, NULL, '{}'),
+      (${UNSENT_ARCHIVED}, NULL, now() - interval '10 days', '{}'),
       (${UNARCHIVED}, now() - interval '400 days', NULL, '{}'),
       (${SENT_364}, now() - interval '364 days', now() - interval '364 days', '{}'),
       (${SENT_366}, now() - interval '366 days', now() - interval '366 days', '{}'),
