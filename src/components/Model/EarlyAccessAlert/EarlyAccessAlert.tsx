@@ -17,11 +17,15 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
-  const { donationGoal } = useQueryModelVersionDonationGoal({
-    modelVersionId: versionId,
-  });
-
   const inEarlyAccess = features.earlyAccessModel && !!deadline && isFutureDate(deadline);
+
+  // Only read below the `!inEarlyAccess` early return, so outside early access the request could
+  // not change what renders. Deliberately NOT gated on `features.donationGoals`: with that flag off
+  // this alert still mentions a goal that can end early access, and gating would drop that line.
+  const { donationGoal } = useQueryModelVersionDonationGoal(
+    { modelVersionId: versionId },
+    { enabled: !!inEarlyAccess }
+  );
 
   const { data: { Notify: notifying = [] } = { Notify: [] } } =
     trpc.user.getEngagedModelVersions.useQuery(

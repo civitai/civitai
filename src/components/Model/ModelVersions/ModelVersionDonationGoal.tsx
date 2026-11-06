@@ -178,10 +178,13 @@ const DonationGoalItem = ({
 };
 
 const ModelVersionDonationGoal = ({ modelVersionId, modelVersion }: Props) => {
-  const { donationGoal, isLoading } = useQueryModelVersionDonationGoal({
-    modelVersionId: modelVersionId,
-  });
   const features = useFeatureFlags();
+  // Gated on the flag, not just hidden by it: with the flag off this component renders nothing
+  // whatever the query returns, so the request would be pure waste on every model page view.
+  const { donationGoal, isLoading } = useQueryModelVersionDonationGoal(
+    { modelVersionId: modelVersionId },
+    { enabled: !!features.donationGoals }
+  );
 
   if (!features.donationGoals) {
     return null;
