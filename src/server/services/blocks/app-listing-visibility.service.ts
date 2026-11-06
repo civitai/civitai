@@ -200,16 +200,7 @@ export async function readListingVisibilityManyForRender(
   }
 }
 
-/**
- * The log event for a visibility read that fell back to its inert answer.
- *
- * TWO CALLERS, TWO RATES. The store list path's missing-column catch fires at most once per
- * catalog cache MISS, which makes the manual-apply window observable.
- * {@link readListingVisibilityManyForRender} logs only real faults (the missing column is
- * swallowed before it), on every grid request that performs the read while the fault lasts.
- * The detail path's missing-column degrade stays deliberately silent: it would emit at
- * page-view rate on a public page.
- */
+/** Log event for a visibility read that fell back to its inert answer. */
 export const VISIBILITY_READ_DEGRADED_EVENT = 'app-listing-visibility-read-degraded';
 
 /**

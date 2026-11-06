@@ -1691,7 +1691,6 @@ describe('the Official flag — card + detail DTOs', () => {
       { kind: 'all', sort: 'newest', limit: 20 },
       { scope: 'full' }
     );
-    // Positive control first: both rows really came back.
     expect(items).toHaveLength(2);
     expect(
       (items as Array<{ id: string; isOfficial?: boolean }>).map((c) => [c.id, c.isOfficial])
@@ -1699,7 +1698,6 @@ describe('the Official flag — card + detail DTOs', () => {
       ['apl_off', true],
       ['apl_plain', false],
     ]);
-    // Asked about exactly this page's listings.
     expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual([
       'apl_off',
       'apl_plain',
@@ -1754,13 +1752,11 @@ describe('the Official flag — card + detail DTOs', () => {
     vi.mocked(readListingOfficialManyForRender).mockClear();
     vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set(['apl_mod_off']));
     const { items } = await listAllListingsForModeration({ limit: 25 });
-    // Positive control first: both rows really came back.
     expect(items).toHaveLength(2);
     expect(items.map((r) => [r.id, r.isOfficial])).toEqual([
       ['apl_mod_off', true],
       ['apl_mod_plain', false],
     ]);
-    // Asked about exactly this page's listings.
     expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual([
       'apl_mod_off',
       'apl_mod_plain',
