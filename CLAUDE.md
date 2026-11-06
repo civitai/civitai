@@ -145,14 +145,13 @@ The GitHub Actions workflows (`.github/workflows/`: `apps`, `lint`, `full-ci`,
 where a change is validated. Do **not** run the whole local mirror
 (`scripts/ci/*.mjs` across the workspace) to "reproduce CI" — this is a large
 monorepo and a workspace-wide run spins the disks and slows every agent and the
-operator's desktop. The heavy-command gate (devrc, both runtimes) HARD-DENIES
-`turbo` task runs and recursive `pnpm`/`npm`/`yarn` (`-r` / `--recursive` /
-`--workspaces`) and names the `remote-run` form.
+operator's desktop. Workspace-wide `turbo` task runs and recursive
+`pnpm`/`npm`/`yarn` (`-r` / `--recursive` / `--workspaces`) are refused by the
+local agent tooling.
 
 **A change-scoped subset is the local loop** — one app's suite
 (`pnpm --filter <app> test`), one `scripts/ci/*.mjs` gate directly, or a single
-package's typecheck. The full workspace is CI's. CI-wait time is recorded
-(`ci-wait-report`, ClickHouse `activity.events` `source=ci`).
+package's typecheck. The full workspace is CI's.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
