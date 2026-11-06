@@ -111,7 +111,7 @@ const genericNamePatterns = [
 /**
  * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID, Crockford
  * alphabet, so no I, L, O or U), optionally followed by the 8-character token `uniqueAssetKey` adds.
- * Deliberately this exact shape and nothing looser, so no name a creator typed is ever replaced.
+ * Keep it exact: a looser match would replace names creators typed.
  */
 const trainerBlobFileName = /^[0-9A-HJKMNP-TV-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
 export function isTrainerBlobFileName(fileName: string) {
@@ -265,10 +265,7 @@ export function resolveModelFileName({
   return headerSafeName(nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index]);
 }
 
-/**
- * Read-time header safety for every returned name; stored and uploaded names were never cleaned.
- * Strips control/format characters; replaces quote, backslash and %XX with _.
- */
+/** Read-time header safety for every returned name; stored and uploaded names were never cleaned. */
 function headerSafeName(fileName: string) {
   return fileName
     .replace(unsafeNameChars, '')
@@ -279,7 +276,7 @@ function headerSafeName(fileName: string) {
 /** UTF-8 bytes, under the 255 most file systems allow, with room for a browser's ` (1)`. */
 export const MAX_OVERRIDE_NAME_BYTES = 200;
 
-// Control and format characters: line breaks, NUL, bidi overrides, zero-width characters.
+// Bidi overrides and zero-width characters spoof a displayed name.
 const unsafeNameChars = /[\p{Cc}\p{Cf}]/gu;
 
 /** The stored name comes from a client too, so an extension that is not plain is not kept. */
