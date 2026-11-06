@@ -312,7 +312,14 @@ describe('a hat is placed with the sticker editor', () => {
 
   test("a corner drag saves a bigger hat, stopping at a sticker's default ceiling", async () => {
     renderPicture('contain', [400, 300]);
-    await drag(CORNER, { x: 5000, y: 5000 });
+    const root = (await editorPart(CORNER)).parentElement!;
+    await measured('contain', [400, 300]);
+    const before = root.getBoundingClientRect().width;
+    // Re-sent until it lands, as above: a press before the layer settles leaves the hat unscaled.
+    await vi.waitFor(async () => {
+      await drag(CORNER, { x: 5000, y: 5000 });
+      expect(root.getBoundingClientRect().width).toBeGreaterThan(before);
+    });
 
     expect((await saved()).scale).toBeCloseTo(HAT_MAX_SCALE, 10);
   });
