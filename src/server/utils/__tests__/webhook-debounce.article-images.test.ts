@@ -3,7 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ArticleService from '~/server/services/article.service';
 
-const updateArticleImageScanStatus = vi.hoisted(() => vi.fn(async () => undefined));
+const updateArticleImageScanStatus = vi.hoisted(() => vi.fn(async (_ids: number[]) => undefined));
 vi.mock('~/server/services/article.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ArticleService>()),
   updateArticleImageScanStatus,

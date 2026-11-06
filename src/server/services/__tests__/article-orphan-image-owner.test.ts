@@ -221,6 +221,7 @@ describe('applyArticleContentChange', () => {
         title: 'A title',
         previousContent: '<p>had images</p>',
         coverId: null,
+        bannerId: null,
         publication: { status: 'Draft' as never, scheduledAt: null },
       },
     });
