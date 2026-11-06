@@ -3,6 +3,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { newBlockIdError } from '~/server/utils/apps-slug';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { compileRemixApp } from '~/shared/remix-apps/compile';
 import type { RemixApp } from '~/shared/remix-apps/define';
@@ -197,6 +198,9 @@ export async function saveRemixApp(input: RemixAppInput) {
       code: 'PRECONDITION_FAILED',
       message: 'The remix apps seed migration has not been applied to this database yet.',
     });
+  // The slug as a store app's blockId would be: the remix- prefix is the one id this allows.
+  const slugError = newBlockIdError(input.slug);
+  if (slugError) throw new TRPCError({ code: 'BAD_REQUEST', message: slugError });
   const blockId = remixBlockId(input.slug);
   const existing = await dbWrite.appBlock.findUnique({
     where: { blockId },

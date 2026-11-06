@@ -94,7 +94,7 @@ const REMIX_MENU_APPS = SEED_REMIX_APPS.map(({ slug, name, description, target, 
   icon: spec.icon,
   enabled: true,
   engine: 'engine' in spec ? spec.engine : DEFAULT_ENGINE,
-  output: 'image',
+  output: 'image' as const,
 }));
 h.seedApps = () => REMIX_MENU_APPS;
 

@@ -332,7 +332,7 @@ import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 
 const NANO_V2_LITE = REMIX_ENGINES.edit.safe.modelVersionId;
 
-const restyleSpec = SEED_REMIX_APPS.find((app) => app.slug === 'restyle')!.spec as {
+const restyleSpec = SEED_REMIX_APPS.find((app) => app.slug === 'restyle')!.spec as unknown as {
   asks: [{ maxLength: number }, { options: { value: string }[] }];
 };
 const RESTYLE_EXTRA_MAX_LENGTH = restyleSpec.asks[0].maxLength;
