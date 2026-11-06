@@ -6,11 +6,13 @@ import {
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
 import { pageRouteLabel } from '~/server/utils/page-routes';
+import { PAGE_ROUTE_REQ_KEY } from '~/shared/constants/page-route.constants';
 import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 
 export const SSR_CPU_METRIC = PROM_PREFIX + 'ssr_cpu_seconds_total';
 
 export type SsrRequestKind = 'html' | 'data' | 'shell';
+export type SsrCpuPhase = 'data' | 'render';
 
 function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
   return registerInstrumentationMetric(
@@ -19,9 +21,11 @@ function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
       new client.Counter({
         name: SSR_CPU_METRIC,
         help:
-          'Main-thread CPU seconds (user + system) spent rendering a page (phase=render: ' +
-          '_document.getInitialProps, which runs renderPage), by page route; kind is data for a ' +
-          '/_next/data request answered with a rendered page and shell for a static shell render. ' +
+          'Main-thread CPU seconds (user + system) spent serving a page, by page route and phase: ' +
+          'phase=data is getServerSideProps (session, flags, the resolver and its prefetches, ' +
+          'dehydrating the state), phase=render is _document.getInitialProps (renderPage); the two ' +
+          'never overlap. kind is data for a /_next/data request and shell for a static shell ' +
+          'render. ' +
           'Excludes V8 worker, libuv pool and ' +
           'Prisma engine threads; under concurrency a measurement also includes CPU of other ' +
           'requests interleaved on the event loop',
@@ -36,6 +40,8 @@ type RequestLike = {
   headers: Record<string, string | string[] | undefined>;
   [SHELL_REQ_KEY]?: string;
 };
+
+type PageRequestLike = RequestLike & { [PAGE_ROUTE_REQ_KEY]?: string };
 
 /**
  * A page without getServerSideProps still renders a full document for a `/_next/data` request.
@@ -74,7 +80,34 @@ export async function measureRenderCpu<T>(
   try {
     return await render();
   } finally {
-    if (start) recordRenderCpu(route, kind, start);
+    if (start) recordCpu(route, 'render', kind, start);
+  }
+}
+
+/**
+ * Adds the main thread's CPU across a page's getServerSideProps (`run`) under phase="data", the
+ * work before the render that `measureRenderCpu` covers: Next calls getServerSideProps and only then
+ * renders, so the two phases never overlap. Recorded on a throw, a redirect and a notFound too.
+ *
+ * The route is the pattern `_app` left on the request (`PAGE_ROUTE_REQ_KEY`); without one it
+ * labels `none`. The kind is read after `run`, from the marks `_app` set before it. Same limits as
+ * `measureRenderCpu`: main thread only, and interleaved requests' CPU lands in the interval.
+ */
+export async function measureDataCpu<T>(req: PageRequestLike, run: () => Promise<T>): Promise<T> {
+  if (typeof window !== 'undefined') return run();
+  const start = cpuNow();
+  try {
+    return await run();
+  } finally {
+    if (start) recordRequestCpu(req, start);
+  }
+}
+
+function recordRequestCpu(req: PageRequestLike, start: NodeJS.CpuUsage) {
+  try {
+    recordCpu(req[PAGE_ROUTE_REQ_KEY], 'data', ssrRequestKind(req), start);
+  } catch {
+    // Losing one sample is fine.
   }
 }
 
@@ -87,13 +120,15 @@ function cpuNow(): NodeJS.CpuUsage | undefined {
   }
 }
 
-function recordRenderCpu(route: string, kind: SsrRequestKind, start: NodeJS.CpuUsage) {
+function recordCpu(
+  route: string | undefined,
+  phase: SsrCpuPhase,
+  kind: SsrRequestKind,
+  start: NodeJS.CpuUsage
+) {
   try {
     const { user, system } = process.threadCpuUsage(start);
-    cpuSecondsCounter().inc(
-      { route: pageRouteLabel(route), phase: 'render', kind },
-      (user + system) / 1e6
-    );
+    cpuSecondsCounter().inc({ route: pageRouteLabel(route), phase, kind }, (user + system) / 1e6);
   } catch {
     // Losing one sample is fine.
   }

@@ -34,6 +34,7 @@ import {
 } from '~/server/shell/shell-response';
 import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import { measureDataCpu } from '~/server/prom/ssr-cpu.metrics';
 import {
   BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
   BOT_CACHE_REQ_KEY,
@@ -178,7 +179,7 @@ export function createServerSideProps<P>({
   requireModerator = false,
   shell,
 }: CreateServerSidePropsProps<P>) {
-  return async function (
+  async function load(
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
     // A static shell render (`_app` decided it and marked the request): nothing per viewer is read
@@ -303,7 +304,12 @@ export function createServerSideProps<P>({
     } as NonNullable<P>;
     attachSsrDehydratedState(pageProps, capture);
     return { props: pageProps };
-  };
+  }
+
+  // The whole of it is the page's data phase, measured at this one site so every page is covered:
+  // the shell answer, the redirects, the resolver and its prefetches, and dehydrating the state.
+  return (context: GetServerSidePropsContext) =>
+    measureDataCpu(context.req as Parameters<typeof measureDataCpu>[0], () => load(context));
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   SHELL_RENDERED_REQ_KEY,
   SHELL_REQ_KEY,
 } from '~/shared/constants/shell.constants';
+import { PAGE_ROUTE_REQ_KEY } from '~/shared/constants/page-route.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
 import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache';
@@ -491,6 +492,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const { req: request } = appContext.ctx;
   if (!request) return initialProps;
   // Everything below this point is only serverside
+
+  // The page's route pattern, for its getServerSideProps (which Next runs after this) to label the
+  // data phase's CPU by. Assigned on every run, as the marks below are.
+  (request as typeof request & { [PAGE_ROUTE_REQ_KEY]?: string })[PAGE_ROUTE_REQ_KEY] =
+    appContext.ctx.pathname;
 
   // const url = appContext.ctx?.req?.url;
 
