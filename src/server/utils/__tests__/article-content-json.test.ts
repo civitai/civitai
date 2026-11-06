@@ -60,4 +60,12 @@ describe('articleContentJson text-style marks', () => {
     );
     expect(attrs.map((a) => a.fontSize)).toEqual([null, '12px']);
   });
+
+  it('drops class from link marks and keeps the href', () => {
+    const doc = articleContentJson(
+      '<p><a href="https://civitai.com/x" class="a b">x</a></p>'
+    ) as Doc;
+    const [link] = (doc.content?.[0].content?.[0].marks ?? []).filter((m) => m.type === 'link');
+    expect(link.attrs).toMatchObject({ href: 'https://civitai.com/x', class: null });
+  });
 });

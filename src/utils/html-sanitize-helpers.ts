@@ -323,10 +323,12 @@ type TiptapJSON = {
 
 /**
  * Applies SPAN_ALLOWED_STYLES to the textStyle marks of a Tiptap JSON doc, in place: an attribute
- * whose value a span style would not keep is cleared. For docs parsed from stored HTML.
+ * whose value a span style would not keep is cleared. Link marks drop `class`, matching what the
+ * save sanitizer keeps on `a`. For docs parsed from stored HTML.
  */
 export function boundTextStyleMarks<T extends TiptapJSON>(node: T): T {
   for (const mark of node.marks ?? []) {
+    if (mark.type === 'link' && mark.attrs) mark.attrs.class = null;
     if (mark.type !== 'textStyle' || !mark.attrs) continue;
     for (const [attr, property] of Object.entries(TEXT_STYLE_ATTR_PROPERTIES)) {
       const value = mark.attrs[attr];
