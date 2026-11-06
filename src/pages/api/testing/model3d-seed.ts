@@ -43,13 +43,10 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
 import { createImage } from '~/server/services/image.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { publishModel3D, upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
+import { normalizeModel3DFormat } from '~/shared/orchestrator/model3d-output';
 
 const fileSchema = z.object({
-  format: z
-    .string()
-    .min(1)
-    .max(16)
-    .transform((s) => s.toLowerCase().replace(/^\./, '')),
+  format: z.string().min(1).max(16).transform(normalizeModel3DFormat),
   url: z.string().url(),
   sizeKB: z.number().positive(),
   name: z.string().optional(),
