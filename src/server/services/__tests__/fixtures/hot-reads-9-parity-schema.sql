@@ -90,7 +90,8 @@ CREATE TABLE "hot_reads_9_parity"."UserProfile" (
   "nsfw"                    BOOLEAN      NOT NULL DEFAULT false,
   "privacySettings"         JSONB        NOT NULL DEFAULT '{"showFollowerCount":true}',
   "profileSectionsSettings" JSONB        NOT NULL DEFAULT '[]',
-  "showcaseItems"           JSONB        NOT NULL DEFAULT '[]'
+  "showcaseItems"           JSONB        NOT NULL DEFAULT '[]',
+  "showcaseSections"        JSONB        NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE "hot_reads_9_parity"."UserLink" (

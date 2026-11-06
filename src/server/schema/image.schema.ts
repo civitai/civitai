@@ -511,7 +511,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
     generation: z.enum(ImageGenerationProcess).array().optional(),
-    ids: z.array(z.number()).optional(),
+    // Raw SQL serves ids queries, so keep it bounded; sticker-book sends up to 200.
+    ids: z.array(z.number()).max(200).optional(),
     imageId: z.number().optional(),
     include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),

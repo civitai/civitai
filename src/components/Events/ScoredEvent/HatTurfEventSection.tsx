@@ -13,6 +13,7 @@ import {
 import styles from '~/components/Events/ScoredEvent/HatTurfEventSection.module.scss';
 import HatTurfVideoModal from '~/components/Events/ScoredEvent/HatTurfVideoModal';
 import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
+import { HatTurfSectionStats } from '~/components/Events/ScoredEvent/HatTurfSectionStats';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { useJoin, useTurfGate } from '~/components/HatTurf/useHatTurf';
 
@@ -129,6 +130,14 @@ export function HatTurfEventSection({
             </UnstyledButton>
           )}
         </div>
+        {joined && (
+          <HatTurfSectionStats
+            perHour={stock.perHour}
+            cap={stock.cap}
+            creditedPlayers={stock.creditedPlayers}
+            multiplier={stock.multiplier}
+          />
+        )}
       </div>
     </div>
   );

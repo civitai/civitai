@@ -235,7 +235,7 @@ Group 2 (UserLink cleanup) is **not a new endpoint** — fold into the existing 
 
 | Action | Privileged | Bulk? | Input |
 |---|---|---|---|
-| `clearProfile` | no | no | `{ userId, fields?: ('location'\|'bio'\|'message')[] }` defaults all |
+| `clearProfile` | no | no | `{ userId, fields?: ('location'\|'bio'\|'message'\|'showcaseSections')[] }` defaults all |
 | `mute` | no | no | `{ userId, until?: ISO, reason? }` — call existing mod-actions service |
 | `unmute` | no | no | `{ userId }` |
 | `updateIdentity` | **yes** | no | `{ userId, username?, email?, name? }` — enforce uniqueness in service, send change notification |

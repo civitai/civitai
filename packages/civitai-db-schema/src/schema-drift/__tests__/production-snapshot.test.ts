@@ -273,6 +273,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `StorylineReport.heldStorylineId` / `.storylineTitle`: `20261222120000_held_storyline`
     //   `app_listings.is_official`: `20261224120200_app_listing_official`
     //   `ServiceDealFile.attestedAt`: `20261224150100_service_deal_file_attachment`
+    //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
@@ -307,6 +308,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'StorylineReport.heldStorylineId',
       'StorylineReport.storylineTitle',
       'app_listings.is_official',
+      'UserProfile.showcaseSections',
       'Placement.track',
       'ServiceDealFile.attestedAt',
     ]);
