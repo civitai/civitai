@@ -237,15 +237,15 @@ describe('deriveCollectionMajors', () => {
     expect(cards).toEqual({ declared: true, majors: [undefined, SEED], migrations: [null, []] });
     expect(collectionSchemaDocuments('pixel-garden', d)).toEqual([
       {
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
         body: {
           $schema: DIALECT,
-          $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+          $id: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
           deprecated: true,
         },
       },
       {
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v2',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v2',
         body: {
           type: 'object',
           properties: {
@@ -253,8 +253,11 @@ describe('deriveCollectionMajors', () => {
             stars: { type: 'integer', maximum: 10 },
           },
           $schema: DIALECT,
-          $id: 'urn:schema:app-blocks:pixel-garden/cards@v2',
-          'x-migrateFrom': { schema: 'urn:schema:app-blocks:pixel-garden/cards@v1', steps: [] },
+          $id: 'urn:schema:apps.civitai.com:pixel-garden/cards@v2',
+          'x-migrateFrom': {
+            schema: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
+            steps: [],
+          },
         },
       },
     ]);
@@ -299,7 +302,7 @@ describe('deriveCollectionMajors', () => {
     ]);
     expect(cards?.declared).toBe(false);
     expect(collectionSchemaDocuments('pixel-garden', d).map((x) => x.urn)).toEqual([
-      'urn:schema:app-blocks:pixel-garden/notes@v1',
+      'urn:schema:apps.civitai.com:pixel-garden/notes@v1',
     ]);
   });
 
@@ -326,7 +329,7 @@ describe('deriveCollectionMajors', () => {
 });
 
 describe('x-migrateFrom on a new major', () => {
-  const V = (n: number) => `urn:schema:app-blocks:pixel-garden/cards@v${n}`;
+  const V = (n: number) => `urn:schema:apps.civitai.com:pixel-garden/cards@v${n}`;
   const docOf = (steps: ManifestStep[], major: number) =>
     collectionSchemaDocuments('pixel-garden', deriveCollectionMajors(steps)).find(
       (d) => d.urn === V(major)
@@ -419,23 +422,23 @@ describe('synthesizeCollectionSchema', () => {
   it('is the declared schema with $schema and $id = the URN', () => {
     expect(
       synthesizeCollectionSchema({
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
         declared: { type: 'object', properties: { title: { type: 'string' } } },
       })
     ).toEqual({
       type: 'object',
       properties: { title: { type: 'string' } },
       $schema: DIALECT,
-      $id: 'urn:schema:app-blocks:pixel-garden/cards@v1',
+      $id: 'urn:schema:apps.civitai.com:pixel-garden/cards@v1',
     });
   });
 
   it('a declared $id never replaces the URN', () => {
     expect(
       synthesizeCollectionSchema({
-        urn: 'urn:schema:app-blocks:pixel-garden/cards@v4',
+        urn: 'urn:schema:apps.civitai.com:pixel-garden/cards@v4',
         declared: { $id: 'https://elsewhere.example/schema-q2' },
       }).$id
-    ).toBe('urn:schema:app-blocks:pixel-garden/cards@v4');
+    ).toBe('urn:schema:apps.civitai.com:pixel-garden/cards@v4');
   });
 });

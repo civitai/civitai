@@ -136,7 +136,8 @@ const MINTED = [
 const HEAD_V1 = { notes: notes(100, { registry: 'public' }) };
 const HEAD_MINTED = { notes: notes(200, { registry: 'public' }), drafts: notes(50) };
 
-const V = (slug: string, coll: string, n: number) => `urn:schema:app-blocks:${slug}/${coll}@v${n}`;
+const V = (slug: string, coll: string, n: number) =>
+  `urn:schema:apps.civitai.com:${slug}/${coll}@v${n}`;
 const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
 
 /** The adapter as `main.ts` composes it, over a catalog and document set the test edits. */
@@ -160,7 +161,7 @@ function source(world: { apps: CatalogApp[] }, features = SWITCH_ON) {
   };
   const readApps = async () => world.apps;
   const entities = createPollingAdapter({
-    namespace: 'app-blocks',
+    namespace: 'apps.civitai.com',
     serves: SERVED_SCHEMAS,
     read: async () =>
       buildEntities(await readApps(), { baseUrl: 'https://civitai.example', features }),
@@ -181,8 +182,11 @@ function source(world: { apps: CatalogApp[] }, features = SWITCH_ON) {
 describe('end first only for a schema this source can never serve (rule 4: end means never)', () => {
   it.each([
     ['another namespace', 'urn:schema:elsewhere.example:model@v1'],
-    ['a collection URN this namespace never issues', 'urn:schema:app-blocks:Orbit Notes/notes@v1'],
-    ['a collection URN without a major', 'urn:schema:app-blocks:orbit-notes/notes'],
+    [
+      'a collection URN this namespace never issues',
+      'urn:schema:apps.civitai.com:Orbit Notes/notes@v1',
+    ],
+    ['a collection URN without a major', 'urn:schema:apps.civitai.com:orbit-notes/notes'],
   ])('%s: end, and no cursor state read or written', async (_name, schema) => {
     const { adapter, store } = source({ apps: [app(MINTED, HEAD_MINTED)] });
     const res = await subscribe(adapter, q(schema));
@@ -231,7 +235,7 @@ describe('🔴 a collection major it may publish later streams empty and writes 
         t.includes('event: upsert')
       );
       expect(events(res.text)).toEqual(['live', 'upsert']);
-      expect(res.text).toContain('urn:app-blocks:orbit-notes/notes/n1');
+      expect(res.text).toContain('urn:apps.civitai.com:orbit-notes/notes/n1');
     } finally {
       clearTimeout(mint);
     }
@@ -239,19 +243,19 @@ describe('🔴 a collection major it may publish later streams empty and writes 
 });
 
 describe('🔴 a cursor is tied to the request that issued it: schema, urns and filter (rule 2)', () => {
-  const ALPHA = 'urn:app-blocks:app/alpha';
-  const BETA = 'urn:app-blocks:app/beta';
-  const APPS = 'urn:schema:app-blocks:app@v1';
-  const RELEASES = 'urn:schema:app-blocks:app-release@v1';
+  const ALPHA = 'urn:apps.civitai.com:app/alpha';
+  const BETA = 'urn:apps.civitai.com:app/beta';
+  const APPS = 'urn:schema:apps.civitai.com:app@v1';
+  const RELEASES = 'urn:schema:apps.civitai.com:app-release@v1';
   const ent = (slug: string, rev: string): Entity => ({
-    urn: `urn:app-blocks:app/${slug}`,
+    urn: `urn:apps.civitai.com:app/${slug}`,
     schemas: [APPS],
     rev,
     body: { slug, kind: 'onsite' },
   });
   const catalog = () =>
     createPollingAdapter({
-      namespace: 'app-blocks',
+      namespace: 'apps.civitai.com',
       serves: [APPS, RELEASES],
       read: async () =>
         new Map([
@@ -311,9 +315,9 @@ describe('🔴 a cursor is tied to the request that issued it: schema, urns and 
 });
 
 describe('🔴 progress after changes the filter excluded (rule 9)', () => {
-  const APPS = 'urn:schema:app-blocks:app@v1';
+  const APPS = 'urn:schema:apps.civitai.com:app@v1';
   const ent = (slug: string, rev: string, kind: string): Entity => ({
-    urn: `urn:app-blocks:app/${slug}`,
+    urn: `urn:apps.civitai.com:app/${slug}`,
     schemas: [APPS],
     rev,
     body: { slug, kind },
@@ -322,7 +326,7 @@ describe('🔴 progress after changes the filter excluded (rule 9)', () => {
   const catalog = (states: Entity[][], store = createMemorySnapshotStore()) => {
     let reads = 0;
     return createPollingAdapter({
-      namespace: 'app-blocks',
+      namespace: 'apps.civitai.com',
       serves: [APPS],
       read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
       store,
@@ -340,7 +344,7 @@ describe('🔴 progress after changes the filter excluded (rule 9)', () => {
     const res = await subscribe(a, q(APPS, ONSITE), after(3));
     expect(events(res.text)).toEqual(['upsert', 'live', 'progress']);
     expect(cursorOf(res.text, 'progress')).not.toBe(liveCursor(res.text));
-    expect(res.text).not.toContain('urn:app-blocks:app/beta');
+    expect(res.text).not.toContain('urn:apps.civitai.com:app/beta');
   });
 
   it('positive control: one the consumer holds that stops matching is a delete (rule 6)', async () => {
@@ -360,9 +364,9 @@ describe('🔴 progress after changes the filter excluded (rule 9)', () => {
 });
 
 describe('🔴 progress (rule 9)', () => {
-  const APPS = 'urn:schema:app-blocks:app@v1';
+  const APPS = 'urn:schema:apps.civitai.com:app@v1';
   const ent = (slug: string, rev: string): Entity => ({
-    urn: `urn:app-blocks:app/${slug}`,
+    urn: `urn:apps.civitai.com:app/${slug}`,
     schemas: [APPS],
     rev,
     body: { slug },
@@ -376,20 +380,20 @@ describe('🔴 progress (rule 9)', () => {
       [ent('alpha', 'r1'), ent('beta', 'r2')],
     ];
     const a = createPollingAdapter({
-      namespace: 'app-blocks',
+      namespace: 'apps.civitai.com',
       serves: [APPS],
       read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
       store,
       pollMs: 5,
       sleep: abortableSleep,
     });
-    const only = urnParam('urn:app-blocks:app/alpha');
+    const only = urnParam('urn:apps.civitai.com:app/alpha');
     const res = await subscribe(a, q(APPS, only), (t) => t.includes('event: progress'));
     expect(events(res.text)).toEqual(['upsert', 'live', 'progress']);
     const progress = cursorOf(res.text, 'progress');
     expect(progress).not.toBe(liveCursor(res.text));
     // `beta` never reached this stream, and the cursor still names a saved state.
-    expect(res.text).not.toContain('urn:app-blocks:app/beta');
+    expect(res.text).not.toContain('urn:apps.civitai.com:app/beta');
     const resumed = await subscribe(a, q(APPS, only + cursorParam(progress)), (t) =>
       t.includes('event: live')
     );

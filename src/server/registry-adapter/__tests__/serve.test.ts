@@ -7,9 +7,9 @@ import { FILTER_MAX_BYTES, usesRegex } from '~/server/registry-adapter/json-sche
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
-const APPS = 'urn:schema:app-blocks:app@v1';
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
 const one: Entity = {
-  urn: 'urn:app-blocks:app/orbit-notes',
+  urn: 'urn:apps.civitai.com:app/orbit-notes',
   schemas: [APPS],
   rev: 'rev-7a',
   body: { slug: 'orbit-notes' },
@@ -18,11 +18,12 @@ const one: Entity = {
 /** A source whose change feed has one delete and then ends, so every stream closes. */
 function adapter(over: Partial<Adapter> = {}): Adapter {
   return {
-    namespace: 'app-blocks',
+    namespace: 'apps.civitai.com',
     serves: (schema) => schema === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [one] }),
-    changes: async () => feed({ delete: 'urn:app-blocks:app/tide-log', cursor: 'c1.after-delete' }),
+    changes: async () =>
+      feed({ delete: 'urn:apps.civitai.com:app/tide-log', cursor: 'c1.after-delete' }),
     ...over,
   };
 }
@@ -73,7 +74,7 @@ describe('the HTTP/SSE binding', () => {
         `data: ${JSON.stringify({ entity: one, cursor: '' })}\n\n` +
         'event: live\nid: c1.snapshot-cursor\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
         'event: delete\nid: c1.after-delete\n' +
-        'data: {"urn":"urn:app-blocks:app/tide-log","cursor":"c1.after-delete"}\n\n' +
+        'data: {"urn":"urn:apps.civitai.com:app/tide-log","cursor":"c1.after-delete"}\n\n' +
         'event: end\ndata: {}\n\n'
     );
   });
@@ -98,7 +99,7 @@ describe('the HTTP/SSE binding', () => {
   it('a urn filter drops other entities', async () => {
     const res = await get(
       adapter(),
-      sub(APPS, `&urn=${encodeURIComponent('urn:app-blocks:app/other')}`)
+      sub(APPS, `&urn=${encodeURIComponent('urn:apps.civitai.com:app/other')}`)
     );
     expect(res.text).toBe(
       'event: live\nid: c1.snapshot-cursor\ndata: {"cursor":"c1.snapshot-cursor"}\n\n' +
@@ -312,7 +313,7 @@ describe('a request filter', () => {
     );
     expect(res.text).toContain(
       'event: delete\nid: c1.after-rename\n' +
-        'data: {"urn":"urn:app-blocks:app/orbit-notes","cursor":"c1.after-rename"}'
+        'data: {"urn":"urn:apps.civitai.com:app/orbit-notes","cursor":"c1.after-rename"}'
     );
     expect(res.text).not.toContain('renamed-orbit');
   });

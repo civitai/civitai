@@ -20,12 +20,12 @@ import {
  * which tells a consumer it is complete.
  */
 
-const APPS = 'urn:schema:app-blocks:app@v1';
-const NOTES = 'urn:schema:app-blocks:orbit-notes/notes@v1';
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
+const NOTES = 'urn:schema:apps.civitai.com:orbit-notes/notes@v1';
 const LIVE = 'event: live';
 
 const app = (slug: string, rev: string): Entity => ({
-  urn: `urn:app-blocks:app/${slug}`,
+  urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
   body: { slug },
@@ -88,7 +88,7 @@ const sub = (schema: string, cursor: string) =>
 function catalog(store: ReturnType<typeof createMemorySnapshotStore>, states: Entity[][]) {
   let reads = 0;
   return createPollingAdapter({
-    namespace: 'app-blocks',
+    namespace: 'apps.civitai.com',
     serves: [APPS],
     read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
     store,
@@ -225,6 +225,6 @@ describe('🔴 a resume checks the cursor before live: the document streams', ()
     expect(
       res.text.startsWith(`${LIVE}\nid: ${live}\ndata: ${JSON.stringify({ cursor: live })}\n\n`)
     ).toBe(true);
-    expect(res.text).toContain('urn:app-blocks:orbit-notes/notes/n2');
+    expect(res.text).toContain('urn:apps.civitai.com:orbit-notes/notes/n2');
   });
 });

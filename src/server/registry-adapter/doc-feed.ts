@@ -1,6 +1,6 @@
 /**
  * The shared-document feed: one stream per collection major
- * (`urn:schema:app-blocks:<slug>/<coll>@vN`), carrying every visible shared document of that
+ * (`urn:schema:apps.civitai.com:<slug>/<coll>@vN`), carrying every visible shared document of that
  * collection that satisfies the major. Each document claims every major of its collection it
  * satisfies, so a mint brings unchanged documents into the new major's stream.
  *

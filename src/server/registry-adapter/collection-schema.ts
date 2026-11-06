@@ -3,10 +3,13 @@
  * (app, collection, major), and the majors themselves, recomputed from the approved manifest
  * history on every read so the adapter keeps no state for them.
  *
- * The rule for a major is the registry's (spec/registry.md @ 0711244, "Schemas": a major changes
- * only additively, by annotations and new optional properties). It is wider than the store's own
- * "breaking" (narrowings only), so it mints on every store-breaking change and on widenings the
- * store accepts in place.
+ * The rule for a major is the spec's, read literally (spec/registry.md @ 4166f34, "Schemas": "A
+ * major version changes only additively: annotations and new optional properties. Any other
+ * change is a new major"). So a major keeps a new optional property and any annotation (at any
+ * depth); everything else mints, a widening included (an added `enum` value, a relaxed bound, a
+ * dropped `required`), since the spec names only those two kinds as additive. That is wider than
+ * the store's own "breaking" (narrowings only): it mints on every store-breaking change, and on
+ * the widenings the store accepts in place.
  *
  * A schema, once published, changes only by what its own major allows. A mint adds the new major
  * (with `x-migrateFrom`) and changes an older one only by the 2020-12 annotation

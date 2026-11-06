@@ -16,11 +16,11 @@ import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-
 
 /** The gRPC binding, through a real `@grpc/grpc-js` client. */
 
-const APPS = 'urn:schema:app-blocks:app@v1';
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
 // A body with every JSON kind, nested: what `google.protobuf.Value` must carry unchanged.
 const BODY = { slug: 'alpha', stars: 4.5, listed: true, retired: null, tags: ['a', 1, { q: [] }] };
 const ent = (slug: string, rev: string, body: unknown = { slug }): Entity => ({
-  urn: `urn:app-blocks:app/${slug}`,
+  urn: `urn:apps.civitai.com:app/${slug}`,
   schemas: [APPS],
   rev,
   body,
@@ -109,7 +109,7 @@ async function viaHttp(a: Adapter, query: string): Promise<StreamEvent[]> {
 function catalog(states: Entity[][], store = createMemorySnapshotStore()) {
   let reads = 0;
   return createPollingAdapter({
-    namespace: 'app-blocks',
+    namespace: 'apps.civitai.com',
     serves: [APPS],
     read: async () => new Map([[APPS, states[Math.min(reads++, states.length - 1)]]]),
     store,
@@ -127,7 +127,7 @@ describe('the gRPC binding', () => {
     expect(error).toBeUndefined();
     expect(kinds(events)).toEqual(['upsert', 'live', 'upsert']);
     expect(events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1', BODY), cursor: '' });
-    expect((events[2] as { entity: Entity }).entity.urn).toBe('urn:app-blocks:app/beta');
+    expect((events[2] as { entity: Entity }).entity.urn).toBe('urn:apps.civitai.com:app/beta');
   });
 
   it('🔴 resumes from a cursor it issued: live with that cursor, then only what changed', async () => {
@@ -213,7 +213,7 @@ describe('🔴 HTTP and gRPC serve one core', () => {
   // change of another URN that only moves the cursor: every path through the core.
   const snapshot = [ent('alpha', 'r1', { kind: 'onsite' }), ent('beta', 'r1', { kind: 'offsite' })];
   const adapter = (): Adapter => ({
-    namespace: 'app-blocks',
+    namespace: 'apps.civitai.com',
     serves: (s) => s === APPS,
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'c1.snap', entities: snapshot }),
@@ -224,7 +224,7 @@ describe('🔴 HTTP and gRPC serve one core', () => {
       })(),
   });
   const FILTER = '{"properties":{"kind":{"const":"onsite"}}}';
-  const URNS = ['urn:app-blocks:app/alpha', 'urn:app-blocks:app/beta'];
+  const URNS = ['urn:apps.civitai.com:app/alpha', 'urn:apps.civitai.com:app/beta'];
 
   it('the same request gets the same events, cursors included', async () => {
     const http = await viaHttp(

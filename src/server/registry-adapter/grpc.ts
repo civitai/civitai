@@ -1,5 +1,5 @@
 /**
- * The gRPC binding of the source protocol (spec/registry.md @ 0711244, "Bindings" → "gRPC"):
+ * The gRPC binding of the source protocol (spec/registry.md @ 4166f34, "Bindings" → "gRPC"):
  * `service Source { rpc Subscribe(SubscribeRequest) returns (stream Event); }`, with the spec's
  * messages verbatim ({@link SOURCE_PROTO}). The subscription itself is the shared core
  * (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
