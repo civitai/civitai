@@ -10,6 +10,12 @@ const h = vi.hoisted(() => ({
   seedApps: (): Record<string, unknown>[] => [],
   startRemix: vi.fn(() => Promise.resolve()),
   openModal: vi.fn(),
+  openPicker: vi.fn(),
+  /** The viewer's saved settings; `remixApps.pinned` is what the menu reads. */
+  settings: undefined as undefined | { remixApps?: { pinned: string[] } },
+  saveSettings: vi.fn(),
+  /** The viewer's remix workflows, newest first: where recents come from. */
+  workflows: [] as { tags: string[] }[],
   flags: { remixApps: true, isGreen: false } as Record<string, boolean>,
   user: { id: 9, showNsfw: true } as { id: number; showNsfw: boolean } | null,
   quoteEnabled: [] as boolean[],
@@ -43,7 +49,19 @@ vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (importOrigi
   useOptionalCivitaiSessionContext: () =>
     h.user ? { type: 'authed', ...h.user } : { type: 'unauthed' },
 }));
-vi.mock('~/components/Dialog/triggers/remix-app', () => ({ openRemixAppModal: h.openModal }));
+vi.mock('~/components/Dialog/triggers/remix-app', () => ({
+  openRemixAppModal: h.openModal,
+  openRemixAppPicker: h.openPicker,
+}));
+vi.mock('~/components/UserSettings/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useCurrentUserSettingsState: () => ({ settings: h.settings, isResolved: true }),
+  useMutateUserSettings: () => ({ mutate: h.saveSettings }),
+}));
+vi.mock('~/components/Image/Remix/useRemixRuns', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useRemixWorkflows: () => ({ data: h.workflows }),
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   const original = await importOriginal<{ trpc: { orchestrator: unknown } }>();
@@ -84,6 +102,7 @@ import { RemixMenu } from '~/components/Image/Remix/RemixMenu';
 import type { RemixSourceImage } from '~/components/Image/Remix/remix.utils';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
+import { REMIX_MENU_ROWS } from '~/shared/remix-apps/menu';
 
 /** The seed as `remixApp.list` returns it before any row exists. */
 const REMIX_MENU_APPS = SEED_REMIX_APPS.map(({ slug, name, description, target, spec }) => ({
@@ -123,6 +142,8 @@ beforeEach(() => {
   h.quoteEnabled = [];
   h.quote = null;
   h.apps = null;
+  h.settings = undefined;
+  h.workflows = [];
 });
 
 describe('Remix apps in the Remix menu', () => {
@@ -135,8 +156,10 @@ describe('Remix apps in the Remix menu', () => {
     expect(h.startRemix).not.toHaveBeenCalled();
     await expect.element(page.getByText('Remix apps')).toBeVisible();
     expect(h.quoteEnabled.at(-1)).toBe(true);
-    for (const app of REMIX_MENU_APPS)
+    for (const app of REMIX_MENU_APPS.slice(0, REMIX_MENU_ROWS))
       await expect.element(page.getByRole('menuitem', { name: app.name })).toBeVisible();
+    if (REMIX_MENU_APPS.length > REMIX_MENU_ROWS)
+      await expect.element(page.getByRole('menuitem', { name: 'See more' })).toBeVisible();
   });
 
   test('lists neither a disabled app nor one for videos', async () => {
@@ -258,6 +281,62 @@ describe('Remix apps in the Remix menu', () => {
       await expect.element(item()).toBeEnabled();
       tap();
       expect(h.openModal).toHaveBeenCalledTimes(1);
+    });
+  });
+  describe('pinned, then recent, then the rest', () => {
+    const many = ['one', 'two', 'three', 'four', 'five', 'six', 'seven'].map((name) => ({
+      ...firstApp,
+      slug: `app-${name}`,
+      name: `App ${name}`,
+    }));
+    const names = async () =>
+      (await page.getByRole('menuitem').all())
+        .map((item) => item.element().textContent ?? '')
+        .filter((text) => text.startsWith('App '))
+        .map((text) => text.replace(/\d+\s*BUZZ$/, '').trim());
+
+    beforeEach(() => {
+      h.apps = many;
+      h.quote = {
+        isLoading: false,
+        prices: many.map((app) => ({ slug: app.slug, cost: 25, ready: true })),
+      };
+    });
+
+    test('shows pins first, tops up with recents, and offers the rest under See more', async () => {
+      h.settings = { remixApps: { pinned: ['app-six', 'gone-app'] } };
+      h.workflows = [{ tags: ['remix-app', 'remix-app:app-four'] }];
+      renderMenu(video);
+      await page.getByRole('button', { name: 'Remix' }).click();
+      await expect.element(page.getByRole('menuitem', { name: 'See more' })).toBeVisible();
+
+      expect(await names()).toEqual(['App six', 'App four', 'App one', 'App two', 'App three']);
+
+      await page.getByRole('menuitem', { name: 'See more' }).click();
+      expect(h.openPicker).toHaveBeenCalledTimes(1);
+      // The picker gets every app this viewer can run here, not just the five shown.
+      expect(h.openPicker.mock.calls[0][0]).toMatchObject({ apps: many, imageId: video.id });
+    });
+
+    test('no See more while every app fits', async () => {
+      h.apps = many.slice(0, 5);
+      renderMenu(video);
+      await page.getByRole('button', { name: 'Remix' }).click();
+      await expect.element(page.getByRole('menuitem', { name: 'App five' })).toBeVisible();
+      await expect
+        .element(page.getByRole('menuitem', { name: 'See more' }))
+        .not.toBeInTheDocument();
+    });
+
+    test('the pin icon unpins an app without opening it, and saves the rest', async () => {
+      h.settings = { remixApps: { pinned: ['app-six', 'app-two'] } };
+      renderMenu(video);
+      await page.getByRole('button', { name: 'Remix' }).click();
+      await page.getByRole('menuitem', { name: 'App six' }).getByTitle('Unpin').click();
+
+      expect(h.openModal).not.toHaveBeenCalled();
+      await expect.poll(() => h.saveSettings.mock.calls.length, { timeout: 3000 }).toBe(1);
+      expect(h.saveSettings).toHaveBeenCalledWith({ remixApps: { pinned: ['app-two'] } });
     });
   });
 });
