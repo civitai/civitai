@@ -321,6 +321,21 @@ describe('auditPromptServer — the auto-mute outcome', () => {
     expect(userActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'Muted' }));
   });
 
+  it('records no mute and keeps the stored prompts when an open case already holds the mute', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockResolvedValueOnce({
+      muted: true,
+      userRestrictionId: 1,
+      deduped: true,
+    });
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
   it('records no mute and keeps the stored prompts when the mute is skipped', async () => {
     overThreshold();
     mockApplyPendingReviewMute.mockResolvedValueOnce({ muted: false, skipped: 'system-account' });

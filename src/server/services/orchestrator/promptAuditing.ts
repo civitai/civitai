@@ -800,9 +800,10 @@ async function reportProhibitedRequest(options: {
         triggers: allBlockedPrompts,
         updateSource: 'promptAuditing:autoMute',
       });
-      muted = result.muted;
+      // A deduped claim joined an open case without storing these prompts, so the list may be
+      // their only copy; only a new mute clears it. A skipped one leaves it to expire on its own.
+      muted = result.muted && !result.deduped;
 
-      // Only a mute clears the list; a skipped one leaves it to expire on its own.
       if (muted) await clearBlockedPromptsAfterMute(userId);
     } catch (banError) {
       logToAxiom({
