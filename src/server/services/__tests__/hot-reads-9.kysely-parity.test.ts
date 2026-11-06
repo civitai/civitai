@@ -6,7 +6,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getUserWithProfileRow } from '@civitai/db-queries/hot-reads-9';
 import { Kysely, PostgresDialect, type CompiledQuery } from 'kysely';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadParitySchema } from '~/server/db/__tests__/parity-schema';
 import {
   compiledRelations,
@@ -429,6 +429,8 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
   it('one statement where Prisma issues one per relation', async () => {
     prismaStatements.length = 0;
     await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
+    // Prisma emits 'query' events after the read resolves, so count once they stop arriving.
+    await vi.waitFor(() => expect(prismaStatements.length).toBeGreaterThanOrEqual(13));
     const prismaCount = prismaStatements.length;
     kyselyStatements.length = 0;
     await readUserWithProfileViaKysely(logged, { username: 'full-profile' });
