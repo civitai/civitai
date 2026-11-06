@@ -183,5 +183,5 @@ export const shareTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const openShareLinkSchema = z.object({ shareToken: shareTokenSchema });
 export const getSharedArticleSchema = z.object({ articleId: z.number().int().positive() });
 export const articleShareTokenRateLimits: RateLimit[] = [{ limit: 30, period: CacheTTL.xs }];
-// Each new link starts a fresh content check.
+// Each create submits the draft text for a scan, so this bounds scan load.
 export const articleShareCreateRateLimits: RateLimit[] = [{ limit: 10, period: CacheTTL.hour }];
