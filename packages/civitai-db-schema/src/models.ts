@@ -822,6 +822,7 @@ export interface MembershipGift {
   stripeSubscriptionId: string | null;
   armedCouponId: string | null;
   armedAt: Date | null;
+  revertPriceId: string | null;
   fulfilledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
