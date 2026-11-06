@@ -365,7 +365,8 @@ async function advance({
   if (pending.length) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Too many answers' });
 
   if (outcome.status === 'done') {
-    const workflowId = last?.workflow.id as string;
+    if (!last) throw damaged('it finished without running anything');
+    const workflowId = last.workflow.id as string;
     // No later segment will record these answers, so the latest one keeps them, or a reload would
     // ask them again.
     if (answers.length) await recordTail(workflowId, [...tail, ...answers], caller);
@@ -439,16 +440,19 @@ async function advance({
   return { status: 'running', runId, workflowId: result.id as string };
 }
 
+/** `answers`: to asks before the app's first workflow, which records them when it submits. */
 export async function startRemixRun({
   slug,
   imageId,
   nonce,
+  answers = [],
   quote,
   caller,
 }: {
   slug: string;
   imageId: number;
   nonce: string;
+  answers?: RemixAnswer[];
   quote?: number;
   caller: RemixAppCaller;
 }) {
@@ -457,7 +461,9 @@ export async function startRemixRun({
   const image = await loadSource(imageId, caller, true);
   const runId = remixRunId({ userId: caller.user.id, slug, imageId, nonce });
   const segments = await readRun(runId, caller);
-  return advance({ runId, app, image, segments, answers: [], quote, caller });
+  // Started already: its first workflow holds these answers, and a repeat tap only reloads it.
+  const given = segments.length ? [] : answers;
+  return advance({ runId, app, image, segments, answers: given, quote, caller });
 }
 
 export async function advanceRemixRun({

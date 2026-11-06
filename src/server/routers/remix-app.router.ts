@@ -97,7 +97,15 @@ export const remixAppRouter = router({
     .use(isFlagProtected('remixApps'))
     .use(runStepRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesWrite })
-    .input(z.object({ slug: z.string().max(64), imageId, nonce, quote: quote.optional() }))
+    .input(
+      z.object({
+        slug: z.string().max(64),
+        imageId,
+        nonce,
+        answers: answer.array().max(8).optional(),
+        quote: quote.optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => startRemixRun({ ...input, caller: await getCaller(ctx) })),
   advance: guardedProcedure
     .use(isFlagProtected('remixApps'))

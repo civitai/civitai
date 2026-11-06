@@ -93,7 +93,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (_input: unknown, opts: { enabled: boolean }) => ({
             ...quoted(),
             data:
-              opts.enabled && h.price ? { prices: [{ slug: 'anime-it', ...h.price }] } : undefined,
+              opts.enabled && h.price
+                ? { prices: ['anime-it', 'restyle'].map((slug) => ({ slug, ...h.price })) }
+                : undefined,
           }),
         },
         'remixApp.teamQuote': {
@@ -169,6 +171,8 @@ beforeEach(() => {
   queryClient.clear();
   h.items = [];
   h.price = { cost: 25, ready: true };
+  // A test that fails before taking its queued answers must not hand them to the next.
+  h.start.mockReset();
   h.start.mockImplementation(async () => {
     h.items = [workflow('wf-0', 'processing')];
     return { status: 'running', runId: RUN, workflowId: 'wf-0' };
@@ -470,6 +474,51 @@ describe('RemixAppModal', () => {
     await upscale.click();
     await vi.waitFor(() => expect(h.advance).toHaveBeenCalledTimes(2));
     expect(h.advance.mock.calls[1][0]).toEqual({ runId: RUN, answers: ['upscale'], quote: 12 });
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  test('asks before the first step: a skip and a priced style go through start, then it collapses to the tray', async () => {
+    const restyle = { slug: 'restyle', name: 'Restyle', runtime: true };
+    const text = {
+      kind: 'text',
+      prompt: 'Add something to the scene (optional)',
+      maxLength: 120,
+      optional: true,
+    };
+    const choice = {
+      kind: 'choice',
+      prompt: 'Pick a style',
+      options: [
+        { value: 'watercolor', label: 'Watercolor' },
+        { value: 'ukiyo-e', label: 'Ukiyo-e' },
+      ],
+    };
+    h.start
+      .mockResolvedValueOnce({ status: 'ask', runId: RUN, ask: text })
+      .mockResolvedValueOnce({
+        status: 'ask',
+        runId: RUN,
+        ask: choice,
+        prices: { watercolor: 25, 'ukiyo-e': 25 },
+      })
+      .mockResolvedValueOnce({ status: 'running', runId: RUN, workflowId: 'wf-0' });
+    await renderWithProviders(<RemixAppModalContent app={restyle} imageId={5} onClose={onClose} />);
+
+    await runButton().click();
+    await page.getByRole('button', { name: 'Skip' }).click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(2));
+    expect(h.start.mock.calls[1][0]).toMatchObject({ slug: 'restyle', imageId: 5, answers: [''] });
+    // A free answer stays in the modal; the style's price is on its button.
+    expect(onClose).not.toHaveBeenCalled();
+    const ukiyoE = page.getByRole('button', { name: /^Ukiyo-e/ });
+    await expect.element(ukiyoE).toHaveTextContent('25');
+
+    await ukiyoE.click();
+    await vi.waitFor(() => expect(h.start).toHaveBeenCalledTimes(3));
+    expect(h.start.mock.calls[2][0]).toMatchObject({ answers: ['', 'ukiyo-e'], quote: 25 });
+    // The same tap each time: one nonce names one run.
+    expect(new Set(h.start.mock.calls.map(([input]) => input.nonce)).size).toBe(1);
+    expect(h.advance).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 

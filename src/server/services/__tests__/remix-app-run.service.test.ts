@@ -309,6 +309,8 @@ import {
 } from '~/server/services/remix-app-run.service';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { RESTYLE_EXTRA_MAX_LENGTH, RESTYLE_STYLES } from '~/shared/remix-apps/system-apps';
 
 const USER_ID = 1;
 const SOURCE_ID = 7;
@@ -626,17 +628,27 @@ describe('remix app runs', () => {
     expect(submits()).toHaveLength(1);
   });
 
-  it('refuses an app that asks before its first workflow, and submits nothing', async () => {
+  it('asks first without submitting, then records the answer on the first workflow', async () => {
     addImage(SOURCE_ID);
-    const start = startRemixRun({
-      slug: 'asks-first',
-      imageId: SOURCE_ID,
-      nonce: 'nonce-0019',
-      quote: 30,
-      caller: caller(),
-    });
-    await expect(start).rejects.toMatchObject({ code: 'CONFLICT' });
+    const args = { slug: 'asks-first', imageId: SOURCE_ID, nonce: 'nonce-0019', caller: caller() };
+
+    const ask = await startRemixRun({ ...args, quote: 30 });
+    expect(ask).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
     expect(submits()).toHaveLength(0);
+
+    const running = await startRemixRun({ ...args, answers: ['anime'], quote: 30 });
+    expect(running).toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(1);
+    expect(submits()[0].metadata?.remixRun).toMatchObject({ answers: ['anime'] });
+
+    // The run replays from its workflow alone: the answer lives there, and a repeat tap reloads it.
+    finish(submits()[0].id, [blob('styled')]);
+    const { runId } = running as { runId: string };
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'done' });
+    expect(await startRemixRun({ ...args, answers: ['anime'], quote: 30 })).toMatchObject({
+      status: 'done',
+    });
+    expect(submits()).toHaveLength(1);
   });
 
   it(`stops a run at ${MAX_RUN_SEGMENTS} steps`, async () => {
@@ -1192,5 +1204,87 @@ describe('replay', () => {
     await expect(replayRemixApp(app, source, [{ type: 'ask', answer: 0 }])).rejects.toBeInstanceOf(
       RemixReplayError
     );
+  });
+});
+
+describe('Restyle', () => {
+  const start = (answers: (string | number)[], quote?: number, nonce = 'nonce-restyle') => {
+    addImage(SOURCE_ID);
+    return startRemixRun({
+      slug: 'restyle',
+      imageId: SOURCE_ID,
+      nonce,
+      answers,
+      quote,
+      caller: caller(),
+    });
+  };
+  const submittedPrompt = () => JSON.stringify(h.submitWorkflow.mock.calls.at(-1));
+  const blockedText = 'something the audit refuses';
+
+  beforeEach(() => {
+    vi.mocked(auditPromptServer).mockImplementation(async ({ prompt }) => {
+      if (prompt.includes(blockedText))
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged.' });
+    });
+  });
+
+  it('asks for an optional addition, then a style priced on every option, and spends nothing until a style is tapped', async () => {
+    expect(await start([])).toMatchObject({
+      status: 'ask',
+      ask: { kind: 'text', optional: true, maxLength: RESTYLE_EXTRA_MAX_LENGTH },
+    });
+
+    const style = await start(['']);
+    expect(style).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
+    expect((style as { prices: Record<string, number> }).prices).toEqual(
+      Object.fromEntries(RESTYLE_STYLES.map(({ value }) => [value, h.price]))
+    );
+    expect(submits()).toHaveLength(0);
+
+    expect(await start(['', 'ukiyo-e'], h.price)).toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(1);
+    expect(submittedPrompt()).toContain('ukiyo-e woodblock print');
+    expect(submittedPrompt()).not.toContain('Also add to the scene');
+  });
+
+  it("adds the viewer's text to the edit", async () => {
+    await start(['a red paper umbrella', 'watercolor'], h.price);
+    expect(submittedPrompt()).toContain('watercolor painting');
+    expect(submittedPrompt()).toContain('Also add to the scene: a red paper umbrella');
+  });
+
+  it(`takes up to ${RESTYLE_EXTRA_MAX_LENGTH} characters and refuses more, or blank text that is not a skip`, async () => {
+    // POSITIVE CONTROL: at the cap, the text is taken.
+    await expect(
+      start(['x'.repeat(RESTYLE_EXTRA_MAX_LENGTH)], undefined, 'nonce-cap')
+    ).resolves.toMatchObject({
+      status: 'ask',
+      ask: { kind: 'choice' },
+    });
+    for (const text of ['x'.repeat(RESTYLE_EXTRA_MAX_LENGTH + 1), '   '])
+      await expect(
+        start([text, 'watercolor'], h.price, `nonce-${text.length}`)
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it('refuses text the prompt audit blocks, cleanly and without charging', async () => {
+    // POSITIVE CONTROL: the same flow with text the audit passes submits.
+    await start(['a lantern', 'claymation'], h.price, 'nonce-audit-ok');
+    expect(submits()).toHaveLength(1);
+    expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.stringContaining('a lantern') })
+    );
+
+    await expect(
+      start([blockedText, 'claymation'], h.price, 'nonce-audit-blocked')
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Your prompt was flagged.',
+    });
+    expect(submits()).toHaveLength(1);
   });
 });

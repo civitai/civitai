@@ -32,7 +32,8 @@ import {
 } from '~/shared/constants/remix-apps.constants';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
-import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { firstAnswer } from '~/shared/remix-apps/mock-host';
+import { type RemixLogEntry, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
 import { remixRunTags } from '~/shared/remix-apps/tags';
 import { REMIX_MENU_APPS, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
 import {
@@ -172,14 +173,21 @@ export function buildRuntimeRequest({
 }
 
 /** The workflow a runtime app runs first, or `null` when it asks something before any spend. */
+/** The first workflow the app runs, through any asks before it on their first answers. */
 export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
-  const outcome = await replayRemixApp(app, runtimeSourceOf(image), []).catch((error) => {
-    if (error instanceof RemixReplayError) return null;
-    throw error;
-  });
-  return outcome?.status === 'effect' && outcome.effect.type === 'workflow'
-    ? outcome.effect.request
-    : null;
+  const log: RemixLogEntry[] = [];
+  // Bounded: an app that only ever asks has no first workflow to price.
+  for (let asked = 0; asked <= 8; asked++) {
+    const outcome = await replayRemixApp(app, runtimeSourceOf(image), log).catch((error) => {
+      if (error instanceof RemixReplayError) return null;
+      throw error;
+    });
+    if (outcome?.status !== 'effect') return null;
+    const { effect } = outcome;
+    if (effect.type === 'workflow') return effect.request;
+    log.push({ type: 'ask', answer: firstAnswer(effect.spec) });
+  }
+  return null;
 }
 
 export function runtimeSourceOf(image: RemixSourceImage) {

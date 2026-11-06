@@ -166,10 +166,16 @@ function AskStep({
         >
           <TextInput
             className="flex-1"
+            aria-label={ask.prompt}
             value={text}
             maxLength={ask.maxLength}
             onChange={(e) => setText(e.currentTarget.value)}
           />
+          {ask.optional && (
+            <Button variant="default" disabled={pending} onClick={() => onAnswer('')}>
+              Skip
+            </Button>
+          )}
           <Button type="submit" disabled={pending || !text.trim()}>
             Continue
           </Button>
@@ -303,13 +309,24 @@ export function RemixAppModalContent({
       });
   }
 
+  /** Advances the run; one with no workflow yet has nothing to advance, so it starts again with its answers. */
+  function step(
+    current: { runId: string; workflowId?: string },
+    input: { answers: RemixAnswer[]; quote?: number },
+    callbacks: { onSuccess: (state: RemixRunState) => void; onError: typeof onError }
+  ) {
+    if (current.workflowId) advance.mutate({ runId: current.runId, ...input }, callbacks);
+    else if (imageId != null) start.mutate({ slug: app.slug, imageId, nonce, ...input }, callbacks);
+  }
+
   function answer(value: RemixAnswer) {
     if (phase.kind !== 'ask') return;
     const answers = [...phase.answers, value];
     // A priced option's button showed its price: the tap agrees to it and submits.
     const quote = phase.prices?.[String(value)] || undefined;
-    advance.mutate(
-      { runId: phase.runId, answers, quote },
+    step(
+      phase,
+      { answers, quote },
       {
         onSuccess: (state) => {
           apply(state, answers);
@@ -325,9 +342,10 @@ export function RemixAppModalContent({
 
   function continuePriced() {
     if (phase.kind !== 'priced') return;
-    const { runId, answers, cost } = phase;
-    advance.mutate(
-      { runId, answers, quote: cost },
+    const { answers, cost } = phase;
+    step(
+      phase,
+      { answers, quote: cost },
       {
         onSuccess: (state) => {
           refetchQueue();
