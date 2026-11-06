@@ -21,7 +21,7 @@ export function watchStrip(daily: Watch) {
   const note = daily.capReached
     ? 'Gold cap reached · XP still counts'
     : daily.watchDone
-    ? `Complete · +${gold} gold earned`
+    ? `+${gold} gold bonus earned · keep judging`
     : `+${gold} gold at the end`;
   return {
     label: `Today's Watch · ${value} of ${daily.watchSize}`,
