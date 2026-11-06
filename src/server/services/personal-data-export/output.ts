@@ -1,3 +1,4 @@
+import { escapeCsvValue } from '~/utils/csv';
 /**
  * The archive's file and manifest shapes, and the CSV encoding. Kept free of I/O so the column
  * policy and the counts can be tested without a database or a bucket.
@@ -38,18 +39,8 @@ export interface ExportWriter {
   addFile(name: string, content: AsyncIterable<string> | string): Promise<void>;
 }
 
-export function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  let s: string;
-  if (value instanceof Date) s = value.toISOString();
-  else if (typeof value === 'bigint') s = value.toString();
-  else if (typeof value === 'object') s = JSON.stringify(value);
-  else s = String(value);
-  // Text starting =, +, - or @ is a formula in a spreadsheet: prefix it so the file opens as data.
-  // Numbers are left alone, so -5 stays -5.
-  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+/** One CSV cell: the app's shared escaper, so the spreadsheet-formula guard lives in one place. */
+export const csvCell = escapeCsvValue;
 
 export const csvLine = (values: readonly unknown[]) => values.map(csvCell).join(',') + '\r\n';
 

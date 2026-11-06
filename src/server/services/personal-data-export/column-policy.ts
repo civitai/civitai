@@ -38,6 +38,22 @@ export const CLASSIFIER_COLUMNS: Record<string, readonly string[]> = {
     'acceptableMinor',
     'scanRequestedAt',
   ],
+  WildcardSet: ['auditRuleVersion', 'invalidationReason'],
+  ModelFile: ['pickleScanMessage', 'virusScanMessage'],
+};
+
+/**
+ * Text columns written by automated checks, on any table: never written to the archive. The
+ * Postgres counterpart of the ClickHouse `CH_DENY_RE`.
+ */
+export const DETECTION_TEXT_RE = /(blockedFor|scanMessage|audit|verdict|detect|classif)/i;
+
+/**
+ * Read for a row rule (see `transformRow`) but never written: `Image.blockedFor` decides whether an
+ * image is listed as removed, and its text can carry an automated check's output.
+ */
+export const RULE_ONLY_COLUMNS: Record<string, readonly string[]> = {
+  Image: ['blockedFor'],
 };
 export const CLASSIFIER_NAME_RE =
   /(scanJobs|^ai[A-Z]\w*|xguard|clavata|classifier|^pHash$|matchedTerms?|matchedRegex|^scores?$|ByScan$|TextHash$)/;
@@ -65,6 +81,10 @@ export const NOTE_COLUMNS: Record<string, readonly string[]> = {
   UserStrike: ['voidReason'],
   CashWithdrawal: ['note'],
   BlockBuzzAttribution: ['holdReason'],
+  PlacementSuspension: ['reason'],
+  ServiceOffering: ['removedReason'],
+  Crucible: ['takedownReason'],
+  AppListingModerationEvent: ['reason'],
 };
 export const NOTE_COLUMN = 'internalNotes';
 
@@ -103,7 +123,14 @@ export const STAFF_PLACEHOLDER = '[staff]';
  */
 export const STAFF_NAME_RE = /(By|ById|ByUserId)$|^(moderatorId|actorId)$/;
 
-export type ColumnDecision = 'read' | 'credential' | 'classifier' | 'others' | 'note' | 'withheld';
+export type ColumnDecision =
+  | 'read'
+  | 'credential'
+  | 'classifier'
+  | 'others'
+  | 'note'
+  | 'withheld'
+  | 'rule-only';
 
 /** The decision for one column of one table. The first rule that matches wins. */
 export function columnDecision(table: string, column: string, type?: string): ColumnDecision {
@@ -111,6 +138,8 @@ export function columnDecision(table: string, column: string, type?: string): Co
     return 'credential';
   if (CLASSIFIER_COLUMNS[table]?.includes(column) || CLASSIFIER_NAME_RE.test(column))
     return 'classifier';
+  if (RULE_ONLY_COLUMNS[table]?.includes(column)) return 'rule-only';
+  if (type === 'String' && DETECTION_TEXT_RE.test(column)) return 'classifier';
   if (OTHER_PEOPLE_COLUMNS[table]?.includes(column)) return 'others';
   if (column === NOTE_COLUMN || NOTE_COLUMNS[table]?.includes(column)) return 'note';
   if (type === 'Json' && !JSON_ALLOWED[table]?.includes(column)) return 'withheld';

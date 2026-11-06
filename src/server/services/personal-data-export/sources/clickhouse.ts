@@ -68,7 +68,7 @@ export const CH_TABLES: ChTable[] = [
     table: 'default.userActivities',
     where: null,
     description: 'Account activity, including sign-ins with IP address and device.',
-    // Sign-ins are in scope for every request; one scan of a mid-sized table.
+    // Sign-ins are in scope for every request.
     required: true,
   },
   {

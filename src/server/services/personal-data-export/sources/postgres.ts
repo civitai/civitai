@@ -38,6 +38,8 @@ export type PgTablePlan = {
   columns: Column[];
   /** Staff-written columns, read into the separate notes file and never written to this one. */
   noteColumns: Column[];
+  /** Read for a row rule, never written (see RULE_ONLY_COLUMNS). */
+  ruleColumns: Column[];
   /** The WHERE clause over the table, the user id inlined (proven a positive integer). */
   where: string;
   /** Subject columns whose index the read relies on (for the unindexed check). */
@@ -75,6 +77,7 @@ function columnsOf(model: DmmfModel, entry: Pick<RegistryEntry, 'subject' | 'sta
   return {
     columns: all.filter((c) => c.decision === 'read'),
     noteColumns: all.filter((c) => c.decision === 'note'),
+    ruleColumns: all.filter((c) => c.decision === 'rule-only'),
   };
 }
 
@@ -123,13 +126,14 @@ function relatedPlans(models: Map<string, DmmfModel>, userId: number): PgTablePl
   ): PgTablePlan => {
     const model = models.get(modelName);
     if (!model) throw new Error(`No model ${modelName}`);
-    const { columns, noteColumns } = columnsOf(model, entry);
+    const { columns, noteColumns, ruleColumns } = columnsOf(model, entry);
     return {
       name,
       model: modelName,
       table: tableOf(model),
       columns: only ? columns.filter((c) => only.includes(c.field)) : columns,
       noteColumns: only ? [] : noteColumns,
+      ruleColumns: only ? [] : ruleColumns,
       where,
       subjectColumns: [],
       description,
@@ -190,7 +194,7 @@ export function planPostgresExport(userId: number): PgTablePlan[] {
     const model = models.get(modelName);
     if (!model) throw new Error(`Registry names ${modelName}, which is not a model`);
     if (!entry.subject.length) throw new Error(`Registry entry ${modelName} has no subject column`);
-    const { columns, noteColumns } = columnsOf(model, entry);
+    const { columns, noteColumns, ruleColumns } = columnsOf(model, entry);
     let where = subjectWhere(model, entry.subject, userId);
     if (entry.rule === 'image-media') where = `${where} AND ${IMAGE_SAFETY_EXCLUSION}`;
     plans.push({
@@ -199,6 +203,7 @@ export function planPostgresExport(userId: number): PgTablePlan[] {
       table: tableOf(model),
       columns,
       noteColumns,
+      ruleColumns,
       where,
       subjectColumns: entry.subject.map((s) => model.fields.find((f) => f.name === s)?.dbName ?? s),
       rule: entry.rule,
@@ -210,7 +215,7 @@ export function planPostgresExport(userId: number): PgTablePlan[] {
 }
 
 export function selectSql(plan: PgTablePlan): string {
-  const cols = [...plan.columns, ...plan.noteColumns].map((c) =>
+  const cols = [...plan.columns, ...plan.noteColumns, ...plan.ruleColumns].map((c) =>
     c.db === c.field ? q(c.db) : `${q(c.db)} AS ${q(c.field)}`
   );
   return `SELECT ${cols.join(', ')} FROM ${q(plan.table)} WHERE ${plan.where}`;

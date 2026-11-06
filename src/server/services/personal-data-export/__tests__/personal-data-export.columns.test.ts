@@ -4,6 +4,7 @@ import {
   CLASSIFIER_NAME_RE,
   CREDENTIAL_COLUMNS,
   CREDENTIAL_NAME_RE,
+  DETECTION_TEXT_RE,
   JSON_ALLOWED,
   NOTE_COLUMNS,
   OTHER_PEOPLE_COLUMNS,
@@ -41,6 +42,17 @@ describe('personal-data-export column policy, over every planned read', () => {
         expect(selectSql(planFor(table)), table).not.toMatch(new RegExp(`"(${cols.join('|')})"`));
     expect(selected('Account')).toEqual(expect.arrayContaining(['provider', 'providerAccountId']));
     expect(selected('Session')).toContain('expires');
+  });
+
+  it('writes no text column an automated check fills, on any table', () => {
+    const leaks = plans.flatMap((p) =>
+      p.columns
+        .filter((c) => c.type === 'String' && DETECTION_TEXT_RE.test(c.field))
+        .map((c) => `${p.name}.${c.field}`)
+    );
+    expect(leaks).toEqual([]);
+    expect(selected('ModelFile')).not.toContain('virusScanMessage');
+    expect(selected('WildcardSet')).not.toContain('auditRuleVersion');
   });
 
   it('withholds every JSON column that is not allow-listed (User.meta and Model.meta among them)', () => {
@@ -119,6 +131,12 @@ describe('personal-data-export row rules', () => {
     expect(transformRow(image, { ...base, ingestion: 'Blocked' }, SUBJECT).out.url).toBe('removed');
     expect(transformRow(image, { ...base, tosViolation: true }, SUBJECT).out.url).toBe('removed');
     expect(transformRow(image, { ...base, blockedFor: 'tos' }, SUBJECT).out.url).toBe('removed');
+    // The block reason decides it, but its text (which an automated check can write) never goes out.
+    const blocked = transformRow(image, { ...base, blockedFor: 'audit: matched xyz' }, SUBJECT).out;
+    expect(blocked.url).toBe('removed');
+    expect(blocked).not.toHaveProperty('blockedFor');
+    expect(selected('Image')).not.toContain('blockedFor');
+    expect(selectSql(image)).toContain('"blockedFor"');
   });
 
   it("drops detection keys inside an allowed JSON column and keeps the user's own", () => {
