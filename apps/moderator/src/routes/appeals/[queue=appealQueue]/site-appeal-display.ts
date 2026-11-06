@@ -41,7 +41,11 @@ export function approvalEffect(
       const text = gone
         ? `The ${noun} no longer exists, so approving restores nothing.`
         : subject.status === 'UnpublishedViolation'
-        ? `Approving republishes the ${noun}.`
+        ? subject.kind === 'article' && subject.restoresTo !== 'Published'
+          ? `Approving returns the article to its author ${
+              subject.restoresTo === 'Draft' ? 'as a draft' : 'unpublished'
+            }, as it was when it was taken down. It is not published.`
+          : `Approving republishes the ${noun}.`
         : subject.status === 'Published'
         ? `The ${noun} is already published, so approving restores nothing.`
         : `The ${noun} is ${subject.status}, not removed by a moderator, so approving restores nothing.`;

@@ -222,6 +222,7 @@ describe('site appeal queues', () => {
       kind: 'article',
       title: 'Removed',
       status: 'UnpublishedViolation',
+      restoresTo: 'Published',
       ownerBanned: false,
       unpublishedReason: 'spam',
       customMessage: null,

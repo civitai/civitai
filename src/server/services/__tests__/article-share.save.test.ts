@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { recordTx, useTxClients } from '~/__tests__/tx-client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
@@ -77,6 +78,16 @@ const writtenStatus = () =>
     .map(([strings, ...values]) => Prisma.sql(strings as TemplateStringsArray, ...values).sql)
     .find((sql) => sql.trim().startsWith('UPDATE "Article"')) ?? '';
 
+/** The transaction the content write ran in, given `recordTx` of `$executeRaw`. */
+const contentWriteTx = (ranIn: number[]) =>
+  ranIn[
+    dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings, ...values]) =>
+      Prisma.sql(strings as TemplateStringsArray, ...values).sql.startsWith(
+        'UPDATE "Article" SET content'
+      )
+    )
+  ];
+
 /** The check record as the submit left it: reset now, or untouched since an hour ago. */
 const checkRecord = (resetBySubmit: boolean) =>
   dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async () => ({
@@ -94,6 +105,7 @@ beforeEach(() => {
     scheduledAt: null,
   } as never);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+  useTxClients();
   // Implementations outlive clearAllMocks; a case that drives the generation must not leak it.
   dbMock.dbWrite.articleShareCheck.findUnique.mockReset();
   dbMock.dbWrite.articleShareCheck.findUnique.mockResolvedValue(null);
@@ -112,11 +124,15 @@ describe('saving a draft that has an active share link', () => {
 
   it('voids the earlier verdict in the same transaction as the new text', async () => {
     checkRecord(true);
+    const writes = recordTx(dbMock.dbWrite.$executeRaw, 1);
+    const voids = recordTx(dbMock.dbWrite.entityModeration.updateMany, { count: 1 });
     await rewrite();
     expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith({
       where: { entityType: 'Article', entityId: ARTICLE },
       data: { status: 'Pending', workflowId: null },
     });
+    expect(voids[0]).toBeGreaterThan(0);
+    expect(voids[0]).toBe(contentWriteTx(writes));
   });
 
   it('leaves the verdict alone when its guarded write lands on nothing', async () => {
@@ -149,9 +165,11 @@ describe('saving a draft that has an active share link', () => {
 
   it('withdraws every link when the text never holds still for a check', async () => {
     checkRecord(true);
+    // Moves on every read until the 50th, then holds: without the attempt bound the loop still
+    // ends, and the count below fails with a number instead of the run hanging.
     let generation = 0;
     dbMock.dbWrite.articleShareCheck.findUnique.mockImplementation((async () => ({
-      generation: generation++,
+      generation: generation < 50 ? generation++ : generation,
     })) as never);
     await rewrite();
     expect(vi.mocked(submitTextModerationOrScan).mock.calls.length).toBeLessThanOrEqual(3);
@@ -162,12 +180,16 @@ describe('saving a draft that has an active share link', () => {
 
   it('bumps the check generation in the same transaction as the new text', async () => {
     checkRecord(true);
+    const writes = recordTx(dbMock.dbWrite.$executeRaw, 1);
+    const upserts = recordTx(dbMock.dbWrite.articleShareCheck.upsert, {});
     await rewrite();
-    expect(dbMock.dbWrite.articleShareCheck.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        update: { generation: { increment: 1 }, workflowId: null, textHash: null },
-      })
+    const bump = { generation: { increment: 1 }, workflowId: null, textHash: null };
+    const i = dbMock.dbWrite.articleShareCheck.upsert.mock.calls.findIndex(
+      ([arg]) => JSON.stringify((arg as { update: unknown }).update) === JSON.stringify(bump)
     );
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(upserts[i]).toBeGreaterThan(0);
+    expect(upserts[i]).toBe(contentWriteTx(writes));
   });
 
   it('keeps its verdict and links when a save leaves the text as it was', async () => {

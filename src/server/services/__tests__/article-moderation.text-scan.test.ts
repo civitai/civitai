@@ -22,6 +22,7 @@ const { applyRatingFloor } = await import('~/server/services/text-scan/rated-ent
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { recomputeArticleIngestion } = await import('~/server/services/article.service');
 const { TEXT_SCAN_ENTITY_NOT_PUBLIC } = await import('~/server/services/text-scan/route');
+const { createNotification } = await import('~/server/services/notification.service');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -110,5 +111,61 @@ describe('articleModerationAdapter — text scan', () => {
     expect(vi.mocked(applyRatingFloor).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(recomputeArticleIngestion).mock.invocationCallOrder[0]
     );
+  });
+});
+
+describe('articleModerationAdapter — a block', () => {
+  // A transaction client distinct from dbWrite, so a call made outside the transaction cannot
+  // pass for one made inside it.
+  const block = async (article: { status: string; userId: number; metadata: object | null }) => {
+    const tx = {
+      $executeRaw: vi.fn(async () => 0),
+      article: { findUnique: vi.fn(async () => article), update: vi.fn(async () => ({})) },
+      accessToken: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (c: unknown) => unknown) =>
+      fn(tx)) as never);
+    await articleModerationAdapter.applyResult!({
+      entityId: 4,
+      blocked: true,
+      triggeredLabels: [],
+    } as never);
+    return tx;
+  };
+  const revoked = {
+    where: { resourceType: 'Article', resourceId: 4, revokedAt: null },
+    data: { revokedAt: expect.any(Date) },
+  };
+
+  // A shared draft is scanned, so it can be blocked. The status it had lets a moderator's restore
+  // return it to its author instead of publishing it, and its links end with the block.
+  it('takes a shared draft down with its links in one transaction, recording its status', async () => {
+    const tx = await block({ status: 'Draft', userId: 9, metadata: { theme: 'x' } });
+    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual([0x41544b, 4]);
+    expect(tx.article.update).toHaveBeenCalledWith({
+      where: { id: 4 },
+      data: {
+        status: 'UnpublishedViolation',
+        metadata: { theme: 'x', statusBeforeViolation: 'Draft' },
+      },
+    });
+    expect(tx.accessToken.updateMany).toHaveBeenCalledWith(revoked);
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('tells no draft author their article was unpublished', async () => {
+    await block({ status: 'Draft', userId: 9, metadata: null });
+    await block({ status: 'Unpublished', userId: 9, metadata: null });
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('tells a published article author, and records no draft status to restore to', async () => {
+    const tx = await block({ status: 'Published', userId: 9, metadata: null });
+    expect(tx.article.update).toHaveBeenCalledWith({
+      where: { id: 4 },
+      data: { status: 'UnpublishedViolation', metadata: {} },
+    });
+    expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
   });
 });

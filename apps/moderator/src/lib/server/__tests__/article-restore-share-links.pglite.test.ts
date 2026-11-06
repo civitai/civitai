@@ -106,6 +106,32 @@ describe("a moderator's article restore", () => {
     expect(await activeLinks()).toEqual([OTHER_ARTICLE]);
   });
 
+  const row = async () =>
+    (
+      await db.query<{ status: string; publishedAt: Date | null; metadata: object }>(
+        `SELECT status, "publishedAt", metadata FROM "Article" WHERE id = ${ARTICLE}`
+      )
+    ).rows[0];
+
+  // A shared draft is text-scanned, and a block moves it to UnpublishedViolation with the status it
+  // had. Restoring it as Published would publish an article its author never published.
+  it('returns a blocked draft to its author as a draft, not published', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation', "publishedAt" = NULL,
+      metadata = '{"statusBeforeViolation":"Draft","unpublishedReason":"tos"}' WHERE id = ${ARTICLE}`);
+    expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual({
+      ok: true,
+    });
+    expect(await row()).toEqual({ status: 'Draft', publishedAt: null, metadata: {} });
+  });
+
+  it('returns a blocked article its author had unpublished to Unpublished', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation',
+      metadata = '{"statusBeforeViolation":"Unpublished"}' WHERE id = ${ARTICLE}`);
+    const { publishedAt } = await row();
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    expect(await row()).toEqual({ status: 'Unpublished', publishedAt, metadata: {} });
+  });
+
   it('leaves the links alone when the restore is refused', async () => {
     await db.exec(`UPDATE "Article" SET status = 'Published' WHERE id = ${ARTICLE}`);
     expect(await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 })).toEqual({

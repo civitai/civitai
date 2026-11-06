@@ -150,6 +150,8 @@ export type ArticleMetadata = {
   customMessage?: string;
   unpublishedAt?: string;
   unpublishedBy?: number;
+  /** Set when a block moves a draft to UnpublishedViolation; a restore returns it here. */
+  statusBeforeViolation?: 'Draft' | 'Unpublished';
 };
 
 export const unpublishArticleSchema = z.object({

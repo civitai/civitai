@@ -34,6 +34,19 @@ export type ArticleMetadata = {
   unpublishedReason?: string | null;
   customMessage?: string | null;
   unpublishedAt?: string | null;
+  /** Written by the main app when a block moves a draft to UnpublishedViolation. */
+  statusBeforeViolation?: string | null;
 } | null;
+
+/**
+ * Where a moderator's restore puts the article: a draft a block took down goes back to its author
+ * as it was, since publishing it would publish something its author never did.
+ */
+export function restoreStatus(metadata: ArticleMetadata | undefined): ArticleStatus {
+  const before = metadata?.statusBeforeViolation;
+  return before === ArticleStatus.Draft || before === ArticleStatus.Unpublished
+    ? before
+    : ArticleStatus.Published;
+}
 
 export const articleUrl = (base: string, id: number) => `${base}/articles/${id}`;

@@ -8,7 +8,7 @@ import { deleteImageRows, finishImageDeletes } from './image-deletion';
 import { syncSearchIndex } from './search-index';
 import { logToAxiom } from './axiom';
 import type { KeptImage } from '$lib/image-kept-reasons';
-import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import { ArticleStatus, restoreStatus, type ArticleMetadata } from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
 type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
@@ -181,13 +181,18 @@ async function restoreArticle(id: number): Promise<void> {
     delete meta.customMessage;
     delete meta.unpublishedAt;
     delete meta.unpublishedBy;
+    delete meta.statusBeforeViolation;
+    const status = restoreStatus(article.metadata as ArticleMetadata);
 
     await trx
       .updateTable('Article')
       .set({
-        status: ArticleStatus.Published,
+        status,
         // Preserve the original publishedAt so a restored article doesn't bump to the top of the feed.
-        publishedAt: article.publishedAt ?? new Date(),
+        publishedAt:
+          status === ArticleStatus.Published
+            ? article.publishedAt ?? new Date()
+            : article.publishedAt,
         metadata: sql`${JSON.stringify(meta)}::jsonb`,
       })
       .where('id', '=', id)

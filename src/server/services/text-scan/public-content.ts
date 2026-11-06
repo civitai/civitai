@@ -35,6 +35,16 @@ export function isShareableArticleStatus(status: ArticleStatus) {
   return status === ArticleStatus.Draft || status === ArticleStatus.Unpublished;
 }
 
+/**
+ * A block moving an article to UnpublishedViolation records a draft's status, so a moderator's
+ * restore returns the draft to its author instead of publishing it.
+ */
+export function violationMetadata<T extends object>(status: ArticleStatus, metadata: T) {
+  return isShareableArticleStatus(status)
+    ? { ...metadata, statusBeforeViolation: status }
+    : metadata;
+}
+
 // Processing and a scheduled Draft go live only once the text verdict is in.
 export function articleAwaitsTextVerdict(article: {
   status: ArticleStatus;

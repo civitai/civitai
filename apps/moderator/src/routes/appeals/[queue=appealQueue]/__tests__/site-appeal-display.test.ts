@@ -38,9 +38,14 @@ describe('approvalEffect', () => {
   });
 
   it('promises a republish only for a moderator-removed article or model', () => {
-    const article = (status: string | null) =>
-      approvalEffect({ kind: 'article', title: 't', status, ...unpublished }, true).text;
+    const article = (status: string | null, restoresTo = 'Published') =>
+      approvalEffect({ kind: 'article', title: 't', status, restoresTo, ...unpublished }, true)
+        .text;
     expect(article('UnpublishedViolation')).toBe('Approving republishes the article.');
+    // A draft a block took down goes back to its author: approving must not promise a publish.
+    expect(article('UnpublishedViolation', 'Draft')).toBe(
+      'Approving returns the article to its author as a draft, as it was when it was taken down. It is not published.'
+    );
     expect(article('Published')).toMatch(/already published/);
     expect(article('Unpublished')).toMatch(/restores nothing/);
     expect(article(null)).toMatch(/no longer exists/);
