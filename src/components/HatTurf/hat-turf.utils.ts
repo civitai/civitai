@@ -74,41 +74,48 @@ export function standingsLabel(
 }
 
 export type BadgeFigure = {
+  /** What the image earns per action: the leader's hats, capped at the players the event credits. */
+  points: number;
+  /** The team earning them, whose colour the disc takes; null when no team has hats here. */
+  pointsTeam: string | null;
   /**
-   * `protected`: a hat guards the image and it earns one point. `toTake`: the viewer's team trails
-   * and needs this many hats to lead. `points`: the viewer's team leads and the image scores this
-   * many. `count`: the leader's counted hats (no team, or credit not yet known).
+   * The viewer's team's position in hats: ahead of the next-closest team (positive), behind the
+   * leader (negative), or level (0). Null for a viewer on no team, or an image with no hats.
    */
-  kind: 'protected' | 'toTake' | 'points' | 'count';
-  value: number;
-  /** The team whose colour the number is in; null is neutral. */
-  team: string | null;
+  margin: number | null;
 };
 
-/**
- * The number in the badge's dial, for this viewer. A trailing viewer sees what it would take to
- * lead (the same figure as the standings popover); a leading one sees the points the image holds,
- * capped at the players the event credits.
- */
+/** The numbers in the badge: points in the dial, the viewer's margin beside it. */
 export function badgeFigure(
   summary: Pick<TurfSummary, 'counted' | 'leader' | 'hatted' | 'hattedTeam'>,
   viewerTeam: string | null | undefined,
   creditedPlayers: number | null | undefined
 ): BadgeFigure {
   const lead = badgeLeader(summary);
-  if (summary.hatted) return { kind: 'protected', value: 1, team: summary.hattedTeam ?? lead };
-  if (!lead) return { kind: 'count', value: 0, team: null };
-  const leadCount = summary.counted[lead] ?? 0;
-  if (viewerTeam && viewerTeam !== lead)
-    return {
-      kind: 'toTake',
-      value: leadCount - (summary.counted[viewerTeam] ?? 0) + 1,
-      team: viewerTeam,
-    };
-  if (viewerTeam && creditedPlayers != null)
-    return { kind: 'points', value: Math.min(leadCount, creditedPlayers), team: lead };
-  return { kind: 'count', value: leadCount, team: lead };
+  const leadCount = lead ? summary.counted[lead] ?? 0 : 0;
+  let margin: number | null = null;
+  if (lead && viewerTeam) {
+    const mine = summary.counted[viewerTeam] ?? 0;
+    if (viewerTeam === lead) {
+      const others = Object.entries(summary.counted)
+        .filter(([team]) => team !== lead)
+        .map(([, n]) => n);
+      margin = mine - Math.max(0, ...others);
+    } else {
+      margin = mine - leadCount;
+    }
+  }
+  if (summary.hatted) return { points: 1, pointsTeam: summary.hattedTeam ?? lead, margin };
+  return {
+    points: creditedPlayers != null ? Math.min(leadCount, creditedPlayers) : leadCount,
+    pointsTeam: lead,
+    margin,
+  };
 }
+
+/** "+3", "\u22123", "0". */
+export const formatMargin = (margin: number) =>
+  margin > 0 ? `+${margin}` : margin < 0 ? `\u2212${-margin}` : '0';
 
 /**
  * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the

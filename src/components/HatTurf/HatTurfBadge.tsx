@@ -11,6 +11,7 @@ import {
   RING_LENGTH,
   RING_RADIUS,
   badgeFigure,
+  formatMargin,
   badgeLeader,
   ringArcs,
   standingsLabel,
@@ -25,12 +26,23 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
 
-const figureLabel = (figure: BadgeFigure | null) =>
-  figure?.kind === 'toTake'
-    ? ` Your team is ${figure.value} ${figure.value === 1 ? 'hat' : 'hats'} from the lead.`
-    : figure?.kind === 'points'
-    ? ` This image holds ${figure.value} ${figure.value === 1 ? 'point' : 'points'}.`
-    : '';
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+const figureLabel = (figure: BadgeFigure) => {
+  if (!figure.pointsTeam) return '';
+  const earns = `This image earns ${plural(figure.points, 'point', 'points')} for ${
+    figure.pointsTeam
+  }.`;
+  if (figure.margin === null) return ` ${earns}`;
+  const { margin } = figure;
+  const position =
+    margin > 0
+      ? `up by ${plural(margin, 'hat', 'hats')}`
+      : margin < 0
+      ? `behind by ${plural(-margin, 'hat', 'hats')}`
+      : 'level with the lead';
+  return ` ${earns} Your team is ${position}.`;
+};
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
@@ -55,10 +67,8 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const holder = guard ?? leader;
   const blocked = guard && leader && leader !== guard ? leader : null;
   const stock = useHatStock();
-  // What the dial reads depends on the viewer: hats to take the lead when trailing, the points the
-  // image holds when leading, a protected image's single point.
   const figure = summary ? badgeFigure(summary, feed?.team, stock?.creditedPlayers) : null;
-  const shownCount = figure ? figure.value : null;
+  const shownCount = figure ? figure.points : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
   const [seenCount, setSeenCount] = useState(shownCount);
@@ -72,10 +82,12 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
-  const discTeam = figure?.kind === 'protected' ? holder : figure?.team ?? null;
+  const discTeam = figure?.pointsTeam ?? null;
   const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
 
-  const label = `${standingsLabel(summary, feed.team)}${figureLabel(figure)}${
+  const label = `${figure?.pointsTeam ? 'Hat Turf:' : standingsLabel(summary, feed.team)}${
+    figure ? figureLabel(figure) : ''
+  }${
     summary.hatted
       ? summary.hattedTeam
         ? ` A ${summary.hattedTeam} hat protects this image.`
@@ -91,7 +103,6 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
       className={clsx(classes.count, !countBeside && classes.countInside, bump && classes.bump)}
       data-testid="hat-turf-count"
     >
-      {figure?.kind === 'toTake' ? '\u2212' : ''}
       {abbreviateNumber(count)}
     </span>
   );
@@ -141,6 +152,16 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
         </span>
       </span>
       {countBeside && countEl}
+      {figure?.margin != null && (
+        <span
+          className={clsx(classes.count, classes.margin)}
+          data-testid="hat-turf-margin"
+          data-margin={figure.margin}
+        >
+          {countBeside && '\u00b7 '}
+          {formatMargin(figure.margin)}
+        </span>
+      )}
       {blocked && (
         <span className={classes.blocked} data-testid="hat-turf-blocked" data-team={blocked}>
           <span className={classes.blockedDot} style={{ backgroundColor: colorOf(blocked) }} />
@@ -159,7 +180,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
       )}
     </>
   );
-  const chip = countBeside || summary.hatted;
+  const chip = countBeside || summary.hatted || figure?.margin != null;
 
   if (feed.arm !== 'badge-popover') {
     return (

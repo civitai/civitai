@@ -143,3 +143,9 @@
     animation: none;
   }
 }
+
+/* The viewer's margin: signed, in the chip beside the dial. */
+.margin {
+  font-size: 11px;
+  font-weight: 700;
+}
