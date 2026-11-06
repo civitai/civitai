@@ -51,6 +51,12 @@ vi.mock('$lib/server/apprenticeship/apprenticeship.service', () => ({
   getApprentice,
 }));
 
+const acolyteLevelGoldSince = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/apprenticeship/level-gold', async (original) => ({
+  ...(await original<typeof import('$lib/server/apprenticeship/level-gold')>()),
+  acolyteLevelGoldSince,
+}));
+
 const getStanding = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
@@ -65,6 +71,8 @@ const run = (user: Record<string, unknown> = {}) =>
   >;
 
 beforeEach(() => {
+  acolyteLevelGoldSince.mockReset();
+  acolyteLevelGoldSince.mockResolvedValue(0);
   getStanding.mockReset();
   getStanding.mockResolvedValue({ banned: false, muted: false });
   getPlayerStatus.mockReset();
@@ -171,13 +179,16 @@ describe('play load', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 10 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
     seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true });
+    acolyteLevelGoldSince.mockResolvedValue(100);
 
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'level',
       level: 10,
       milestone: expect.stringMatching(/halfway/),
+      levelGold: 100,
     });
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
     expect(seenStore.set).not.toHaveBeenCalled();
 
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
