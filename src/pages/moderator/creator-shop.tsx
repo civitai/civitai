@@ -953,10 +953,11 @@ function CreatorShopReviewPage() {
                       {artUrl(selected.cosmetic?.data) ? (
                         <EdgeMedia
                           src={artUrl(selected.cosmetic?.data)!}
-                          width={340}
+                          // Sticker art is capped at 512px, so the original is no bigger than the
+                          // resize, and serving it skips a cold resize on every newly queued item.
+                          {...(isSticker ? { original: true } : { width: 340, optimized: true })}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
-                          optimized
                         />
                       ) : selectedMeta.coverUrl ? (
                         <EdgeMedia
