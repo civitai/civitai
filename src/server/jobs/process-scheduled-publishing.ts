@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
@@ -440,6 +441,9 @@ export const processScheduledPublishing = createJob(
     // set also carries normally-published drafts, so anything driven off it has to
     // tolerate being handed the same post id twice.
     const publishedPosts = uniqBy([...flippedPosts, ...newlyLivePosts], 'id');
+    // Before the unguarded engagements: a re-published chapter 1 gets its story spark back.
+    if (publishedPosts.length)
+      void onStorySparkPostsRestored({ postIds: publishedPosts.map((p) => p.id) });
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({
