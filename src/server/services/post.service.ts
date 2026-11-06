@@ -1175,7 +1175,7 @@ export const updatePost = async ({
   else await userPostCountCache.refresh(post.userId);
   // A scheduled date writes publishedAt too; the scheduled-publishing job releases those reviews.
   if (publishedAtWritten && post.publishedAt && post.publishedAt <= new Date())
-    await releasePendingReviewsForPosts([post.id]).catch((error) =>
+    void releasePendingReviewsForPosts([post.id]).catch((error) =>
       logToAxiom({
         name: 'post-service',
         type: 'error',
