@@ -200,6 +200,14 @@ export async function collectPage({
   return { items, nextCursor };
 }
 
+async function resolveTagIds(names: string[]) {
+  const tags = await dbRead.tag.findMany({
+    where: { name: { in: names.map((name) => name.toLowerCase()) } },
+    select: { id: true },
+  });
+  return tags.map((x) => x.id);
+}
+
 async function resolveUserIds(usernames: string[]) {
   const users = await dbRead.user.findMany({
     where: { username: { in: usernames } },
@@ -220,17 +228,21 @@ export async function searchSemanticImages({
   domain?: DomainColor;
   candidateSource?: CandidateSource;
 }) {
-  const [hidden, addonData, blockedTags, userIds] = await Promise.all([
+  const [hidden, addonData, blockedTags, userIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
     getBlockedBrowsingTags(),
     input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
+    input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
   ]);
   if (userIds && !userIds.length)
     return { items: [], nextCursor: undefined, correctedQuery: undefined };
   // As the image feed: a tag that cannot be browsed is dropped, and a filter of only such tags is empty.
+  // A named tag that does not exist can match nothing.
+  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size)
+    return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const strip = stripBlockedTagIds(
-    input.tagIds,
+    [...new Set([...(input.tagIds ?? []), ...(namedTagIds ?? [])])],
     blockedTags.map((t) => t.id)
   );
   if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };

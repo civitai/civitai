@@ -348,6 +348,29 @@ describe('filters', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('narrows to tags chosen by name', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 77 }]);
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: textQuery({ tagNames: ['Fox'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.tagIds).toEqual([77]);
+  });
+
+  it('returns nothing, without asking the index, for a tag name that does not exist', async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([]);
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      input: textQuery({ tagNames: ['no-such-tag'] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
   it('bounds the posted date', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({

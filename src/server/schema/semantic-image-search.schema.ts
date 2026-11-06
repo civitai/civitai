@@ -12,6 +12,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
     tagIds: z.number().int().array().max(20).optional(),
+    // By name, as the image search URLs and pickers carry them; resolved to ids on the server.
+    tagNames: z.string().trim().min(1).array().max(20).optional(),
     excludedTagIds: z.number().int().array().max(50).optional(),
     baseModels: z.string().array().max(20).optional(),
     types: z.enum(MediaType).array().optional(),
