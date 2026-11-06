@@ -23,7 +23,7 @@ export const CollectionsHome = () => {
           <Loader />
         </Center>
       ) : (
-        <CollectionsLanding />
+        <CollectionsLanding signedIn={!!currentUser} hasCollections={collections.length > 0} />
       )}
     </CollectionsLayout>
   );
