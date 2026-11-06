@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAxiomLogger } from '../client';
-import { redactCredentials, redactCredentialsInString } from '../redact-credentials';
+import {
+  isCredentialField,
+  redactCredentials,
+  redactCredentialsInString,
+} from '../redact-credentials';
 
 const FAKE_KEY = 'fakekey0123456789abcdef0123456789';
 
@@ -73,10 +77,47 @@ describe('redactCredentials', () => {
     expect(out.link).toBe('https://x.test/a?token=[redacted]');
   });
 
-  it('does not mutate its input', () => {
-    const input = { token: FAKE_KEY };
-    redactCredentials(input);
+  it.each([
+    'authToken',
+    'sessionToken',
+    'csrf_token',
+    'privateKey',
+    'webhookSecret',
+    'newPassword',
+    'passwordHash',
+    'x-internal-token',
+    'x-request-signature',
+  ])('treats %s as a credential field', (name) => {
+    expect(isCredentialField(name)).toBe(true);
+  });
+
+  it.each([
+    'tokens',
+    'tokenizer',
+    'promptTokens',
+    'maxTokens',
+    'keyword',
+    'code',
+    'x-request-id',
+    'x-session-reauth',
+    'x-cache-key',
+  ])('keeps %s', (name) => {
+    expect(isCredentialField(name)).toBe(false);
+  });
+
+  it('does not mutate its input, arrays included', () => {
+    const input = { token: FAKE_KEY, list: [`?token=${FAKE_KEY}`] };
+    const out = redactCredentials(input);
     expect(input.token).toBe(FAKE_KEY);
+    expect(input.list[0]).toContain(FAKE_KEY);
+    expect(out.list[0]).toBe('?token=[redacted]');
+  });
+
+  it('returns clean subtrees by reference', () => {
+    const clean = { a: { b: [1, 'x'] } };
+    expect(redactCredentials(clean)).toBe(clean);
+    const mixed = { clean: { page: 2 }, url: `?token=${FAKE_KEY}` };
+    expect(redactCredentials(mixed).clean).toBe(mixed.clean);
   });
 });
 

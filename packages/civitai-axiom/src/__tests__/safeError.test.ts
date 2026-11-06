@@ -85,8 +85,12 @@ describe('safeError', () => {
   });
 
   it('keeps count fields whose names only contain "token"', () => {
-    const out = safeError({ detail: 'limit', tokens: 5, promptTokens: 120 })!;
-    expect(JSON.parse(out.message)).toMatchObject({ tokens: 5, promptTokens: 120 });
+    const out = safeError({ detail: 'limit', tokens: 5, promptTokens: 120, authToken: 'a1' })!;
+    expect(JSON.parse(out.message)).toMatchObject({
+      tokens: 5,
+      promptTokens: 120,
+      authToken: '[redacted]',
+    });
   });
 
   it('caps the serialized text and survives values JSON cannot encode', () => {

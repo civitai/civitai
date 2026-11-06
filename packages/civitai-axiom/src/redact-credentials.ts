@@ -52,11 +52,18 @@ export const CREDENTIAL_FIELD_NAMES: ReadonlySet<string> = new Set([
 const normalize = (name: string) => name.toLowerCase().replace(/[-_]/g, '');
 
 export const isCredentialParam = (name: string) => CREDENTIAL_PARAM_NAMES.has(normalize(name));
-// Custom `x-` headers named for a credential (`x-<anything>-token`, `-secret`, `-signature`, ...).
-const CREDENTIAL_HEADER_RE = /^x-.*(token|secret|signature|key|auth|password)$/i;
+// Compound names (`authToken`, `x-internal-token`, `privateKey`, `passwordHash`) match by suffix
+// or by containing `secret`/`password`. `token` must END the name, so `tokens`, `tokenizer` and
+// `promptTokens` survive.
+const CREDENTIAL_SUFFIX_RE = /(token|signature|apikey|privatekey|secretkey|accesskey)$/;
+const CREDENTIAL_WORD_RE = /secret|password|passwd/;
 
-export const isCredentialField = (name: string) =>
-  CREDENTIAL_FIELD_NAMES.has(normalize(name)) || CREDENTIAL_HEADER_RE.test(name);
+export const isCredentialField = (name: string) => {
+  const n = normalize(name);
+  return (
+    CREDENTIAL_FIELD_NAMES.has(n) || CREDENTIAL_SUFFIX_RE.test(n) || CREDENTIAL_WORD_RE.test(n)
+  );
+};
 
 // `name=value` after `?`, `&`, `#` or at the start (a bare query string such as OTel's `url.query`).
 const QUERY_PARAM_RE = /(^|[?&#])([^=?&#\s"'<>]+)=([^&#\s"'<>]*)/g;
