@@ -50,7 +50,8 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
-import { getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
+import { getFileExtension } from '~/utils/string-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import { trpc } from '~/utils/trpc';
 import { getModelFileTypeOptions, UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
@@ -132,7 +133,7 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
   }
 }
 
-export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean } = {}) {
+export function Files() {
   const {
     files,
     linkedComponents,
@@ -343,7 +344,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                   data={file}
                   index={files.indexOf(file)}
                   fileTypes={primaryTypes}
-                  showRename={showRenameOnPrimary}
+                  showRename
                 />
               ))}
               <InlineDropzone
@@ -703,8 +704,7 @@ function FileCard({
 
   const handleRenameSave = () => {
     if (!versionFile.id) return;
-    const originalExt = `.${getFileExtension(versionFile.name)}`;
-    const next = renameValue.trim() ? sanitizeDownloadFilename(renameValue, originalExt) : null;
+    const next = sanitizeOverrideName(renameValue, versionFile.name);
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };
 
