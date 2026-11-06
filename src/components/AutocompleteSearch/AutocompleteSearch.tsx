@@ -27,6 +27,7 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -93,7 +94,7 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // never reaches `useInstantSearch().status`, so we can't key off that).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
   createResilientSearchClient(
-    {
+    withSemanticImageSearch({
       ...meilisearch,
       search(requests) {
         // Prevent making a request if there is no query
@@ -105,7 +106,7 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
 
         return meilisearch.search(requests);
       },
-    },
+    }),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
       onSuccess: () => autocompleteAvailability.setUnavailable(false),
