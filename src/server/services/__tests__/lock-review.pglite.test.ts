@@ -68,6 +68,7 @@ const {
   getLockReviewState,
   latestModelAppealOfKind,
   LOCK_REVIEW_DETECTION_HELD,
+  LOCK_REVIEW_MATCH_CHECK_FAILED,
   LOCK_REVIEW_HELD,
   LOCK_REVIEW_UNAVAILABLE,
 } = await import('~/server/services/lock-review.service');
@@ -95,8 +96,17 @@ beforeAll(async () => {
       nsfw boolean NOT NULL DEFAULT false,
       poi boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'Published',
       meta jsonb NOT NULL DEFAULT '{}'
     );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id int PRIMARY KEY,
+      "modelVersionId" int NOT NULL,
+      type text NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "ModelFileHash" ("fileId" int NOT NULL, type text NOT NULL, hash text NOT NULL);
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -156,7 +166,9 @@ async function seed({
   owner,
   meta = {},
 }: Seed) {
-  await db.exec(`DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held";`);
+  await db.exec(
+    `DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash";`
+  );
   await db.query(
     `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor, meta) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [MODEL, owner ?? OWNER, locked, nsfw, !!poi, !!minor, meta]
@@ -330,6 +342,70 @@ describe('approving a lock review', () => {
       expect((await appealRow()).status).toBe('Pending');
     }
   );
+
+  it('refuses while a real person file match waits for a moderator', async () => {
+    await seed({ locked: ['poi', 'nsfw'], meta: { poiHashMatch: { at: 'then', hash: 'h' } } });
+
+    await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+    expect((await modelRow()).lockedProperties).toEqual(['poi', 'nsfw']);
+  });
+
+  describe('with a minor file match waiting for a moderator', () => {
+    const SEED_MODEL = 90;
+    const SEED_OWNER = 99;
+
+    /** Another uploader's moderator-flagged minor model shares a weights file with the model. */
+    async function matchFile() {
+      await db.query(
+        `INSERT INTO "Model" (id, "userId", "lockedProperties", minor) VALUES ($1, $2, '{minor}', true)`,
+        [SEED_MODEL, SEED_OWNER]
+      );
+      await db.exec(`
+        INSERT INTO "ModelVersion" VALUES (1, ${MODEL}), (2, ${SEED_MODEL});
+        INSERT INTO "ModelFile" (id, "modelVersionId", type) VALUES (1, 1, 'Model'), (2, 2, 'Model');
+        INSERT INTO "ModelFileHash" VALUES (1, 'SHA256', 'same'), (2, 'SHA256', 'same');
+      `);
+    }
+
+    it('refuses to approve, and changes nothing', async () => {
+      await seed({ locked: ['poi', 'minor', 'nsfw'] });
+      await matchFile();
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_DETECTION_HELD);
+      expect((await modelRow()).lockedProperties).toEqual(['poi', 'minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    });
+
+    it('approves once a moderator has dismissed the match', async () => {
+      await seed({
+        locked: ['minor', 'nsfw'],
+        meta: { minorHashDismissed: { at: 'then', by: 1 } },
+      });
+      await matchFile();
+
+      await approve();
+
+      expect((await modelRow()).lockedProperties).toEqual(['minor']);
+    });
+
+    it('still lets the review be rejected', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      await matchFile();
+
+      await reject();
+
+      expect((await appealRow()).status).toBe('Rejected');
+    });
+
+    it('refuses to approve when the match cannot be checked', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('timeout'));
+
+      await expect(approve()).rejects.toThrow(LOCK_REVIEW_MATCH_CHECK_FAILED);
+      expect((await modelRow()).lockedProperties).toEqual(['minor', 'nsfw']);
+      expect((await appealRow()).status).toBe('Pending');
+    });
+  });
 
   it('still lets the review be rejected while a detection is held', async () => {
     await seed({ locked: ['poi', 'nsfw'], meta: heldDetection('poi') });

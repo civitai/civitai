@@ -15,6 +15,8 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { hasPendingMinorHashMatch } from '~/server/services/minor-hash.service';
+import { POI_HASH_MATCH_KEY } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
@@ -40,6 +42,9 @@ export const LOCK_REVIEW_HELD =
 /** Moderators only. */
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
+/** Moderators only. */
+export const LOCK_REVIEW_MATCH_CHECK_FAILED =
+  "Couldn't check this model for a file match waiting for a moderator, so it can't be approved now. Try again.";
 
 export async function getLockReviewState({
   modelId,
@@ -200,6 +205,12 @@ export async function resolveLockReviewAppeal({
   }
 
   const markerView = approve ? await holdMarkerViewExists() : false;
+  // Outside the row lock: it reads the model's files and every moderator-flagged minor model's.
+  let minorMatchPending = false;
+  if (approve)
+    minorMatchPending = await hasPendingMinorHashMatch(modelId, dbWrite).catch(() => {
+      throw throwBadRequestError(LOCK_REVIEW_MATCH_CHECK_FAILED);
+    });
   const { claimed, unlocked } = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<
       {
@@ -216,7 +227,8 @@ export async function resolveLockReviewAppeal({
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
         a."userId" = m."userId" AS "ownerFiled",
         COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
-          OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected', FALSE) AS "detectionHeld",
+          OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
+          OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE) AS "detectionHeld",
         ${
           approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
         } AS held
@@ -243,7 +255,8 @@ export async function resolveLockReviewAppeal({
         throw throwBadRequestError(
           'This model is now flagged as a real person or a minor; its locks stay. Reject the review instead.'
         );
-      if (row.detectionHeld) throw throwBadRequestError(LOCK_REVIEW_DETECTION_HELD);
+      if (row.detectionHeld || minorMatchPending)
+        throw throwBadRequestError(LOCK_REVIEW_DETECTION_HELD);
       lift = locksToLift(asked.locks, locked);
       if (lift.length)
         await tx.model.update({
