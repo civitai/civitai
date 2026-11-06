@@ -18,6 +18,13 @@ describe('requestableLocks', () => {
     ).toEqual(['nsfw']);
   });
 
+  it('offers the other locked settings while poi and minor are locked but unset', () => {
+    expect(requestableLocks({ lockedProperties: ['poi', 'minor', 'tags'] })).toEqual(['tags']);
+    expect(
+      requestableLocks({ lockedProperties: ['poi', 'minor', 'tags'], poi: null, minor: null })
+    ).toEqual(['tags']);
+  });
+
   it.each([{ poi: true }, { minor: true }])('offers nothing on a model marked %o', (mark) => {
     expect(
       requestableLocks({ lockedProperties: ['poi', 'minor', 'nsfw', 'tags'], ...mark })
