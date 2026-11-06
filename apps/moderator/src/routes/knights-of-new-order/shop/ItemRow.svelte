@@ -48,7 +48,7 @@
         <span class="shrink-0 text-xs text-dark-2">#{item.id}</span>
       </div>
       {#if secondary}<span class="truncate text-xs text-dark-2">{secondary}</span>{/if}
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 md:hidden">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 @4xl:hidden">
         <AvailabilityBadge availability={status} />
         {#if item.minRank}
           <span class="inline-flex items-center gap-1 text-xs text-dark-2">
@@ -59,8 +59,8 @@
     </div>
   </TableCell>
   <TableCell class="text-right tabular-nums text-dark-0">{num(item.price)} g</TableCell>
-  <TableCell class="hidden md:table-cell"><AvailabilityBadge availability={status} /></TableCell>
-  <TableCell class="hidden text-sm text-dark-2 md:table-cell">{rankLabel(item.minRank)}</TableCell>
+  <TableCell class="hidden @4xl:table-cell"><AvailabilityBadge availability={status} /></TableCell>
+  <TableCell class="hidden text-sm text-dark-2 @4xl:table-cell">{rankLabel(item.minRank)}</TableCell>
   <TableCell class="w-28 text-right">
     <div class="flex items-center justify-end gap-1">
       <Button size="sm" variant="outline" onclick={onedit}>Edit</Button>

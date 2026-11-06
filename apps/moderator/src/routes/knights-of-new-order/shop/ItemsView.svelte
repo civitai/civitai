@@ -109,7 +109,7 @@
 {:else}
   <TodayStrip {items} {entries} {day} {now} />
 
-  <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
+  <section class="@container rounded-xl border border-dark-4 bg-dark-6 p-4">
     <div class="mb-2 flex flex-wrap items-center gap-3">
       <div class="relative">
         <IconSearch class="pointer-events-none absolute top-2 left-2.5 size-4 text-dark-2" />
@@ -168,10 +168,10 @@
         <TableHeader>
           <TableRow>
             <TableHead class="w-14"><span class="sr-only">Picture</span></TableHead>
-            <TableHead>Item</TableHead>
-            <TableHead class="w-28 text-right">Price</TableHead>
-            <TableHead class="hidden w-64 md:table-cell">Availability</TableHead>
-            <TableHead class="hidden w-28 md:table-cell">Open to</TableHead>
+            <TableHead class="min-w-40">Item</TableHead>
+            <TableHead class="w-24 text-right">Price</TableHead>
+            <TableHead class="hidden w-64 @4xl:table-cell">Availability</TableHead>
+            <TableHead class="hidden w-28 @4xl:table-cell">Open to</TableHead>
             <TableHead class="w-28"><span class="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>

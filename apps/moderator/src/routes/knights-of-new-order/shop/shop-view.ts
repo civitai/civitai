@@ -89,7 +89,7 @@ export function whatItIs(item: Describable) {
 }
 
 export const buzzRate = (price: number, buzz: number) =>
-  `${Number((price / buzz).toFixed(2)).toLocaleString()} gold / Buzz`;
+  `${Number((price / buzz).toFixed(1)).toLocaleString()} gold / Buzz`;
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 

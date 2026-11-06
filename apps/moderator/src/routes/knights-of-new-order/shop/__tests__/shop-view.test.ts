@@ -187,6 +187,15 @@ describe('secondaryLine', () => {
     expect(secondaryLine(pack('Starter'))).toBe('50 Buzz · 20 gold / Buzz');
   });
 
+  it('rounds the rate to one decimal', () => {
+    expect(secondaryLine(row(1, { name: 'a', price: 962, buzz: 50 }))).toBe(
+      '50 Buzz · 19.2 gold / Buzz'
+    );
+    expect(secondaryLine(row(1, { name: '11 Buzz', price: 200, buzz: 11 }))).toBe(
+      '18.2 gold / Buzz'
+    );
+  });
+
   it("keeps a membership's tier and length and a cosmetic's type", () => {
     expect(secondaryLine(row(2, { kind: 'membership', tier: 'bronze', months: 1 }))).toBe(
       'Bronze · 1 month'
