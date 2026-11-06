@@ -1513,7 +1513,6 @@ export async function applyArticleContentChange({
     };
   }
   const { ownerId, title, previousContent, coverId, publication } = resolved;
-  // Set by whichever write voided a shared draft's verdict; a fresh check must follow it.
   let sharedTextChanged = !!resolved.sharedTextChanged;
 
   // A caller holding the pre-write snapshot has already written this body itself. Replaying
@@ -1624,9 +1623,8 @@ export async function applyArticleContentChange({
         where: { entityType: 'Article', entityId: id },
       });
     } else if (shared) {
-      // A write that voided the verdict needs a fresh one; otherwise the verdict on record is for
-      // this text. Link holders see the text as soon as it passes, so a check that cannot be
-      // shown to have started withdraws the links.
+      // Link holders see the text as soon as it passes, so a check that cannot be shown to have
+      // started withdraws the links.
       const checked =
         !sharedTextChanged ||
         (await submitSharedArticleText(id).catch((e) => {
@@ -2608,13 +2606,6 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
 }
 
 /**
- * Does this article have any text worth sending to the text-moderation pipeline?
- * Shared between the submit-text-moderation gate and the recomputeArticleIngestion
- * empty-content branch so the two can't drift: anything that wouldn't be submitted
- * must also be treated as "textDone" by the state machine, otherwise the article
- * gets trapped in Pending waiting for a moderation callback that will never come.
- */
-/**
  * Written in the same transaction as a shared draft's new text: the earlier verdict stops
  * counting, and its in-flight check can no longer land (callbacks match on `workflowId`).
  */
@@ -2699,6 +2690,13 @@ export async function submitSharedArticleText(id: number): Promise<boolean> {
   return false;
 }
 
+/**
+ * Does this article have any text worth sending to the text-moderation pipeline?
+ * Shared between the submit-text-moderation gate and the recomputeArticleIngestion
+ * empty-content branch so the two can't drift: anything that wouldn't be submitted
+ * must also be treated as "textDone" by the state machine, otherwise the article
+ * gets trapped in Pending waiting for a moderation callback that will never come.
+ */
 export function articleHasText(title: string | null, content: string | null): boolean {
   const titleText = title?.trim() ?? '';
   const contentText = removeTags(content ?? '').trim();

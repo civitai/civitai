@@ -50,8 +50,8 @@ export function ArticleShareDraftModal({ articleId }: { articleId: number }) {
     <Modal {...dialog} title="Share draft" size="md">
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          Anyone with the link can read this draft, signed in or not, until it expires or you revoke
-          it. They can&apos;t comment, react or edit.
+          Anyone with the link can read this draft, signed in or not, once it passes our content
+          checks, until it expires or you revoke it. They can&apos;t comment, react or edit.
         </Text>
         <Stack gap={4}>
           <Text size="sm" fw={500}>

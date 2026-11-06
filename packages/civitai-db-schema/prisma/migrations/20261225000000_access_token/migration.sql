@@ -6,8 +6,9 @@
 -- each environment (preview / dev, then production).
 --
 -- DEPLOY ORDER: apply this BEFORE deploying the code that reads it. A new table has no readers on
--- the previous build, so applying early is safe; deploying first makes every share-link procedure
--- fail until it is applied.
+-- the previous build, so applying early is safe. Deploying first breaks every save that changes a
+-- Draft or Unpublished article's text, the scan-status read and text-scan submission for those
+-- articles, and every share-link procedure, until it is applied.
 
 CREATE TABLE "AccessToken" (
   "id" SERIAL NOT NULL,

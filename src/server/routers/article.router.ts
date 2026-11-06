@@ -115,7 +115,8 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
     .query(({ input }) => isArticleProcessing(input)),
-  // Draft share links. The token opens only `getShared`; nothing else reads it.
+  // Draft share links. The token is accepted by `openShareLink` (once, to set the cookie) and read
+  // from that cookie by `getShared`; nothing else reads it.
   createShareLink: guardedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(createArticleShareLinkSchema)

@@ -181,8 +181,7 @@ export async function getArticleByShareToken({
   // One read, so the text shown is the text whose state was checked.
   const article = await readSharedArticle(row.resourceId);
   if (!article) return UNAVAILABLE;
-  // A link outlives nothing about its author: a transferred article, or a banned, muted or
-  // deleted author, ends it.
+  // A transfer, or a banned, muted or deleted author, makes the link answer unavailable meanwhile.
   if (article.userId !== row.createdById) return UNAVAILABLE;
   if (article.user.bannedAt || article.user.muted || article.user.deletedAt) return UNAVAILABLE;
   if (viewerId && (await amIBlockedByUser({ userId: viewerId, targetUserId: article.userId })))
@@ -200,8 +199,7 @@ export async function getArticleByShareToken({
     return settling ? { status: 'checking' } : UNAVAILABLE;
   }
 
-  // Ingestion alone is not enough: it can read Scanned with no verdict for this text. The read
-  // requires the verdict of the current text's check.
+  // The read requires the verdict of the current text's check.
   if (articleHasText(article.title, article.content)) {
     const [check, required] = await Promise.all([
       dbWrite.entityModeration.findUnique({

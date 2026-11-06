@@ -5088,7 +5088,7 @@ model AccessToken {
 }
 
 // The check a shared draft's read requires: the workflow whose verdict covers the draft's text, and
-// a hash of that text. Written only by the share flow, under the share-token lock.
+// a hash of that text. Written under the share-token lock.
 model ArticleShareCheck {
   articleId  Int      @id
   // Bumped by every write that changes a shared draft's text.

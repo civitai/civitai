@@ -42,7 +42,7 @@ export function isUsableAccessToken(
   );
 }
 
-/** Only rows that still grant access. Shared by every reader so expiry and revocation agree. */
+/** The where-clause form of `isUsableAccessToken`: rows that still grant access. */
 const activeWhere = (now = new Date()) => ({ revokedAt: null, expiresAt: { gt: now } });
 
 export class AccessTokenLimitError extends Error {}
@@ -127,7 +127,6 @@ export async function getResourceIdsWithActiveAccessTokens(
     where: { resourceType, resourceId: { in: resourceIds }, ...activeWhere() },
     select: { resourceId: true, resourceType: true, expiresAt: true, revokedAt: true },
   });
-  // Re-checked here so this answer and `resolveAccessToken` cannot disagree about a row.
   return new Set(rows.filter((r) => isUsableAccessToken(r, resourceType)).map((r) => r.resourceId));
 }
 
