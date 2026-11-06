@@ -86,7 +86,8 @@ describe('remixApp.admin', () => {
     await as(moderator).save({ ...restyle });
     await as(moderator).setEnabled({ slug: 'restyle', enabled: false });
     await as(moderator).order({ slugs: ['restyle'] });
-    for (const fn of [h.list, h.save, h.setEnabled, h.order]) expect(fn).toHaveBeenCalledTimes(1);
+    await as(moderator).testStart({ ...tap(), quote: 30 });
+    for (const fn of Object.values(h)) expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a moderator while the remix apps flag is off', async () => {
@@ -141,6 +142,16 @@ describe('remixApp.admin', () => {
       code: 'BAD_REQUEST',
     });
     expect(h.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a video.remix target, which no app may use yet, before it is saved', async () => {
+    await expect(
+      as(moderator).save({ ...restyle, target: 'video.remix' } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.save).not.toHaveBeenCalled();
+    // POSITIVE CONTROL: the same row on the image slot saves.
+    await as(moderator).save({ ...restyle, target: 'image.remix' });
+    expect(h.save).toHaveBeenCalledTimes(1);
   });
 
   it('test-runs any app, disabled ones too, and passes no quote until one is confirmed', async () => {

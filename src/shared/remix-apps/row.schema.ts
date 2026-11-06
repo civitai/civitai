@@ -19,6 +19,8 @@ export const REMIX_STATUSES: string[] = Object.values(REMIX_STATUS);
 
 export const REMIX_SLOT_IDS = ['image.remix', 'video.remix'] as const;
 export type RemixSlotId = (typeof REMIX_SLOT_IDS)[number];
+/** The slots a mod may save an app into. `video.remix` exists, but no app runs on video yet. */
+export const REMIX_SAVABLE_SLOT_IDS = ['image.remix'] as const satisfies readonly RemixSlotId[];
 
 /** The menu draws these; any other icon would render as the fallback. */
 export const REMIX_APP_ICONS = [
@@ -209,7 +211,7 @@ export const remixAppInputSchema = z.object({
   slug: remixAppSlugSchema,
   name: text(40),
   description: z.string().trim().max(200).optional(),
-  target: z.enum(REMIX_SLOT_IDS),
+  target: z.enum(REMIX_SAVABLE_SLOT_IDS),
   spec: remixAppSpecSchema,
 });
 export type RemixAppInput = z.infer<typeof remixAppInputSchema>;
