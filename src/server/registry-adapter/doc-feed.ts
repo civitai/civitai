@@ -311,54 +311,68 @@ export function createDocFeed(opts: DocFeedOptions) {
     }
   };
 
+  /** The changes after a loaded `state`, starting from its first poll, `first`, already made. */
+  async function* follow(
+    schema: string,
+    cursor: string,
+    loaded: FeedState,
+    first: Awaited<ReturnType<typeof advance>>,
+    signal: AbortSignal
+  ): AsyncGenerator<Change> {
+    let state = loaded;
+    let position = cursor;
+    let pending: Awaited<ReturnType<typeof advance>> | null = first;
+    while (!signal.aborted) {
+      const before = state;
+      const { next, entities } = pending ?? (await guarded(() => advance(schema, before)));
+      pending = null;
+      if (next === before) {
+        await opts.sleep(opts.pollMs, signal);
+        continue;
+      }
+      const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
+      const still = new Set(next.served.map(([urn]) => urn));
+      const deletes = [...was.keys()]
+        .filter((urn) => !still.has(urn))
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const upserts = next.served
+        .filter(([urn, rev]) => was.get(urn) !== rev)
+        .map(([urn]) => entities.get(urn))
+        .filter((e): e is Entity => e !== undefined);
+      const diff: Array<{ delete: string } | { upsert: Entity }> = [
+        ...deletes.map((urn) => ({ delete: urn })),
+        ...upserts.map((upsert) => ({ upsert })),
+      ];
+      if (diff.length > 0) {
+        const nextCursor = await save(next);
+        for (let i = 0; i < diff.length; i++) {
+          if (signal.aborted) return;
+          const at = i === diff.length - 1 ? nextCursor : position;
+          const c = diff[i];
+          yield 'upsert' in c ? { upsert: c.upsert, cursor: at } : { delete: c.delete, cursor: at };
+        }
+        position = nextCursor;
+      }
+      state = next;
+      await opts.sleep(opts.pollMs, signal);
+    }
+  }
+
   return {
     async snapshot(schema: string) {
       const { next, entities } = await guarded(() => advance(schema, null));
       return { cursor: await save(next), entities: [...entities.values()] };
     },
 
-    async *changes(
-      schema: string,
-      cursor: string,
-      { signal }: AdapterContext
-    ): AsyncGenerator<Change> {
-      let state = await guarded(() => load(schema, cursor));
-      let position = cursor;
-      while (!signal.aborted) {
-        const before = state;
-        const { next, entities } = await guarded(() => advance(schema, before));
-        if (next === before) {
-          await opts.sleep(opts.pollMs, signal);
-          continue;
-        }
-        const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
-        const still = new Set(next.served.map(([urn]) => urn));
-        const deletes = [...was.keys()]
-          .filter((urn) => !still.has(urn))
-          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-        const upserts = next.served
-          .filter(([urn, rev]) => was.get(urn) !== rev)
-          .map(([urn]) => entities.get(urn))
-          .filter((e): e is Entity => e !== undefined);
-        const diff: Array<{ delete: string } | { upsert: Entity }> = [
-          ...deletes.map((urn) => ({ delete: urn })),
-          ...upserts.map((upsert) => ({ upsert })),
-        ];
-        if (diff.length > 0) {
-          const nextCursor = await save(next);
-          for (let i = 0; i < diff.length; i++) {
-            if (signal.aborted) return;
-            const at = i === diff.length - 1 ? nextCursor : position;
-            const c = diff[i];
-            yield 'upsert' in c
-              ? { upsert: c.upsert, cursor: at }
-              : { delete: c.delete, cursor: at };
-          }
-          position = nextCursor;
-        }
-        state = next;
-        await opts.sleep(opts.pollMs, signal);
-      }
+    /**
+     * Resolves only once the cursor is checked, which here takes the first poll as well: the
+     * history checks of {@link advance} (a re-created app, a seq reset, a purge) are cursor
+     * checks too, so each of them rejects before `live` rather than after it.
+     */
+    async changes(schema: string, cursor: string, { signal }: AdapterContext) {
+      const state = await guarded(() => load(schema, cursor));
+      const first = await guarded(() => advance(schema, state));
+      return follow(schema, cursor, state, first, signal);
     },
   };
 }

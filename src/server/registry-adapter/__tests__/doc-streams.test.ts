@@ -141,17 +141,13 @@ describe('composeAdapter', () => {
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'entity-cursor', entities: [] }),
     // eslint-disable-next-line require-yield
-    async *changes() {
-      return;
-    },
+    changes: async () => (async function* () {})(),
   };
   const docs = {
     // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
     snapshot: async () => ({ cursor: 'doc-cursor', entities: [] }),
     // eslint-disable-next-line require-yield
-    async *changes() {
-      return;
-    },
+    changes: async () => (async function* () {})(),
   };
   const adapter = composeAdapter(entities, docs as never);
   const ctx = { signal: new AbortController().signal };

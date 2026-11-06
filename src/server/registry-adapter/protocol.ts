@@ -68,8 +68,12 @@ export interface Adapter {
     schema: string,
     ctx: AdapterContext
   ): Promise<{ cursor: string; entities: Iterable<Entity> | AsyncIterable<Entity> }>;
-  /** Throws {@link cursorExpired} for a cursor it cannot resume from. */
-  changes(schema: string, cursor: string, ctx: AdapterContext): AsyncIterable<Change>;
+  /**
+   * The changes after `cursor`. The cursor is checked before this resolves: it rejects with
+   * {@link cursorExpired} for a cursor it cannot resume from, so the stream answers that before
+   * `live`, never after it.
+   */
+  changes(schema: string, cursor: string, ctx: AdapterContext): Promise<AsyncIterable<Change>>;
 }
 
 export function parseSubscribeQuery(params: URLSearchParams): SubscribeRequest {

@@ -104,9 +104,13 @@ export function handleRequest(
         }
         position = snapshot.cursor;
       }
+      // The cursor is checked before `live`: one the source cannot resume from rejects here, and
+      // on a resume nothing has been sent yet, so it is answered with its own status.
+      const changes = await adapter.changes(schema, position, ctx);
+      if (stream.signal.aborted) return;
       stream.send({ type: 'live', cursor: position });
 
-      for await (const change of adapter.changes(schema, position, ctx)) {
+      for await (const change of changes) {
         if (stream.signal.aborted) return;
         if ('upsert' in change) {
           if (wanted(change.upsert.urn)) {

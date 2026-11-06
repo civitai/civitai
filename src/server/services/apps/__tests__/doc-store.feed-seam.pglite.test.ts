@@ -92,7 +92,7 @@ describe.each([{ rls: true }, { rls: false }])(
       });
       const drain = async (cursor: string) => {
         const out: Change[] = [];
-        for await (const c of feed.changes(V1, cursor, { signal: abort.signal })) out.push(c);
+        for await (const c of await feed.changes(V1, cursor, { signal: abort.signal })) out.push(c);
         return out;
       };
       return { feed, drain };

@@ -41,7 +41,8 @@ function harness(store: SnapshotStore, states: Entity[][], maxPolls = 3) {
   });
   const drain = async (schema: string, cursor: string) => {
     const out: Change[] = [];
-    for await (const c of adapter.changes(schema, cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await adapter.changes(schema, cursor, { signal: abort.signal }))
+      out.push(c);
     return out;
   };
   return { adapter, drain, signal: abort.signal, polls: () => polls };

@@ -68,7 +68,8 @@ function setup(store = createMemorySnapshotStore()) {
     });
     const drain = async (schema: string, cursor: string) => {
       const out: Change[] = [];
-      for await (const c of feed.changes(schema, cursor, { signal: abort.signal })) out.push(c);
+      for await (const c of await feed.changes(schema, cursor, { signal: abort.signal }))
+        out.push(c);
       return out;
     };
     return { feed, drain, signal: abort.signal };
@@ -325,7 +326,8 @@ describe('🔴 an empty published stream reads incrementally', () => {
     const snap = await feed.snapshot(V1);
     expect([snap.entities, fullReads]).toEqual([[], 1]);
     const out: Change[] = [];
-    for await (const c of feed.changes(V1, snap.cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await feed.changes(V1, snap.cursor, { signal: abort.signal }))
+      out.push(c);
     expect(out.map(shape)).toEqual([['upsert', urn('n7')]]);
     expect(fullReads).toBe(1);
   });
@@ -372,7 +374,7 @@ describe('a poll with nothing new', () => {
     const { cursor } = await feed.snapshot(V2);
     const after = { puts: store.puts(), reads: { ...reads } };
     const out: Change[] = [];
-    for await (const c of feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
+    for await (const c of await feed.changes(V2, cursor, { signal: abort.signal })) out.push(c);
     expect(out).toEqual([]);
     expect(polls).toBe(4);
     expect([store.puts() - after.puts, reads]).toEqual([0, after.reads]);
