@@ -1,10 +1,11 @@
 /**
  * Credential redaction for server-side log and trace payloads.
  *
- * Names are matched EXACTLY after lowercasing and dropping `-`/`_`, never as a substring:
- * `tokens=5`, `tokenizer` and a `promptTokens` field are ordinary debug data and must survive.
- * The browser-side `src/utils/faro/redact.ts` deliberately over-redacts (substring match);
- * this one does not, because server logs are the debugging record.
+ * Names are compared after lowercasing and dropping `-`/`_`. Query parameters must match a name
+ * exactly. Object fields match an exact name, a credential suffix (`authToken`, `privateKey`) or
+ * a contained word (`passwordHash`, `cookieHeader`); see `isCredentialField`. Either way
+ * `tokens=5`, `tokenizer` and a `promptTokens` field survive: server logs are the debugging
+ * record, unlike the deliberately broad browser-side `src/utils/faro/redact.ts`.
  *
  * The next-axiom request-path patch (`patches/@civitai__next-axiom@0.17.0.patch`) inlines
  * CREDENTIAL_PARAM_NAMES; a parity test keeps the two in step.
@@ -52,9 +53,7 @@ export const CREDENTIAL_FIELD_NAMES: ReadonlySet<string> = new Set([
 const normalize = (name: string) => name.toLowerCase().replace(/[-_]/g, '');
 
 export const isCredentialParam = (name: string) => CREDENTIAL_PARAM_NAMES.has(normalize(name));
-// Compound names (`authToken`, `x-internal-token`, `privateKey`, `passwordHash`) match by suffix
-// or by containing `secret`/`password`. `token` must END the name, so `tokens`, `tokenizer` and
-// `promptTokens` survive.
+// `token` must END a field name, so `tokens`, `tokenizer` and `promptTokens` survive.
 const CREDENTIAL_SUFFIX_RE =
   /(token|signature|apikey|privatekey|secretkey|accesskey|(access|refresh|auth|id|session)tokens|apikeys)$/;
 const CREDENTIAL_WORD_RE = /secret|password|passwd|authorization|cookie/;
@@ -103,9 +102,10 @@ function isPlainObject(value: object): value is Record<string, unknown> {
 
 /**
  * Return `value` with credential-named fields blanked and every string scrubbed by
- * `redactCredentialsInString`, without mutating it. Arrays and plain objects are walked and URL instances scrubbed; other objects (Error, Date,
- * class instances) pass through untouched, as does a reference already on the current path, so a
- * circular payload still reaches the caller's own serialization fallback. Never throws.
+ * `redactCredentialsInString`, without mutating it. Arrays and plain objects are walked and URL
+ * instances scrubbed; other objects (Error, Date, class instances) pass through untouched, as does
+ * a reference already on the current path, so a circular payload still reaches the caller's own
+ * serialization fallback. Never throws.
  */
 export function redactCredentials<T>(value: T): T {
   try {
