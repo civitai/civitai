@@ -85,13 +85,7 @@ describe("owner's Hat Turf switch in account settings", () => {
     ],
     [
       'legacy settings',
-      {},
-      /Leave Hat Turf on the event page first/,
-      '/events/birthday2026#hat-turf',
-    ],
-    [
-      'V2 settings, Hat Turf flags off',
-      { accountSettingsV2: true },
+      { hatTurfImageDetail: true },
       /Leave Hat Turf on the event page first/,
       '/events/birthday2026#hat-turf',
     ],
@@ -103,6 +97,16 @@ describe("owner's Hat Turf switch in account settings", () => {
     expect(toggle()!.disabled).toBe(true);
     expect(document.body.textContent).toMatch(copy);
     expect(document.querySelector(`a[href="${href}"]`)).not.toBeNull();
+  });
+
+  // With the Hat Turf flags off, neither way to leave is drawn, so there is nothing to link to.
+  test('in Hat Turf with its flags off: no link', async () => {
+    h.flags = { accountSettingsV2: true };
+    h.stock = { available: 3, optedIn: true, ownerOff: false, mode: 'live' };
+    await render();
+    await vi.waitFor(() => expect(toggle()).not.toBeNull());
+    expect(document.body.textContent).toMatch(/Leave Hat Turf first/);
+    expect(document.querySelector('a')).toBeNull();
   });
 
   test.each([

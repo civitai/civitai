@@ -348,14 +348,17 @@ function ImageDetail2Content() {
       {/* On a phone the Buzz chip in the reaction row is the tip button, unless reactions are
           hidden: the chip goes with them, so the bar keeps a Tip circle. */}
       {!withStoryline && reactionsHidden && !image.poi && (
-        <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
-          <LegacyActionIcon
-            {...sharedActionIconProps}
-            aria-label="Tip"
-            data-testid="image-detail-tip"
-          >
+        // The wrapper is the button; the circle inside it is a plain badge.
+        <InteractiveTipBuzzButton
+          toUserId={image.user.id}
+          entityId={image.id}
+          entityType="Image"
+          aria-label="Tip"
+          data-testid="image-detail-tip"
+        >
+          <Badge {...sharedBadgeProps} px={0} w={36}>
             <IconBolt size={18} fill={theme.colors.accent[5]} color={theme.colors.accent[5]} />
-          </LegacyActionIcon>
+          </Badge>
         </InteractiveTipBuzzButton>
       )}
       {withStoryline && !image.poi && (

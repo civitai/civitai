@@ -18,9 +18,10 @@ export function useHatTurfOwnerSwitch() {
   const user = useCurrentUser();
   const features = useFeatureFlags();
   const event = getReleasedEventDecoration('Image')?.event;
-  // Where HatTurfSetting renders: the V2 Profile pane, behind the same flags as useTurfGate.
-  const leaveInSettings =
-    !!features.accountSettingsV2 && (!!features.hatTurfImageDetail || !!features.hatTurfFeedCard);
+  // Both ways to leave (HatTurfSetting, on the V2 Profile pane, and the event page's section)
+  // sit behind the same flags as useTurfGate.
+  const turfShown = !!features.hatTurfImageDetail || !!features.hatTurfFeedCard;
+  const leaveInSettings = turfShown && !!features.accountSettingsV2;
   const utils = trpc.useUtils();
   const { data: stock } = trpc.hatTurf.getStock.useQuery(
     { event: event ?? '' },
@@ -49,6 +50,8 @@ export function useHatTurfOwnerSwitch() {
         </NextLink>{' '}
         first
       </>
+    ) : !turfShown ? (
+      'Leave Hat Turf first'
     ) : (
       // The legacy account page has no "Take part" switch; the event page has Leave.
       <>

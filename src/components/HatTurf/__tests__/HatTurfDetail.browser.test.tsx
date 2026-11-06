@@ -721,7 +721,7 @@ describe('Hat Turf on image detail', () => {
 
   // Product decision (2026-11-06): leaving is on the event page and in account settings only.
   // Don't add a Leave button back to this popover without that decision being reversed.
-  test('the hat popover has no Leave: leaving is on the event page', async () => {
+  test('the hat popover has no Leave', async () => {
     render();
     await vi.waitFor(() => expect(q('hat-turf-detail-badge')).not.toBeNull());
     click(q('hat-turf-detail-badge'));

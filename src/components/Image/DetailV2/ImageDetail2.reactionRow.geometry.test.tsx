@@ -36,8 +36,24 @@ const image = {
   reactions: [{ userId: 2, reaction: 'Heart' }],
 };
 
+// A button around its child, as the real one is (an UnstyledButton), with its other props.
 vi.mock('~/components/Buzz/InteractiveTipBuzzButton', () => ({
-  InteractiveTipBuzzButton: ({ children }: { children: ReactNode }) => <>{children}</>,
+  InteractiveTipBuzzButton: ({
+    children,
+    toUserId: _u,
+    entityId: _i,
+    entityType: _t,
+    ...rest
+  }: {
+    children: ReactNode;
+    toUserId: number;
+    entityId: number;
+    entityType: string;
+  }) => (
+    <button type="button" style={{ display: 'flex' }} {...rest}>
+      {children}
+    </button>
+  ),
   useBuzzTippingStore: () => 0,
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -360,6 +376,7 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
     ];
     expect(ascending(leftToRight(bar))).toBe(true);
     expect(middles(bar).size).toBe(1);
+    expect(q('image-detail-chevron')!.getBoundingClientRect().right).toBeLessThanOrEqual(width);
     // Icon-only circles the size of the hat button.
     for (const el of bar.slice(0, 3)) {
       const r = el!.getBoundingClientRect();
@@ -385,10 +402,15 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
     await vi.waitFor(() => expect(q('hat-turf-detail-hat')).not.toBeNull());
     expect(label('Like reaction')).toBeNull();
     const tip = drawn(document.querySelectorAll('[data-testid="image-detail-tip"]'));
-    expect(tip?.getAttribute('aria-label')).toBe('Tip');
+    expect(tip?.tagName).toBe('BUTTON');
+    expect(tip!.getAttribute('aria-label')).toBe('Tip');
+    // One button: the tip wrapper is it, and what it wraps is not another.
+    expect(tip!.querySelector('button')).toBeNull();
     const r = tip!.getBoundingClientRect();
     expect([r.width, r.height]).toEqual([36, 36]);
-    expect(r.right).toBeLessThanOrEqual(q('image-detail-chevron')!.getBoundingClientRect().left);
+    const chevron = q('image-detail-chevron')!.getBoundingClientRect();
+    expect(r.right).toBeLessThanOrEqual(chevron.left);
+    expect(chevron.right).toBeLessThanOrEqual(width);
   });
 
   test('with Hat Turf off, both bars keep their order without the badge or hat', async () => {
