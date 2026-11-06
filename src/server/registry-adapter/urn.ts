@@ -21,12 +21,12 @@ export type UrnRef =
   | { kind: 'document'; slug: string; collection: string; key: string }
   | { kind: 'runtime'; name: string; major: number };
 
-// A segment never contains `:`, `/` or `@`, so every URN parses back unambiguously.
-// Bounded like the store's own names.
+// Slug, collection, version and runtime segments never contain `:`, `/` or `@`. A document key
+// (the store's own key shape) may contain `:` but never `/` or `@`, and it is a document URN's
+// last segment, so every URN still parses back unambiguously. Bounded like the store's own names.
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const COLLECTION_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const VERSION_RE = /^[0-9A-Za-z.+-]{1,64}$/;
-// The store's own key shape: no `/` or `@`, so a document URN still parses back.
 const KEY_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
 function segment(value: string, re: RegExp, what: string): string {

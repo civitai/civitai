@@ -289,9 +289,7 @@ export function createDocFeed(opts: DocFeedOptions) {
         v: STATE_FORMAT,
         schema,
         appId,
-        // Recorded even when nothing is served, so an empty stream reads incrementally. A seq that
-        // goes back is still caught (the head-behind-cursor check); with nothing served there is no witness, so a purge
-        // written past this seq before the next poll is not.
+        // Recorded even when nothing is served, so an empty stream reads incrementally.
         seq: head,
         family: digest,
         witness,

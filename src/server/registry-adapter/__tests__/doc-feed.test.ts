@@ -114,13 +114,23 @@ describe('multi-major claims', () => {
 
 describe('the cursor', () => {
   it('🔴 is opaque: a fixed-size digest whatever it names, never the seq', async () => {
+    // A seq long enough that neither its decimal nor its hex form turns up in a 32-hex digest
+    // by chance.
+    const SEQ = 987_654_321;
     const { world, make } = setup();
     const small = await make().feed.snapshot(V2);
-    world.cat.documents!.push(doc('n3', 'third', 4711));
-    world.cat.lastSeq = { ab_orbit_7: 4711 };
+    world.cat.documents!.push(doc('n3', 'third', SEQ));
+    world.cat.lastSeq = { ab_orbit_7: SEQ };
     const large = await make().feed.snapshot(V2);
-    for (const c of [small.cursor, large.cursor]) expect(c).toMatch(/^f1\.[0-9a-f]{32}$/);
-    expect(small.cursor).not.toBe(large.cursor);
+    // The same seq, different content: a different cursor, so the cursor is not the seq.
+    world.cat.documents![2] = doc('n3', 'third, edited', SEQ, { version: 2 });
+    const edited = await make().feed.snapshot(V2);
+    for (const c of [small.cursor, large.cursor, edited.cursor]) {
+      expect(c).toMatch(/^f1\.[0-9a-f]{32}$/);
+      expect(c).not.toContain(String(SEQ));
+      expect(c).not.toContain(SEQ.toString(16));
+    }
+    expect(new Set([small.cursor, large.cursor, edited.cursor]).size).toBe(3);
   });
 
   it('round trip: a new process resumes it, and only what changed since arrives', async () => {

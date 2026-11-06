@@ -173,8 +173,7 @@ export function buildEntities(
     }
     for (const e of releases.values()) add(APP_RELEASE_SCHEMA, e);
 
-    // The app names its head version only when that release was served (a version whose URN
-    // cannot be built never is, and was logged in the loop above).
+    // Not logged again: an unbuildable head version was already skipped, and logged, as a release.
     const headUrn = block
       ? urnOrSkip({ kind: 'release', slug, version: block.version }, () => undefined)
       : null;
