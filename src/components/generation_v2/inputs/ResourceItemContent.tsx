@@ -28,6 +28,7 @@ import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResidency';
+import { PartnerDisclosureIcons } from '~/components/generation_v2/PartnerDisclosureIcons';
 
 // =============================================================================
 // Types
@@ -249,6 +250,10 @@ export function ResourceItemContent({
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
+            <PartnerDisclosureIcons
+              partnerService={resource.partnerService}
+              partnerTrains={resource.partnerTrains}
+            />
             {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>

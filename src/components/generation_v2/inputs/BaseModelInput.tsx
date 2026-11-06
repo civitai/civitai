@@ -35,6 +35,8 @@ import type { GateItemState } from '~/shared/generation/gates';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
+import { PartnerDisclosureIcons } from '~/components/generation_v2/PartnerDisclosureIcons';
+import { PARTNER_SERVICE_ECOSYSTEMS } from '~/shared/constants/partner-ecosystems.constants';
 
 // Badge + default tooltip per shown-but-disabled state. A rule's `message`
 // (when present) overrides only the tooltip copy, layered on the same badge.
@@ -104,12 +106,13 @@ type TabValue = 'compatible' | 'recent' | 'all';
 /** The model card's header strip; `min-h-11` is the phone tap height, kept on every layout. */
 interface TriggerButtonProps {
   label: string;
+  ecosystemKey?: string;
   disabled?: boolean;
   onClick: () => void;
 }
 
 const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
-  ({ label, disabled, onClick }, ref) => (
+  ({ label, ecosystemKey, disabled, onClick }, ref) => (
     <UnstyledButton
       ref={ref}
       onClick={onClick}
@@ -126,6 +129,9 @@ const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
         <span className="text-gray-6 dark:text-dark-2">Ecosystem</span>{' '}
         <span className="font-semibold">{label}</span>
       </span>
+      <PartnerDisclosureIcons
+        partnerService={!!ecosystemKey && PARTNER_SERVICE_ECOSYSTEMS.has(ecosystemKey)}
+      />
       <span className="flex shrink-0 items-center gap-1 font-semibold text-blue-6 dark:text-blue-4">
         Change
         <IconChevronDown size={14} stroke={2.5} />
@@ -353,6 +359,7 @@ export function BaseModelListContent({
             {item.name}
           </Text>
           <ExperimentalFlask target={{ kind: 'ecosystem', key: disabledCheckKey }} size={16} />
+          <PartnerDisclosureIcons partnerService={PARTNER_SERVICE_ECOSYSTEMS.has(item.key)} />
           <SfwOnlyBadge ecosystemIds={getItemEcosystemIds(item)} />
         </div>
         {badge ? (
@@ -793,6 +800,7 @@ export function BaseModelInput({
       target={
         <TriggerButton
           label={readableName}
+          ecosystemKey={value}
           disabled={disabled}
           onClick={() => {
             if (disabled) return;

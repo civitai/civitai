@@ -317,7 +317,10 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  isGenerationDisabled,
+  toPublicApiVersionFlags,
+} from '~/shared/constants/model-version-flags.constants';
 import {
   isModelNameTooLong,
   MODEL_NAME_TOO_LONG_MESSAGE,
@@ -6524,6 +6527,7 @@ export async function getModelsWithVersions({
 
               return {
                 ...version,
+                flags: toPublicApiVersionFlags(version.flags),
                 // `modelVersionId` is deliberately PRESERVED on each file. The
                 // `files.push(...vaeFile)` above splices in files that live on
                 // the LINKED VAE version, so "which version owns this file" is

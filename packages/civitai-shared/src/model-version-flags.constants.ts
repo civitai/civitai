@@ -30,6 +30,12 @@ export const ModelVersionFlag = {
 
   /** Generating with this version adds no additional-resource fee (speed LoRAs such as LCM or Lightning); surfaced to the orchestrator as `additionalResourceCharge: false` on the mini endpoint. Moderator-controlled. */
   NoAdditionalResourceFee: 1 << 4, // 16
+
+  /** A partner, not Civitai, runs generations with this version. Moderator-controlled. */
+  PartnerService: 1 << 5, // 32
+
+  /** The partner running this version may use prompts and results to improve its models. Only meaningful alongside PartnerService. Moderator-controlled. */
+  PartnerTrains: 1 << 6, // 64
 } as const;
 
 export type ModelVersionFlagValue = (typeof ModelVersionFlag)[keyof typeof ModelVersionFlag];
@@ -45,6 +51,8 @@ export const modelVersionFlagLabels: Record<number, string> = {
   [ModelVersionFlag.NotDerivative]: 'Not a derivative',
   [ModelVersionFlag.NotEvictable]: 'Not evictable',
   [ModelVersionFlag.NoAdditionalResourceFee]: 'No additional resource fee',
+  [ModelVersionFlag.PartnerService]: 'Partner service',
+  [ModelVersionFlag.PartnerTrains]: 'Partner trains',
 };
 
 /**
@@ -68,3 +76,21 @@ export const isEvictable = (flags: number) => !Flags.hasFlag(flags, ModelVersion
 
 export const isAdditionalResourceFeeWaived = (flags: number) =>
   Flags.hasFlag(flags, ModelVersionFlag.NoAdditionalResourceFee);
+
+export type PartnerDisclosure = { partnerService: boolean; partnerTrains: boolean };
+
+/** Trains is never shown without the partner bit: a stray PartnerTrains alone discloses nothing. */
+export const getPartnerDisclosure = (flags: number): PartnerDisclosure => {
+  const partnerService = Flags.hasFlag(flags, ModelVersionFlag.PartnerService);
+  return {
+    partnerService,
+    partnerTrains: partnerService && Flags.hasFlag(flags, ModelVersionFlag.PartnerTrains),
+  };
+};
+
+/**
+ * `flags` as the public REST API has always served it. The partner bits are published as
+ * booleans where the generator needs them, never inside this raw number.
+ */
+export const toPublicApiVersionFlags = (flags: number) =>
+  flags & ~(ModelVersionFlag.PartnerService | ModelVersionFlag.PartnerTrains);

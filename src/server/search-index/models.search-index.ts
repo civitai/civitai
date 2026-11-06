@@ -1,5 +1,6 @@
 import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
+import { getPartnerDisclosure } from '~/shared/constants/model-version-flags.constants';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
@@ -294,7 +295,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const [version] = modelVersions;
       if (!version) return null;
 
-      const { files, ...restVersion } = version;
+      const { files, flags: versionFlags, ...restVersion } = version;
 
       const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, model.type));
       const canGenerate = eligibility.some((x) => x.canGenerate);
@@ -504,6 +505,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         },
         version: {
           ...restVersion,
+          ...getPartnerDisclosure(versionFlags),
           metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
           hashes: restVersion.hashes.map((hash) => hash.hash),
           hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
@@ -519,11 +521,13 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
               settings,
               metrics: vMetrics,
               usageControl,
+              flags,
               ...x
             },
             i
           ) => ({
             ...x,
+            ...getPartnerDisclosure(flags),
             // Keeps the column's name but holds readiness — the loaded-only filter reads this.
             generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
             // A turbo block on the version is what makes it a turbo variant; the picker filters on this.

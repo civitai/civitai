@@ -1,6 +1,7 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
+import { getPartnerDisclosure } from '~/shared/constants/model-version-flags.constants';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -56,7 +57,7 @@ const updateGenerationCoverage = (idOffset: number) =>
 
     const updateIndexReadyRecords = records
       .map(({ id, type, modelVersions }) => {
-        const [{ files, generationCoverage: _gc, ...version }] = modelVersions;
+        const [{ files, generationCoverage: _gc, flags: versionFlags, ...version }] = modelVersions;
         const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, type));
         const canGenerate = eligibility.some((x) => x.canGenerate);
         const canGenerateNext = eligibility.some((x) => x.canGenerateNext);
@@ -69,11 +70,13 @@ const updateGenerationCoverage = (idOffset: number) =>
           id,
           version: {
             ...version,
+            ...getPartnerDisclosure(versionFlags),
             hashes: version.hashes.map((hash) => hash.hash),
           },
           versions: modelVersions.map(
-            ({ generationCoverage: _coverage, files, hashes, usageControl, ...x }, i) => ({
+            ({ generationCoverage: _coverage, files, hashes, usageControl, flags, ...x }, i) => ({
               ...x,
+              ...getPartnerDisclosure(flags),
               // Keeps the column's name but holds readiness — see models.search-index.
               generatorLoaded: isGeneratorReady({
                 generatorLoaded: x.generatorLoaded,
