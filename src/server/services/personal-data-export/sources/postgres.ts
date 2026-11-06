@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { PoolClient } from 'pg';
 import {
   STAFF_NAME_RE,
+  STAFF_PLACEHOLDER,
   columnDecision,
   reduceTriggers,
   redactStaff,
@@ -241,6 +242,15 @@ export function transformRow(
   if (plan.model === 'MembershipGift' && row.anonymous === true && Number(row.gifterId) !== userId)
     for (const k of ['gifterId', 'stripeCheckoutSessionId', 'stripePaymentIntentId', 'amountCents'])
       if (k in out) out[k] = null;
+  // A placement's resolver is the owner, except when staff removed it.
+  if (plan.model === 'Placement' && out.resolvedById != null) {
+    const byStaff = row.removedBy === 'moderator' || row.removedBy === 'cosmeticTakedown';
+    if (byStaff || Number(row.resolvedById) !== Number(row.ownerId))
+      out.resolvedById = STAFF_PLACEHOLDER;
+  }
+  // A moderator can add a collaborator for the owner, so the adder is not shown.
+  if (plan.model === 'EntityCollaborator' && 'createdBy' in out)
+    out.createdBy = redactStaff(out.createdBy, userId);
   if (plan.rule === 'image-media') {
     const removed =
       row.ingestion === 'Blocked' || row.tosViolation === true || row.blockedFor != null;

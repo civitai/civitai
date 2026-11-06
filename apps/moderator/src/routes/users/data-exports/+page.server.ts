@@ -27,7 +27,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   };
 };
 
-// Page access for the actions is enforced by the hook (hooks.server.ts), as for every route here.
 export const actions: Actions = {
   queue: requiresGrant('user.personalDataExport.queue', async ({ request, locals }) => {
     const input = parseForm(z.object({ userId: int4Id }), await request.formData());

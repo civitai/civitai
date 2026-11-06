@@ -202,7 +202,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   Model3DMetric: { subject: ['userId'] },
   ShopifyCustomerLink: { subject: ['userId'] },
   ShopifyMerchOrder: { subject: ['userId'] },
-  // The owner who approved it: the other party, not staff.
+  // The owner who approved it; `transformRow` shows a staff removal as staff.
   Placement: { subject: ['ownerId', 'placerId', 'sellerId'], others: ['resolvedById'] },
   PlacementSuspension: { subject: ['userId'] },
   Storyline: { subject: ['userId'] },

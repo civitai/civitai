@@ -336,7 +336,6 @@ export const NAVIGATION: NavLink[] = [
       { path: '/users/newest', label: 'Newest Users' },
       { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
-      // Its own grant: seeing exports lists access requests, which is not the same as banning anyone.
       { path: '/users/data-exports', label: 'Data Exports' },
     ],
   },

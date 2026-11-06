@@ -435,7 +435,7 @@ export type ReleaseResult =
     };
 
 /**
- * Sends the account owner the cover note and a fresh 48-hour link. Re-checks every hold and reads
+ * Sends the account owner the cover note and a fresh download link. Re-checks every hold and reads
  * the owner's email again at the moment of sending; the archive's own build-time check is not
  * trusted for this. The internal notes file is never sent from here.
  */
@@ -496,7 +496,6 @@ export async function releaseExport({
       )
       AND NOT ${reviewHoldSql(Prisma.sql`${row.userId}::int`)}
   `;
-  // Zero rows: another press claimed it first, or a hold landed after the check above.
   if (claimed !== 1) return { ok: false, reason: 'not-releasable' };
 
   let link: { url: string; expiresAt: Date };

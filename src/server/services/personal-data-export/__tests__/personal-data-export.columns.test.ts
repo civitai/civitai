@@ -167,6 +167,43 @@ describe('personal-data-export row rules', () => {
     ]);
   });
 
+  it("shows a staff removal of a placement as staff, and keeps the owner's own decision", () => {
+    const placement = planFor('Placement');
+    const row = { id: 1, ownerId: 7, placerId: SUBJECT, status: 'removed', removedBy: 'moderator' };
+    for (const removedBy of ['moderator', 'cosmeticTakedown'])
+      expect(
+        transformRow(placement, { ...row, removedBy, resolvedById: 900 }, SUBJECT).out.resolvedById
+      ).toBe('[staff]');
+    // Even a staff removal by the owner's own account says staff, not the id.
+    expect(transformRow(placement, { ...row, resolvedById: 7 }, SUBJECT).out.resolvedById).toBe(
+      '[staff]'
+    );
+    // Anyone but the owner, whatever the row says.
+    expect(
+      transformRow(placement, { ...row, removedBy: null, resolvedById: 900 }, SUBJECT).out
+        .resolvedById
+    ).toBe('[staff]');
+    // The owner approving or declining: kept (control).
+    for (const status of ['approved', 'declined'])
+      expect(
+        transformRow(placement, { ...row, status, removedBy: null, resolvedById: 7 }, SUBJECT).out
+          .resolvedById
+      ).toBe(7);
+    expect(
+      transformRow(placement, { ...row, removedBy: null, resolvedById: null }, SUBJECT).out
+        .resolvedById
+    ).toBeNull();
+  });
+
+  it('does not show who added a collaborator, since a moderator can', () => {
+    const collab = planFor('EntityCollaborator');
+    const row = { entityId: 1, entityType: 'Post', userId: SUBJECT, createdBy: 900 };
+    expect(transformRow(collab, row, SUBJECT).out.createdBy).toBe('[staff]');
+    expect(transformRow(collab, { ...row, createdBy: SUBJECT }, SUBJECT).out.createdBy).toBe(
+      SUBJECT
+    );
+  });
+
   it('does not name the gifter of an anonymous gift to its recipient', () => {
     const gift = planFor('MembershipGift');
     const row = {

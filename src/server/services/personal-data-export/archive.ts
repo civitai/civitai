@@ -16,7 +16,7 @@ export const LINK_TTL_SECONDS = 48 * 60 * 60;
 export const BUCKET_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const RELEASE_WINDOW_SECONDS = BUCKET_TTL_SECONDS - LINK_TTL_SECONDS;
 
-/** `queueSize * partSize` is the upload's in-flight buffer: 32 MiB, and a 78 GiB object ceiling. */
+/** `queueSize * partSize` is the upload's in-flight buffer. */
 const PART_SIZE = 8 * 1024 * 1024;
 const QUEUE_SIZE = 4;
 
@@ -97,7 +97,6 @@ export async function streamArchiveToBucket(
   const sink = new stream.PassThrough();
   // `pipeline`, not `.pipe()`: a destroyed sink must error the archiver, or every pending append
   // waits forever (see `uploadStream` in csam.service-new.ts).
-  // Not shared with it: its own bucket and credentials, and one awaited entry at a time.
   stream.pipeline(archive, sink, () => undefined);
 
   const upload = new Upload({
