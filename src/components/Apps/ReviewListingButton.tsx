@@ -254,17 +254,9 @@ export function ReviewListingModal({
 }
 
 /**
- * A labelled "Leave a review" / "Edit review" button that renders NO modal and applies NO
- * gate — the caller has already run {@link useCanReviewListing} and owns the one
- * {@link ReviewListingModal} that `onOpen` opens.
- *
- * The listing detail's Reviews section uses this (tester feedback: the `⋮` item was the
- * only way in, and nobody found it). The detail body owns a SINGLE modal shared by this
- * button and the `⋮` item, so two copies of the form cannot both exist on the page.
- *
- * The label reads `getMyReview` (protected) on mount, which is why this must only be
- * mounted for an eligible viewer. Same key the modal invalidates on submit, so the label
- * flips to "Edit review" once a review lands.
+ * A "Leave a review" / "Edit review" button with no modal and no gate: the caller runs
+ * {@link useCanReviewListing} and owns the {@link ReviewListingModal} `onOpen` opens.
+ * Reads `getMyReview` (protected) on mount, so mount it only for an eligible viewer.
  */
 export function ReviewListingTrigger({
   appListingId,

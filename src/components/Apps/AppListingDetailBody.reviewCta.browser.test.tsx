@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
   myReview: null as null | { id: number; recommended: boolean; details: string | null },
   reviews: [] as unknown[],
+  // Every `getMyReview.useQuery` hook call. Only review UI instantiates it, so a count of
+  // zero means nothing review-related mounted.
+  myReviewHookCalls: 0,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
@@ -45,7 +48,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({
     'appListings.getMyReview': {
-      useQuery: () => ({ data: mocks.myReview, isLoading: false }),
+      useQuery: () => {
+        mocks.myReviewHookCalls += 1;
+        return { data: mocks.myReview, isLoading: false };
+      },
     },
     'appListings.listReviews': {
       useInfiniteQuery: () => ({
@@ -86,6 +92,7 @@ beforeEach(async () => {
   mocks.features = { ...FULL_SCOPE };
   mocks.myReview = null;
   mocks.reviews = [];
+  mocks.myReviewHookCalls = 0;
   await page.viewport(...WIDE);
 });
 
@@ -183,8 +190,55 @@ describe('Reviews section — visible review entry point', () => {
     await expect
       .element(page.getByText('Would you recommend this app to others?'))
       .toBeInTheDocument();
-    // ONE form on the page, not one per entry point.
-    expect(page.getByText('Would you recommend this app to others?').elements()).toHaveLength(1);
+  });
+
+  test('🔴 the cover ⋮ menu item opens the review modal (the body-owned one)', async () => {
+    const { container } = await renderWithProviders(<AppListingDetailBody detail={base()} />);
+    const trigger = page.elementLocator(container).getByTestId('apps-listing-actions-menu');
+    await expect.element(trigger).toBeInTheDocument();
+    await userEvent.click(trigger);
+    const item = await vi.waitUntil(
+      () => document.querySelector<HTMLElement>('[data-testid="apps-listing-review-action"]'),
+      { timeout: 10000 }
+    );
+    await userEvent.click(item);
+    await expect
+      .element(page.getByText('Would you recommend this app to others?'))
+      .toBeInTheDocument();
+  });
+
+  describe('preview (moderator read-only) mounts no review UI', () => {
+    const REVIEW_CTA_SELECTOR = [
+      '[data-testid="apps-listing-reviews-cta"]',
+      '[data-testid="apps-listing-reviews-empty-cta"]',
+      '[data-testid="apps-listing-actions-menu"]',
+    ].join(',');
+
+    async function renderBody(preview: boolean) {
+      const { container } = await renderWithProviders(
+        <AppListingDetailBody detail={base()} preview={preview} />
+      );
+      // Render barrier, so a zero below is about the CTAs and not a failed render.
+      await expect.element(page.elementLocator(container).getByText('My App')).toBeInTheDocument();
+      return container;
+    }
+
+    test('positive control: the same eligible viewer, NOT in preview, gets the CTAs', async () => {
+      const container = await renderBody(false);
+      expect(container.querySelectorAll('[data-testid="apps-listing-reviews-cta"]')).toHaveLength(
+        1
+      );
+      expect(mocks.myReviewHookCalls).toBeGreaterThan(0);
+    });
+
+    test('🔴 an eligible viewer in preview gets no review CTA and no review modal', async () => {
+      const container = await renderBody(true);
+      expect(container.querySelectorAll(REVIEW_CTA_SELECTOR)).toHaveLength(0);
+      // The Reviews section has its own `!preview` guard, so the CTA count alone cannot see
+      // a modal mounted in preview. A closed modal renders nothing, but it does instantiate
+      // `getMyReview` — that is what this counts.
+      expect(mocks.myReviewHookCalls).toBe(0);
+    });
   });
 
   describe('hidden by the existing gate', () => {

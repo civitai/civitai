@@ -56,8 +56,7 @@ import { isAppReviewer } from '~/shared/utils/app-blocks-access';
  * is the defect this file is the fix for.
  *
  * WHAT IS PARAMETERISED, and nothing else: the trigger's size / variant / glyph
- * size / `data-testid`, whether the trigger stops click propagation, whether the
- * caller owns the review modal (`onOpenReview`, so the detail page has one), and — via
+ * size / `data-testid`, whether the trigger stops click propagation, and — via
  * {@link AppListingMenuSurface} — the ONE item-set difference between the two
  * surfaces. The ORDER, the labels, the eligibility predicates and the modals are
  * identical on both by construction; that is still the point.
@@ -155,12 +154,8 @@ export type AppListingActionsMenuProps = {
    */
   stopPropagation?: boolean;
   /**
-   * Hand "Leave a review" to a review modal the CALLER owns, instead of the menu's own.
-   *
-   * The detail body passes this because it also renders a Reviews-section button for the
-   * same action; one caller-owned modal means the two entry points cannot mount two
-   * copies of the form. The gate is unchanged — the item still renders only on
-   * `canReview`, and the caller mounts its modal behind the same `useCanReviewListing`.
+   * Opens the review modal the CALLER owns; the menu then mounts none. The caller must
+   * mount it behind the same `useCanReviewListing` gate.
    */
   onOpenReview?: () => void;
 };
@@ -526,7 +521,6 @@ export function AppListingActionsMenu({
           `showMenu` carries `!preview`. */}
       {everOpened && (
         <>
-          {/* Not mounted when the caller owns the review modal (`onOpenReview`). */}
           {canReview && !onOpenReview && (
             <ReviewListingModal
               appListingId={listing.id}
