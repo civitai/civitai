@@ -10,6 +10,7 @@ import {
   OTHER_PEOPLE_COLUMNS,
   STAFF_NAME_RE,
   STAFF_PLACEHOLDER,
+  columnDecision,
   redactNoteText,
   scrubJson,
 } from '../column-policy';
@@ -53,6 +54,13 @@ describe('personal-data-export column policy, over every planned read', () => {
     expect(leaks).toEqual([]);
     expect(selected('ModelFile')).not.toContain('virusScanMessage');
     expect(selected('WildcardSet')).not.toContain('auditRuleVersion');
+  });
+
+  it('withholds a future text column an automated check fills, by its name alone', () => {
+    expect(columnDecision('NewTable', 'malwareScanMessage', 'String')).toBe('classifier');
+    expect(columnDecision('NewTable', 'auditNote', 'String')).toBe('classifier');
+    // Control: an ordinary text column of an unknown table is read.
+    expect(columnDecision('NewTable', 'title', 'String')).toBe('read');
   });
 
   it('withholds every JSON column that is not allow-listed (User.meta and Model.meta among them)', () => {
@@ -136,7 +144,8 @@ describe('personal-data-export row rules', () => {
     expect(blocked.url).toBe('removed');
     expect(blocked).not.toHaveProperty('blockedFor');
     expect(selected('Image')).not.toContain('blockedFor');
-    expect(selectSql(image)).toContain('"blockedFor"');
+    // Still SELECTed (the rule needs it): look in the column list, not the WHERE, which names it too.
+    expect(selectSql(image).split(' FROM ')[0]).toContain('"blockedFor"');
   });
 
   it("drops detection keys inside an allowed JSON column and keeps the user's own", () => {
