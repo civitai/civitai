@@ -133,7 +133,16 @@ Disallow: /user/*/3d-models
 Disallow: /user/*/articles
 Disallow: /user/*/followers
 Disallow: /user/*/following`;
-const IMAGE_DETAIL = `Disallow: /images/`;
+const IMAGE_DETAIL = `Disallow: /images/0
+Disallow: /images/1
+Disallow: /images/2
+Disallow: /images/3
+Disallow: /images/4
+Disallow: /images/5
+Disallow: /images/6
+Disallow: /images/7
+Disallow: /images/8
+Disallow: /images/9`;
 
 const EXPECTED_ROBOTS_TXT = `# AI training crawlers — same rules as *, plus a crawl delay
 User-agent: GPTBot
@@ -254,15 +263,24 @@ describe('robots.txt', () => {
     }
   });
 
-  it('disallows image detail pages and keeps the image index crawlable', async () => {
+  it('disallows image detail pages, not the image index or static images', async () => {
     const { ai, star } = await groups();
 
     for (const group of [ai!, star!]) {
       const rules = accessRules(group);
-      for (const path of ['/images/123', '/images/123?x=1'])
+      for (const path of ['/images/1', '/images/123', '/images/9876?x=1'])
         expect(isDisallowed(rules, path), `${group.agents.join(',')} ${path}`).toBe(true);
 
-      for (const path of ['/images', '/images?sort=Newest', '/user/alice/images'])
+      // Static assets under public/images are served from the same path and must stay fetchable:
+      // the site logo in the Organization schema, app icons and og:images.
+      for (const path of [
+        '/images/logo_light_mode.png',
+        '/images/training-landing/og-train.jpg',
+        '/images/apple-touch-icon.png',
+        '/images',
+        '/images?sort=Newest',
+        '/user/alice/images',
+      ])
         expect(isDisallowed(rules, path), `${group.agents.join(',')} ${path}`).toBe(false);
     }
   });
