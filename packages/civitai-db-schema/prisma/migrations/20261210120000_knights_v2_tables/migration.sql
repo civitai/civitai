@@ -331,7 +331,7 @@ CREATE TABLE IF NOT EXISTS "KnightsAcolyteLevelGold" (
 );
 
 -- The gold shop: a catalog, and the gold ledger of what was bought. The catalog is managed from the moderator app
--- (/knights-of-new-order/shop); `pnpm run seed:shop` in apps/knights fills a local dev database only.
+-- (/knights-of-new-order/shop) in every environment, dev included.
 CREATE TABLE IF NOT EXISTS "KnightsShopItem" (
   "id" SERIAL PRIMARY KEY,
   "kind" TEXT NOT NULL,
