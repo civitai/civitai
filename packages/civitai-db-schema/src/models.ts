@@ -1565,6 +1565,8 @@ export interface ResourceReview {
   reactions?: ResourceReviewReaction[];
   helper?: ResourceReviewHelper | null;
   reports?: ResourceReviewReport[];
+  postId: number | null;
+  post?: Post | null;
 }
 
 export interface ResourceReviewReaction {
@@ -1680,6 +1682,7 @@ export interface Post {
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
+  resourceReviews?: ResourceReview[];
 }
 
 export interface PostMetric {

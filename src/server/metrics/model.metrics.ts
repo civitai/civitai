@@ -10,6 +10,7 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
@@ -546,6 +547,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelVersionId" = ANY($1::int[])
         AND r."modelVersionId" BETWEEN $2 AND $3
       GROUP BY r."modelVersionId"`,
@@ -647,6 +649,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelId" = ANY($1::int[])
       GROUP BY r."modelId"`,
       [ids]

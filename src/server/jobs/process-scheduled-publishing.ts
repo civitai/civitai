@@ -17,6 +17,7 @@ import {
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
+import { releasePendingReviewsForPosts } from '~/server/services/resourceReview.visibility';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
@@ -444,6 +445,25 @@ export const processScheduledPublishing = createJob(
     // Before the unguarded engagements: a re-published chapter 1 gets its story spark back.
     if (publishedPosts.length)
       void onStorySparkPostsRestored({ postIds: publishedPosts.map((p) => p.id) });
+
+    // The posts this run flipped were not live before it. The sweep can hand over a post already
+    // released, by its publish or an earlier run.
+    const flippedPostIds = new Set(flippedPosts.map((p) => p.id));
+    await releasePendingReviewsForPosts([...flippedPostIds])
+      .then(() =>
+        releasePendingReviewsForPosts(
+          newlyLivePosts.map((p) => p.id).filter((id) => !flippedPostIds.has(id)),
+          { onlyUnreleased: true }
+        )
+      )
+      .catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'Failed to release pending resource reviews',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({

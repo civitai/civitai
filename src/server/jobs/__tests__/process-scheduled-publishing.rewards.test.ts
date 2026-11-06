@@ -12,6 +12,7 @@ const {
   mockBustMvCache,
   mockPublishDueArticles,
   mockScanEntitiesInBackground,
+  mockReleaseReviews,
   jobDate,
 } = vi.hoisted(() => ({
   mockApply: vi.fn(),
@@ -28,6 +29,7 @@ const {
     > => undefined
   ),
   mockScanEntitiesInBackground: vi.fn(),
+  mockReleaseReviews: vi.fn(async (): Promise<unknown[]> => []),
   jobDate: { lastRun: new Date(0) },
 }));
 
@@ -66,6 +68,9 @@ vi.mock('~/server/services/article-schedule.service', () => ({
 }));
 vi.mock('~/server/services/text-scan/submit', () => ({
   scanEntitiesInBackground: mockScanEntitiesInBackground,
+}));
+vi.mock('~/server/services/resourceReview.visibility', () => ({
+  releasePendingReviewsForPosts: mockReleaseReviews,
 }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_n: string, _c: string, fn: unknown) => fn,
@@ -335,6 +340,22 @@ describe('processScheduledPublishing :: first daily post reward', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', message: expect.stringContaining('row limit') })
     );
+  });
+});
+
+describe('processScheduledPublishing :: pending resource reviews', () => {
+  // A swept post may already have been released by its publish or an earlier run, and a second
+  // release would mark the owner's read notification unread again.
+  it('releases the posts it flipped in full and the swept ones only if not yet released', async () => {
+    stubReads({
+      scheduled: [{ id: 1, userId: 10 }],
+      newlyLive: [
+        { id: 1, userId: 10 },
+        { id: 2, userId: 20 },
+      ],
+    });
+    await runJob();
+    expect(mockReleaseReviews.mock.calls).toEqual([[[1]], [[2], { onlyUnreleased: true }]]);
   });
 });
 

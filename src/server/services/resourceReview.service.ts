@@ -4,7 +4,6 @@ import { Prisma } from '@prisma/client';
 import type { ResourceReview } from '@prisma/client';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { CacheTTL } from '~/server/common/constants';
-import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
@@ -28,7 +27,6 @@ import {
   getBlockCheckOwnerIds,
   throwIfBlockedByOwners,
 } from '~/server/services/block-check.service';
-import { createNotification } from '~/server/services/notification.service';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -48,7 +46,6 @@ import {
 } from '~/server/services/resourceReview.cache';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
-import type { ResourceReviewCreate } from '~/types/router';
 import type { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
 import type {
   CreateResourceReviewInput,
@@ -59,6 +56,13 @@ import type {
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import {
+  createResourceReviewNotification,
+  pendingPostIdFor,
+  visibleReviewForViewerSql,
+  visibleReviewSql,
+  visibleReviewWhere,
+} from '~/server/services/resourceReview.visibility';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({
@@ -66,8 +70,8 @@ export const getResourceReview = async ({
   userId,
   isModerator,
 }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const result = await dbRead.resourceReview.findUnique({
-    where: { id },
+  const result = await dbRead.resourceReview.findFirst({
+    where: { id, ...visibleReviewWhere(userId) },
     select: {
       ...resourceReviewSelect,
       model: { select: { name: true, id: true, userId: true, status: true } },
@@ -127,7 +131,7 @@ export const getResourceReviewsByUserId = async ({
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
   return await dbRead.resourceReview.findMany({
-    where: { modelVersionId: { in: resourceIds } },
+    where: { modelVersionId: { in: resourceIds }, ...visibleReviewWhere() },
     select: {
       id: true,
       modelVersionId: true,
@@ -146,8 +150,9 @@ export const getResourceReviewsInfinite = async ({
   username,
   include,
   hasDetails,
-}: GetResourceReviewsInfiniteInput) => {
-  const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [];
+  viewerId,
+}: GetResourceReviewsInfiniteInput & { viewerId?: number }) => {
+  const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [visibleReviewWhere(viewerId)];
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
 
   if (username) {
@@ -258,6 +263,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" != rr."userId"
     WHERE ${Prisma.join(AND, ' AND ')} AND NOT rr.exclude
+      AND ${Prisma.raw(visibleReviewSql('rr'))}
       AND rr.recommended -- Only expose recommended reviews
     GROUP BY rr.rating, rr.recommended
   `;
@@ -282,75 +288,6 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   );
 
   return transformed;
-};
-
-const createResourceReviewNotification = async ({
-  id,
-  modelId,
-  modelVersionId,
-  recommended,
-  userId,
-}: ResourceReviewCreate & { userId: number }) => {
-  // don't send a notification for bad reviews
-  if (!recommended) return;
-
-  // TODO maybe add dedupe query
-
-  const modelVersion = await dbRead.modelVersion.findFirst({
-    where: { id: modelVersionId },
-    select: {
-      model: { select: { name: true, userId: true } },
-      name: true,
-    },
-  });
-
-  // don't send notification to self
-  if (userId === modelVersion?.model.userId || modelVersion?.model.userId === -1) return;
-
-  if (!modelVersion) {
-    logToAxiom(
-      {
-        type: 'warning',
-        name: 'Failed to create notification',
-        details: { key: 'new-review' },
-        message: 'Could not find modelVersion',
-      },
-      'notifications'
-    ).catch();
-    return;
-  }
-
-  const imageCount = await dbRead.imageResourceNew.count({
-    where: { modelVersionId, image: { userId } },
-  });
-
-  // TODO if no content and no images, skip?
-  // if (!imageCount && !content) return;
-
-  const u = await dbRead.user.findFirst({
-    where: { id: userId },
-    select: { username: true },
-  });
-
-  const detailsObj = {
-    version: 2,
-    modelId: modelId,
-    reviewId: id,
-    modelName: modelVersion.model.name,
-    modelVersionName: modelVersion.name,
-    username: u?.username ?? '(unknown)',
-    rating: recommended ? 5 : 1,
-    recommended,
-    imageCount,
-  };
-
-  await createNotification({
-    type: 'new-review',
-    key: `new-review:${modelVersionId}:${userId}`,
-    category: NotificationCategory.Update,
-    userId: modelVersion.model.userId,
-    details: detailsObj,
-  }).catch();
 };
 
 // Read through the writer: on the replica a review created seconds ago resolves no model, the
@@ -384,6 +321,7 @@ async function throwIfBlockedByModelOwners({
 export const upsertResourceReview = async ({
   userId,
   isModerator,
+  postId,
   ...data
 }: UpsertResourceReviewInput & { userId: number; isModerator?: boolean }) => {
   await throwOnBlockedUserContent(data.details, { isModerator, surface: 'resourceReview' });
@@ -398,10 +336,12 @@ export const upsertResourceReview = async ({
   });
 
   if (!data.id) {
+    const pendingPostId = postId ? await pendingPostIdFor({ postId, userId }) : undefined;
+    const select = { ...resourceReviewSelect, postId: true };
     const ret = await dbWrite.resourceReview
       .create({
-        data: { ...data, userId, thread: { create: {} } },
-        select: resourceReviewSelect,
+        data: { ...data, userId, postId: pendingPostId, thread: { create: {} } },
+        select,
       })
       .catch(async (err) => {
         // Concurrent create race: the (modelVersionId, userId) unique constraint
@@ -410,12 +350,13 @@ export const upsertResourceReview = async ({
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
           return dbWrite.resourceReview.findUniqueOrThrow({
             where: { modelVersionId_userId: { modelVersionId: data.modelVersionId, userId } },
-            select: resourceReviewSelect,
+            select,
           });
         }
         throw err;
       });
-    await createResourceReviewNotification({ ...ret, userId }).catch();
+    // A review linked to a post is notified when the post goes live, by releasePendingReviewsForPosts.
+    if (!ret.postId) await createResourceReviewNotification({ ...ret, userId }).catch();
     await bustRatingTotalsCache({
       modelId: data.modelId,
       modelVersionId: data.modelVersionId,
@@ -510,23 +451,23 @@ export const createResourceReview = async ({
     isModerator,
     modelIds: [data.modelId],
   });
-  const ret = await dbWrite.resourceReview
-    .create({ data, select: resourceReviewSimpleSelect })
-    .catch(async (err) => {
-      // Concurrent create race: the (modelVersionId, userId) unique constraint
-      // trips (P2002). The review already exists — resolve idempotently by
-      // returning the existing row instead of bubbling a 500.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        return dbWrite.resourceReview.findUniqueOrThrow({
-          where: {
-            modelVersionId_userId: { modelVersionId: data.modelVersionId, userId: data.userId },
-          },
-          select: resourceReviewSimpleSelect,
-        });
-      }
-      throw err;
-    });
-  await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  const select = { ...resourceReviewSimpleSelect, postId: true };
+  const ret = await dbWrite.resourceReview.create({ data, select }).catch(async (err) => {
+    // Concurrent create race: the (modelVersionId, userId) unique constraint
+    // trips (P2002). The review already exists — resolve idempotently by
+    // returning the existing row instead of bubbling a 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return dbWrite.resourceReview.findUniqueOrThrow({
+        where: {
+          modelVersionId_userId: { modelVersionId: data.modelVersionId, userId: data.userId },
+        },
+        select,
+      });
+    }
+    throw err;
+  });
+  // The race can return a review written from a post, which is notified when that post goes live.
+  if (!ret.postId) await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
   void onModelReviewsChanged([{ modelId: data.modelId, userId: data.userId }]);
   await bustRatingTotalsCache({
     modelId: data.modelId,
@@ -596,7 +537,10 @@ export const getPagedResourceReviews = async ({
 }) => {
   const { limit, page, modelVersionId, username } = input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
-  const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
+  const AND = [
+    Prisma.sql`rr."modelVersionId" = ${modelVersionId}`,
+    visibleReviewForViewerSql('rr', userId),
+  ];
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
@@ -732,6 +676,7 @@ export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" = ${userId}
     WHERE rr."userId" != ${userId} AND NOT rr.exclude
+      AND ${Prisma.raw(visibleReviewSql('rr'))}
     GROUP BY rr.rating, rr.recommended
   `;
 
