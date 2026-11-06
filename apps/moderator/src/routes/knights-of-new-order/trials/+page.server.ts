@@ -2,8 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { int4Id, parseForm } from '$lib/server/query';
-import { MAX_INT4 } from '$lib/server/users.service';
+import { int4Id, parseForm, parseQuery } from '$lib/server/query';
 import {
   addCoreImage,
   getCoreItems,
@@ -16,7 +15,9 @@ import {
   updateCoreItem,
   type Outcome,
 } from '$lib/server/knights/coreset.service';
-import { CORESET } from '$lib/server/knights/coreset.config';
+import { CORESET, type ListPage, type ListQuery } from '$lib/server/knights/coreset.config';
+import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
+import { BAD_IMAGE, imageRef, parseImageRef } from './image-ref';
 import {
   addYesNoReference,
   deleteYesNoReference,
@@ -32,22 +33,19 @@ type Tab = (typeof TABS)[number];
 
 const level = z.coerce.number().int();
 const why = z.string().max(2000);
+const question = z
+  .string()
+  .trim()
+  .min(1, 'Write the question Acolytes will be asked.')
+  .max(YESNO_PROMPT_MAX);
 
-const BAD_IMAGE = 'Enter an image id or an image page URL.';
-
-/** An image id, or any civitai image page URL (`/images/<id>`). */
-const imageRef = z.preprocess((value) => {
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (/^\d+$/.test(text)) return Number(text);
-  const fromUrl = text.match(/\/images\/(\d+)(?:[/?#]|$)/);
-  return fromUrl ? Number(fromUrl[1]) : NaN;
-}, z.number({ error: BAD_IMAGE }).int(BAD_IMAGE).positive(BAD_IMAGE).max(MAX_INT4, BAD_IMAGE));
 const yesNo = z.enum(['yes', 'no']).transform((value) => value === 'yes');
 
 const forms = {
   addYesNo: z.object({
     image: imageRef,
     questionKey: z.string().trim().min(1).max(200),
+    prompt: question,
     answer: yesNo,
     explanation: why.optional().default(''),
   }),
@@ -55,31 +53,57 @@ const forms = {
     id: int4Id,
     active: z.enum(['true', 'false']).transform((v) => v === 'true'),
   }),
-  updateYesNo: z.object({ id: int4Id, answer: yesNo, explanation: why.optional().default('') }),
+  updateYesNo: z.object({
+    id: int4Id,
+    prompt: question,
+    answer: yesNo,
+    explanation: why.optional().default(''),
+  }),
   deleteYesNo: z.object({ id: int4Id }),
-  add: z.object({ imageId: int4Id, level, explanation: why }),
+  add: z.object({ image: imageRef, level, explanation: why }),
   update: z.object({ id: int4Id, level, explanation: why }),
   retire: z.object({ id: int4Id }),
   promote: z.object({ id: int4Id, explanation: why.optional().default('') }),
   spotCheck: z.object({ id: int4Id, level }),
 };
 
+const query = z.object({
+  tab: z.enum(TABS).catch('core'),
+  page: z.coerce.number().int().positive().max(100_000).catch(1),
+  q: z.string().trim().max(500).catch(''),
+});
+
+const blank = <T>(): ListPage<T> => ({ items: [], total: 0, page: 1 });
+
 export const load: PageServerLoad = async ({ url, locals }) => {
   requireAccess(locals.user, url.pathname);
-  const requested = url.searchParams.get('tab');
-  const tab: Tab = TABS.find((t) => t === requested) ?? 'core';
-  const [counts, yesNoCount] = await Promise.all([getCoreSetCounts(), getYesNoReferenceCount()]);
+  const { tab, page, q } = parseQuery(url, query);
+  const imageId = q ? parseImageRef(q) : null;
+  const searchError = q && imageId === null ? BAD_IMAGE : null;
+  const list: ListQuery = imageId === null ? { page } : { page, imageId };
+  const read = <T>(wanted: Tab, get: (q: ListQuery) => Promise<ListPage<T>>) =>
+    tab === wanted && !searchError ? get(list) : Promise.resolve(blank<T>());
+
+  const [counts, yesNoCount, core, fresh, spotCheck, yesNo, questions] = await Promise.all([
+    getCoreSetCounts(),
+    getYesNoReferenceCount(),
+    read('core', getCoreItems),
+    read('fresh', getFreshItems),
+    read('spot-check', getSpotCheckItems),
+    read('yes-no', getYesNoReferences),
+    tab === 'yes-no' ? getYesNoQuestions() : Promise.resolve([]),
+  ]);
+  const shown = { core, fresh, 'spot-check': spotCheck, 'yes-no': yesNo }[tab];
   return {
     tab,
+    search: { text: q, error: searchError },
+    pageSize: CORESET.pageSize,
+    paging: { page: shown.page, total: shown.total },
     counts: { ...counts, yesNo: yesNoCount },
-    limit: CORESET.listLimit,
     flagRule: { minAnswers: CORESET.flagMinAnswers, failureRate: CORESET.flagFailureRate },
-    items: tab === 'core' ? await getCoreItems() : tab === 'fresh' ? await getFreshItems() : [],
-    spotCheck: tab === 'spot-check' ? await getSpotCheckItems() : [],
-    yesNo:
-      tab === 'yes-no'
-        ? { items: await getYesNoReferences(), questions: await getYesNoQuestions() }
-        : { items: [], questions: [] },
+    items: tab === 'core' ? core.items : fresh.items,
+    spotCheck: spotCheck.items,
+    yesNo: { items: yesNo.items, questions },
   };
 };
 
@@ -105,7 +129,10 @@ async function run<S extends z.ZodType>(
 }
 
 export const actions: Actions = {
-  add: (event) => run(event, forms.add, 'add the image', addCoreImage),
+  add: (event) =>
+    run(event, forms.add, 'add the image', ({ image, ...rest }) =>
+      addCoreImage({ ...rest, imageId: image })
+    ),
   update: (event) => run(event, forms.update, 'save the change', updateCoreItem),
   retire: (event) => run(event, forms.retire, 'retire the image', ({ id }) => retireReference(id)),
   promote: (event) => run(event, forms.promote, 'promote the image', promoteToCore),

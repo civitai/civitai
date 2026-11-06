@@ -18,6 +18,20 @@ export const YESNO_MAX_VOTES = 10;
 const AXIS = /^[a-z][a-z0-9_]{0,39}$/;
 export const isAxis = (value: string): boolean => AXIS.test(value);
 
+/** Seeds an axis question's prompt on import; items and pairs with no question text of their own fall back to it. */
+const AXIS_PROMPTS: Record<string, string> = {
+  language: 'Does text in this image contain strong profanity?',
+  language_level: 'Does text in this image contain strong profanity?',
+  profanity: 'Does text in this image contain strong profanity?',
+  sexual: 'Does this image contain sexual content?',
+  sexual_visual: 'Does this image contain sexual content?',
+  sexual_text: 'Does text in this image describe or propose sexual activity?',
+  subject_state: 'Does this image show a dead, decaying or reanimated body?',
+  violence: 'Does this image show graphic injury, blood or gore?',
+};
+export const axisPrompt = (axis: string): string =>
+  AXIS_PROMPTS[axis] ?? 'Answer the question about this image.';
+
 export const axisKey = (axis: string): string => `${YESNO_KEY_PREFIX}${axis}`;
 
 /** The label-store question a question's answers are recorded under; the producer's own id, so it can join back to its data. */

@@ -8,7 +8,14 @@ import {
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { dbWrite } from '../db';
-import { CORESET, type CoreSetConfig } from './coreset.config';
+import {
+  CORESET,
+  FIRST_PAGE,
+  pageWindow,
+  type CoreSetConfig,
+  type ListPage,
+  type ListQuery,
+} from './coreset.config';
 
 export type CoreSetItem = {
   id: number;
@@ -45,8 +52,19 @@ function references() {
 const flaggedSql = (config: CoreSetConfig) =>
   sql<boolean>`("r"."answers" >= ${config.flagMinAnswers} AND "r"."answers" > 0 AND "r"."failures"::float8 >= ${config.flagFailureRate}::float8 * "r"."answers")`;
 
-function listItems(config: CoreSetConfig) {
-  return references().select((eb) => [
+type ReferenceQuery = ReturnType<typeof references>;
+
+const countOf = async (query: ReferenceQuery) =>
+  Number(
+    (await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirstOrThrow())
+      .count
+  );
+
+const forImage = (query: ReferenceQuery, { imageId }: ListQuery) =>
+  imageId === undefined ? query : query.where('r.imageId', '=', imageId);
+
+function listItems(base: ReferenceQuery, config: CoreSetConfig) {
+  return base.select((eb) => [
     'r.id',
     'r.imageId',
     'r.source',
@@ -71,43 +89,72 @@ function listItems(config: CoreSetConfig) {
 }
 
 /** Retired items stay listed so they can be added back. */
-export async function getCoreItems(config: CoreSetConfig = CORESET): Promise<CoreSetItem[]> {
-  return listItems(config)
-    .where('r.source', '=', REFERENCE_SOURCE.core)
+export async function getCoreItems(
+  query: ListQuery = FIRST_PAGE,
+  config: CoreSetConfig = CORESET
+): Promise<ListPage<CoreSetItem>> {
+  const base = forImage(references().where('r.source', '=', REFERENCE_SOURCE.core), query);
+  const total = await countOf(base);
+  const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
+  const items = await listItems(base, config)
     .orderBy(sql`("r"."status" = ${REFERENCE_STATUS.active})`, 'desc')
     .orderBy('r.id', 'asc')
-    .limit(config.listLimit)
+    .limit(limit)
+    .offset(offset)
     .execute();
+  return { items, total, page };
 }
 
-/** Fresh items in the apprenticeship pool, flagged ones first so the limit never cuts them. */
-export async function getFreshItems(config: CoreSetConfig = CORESET): Promise<CoreSetItem[]> {
-  return listItems(config)
-    .where('r.source', '!=', REFERENCE_SOURCE.core)
-    .where('r.pool', '=', REFERENCE_POOL.trials)
-    .where('r.status', '=', REFERENCE_STATUS.active)
+/** Fresh items in the apprenticeship pool, flagged ones first so they lead the first page. */
+export async function getFreshItems(
+  query: ListQuery = FIRST_PAGE,
+  config: CoreSetConfig = CORESET
+): Promise<ListPage<CoreSetItem>> {
+  const base = forImage(
+    references()
+      .where('r.source', '!=', REFERENCE_SOURCE.core)
+      .where('r.pool', '=', REFERENCE_POOL.trials)
+      .where('r.status', '=', REFERENCE_STATUS.active),
+    query
+  );
+  const total = await countOf(base);
+  const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
+  const items = await listItems(base, config)
     .orderBy(flaggedSql(config), 'desc')
     .orderBy('r.harvestedAt', 'desc')
     .orderBy('r.id', 'desc')
-    .limit(config.listLimit)
+    .limit(limit)
+    .offset(offset)
     .execute();
+  return { items, total, page };
 }
 
-export async function getSpotCheckItems(config: CoreSetConfig = CORESET): Promise<SpotCheckItem[]> {
-  return references()
+export async function getSpotCheckItems(
+  query: ListQuery = FIRST_PAGE,
+  config: CoreSetConfig = CORESET
+): Promise<ListPage<SpotCheckItem>> {
+  const base = forImage(
+    references()
+      .where('r.pool', '=', REFERENCE_POOL.trials)
+      .where('r.status', '=', REFERENCE_STATUS.pending),
+    query
+  );
+  const total = await countOf(base);
+  const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
+  const items = await base
     .select(['r.id', 'ri.url as imageKey'])
-    .where('r.pool', '=', REFERENCE_POOL.trials)
-    .where('r.status', '=', REFERENCE_STATUS.pending)
     .orderBy('r.harvestedAt', 'asc')
     .orderBy('r.id', 'asc')
-    .limit(config.listLimit)
+    .limit(limit)
+    .offset(offset)
     .execute();
+  return { items, total, page };
 }
 
 export async function getCoreSetCounts() {
   const rows = await dbWrite
     .selectFrom('KnightsReferenceImage')
-    .select(['source', 'pool', 'status', sql<string>`count(*)`.as('count')])
+    .select((eb) => ['source', 'pool', 'status', eb.fn.countAll<string>().as('count')])
     .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .groupBy(['source', 'pool', 'status'])
     .execute();

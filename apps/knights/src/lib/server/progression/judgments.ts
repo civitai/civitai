@@ -6,6 +6,7 @@ import {
   answerImageId,
   answerImageJoin,
   answerQuestionKey,
+  ownPairPrompt,
 } from '../apprenticeship/answer-snapshot';
 
 export const JUDGMENTS_PAGE_SIZE = 20;
@@ -145,7 +146,7 @@ export async function listJudgments(
       'a.createdAt',
       sql<Date | null>`NULL`.as('startAt'),
       'q.prompt',
-      sql<string | null>`NULL`.as('itemPrompt'),
+      ownPairPrompt.as('itemPrompt'),
       sql<
         typeof YES_NO_OPTIONS
       >`CASE WHEN q."key" = ${KNIGHTS_NSFW_LEVEL_QUESTION} THEN q."options" ELSE ${JSON.stringify(

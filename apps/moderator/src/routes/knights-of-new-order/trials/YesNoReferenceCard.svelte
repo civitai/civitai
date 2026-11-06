@@ -4,12 +4,14 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
+  import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
   import YesNoPicker from './YesNoPicker.svelte';
   import type { YesNoReferenceItem } from '$lib/server/knights/yesno-reference.service';
 
@@ -22,12 +24,14 @@
     onSuccess: () => {
       answer = null;
       why = null;
+      ask = null;
       toast.success('Saved');
     },
   });
   const remove = new FormState({ reload: true, onSuccess: () => toast.success('Deleted') });
   let answer = $state<'yes' | 'no' | null>(null);
   let why = $state<string | null>(null);
+  let ask = $state<string | null>(null);
   const chosen = $derived(answer ?? (item.answer ? 'yes' : 'no'));
   let open = $state(false);
   let deleteForm: HTMLFormElement | undefined = $state();
@@ -54,8 +58,18 @@
       <Badge variant={item.answer ? 'default' : 'secondary'}>Answer: {item.answer ? 'Yes' : 'No'}</Badge>
       <span class="text-sm text-dark-2">{item.answers} answered</span>
       {#if !item.active}<Badge variant="outline">Inactive</Badge>{/if}
+      {#if !item.prompt}<Badge variant="outline">No question text</Badge>{/if}
     </div>
-    <p class="text-sm">{item.questionPrompt}</p>
+    {#if item.prompt}
+      <p class="text-sm text-dark-0">{item.prompt}</p>
+    {:else}
+      <p class="text-sm text-dark-2">
+        No question text. Acolytes see the generic prompt: "{item.questionPrompt}".
+        {item.answers === 0
+          ? 'Edit this pair to write one.'
+          : "It can't be edited now that Acolytes have answered it; deactivate it instead."}
+      </p>
+    {/if}
     <p class="text-xs text-dark-2">{item.questionKey}</p>
     {#if item.answers > 0}
       {#if item.explanation}<p class="text-sm text-dark-2">{item.explanation}</p>{/if}
@@ -66,6 +80,14 @@
       {#if save.error}<ErrorAlert message={save.error} />{/if}
       <form method="POST" action="?/updateYesNo" use:enhance={save.enhance} class="flex flex-col gap-2">
         <input type="hidden" name="id" value={item.id} />
+        <Input
+          name="prompt"
+          required
+          maxlength={YESNO_PROMPT_MAX}
+          placeholder="The question Acolytes are asked about this image"
+          value={ask ?? item.prompt ?? ''}
+          oninput={(e) => (ask = e.currentTarget.value)}
+        />
         <div class="flex items-center gap-2">
           <span class="text-sm text-dark-2">Answer</span>
           <YesNoPicker value={chosen} onchange={(v) => (answer = v)} />

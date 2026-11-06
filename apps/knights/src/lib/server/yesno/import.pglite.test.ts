@@ -113,13 +113,21 @@ describe('importYesNo', () => {
     });
 
     const questions = (
-      await pg.query<{ key: string; kind: string }>(
-        `SELECT key, kind FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%' ORDER BY key`
+      await pg.query<{ key: string; kind: string; prompt: string }>(
+        `SELECT key, kind, prompt FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%' ORDER BY key`
       )
     ).rows;
     expect(questions).toEqual([
-      { key: 'knights.yesno.language', kind: 'bool' },
-      { key: 'knights.yesno.violence', kind: 'bool' },
+      {
+        key: 'knights.yesno.language',
+        kind: 'bool',
+        prompt: 'Does text in this image contain strong profanity?',
+      },
+      {
+        key: 'knights.yesno.violence',
+        kind: 'bool',
+        prompt: 'Does this image show graphic injury, blood or gore?',
+      },
     ]);
 
     const [a, , c] = await items();

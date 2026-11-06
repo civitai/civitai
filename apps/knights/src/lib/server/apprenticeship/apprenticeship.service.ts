@@ -10,7 +10,7 @@ import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
 import { YESNO_ANSWERS } from '../yesno/keys';
-import { answerImageJoin, answerQuestionKey } from './answer-snapshot';
+import { answerImageJoin, answerQuestionKey, pairPrompt } from './answer-snapshot';
 import { APPRENTICE } from './config';
 import {
   accuracyOf,
@@ -35,6 +35,8 @@ export type ApprenticeItem = {
   referenceId: number;
   questionKey: string;
   prompt: string;
+  /** The pair's `updatedAt` as served; an answer is refused if a moderator changed the pair since. Null for a rating. */
+  version: string | null;
   options: QuestionOption[];
   imageKey: string;
   width: number | null;
@@ -177,6 +179,7 @@ async function nextRating(db: Executor, playerId: number, core: boolean): Promis
     imageId: row.imageId,
     questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
     ...(await ratingOptions(db)),
+    version: null,
     imageKey: row.imageKey,
     width: row.width,
     height: row.height,
@@ -206,7 +209,8 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
       'y.imageId',
       'y.answer',
       'y.questionKey',
-      'q.prompt',
+      pairPrompt.as('prompt'),
+      sql<string>`y."updatedAt"::text`.as('version'),
       'img.url as imageKey',
       'img.width',
       'img.height',
@@ -221,6 +225,7 @@ async function nextYesNo(db: Executor, playerId: number): Promise<NextItem | nul
     imageId: row.imageId,
     questionKey: row.questionKey,
     prompt: row.prompt,
+    version: row.version,
     options: YESNO_ANSWERS.map((answer) => ({ ...answer })),
     imageKey: row.imageKey,
     width: row.width,
@@ -331,10 +336,17 @@ export async function getApprentice(db: Kysely<DB>, playerId: number): Promise<A
 
 export async function answerApprentice(
   db: Kysely<DB>,
-  input: { userId: number; kind: ItemKind; referenceId: number; answer: string },
+  input: {
+    userId: number;
+    kind: ItemKind;
+    referenceId: number;
+    /** The `version` the item was served with. Required for a yes/no pair, ignored for a rating. */
+    version?: string | null;
+    answer: string;
+  },
   deps: ApprenticeDeps
 ): Promise<AnswerResult> {
-  const { userId, kind, referenceId, answer } = input;
+  const { userId, kind, referenceId, version, answer } = input;
   const now = deps.now();
 
   const result = await db.transaction().execute(async (trx): Promise<AnswerResult> => {
@@ -360,7 +372,22 @@ export async function answerApprentice(
       return { status: 'rejected', reason: 'bad-answer' };
     }
 
-    const correct = answer === current.correctAnswer;
+    let correctAnswer = current.correctAnswer;
+    if (kind === 'yesno') {
+      // Lock the pair so a moderator edit cannot commit between this read and the insert.
+      const pair = await trx
+        .selectFrom('KnightsYesNoReference')
+        .select(['answer', 'active', sql<string>`"updatedAt"::text`.as('version')])
+        .where('id', '=', referenceId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!pair || !pair.active || !version || pair.version !== version) {
+        return { status: 'rejected', reason: 'not-current' };
+      }
+      correctAnswer = pair.answer ? 'yes' : 'no';
+    }
+
+    const correct = answer === correctAnswer;
     const xp = correct ? APPRENTICE.xpPerCorrect : 0;
     await trx
       .insertInto('KnightsApprenticeAnswer')
@@ -371,7 +398,7 @@ export async function answerApprentice(
         referenceId: kind === 'rating' ? referenceId : null,
         yesNoReferenceId: kind === 'yesno' ? referenceId : null,
         answer,
-        correctAnswer: current.correctAnswer,
+        correctAnswer,
         correct,
         xp,
         createdAt: utc(now),

@@ -61,7 +61,19 @@ describe('apprentice action', () => {
     expect(await post(valid)).toEqual({ success: true, correct: false, promoted: false });
     expect(answerApprentice).toHaveBeenCalledWith(
       {},
-      { userId: 7, kind: 'rating', referenceId: 5, answer: '4' },
+      { userId: 7, kind: 'rating', referenceId: 5, version: null, answer: '4' },
+      expect.anything()
+    );
+  });
+
+  it('hands the version the item was served with to the ledger', async () => {
+    answerApprentice.mockResolvedValue({ status: 'rejected', reason: 'not-current' });
+
+    await post({ kind: 'yesno', referenceId: '5', version: '2026-12-15 12:00:00', answer: 'yes' });
+
+    expect(answerApprentice).toHaveBeenCalledWith(
+      {},
+      { userId: 7, kind: 'yesno', referenceId: 5, version: '2026-12-15 12:00:00', answer: 'yes' },
       expect.anything()
     );
   });

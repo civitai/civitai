@@ -3,6 +3,7 @@ import { closeOpenYesNoItem } from './close';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   axisKey,
+  axisPrompt,
   isAxis,
   YESNO_ANSWERS,
   YESNO_AUDIENCE,
@@ -154,7 +155,7 @@ export async function importYesNo(
       .values({
         key: axisKey(axis),
         kind: 'bool',
-        prompt: 'Answer the question about this image.',
+        prompt: axisPrompt(axis),
         options: JSON.stringify(YESNO_ANSWERS),
         minRank: 'Knight',
         votesToResolve: YESNO_CONSENSUS_VOTES,

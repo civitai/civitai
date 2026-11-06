@@ -30,6 +30,7 @@ export function apprenticePayload(view: Exclude<ApprenticeView, { kind: 'not-aco
         item: {
           kind: view.item.kind,
           referenceId: view.item.referenceId,
+          version: view.item.version,
           src: imageUrl(view.item.imageKey),
           width: view.item.width,
           height: view.item.height,

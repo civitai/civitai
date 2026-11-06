@@ -1,16 +1,22 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import YesNoPicker from './YesNoPicker.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
+  import NumberedPager from '$lib/components/NumberedPager.svelte';
+  import { YESNO_PROMPT_MAX } from '$lib/knights/trials-limits';
+  import { urlWith } from '$lib/url';
   import { FormState } from '$lib/form-state.svelte';
   import CoreItemCard from './CoreItemCard.svelte';
   import LevelPicker from './LevelPicker.svelte';
+  import ListSearch from './ListSearch.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
   import YesNoReferenceCard from './YesNoReferenceCard.svelte';
   import type { PageData } from './$types';
@@ -23,6 +29,14 @@
     { value: 'spot-check', label: `Spot-check (${data.counts.spotCheck})`, href: '?tab=spot-check' },
     { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
   ]);
+  const nouns = {
+    core: 'core images',
+    fresh: 'fresh images',
+    'spot-check': 'images to spot-check',
+    'yes-no': 'pairs',
+  } as const;
+  const toPage = (p: number) =>
+    goto(urlWith(page.url, { page: p === 1 ? null : p }), { keepFocus: true, noScroll: true });
   const empty = {
     core: 'The core set is empty. Add an image above, or promote one from the Fresh tab.',
     fresh: 'No fresh images are in Trials right now. They arrive with the next harvest of moderator rulings.',
@@ -30,19 +44,30 @@
     'yes-no': 'No yes/no reference pairs yet. Add one above.',
   } as const;
 
+  const noMatch = 'Nothing in this tab matches that image.';
+  const searchProps = $derived({
+    text: data.search.text,
+    error: data.search.error,
+    total: data.paging.total,
+    noun: nouns[data.tab],
+  });
+
   let level = $state<number | null>(null);
   let answer = $state<'yes' | 'no' | null>(null);
+  let questionKey = $state('');
+  const pickedQuestion = $derived(data.yesNo.questions.find((q) => q.key === questionKey));
   const addYesNo = new FormState({
+    reload: true,
     onSuccess: () => {
       answer = null;
-      void invalidateAll();
+      questionKey = '';
       toast.success('Pair added');
     },
   });
   const add = new FormState({
+    reload: true,
     onSuccess: () => {
       level = null;
-      void invalidateAll();
       toast.success('Added to the core set');
     },
   });
@@ -66,8 +91,8 @@
     {#if add.error}<ErrorAlert class="mb-2" message={add.error} />{/if}
     <form method="POST" action="?/add" use:enhance={add.enhance} class="flex flex-col gap-2">
       <label class="flex items-center gap-2 text-sm text-dark-2">
-        Image id
-        <Input name="imageId" inputmode="numeric" required class="w-40" />
+        Image id or URL
+        <Input name="image" required class="w-80" placeholder="123 or https://civitai.com/images/123" />
       </label>
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-sm text-dark-2">Answer</span>
@@ -101,16 +126,31 @@
       </label>
       <label class="flex items-center gap-2 text-sm text-dark-2">
         Question
-        <select
-          name="questionKey"
+        <Select.Root type="single" bind:value={questionKey}>
+          <Select.Trigger class="min-w-0 flex-1">
+            {pickedQuestion
+              ? `${pickedQuestion.prompt} (${pickedQuestion.key}${pickedQuestion.active ? '' : ', inactive'})`
+              : 'Pick a question'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each data.yesNo.questions as q (q.key)}
+              <Select.Item value={q.key}>
+                {q.prompt} ({q.key}{q.active ? '' : ', inactive'})
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+        <input type="hidden" name="questionKey" value={questionKey} />
+      </label>
+      <label class="flex items-center gap-2 text-sm text-dark-2">
+        Acolytes are asked
+        <Input
+          name="prompt"
           required
-          class="h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
-        >
-          <option value="">Pick a question</option>
-          {#each data.yesNo.questions as q (q.key)}
-            <option value={q.key}>{q.prompt} ({q.key}{q.active ? '' : ', inactive'})</option>
-          {/each}
-        </select>
+          maxlength={YESNO_PROMPT_MAX}
+          class="min-w-0 flex-1"
+          placeholder="The yes/no question about this image, e.g. Is a weapon being held?"
+        />
       </label>
       <div class="flex items-center gap-2">
         <span class="text-sm text-dark-2">Correct answer</span>
@@ -122,29 +162,32 @@
         placeholder="Optional: why this is the answer, shown to Acolytes after they answer"
       />
       <div>
-        <Button type="submit" size="sm" disabled={addYesNo.submitting || answer === null}>Add</Button>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={addYesNo.submitting || answer === null || !questionKey}>Add</Button
+        >
       </div>
     </form>
   </section>
+  <ListSearch {...searchProps} />
   {#if data.yesNo.items.length === 0}
-    <p class="text-sm text-dark-2">{empty['yes-no']}</p>
+    {#if !data.search.error}<p class="text-sm text-dark-2">{data.search.text ? noMatch : empty['yes-no']}</p>{/if}
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.yesNo.items as item (item.id)}
         <YesNoReferenceCard {item} />
       {/each}
     </div>
-    {#if data.yesNo.items.length >= data.limit}
-      <p class="mt-3 text-xs text-dark-2">Showing the first {data.limit}.</p>
-    {/if}
   {/if}
 {:else if data.tab === 'spot-check'}
   <p class="mb-3 text-sm text-dark-2">
     Rate each image without seeing the rating it was harvested with. A match lets it into Trials; a
     different rating keeps it out.
   </p>
+  <ListSearch {...searchProps} />
   {#if data.spotCheck.length === 0}
-    <p class="text-sm text-dark-2">{empty['spot-check']}</p>
+    {#if !data.search.error}<p class="text-sm text-dark-2">{data.search.text ? noMatch : empty['spot-check']}</p>{/if}
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.spotCheck as item (item.id)}
@@ -152,8 +195,6 @@
       {/each}
     </div>
   {/if}
-{:else if data.items.length === 0}
-  <p class="text-sm text-dark-2">{empty[data.tab]}</p>
 {:else}
   {#if data.tab === 'fresh'}
     <p class="mb-3 text-sm text-dark-2">
@@ -162,12 +203,22 @@
       at them first: the rating may be wrong. Fresh images age out on their own.
     </p>
   {/if}
-  <div class="flex flex-col gap-3">
-    {#each data.items as item (item.id)}
-      <CoreItemCard {item} mode={data.tab === 'fresh' ? 'fresh' : 'core'} />
-    {/each}
-  </div>
-  {#if data.items.length >= data.limit}
-    <p class="mt-3 text-xs text-dark-2">Showing the first {data.limit}.</p>
+  {#key data.tab}<ListSearch {...searchProps} />{/key}
+  {#if data.items.length === 0}
+    {#if !data.search.error}<p class="text-sm text-dark-2">{data.search.text ? noMatch : empty[data.tab]}</p>{/if}
+  {:else}
+    <div class="flex flex-col gap-3">
+      {#each data.items as item (item.id)}
+        <CoreItemCard {item} mode={data.tab === 'fresh' ? 'fresh' : 'core'} />
+      {/each}
+    </div>
   {/if}
 {/if}
+
+<NumberedPager
+  page={data.paging.page}
+  total={data.paging.total}
+  perPage={data.pageSize}
+  label={nouns[data.tab]}
+  onPageChange={toPage}
+/>

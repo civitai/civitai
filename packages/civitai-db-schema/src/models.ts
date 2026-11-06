@@ -5189,6 +5189,7 @@ export interface KnightsYesNoReference {
   question?: KnightsQuestion;
   answer: boolean;
   explanation: string | null;
+  prompt: string | null;
   active: boolean;
   createdBy: number;
   createdAt: Date;

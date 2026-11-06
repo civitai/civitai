@@ -54,7 +54,13 @@ async function answerRight(userId: number) {
   );
   const result = await answerApprentice(
     db,
-    { userId, kind: item.kind, referenceId: item.referenceId, answer: rows[0].answer },
+    {
+      userId,
+      kind: item.kind,
+      referenceId: item.referenceId,
+      version: item.version,
+      answer: rows[0].answer,
+    },
     deps()
   );
   now = new Date(now.getTime() + 1000);

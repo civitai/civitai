@@ -70,13 +70,13 @@ async function rating(
 
 async function yesNo(
   imageId: number,
-  o: { answer?: boolean; active?: boolean; explanation?: string } = {}
+  o: { answer?: boolean; active?: boolean; explanation?: string; prompt?: string } = {}
 ) {
   await seedImage(pg, imageId);
   const { rows } = await pg.query<{ id: number }>(
-    `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","explanation","active","createdBy")
-     VALUES ($1,$2,$3,$4,$5,1) RETURNING "id"`,
-    [imageId, YESNO_Q, o.answer ?? true, o.explanation ?? null, o.active ?? true]
+    `INSERT INTO "KnightsYesNoReference" ("imageId","questionKey","answer","explanation","active","createdBy","prompt")
+     VALUES ($1,$2,$3,$4,$5,1,$6) RETURNING "id"`,
+    [imageId, YESNO_Q, o.answer ?? true, o.explanation ?? null, o.active ?? true, o.prompt ?? null]
   );
   return rows[0].id;
 }
@@ -134,6 +134,7 @@ async function answerNext(userId: number, right: boolean | ((n: number) => boole
       userId,
       kind: item.kind,
       referenceId: item.referenceId,
+      version: item.version,
       answer: isRight ? await correctFor(item) : await wrongFor(item),
     },
     deps()
@@ -294,6 +295,73 @@ describe('grading and XP', () => {
       `SELECT "answer","correctAnswer" FROM "KnightsApprenticeAnswer"`
     );
     expect(stored.rows[0]).toEqual({ answer: 'yes', correctAnswer: 'no' });
+  });
+
+  it("shows a yes/no pair's own question, and the axis question for a pair without one", async () => {
+    await player(1);
+    await yesNo(1, { prompt: 'Is a knife held in the hand?' });
+    await yesNo(2);
+
+    const served = await play(1, 2);
+    const promptOf = async (referenceId: number) =>
+      served.find((s) => s.referenceId === referenceId)?.prompt;
+    const ids = (
+      await pg.query<{ id: number; imageId: number }>(
+        `SELECT "id","imageId" FROM "KnightsYesNoReference" ORDER BY "imageId"`
+      )
+    ).rows;
+    expect(await promptOf(ids[0].id)).toBe('Is a knife held in the hand?');
+    expect(await promptOf(ids[1].id)).toBe('Does this show violence?');
+  });
+
+  it('grades a yes/no answer only against the pair the player was shown', async () => {
+    await player(1);
+    await player(2);
+    const id = await yesNo(1, { answer: true, prompt: 'Is a knife held?' });
+    const shown = question(await getApprentice(db, 1)).item;
+    const alsoShown = question(await getApprentice(db, 2)).item;
+    expect(shown.version).toEqual(expect.any(String));
+
+    await pg.query(
+      `UPDATE "KnightsYesNoReference" SET "answer"=false, "prompt"='Is a sword held?', "updatedAt"="updatedAt" + interval '1 second' WHERE "id"=$1`,
+      [id]
+    );
+    const stale = await answerApprentice(
+      db,
+      { userId: 1, kind: 'yesno', referenceId: id, version: shown.version, answer: 'yes' },
+      deps()
+    );
+
+    expect(stale).toEqual({ status: 'rejected', reason: 'not-current' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsApprenticeAnswer"`)).rows).toHaveLength(0);
+    expect(await expOf(1)).toBe(0);
+
+    const refreshed = question(await getApprentice(db, 1)).item;
+    expect(refreshed.version).not.toBe(shown.version);
+    expect(refreshed.prompt).toBe('Is a sword held?');
+    const fresh = await answerApprentice(
+      db,
+      { userId: 1, kind: 'yesno', referenceId: id, version: refreshed.version, answer: 'no' },
+      deps()
+    );
+    expect(fresh).toMatchObject({ status: 'recorded', correct: true });
+
+    const stored = await pg.query<{ correctAnswer: string }>(
+      `SELECT "correctAnswer" FROM "KnightsApprenticeAnswer"`
+    );
+    expect(stored.rows).toEqual([{ correctAnswer: 'no' }]);
+    expect(alsoShown.version).toBe(shown.version);
+  });
+
+  it('refuses a yes/no answer that carries no version', async () => {
+    await player(1);
+    const id = await yesNo(1);
+    const result = await answerApprentice(
+      db,
+      { userId: 1, kind: 'yesno', referenceId: id, answer: 'yes' },
+      deps()
+    );
+    expect(result).toEqual({ status: 'rejected', reason: 'not-current' });
   });
 
   it('never smites an Acolyte for wrong answers', async () => {

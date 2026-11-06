@@ -280,8 +280,8 @@ describe('retireReference', () => {
     expect(await retireReference(id)).toEqual({ ok: true });
 
     expect((await row(id)).status).toBe('retired');
-    expect((await getCoreItems()).map((i) => i.id)).toEqual([id]);
-    expect((await getCoreItems())[0].status).toBe('retired');
+    expect((await getCoreItems()).items.map((i) => i.id)).toEqual([id]);
+    expect((await getCoreItems()).items[0].status).toBe('retired');
   });
 
   it('reports an item that is already gone', async () => {
@@ -333,9 +333,9 @@ describe('lists', () => {
     await seedRef(4, { pool: 'hiddenCheck' });
     const pendingId = await seedRef(5, { status: 'pending' });
 
-    expect((await getCoreItems()).map((i) => i.imageId).sort()).toEqual([1, 2]);
-    expect((await getFreshItems()).map((i) => i.imageId)).toEqual([3]);
-    expect((await getSpotCheckItems()).map((i) => i.id)).toEqual([pendingId]);
+    expect((await getCoreItems()).items.map((i) => i.imageId).sort()).toEqual([1, 2]);
+    expect((await getFreshItems()).items.map((i) => i.imageId)).toEqual([3]);
+    expect((await getSpotCheckItems()).items.map((i) => i.id)).toEqual([pendingId]);
   });
 
   it('flags an item players fail far more than expected, once it has enough answers', async () => {
@@ -345,30 +345,101 @@ describe('lists', () => {
     await seedRef(3, { answers: 4, failures: 4 });
     await seedRef(4, { source: 'core', explanation: 'x', answers: 40, failures: 30 });
 
-    const config = { flagMinAnswers: 20, flagFailureRate: 0.6, listLimit: 200 };
+    const config = { flagMinAnswers: 20, flagFailureRate: 0.6, pageSize: 200 };
     const flagged = (items: { imageId: number; flagged: boolean }[]) =>
       items.filter((i) => i.flagged).map((i) => i.imageId);
 
-    expect(flagged(await getFreshItems(config))).toEqual([1]);
-    expect(flagged(await getCoreItems(config))).toEqual([4]);
-    expect((await getFreshItems(config))[0].imageId).toBe(1);
+    expect(flagged((await getFreshItems(undefined, config)).items)).toEqual([1]);
+    expect(flagged((await getCoreItems(undefined, config)).items)).toEqual([4]);
+    expect((await getFreshItems(undefined, config)).items[0].imageId).toBe(1);
   });
 
   it('gives the spot-check only the media, never the image id, name or stored rating', async () => {
     await seedImage(1);
     const id = await seedRef(1, { status: 'pending', answer: '16' });
-    expect(await getSpotCheckItems()).toEqual([{ id, imageKey: 'key-1' }]);
+    expect((await getSpotCheckItems()).items).toEqual([{ id, imageKey: 'key-1' }]);
   });
 
-  it('keeps a flagged item inside the limit even when it is the oldest', async () => {
+  it('keeps a flagged item on the first page even when it is the oldest', async () => {
     for (let n = 1; n <= 6; n++) await seedImage(n);
     await seedRef(1, { answers: 40, failures: 38, daysOld: 50 });
     for (let n = 2; n <= 6; n++) await seedRef(n, { daysOld: n });
 
-    const shown = await getFreshItems({ flagMinAnswers: 20, flagFailureRate: 0.6, listLimit: 3 });
+    const config = { flagMinAnswers: 20, flagFailureRate: 0.6, pageSize: 3 };
+    const first = await getFreshItems({ page: 1 }, config);
 
-    expect(shown.map((i) => i.imageId)).toEqual([1, 2, 3]);
-    expect(shown[0].flagged).toBe(true);
+    expect(first.items.map((i) => i.imageId)).toEqual([1, 2, 3]);
+    expect(first.items[0].flagged).toBe(true);
+  });
+
+  describe('paging and search', () => {
+    const config = { flagMinAnswers: 20, flagFailureRate: 0.6, pageSize: 2 };
+
+    beforeEach(async () => {
+      for (let n = 1; n <= 5; n++) await seedImage(n);
+      await seedRef(1, { source: 'core', explanation: 'x' });
+      await seedRef(2, { source: 'core', explanation: 'x' });
+      await seedRef(3, { source: 'core', explanation: 'x' });
+      await seedRef(4, { source: 'core', explanation: 'x', status: 'retired' });
+      await seedRef(5, { source: 'core', explanation: 'x' });
+    });
+
+    const walk = async <T extends { items: unknown[]; total: number }>(
+      read: (page: number) => Promise<T>
+    ) => [await read(1), await read(2), await read(3)];
+
+    it('returns disjoint consecutive core pages in list order, retired last, with the total', async () => {
+      const pages = await walk((page) => getCoreItems({ page }, config));
+      expect(pages.map((p) => p.items.map((i) => i.imageId))).toEqual([[1, 2], [3, 5], [4]]);
+      expect(pages.map((p) => p.total)).toEqual([5, 5, 5]);
+    });
+
+    it('pages fresh items newest first with flagged ones leading, and clamps a page past the end', async () => {
+      for (let n = 6; n <= 10; n++) await seedImage(n);
+      await seedRef(6, { daysOld: 5 });
+      await seedRef(7, { daysOld: 4 });
+      await seedRef(8, { daysOld: 3, answers: 40, failures: 39 });
+      await seedRef(9, { daysOld: 2 });
+      await seedRef(10, { daysOld: 1 });
+
+      const pages = await walk((page) => getFreshItems({ page }, config));
+      expect(pages.map((p) => p.items.map((i) => i.imageId))).toEqual([[8, 10], [9, 7], [6]]);
+      const beyond = await getFreshItems({ page: 8 }, config);
+      expect(beyond.page).toBe(3);
+      expect(beyond.items.map((i) => i.imageId)).toEqual([6]);
+    });
+
+    it('pages the spot-check oldest first', async () => {
+      for (let n = 6; n <= 8; n++) await seedImage(n);
+      for (const [n, daysOld] of [
+        [6, 1],
+        [7, 3],
+        [8, 2],
+      ]) {
+        await seedRef(n, { status: 'pending', daysOld });
+      }
+      const pages = await walk((page) => getSpotCheckItems({ page }, config));
+      expect(pages.map((p) => p.items.length)).toEqual([2, 1, 1]);
+      expect(pages.map((p) => p.total)).toEqual([3, 3, 3]);
+      expect(pages[0].items.map((i) => i.imageKey)).toEqual(['key-7', 'key-8']);
+    });
+
+    it('finds one image by id on each list, and no other tab shows it', async () => {
+      await seedImage(11);
+      await seedRef(11, { daysOld: 1 });
+      await seedImage(12);
+      await seedRef(12, { status: 'pending' });
+
+      expect(
+        (await getCoreItems({ page: 1, imageId: 3 }, config)).items.map((i) => i.imageId)
+      ).toEqual([3]);
+      expect(
+        (await getFreshItems({ page: 1, imageId: 11 }, config)).items.map((i) => i.imageId)
+      ).toEqual([11]);
+      expect((await getSpotCheckItems({ page: 1, imageId: 12 }, config)).total).toBe(1);
+      expect((await getCoreItems({ page: 1, imageId: 11 }, config)).total).toBe(0);
+      expect((await getFreshItems({ page: 1, imageId: 3 }, config)).total).toBe(0);
+    });
   });
 
   it('marks core items whose image Acolytes would no longer be shown', async () => {
@@ -378,7 +449,9 @@ describe('lists', () => {
     await seedImage(4, { published: false });
     for (const n of [1, 2, 3, 4]) await seedRef(n, { source: 'core', explanation: 'x' });
 
-    const shown = Object.fromEntries((await getCoreItems()).map((i) => [i.imageId, i.servable]));
+    const shown = Object.fromEntries(
+      (await getCoreItems()).items.map((i) => [i.imageId, i.servable])
+    );
 
     expect(shown).toEqual({ 1: true, 2: false, 3: false, 4: false });
   });
