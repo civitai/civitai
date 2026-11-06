@@ -1,15 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createCacheBuilders, type CacheBuilderDeps } from '../cached-array';
 import type { RedisKeyTemplateCache } from '../client';
 
 /**
- * `cacheNotFound` as a FUNCTION (a runtime switch): asked once per fetch that reaches Redis. On,
- * an id the lookup finds nothing for is cached as a notFound marker; off, nothing is written and a
- * marker left from an "on" period is read as a miss, so off is the uncached behaviour at once.
- * A static `false` keeps its old meaning (no writes, a marker found is still served).
+ * `cacheNotFound` as a FUNCTION: asked once per fetch, a throw counts as false, and the static
+ * `true`/`false` forms keep their old meaning. The flag-driven on/off/refresh behaviour of the one
+ * caller (the frame caches) is covered end to end in src/server/__tests__/frame-cache-negative.test.ts.
  *
- * The redis stub is a Map with EX expiry on the faked clock, so what one fetch writes is what the
- * next reads.
+ * The redis stub is a Map with EX expiry, so what one fetch writes is what the next reads.
  */
 
 type Row = { id: number; frame: string };
@@ -82,82 +80,17 @@ function build(cacheNotFound: boolean | (() => boolean | Promise<boolean>)) {
 }
 
 const FRAMELESS = 4242;
-const FRAMED = 5151;
 
 describe('switchable cacheNotFound', () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-06T12:00:00Z'));
-  });
-  afterEach(() => vi.useRealTimers());
-
-  it('on: a frameless id is read from the origin once across two requests', async () => {
-    const w = build(() => true);
-    w.db.set(FRAMED, 'gold-7');
-    expect(await w.cache.fetch([FRAMELESS, FRAMED])).toEqual({
-      [FRAMED]: { id: FRAMED, frame: 'gold-7' },
-    });
-    expect(await w.cache.fetch([FRAMELESS, FRAMED])).toEqual({
-      [FRAMED]: { id: FRAMED, frame: 'gold-7' },
-    });
-    expect(w.lookedUp(FRAMELESS)).toBe(1);
-    expect(w.lookedUp(FRAMED)).toBe(1);
-  });
-
-  it('off (control): a frameless id is read from the origin on every request, nothing written', async () => {
-    const w = build(() => false);
-    for (let i = 0; i < 3; i++) await w.cache.fetch([FRAMELESS]);
-    expect(w.lookedUp(FRAMELESS)).toBe(3);
-    expect(w.sets).toEqual([]);
-  });
-
-  it('on: the marker lives exactly as long as a cached frame', async () => {
-    const w = build(() => true);
-    w.db.set(FRAMED, 'gold-7');
-    await w.cache.fetch([FRAMELESS, FRAMED]);
-    const ex = (id: number) => w.sets.find((s) => s.key === `${KEY}:${id}`)?.EX;
-    expect(ex(FRAMELESS)).toBe(TTL);
-    expect(ex(FRAMED)).toBe(TTL);
-    expect(w.sets.find((s) => s.key === `${KEY}:${FRAMELESS}`)?.NX).toBe(true);
-    vi.setSystemTime(new Date(Date.now() + (TTL - 1) * 1000));
-    await w.cache.fetch([FRAMELESS]);
-    expect(w.lookedUp(FRAMELESS)).toBe(1);
-    vi.setSystemTime(new Date(Date.now() + 2_000));
-    await w.cache.fetch([FRAMELESS]);
+  it('the function is asked once per fetch, and each answer governs that fetch', async () => {
+    const answers = [true, false];
+    const sw = vi.fn(() => answers.shift() ?? false);
+    const w = build(sw);
+    await w.cache.fetch([FRAMELESS]); // true: marker written
+    expect(w.sets).toEqual([{ key: `${KEY}:${FRAMELESS}`, EX: TTL, NX: true }]);
+    await w.cache.fetch([FRAMELESS]); // false: marker ignored, origin read again
+    expect(sw).toHaveBeenCalledTimes(2);
     expect(w.lookedUp(FRAMELESS)).toBe(2);
-  });
-
-  it('on: putting a frame on refreshes the entry, so the next request sees it', async () => {
-    const w = build(() => true);
-    await w.cache.fetch([FRAMELESS]);
-    w.db.set(FRAMELESS, 'silver-3');
-    await w.cache.refresh(FRAMELESS); // what every equip path does
-    expect(await w.cache.fetch([FRAMELESS])).toEqual({
-      [FRAMELESS]: { id: FRAMELESS, frame: 'silver-3' },
-    });
-  });
-
-  it('on: a bust also ends the marker (the next request reads the origin)', async () => {
-    const w = build(() => true);
-    await w.cache.fetch([FRAMELESS]);
-    w.db.set(FRAMELESS, 'silver-3');
-    await w.cache.bust(FRAMELESS);
-    expect(await w.cache.fetch([FRAMELESS])).toEqual({
-      [FRAMELESS]: { id: FRAMELESS, frame: 'silver-3' },
-    });
-  });
-
-  it('turned off, a marker written while on is ignored at once', async () => {
-    let on = true;
-    const w = build(() => on);
-    await w.cache.fetch([FRAMELESS]);
-    // A frame goes on through a writer that does not refresh; with the switch off it must still
-    // show on the next request, as it does today.
-    w.db.set(FRAMELESS, 'bronze-9');
-    on = false;
-    expect(await w.cache.fetch([FRAMELESS])).toEqual({
-      [FRAMELESS]: { id: FRAMELESS, frame: 'bronze-9' },
-    });
   });
 
   it('a throwing switch is off', async () => {
@@ -177,6 +110,14 @@ describe('switchable cacheNotFound', () => {
     w.store.set(`${KEY}:${FRAMELESS}`, { value: { id: FRAMELESS, notFound: true } });
     w.db.set(FRAMELESS, 'bronze-9');
     expect(await w.cache.fetch([FRAMELESS])).toEqual({});
+    expect(w.lookedUp(FRAMELESS)).toBe(1);
+  });
+
+  it('a static true keeps its meaning: the marker is written and served', async () => {
+    const w = build(true);
+    await w.cache.fetch([FRAMELESS]);
+    await w.cache.fetch([FRAMELESS]);
+    expect(w.sets).toEqual([{ key: `${KEY}:${FRAMELESS}`, EX: TTL, NX: true }]);
     expect(w.lookedUp(FRAMELESS)).toBe(1);
   });
 });

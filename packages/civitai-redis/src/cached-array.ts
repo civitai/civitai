@@ -442,6 +442,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       let cacheHits = 0;
       // Resolved once per fetch. `markersLive` is false only while a switchable cacheNotFound
       // answers false: its markers are then ignored, so the fetch matches the uncached behaviour.
+      // Rollback insurance: turning the flag off takes effect at once, not when markers expire.
       let negative: boolean;
       if (typeof cacheNotFound === 'function') {
         try {

@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The per-entity frame caches (`cosmeticEntityCaches`) behind FRAME_CACHE_NEGATIVE, through the
@@ -9,7 +11,7 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
  */
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/flipt/client')>()),
+  ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
 }));
 
@@ -100,6 +102,21 @@ describe('frame caches: FRAME_CACHE_NEGATIVE', () => {
     expect(second).toEqual(first);
     expect(Object.keys(first)).toEqual([String(FRAMED)]);
     expect(lookedUp(FRAMELESS)).toBe(2);
+  });
+
+  it('on: the "no frame" marker lives an hour, a frame a day', async () => {
+    flagOn = true;
+    await page();
+    // The cache writes each entry with packed.set(key, value, { EX, NX? }).
+    const packedSet = (redisMock.redis as unknown as { packed: { set: Mock } }).packed.set;
+    const sets = packedSet.mock.calls as unknown as [
+      string,
+      unknown,
+      { EX?: number; NX?: boolean }
+    ][];
+    const optionsFor = (id: number) => sets.find(([key]) => key.endsWith(`:Image:${id}`))?.[2];
+    expect(optionsFor(FRAMELESS)).toEqual({ EX: 3600, NX: true });
+    expect(optionsFor(FRAMED)).toEqual({ EX: 86400 });
   });
 
   it('on: setting a frame refreshes the entry, so the next request shows it', async () => {
