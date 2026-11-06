@@ -25,7 +25,8 @@
     "vector-sync": "tsx -r tsconfig-paths/register src/vector-sync/consumer.ts",
     "vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/backfill.ts",
     "vector-reconcile": "tsx -r tsconfig-paths/register src/vector-sync/reconcile.ts",
-    "model-vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/models/backfill.ts"
+    "model-vector-backfill": "tsx -r tsconfig-paths/register src/vector-sync/models/backfill.ts",
+    "model-vector-sync": "tsx -r tsconfig-paths/register src/vector-sync/models/consumer.ts"
   },
   "keywords": [
     "kafka",
