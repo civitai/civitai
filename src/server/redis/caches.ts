@@ -70,12 +70,20 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
+// The feed-hydration caches can move to the slot-bucketed key layout (`slotBuckets` in
+// packages/civitai-redis/src/cached-array.ts), per cache, behind the
+// FEED_HYDRATION_SLOT_BUCKETS Flipt flag: a feed page then reads each of them with at most this
+// many MGETs instead of one GET per id. Kept literal in image.service.ts too (it is imported by
+// suites that mock this module).
+export const FEED_HYDRATION_SLOT_BUCKETS = 16;
+
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
   tags: number[];
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'imageId',
   // 8h logical TTL. Measured live (2026-06-17) at ~1.7KB/key and ~16.85 GiB/shard
   // (~50 GiB cluster-wide) — the single largest next-redis-cluster consumer, NOT
@@ -146,6 +154,7 @@ type UserCosmeticLookup = {
 };
 export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   key: REDIS_KEYS.CACHES.USER_COSMETICS,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing new cosmetics
   lookupFn: async (ids, fromWrite) => {
@@ -262,6 +271,7 @@ type CosmeticLookup = {
 };
 export const cosmeticCache = createCachedObject<CosmeticLookup>({
   key: REDIS_KEYS.CACHES.COSMETICS,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'id',
   lookupFn: async (ids, fromWrite) => {
     const goodIds = ids.filter(isDefined);
@@ -278,6 +288,7 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
 
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
   lookupFn: async (ids, fromWrite) => {
@@ -317,6 +328,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
     entity as CosmeticEntity,
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
+      slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
       idKey: 'equippedToId',
       cacheNotFound: false,
       staleWhileRevalidate: false,
@@ -390,6 +402,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
     createCachedObject<WornEventDecoration>({
       // v2: entries carry userId.
       key: `${REDIS_KEYS.CACHES.COSMETICS}:event:v2:${entity}`,
+      slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
       idKey: 'equippedToId',
       // Read on every image feed page while an event runs, and almost no entity wears one, so
       // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
@@ -508,6 +521,7 @@ type UserBasicLookup = {
 };
 export const userBasicCache = createCachedObject<UserBasicLookup>({
   key: REDIS_KEYS.CACHES.BASIC_USERS,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'id',
   lookupFn: async (ids, fromWrite) => {
     const goodIds = ids.filter(isDefined);
@@ -603,6 +617,7 @@ type TagLookup = {
 };
 export const tagCache = createCachedObject<TagLookup>({
   key: REDIS_KEYS.CACHES.BASIC_TAGS,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'id',
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
@@ -711,6 +726,7 @@ type ModelDataCache = {
 };
 export const dataForModelsCache = createCachedObject<ModelDataCache>({
   key: REDIS_KEYS.CACHES.DATA_FOR_MODEL,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'modelId',
   ttl: CacheTTL.day,
   cacheNotFound: false,
@@ -1480,6 +1496,7 @@ type ImageWithMeta = {
 
 export const imageMetaCache = createCachedObject<ImageWithMeta>({
   key: REDIS_KEYS.CACHES.IMAGE_META,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'id',
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
@@ -1569,6 +1586,7 @@ export const thumbnailCache = createCachedObject<{
   parentId?: number;
 }>({
   key: REDIS_KEYS.CACHES.THUMBNAILS,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'parentId',
   lookupFn: async (ids, fromWrite) => {
     if (ids.length === 0) return {};
@@ -1925,6 +1943,7 @@ type ModelTagCacheItem = {
 };
 export const modelTagCache = createCachedObject<ModelTagCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_TAGS,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'modelId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new tags
   lookupFn: async (ids, fromWrite) => {
@@ -1972,6 +1991,7 @@ type ImageResourcesCacheItem = {
 
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
+  slotBuckets: FEED_HYDRATION_SLOT_BUCKETS,
   idKey: 'imageId',
   // Reduced from day to 8h — 68.8% hit at ~728B/key × ~7.3M keys; with SWR on,
   // the day TTL resided for 48h, generous for a sub-average-hit cache.

@@ -6,6 +6,7 @@
 // Everything app-specific (metrics, logging, the L1 factory, pattern-clearing) is INJECTED via
 // createCacheBuilders rather than imported, so this module stays free of app env/logging/prom deps —
 // and so app-level test mocks of the redis client still intercept.
+import calculateSlot from 'cluster-key-slot';
 import { chunk } from 'lodash-es';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from './client';
 import { createLruCache } from './lru-cache';
@@ -71,7 +72,76 @@ export type CachedLookupOptions<T extends object> = {
   // notFound marker, the debounce marker) and `T extends object`, so the 0x01 sentinel can never
   // collide with a bare-scalar msgpack payload. See ./packed-compression.
   compress?: boolean;
+  // --- Slot-bucketed key layout (opt-in here, switched on per cache by deps.isSlotBucketed) -------
+  // A second key layout for the same entries, `${key}:{<tag>.<bucket>}:${id}`, whose hash tag puts
+  // every id of one bucket in ONE cluster slot, so a fetch reads each bucket with one MGET (see
+  // PipelinedGetOptions.coalesceSlots) instead of one GET per id: at most `slotBuckets` commands
+  // per fetch chunk, whatever its size. Values, TTLs, markers and locks are exactly the legacy ones.
+  //
+  // Setting this only makes the cache CAPABLE of the layout; reads move to it while
+  // deps.isSlotBucketed(key) answers true. Both layouts can be live at once (a flag flip, a rollout
+  // across pods), so while this is set every invalidation — bust, invalidate, refresh — writes BOTH
+  // layouts, and `update` declines (returns false, so its caller re-derives through refresh).
+  // A fetch fills only the layout it read. Turning the flag on starts the bucketed layout COLD.
+  //
+  // Bucket count trades commands against spread: each bucket is one slot, so a cache's entries live
+  // in `slotBuckets` slots (and so on at most that many masters). Too few concentrates a big cache
+  // on one shard; too many stops the MGETs from saving anything.
+  slotBuckets?: number;
 };
+
+type KeyOf = (id: number | string) => RedisKeyTemplateCache;
+
+/** 32-bit FNV-1a, for the bucket tag and non-integer ids. Stable across processes and versions. */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * The bucket of an id. An integer id and its decimal string (refresh() sees string ids) land in the
+ * same bucket; anything else is hashed.
+ */
+export function slotBucketOf(id: number | string, buckets: number): number {
+  const n = typeof id === 'number' ? id : Number(id);
+  if (Number.isSafeInteger(n) && String(n) === String(id)) return Math.abs(n) % buckets;
+  return fnv1a(String(id)) % buckets;
+}
+
+/**
+ * The hash tags of a cache's buckets: bucket `b`'s tag hashes to a slot inside the b-th of
+ * `buckets` equal slices of the slot space. Masters own contiguous slot ranges, so the buckets of
+ * every cache spread over the masters as evenly as the count allows instead of wherever CRC16 drops
+ * them (a big cache in few slots could otherwise land mostly on one shard). The tag also carries a
+ * hash of the cache key, so two caches' buckets are different slots. Deterministic: the same in
+ * every process and version, which is what lets every pod address the same keys.
+ */
+export function slotBucketTags(key: string, buckets: number): string[] {
+  const prefix = fnv1a(key).toString(36);
+  const width = 16384 / buckets;
+  return Array.from({ length: buckets }, (_, b) => {
+    const lo = Math.floor(b * width);
+    const hi = Math.floor((b + 1) * width);
+    for (let n = 0; n < 1_000_000; n++) {
+      const tag = `${prefix}.${b}.${n}`;
+      const slot = calculateSlot(tag);
+      if (slot >= lo && slot < hi) return tag;
+    }
+    // Unreachable in practice (each try lands in the slice with probability 1/buckets); a tag
+    // outside its slice is still a valid, unique tag.
+    return `${prefix}.${b}`;
+  });
+}
+
+/** The slot-bucketed key builder of cache `key`: `${key}:{<tag of the id's bucket>}:${id}`. */
+export function createSlotBucketedKey(key: string, buckets: number) {
+  const tags = slotBucketTags(key, buckets);
+  return (id: number | string) => `${key}:{${tags[slotBucketOf(id, buckets)]}}:${id}`;
+}
 
 /** Per-call options for `fetch`. */
 export type CachedFetchOptions = {
@@ -95,7 +165,7 @@ type PackedClient = {
   packed: {
     mGet<T>(
       keys: RedisKeyTemplateCache[],
-      packedOptions?: { compress?: boolean; cacheName?: string }
+      packedOptions?: { compress?: boolean; cacheName?: string; coalesceSlots?: boolean }
     ): Promise<(T | null)[]>;
     set<T>(
       key: RedisKeyTemplateCache,
@@ -143,6 +213,11 @@ export type CacheBuilderDeps = {
   log(...args: unknown[]): void;
   /** Backs flush(); the app owns pattern scanning (it is cluster- and target-aware). */
   clearByPattern(pattern: string): Promise<unknown>;
+  /**
+   * Whether a cache built with `slotBuckets` reads the slot-bucketed layout now. Asked once per
+   * fetch that reaches Redis, with the cache's key. Absent, false, or throwing: the legacy layout.
+   */
+  isSlotBucketed?(cacheKey: string): boolean | Promise<boolean>;
 };
 
 /**
@@ -217,7 +292,31 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     localMax = 10000,
     localMaxBytes,
     compress = false,
+    slotBuckets,
   }: CachedLookupOptions<T>) {
+    if (slotBuckets !== undefined && !(Number.isInteger(slotBuckets) && slotBuckets >= 1))
+      throw new Error(`createCachedArray slotBuckets must be a positive integer [${key}]`);
+    // A brace in the key would make ITS text the hash tag, and every bucket one slot.
+    if (slotBuckets && /[{}]/.test(key))
+      throw new Error(`createCachedArray slotBuckets needs a key without braces [${key}]`);
+    const legacyKeyOf: KeyOf = (id) => `${key}:${id}` as RedisKeyTemplateCache;
+    const bucketedKeyOfRaw = slotBuckets ? createSlotBucketedKey(key, slotBuckets) : undefined;
+    const bucketedKeyOf: KeyOf = (id) =>
+      (bucketedKeyOfRaw as NonNullable<typeof bucketedKeyOfRaw>)(id) as RedisKeyTemplateCache;
+    // Every layout an entry of this cache can be read from — what each invalidation must write.
+    const layouts: KeyOf[] = slotBuckets ? [legacyKeyOf, bucketedKeyOf] : [legacyKeyOf];
+    // The layout this fetch reads and fills. The flag is consulted only by a capable cache, and any
+    // failure to answer keeps the legacy layout.
+    const legacyLayout = { keyOf: legacyKeyOf, bucketed: false } as const;
+    const bucketedLayout = { keyOf: bucketedKeyOf, bucketed: true } as const;
+    async function readLayout(): Promise<{ keyOf: KeyOf; bucketed: boolean }> {
+      if (deps.isSlotBucketed) {
+        try {
+          if ((await deps.isSlotBucketed(key)) === true) return bucketedLayout;
+        } catch {}
+      }
+      return legacyLayout;
+    }
     // Resolved ONCE and passed to every redis.packed call below except the not-found marker's
     // (notFoundPackedOptions), so no READ can miss the compress flag.
     // `cacheName` rides along on the same binding: it is the `cache_name` label on the codec
@@ -225,6 +324,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // metrics.hit/miss as cache_name — one scheme, not two. Bounded by construction (it is the
     // cache prefix, not `${key}:${id}`), and observational only.
     const packedOptions = { compress, cacheName: key } as const;
+    // The bucketed layout's reads: the same, plus one MGET per slot.
+    const bucketedReadOptions = { ...packedOptions, coalesceSlots: true } as const;
     // Not-found markers skip compression even on a compress:true cache: a tiny map gains nothing,
     // and the compress-aware read passes a non-sentinel value (a msgpack map never starts with
     // 0x01) straight to msgpack. See ./packed-compression.
@@ -401,11 +502,14 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
 
       const results = new Set<T>();
       const cacheResults: T[] = [];
+      // Decided once per fetch: this fetch reads, and fills on a miss, one layout only. A cache
+      // without slotBuckets never asks (no extra await on its path).
+      const { keyOf, bucketed } = slotBuckets ? await readLayout() : legacyLayout;
       try {
         for (const batch of chunk(distinctIds, 200)) {
           const batchResults = await redis.packed.mGet<T>(
-            batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache),
-            packedOptions
+            batch.map(keyOf),
+            bucketed ? bucketedReadOptions : packedOptions
           );
           cacheResults.push(...batchResults.filter(isDefined));
         }
@@ -553,12 +657,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             if (Object.keys(toCache).length > 0)
               await Promise.all(
                 Object.entries(toCache).map(([id, value]) =>
-                  redis.packed.set(
-                    `${key}:${id}` as RedisKeyTemplateCache,
-                    value,
-                    { EX },
-                    packedOptions
-                  )
+                  redis.packed.set(keyOf(id), value, { EX }, packedOptions)
                 )
               );
 
@@ -569,7 +668,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
               await Promise.all(
                 Object.entries(toCacheNotFound).map(([id, value]) =>
                   redis.packed.set(
-                    `${key}:${id}` as RedisKeyTemplateCache,
+                    keyOf(id),
                     value,
                     { EX: notFoundEX, NX: true },
                     notFoundPackedOptions
@@ -624,13 +723,16 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       if (ids.length === 0) return;
       dropLocal(ids);
 
+      // Every layout: a reader of either one must see the marker.
       await Promise.all(
-        ids.map((id) =>
-          redis.packed.set(
-            `${key}:${id}` as RedisKeyTemplateCache,
-            { [idKey]: id, debounce: true },
-            { EX: options.debounceTime ?? debounceTime ?? NON_SWR_BUST_WINDOW },
-            packedOptions
+        layouts.flatMap((keyOf) =>
+          ids.map((id) =>
+            redis.packed.set(
+              keyOf(id),
+              { [idKey]: id, debounce: true },
+              { EX: options.debounceTime ?? debounceTime ?? NON_SWR_BUST_WINDOW },
+              packedOptions
+            )
           )
         )
       );
@@ -642,12 +744,20 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       if (ids.length === 0) return;
       dropLocal(ids);
 
+      // Each layout is rewritten from what IT holds, exactly as the single layout always was.
+      for (const keyOf of layouts) await invalidateLayout(ids, keyOf, options);
+
+      log(`Invalidated ${ids.length} ${key} items: ${ids.join(', ')}`);
+    }
+
+    async function invalidateLayout(
+      ids: number[],
+      keyOf: KeyOf,
+      options: { debounceTime?: number }
+    ) {
       const cacheResults: T[] = [];
       for (const batch of chunk(ids, 200)) {
-        const batchResults = await redis.packed.mGet<T>(
-          batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache),
-          packedOptions
-        );
+        const batchResults = await redis.packed.mGet<T>(batch.map(keyOf), packedOptions);
         cacheResults.push(...batchResults.filter(isDefined));
       }
 
@@ -661,13 +771,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const notFoundIds = cacheResults
         .filter((x) => (x as AnyRecord).notFound)
         .map((x) => x[idKey] as unknown as number);
-      if (notFoundIds.length > 0 && windowSeconds <= 0)
-        await redis.del(notFoundIds.map((id) => `${key}:${id}` as RedisKeyTemplateCache));
+      if (notFoundIds.length > 0 && windowSeconds <= 0) await redis.del(notFoundIds.map(keyOf));
       else if (notFoundIds.length > 0)
         await Promise.all(
           notFoundIds.map((id) =>
             redis.packed.set(
-              `${key}:${id}` as RedisKeyTemplateCache,
+              keyOf(id),
               { [idKey]: id, debounce: true },
               { EX: windowSeconds },
               packedOptions
@@ -692,11 +801,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       if (Object.keys(toCache).length > 0)
         await Promise.all(
           Object.entries(toCache).map(([id, value]) =>
-            redis.packed.set(`${key}:${id}` as RedisKeyTemplateCache, value, { EX }, packedOptions)
+            redis.packed.set(keyOf(id), value, { EX }, packedOptions)
           )
         );
-
-      log(`Invalidated ${ids.length} ${key} items: ${ids.join(', ')}`);
     }
 
     async function refresh(id: number | number[]) {
@@ -713,13 +820,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         // correctness guard otherwise loses that guard entirely, since refresh() is what every
         // bust-and-repopulate helper calls. `x &&` keeps a falsy value classified as "no row".
         const cacheable = Object.entries(results).filter(([, x]) => x && !dontCacheFn?.(x));
+        // Every layout, so neither keeps serving the value this refresh replaces.
         await Promise.all(
-          cacheable.map(([rid, x]) =>
-            redis.packed.set(
-              `${key}:${rid}` as RedisKeyTemplateCache,
-              { ...x, cachedAt },
-              { EX },
-              packedOptions
+          layouts.flatMap((keyOf) =>
+            cacheable.map(([rid, x]) =>
+              redis.packed.set(keyOf(rid), { ...x, cachedAt }, { EX }, packedOptions)
             )
           )
         );
@@ -730,7 +835,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cached = new Set(cacheable.map(([rid]) => rid));
         const toRemove = ids.map(String).filter((rid) => !cached.has(rid));
         await Promise.all(
-          toRemove.map((rid) => redis.del(`${key}:${rid}` as RedisKeyTemplateCache))
+          layouts.flatMap((keyOf) => toRemove.map((rid) => redis.del(keyOf(rid))))
         );
       } catch (error) {
         // Refresh is best-effort: swallow and fall back to bust semantics so the next reader
@@ -781,6 +886,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
      * sooner.
      */
     async function update(id: number, updater: (current: T) => T): Promise<boolean> {
+      // A cache with two live layouts cannot rewrite one entry from a delta: the other layout's
+      // copy would keep the pre-delta value. Decline, which sends the caller to refresh(), and that
+      // writes both.
+      if (slotBuckets) return false;
       const entryKey = `${key}:${id}` as RedisKeyTemplateCache;
       // Two concurrent read-modify-writes on one entry lose one of the deltas, and a
       // lost delta persists for the rest of the TTL. The loser reports false and

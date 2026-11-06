@@ -48,6 +48,28 @@ export type PipelinedGetDeps<V> = {
   isRedirect(err: unknown): boolean;
   /** Called once per batch that had to re-read some keys on their own. */
   onReread?(keyCount: number, firstError: unknown): void;
+  /**
+   * Send every command (`['GET', key]` or `['MGET', key, …]`) to `node` in one write, without
+   * following redirects. One settled result per command, in order. Only the slot-coalescing read
+   * (`{ coalesceSlots: true }`) uses it; without it that option falls back to the GET-per-key batch.
+   */
+  pipelineCommands?(node: string, commands: string[][]): Promise<PromiseSettledResult<unknown>[]>;
+  /**
+   * True for an error reply to a MULTI-key command that a routed per-key re-read can fix, beyond
+   * MOVED/ASK: TRYAGAIN, which a node answers while the slot is mid-migration and the keys are
+   * split between the two nodes.
+   */
+  isMultiKeyRetryable?(err: unknown): boolean;
+};
+
+export type PipelinedGetOptions = {
+  /**
+   * Read keys that share a hash SLOT with one `MGET` per slot instead of one GET per key, still one
+   * pipelined write per master. Only pays off for keys that were built to share slots (hash tags);
+   * keys in distinct slots are read exactly as without it. Same contract and the same accounting
+   * (`track` still counts keys, so the wedge signals read the same in both modes).
+   */
+  coalesceSlots?: boolean;
 };
 
 /**
@@ -57,8 +79,94 @@ export type PipelinedGetDeps<V> = {
 export function createPipelinedGet<V>(deps: PipelinedGetDeps<V>) {
   const perKey = (keys: string[]) => Promise.all(keys.map((k) => deps.get(k)));
 
-  return async function pipelinedGet(keys: string[]): Promise<(V | null)[]> {
+  // One command per SLOT: `MGET` for a slot holding several keys, GET for a slot holding one. The
+  // safety argument is the GET one above, per command: a node answers a multi-key read of a slot
+  // it does not own (or is migrating) with MOVED/ASK for the whole command, and TRYAGAIN while the
+  // slot's keys are split mid-migration; every such command's keys are re-read on their own
+  // through the routed GET. Any other failure rejects, as in the per-key batch.
+  async function coalescedGet(keys: string[]): Promise<(V | null)[]> {
+    const byNode = new Map<string, Map<number, number[]>>();
+    const out: (V | null)[] = new Array(keys.length).fill(null);
+    const reread: number[] = [];
+    let firstError: unknown;
+    for (let i = 0; i < keys.length; i++) {
+      const slot = calculateSlot(keys[i]);
+      const node = deps.nodeOf(slot);
+      if (node === undefined) {
+        reread.push(i);
+        continue;
+      }
+      let slots = byNode.get(node);
+      if (!slots) byNode.set(node, (slots = new Map()));
+      let positions = slots.get(slot);
+      if (!positions) slots.set(slot, (positions = []));
+      positions.push(i);
+    }
+
+    await Promise.all(
+      [...byNode].map(async ([node, slots]) => {
+        const groups = [...slots.values()];
+        const keyCount = groups.reduce((n, g) => n + g.length, 0);
+        if (keyCount === 1) {
+          reread.push(groups[0][0]);
+          return;
+        }
+        const commands = groups.map((g) =>
+          g.length === 1 ? ['GET', keys[g[0]]] : ['MGET', ...g.map((i) => keys[i])]
+        );
+        const send = deps.pipelineCommands as NonNullable<PipelinedGetDeps<V>['pipelineCommands']>;
+        const settled = await deps.track(keyCount, () => send(node, commands));
+        if (settled.length !== commands.length) {
+          throw new Error(
+            `pipelined read returned ${settled.length} replies for ${commands.length} commands`
+          );
+        }
+        const take = (pos: number, v: unknown) => {
+          if (v === null || v === undefined) out[pos] = null;
+          else if (deps.isValue(v)) out[pos] = v;
+          else {
+            firstError ??= new Error(`pipelined read returned a ${typeof v}`);
+            reread.push(pos);
+          }
+        };
+        for (let c = 0; c < groups.length; c++) {
+          const group = groups[c];
+          const r = settled[c];
+          const multi = group.length > 1;
+          if (r.status === 'fulfilled') {
+            if (!multi) take(group[0], r.value);
+            else if (!Array.isArray(r.value) || r.value.length !== group.length) {
+              // Not the reply shape MGET has: re-read rather than guess.
+              firstError ??= new Error('pipelined MGET returned an unexpected reply');
+              reread.push(...group);
+            } else for (let j = 0; j < group.length; j++) take(group[j], r.value[j]);
+          } else if (
+            deps.isRedirect(r.reason) ||
+            (multi && deps.isMultiKeyRetryable?.(r.reason) === true)
+          ) {
+            firstError ??= r.reason;
+            reread.push(...group);
+          } else {
+            throw r.reason;
+          }
+        }
+      })
+    );
+
+    if (reread.length > 0) {
+      if (firstError !== undefined) deps.onReread?.(reread.length, firstError);
+      const values = await perKey(reread.map((i) => keys[i]));
+      for (let j = 0; j < reread.length; j++) out[reread[j]] = values[j];
+    }
+    return out;
+  }
+
+  return async function pipelinedGet(
+    keys: string[],
+    options?: PipelinedGetOptions
+  ): Promise<(V | null)[]> {
     if (keys.length <= 1) return perKey(keys);
+    if (options?.coalesceSlots && deps.pipelineCommands) return coalescedGet(keys);
 
     // Group key POSITIONS by owning master (duplicates are read once per position, as before).
     const groups = new Map<string, number[]>();
@@ -194,9 +302,18 @@ export function createClusterPipelinedGet(opts: {
         keys.map((k) => client.sendCommand(['GET', k], { typeMapping, timeout: undefined }))
       );
     },
+    // The same, for the slot-coalescing read: GET or MGET per slot. The same no-await rule.
+    pipelineCommands: async (node, commands) => {
+      const master = masters.get(node);
+      const client = (await cluster.nodeClient(master)) as NodeClientLike;
+      return Promise.allSettled(
+        commands.map((args) => client.sendCommand(args, { typeMapping, timeout: undefined }))
+      );
+    },
     track: opts.track,
     isValue: (v): v is Buffer => Buffer.isBuffer(v),
     isRedirect: (err) => err instanceof ErrorReply && /^(MOVED|ASK) /.test(err.message),
+    isMultiKeyRetryable: (err) => err instanceof ErrorReply && /^TRYAGAIN\b/.test(err.message),
     onReread: (keyCount, err) =>
       log(
         `Pipelined cluster GET re-read ${keyCount} keys on their own: ${

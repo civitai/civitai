@@ -116,8 +116,12 @@ type CommandType = ClientCommandOptions;
  * the `cache_name` on cacheHitCounter/cacheMissCounter, so the values match by construction;
  * `fetchThroughCache` emits no hit/miss counters at all, so for those call sites the label
  * separates caches from each other but joins to nothing.
+ *
+ * `coalesceSlots` is READ-ONLY and only `mGet` reads it: on the cache cluster, keys sharing a hash
+ * slot are read with one MGET per slot (see PipelinedGetOptions in ./cluster-pipelined-get). The
+ * values returned are the same either way.
  */
-export type PackedOptions = { compress?: boolean; cacheName?: string };
+export type PackedOptions = { compress?: boolean; cacheName?: string; coalesceSlots?: boolean };
 
 interface CustomRedisClient<K extends RedisKeyTemplates>
   extends Omit<
@@ -1865,8 +1869,12 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
           log,
         })
       : undefined;
-  const getBuffers = (keys: K[]): Promise<(Buffer | null)[]> =>
-    batchedGet ? batchedGet(keys) : Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
+  const getBuffers = (keys: K[], coalesceSlots?: boolean): Promise<(Buffer | null)[]> =>
+    batchedGet
+      ? coalesceSlots
+        ? batchedGet(keys, { coalesceSlots })
+        : batchedGet(keys)
+      : Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
 
   client.packed = {
     async get<T>(key: K, packedOptions?: PackedOptions): Promise<T | null> {
@@ -1883,7 +1891,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
     // Not a native MGET (CROSSSLOT on a cluster): see getBuffers above.
     async mGet<T>(keys: K[], packedOptions?: PackedOptions): Promise<(T | null)[]> {
-      const results = await getBuffers(keys);
+      const results = await getBuffers(keys, packedOptions?.coalesceSlots);
       // SYMMETRIC with `set(..., { compress: true })`, same as the single-key `get` above.
       // The batched read is the one a per-id cache (createCachedArray) actually uses, so a
       // compressed writer that could not opt its mGet in would corrupt every read.

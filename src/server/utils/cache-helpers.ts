@@ -5,6 +5,7 @@ import { chunk } from 'lodash-es';
 // force every suite that mocks the shim to add it to its mock factory.
 import { CACHE_KEY_PREFIX, createCacheBuilders, prefixCacheKey } from '@civitai/redis';
 import { CacheTTL } from '~/server/common/constants';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   cacheFailOpenDegradedCounter,
@@ -200,6 +201,11 @@ const { createCachedArray, createCachedObject } = createCacheBuilders({
     ).catch(() => undefined),
   log,
   clearByPattern: (pattern) => clearCacheByPattern(pattern),
+  // Which caches built with `slotBuckets` read the slot-bucketed layout. Evaluated with the cache's
+  // key as BOTH the entity id (a percentage rollout moves whole caches) and the `cache` context
+  // property (a segment can name caches), so a cache can be moved, or moved back, on its own.
+  isSlotBucketed: (cacheKey) =>
+    isFlipt(FLIPT_FEATURE_FLAGS.FEED_HYDRATION_SLOT_BUCKETS, cacheKey, { cache: cacheKey }),
 });
 
 export { createCachedArray, createCachedObject };
