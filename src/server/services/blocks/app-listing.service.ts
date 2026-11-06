@@ -29,7 +29,7 @@ import {
 // the field is `// @no-type` and therefore absent from the generated client entirely. See its
 // module header for the production 500 that forced that.
 import {
-  noteDegradedVisibilityRead,
+  VISIBILITY_READ_DEGRADED_EVENT,
   readListingVisibility,
   readListingVisibilityMany,
   readListingVisibilityManyForRender,
@@ -73,6 +73,7 @@ import {
 } from '~/server/services/blocks/app-sub-listing-store.service';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { logToAxiom } from '~/server/logging/client';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
 import {
@@ -1069,8 +1070,7 @@ export function listingBayesianSortKey(globalMean: number): Prisma.Sql {
  *   lpad(usage, 20) || lpad(installs, 20)    (then `al.id`, from the keyset tuple)
  *   usage = plays (`open_count`) for an ON-SITE listing, installs for any other kind
  *
- * Plays, because plays are what the store card shows and what most apps accumulate;
- * installs read ~0 for nearly every listing, so an installs-first key ranked by id.
+ * Plays, because plays are what the store card shows.
  *
  * 🔴 AN OFF-SITE LISTING HAS NO PLAY COUNT, NOT ZERO PLAYS — its `open_count` column is
  * the `NOT NULL DEFAULT 0`, and `cardOpenCount` projects it as `null`. Ranking it on that
@@ -1625,9 +1625,10 @@ export async function listAvailableListings(
   // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
   // a card's mutable projection fields are never served from two different ages.
   //
-  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable` and the sub-listing
-  // state are literal segments of the redis key, deliberately outside the 32-bit
-  // `hashifyObject` of the statement. See {@link catalogPageCache}.
+  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable`, the sub-listing
+  // state and the mature state (`mature`) are literal segments of the redis key,
+  // deliberately outside the 32-bit `hashifyObject` of the statement. See
+  // {@link catalogPageCache}.
   //
   // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
   // actions, and every one of those paths calls `bustAppListingCatalogCache()`.
@@ -1725,7 +1726,7 @@ export async function listAvailableListings(
     const page = withSubListings ? withSubListingsPage : parentsOnlyPage;
     return page(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
       if (!isMissingColumnError(err)) throw err;
-      noteDegradedVisibilityRead(err);
+      noteDegradedRead(VISIBILITY_READ_DEGRADED_EVENT, err);
       return page(Prisma.sql`al.status = 'approved'`);
     });
   };
@@ -2137,7 +2138,8 @@ export async function getListingHiddenByBrowsingLevel(
     floor: opts.floor ?? 'public',
     browsingLevel: allBrowsingLevelsFlag,
   });
-  // Never report hidden-by-level for a site-gated app.
+  // Non-red hosts never get a hidden-by-level answer. A site-gated row is already dropped by
+  // the loader; this return covers the remaining rows (e.g. PG-rated apps).
   if (!gated || !opts.redCapable) return null;
   const hidden = ratingHiddenByBrowsingLevel(gated.row.contentRating, opts.viewerBrowsingLevel);
   return hidden ? { contentRating: hidden } : null;

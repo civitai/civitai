@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Popover } from '~/components/MantineOverlays';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { HatIcon } from '~/components/HatTurf/HatIcon';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
@@ -45,7 +44,14 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const guard = summary?.hatted ? summary.hattedTeam : null;
   const holder = guard ?? leader;
   const blocked = guard && leader && leader !== guard ? leader : null;
-  const shownCount = summary && holder ? summary.counted[holder] ?? 0 : null;
+  // A protected image earns one point, for its hat's team; otherwise the holder's counted stickers.
+  const shownCount = summary
+    ? summary.hatted
+      ? 1
+      : holder
+      ? summary.counted[holder] ?? 0
+      : 0
+    : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
   const [seenCount, setSeenCount] = useState(shownCount);
@@ -59,7 +65,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
-  const discColor = holder ? colorOf(holder) : undefined;
+  const discColor = holder ? colorOf(holder) : summary.hatted ? FALLBACK_COLOR : undefined;
 
   const label = `${standingsLabel(summary, feed.team)}${
     summary.hatted
@@ -68,14 +74,13 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
         : ' A hat protects this image.'
       : ''
   }`;
-  // Digits beyond one don't fit the dial; the count goes beside it.
-  const hasCount = !!holder && count > 0;
-  const countInside = hasCount && count < 10;
-  const countBeside = hasCount && !countInside;
-  const countEl = hasCount && (
+  // The dial's centre is always a number. Two digits don't fit it, so from 10 up it reads "9+" and
+  // the full count goes beside the dial.
+  const countBeside = count >= 10 && !summary.hatted;
+  const countEl = (
     <span
       key={count}
-      className={clsx(classes.count, countInside && classes.countInside, bump && classes.bump)}
+      className={clsx(classes.count, !countBeside && classes.countInside, bump && classes.bump)}
       data-testid="hat-turf-count"
     >
       {abbreviateNumber(count)}
@@ -114,7 +119,16 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
           />
         </svg>
         <span className={classes.disc} data-testid="hat-turf-disc">
-          {countInside ? countEl : <HatIcon className={classes.hat} />}
+          {countBeside ? (
+            <span
+              className={clsx(classes.count, classes.countInside)}
+              data-testid="hat-turf-count-cap"
+            >
+              9+
+            </span>
+          ) : (
+            countEl
+          )}
         </span>
       </span>
       {countBeside && countEl}

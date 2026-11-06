@@ -1,10 +1,11 @@
--- GenerationCoverage: a version with any model file whose pickle or virus scan result is 'Danger' or
--- 'Error' is not covered under either rule. Columns and their order are unchanged, so CREATE OR
--- REPLACE applies in place.
+-- GenerationCoverage: a version is not covered under either rule when any of its model files has a
+-- pickle or virus scan result of 'Danger', or a loadable file (the types ok_live and ok_next accept)
+-- has one of 'Error'. Columns and their order are unchanged, so CREATE OR REPLACE applies in place.
 --
--- Error is excluded here although publish and download refuse only Danger: a scanner that errored
--- vouched for nothing, and generation loads the file without a person choosing to. Pending is NOT
--- excluded: it holds files not scanned yet, and trained models' result files.
+-- Error is excluded on loadable files although publish and download refuse only Danger: a scanner
+-- that errored vouched for nothing, and generation loads the file without a person choosing to. An
+-- Error on a file the generator never loads (a config, training data) leaves the version covered.
+-- Pending is NOT excluded: it holds files not scanned yet, and trained models' result files.
 --
 -- Version-level, not per-file: the generator may pick any file of a covered version.
 --
@@ -13,7 +14,9 @@
 --        SELECT DISTINCT gc."modelId", gc."modelVersionId"
 --        FROM "GenerationCoverage" gc
 --        JOIN "ModelFile" mf ON mf."modelVersionId" = gc."modelVersionId"
---        WHERE mf."pickleScanResult" IN ('Danger', 'Error') OR mf."virusScanResult" IN ('Danger', 'Error');
+--        WHERE mf."pickleScanResult" = 'Danger' OR mf."virusScanResult" = 'Danger'
+--          OR ((mf."pickleScanResult" = 'Error' OR mf."virusScanResult" = 'Error')
+--              AND mf.type = ANY (ARRAY['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE']));
 --   1. Dry run: this file inside BEGIN; ... ROLLBACK;
 --   2. Apply.
 --   3. Re-run the step-0 query: it must return no rows. (The schema drift check does not cover views.)
@@ -105,8 +108,12 @@ FROM (
         ) AS is_safetensor,
         -- Matches excludedFromCoverage (src/server/utils/failed-scan.ts).
         (
-          mf."pickleScanResult" = ANY (ARRAY['Danger'::"ScanResultCode", 'Error'::"ScanResultCode"])
-          OR mf."virusScanResult" = ANY (ARRAY['Danger'::"ScanResultCode", 'Error'::"ScanResultCode"])
+          mf."pickleScanResult" = 'Danger'::"ScanResultCode"
+          OR mf."virusScanResult" = 'Danger'::"ScanResultCode"
+          OR (
+            (mf."pickleScanResult" = 'Error'::"ScanResultCode" OR mf."virusScanResult" = 'Error'::"ScanResultCode")
+            AND mf.type = ANY (ARRAY['Model'::text, 'Pruned Model'::text, 'Diffusion Model'::text, 'UNet'::text, 'Negative'::text, 'VAE'::text])
+          )
         ) AS scan_excluded
       FROM "ModelFile" mf
       WHERE mf."modelVersionId" = mv.id
@@ -114,7 +121,7 @@ FROM (
   ) f ON TRUE
 
   -- Both rules carry these, so they are stated once: a moderated model is not covered under either,
-  -- and neither is a version with any file whose scan failed or errored, whatever arm would cover it.
+  -- and neither is a version scan_excluded marks, whatever arm would cover it.
   WHERE m.mode IS NULL
     AND NOT f.scan_excluded
 ) rules

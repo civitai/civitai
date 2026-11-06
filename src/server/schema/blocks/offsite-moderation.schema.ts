@@ -196,8 +196,8 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // (`app-listing-moderator-edit.ts`). Changes no `status`; owner-visible.
   // `reason` — the owner-facing sentence.   `detail` — `details` | `media`.
   'moderator-edit',
-  // A moderator marked or unmarked the listing Official (`app-listing-official.service.ts`,
-  // added by `20261224120200_app_listing_official`). Writes `is_official` only; no `status`.
+  // A moderator marked or unmarked the listing Official (`app-listing-official.service.ts`).
+  // Writes `is_official` only; no `status`.
   // `reason` — the owner-facing sentence.   `before` / `after` — { isOfficial }.
   'set-official',
 ] as const;
