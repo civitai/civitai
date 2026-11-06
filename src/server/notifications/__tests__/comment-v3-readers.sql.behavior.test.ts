@@ -90,6 +90,7 @@ CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
+ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published';
 INSERT INTO "Article" VALUES (10);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
 UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
@@ -323,6 +324,26 @@ describe('notification queries on CommentV3', () => {
     );
     expect(out.find((r) => r.userId === 9)!.dedupeKey).toBe(
       response.find((r) => r.details.commentId === 101)!.dedupeKey
+    );
+  });
+
+  it('new-mention stays quiet on an unpublished article, so the draft reaches nobody new', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Draft' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
     );
   });
 

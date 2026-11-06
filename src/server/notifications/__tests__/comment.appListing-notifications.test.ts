@@ -650,6 +650,10 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND c.content LIKE '%"mention:%'
       AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR m."userId" > 0)
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
+      AND NOT EXISTS (
+      SELECT 1 FROM "Article" da
+      WHERE c."entityType" = 'article' AND da.id = c."entityId" AND da.status <> 'Published'
+      )
       UNION
       SELECT DISTINCT
       CAST(unnest(regexp_matches(m.description, '"mention:(\\d+)"', 'g')) as INT) "ownerId",

@@ -1,6 +1,8 @@
 import { NotificationCategory } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
+import { articleShareCookieName } from '~/server/services/article-share.helpers';
+import { getArticleByShareToken } from '~/server/services/article-share.service';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
@@ -23,9 +25,13 @@ import {
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { type CommentEntityType, ComicChapterStatus } from '~/shared/utils/prisma/enums';
+import {
+  ArticleStatus,
+  type CommentEntityType,
+  ComicChapterStatus,
+} from '~/shared/utils/prisma/enums';
 
-export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req'>;
+export type CommentReadContext = Pick<Context, 'user' | 'features' | 'req' | 'cache'>;
 
 /**
  * What one kind of entity adds to the comment rules every surface shares. The owner is not here:
@@ -76,6 +82,29 @@ const accessGated =
     if (!access?.hasAccess)
       throw throwAuthorizationError('You do not have access to this resource.');
   };
+
+/**
+ * An unpublished article's comments are its owner's, moderators', and those of a viewer whose share
+ * link for it still opens the draft (round 1's cookie, re-resolved on every call).
+ */
+async function assertArticleCommentsVisible(articleId: number, ctx: CommentReadContext) {
+  const article = await dbRead.article.findUnique({
+    where: { id: articleId },
+    select: { userId: true, status: true },
+  });
+  if (!article) throw throwNotFoundError('Article not found');
+  if (article.status === ArticleStatus.Published) return;
+  // Signed-out reads are edge-cached by URL; a link holder's answer must never be served to anyone else.
+  if (ctx.cache)
+    Object.assign(ctx.cache, { skip: true, canCache: false, edgeTTL: 0, browserTTL: 0 });
+  if (ctx.user?.isModerator || article.userId === ctx.user?.id) return;
+  const shared = await getArticleByShareToken({
+    articleId,
+    shareToken: ctx.req?.cookies?.[articleShareCookieName(articleId)],
+    viewerId: ctx.user?.id,
+  });
+  if (shared.status !== 'ok') throw throwNotFoundError('Article not found');
+}
 
 /**
  * The comic reader's chapter rules (`comics/chapter-visibility.ts`), but not its `comicCreator`
@@ -152,7 +181,7 @@ async function notifyComicOwner(comment: StoredCommentV3, ctx: ProtectedContext)
 
 /** Every entity type with a comment section, so a new one does not compile until it has an entry. */
 export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
-  article: { assertWritable: accessGated('Article') },
+  article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
   post: { assertWritable: accessGated('Post') },
   image: {
     onCreated: (comment, ctx) => {
