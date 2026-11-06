@@ -18,6 +18,7 @@
   import LevelPicker from './LevelPicker.svelte';
   import ListSearch from './ListSearch.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
+  import QuestionCard from './QuestionCard.svelte';
   import YesNoReferenceCard from './YesNoReferenceCard.svelte';
   import type { PageData } from './$types';
 
@@ -28,12 +29,21 @@
     { value: 'fresh', label: `Fresh (${data.counts.fresh})`, href: '?tab=fresh' },
     { value: 'spot-check', label: `Spot-check (${data.counts.spotCheck})`, href: '?tab=spot-check' },
     { value: 'yes-no', label: `Yes/No (${data.counts.yesNo})`, href: '?tab=yes-no' },
+    { value: 'questions', label: 'Questions', href: '?tab=questions' },
   ]);
+  const statuses = [
+    { value: 'open', label: 'Open' },
+    { value: 'closed', label: 'Closed' },
+    { value: 'all', label: 'All' },
+  ] as const;
+  const filterTo = (params: Record<string, string | null>) =>
+    goto(urlWith(page.url, { ...params, page: null }), { keepFocus: true, noScroll: true });
   const nouns = {
     core: 'core images',
     fresh: 'fresh images',
     'spot-check': 'images to spot-check',
     'yes-no': 'pairs',
+    questions: 'questions',
   } as const;
   const toPage = (p: number) =>
     goto(urlWith(page.url, { page: p === 1 ? null : p }), { keepFocus: true, noScroll: true });
@@ -42,6 +52,7 @@
     fresh: 'No fresh images are in Trials right now. They arrive with the next harvest of moderator rulings.',
     'spot-check': 'Nothing is waiting for a spot-check.',
     'yes-no': 'No yes/no reference pairs yet. Add one above.',
+    questions: 'No questions match these filters.',
   } as const;
 
   const noMatch = 'Nothing in this tab matches that image.';
@@ -177,6 +188,42 @@
     <div class="flex flex-col gap-3">
       {#each data.yesNo.items as item (item.id)}
         <YesNoReferenceCard {item} />
+      {/each}
+    </div>
+  {/if}
+{:else if data.tab === 'questions'}
+  <p class="mb-3 text-sm text-dark-2">
+    The yes/no questions players are asked, one per image and question. Retire one that makes no sense
+    for its image, or reword it; players who already answered lose only their pending gold. Search by
+    image id or URL, or by words in the question.
+  </p>
+  <div class="mb-3 flex flex-wrap items-center gap-2">
+    {#each statuses as s (s.value)}
+      <Button
+        size="sm"
+        variant={data.questions.filters.status === s.value ? 'default' : 'outline'}
+        onclick={() => filterTo({ status: s.value === 'open' ? null : s.value })}>{s.label}</Button
+      >
+    {/each}
+    <select
+      aria-label="Axis"
+      class="h-8 rounded-md border border-dark-4 bg-dark-6 px-2 text-sm"
+      value={data.questions.filters.axis}
+      onchange={(e) => filterTo({ axis: e.currentTarget.value || null })}
+    >
+      <option value="">All axes</option>
+      {#each data.questions.axes as axis (axis.key)}
+        <option value={axis.key}>{axis.key.replace('knights.yesno.', '')}</option>
+      {/each}
+    </select>
+  </div>
+  {#key data.tab}<ListSearch {...searchProps} placeholder="Image id, image URL or question text" />{/key}
+  {#if data.questions.items.length === 0}
+    <p class="text-sm text-dark-2">{empty.questions}</p>
+  {:else}
+    <div class="flex flex-col gap-3">
+      {#each data.questions.items as item (item.id)}
+        <QuestionCard {item} />
       {/each}
     </div>
   {/if}
