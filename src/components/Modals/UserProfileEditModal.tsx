@@ -894,6 +894,7 @@ export default function UserProfileEditModal() {
             <InputProfileSectionsSettingsInput
               name="profileSectionsSettings"
               label="Page sections"
+              showcaseSections={user.profile.showcaseSections}
               description="Drag diferent sections on your profile in order of your preference"
             />
           )}

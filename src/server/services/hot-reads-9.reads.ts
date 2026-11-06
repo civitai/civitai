@@ -168,6 +168,7 @@ export async function readUserWithProfileViaKysely(
             profileSectionsSettings: row.profileSectionsSettings,
             privacySettings: row.profilePrivacySettings,
             showcaseItems: row.profileShowcaseItems,
+            showcaseSections: row.profileShowcaseSections,
             location: row.profileLocation,
             nsfw: row.profileNsfw,
             userId: row.profileUserId,

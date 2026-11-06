@@ -6220,6 +6220,7 @@ export type UserProfile = {
   privacySettings: Generated<unknown>;
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
+  showcaseSections: Generated<unknown>;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;
