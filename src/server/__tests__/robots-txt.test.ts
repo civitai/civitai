@@ -148,6 +148,7 @@ const EXPECTED_ROBOTS_TXT = `# AI training crawlers — same rules as *, plus a 
 User-agent: GPTBot
 User-agent: ClaudeBot
 User-agent: Amazonbot
+User-agent: meta-externalagent
 Crawl-delay: 30
 ${RULES}
 ${LOGIN}
@@ -196,11 +197,11 @@ async function groups() {
 describe('robots.txt', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('asks GPTBot, ClaudeBot and Amazonbot, in one group, to wait 30 s', async () => {
+  it('asks GPTBot, ClaudeBot, Amazonbot and meta-externalagent, in one group, to wait 30 s', async () => {
     const { parsed, ai, star } = await groups();
 
     expect(ai).toBeDefined();
-    expect(ai!.agents).toEqual(['GPTBot', 'ClaudeBot', 'Amazonbot']);
+    expect(ai!.agents).toEqual(['GPTBot', 'ClaudeBot', 'Amazonbot', 'meta-externalagent']);
     expect(ai!.lines).toContain('Crawl-delay: 30');
     // Placed before the catch-all group.
     expect(parsed.indexOf(ai!)).toBeLessThan(parsed.indexOf(star!));
