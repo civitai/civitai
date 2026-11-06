@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as PlacementService from '~/server/services/placement.service';
+import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
@@ -15,6 +20,15 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const {
   enforceBlockedBrowsingTags,
@@ -59,6 +73,11 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags,
 }));
+const resolvePlacementSpaceFor = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PlacementSpaceService>()),
+  resolvePlacementSpaceFor,
+}));
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementService>()),
   placementPriceRanges,
@@ -100,10 +119,14 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  followStoryline,
+  getStorylineFollow,
+  unfollowStoryline,
   assertCanContinueStoryline,
   assertStorylineVisible,
   setCanonChapter,
   updateStoryline,
+  STORYLINE_SPARK_REFUSALS,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/cover-image.service';
@@ -196,6 +219,7 @@ beforeEach(() => {
   // The shared db mock is otherwise reset only between files; these tests must not share call
   // counts or implementations.
   resetSharedMocks();
+  for (const hook of Object.values(sparkHooks)) hook.mockClear();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
   hiddenUsersCached.mockReset();
@@ -208,6 +232,8 @@ beforeEach(() => {
   enforceBlockedBrowsingTags.mockResolvedValue({ emptyResult: false });
   setFetchThroughCache.mockReset();
   scanEntityInBackground.mockReset();
+  resolvePlacementSpaceFor.mockReset();
+  resolvePlacementSpaceFor.mockResolvedValue({ mode: 'review' });
   blockedPairs = [];
   answerRaw(w);
 });
@@ -1661,6 +1687,34 @@ describe('reading', () => {
       });
       expect(hasEarlier).toBe(true);
     });
+
+    // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
+    // else is told which chapters were paid for, not even that none were.
+    it('tells only the owner which chapters someone paid to add', async () => {
+      const route = [
+        { id: 1, postId: 101, depth: 0, parentIds: [] },
+        { id: 4, postId: 104, depth: 1, parentIds: [] },
+      ];
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+        Promise.resolve(
+          Prisma.sql(strings, ...(values as Prisma.Sql[])).sql.includes('"Placement"')
+            ? [{ id: 4 }]
+            : route
+        )) as never);
+      const path = (viewer: { id: number; isModerator?: boolean }) =>
+        getStorylinePath({ chapterId: 4, viewer, browsingLevel: NsfwLevel.PG | NsfwLevel.R });
+
+      const { chapters: asOwner } = await path({ id: OWNER });
+      expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+        [1, false],
+        [4, true],
+      ]);
+      for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+        const { chapters } = await path(viewer);
+        expect(chapters.map((c) => c.chapterId)).toEqual([1, 4]);
+        for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+      }
+    });
   });
 
   describe('a storyline hidden from the reader', () => {
@@ -2082,6 +2136,28 @@ describe('getStoryline: page fields', () => {
     ] as never);
   });
 
+  // Others are not told even that none were.
+  it("tells only the owner which of the main route's chapters someone paid to add", async () => {
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      sqlOfRaw(strings, values).includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const page = (viewer: { id: number; isModerator?: boolean }) =>
+      getStoryline({ id: 10, viewer, browsingLevel: NsfwLevel.PG });
+
+    const asOwner = await page({ id: OWNER });
+    expect(asOwner.mainPath.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+      const { mainPath } = await page(viewer);
+      expect(mainPath.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of mainPath) expect(chapter).not.toHaveProperty('paid');
+    }
+  });
+
   it('gives counts, roles, the main route with tombstones, and the viewer’s role', async () => {
     getBlockedPairIds.mockResolvedValue([BLOCKED]);
     const page = await getStoryline({
@@ -2456,9 +2532,25 @@ describe('getStorylineChapterLevels', () => {
     ] as never);
   });
 
+  it("gives the spark image's level, or none once it is taken down", async () => {
+    r.storyline.findUnique.mockResolvedValue({
+      sparkImage: { nsfwLevel: NsfwLevel.R, tosViolation: false },
+    } as never);
+    await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toMatchObject({
+      sparkNsfwLevel: NsfwLevel.R,
+    });
+    r.storyline.findUnique.mockResolvedValue({
+      sparkImage: { nsfwLevel: NsfwLevel.R, tosViolation: true },
+    } as never);
+    await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toMatchObject({
+      sparkNsfwLevel: null,
+    });
+  });
+
   it('gives the owner chapter 1 level apart from the later chapters', async () => {
     await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.PG13,
+      sparkNsfwLevel: null,
       chapterLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.PG],
     });
   });
@@ -2493,6 +2585,7 @@ describe('getStorylineChapterLevels', () => {
     ] as never);
     await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.PG,
+      sparkNsfwLevel: null,
       chapterLevels: [NsfwLevel.R],
     });
     expect(getBlockedPairIds).toHaveBeenCalledWith(OWNER);
@@ -3181,6 +3274,7 @@ describe('a chapter whose placement was removed', () => {
     ] as never);
     await expect(getStorylineChapterLevels({ id: 10, userId: OWNER })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.PG,
+      sparkNsfwLevel: null,
       chapterLevels: [NsfwLevel.R],
     });
     expect(rawSql(r.$queryRaw.mock.calls[0])).toContain(
@@ -3841,6 +3935,35 @@ describe('covers and cast', () => {
     });
   });
 
+  it("tells only the owner which of the map's chapters someone paid to add", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      composed([strings, ...values]).text.includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const graph = (viewer: { id: number; isModerator?: boolean }) =>
+      getStorylineGraph({ id: 10, viewer, browsingLevel: PG });
+
+    const { chapters: asOwner } = await graph({ id: OWNER });
+    expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: STRANGER }, { id: MODERATOR, isModerator: true }]) {
+      const { chapters } = await graph(viewer);
+      expect(chapters.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+    }
+  });
+
   it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
     r.storylineChapter.findMany.mockResolvedValue([
       { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
@@ -4441,16 +4564,15 @@ describe('title moderation', () => {
         TemplateStringsArray,
         ...unknown[]
       ];
-      const { sql, values: bound } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
       const text = sql.replace(/\s+/g, ' ');
       const level =
         `OR ((SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')} ` +
-        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ?), st."maxNsfwLevel") AS l, ` +
+        // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does. Blocked is
+        // written into the shared SQL text (storyline-visibility.sql), no longer bound.
+        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${NsfwLevel.Blocked}), st."maxNsfwLevel") AS l, ` +
         `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`;
       expect(text).toContain(level);
-      // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does.
-      const at = text.slice(0, text.indexOf(level) + level.indexOf('?')).split('?').length - 1;
-      expect(bound[at]).toBe(NsfwLevel.Blocked);
     });
   });
 
@@ -4831,6 +4953,7 @@ describe('the title scan’s minor finding, beyond the scan', () => {
           details: { storylineId: 10, takenDown: true, title: 'T' },
         })
       );
+      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
@@ -4906,5 +5029,365 @@ describe('getStoryline — title appeal', () => {
       page({ ...byScan, tosViolationByModerator: true }, { id: OWNER })
     ).resolves.toMatchObject({ titleAppealable: false, titleAppeal: null });
     expect(r.appeal.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('a storyline started from an image', () => {
+  const CREATOR = 6;
+  const spark = (overrides: Record<string, unknown> = {}) => ({
+    userId: CREATOR,
+    nsfwLevel: NsfwLevel.R,
+    ingestion: 'Scanned',
+    tosViolation: false,
+    needsReview: null,
+    minor: false,
+    poi: false,
+    acceptableMinor: false,
+    post: { publishedAt: new Date('2026-10-01'), availability: 'Public', tosViolation: false },
+    user: notBanned,
+    ...overrides,
+  });
+  const start = (maxNsfwLevel: number = NsfwLevel.R, userId = OWNER) =>
+    createStoryline({ sparkImageId: 77, title: 't', maxNsfwLevel, userId });
+
+  beforeEach(() => {
+    w.image.findUnique.mockResolvedValue(spark() as never);
+    w.storyline.create.mockResolvedValue({ id: 10 } as never);
+  });
+
+  describe('starting it', () => {
+    it("records someone else's image as the spark, with no chapter", async () => {
+      await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+      expect(w.image.findUnique.mock.calls[0][0]).toMatchObject({ where: { id: 77 } });
+      expect(w.storyline.create.mock.calls[0][0]).toMatchObject({
+        data: { userId: OWNER, sparkImageId: 77, maxNsfwLevel: NsfwLevel.R },
+      });
+      expect(resolvePlacementSpaceFor).toHaveBeenCalledWith({
+        surface: 'remixGallery',
+        targetType: 'image',
+        targetId: 77,
+      });
+      expect(w.storylineChapter.create).not.toHaveBeenCalled();
+      expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+    });
+
+    it('tells event points once chapter 1 is written with the spark', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      await createStoryline({
+        sparkImageId: 77,
+        postId: 500,
+        title: 't',
+        maxNsfwLevel: NsfwLevel.R,
+        userId: OWNER,
+      });
+      expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(10);
+    });
+
+    it('refuses a ceiling below the image rating, and accepts one above it', async () => {
+      await expect(start(NsfwLevel.PG13)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: STORYLINE_SPARK_REFUSALS.belowSpark,
+      });
+      expect(w.storyline.create).not.toHaveBeenCalled();
+      await expect(start(NsfwLevel.X)).resolves.toMatchObject({ id: 10 });
+    });
+
+    it.each([
+      ['not yet rated', { nsfwLevel: 0 }],
+      ['still being scanned', { ingestion: 'Pending' }],
+    ])('refuses an image %s', async (_name, overrides) => {
+      w.image.findUnique.mockResolvedValue(spark(overrides) as never);
+      await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.unrated });
+      expect(w.storyline.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['gone', null],
+      ['taken down', spark({ tosViolation: true })],
+      ['awaiting review', spark({ needsReview: 'minor' })],
+      ['flagged as a minor', spark({ minor: true })],
+      ['of a real person', spark({ poi: true })],
+      ['rated Blocked', spark({ nsfwLevel: NsfwLevel.Blocked })],
+      [
+        'unpublished',
+        spark({ post: { publishedAt: null, availability: 'Public', tosViolation: false } }),
+      ],
+      [
+        'private',
+        spark({ post: { publishedAt: new Date(0), availability: 'Private', tosViolation: false } }),
+      ],
+      ['by a banned account', spark({ user: { bannedAt: new Date(), deletedAt: null } })],
+      ['by a deleted account', spark({ user: { bannedAt: null, deletedAt: new Date() } })],
+      [
+        'scheduled',
+        spark({
+          post: {
+            publishedAt: new Date(Date.now() + 86_400_000),
+            availability: 'Public',
+            tosViolation: false,
+          },
+        }),
+      ],
+      [
+        'on a taken-down post',
+        spark({ post: { publishedAt: new Date(0), availability: 'Public', tosViolation: true } }),
+      ],
+      ['an acceptable minor', spark({ acceptableMinor: true })],
+      ['blocked at ingestion', spark({ ingestion: 'Blocked' })],
+      ['failed at ingestion', spark({ ingestion: 'Error' })],
+      ['missing at ingestion', spark({ ingestion: 'NotFound' })],
+    ])('refuses an image that is %s', async (_name, image) => {
+      w.image.findUnique.mockResolvedValue(image as never);
+      await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.cannotUse });
+      expect(w.storyline.create).not.toHaveBeenCalled();
+    });
+
+    it("refuses an image whose creator's remix gallery is off", async () => {
+      resolvePlacementSpaceFor.mockResolvedValue({ mode: 'off' });
+      await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.closed });
+      expect(w.storyline.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses, without saying why, across a block either way', async () => {
+      // getBlockedPairIds returns both directions of a block for the starter.
+      getBlockedPairIds.mockResolvedValue([CREATOR]);
+      await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.cannotUse });
+      expect(getBlockedPairIds).toHaveBeenCalledWith(OWNER);
+      expect(w.storyline.create).not.toHaveBeenCalled();
+    });
+
+    it('lets the creator start from their own image, whatever their gallery says', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue({ mode: 'off' });
+      w.image.findUnique.mockResolvedValue(
+        spark({
+          userId: OWNER,
+          post: { publishedAt: new Date(0), availability: 'Private', tosViolation: false },
+        }) as never
+      );
+      await expect(start()).resolves.toMatchObject({ id: 10 });
+      expect(resolvePlacementSpaceFor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lowering its ceiling', () => {
+    beforeEach(() => {
+      w.storyline.findUnique.mockImplementation(((args: { select: Record<string, unknown> }) =>
+        Promise.resolve(
+          args.select.sparkImage
+            ? { sparkImage: { nsfwLevel: NsfwLevel.R, tosViolation: false } }
+            : storylineRow({ maxNsfwLevel: NsfwLevel.XXX })
+        )) as never);
+      w.storylineChapter.findFirst.mockResolvedValue({
+        post: { nsfwLevel: NsfwLevel.PG, tosViolation: false },
+      } as never);
+      w.storyline.update.mockResolvedValue(storylineRow() as never);
+    });
+
+    it('refuses a ceiling below the image, and writes nothing', async () => {
+      await expect(
+        updateStoryline({ id: 10, maxNsfwLevel: NsfwLevel.PG13, userId: OWNER })
+      ).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.belowSpark });
+      expect(w.storyline.update).not.toHaveBeenCalled();
+    });
+
+    it('never writes the spark on update, even when one is sent', async () => {
+      await updateStoryline({
+        id: 10,
+        title: 'renamed',
+        userId: OWNER,
+        ...({ sparkImageId: 99 } as object),
+      });
+      expect(w.storyline.update).toHaveBeenCalled();
+      for (const [args] of w.storyline.update.mock.calls)
+        expect((args as { data: object }).data).not.toHaveProperty('sparkImageId');
+    });
+
+    it('accepts a ceiling at the image rating, or any once the image is taken down', async () => {
+      await updateStoryline({ id: 10, maxNsfwLevel: NsfwLevel.R, userId: OWNER });
+      w.storyline.findUnique.mockImplementation(((args: { select: Record<string, unknown> }) =>
+        Promise.resolve(
+          args.select.sparkImage
+            ? { sparkImage: { nsfwLevel: NsfwLevel.R, tosViolation: true } }
+            : storylineRow({ maxNsfwLevel: NsfwLevel.XXX })
+        )) as never);
+      await updateStoryline({ id: 10, maxNsfwLevel: NsfwLevel.PG, userId: OWNER });
+      expect(w.storyline.update).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('reading it', () => {
+    const sparkRow = {
+      id: 77,
+      url: 'spark-url',
+      type: 'image',
+      nsfwLevel: NsfwLevel.PG,
+      hash: null,
+      width: 1,
+      height: 1,
+      userId: CREATOR,
+      minor: false,
+      poi: false,
+      username: 'creator',
+    };
+
+    beforeEach(() => {
+      r.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        sparkImageId: 77,
+        collaborators: [],
+      } as never);
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+        Promise.resolve(
+          sqlOfRaw(strings, values).includes('JOIN "Image" i ON i.id = st."sparkImageId"')
+            ? [sparkRow]
+            : []
+        )) as never);
+      r.user.findMany.mockResolvedValue([] as never);
+      r.post.findMany.mockResolvedValue([] as never);
+      r.storylineChapterEdge.groupBy.mockResolvedValue([] as never);
+    });
+
+    const read = () =>
+      getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: NsfwLevel.PG });
+
+    it('credits the image and its creator, and hands out no spark id', async () => {
+      const page = await read();
+      expect(page.spark).toEqual({
+        image: expect.objectContaining({ id: 77, url: 'spark-url' }),
+        user: { id: CREATOR, username: 'creator' },
+      });
+      expect(page).not.toHaveProperty('sparkImageId');
+    });
+
+    it('drops the credit for a reader in a block with its creator, and keeps the story', async () => {
+      getBlockedPairIds.mockResolvedValue([CREATOR]);
+      const page = await read();
+      expect(page.spark).toBeNull();
+      expect(page.id).toBe(10);
+    });
+
+    it('drops the credit when the gate returns no image (taken down, above the ceiling)', async () => {
+      r.$queryRaw.mockResolvedValue([] as never);
+      expect((await read()).spark).toBeNull();
+    });
+  });
+});
+
+/**
+ * Follow rows, written as raw SQL into an in-process Postgres built from the follow migration (on
+ * stub "Storyline", "User" and "StorylineCollaborator" tables), so each test reads the row itself.
+ */
+describe('following a storyline', () => {
+  const pg = { db: null as unknown as PGlite };
+  const scopeOf = async (userId: number) =>
+    (
+      await pg.db.query<{ scope: string }>(
+        `SELECT scope FROM "StorylineFollow" WHERE "storylineId" = 10 AND "userId" = $1`,
+        [userId]
+      )
+    ).rows[0]?.scope ?? null;
+
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TABLE "User" (id integer PRIMARY KEY);
+      CREATE TABLE "Storyline" (id integer PRIMARY KEY, "userId" integer);
+      CREATE TABLE "StorylineCollaborator" ("storylineId" integer, "userId" integer, "acceptedAt" timestamp(3));
+      INSERT INTO "User" (id) VALUES (1), (2), (3);
+    `);
+    await pg.db.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261224120000_storyline_follow/migration.sql'
+        ),
+        'utf8'
+      )
+    );
+  });
+  afterAll(() => pg.db.close());
+
+  beforeEach(async () => {
+    await pg.db.exec(`
+      DELETE FROM "StorylineFollow"; DELETE FROM "Storyline";
+      INSERT INTO "Storyline" (id, "userId") VALUES (10, 1);
+    `);
+    const raw = pgliteRaw(pg.db);
+    w.$executeRaw.mockImplementation(raw.executeRaw as never);
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('?').includes('"StorylineFollow"')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    w.storyline.findUnique.mockResolvedValue({ userId: OWNER, tosViolation: false } as never);
+  });
+
+  const follow = (scope: 'Canon' | 'Endorsed' | 'Everything', userId = STRANGER) =>
+    followStoryline({
+      storylineId: 10,
+      scope,
+      viewer: { id: userId },
+      browsingLevel: NsfwLevel.PG,
+    });
+
+  it('has the owner follow the storyline they start', async () => {
+    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+    w.storyline.create.mockResolvedValue({ id: 10 } as never);
+    w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+    await createStoryline({ postId: 500, title: 't', maxNsfwLevel: NsfwLevel.R, userId: OWNER });
+    expect(await scopeOf(OWNER)).toBe('Canon');
+  });
+
+  it('has a collaborator follow on accepting, again after an unfollow, keeping a chosen scope', async () => {
+    w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Canon');
+
+    await unfollowStoryline({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBeNull();
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Canon');
+
+    await follow('Everything', COLLABORATOR);
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Everything');
+  });
+
+  it('follows nothing when there was no open invitation', async () => {
+    w.storylineCollaborator.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(
+      acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(COLLABORATOR)).toBeNull();
+  });
+
+  it('follows at a scope, changes it, reads it back and unfollows', async () => {
+    await expect(getStorylineFollow({ storylineId: 10, userId: STRANGER })).resolves.toEqual({
+      scope: null,
+    });
+    await follow('Endorsed');
+    expect(await scopeOf(STRANGER)).toBe('Endorsed');
+    await follow('Canon');
+    await expect(getStorylineFollow({ storylineId: 10, userId: STRANGER })).resolves.toEqual({
+      scope: 'Canon',
+    });
+    await unfollowStoryline({ storylineId: 10, userId: STRANGER });
+    expect(await scopeOf(STRANGER)).toBeNull();
+  });
+
+  it('refuses a taken-down storyline and writes no row', async () => {
+    r.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }) as never);
+    await expect(follow('Everything')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(STRANGER)).toBeNull();
+  });
+
+  it('refuses a storyline whose chapter 1 is hidden, and writes no row', async () => {
+    const [root] = storylineRow().chapters;
+    r.storyline.findUnique.mockResolvedValue(
+      storylineRow({ chapters: [{ ...root, post: { ...root.post, publishedAt: null } }] }) as never
+    );
+    await expect(follow('Everything')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(STRANGER)).toBeNull();
   });
 });

@@ -2,11 +2,7 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readImageReactionIdViaKysely,
-  readImageReactionIdViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readImageReactionIdViaKysely } from '~/server/services/hot-reads-5.reads';
 import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
@@ -161,13 +157,11 @@ const getReaction = async ({
         select: { id: true },
       });
     case 'image':
-      if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-        return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
-          userId,
-          reaction,
-          imageId: entityId,
-        });
-      return await readImageReactionIdViaPrisma(db, { userId, reaction, imageId: entityId });
+      return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
+        userId,
+        reaction,
+        imageId: entityId,
+      });
     case 'post':
       return await db.postReaction.findFirst({
         where: { userId, reaction, postId: entityId },

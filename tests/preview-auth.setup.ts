@@ -1,5 +1,7 @@
 import { test as setup } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 import fs from 'fs';
+import { trpcMutation, trpcQuery } from './preview-trpc';
 import { EncryptJWT } from 'jose';
 import { hkdfSync } from 'node:crypto';
 import {
@@ -99,6 +101,33 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
   return value;
 }
 
+/**
+ * The apps specs author as `mod`, and authoring refuses anyone who has not accepted the current
+ * App Developer Terms. The version is read from the server so a terms bump needs no change here.
+ * Idempotent. Not fatal: a failure here would skip the whole suite, while the apps specs then fail
+ * on their own with the 403 that names the cause.
+ */
+async function acceptAppDeveloperTerms(request: APIRequestContext, jwt: string) {
+  const headers = { cookie: `${COOKIE_NAME}=${jwt}` };
+  try {
+    const status = await trpcQuery<{ version: string; acceptedAt: string | null }>(
+      request,
+      'appListings.getDeveloperTermsStatus',
+      undefined,
+      headers
+    );
+    if (status.acceptedAt) return;
+    await trpcMutation(
+      request,
+      'appListings.acceptDeveloperTerms',
+      { version: status.version },
+      headers
+    );
+  } catch (e) {
+    console.warn(`[preview-auth.setup] could not accept App Developer Terms for mod: ${e}`);
+  }
+}
+
 setup('mint preview sessions', async ({ request }) => {
   // This setup runs the cold-pod warm-up below: ~9 SEQUENTIAL heavy-SSR GETs (each
   // capped at 60s) so one route compiles at a time (parallel heavy renders OOM the
@@ -155,6 +184,7 @@ setup('mint preview sessions', async ({ request }) => {
     for (const path of ['/moderator/rewards', '/moderator/suspicious-audit-matches']) {
       await request.get(path, { timeout: 60_000, headers }).catch(() => {});
     }
+    await acceptAppDeveloperTerms(request, mod);
   }
 
   // Best-effort search warm-up (NOT a blocking readiness gate). The image-search

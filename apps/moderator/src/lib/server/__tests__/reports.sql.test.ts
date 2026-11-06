@@ -230,12 +230,12 @@ describe('report rows link to what was reported', () => {
       expect(statements.some((sql) => sql.includes('AS "' + column + '"'))).toBe(true);
   });
 
-  it("links a service offering report to its seller's shop", async () => {
+  it("links a service offering report to its card in the seller's shop", async () => {
     await service.getMostReported({ limit: 10 });
 
     const sql = emitted().find((s) => s.includes('context:serviceOffering'))!;
     expect(flat(sql)).toContain(
-      `SELECT '/user/' || u.username || '/shop' FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
+      `SELECT '/user/' || u.username || '/shop#service-' || o.id FROM "ServiceOffering" o JOIN "User" u ON u.id = o."sellerId"`
     );
   });
 

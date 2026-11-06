@@ -213,7 +213,12 @@ describe('production catalog snapshot (2026-10-20)', () => {
     // The accepted batch is declared `ON UPDATE Cascade` against a database `NoAction` on
     // hand-written foreign keys (App Blocks, mystery box). Inert while ids are never updated. An
     // ON DELETE disagreement is a different, live hazard and must not hide inside this batch.
-    const actions = currentReport.findings.filter((f) => f.kind === 'referential-action');
+    // Exception: `StorylineReport.storylineId` turns ON DELETE Cascade into SetNull in the
+    // hand-applied `20261222120000_held_storyline`. Remove it when the catalog is recaptured after it.
+    const inFlight = new Set(['StorylineReport.storylineId']);
+    const actions = currentReport.findings.filter(
+      (f) => f.kind === 'referential-action' && !inFlight.has(`${f.table}.${f.columns.join('+')}`)
+    );
     const onDelete = (s: string) => /ON DELETE (\w+)/.exec(s)?.[1];
     const onUpdate = (s: string) => /ON UPDATE (\w+)/.exec(s)?.[1];
     expect(actions.length).toBeGreaterThan(0);
@@ -264,6 +269,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
     //   the two `app_blocks.storage_*` columns: `20261218120000_app_block_storage_deleted_at`
+    //   `Storyline.sparkImageId`: `20261220120000_storyline_spark_image`
+    //   `StorylineReport.heldStorylineId` / `.storylineTitle`: `20261222120000_held_storyline`
+    //   `app_listings.is_official`: `20261224120200_app_listing_official`
+    //   `UserProfile.showcaseSections`: `20261106005437_user_profile_showcase_sections`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
@@ -294,6 +303,12 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'Crucible.ownerRemovalCount',
       'app_blocks.storage_deleted_at',
       'app_blocks.storage_purged_at',
+      'Storyline.sparkImageId',
+      'StorylineReport.heldStorylineId',
+      'StorylineReport.storylineTitle',
+      'app_listings.is_official',
+      'UserProfile.showcaseSections',
+      'Placement.track',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

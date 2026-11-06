@@ -68,6 +68,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
   APPEAL_ALREADY_PENDING,
+  getAppealRefusal,
   IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   OrphanedAppealReason,
@@ -1258,8 +1259,39 @@ export async function isAppealBlockedByHoldMarker({
 }
 
 /**
- * The rule `createEntityAppealHandler` refuses an image appeal on, so the owner's page offers one
- * only when it would be accepted. Anyone else's image reads as no.
+ * The images whose appealable-looking block is refused anyway: a hold marker keeps them, or the
+ * appeal flow excludes the image or its owner. The endpoint, the owner's image page and the
+ * removed-images list all read this. The owner query runs even with no images.
+ */
+export async function getAppealRefusedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  const [held, excluded] = await Promise.all([
+    getHoldMarkerBlockedImageIds({ imageIds, userId }),
+    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+  ]);
+  if (excluded.users.has(userId)) return new Set(imageIds);
+  return new Set(imageIds.filter((id) => held.has(id) || excluded.images.has(id)));
+}
+
+export async function isImageAppealRefused({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  return (await getAppealRefusedImageIds({ imageIds: [imageId], userId })).has(imageId);
+}
+
+/**
+ * Whether the owner's page shows the appeal prompt. An image with a pending or decided appeal shows
+ * it; the prompt then says the appeal is under review or the decision stands, as the endpoint's
+ * refusal does. Anyone else's image reads as no.
  */
 export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
   const [image] = await dbWrite.$queryRaw<
@@ -1268,7 +1300,9 @@ export async function canAppealOwnImage({ imageId, userId }: { imageId: number; 
     SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
   `;
   if (!image || !isAppealableImage(image)) return false;
-  return !(await isAppealBlockedByHoldMarker({ imageId, userId }));
+  const latest = await getLatestAppeal({ entityType: EntityType.Image, entityId: imageId, userId });
+  if (getAppealRefusal(EntityType.Image, latest)) return true;
+  return !(await isImageAppealRefused({ imageId, userId }));
 }
 
 // Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.

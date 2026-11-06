@@ -89,6 +89,9 @@ const INSET_CONSUMERS = [
   'src/components/Csam/CsamImageSelection.tsx',
   'src/components/Games/NewOrder/NewOrderImageRatings.tsx',
   'src/components/Image/DetailV2/ImageDetail2.tsx',
+  // The remix tray floats `fixed` above the footer's Assistant button, so it adds the same insets
+  // the footer's cluster does.
+  'src/components/Image/Remix/RemixTray.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
   // The mobile generator is `fixed` over the whole viewport: it pads its top by the status bar's
   // inset (the open form sheet starts below it) and its closed form bar by the home indicator's.

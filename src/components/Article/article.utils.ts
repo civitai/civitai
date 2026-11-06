@@ -19,7 +19,7 @@ export const useArticleFilters = () => {
   return removeEmpty(storeFilters);
 };
 
-const articleQueryParamSchema = z
+export const articleQueryParamSchema = z
   .object({
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),

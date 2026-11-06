@@ -9,9 +9,9 @@ import {
   Table,
   Text,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useRef, useState } from 'react';

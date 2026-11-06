@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { isSystemAccountMeta } from '@civitai/auth';
 import {
   shapeSessionUser,
   type ProducerUserRow,
@@ -306,5 +307,18 @@ describe('shapeSessionUser — meta / banDetails (parity)', () => {
   it('treats a null/garbage meta as an empty object', () => {
     expect(shape({ meta: null }).meta).toEqual({});
     expect(shape({ meta: 'nope' }).meta).toEqual({});
+  });
+
+  it('reads meta stored as a JSON string, so the session user keeps its system-account marker', () => {
+    const u = shape({ meta: '{"systemAccount":true,"scores":{"total":1}}' });
+    expect(u.meta).toEqual({ systemAccount: true, scores: { total: 1 } });
+    expect(isSystemAccountMeta(u.meta)).toBe(true);
+  });
+
+  it('treats a string meta that is not a JSON object as an empty object', () => {
+    expect(shape({ meta: '"x"' }).meta).toEqual({});
+    expect(shape({ meta: '[1]' }).meta).toEqual({});
+    expect(shape({ meta: 'null' }).meta).toEqual({});
+    expect(shape({ meta: '{bad json' }).meta).toEqual({});
   });
 });

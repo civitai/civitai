@@ -17,7 +17,8 @@
 
 import { useMemo, useRef } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
-import { Badge, Input, Text, Tooltip } from '@mantine/core';
+import { Badge, Input, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 import classes from './ImageUploadMultipleInput.module.scss';

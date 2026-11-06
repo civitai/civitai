@@ -160,7 +160,9 @@ export type GenerationInputEntryPoint =
   | 'appBlocksWorkflow'
   | 'enhancePrompt'
   | 'comicsCostEstimate'
-  | 'comicPanelJob';
+  | 'comicPanelJob'
+  | 'remixAppRun'
+  | 'remixAppQuote';
 
 /** Entry points where an external host is only counted while the external-host flag is off. */
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([

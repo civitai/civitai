@@ -1,4 +1,5 @@
 import { Alert, Box, useComputedColorScheme } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
 import { blockPreconnectHint } from '~/components/AppBlocks/blockPreconnect';
@@ -20,8 +21,18 @@ import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag'
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  ratingHiddenByBrowsingLevel,
+  type HiddenMatureRating,
+} from '~/server/services/blocks/app-listing-store-gate';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { Page } from '~/components/AppLayout/Page';
+import {
+  APPS_RUN_FROM_PARAM,
+  parseAppsRunOrigin,
+  type AppsRunOrigin,
+} from '~/shared/utils/apps-run-origin';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
@@ -61,7 +72,7 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * live links to break.
  */
 
-interface PageProps {
+interface AppRunProps {
   appBlockId: string;
   blockId: string;
   appId: string;
@@ -104,17 +115,76 @@ interface PageProps {
    * APPROVED bundle, not the re-submitted one, and the viewer has to be told which.
    */
   privateRunStatus: string | null;
+  /**
+   * Where this run was launched from (`?from=home` on the My apps home's tile links), for the
+   * run chrome's way out only: `home` → "My apps" (`/apps`), anything else → "Marketplace"
+   * (`/apps/store`). Read here, server-side, so the first render already says the right
+   * thing; it is passed to the host's chrome and nowhere else — the iframe `src` is
+   * `iframeSrc` above, which never carries the page's query. See `apps-run-origin.ts`.
+   */
+  launchOrigin: AppsRunOrigin;
+  /**
+   * The signed-in viewer had removed this app from their My apps home ("Remove from My apps").
+   * Opening it is a use, so the page clears that hide server-side after mount
+   * (`ReopenClearsHide` → `appListings.unhideMyApp`), which brings it back on EVERY device —
+   * not just this browser's recently-opened list. Computed only on the public path for a
+   * signed-in viewer, so the common open (nothing hidden) makes no write. See
+   * `openingClearsHide` in `my-apps-hidden.ts`.
+   */
+  isHiddenForViewer: boolean;
 }
+
+/**
+ * 🔴 AN R/X APP THE VIEWER'S BROWSING LEVEL EXCLUDES (on a mature-capable site) does not run and
+ * is not a 404: the page renders a hidden state explaining why. These props carry NOTHING of the
+ * app but its rating — no name, id, iframe or scopes — so none of it reaches the HTML.
+ */
+interface HiddenRunProps {
+  hiddenByBrowsingLevel: { contentRating: HiddenMatureRating; signedIn: boolean };
+}
+
+type PageProps = AppRunProps | HiddenRunProps;
+
+/** The hidden state (`HiddenRunProps`), loaded only when a render needs it. */
+const HiddenByBrowsingLevelNotice = dynamic(() =>
+  import('~/components/Apps/HiddenByBrowsingLevelNotice').then(
+    (mod) => mod.HiddenByBrowsingLevelNotice
+  )
+);
+
+/**
+ * Loaded only when the viewer actually has a hide to clear, so the common launch ships no
+ * mutation code; client-only because the write must not happen during SSR.
+ */
+const ReopenClearsHide = dynamic(
+  () => import('~/components/Apps/ReopenClearsHide').then((mod) => mod.ReopenClearsHide),
+  { ssr: false }
+);
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
   resolver: async ({ features, ctx, session }) => {
+    // The hidden state for an R/X app this viewer's browsing level excludes. Applied on BOTH
+    // paths below, AFTER the site gate (off a mature-capable host a mature app stays a plain 404)
+    // and before anything is recorded. Owners and moderators are not exempt.
+    const hiddenFor = (
+      contentRating: string | null | undefined
+    ): { props: HiddenRunProps } | null => {
+      const hidden = ratingHiddenByBrowsingLevel(
+        contentRating,
+        getServerBrowsingLevel({ canViewNsfw: !!features?.canViewNsfw, user: session?.user })
+      );
+      return hidden
+        ? { props: { hiddenByBrowsingLevel: { contentRating: hidden, signedIn: !!session?.user } } }
+        : null;
+    };
     // GATE FIRST, fail-closed. Both flags required. A viewer without them gets
     // a 404 — the page is invisible/un-enumerable until W10 launch widens the
     // `app-blocks-pages-enabled` segment.
     if (!features?.appBlocks || !features?.appBlocksPages) {
       return { notFound: true };
     }
+    const launchOrigin = parseAppsRunOrigin(ctx.query?.[APPS_RUN_FROM_PARAM]);
     const rawSlug = ctx.params?.slug;
     const slug = typeof rawSlug === 'string' ? rawSlug : Array.isArray(rawSlug) ? rawSlug[0] : '';
     if (!slug) return { notFound: true };
@@ -147,9 +217,20 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // No listing ICON is read here. The run page used to read one for its recents entry, but the
     // recents store no longer persists an icon (`recentlyOpenedAppsStore.ts`), so nothing on this
     // page rendered it.
-    const [page, beta] = await Promise.all([
+    // The third read is "opening clears the hide" (`openingClearsHide`): keyed on the slug like
+    // the beta read, so it adds no round trip, cached, and fail-open to `false` (never a 500 on
+    // the launch). Signed-out viewers have no hides and skip it. The service is imported
+    // LAZILY, like the router does: its static chain (user.service → the db clients and the
+    // server env) would otherwise load for every importer of this page module, signed in or not.
+    const viewerId = session?.user?.id;
+    const [page, beta, hiddenForViewer] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
+      viewerId != null
+        ? import('~/server/services/blocks/my-apps-hidden.service')
+            .then(({ isMyAppHidden }) => isMyAppHidden({ userId: viewerId, slug }))
+            .catch(() => false)
+        : false,
     ]);
 
     // ── PRIVATE RUN — THE DELISTED/SUSPENDED FALLBACK ──────────────────────────
@@ -207,6 +288,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
       if (!ratingAllowedOnHost(block.contentRating, privateHost)) {
         return { notFound: true };
       }
+      const privateHidden = hiddenFor(block.contentRating);
+      if (privateHidden) return privateHidden;
 
       // 🔴 NO `recordAppListingOpen` HERE, AND ITS ABSENCE IS THE FEATURE. Recording the
       // play would move `views.count` / `views.uniqueViewers` on the OWNER'S OWN analytics
@@ -235,6 +318,10 @@ export const getServerSideProps = createServerSideProps<PageProps>({
           betaMessage: null,
           audience: access.audience,
           privateRunStatus: block.status,
+          launchOrigin,
+          // A delisted app is not on anyone's home; a moderator's or owner's private run is
+          // not a use to record (the same reason it writes no recents entry or play).
+          isHiddenForViewer: false,
         },
       };
     }
@@ -251,6 +338,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     if (!ratingAllowedOnHost(page.contentRating, host)) {
       return { notFound: true };
     }
+    const hidden = hiddenFor(page.contentRating);
+    if (hidden) return hidden;
 
     // ── RECORD THE PLAY ────────────────────────────────────────────────────────
     // 🔴 AFTER EVERY FAIL-CLOSED GATE, DELIBERATELY. A launch that 404s — flags off,
@@ -299,6 +388,8 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // whether an absent key means "public" or "forgot to set it".
         audience: null,
         privateRunStatus: null,
+        launchOrigin,
+        isHiddenForViewer: hiddenForViewer,
       },
     };
   },
@@ -345,7 +436,7 @@ export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSu
  * The localStorage "recently opened" entry for this render — or `null` when there must
  * not be one.
  *
- * 🔴 A PRIVATE RUN GETS `null`. Both link shapes the recents rail builds —
+ * 🔴 A PRIVATE RUN GETS `null`. Both link shapes a recents entry becomes —
  * `/apps/run/<slug>` and `/apps/store-preview/<slug>` — 404 for a delisted app once the
  * flag narrows again, so an entry written here is a rail row that breaks later. That is
  * the defect `ownerId` (#4048) was added to stop, arriving by a different route.
@@ -437,7 +528,14 @@ export function privateRunNotice(args: { audience: PrivateRunAudience; status: s
   return `${why} ${which}`;
 }
 
-function AppPage(props: PageProps) {
+function RunPage(props: PageProps) {
+  if ('hiddenByBrowsingLevel' in props) {
+    return <HiddenByBrowsingLevelNotice {...props.hiddenByBrowsingLevel} />;
+  }
+  return <AppPage {...props} />;
+}
+
+function AppPage(props: AppRunProps) {
   const {
     appBlockId,
     blockId,
@@ -452,7 +550,9 @@ function AppPage(props: PageProps) {
     isBeta,
     betaMessage,
     audience,
+    launchOrigin,
     privateRunStatus,
+    isHiddenForViewer,
   } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -460,8 +560,8 @@ function AppPage(props: PageProps) {
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Record this ACTUAL run in the client-only recents store (localStorage), so
-  // both the shared app-chrome "Recently run" menu AND the `/apps` store's
-  // "Recently opened" rail can offer a 1-click return. Keyed by appBlockId (the
+  // both the shared app-chrome "Recently run" menu AND the `/apps` home's
+  // "My apps" grid can offer a 1-click return. Keyed by appBlockId (the
   // store's stable de-dup id).
   //
   // Fields, and why each is written:
@@ -486,10 +586,10 @@ function AppPage(props: PageProps) {
   // these entries — which is how a rail of apps that 404 for the viewer got
   // rendered. `ownerId` is `null` for a signed-out run, which is its own bucket.
   //
-  // 🔴 A PRIVATE RUN WRITES NO RECENTS ENTRY. The store's "Recently opened" rail and the
+  // 🔴 A PRIVATE RUN WRITES NO RECENTS ENTRY. The `/apps` home's grid and the
   // chrome's "Recently run" menu both link to `/apps/run/<slug>` and to the app's STORE
   // page — and a delisted app has neither a live listing nor a public run. Recording one
-  // would hand the viewer a rail entry that 404s the moment the flag narrows again, which
+  // would hand the viewer a recents entry that 404s the moment the flag narrows again, which
   // is the exact defect `ownerId` (#4048) was added to stop. The guard is inside the
   // effect rather than on the call site so the hook order is unconditional.
   const recentsOwnerId = currentUser?.id ?? null;
@@ -578,6 +678,7 @@ function AppPage(props: PageProps) {
 
   return (
     <>
+      {isHiddenForViewer ? <ReopenClearsHide slug={slug} /> : null}
       {/* 🔴 SSR RESOURCE HINT — and its VALUE comes entirely from being HERE.
           The block iframe mounts on the first client render AFTER hydration,
           hundreds of ms after this head is parsed; that gap is the head start
@@ -743,6 +844,7 @@ function AppPage(props: PageProps) {
           // greppable shape and a future surface can't justify a per-surface
           // constant.)
           canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+          launchOrigin={launchOrigin}
         />
       </Box>
     </>
@@ -812,7 +914,7 @@ function AppPage(props: PageProps) {
  * Note the nav announcement slot (Buzz Bonus, event strips) still renders regardless
  * (`AppLayout` shows it in the `{!subNav && …}` branch), so it is NOT removed by this.
  */
-export default Page(AppPage, {
+export default Page(RunPage, {
   scrollable: false,
   subNav: null,
 });

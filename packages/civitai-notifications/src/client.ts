@@ -1,6 +1,7 @@
 import {
   createNotificationPendingRow,
   createNotificationsBulkInput,
+  markReadByKeysInput,
   sendSystemNoticesInput,
   type SendSystemNoticesInput,
   type SendSystemNoticesResult,
@@ -9,6 +10,7 @@ import {
   type CountNotificationsInput,
   type CreateNotificationPendingRow,
   type CreateNotificationRow,
+  type MarkReadByKeysInput,
   type MarkReadInput,
   type NotificationCategoryCount,
   type NotificationExistsInput,
@@ -75,6 +77,27 @@ function safeReport(
   }
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// A test run must never reach a real notifications service, whatever stub it did or didn't load.
+// Returns true when the guard applies, so the caller also refuses redirects (a loopback stub could
+// otherwise forward the request anywhere).
+function assertEndpointAllowedInTests(endpoint: string): boolean {
+  const isTestRun = !!process.env.VITEST || process.env.NODE_ENV === 'test';
+  if (!isTestRun || process.env.CIVITAI_NOTIFICATIONS_ALLOW_REMOTE_IN_TEST === '1') return false;
+  let hostname: string | undefined;
+  try {
+    hostname = new URL(endpoint).hostname;
+  } catch {}
+  if (hostname && LOOPBACK_HOSTS.has(hostname)) return true;
+  throw new NotificationsClientError(
+    `Refusing notifications endpoint ${
+      hostname ? `"${hostname}"` : '(unparseable)'
+    } in a test run: only localhost, ` +
+      '127.0.0.1 and [::1] are allowed. Set CIVITAI_NOTIFICATIONS_ALLOW_REMOTE_IN_TEST=1 to override.'
+  );
+}
+
 function resolveConfig(config: NotificationsClientConfig) {
   const endpoint = config.endpoint ?? process.env.NOTIFICATIONS_ENDPOINT;
   if (!endpoint) {
@@ -82,6 +105,7 @@ function resolveConfig(config: NotificationsClientConfig) {
       'No notifications endpoint configured (pass `endpoint` or set NOTIFICATIONS_ENDPOINT).'
     );
   }
+  const guarded = assertEndpointAllowedInTests(endpoint);
   const fetchImpl = config.fetch ?? globalThis.fetch;
   if (!fetchImpl)
     throw new NotificationsClientError('No fetch implementation available (pass `fetch`).');
@@ -93,6 +117,7 @@ function resolveConfig(config: NotificationsClientConfig) {
     retries: config.retries ?? 2,
     retryBaseMs: config.retryBaseMs ?? 200,
     onFailure: config.onFailure,
+    redirect: guarded ? ('error' as const) : ('follow' as const),
   };
 }
 
@@ -101,7 +126,8 @@ async function postAttempt(
   body: unknown,
   token: string,
   fetchImpl: typeof fetch,
-  timeoutMs: number
+  timeoutMs: number,
+  redirect: 'error' | 'follow'
 ): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -114,6 +140,7 @@ async function postAttempt(
       },
       body: JSON.stringify(body),
       signal: controller.signal,
+      redirect,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -164,11 +191,12 @@ async function post(
     retries,
     retryBaseMs,
     onFailure,
+    redirect,
   } = resolved;
   const url = `${endpoint}${path}`;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postAttempt(url, body, token, fetchImpl, timeoutMs);
+      return await postAttempt(url, body, token, fetchImpl, timeoutMs, redirect);
     } catch (err) {
       const e = err as NotificationsClientError;
       if (!e.retryable || attempt >= retries) {
@@ -220,7 +248,7 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
       }
     },
 
-    // `createdAt` arrives as an ISO string but callers need a Date (the tRPC cursor is `z.date()`).
+    // `createdAt` arrives as an ISO string; revive it to a Date.
     queryNotifications: async (input: QueryNotificationsInput): Promise<NotificationRow[]> => {
       const res = (await post('/notifications/query', input, config)) as Array<
         Omit<NotificationRow, 'createdAt'> & { createdAt: string }
@@ -244,6 +272,18 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
 
     markNotificationsRead: async (input: MarkReadInput): Promise<void> => {
       await post('/notifications/mark-read', input, config);
+    },
+
+    // Unlike markNotificationsRead this waits for the write and returns what it cleared, per category.
+    markNotificationsReadByKeys: async (
+      input: MarkReadByKeysInput
+    ): Promise<NotificationCategoryCount[]> => {
+      const res = (await post(
+        '/notifications/mark-read-by-key',
+        markReadByKeysInput.parse(input),
+        config
+      )) as Array<Omit<NotificationCategoryCount, 'count'> & { count: number | string }>;
+      return res.map((c) => ({ category: c.category, count: Number(c.count) }));
     },
 
     notificationExists: async (input: NotificationExistsInput): Promise<boolean> => {

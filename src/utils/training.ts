@@ -484,6 +484,8 @@ export const trainingModelInfo: {
     air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
     baseModel: 'Ideogram 4.0',
     isNew: true,
+    // Not licensed for on-site training. Kept so existing LoRAs still resolve.
+    disabled: true,
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
@@ -676,6 +678,14 @@ export const trainingModelInfo: {
 
 export const rapidEta = 5;
 
+/** The image and video entries a training-data zip is read for. */
+export function isTrainingMediaEntry(zname: string) {
+  if (zname.endsWith('/') || zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE'))
+    return false;
+  const mimeType = getMimeTypeFromExt(getFileExtension(zname));
+  return !!mimeType && !!MEDIA_TYPE[mimeType];
+}
+
 export async function unzipTrainingData<T = void>(
   zData: JSZip,
   cb: (args: { imgBlob: Blob; filename: string; fileExt: string }) => Promise<T> | T
@@ -683,12 +693,9 @@ export async function unzipTrainingData<T = void>(
   return (
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
-        if (zf.dir) return;
-        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+        if (zf.dir || !isTrainingMediaEntry(zname)) return;
 
         const fileExt = getFileExtension(zname);
-        const mimeType = getMimeTypeFromExt(fileExt);
-        if (!MEDIA_TYPE[mimeType as any]) return;
         const imgBlob = await zf.async('blob');
         return cb({ imgBlob, filename: zname, fileExt });
       })
@@ -924,6 +931,27 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'yue2',
   ];
   return mandatoryTypes.includes(baseType);
+};
+
+/**
+ * True when every catalog entry for this base type, or for this AI Toolkit ecosystem, is disabled.
+ * The form hides such a type entirely, but a custom-model run names an AIR rather than a catalog key,
+ * so the per-key `disabled` check alone would let it through.
+ */
+export const isRetiredTrainingTarget = ({
+  baseModelType,
+  ecosystem,
+}: {
+  baseModelType: string;
+  ecosystem?: string;
+}): boolean => {
+  const entries = Object.values(trainingModelInfo);
+  const allDisabled = (matching: typeof entries) =>
+    matching.length > 0 && matching.every((v) => v.disabled === true);
+  return (
+    allDisabled(entries.filter((v) => v.type === baseModelType)) ||
+    (!!ecosystem && allDisabled(entries.filter((v) => v.aiToolkit?.ecosystem === ecosystem)))
+  );
 };
 
 export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolean => {

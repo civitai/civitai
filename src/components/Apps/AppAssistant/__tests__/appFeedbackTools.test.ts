@@ -183,7 +183,7 @@ describe('the feedback source: only the user’s own apps', () => {
 });
 
 describe('get_review_feedback', () => {
-  it('answers the review as My apps shows it, the moderator’s text framed as untrusted', async () => {
+  it('answers the review as My builds shows it, the moderator’s text framed as untrusted', async () => {
     const { run, calls } = tools();
     const out = await run(GET_REVIEW_FEEDBACK);
     expect(calls.history).toEqual([OWN_LISTING]);

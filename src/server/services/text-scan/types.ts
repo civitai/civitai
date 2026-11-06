@@ -1,6 +1,13 @@
 import { NsfwLevel } from '~/server/common/enums';
 
-export const TEXT_SCAN_LABELS = ['nsfw', 'poi', 'minor', 'scam', 'csam'] as const;
+export const TEXT_SCAN_LABELS = [
+  'nsfw',
+  'poi',
+  'minor',
+  'scam',
+  'csam',
+  'model-com-face-intent',
+] as const;
 export type TextScanLabel = (typeof TEXT_SCAN_LABELS)[number];
 
 export const NSFW_LEVEL_NAMES = ['none', 'pg13', 'r', 'x', 'xxx'] as const;
@@ -65,6 +72,7 @@ export type TextScanOutput = {
   minor?: { detected: boolean; reason: string };
   scam?: { detected: boolean; reason: string };
   csam?: { detected: boolean; reason: string };
+  'model-com-face-intent'?: { detected: boolean; reason: string };
 };
 
 /** `base` plus one entry per label, each the `TextScanPrompt.id` used. */

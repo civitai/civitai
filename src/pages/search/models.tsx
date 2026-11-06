@@ -99,6 +99,7 @@ const RenderFilters = () => {
         sortBy={['name']}
         limit={SEARCH_FACET_LIMIT}
         searchable
+        remoteSearch={false}
         renderOption={renderBaseModelOption}
       />
       <ChipRefinementList

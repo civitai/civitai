@@ -1,16 +1,6 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import {
-  Alert,
-  Anchor,
-  Button,
-  Group,
-  Input,
-  Paper,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -380,6 +370,9 @@ export function ArticleUpsertForm({ article }: Props) {
                 'colors',
                 'timestamp',
                 'blurb',
+                'imageSize',
+                'align',
+                'civitaiEmbed',
               ]}
               withAsterisk
               stickyToolbar

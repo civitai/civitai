@@ -3,7 +3,8 @@
  * extraction footer and the step-warnings notification.
  */
 
-import { Button, LoadingOverlay, Menu, Notification, Text, Tooltip } from '@mantine/core';
+import { Button, LoadingOverlay, Notification, Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconArrowRight,

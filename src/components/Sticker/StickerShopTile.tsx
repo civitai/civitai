@@ -1,4 +1,5 @@
-import { Text, Tooltip } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';

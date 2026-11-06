@@ -25,6 +25,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { inferComponentType } from '~/server/utils/model-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import {
   ModelFileVisibility,
   ModelHashType,
@@ -34,6 +35,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -157,6 +159,8 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   isModerator,
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
+  if (data.overrideName !== undefined)
+    data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
   // `name` is the uploaded file name, which some model types publish as the download name.
   await throwOnBlockedUserContent([data.overrideName, data.name], {
@@ -211,6 +215,14 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
+  // Skip a re-sent stored name: sanitising it would make it look changed and rescan it against
+  // the blocklist.
+  if (inputData.overrideName != null && inputData.overrideName !== modelFile.overrideName)
+    inputData.overrideName = sanitizeOverrideName(
+      inputData.overrideName,
+      inputData.name ?? modelFile.name
+    );
+
   // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
   // would leave a file whose name trips a list impossible to edit in any other way.
   const changedNames = [
@@ -242,6 +254,11 @@ export async function updateFile({
     });
   }
 
+  const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
+  // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
+  // write derives only the new one. Never throws.
+  if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
+
   const { count } = await dbWrite.modelFile.updateMany({
     where: { id },
     data: { ...inputData, metadata },
@@ -249,6 +266,20 @@ export async function updateFile({
   // Replaced or deleted since the lookup above: nothing was written.
   if (count === 0) throw throwNotFoundError();
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+  // GenerationCoverage decides by file type, so the version's cached coverage is stale.
+  if (typeChanged)
+    await Promise.all([
+      resourceDataCache.bust([modelFile.modelVersionId]),
+      bustOrchestratorModelCache(modelFile.modelVersionId),
+      bustVersionScannedFileAirs(modelFile.modelVersionId, modelFile.modelVersion),
+    ]).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-type-change',
+        message: `Failed to bust resource caches for file ${id}`,
+        error,
+      }).catch(() => undefined)
+    );
 
   // Merge committed updates back into the snapshot so the returned record
   // reflects post-update state. `updateMany` doesn't return the updated row,

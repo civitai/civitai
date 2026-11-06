@@ -19,6 +19,39 @@
   pointer-events: auto !important;
 }
 
+// Article images. max-width, not width: images never upscale past their natural size.
+.sizedImages,
+.htmlRenderer {
+  img {
+    display: block;
+    margin-inline: auto;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 80vh;
+  }
+
+  img[data-width='33'] {
+    max-width: 33%;
+  }
+
+  img[data-width='50'] {
+    max-width: 50%;
+  }
+
+  img[data-width='75'] {
+    max-width: 75%;
+  }
+
+  // S and M are too small on a phone; L and Full stay as set. 640px: no theme breakpoint matches.
+  @media (max-width: 640px) {
+    img[data-width='33'],
+    img[data-width='50'] {
+      max-width: 60%;
+    }
+  }
+}
+
 .bubbleTooltip {
   z-index: 1;
   position: relative;
@@ -100,6 +133,14 @@
   }
 }
 
+
+.sizedImages {
+  // A plain img is the selected node itself; an uploaded image sits inside its node view.
+  img:global(.ProseMirror-selectednode),
+  :global(.ProseMirror-selectednode) img {
+    outline: 2px solid var(--mantine-primary-color-filled);
+  }
+}
 
 .htmlRenderer {
 

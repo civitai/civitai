@@ -1,0 +1,34 @@
+// The night-party surface of the home block and the event page, at banner height.
+.party {
+  position: relative;
+  overflow: hidden;
+  color: #f1f3f5;
+  background: radial-gradient(120% 160% at 85% 30%, #2a2550 0%, #1f1c36 45%, #15131f 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 20px 40px -16px rgba(10, 8, 30, 0.55),
+    0 6px 14px -6px rgba(10, 8, 30, 0.4);
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: radial-gradient(500px 200px at 15% -20%, rgba(255, 255, 255, 0.08), transparent 70%);
+  }
+}
+
+.accent {
+  background-image: linear-gradient(90deg, #fcc419, #f06595 50%, #339af0);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.art {
+  mask-image: linear-gradient(to top, transparent, #000 55%);
+
+  @container (min-width: 768px) {
+    mask-image: linear-gradient(to right, transparent, #000 45%);
+  }
+}

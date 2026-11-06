@@ -13,12 +13,11 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
@@ -104,6 +103,12 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import {
+  spaceRowInput,
+  STICKER_PRICE_RANGE_INPUT,
+} from '~/components/Sticker/PlacementSpaceToggle';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import { isDefined } from '~/utils/type-guards';
 import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
@@ -1288,6 +1293,26 @@ function StorylineCaption() {
   return <StorylineCaptionSlot post={post} image={image} />;
 }
 
+/**
+ * The menu's dropdown mounts only when it opens, so the sticker setting and the party-hat item
+ * would otherwise start loading at that moment and change the menu's size when they arrive. Warm
+ * them as the pointer, a touch or the keyboard reaches the button.
+ */
+function useWarmImageMenu(imageId: number, isOwner: boolean) {
+  const utils = trpc.useUtils();
+  const features = useFeatureFlags();
+  const hatEvent = isOwner ? getReleasedEventDecoration(CosmeticEntity.Image)?.event : undefined;
+  return () => {
+    if (imageId <= 0) return;
+    if (features.stickerPlacement) {
+      void utils.placement.getSpaceRow.prefetch(spaceRowInput('image', imageId));
+      void utils.placement.getPriceRange.prefetch(STICKER_PRICE_RANGE_INPUT);
+    }
+    if (hatEvent)
+      void utils.event.getAccess.prefetch({ event: hatEvent }, { staleTime: 5 * 60 * 1000 });
+  };
+}
+
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
   const { image, isBlocked, onDelete, onMove, isDeleting, onEditMetaClick, needsReview, isMinor } =
@@ -1295,6 +1320,7 @@ function PostImage() {
   const { metadata, url, type, id, nsfwLevel, poi } = image;
   // Only the owner can hat their images; a moderator editing this post would be refused.
   const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const warmMenu = useWarmImageMenu(id, isOwner);
   const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
   return (
     <div className={`relative`}>
@@ -1339,7 +1365,7 @@ function PostImage() {
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <LegacyActionIcon>
+            <LegacyActionIcon onPointerEnter={warmMenu} onTouchStart={warmMenu} onFocus={warmMenu}>
               <IconDotsVertical
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"

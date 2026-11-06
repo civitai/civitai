@@ -253,9 +253,16 @@ export type EventScoring = EventPointsConfig & {
   newAccountDays: number;
   // Scoring keeps running this long past endDate for late data; the winner is decided after it.
   finalizeAfterMs: number;
+  // Most stories one person can start from hatted images per UTC day that score, as a remix of the
+  // image. Without it, a story never scores.
+  storySparksPerActorPerDay?: number;
   // Points a team is given outright: they count toward its total, rank and winner from `at`, but
   // never toward any hat's or person's points.
   teamAwards?: readonly TeamAward[];
+  // While the event is playable, a remix submitted to a teammate's hatted image is waived the
+  // owner's remix gallery price, up to this many waived submissions per placer per UTC day. See
+  // team-remix-waiver.ts for who qualifies. Omit it and nobody's price is waived.
+  teamRemixWaiver?: { perPlacerPerDay: number };
 };
 export type TeamAward = { team: string; points: number; at: Date; reason: string };
 

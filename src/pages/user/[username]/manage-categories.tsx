@@ -8,7 +8,6 @@ import {
   Container,
   Group,
   LoadingOverlay,
-  Menu,
   Pagination,
   ScrollArea,
   Stack,
@@ -17,6 +16,7 @@ import {
   ThemeIcon,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';

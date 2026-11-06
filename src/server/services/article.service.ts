@@ -1,12 +1,6 @@
-import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
 import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
-import { heldCommentV3OnArticleSql } from '~/server/services/commentv3/moderation.service';
-import {
-  accountHoldSql,
-  contentKeptError,
-  holdMarkerViewExists,
-} from '~/server/services/legal-hold.service';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -99,8 +93,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { generateJSON } from '~/server/utils/tiptap-generate-json';
-import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { articleContentJson } from '~/server/utils/article-content-json';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import {
   assertContentLinkHoldWritable,
@@ -828,7 +821,7 @@ export const getArticleById = async ({
     // included). `generateJSON` is total over arbitrary text.
     let contentJson: MixedObject | undefined;
     if (article.content) {
-      contentJson = generateJSON(article.content, tiptapExtensions);
+      contentJson = articleContentJson(article.content);
     }
 
     return {
@@ -1676,6 +1669,7 @@ export const unusedAuthorImage = (ownerId: number) =>
     crucibleEntries: { none: {} },
     storylineCovers: { none: {} },
     storylineHeroes: { none: {} },
+    storylineSparks: { none: {} },
     storylineCoverUploads: { none: {} },
   } satisfies Prisma.ImageWhereInput);
 
@@ -1759,22 +1753,10 @@ export const deleteArticleById = async ({
     // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
-    const markerView = await holdMarkerViewExists();
     const deleted = await dbWrite.$transaction(async (tx) => {
-      // Its comments written only to CommentV3 go with it; a held author's keeps the article.
-      // Locked first, so a comment posted while this runs waits and then finds the article gone,
-      // rather than landing after the check and going with it.
-      await tx.$queryRaw`
-        SELECT 1 FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id} FOR UPDATE`;
-      const [kept] = await tx.$queryRaw<{ keptByComment: boolean }[]>`
-        SELECT ${heldCommentV3OnArticleSql(Prisma.sql`${id}::int`, markerView)} AS "keptByComment"`;
-      if (kept?.keptByComment) throw contentKeptError(isModerator);
       // The comments' CommentV3 rows go before the article's cascade reaches their CommentV2 rows:
       // every write on these comments locks CommentV3 first, so the cascade must too.
       await tx.$executeRaw`DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" = ${id}`;
-      await tx.$executeRaw(
-        detachHeldThreadsSql({ articleId: Prisma.sql`SELECT ${id}::int` }, markerView)
-      );
       const article = await tx.article.delete({
         where: { id },
         select: { coverId: true },

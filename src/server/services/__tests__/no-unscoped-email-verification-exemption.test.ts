@@ -60,6 +60,7 @@ const MUST_STAY_GUARDED: Record<string, string[]> = {
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
+  'remix-app.router.ts': ['run'],
 };
 
 /**
@@ -101,6 +102,8 @@ const DERIVED_BASES: Record<string, string> = {
   comicModeratorProcedure: 'moderatorProcedure',
   comicProtectedProcedure: 'protectedProcedure',
   comicPublicProcedure: 'publicProcedure',
+  // `csam.router.ts`: moderators with CSAM reporting access.
+  csamProcedure: 'moderatorProcedure',
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
@@ -110,6 +113,8 @@ const DERIVED_BASES: Record<string, string> = {
   orchestratorProcedure: 'protectedProcedure',
   postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
+  // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  remixAppProcedure: 'protectedProcedure',
   // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
   semanticSearchProcedure: 'publicProcedure',
   servicesGuardedProcedure: 'guardedProcedure',

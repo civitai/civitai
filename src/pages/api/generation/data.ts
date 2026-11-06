@@ -1,14 +1,14 @@
 import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
-      const session = await getServerAuthSession({ req, res });
+      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
       // 🔴 civitai#3845 TIER 1. The catch below used to answer EVERY failure with
       // `400 { message: e.message }` on a `PublicEndpoint`, so a

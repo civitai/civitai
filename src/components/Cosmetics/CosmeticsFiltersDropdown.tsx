@@ -1,6 +1,5 @@
 import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
-  Popover,
   Group,
   Indicator,
   Stack,
@@ -11,6 +10,7 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';

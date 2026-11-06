@@ -60,6 +60,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * A moderator's global-search OAuth-client option — the SECRET-FREE projection
@@ -225,6 +229,7 @@ function ExternalCreateForm() {
     onBeforeFire: applyNormalizedUrl,
   });
 
+  const termsAccepted = useAppDeveloperTermsAccepted();
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
       setSubmitted(res);
@@ -335,7 +340,7 @@ function ExternalCreateForm() {
   function handleDetailsKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     e.preventDefault();
-    if (isCreateDetailsStepComplete(values, allowedScopes)) handleCreateDraft();
+    if (termsAccepted && isCreateDetailsStepComplete(values, allowedScopes)) handleCreateDraft();
   }
 
   function handleCreateDraft() {
@@ -842,6 +847,8 @@ function ExternalCreateForm() {
                 disabled={busy}
               />
 
+              <AppDeveloperTermsCheckbox />
+
               <Group justify="space-between">
                 <Button
                   variant="default"
@@ -854,7 +861,7 @@ function ExternalCreateForm() {
                 <Button
                   onClick={handleCreateDraft}
                   loading={busy}
-                  disabled={!isCreateDetailsStepComplete(values, allowedScopes)}
+                  disabled={!termsAccepted || !isCreateDetailsStepComplete(values, allowedScopes)}
                   leftSection={<IconExternalLink size={16} />}
                   data-testid="apps-offsite-submit-create"
                 >

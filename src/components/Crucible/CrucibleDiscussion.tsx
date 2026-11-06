@@ -1,4 +1,5 @@
-import { EntityDiscussion } from '~/components/CommentsV2/EntityDiscussion';
+import { Title } from '@mantine/core';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 
 type Props = {
   crucibleId: number;
@@ -6,5 +7,17 @@ type Props = {
 };
 
 export function CrucibleDiscussion({ crucibleId, userId }: Props) {
-  return <EntityDiscussion entityType="crucible" entityId={crucibleId} userId={userId} />;
+  return (
+    <div className="mt-8">
+      <CommentSection
+        entityType="crucible"
+        entityId={crucibleId}
+        ownerId={userId}
+        ownerModerates={false}
+        title={<Title order={2}>Discussion</Title>}
+        hideWhenLocked
+        anchorId="comments"
+      />
+    </div>
+  );
 }

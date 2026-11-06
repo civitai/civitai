@@ -1,3 +1,7 @@
+import {
+  AppDeveloperTermsNotAcceptedError,
+  appDeveloperTermsRefusalMessage,
+} from '~/shared/constants/app-developer-terms.constants';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -321,6 +325,7 @@ describe('POST /api/blocks/submit-version', () => {
       version: '1.0.0',
       status: 'pending',
       listing,
+      storageMigrationWarnings: [],
     });
   });
 
@@ -336,6 +341,8 @@ describe('POST /api/blocks/submit-version', () => {
       status: 'pending',
       // The service answered no listing readiness: the field is still there, as null.
       listing: null,
+      // Nor any schema-migration warning: the field is still there, empty.
+      storageMigrationWarnings: [],
     });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const arg = mockSubmitVersion.mock.calls[0][0];
@@ -344,6 +351,18 @@ describe('POST /api/blocks/submit-version', () => {
     expect(arg.submitterIsModerator).toBe(true);
     expect(Buffer.isBuffer(arg.bundleBuffer)).toBe(true);
     expect((arg.bundleBuffer as Buffer).equals(Buffer.from('fake-zip-bytes'))).toBe(true);
+  });
+
+  it('403s an App Developer Terms refusal with its message, so the client does not offer a fix', async () => {
+    mockSubmitVersion.mockRejectedValue(
+      new AppDeveloperTermsNotAcceptedError(appDeveloperTermsRefusalMessage('https://civitai.com'))
+    );
+    const res = makeRes();
+    await invoke(makeReq({ body: { bundleBase64 } }), res);
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({
+      message: expect.stringContaining('https://civitai.com/apps/submit'),
+    });
   });
 
   it('400s and surfaces the service error message', async () => {

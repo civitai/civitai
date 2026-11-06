@@ -1,4 +1,5 @@
-import { Menu, Text, useMantineTheme } from '@mantine/core';
+import { Text, useMantineTheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';

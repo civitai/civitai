@@ -1,7 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { reviewCollectionImageSql } from '~/server/services/collection-review.sql';
-import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
-import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -63,6 +61,7 @@ import {
 import {
   hasBlockMarker,
   imageReviewedSql,
+  pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '~/server/common/image-visibility';
 import {
@@ -326,10 +325,7 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
-import {
-  readUserIdByUsernameViaKysely,
-  readUserIdByUsernameViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readUserIdByUsernameViaKysely } from '~/server/services/hot-reads-6.reads';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -947,7 +943,6 @@ export const deleteImageById = async ({
       deletedById !== undefined &&
       (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
-    const markerView = await holdMarkerViewExists();
     const [image = null] = await dbWrite.$queryRaw<
       {
         url: string;
@@ -960,7 +955,6 @@ export const deleteImageById = async ({
         blockedFor: string | null;
       }[]
     >`
-      WITH ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT ${id}::int` }, markerView)}
       DELETE FROM "Image" WHERE id = ${id}
       RETURNING url, "postId", "nsfwLevel", "userId", metadata, ingestion::text, "needsReview", "blockedFor"
     `;
@@ -1104,7 +1098,6 @@ export async function deleteImages(
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
-  const markerView = await holdMarkerViewExists();
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1129,11 +1122,9 @@ export async function deleteImages(
         WHERE id IN (${Prisma.join(ids)})
           ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
         -- Locked, so a change to the row's own columns made meanwhile is re-checked against the
-        -- guard here, and the thread detach below never acts on an image the guard then keeps.
-        -- Holds kept in other tables are still read from the statement's snapshot.
+        -- guard here. Holds kept in other tables are still read from the statement's snapshot.
         ${onlyWhere ? Prisma.sql`FOR UPDATE` : Prisma.empty}
-      ),
-      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
+      )
       DELETE FROM "Image"
       WHERE id IN (SELECT id FROM doomed)
         -- Again here: a row changed while this statement waits for it is re-checked only against
@@ -2799,17 +2790,7 @@ const getAllImagesUncaptured = async (
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId}))${
-          reviewCollectionId
-            ? Prisma.sql` OR ${reviewCollectionImageSql({
-                collectionId: reviewCollectionId,
-                userId,
-              })}`
-            : Prisma.empty
-        })`
-      );
+      AND.push(pendingViewerImageSql({ userId, browsingLevel, reviewCollectionId }));
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
@@ -3267,9 +3248,7 @@ type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
 };
 export async function findUserIdByUsername(username: string) {
   const user =
-    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readUserIdByUsernameViaKysely(kyselyRead, username)
-      : await readUserIdByUsernameViaPrisma(dbRead, username)) ??
+    (await readUserIdByUsernameViaKysely(kyselyRead, username)) ??
     (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
   return user?.id;
 }
@@ -6418,7 +6397,7 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
@@ -6677,7 +6656,7 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(...pendingOthersImageConditions(userId));
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );

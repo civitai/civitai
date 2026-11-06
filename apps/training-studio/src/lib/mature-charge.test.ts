@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { matureAckKey, matureAckMissing, matureSpend } from './mature-charge';
+import { matureAckKey, matureAckMissing, matureSpend, spendOrder } from './mature-charge';
+
+describe('spendOrder', () => {
+  it('spends Blue first by default, then the paid account', () => {
+    expect(spendOrder('yellow', true)).toEqual(['blue', 'yellow']);
+  });
+
+  it('a paid-only choice charges the paid account only, never Blue', () => {
+    expect(spendOrder('yellow', false)).toEqual(['yellow']);
+    expect(spendOrder('green', false)).toEqual(['green']);
+  });
+});
 
 const base = { price: 1400, blue: 384, mode: 'green' as const, mature: false, member: true };
 
@@ -66,20 +77,25 @@ describe('matureSpend', () => {
 });
 
 describe('mature acknowledgement', () => {
-  const key = matureAckKey(1400, 3);
+  const key = matureAckKey(1400, 1016, 3);
 
   it('requires no tick for a dataset with no mature images', () => {
-    expect(matureAckKey(1400, 0)).toBeNull();
+    expect(matureAckKey(1400, 1016, 0)).toBeNull();
     expect(matureAckMissing(null, null)).toBe(false);
   });
 
   it('requires the tick for a mature dataset even when Blue covers the price', () => {
     expect(matureSpend({ ...base, blue: 5000, mature: true })).toBeNull();
-    expect(matureAckMissing(null, matureAckKey(1400, 3))).toBe(true);
+    expect(matureAckMissing(null, matureAckKey(1400, 1016, 3))).toBe(true);
+  });
+
+  it('un-ticks when Blue stops covering the price, e.g. Blue first turned off', () => {
+    const blueCovers = matureAckKey(1400, null, 3);
+    expect(matureAckMissing(blueCovers, matureAckKey(1400, 1400, 3))).toBe(true);
   });
 
   it('has nothing to tick before there is a price', () => {
-    expect(matureAckKey(null, 3)).toBeNull();
+    expect(matureAckKey(null, null, 3)).toBeNull();
   });
 
   it('blocks start until the current charge is ticked', () => {
@@ -88,7 +104,7 @@ describe('mature acknowledgement', () => {
   });
 
   it('un-ticks when the price or the mature count changes', () => {
-    expect(matureAckMissing(key, matureAckKey(1500, 3))).toBe(true);
-    expect(matureAckMissing(key, matureAckKey(1400, 4))).toBe(true);
+    expect(matureAckMissing(key, matureAckKey(1500, 1116, 3))).toBe(true);
+    expect(matureAckMissing(key, matureAckKey(1400, 1016, 4))).toBe(true);
   });
 });

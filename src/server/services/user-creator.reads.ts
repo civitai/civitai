@@ -67,6 +67,32 @@ const userCreatorSelect = {
 export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }>;
 export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | null;
 
+type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
+
+/**
+ * The `profileImageSelect` payload from a row's `ProfilePicture` columns; also used by the user
+ * profile read (`getUserWithProfileRow`), which selects the same columns.
+ */
+export function profilePictureOf(
+  row: Pick<CreatorRow, Extract<keyof CreatorRow, `profilePicture${string}`>>
+) {
+  return row.profilePictureId !== null
+    ? {
+        id: row.profilePictureId,
+        name: row.profilePictureName,
+        url: row.profilePictureUrl,
+        nsfwLevel: row.profilePictureNsfwLevel,
+        hash: row.profilePictureHash,
+        userId: row.profilePictureUserId,
+        ingestion: row.profilePictureIngestion,
+        type: row.profilePictureType,
+        width: row.profilePictureWidth,
+        height: row.profilePictureHeight,
+        metadata: row.profilePictureMetadata,
+      }
+    : null;
+}
+
 /**
  * Two Kysely statements, one after the other on ONE pooled connection, mapped to the Prisma shape: the user (`getUserCreatorRow`, with links, rank, cosmetics, profile picture and
  * the model count), then, once its id is known, its stats (`getUserStatRow`). The stats are the
@@ -127,22 +153,7 @@ export async function readUserCreatorViaKysely(
         data: cosmetic.cosmeticData,
       },
     })),
-    profilePicture:
-      row.profilePictureId !== null
-        ? {
-            id: row.profilePictureId,
-            name: row.profilePictureName,
-            url: row.profilePictureUrl,
-            nsfwLevel: row.profilePictureNsfwLevel,
-            hash: row.profilePictureHash,
-            userId: row.profilePictureUserId,
-            ingestion: row.profilePictureIngestion,
-            type: row.profilePictureType,
-            width: row.profilePictureWidth,
-            height: row.profilePictureHeight,
-            metadata: row.profilePictureMetadata,
-          }
-        : null,
+    profilePicture: profilePictureOf(row),
   };
 
   return { user: user as unknown as UserCreatorUser, modelCount: row.modelCount ?? 0 };

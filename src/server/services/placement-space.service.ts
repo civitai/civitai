@@ -8,7 +8,10 @@ import {
 } from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { reservedFreeSlotsWhere } from '~/server/services/placement-count-predicates';
+import {
+  countFreeTier,
+  reservedFreeSlotsWhere,
+} from '~/server/services/placement-count-predicates';
 import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
@@ -140,6 +143,8 @@ export type ResolvedPlacementSpace = {
    * blank.
    */
   ownerUsername: string | null;
+  /** Whether an image target is a still or a video; absent for other targets. */
+  mediaType?: StickerMediaType;
   mode: PlacementSpaceMode;
   /** What the owner asks. `null` when they have never set one. */
   setPrice: number | null;
@@ -208,7 +213,7 @@ export type ResolvedPlacementSpace = {
  * fully-booked paid image still shows its free slots as available.
  *
  * The predicate is `reservedFreeSlotsWhere`, which the display path's Kysely count
- * reads too, so the two cannot disagree.
+ * reads too, so the two cannot disagree. Team-waived rows hold no slot.
  */
 export const reservedFreeSlots = (
   /**
@@ -218,7 +223,7 @@ export const reservedFreeSlots = (
    */
   client: Pick<typeof dbWrite, 'placement'>,
   target: SpaceTarget
-) => client.placement.count({ where: reservedFreeSlotsWhere(target) });
+) => countFreeTier((where) => client.placement.count({ where }), reservedFreeSlotsWhere(target));
 
 type SpaceTarget = { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number };
 
@@ -226,8 +231,10 @@ type SpaceTarget = { surface: PlacementSurface; targetType: PlacementTargetType;
  * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on
  * `reservedFreeSlots(tx, …)` under its lock.
  */
-const displayedReservedFreeSlots = async (target: SpaceTarget) =>
-  countPlacements((await loadKyselyDb()).kyselyRead, reservedFreeSlotsWhere(target));
+const displayedReservedFreeSlots = async (target: SpaceTarget) => {
+  const db = (await loadKyselyDb()).kyselyRead;
+  return countFreeTier((where) => countPlacements(db, where), reservedFreeSlotsWhere(target));
+};
 
 /**
  * The space that governs one target, with the cascade already applied.
@@ -323,6 +330,7 @@ export async function resolvePlacementSpaceFor({
   return {
     ownerId,
     ...(storylineId ? { storylineId } : {}),
+    ...(mediaType ? { mediaType } : {}),
     ownerUsername,
     // A completed storyline takes no continuations, whatever its space says.
     // Read from the storyline itself rather than trusting Complete to have

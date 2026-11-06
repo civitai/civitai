@@ -239,7 +239,7 @@ describe('notification queries on CommentV3', () => {
       commentParentId: 100,
       commentParentType: 'comment',
     });
-    expect(byId(103).details.commentParentId).toBe(102);
+    expect(byId(103).details.commentParentId).toBe(101);
     expect(byId(302).details).toMatchObject({ threadType: 'comicProject', threadParentId: 5 });
     expect(byId(303).details).toMatchObject({
       threadType: 'appListing',
@@ -279,7 +279,7 @@ describe('notification queries on CommentV3', () => {
     ]);
     const byId = (id: number) => out.find((r) => r.details.commentId === id)!;
     expect(byId(105).details).toMatchObject({ commentParentId: 10, commentParentType: 'image' });
-    expect(byId(103).details.commentParentId).toBe(102);
+    expect(byId(103).details.commentParentId).toBe(101);
     const modelReply = out.find((r) => r.details.commentId === 101 && r.userId === 10)!;
     expect(modelReply.details).toMatchObject({ modelId: 1, parentId: 55, parentType: 'comment' });
     expect(modelReply.details.threadType).toBeUndefined();
@@ -357,19 +357,20 @@ describe('notification queries on CommentV3', () => {
       }
     );
   });
-  it('opens a clamped reply under its parent on a surface that reads v3, and under the comment it answers elsewhere', async () => {
+  it('opens a clamped reply under its parent, where the v3 section lists it', async () => {
     await temporarily(
       `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content) VALUES
          (1061, 'article', 10, 106, NULL, 2, 'article reply'),
-         (1062, 'article', 10, 106, 1061, 3, 'clamped article reply')`,
-      `DELETE FROM "CommentV3" WHERE id IN (1062, 1061)`,
+         (1062, 'article', 10, 106, 1061, 3, 'clamped article reply'),
+         (3021, 'comicChapter', 77, 300, 302, 4, 'clamped chapter reply')`,
+      `DELETE FROM "CommentV3" WHERE id IN (3021, 1062, 1061)`,
       async () => {
         const out = await emitted('new-comment-reply');
         const reply = out.find((r) => r.details.commentId === 1062)!;
         // The v3 article section shows 106's replies, which is where 1062 sits.
         expect(reply.details).toMatchObject({ commentParentId: 106, commentParentType: 'comment' });
-        // Images still read v2, where the clamped reply sits in the answered comment's thread.
-        expect(out.find((r) => r.details.commentId === 103)!.details.commentParentId).toBe(102);
+        // Not under 302, the comment it answers: the chapter's section also lists 300's replies.
+        expect(out.find((r) => r.details.commentId === 3021)!.details.commentParentId).toBe(300);
       }
     );
   });
@@ -529,9 +530,10 @@ describe('the mute menu', () => {
 });
 
 describe('the permalink row', () => {
-  it('addresses a comic chapter by its project and an app listing by its slug', async () => {
+  it('addresses a comic chapter by its project and position, and an app listing by its slug', async () => {
+    // Chapter 77 sits at position 2 of project 5: the reader's third chapter.
     expect(buildCommentPermalink(await getCommentPermalinkRow(300))).toBe(
-      '/comics/5?highlight=300&commentParentType=comment&commentParentId=300'
+      '/comics/5/comic/3?highlight=300&commentParentType=comment&commentParentId=300'
     );
     expect(buildCommentPermalink(await getCommentPermalinkRow(301))).toBe(
       '/apps/store-preview/pixel-forge?highlight=301&commentParentType=comment&commentParentId=301'
@@ -574,7 +576,7 @@ describe('the challenge comment count', () => {
       INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('challenge', 60);
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation", "deletedAt") VALUES
         (600, 'challenge', 60, 4, 'live', false, NULL),
-        (601, 'challenge', 60, 5, 'kept for a hold', true, NULL),
+        (601, 'challenge', 60, 5, 'hidden for ToS', true, NULL),
         (602, 'challenge', 60, 6, '', false, now());
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "parentId") VALUES
         (603, 'challenge', 60, 7, 'a reply', 600);
@@ -616,9 +618,9 @@ describe('a comment hidden for ToS', () => {
       INSERT INTO "ResourceReview" (id) VALUES (70);
       INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('review', 70);
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation") VALUES
-        (610, 'image', 10, 8, 'kept for a hold', true),
+        (610, 'image', 10, 8, 'hidden for ToS', true),
         (611, 'image', 10, 9, 'live', false),
-        (612, 'review', 70, 8, 'kept for a hold', true),
+        (612, 'review', 70, 8, 'hidden for ToS', true),
         (613, 'review', 70, 9, 'live', false);
     `);
   });

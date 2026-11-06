@@ -1,88 +1,136 @@
+/*
+ * A 24px dial (team ring around the leader's disc), and, when there is more to say, a dark chip
+ * that carries the viewer's margin and the lock to its right. A surface resizes it by setting
+ * `--hat-turf-badge-size`: a different property from `--dial`, so it wins whatever the order the
+ * two stylesheets load in.
+ */
 .badge {
+  --dial: var(--hat-turf-badge-size, 24px);
   position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  pointer-events: none;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: var(--dial);
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--dial) / 2);
+  background: none;
+  color: var(--mantine-color-white);
+  cursor: pointer;
+  pointer-events: auto;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
 
-.ringBox {
+.chip {
+  padding-right: 6px;
+  background-color: rgba(0, 0, 0, 0.55);
+  filter: none;
+}
+
+/* Control arm: taps fall through to the card. */
+.passive {
+  cursor: inherit;
+  pointer-events: none;
+}
+
+.dial {
   position: relative;
   flex: none;
-  width: 48px;
-  height: 48px;
+  width: var(--dial);
+  height: var(--dial);
 }
 
 .ring {
   position: absolute;
   inset: 0;
-  transform: rotate(-90deg);
 }
 
 .track {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.55);
-  stroke-width: 6;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 4;
 }
 
 .arc {
   fill: none;
-  stroke-width: 5;
+  stroke-width: 4;
   transition: stroke-dasharray 0.55s ease, stroke-dashoffset 0.55s ease;
 }
 
-.disc {
-  position: absolute;
-  inset: 6px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  border-radius: 50%;
-  color: var(--mantine-color-white);
-  /* White has to read on the lightest team colour (yellow) too. */
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
-  transition: background-color 0.3s ease;
+/* The dark gap keeps the leader's own colour apart from its arc of the ring. */
+.gap {
+  fill: rgba(12, 12, 14, 0.95);
+}
 
-  & svg {
-    filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.6));
-  }
+.discFill {
+  transition: fill 0.3s ease;
 }
 
 .neutral {
-  background-color: rgba(255, 255, 255, 0.2);
+  fill: rgba(255, 255, 255, 0.2);
+}
+
+/* Holds the digit over the disc: 14/48 of the dial from the centre. */
+.disc {
+  position: absolute;
+  inset: calc(var(--dial) * 10 / 48);
+  display: grid;
+  place-items: center;
+  color: var(--mantine-color-white);
 }
 
 .count {
-  font-size: 11px;
-  font-weight: 900;
+  font-size: 10px;
+  font-weight: 600;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  color: var(--mantine-color-white);
+}
+
+/* Two digits in the disc: the font follows the dial so both fit, on the card and in the detail row. */
+.countTwo {
+  font-size: calc(var(--dial) * 0.34);
+  letter-spacing: -0.03em;
+}
+
+/* White has to read on the lightest team colour (yellow) too. */
+.countInside {
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.8), 0 0 1px rgba(0, 0, 0, 0.9);
 }
 
 .bump {
   animation: bump 0.55s ease;
 }
 
-.you {
-  margin-top: 24px;
-  display: flex;
+.blocked {
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 19px;
-  padding: 0 6px 0 5px;
-  border: 2px solid currentColor;
-  border-radius: 99px;
-  background-color: rgba(0, 0, 0, 0.6);
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
+  gap: 2px;
+  padding-left: 1px;
 }
 
-.youLabel {
+.blockedDot {
+  flex: none;
+  width: max(6px, calc(var(--dial) * 0.2));
+  height: max(6px, calc(var(--dial) * 0.2));
+  border-radius: 50%;
+}
+
+.struck {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.lock {
+  display: grid;
+  place-items: center;
   color: var(--mantine-color-white);
+
+  & svg {
+    width: max(12px, calc(var(--dial) * 0.45));
+    height: max(12px, calc(var(--dial) * 0.45));
+  }
 }
 
 @keyframes bump {
@@ -93,11 +141,17 @@
 
 @media (prefers-reduced-motion: reduce) {
   .arc,
-  .disc {
+  .discFill {
     transition: none;
   }
 
   .bump {
     animation: none;
   }
+}
+
+/* The viewer's margin: signed, in the chip beside the dial. */
+.margin {
+  font-size: 11px;
+  font-weight: 700;
 }

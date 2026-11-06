@@ -58,6 +58,17 @@ export const imageReviewedSql = (alias = 'i') => {
 };
 
 /**
+ * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`
+ * aliased `i`: not awaiting moderator review, not `acceptableMinor`, and reviewed if rated. The
+ * viewer's own images are exempt. Unrated images still need the read's own level check to show.
+ */
+export const pendingOthersImageConditions = (userId: number) => [
+  Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`,
+  Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`,
+  Prisma.sql`(i."userId" = ${userId} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})`,
+];
+
+/**
  * TS twin of `imageReviewedSql`, for rows already fetched. Kept next to it
  * deliberately: the rule is one decision with two encodings, and they have to
  * move together.

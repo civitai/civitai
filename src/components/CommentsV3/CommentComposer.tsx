@@ -3,7 +3,7 @@ import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSectionMute } from '~/components/CommentsV2/Comment/CreateComment';
+import { useSectionMute } from '~/components/CommentsV3/useSectionMute';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
@@ -15,7 +15,7 @@ import { removeDuplicates } from '~/utils/array-helpers';
 import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
 import { useCommentMutations } from './useCommentMutations';
-import classes from '~/components/CommentsV2/Comment/CommentForm.module.scss';
+import classes from '~/components/CommentsV3/CommentComposer.module.scss';
 
 const contentSchema = upsertCommentv2Schema.pick({ content: true });
 
@@ -97,7 +97,7 @@ export function CommentEditor({
         onFocus={!autoFocus ? () => setFocused(true) : undefined}
         onSuperEnter={() => form.handleSubmit(submit)()}
         classNames={{
-          root: borderless ? 'border-none' : undefined,
+          root: clsx('rounded-3xl', borderless && 'border-none'),
           content: clsx(classes.content, 'rounded-3xl'),
         }}
         data-testid="comment-form"

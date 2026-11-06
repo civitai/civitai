@@ -14,6 +14,7 @@
     exportHref,
     onAction,
     onStartSale,
+    onMakeSafe,
     salesEnabled = false,
     onSelectAllMatching,
     onClear,
@@ -26,6 +27,8 @@
     onAction: (action: BulkAction) => void;
     /** Hands the current selection to the sales flow, which finishes the sale in its own side panel. */
     onStartSale: () => void;
+    /** Opens the civitai.com face review for the selected versions' models. */
+    onMakeSafe: () => void;
     /** Scheduled sales are behind a flag; the bar must not offer what the action would refuse. */
     salesEnabled?: boolean;
     onSelectAllMatching: () => void;
@@ -72,6 +75,9 @@
   {#if salesEnabled}
     <Button variant="outline" size="sm" disabled={!has} onclick={onStartSale}>Put on sale</Button>
   {/if}
+  <Button variant="outline" size="sm" disabled={!has} onclick={onMakeSafe}
+    >Customize for civitai.com</Button
+  >
   <Button variant="outline" size="sm" disabled={!has} onclick={() => onAction('usageControl')}>
     Usage control
   </Button>

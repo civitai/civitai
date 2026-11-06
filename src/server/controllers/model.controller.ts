@@ -35,10 +35,7 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
-import {
-  readModelAssociationTargetsViaKysely,
-  readModelAssociationTargetsViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
@@ -197,6 +194,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { getMatureLockReason } from '~/server/services/mature-lock-reason.service';
 import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
@@ -224,6 +222,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { failedScanFileWhere } from '~/server/utils/failed-scan';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -289,8 +288,6 @@ export const getModelHandler = async ({
       })
     );
     const modelVersionIds = filteredVersions.map((version) => version.id);
-    // The posts, the suggested-resource count and the owner's settings below read through Kysely
-    // on the replica.
     const { kyselyRead } = await loadKyselyDb();
     const postsInput = { modelVersionIds, userId: model.user.id };
     // `model-getbyid-skip-owner-posts` on: a viewer who is neither the owner nor a moderator gets
@@ -580,6 +577,13 @@ export const getModelHandler = async ({
         })
       : null;
 
+    const matureLockReason = forEditor
+      ? await getMatureLockReason({
+          model: { ...model, userId: model.user.id },
+          viewerId: ctx.user?.id,
+        })
+      : null;
+
     const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
       getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
       getCosmeticsAndProfilePicturesForUsers([model.user.id]),
@@ -590,6 +594,8 @@ export const getModelHandler = async ({
       hasSfwFace: hasCompleteSfwFace(model),
       sfwName: isOwner ? model.sfwName : null,
       sfwDescription: isOwner ? model.sfwDescription : null,
+      // The listing re-check took the model off .com; the editor tells the owner.
+      comFaceRemoved: !!isOwner && !!(model.meta as ModelMeta | null)?.comFaceRemoved,
       user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
@@ -625,6 +631,7 @@ export const getModelHandler = async ({
         meta: model.meta as ModelMeta | null,
       }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
+      matureLockReason,
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
@@ -655,11 +662,16 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+  // caller who omits it where the domain caps nothing would otherwise reach the query
+  // with no level and get no rows.
+  resolveRequestBrowsingLevels(input, ctx);
+  return getModelsFeed(input, ctx);
+};
+
+/** model.getAll's query, at whatever levels `input` already carries. */
+export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
-    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
-    // caller who omits it where the domain caps nothing would otherwise reach the query
-    // with no level and get no rows.
-    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -726,7 +738,7 @@ export const getModelsInfiniteHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
-};
+}
 
 export const getModelsPagedSimpleHandler = async ({
   input,
@@ -1233,6 +1245,7 @@ export const getDownloadCommandHandler = async ({
     const fileWhere: Prisma.ModelFileWhereInput = {};
     if (type) fileWhere.type = type;
     if (format) fileWhere.metadata = { path: ['format'], equals: format };
+    if (!ctx.user?.isModerator) fileWhere.NOT = failedScanFileWhere;
 
     const modelVersion = await dbRead.modelVersion.findFirst({
       where: { modelId, id: modelVersionId },
@@ -1926,12 +1939,11 @@ export const getAssociatedResourcesCardDataHandler = async ({
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
     const useNext = await nextCoverageEnabled();
-    const associatedResources = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readModelAssociationTargetsViaKysely((await loadKyselyDb()).kyselyRead, {
-          fromModelId: fromId,
-          type,
-        })
-      : await readModelAssociationTargetsViaPrisma(dbRead, { fromModelId: fromId, type });
+    const { kyselyRead } = await loadKyselyDb();
+    const associatedResources = await readModelAssociationTargetsViaKysely(kyselyRead, {
+      fromModelId: fromId,
+      type,
+    });
 
     const resourcesIds = associatedResources.map(({ toModelId, toArticleId }) =>
       toModelId
@@ -2415,9 +2427,10 @@ export async function copyGalleryBrowsingLevelHandler({
 
 export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
   try {
-    const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-      ? await readModelMetaViaKysely(await getKyselyWithoutLag('model', input.id), input.id)
-      : await getModel({ id: input.id, select: { id: true, meta: true } });
+    const model = await readModelMetaViaKysely(
+      await getKyselyWithoutLag('model', input.id),
+      input.id
+    );
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const modelMeta = model.meta as ModelMeta | null;

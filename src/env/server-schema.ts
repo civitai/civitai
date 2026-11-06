@@ -371,6 +371,8 @@ export const serverSchema = z
     DISCORD_BOT_TOKEN: z.string().optional(),
     DISCORD_GUILD_ID: z.string().optional(),
     DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
+    // The training canary's Discord channel. Unset: canary results are only logged to Axiom.
+    DISCORD_WEBHOOK_TRAINING_CANARY: z.string().optional(),
     EMAIL_HOST: z.string(),
     EMAIL_PORT: z.preprocess((x) => parseInt(String(x)), z.number()),
     EMAIL_SECURE: zc.booleanString,
@@ -393,6 +395,9 @@ export const serverSchema = z
     S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
     CF_API_TOKEN: z.string().optional(),
     CF_ZONE_ID: z.string().optional(),
+    // The value the edge puts in `x-civ-cf-verified-bot` on a verified crawler's request. Unset or
+    // empty: no request is treated as one (`~/server/bot-cache/bot-cache`).
+    CF_VERIFIED_BOT_HEADER_SECRET: z.string().optional(),
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),

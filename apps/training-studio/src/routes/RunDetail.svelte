@@ -456,7 +456,7 @@
   const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
     if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
-    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}`;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}#${buzzMode.blueFirst}`;
   });
   $effect(() => {
     // A stale "could not price" must not linger after the panel closes or the input empties.
@@ -506,7 +506,7 @@
   );
   // The run id is in the key so a tick never carries over to another run with the same price.
   const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(furtherSpend?.amount ?? quote?.cost, furtherMature);
+    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
     return key && `${workflowIdKey}:${key}`;
   });
   let furtherAckedFor = $state<string | null>(null);
@@ -654,8 +654,8 @@
   </a>
 
   <header class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <div class="flex flex-wrap items-start gap-4">
-      <div class="min-w-0 flex-1">
+    <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+      <div class="min-w-0 flex-1 max-sm:basis-full">
         {#if renaming}
           <form class="flex flex-wrap items-center gap-2" onsubmit={saveRename} use:focusInput>
             <Input
@@ -675,14 +675,16 @@
           {/if}
         {:else}
           <div class="flex items-center gap-2">
-            <h1 class="m-0 truncate text-2xl font-semibold text-white">{d.name}</h1>
+            <h1 class="m-0 break-words text-xl font-semibold text-white sm:truncate sm:text-2xl">{d.name}</h1>
             <button
               type="button"
               aria-label="Rename training"
               onclick={startRename}
               class="shrink-0 rounded p-1 text-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              <IconPencil size={14} stroke={2} class="mr-1 inline" />Rename
+              <IconPencil size={14} stroke={2} class="inline sm:mr-1" /><span
+                class="sr-only sm:not-sr-only">Rename</span
+              >
             </button>
           </div>
         {/if}
@@ -704,7 +706,8 @@
           </p>
         {/if}
       </div>
-      <RunStateBadge state={d.state} />
+      <!-- Below sm the badge sits above the title so the name gets the full row. -->
+      <RunStateBadge state={d.state} class="max-sm:order-first" />
     </div>
 
     <dl class="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-dark-4 pt-4 font-mono text-xs">
@@ -761,7 +764,7 @@
       </div>
     </dl>
     <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
-      <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
+      <span class="w-full font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-auto">Download</span>
       {#if archivableEpochs > 0}
         <Button size="sm" variant="outline" disabled={archiving !== null}
           onclick={() => downloadArchive('weights')}
@@ -1029,7 +1032,7 @@
           </div>
           {#if featured.modelUrl}
             {@const gen = epochGenerateLink(featured)}
-            <div class="ml-auto flex flex-wrap items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
               {#if gen}
                 {@render epochGenerate(
                   gen,
@@ -1260,9 +1263,11 @@
                     I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
                       >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
                     > will be charged.
-                  {:else}
+                  {:else if buzzMode.blueFirst}
                     I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
                     charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {:else}
+                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
                   {/if}
                 </label>
               </div>
@@ -1346,7 +1351,7 @@
          there are no epochs yet), collapsed once finished. -->
     <details open={d.state === 'training'} class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
       <summary
-        class="flex cursor-pointer select-none items-center gap-2 px-5 py-3 text-sm font-semibold text-dark-0 hover:bg-dark-5/40 [&::-webkit-details-marker]:hidden"
+        class="flex cursor-pointer select-none flex-wrap items-center gap-x-2 gap-y-2.5 whitespace-nowrap px-5 py-3 text-sm font-semibold text-dark-0 hover:bg-dark-5/40 [&::-webkit-details-marker]:hidden"
       >
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
@@ -1355,14 +1360,14 @@
             ? `${pairCount} ${pairCount === 1 ? 'pair' : 'pairs'}`
             : mediaCount(d.dataset.length, d.media)}
         </span>
-        <span class="ml-auto flex items-center gap-1.5">
+        <span class="ml-auto flex items-center gap-1.5 max-sm:grid max-sm:w-full max-sm:grid-cols-2 max-sm:gap-2">
           <button
             type="button"
             onclick={(e) => {
               e.preventDefault();
               void reuseDataset();
             }}
-            class="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            class="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-primary transition-colors max-sm:border max-sm:border-primary/40 max-sm:py-2 max-sm:text-sm hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             title="Start a new training with this dataset"
           >
             <IconRepeat size={13} stroke={2} />Train again
@@ -1374,13 +1379,13 @@
               void downloadDataset();
             }}
             disabled={downloading}
-            class="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-dark-1 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            class="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-dark-1 transition-colors max-sm:border max-sm:border-dark-4 max-sm:py-2 max-sm:text-sm hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
             title="Download images + captions as a .zip"
           >
             <IconArchive size={13} stroke={2} />{downloading ? 'Zipping…' : 'Download'}
           </button>
           {#if downloadError}
-            <span class="font-mono text-xs text-red-400">{downloadError}</span>
+            <span class="whitespace-normal font-mono text-xs text-red-400 max-sm:col-span-2">{downloadError}</span>
           {/if}
         </span>
       </summary>

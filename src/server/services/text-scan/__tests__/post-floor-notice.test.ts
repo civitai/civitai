@@ -20,6 +20,11 @@ vi.mock('~/server/services/rating-review.service', async (importOriginal) => ({
   maybeAutoResolveRatingDisputeAfterScan: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+// A rating that lifts a post out of unrated restores its story sparks; the hook's own query is not under test.
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
 // Hand-listed: the real module builds Meilisearch clients and prom collectors at load.
 vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
@@ -36,6 +41,7 @@ const { getModerationAdapter } = await import('~/server/services/moderation-adap
 const { postTextScanAdapter } = await import('~/server/services/text-scan/adapters');
 const { updateNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { createNotification } = await import('~/server/services/notification.service');
+const { logToAxiom } = await import('~/server/logging/client');
 
 const POST_ID = 7;
 const OWNER = 5;
@@ -415,5 +421,100 @@ describe('rating-raised notice when the floor lands on the level recompute', () 
 
     expect(post.level).toBe(FLOOR);
     expect(ratingNotices()).toHaveLength(0);
+  });
+});
+
+describe('the recompute logs one decision per first-rated post', () => {
+  const jobDecisions = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.message === 'rating notice decision' && entry.path === 'job');
+  const decision = (name: string, workflowId: string | null, baseline: number | null) => ({
+    type: 'info',
+    name: 'text-scan',
+    message: 'rating notice decision',
+    path: 'job',
+    entityType: 'Post',
+    entityId: POST_ID,
+    workflowId,
+    decision: name,
+    before: 0,
+    baseline,
+    after: FLOOR,
+  });
+  const withRow = (override: Record<string, unknown>) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (query: Prisma.Sql) => {
+      const rows = (await fakeRaw(query)) as Record<string, unknown>[];
+      return query.text.includes('JOIN "EntityModeration" em')
+        ? rows.map((r) => ({ ...r, ...override }))
+        : rows;
+    }) as never);
+
+  it.each([
+    ['sent', () => (verdict = raisedVerdict()), 1, decision('sent', 'wf-1', 1)],
+    ['no-rise', () => (verdict = raisedVerdict()), FLOOR, decision('no-rise', 'wf-1', FLOOR)],
+    [
+      'moderator-rated',
+      () => {
+        verdict = raisedVerdict();
+        post.moderatorNsfwLevel = FLOOR;
+      },
+      1,
+      decision('moderator-rated', 'wf-1', 1),
+    ],
+    [
+      'deferred-poi-minor',
+      () => (verdict = raisedVerdict(['nsfw', 'poi'])),
+      1,
+      decision('deferred-poi-minor', 'wf-1', 1),
+    ],
+    [
+      'no-owner',
+      () => {
+        verdict = raisedVerdict();
+        withRow({ userId: null });
+      },
+      1,
+      decision('no-owner', 'wf-1', 1),
+    ],
+    [
+      'no-workflow',
+      () => {
+        verdict = raisedVerdict();
+        withRow({ workflowId: null });
+      },
+      1,
+      decision('no-workflow', null, 1),
+    ],
+    [
+      'no-nsfw-verdict',
+      () => (verdict = raisedVerdict([])),
+      1,
+      decision('no-nsfw-verdict', null, null),
+    ],
+    [
+      'notice-failed',
+      () => {
+        verdict = raisedVerdict();
+        vi.mocked(createNotification).mockRejectedValueOnce(new Error('insert failed'));
+      },
+      1,
+      decision('notice-failed', 'wf-1', 1),
+    ],
+  ])('%s', async (_, arrange, imageLevel, expected) => {
+    arrange();
+    await imageRated(imageLevel);
+
+    expect(post.level).toBe(FLOOR);
+    expect(jobDecisions()).toEqual([expected]);
+  });
+
+  it('logs nothing for a post that is not on its first rating', async () => {
+    verdict = raisedVerdict();
+    post.images = 1;
+    post.level = 1;
+    await imageRated(0);
+    expect(jobDecisions()).toEqual([]);
   });
 });

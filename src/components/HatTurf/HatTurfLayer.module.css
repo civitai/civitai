@@ -10,17 +10,18 @@
   position: absolute;
 }
 
-.draft {
+/* With Show hats off, the hats a placement revealed leave again. `.placed` carries the transition. */
+.fading .placed {
+  opacity: 0 !important; /* beats .dim and .muted */
+}
+
+/* Above the hats, so they never take its taps. */
+.corner {
   position: absolute;
-  transform: translate(-50%, -50%);
-  line-height: 0;
-  border-radius: var(--mantine-radius-sm);
-  outline: 2px dashed var(--mantine-color-white);
-  outline-offset: 4px;
-  cursor: move;
-  touch-action: none;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
   pointer-events: auto;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
 }
 
 .placed {
@@ -35,7 +36,7 @@
 }
 
 .dim {
-  opacity: 0.38;
+  opacity: 0.55;
   filter: saturate(0.25) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
@@ -45,18 +46,7 @@
 
 .muted {
   opacity: 0.45;
-  filter: grayscale(1) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
-}
-
-.own {
-  position: absolute;
-  right: -5px;
-  bottom: -4px;
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--mantine-color-white);
-  border-radius: 50%;
-  background-color: var(--mantine-color-violet-6);
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
 }
 
 .more {
@@ -86,55 +76,6 @@
   cursor: progress;
 }
 
-.lock {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 8px;
-  border-radius: 99px;
-  background-color: rgba(0, 0, 0, 0.65);
-  color: var(--mantine-color-white);
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
-  transform: translateX(-50%);
-}
-
-.actions {
-  position: absolute;
-  display: flex;
-  gap: 6px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-}
-
-.save,
-.discard {
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--mantine-color-white);
-  border-radius: 50%;
-  color: var(--mantine-color-white);
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-}
-
-.save {
-  width: 34px;
-  height: 34px;
-  background-color: var(--mantine-color-green-6);
-}
-
-.discard {
-  align-self: center;
-  width: 28px;
-  height: 28px;
-  background-color: var(--mantine-color-gray-7);
-}
-
 @keyframes land {
   from {
     opacity: 0;
@@ -148,5 +89,9 @@
 @media (prefers-reduced-motion: reduce) {
   .landed {
     animation: none;
+  }
+
+  .placed {
+    transition: none;
   }
 }

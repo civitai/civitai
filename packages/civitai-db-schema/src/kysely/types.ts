@@ -138,6 +138,7 @@ import type {
   OutboxEntity,
   StorylineStatus,
   StorylineWhoCanContinue,
+  StorylineFollowScope,
   ServiceOfferingStatus,
   ServicePreviewKind,
   ServiceBuzzType,
@@ -427,6 +428,11 @@ export type AppCollaborator = {
   last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
+};
+export type AppDeveloperTermsAcceptance = {
+  user_id: number;
+  version: string;
+  accepted_at: Generated<Timestamp>;
 };
 export type AppDevForgejoIdentity = {
   user_id: number;
@@ -2625,7 +2631,7 @@ export type Comment = {
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
   /**
-   * Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+   * No longer set; only the reverse copy reads it. Kept until a migration drops it.
    */
   removedByAuthor: Generated<boolean>;
 };
@@ -4489,6 +4495,11 @@ export type Placement = {
   ownerId: number;
   placerId: number;
   data: Generated<unknown>;
+  /**
+   * A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+   * `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+   */
+  track: unknown | null;
   status: string;
   /**
    * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
@@ -5587,6 +5598,11 @@ export type Storyline = {
    * The banner's vertical focus, as a percentage (0 top to 100 bottom).
    */
   heroImagePosition: Generated<number>;
+  /**
+   * The image the storyline was started from, credited above chapter 1. Not a chapter. Shown only
+   * while the image is visible and within the storyline's ceiling, which may not go below it.
+   */
+  sparkImageId: number | null;
 };
 export type StorylineBranchChoice = {
   userId: number;
@@ -5693,6 +5709,12 @@ export type StorylineEarlyAccessSignup = {
   storylineId: number | null;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineFollow = {
+  storylineId: number;
+  userId: number;
+  scope: Generated<StorylineFollowScope>;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylinePendingChapter = {
   postId: number;
   storylineId: number;
@@ -5708,8 +5730,16 @@ export type StorylinePendingChapter = {
   createdAt: Generated<Timestamp>;
 };
 export type StorylineReport = {
-  storylineId: number;
   reportId: number;
+  storylineId: number | null;
+  /**
+   * The storyline's id once deleted, when a held copy of it was kept ("HeldStoryline").
+   */
+  heldStorylineId: number | null;
+  /**
+   * The storyline's title when it was deleted.
+   */
+  storylineTitle: string | null;
 };
 export type Tag = {
   id: Generated<number>;
@@ -6189,6 +6219,7 @@ export type UserProfile = {
   privacySettings: Generated<unknown>;
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
+  showcaseSections: Generated<unknown>;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;
@@ -6446,6 +6477,7 @@ export type DB = {
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_developer_terms_acceptances: AppDeveloperTermsAcceptance;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;
@@ -6797,6 +6829,7 @@ export type DB = {
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylineFollow: StorylineFollow;
   StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;
