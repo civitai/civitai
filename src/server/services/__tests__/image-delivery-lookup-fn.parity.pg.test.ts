@@ -358,11 +358,16 @@ describe.skipIf(!adminUrl)(
         });
       });
 
-      it('a role with EXECUTE but no USAGE on public is refused at the schema', async () => {
+      // Without USAGE an unqualified call cannot even find the function, and a schema-qualified
+      // one (the form another service sends) is refused at the schema.
+      it('a role with EXECUTE but no USAGE on public cannot call it', async () => {
         await asRole(ROLE.noUsage, async (client) => {
           await expect(run(imageDeliveryFunctionStatement(FOUND), client)).rejects.toThrow(
-            /permission denied for schema public/
+            /function image_delivery_lookup\(unknown\) does not exist/
           );
+          await expect(
+            client.query('SELECT "hideMeta" FROM public.image_delivery_lookup($1)', [FOUND])
+          ).rejects.toThrow(/permission denied for schema public/);
         });
       });
 
