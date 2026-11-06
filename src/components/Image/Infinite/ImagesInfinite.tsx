@@ -14,10 +14,8 @@ import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
-import {
-  IMAGES_CARD_FOOTER_HEIGHT,
-  ImagesCardMemoized,
-} from '~/components/Image/Infinite/ImagesCard';
+import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { getImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -248,10 +246,7 @@ export function ImagesInfiniteContent({
                 const height = data?.height ? data.height : 450;
                 return { width, height };
               }}
-              adjustHeight={({ height }) => {
-                const imageHeight = Math.max(Math.min(height, 600), 150);
-                return imageHeight + IMAGES_CARD_FOOTER_HEIGHT;
-              }}
+              adjustHeight={({ height, width }) => getImagesCardHeight(height, width)}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCardMemoized}
               itemId={(data) => data.id}
