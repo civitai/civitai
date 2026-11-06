@@ -68,7 +68,7 @@ function RenderFilters() {
   // Sort, media type, aspect ratio, tools and techniques return when the image index carries
   // what they need (docs/image-search-qdrant-plan.md).
   return (
-    <div className="flex flex-col gap-1 pt-3">
+    <div className="flex flex-col gap-4 pt-4 [&_.mantine-Accordion-control]:pt-2 [&_.mantine-Accordion-panel]:pb-1">
       <Text size="sm" c="dimmed" className="px-4 pb-2">
         Filters narrow down a search. Type what you&rsquo;re looking for in the search bar first.
       </Text>
