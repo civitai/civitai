@@ -451,6 +451,21 @@ describe.skipIf(!parityUrl)('hot reads 9: Kysely returns exactly what Prisma ret
     }
   );
 
+  it('TEMP CONTROL (b): the metric delta is measured, not 0', async () => {
+    const before = await datasourceQueries();
+    await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
+    expect((await datasourceQueries()) - before).toBe(999);
+  });
+
+  it('TEMP CONTROL (c): a missing counter fails the > 0 guard', async () => {
+    const missing = async () =>
+      (await prisma.$metrics.json()).counters.find((counter) => counter.key === 'no_such_counter')
+        ?.value ?? 0;
+    const before = await missing();
+    await readUserWithProfileViaPrisma(prisma, { username: 'full-profile' });
+    expect((await missing()) - before).toBeGreaterThan(0);
+  });
+
   // "TagsOnImageDetails" is a VIEW. It is a per-row projection (no GROUP BY, no UNION), so Postgres
   // flattens it and the image id reaches the scan of its base table.
   it("the tags view is read by each cover image's id, not computed whole", async () => {

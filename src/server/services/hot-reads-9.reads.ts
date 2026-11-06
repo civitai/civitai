@@ -115,6 +115,7 @@ export async function readUserWithProfileViaKysely(
   if (where.id === undefined && where.username === undefined)
     throw new Error('readUserWithProfileViaKysely: an id or a username is required');
   const row = await getUserWithProfileRow(db, where);
+  await getUserWithProfileRow(db, where); // TEMP CONTROL (a): a second statement
   if (!row) throw userNotFoundError();
 
   const user = {
