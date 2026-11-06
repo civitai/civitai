@@ -5,10 +5,13 @@ import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
  *
  * That server is plain CommonJS that calls compiled pages-API route modules directly and never runs
  * the proxy (`src/proxy.ts`). Under its `api` profile it serves `/api/v1/` pages, which DO sit
- * behind the proxy under Next, so before their route runs it must do what the proxy does to an API
- * request. That is exactly `applyApiRequestPolicy` (the shared implementation the proxy middlewares
- * and the tRPC route already use; `standalone-api-policy.test.ts` pins that nothing else in the
- * proxy acts on an `/api/v1/` request). It cannot import TypeScript, so instrumentation registers
+ * behind the proxy under Next, so before their route runs it must do what Next does there. That is
+ * two things. The proxy MIDDLEWARES' whole effect on an API request is `applyApiRequestPolicy` (the
+ * shared implementation the proxy middlewares and the tRPC route already use;
+ * `standalone-api-policy.test.ts` pins that no other middleware acts on an `/api/v1/` request).
+ * Next's own machinery around the proxy also caps a non-GET request body at
+ * `proxyClientMaxBodySize`; the server reproduces that itself with Next's function
+ * (`applyProxyBodyLimit` in `scripts/trpc-server/next-compat.cjs`). It cannot import TypeScript, so instrumentation registers
  * the function here, on `globalThis`, before the server takes its first request; the server reads
  * it at boot and refuses to start under a profile that needs it if it is missing.
  *

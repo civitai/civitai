@@ -421,7 +421,7 @@ jobs:
           # The api profile's negative control: the same, with the proxy-policy call removed instead.
           mkdir -p "$WORK/api-mutant"
           cp scripts/trpc-server/server.cjs "$WORK/api-mutant/server.cjs"
-          anchor='^  if (applyApiPolicy && served.needsApiPolicy(matched.page) && applyApiPolicy(req, res)) return;$'
+          anchor='^    if (applyApiPolicy(req, res)) return;$'
           n=$(grep -c "$anchor" "$WORK/api-mutant/server.cjs" || true)
           if [ "$n" != 1 ]; then echo "api mutation anchor matched $n lines, expected 1"; exit 2; fi
           sed -i "s|$anchor|  // MUTANT: proxy API policy not applied|" "$WORK/api-mutant/server.cjs"

@@ -16,8 +16,10 @@ import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 /**
  * Under its `api` profile the standalone server (`scripts/trpc-server/server.cjs`) serves `/api/v1/`
  * routes WITHOUT the proxy, and stands in for it by calling `applyApiRequestPolicy` before the
- * route. That is only correct while the proxy's whole effect on an `/api/v1/` request IS that
- * function. This file pins the seam from both sides:
+ * route. That is only correct while the proxy MIDDLEWARES' whole effect on an `/api/v1/` request IS
+ * that function. (Next's request-body cap around the proxy is separate: the server reproduces it
+ * with `applyProxyBodyLimit`, tested in `scripts/trpc-server/__tests__/next-compat.test.ts` and by
+ * the parity case `v1-body-over-proxy-cap`.) This file pins the seam from both sides:
  *
  *   1. which proxy middlewares run on an `/api/v1/` request: exactly the three the policy
  *      reproduces. A new middleware that acts on `/api/v1/` fails here, which is the point: the

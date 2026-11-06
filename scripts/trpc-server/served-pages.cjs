@@ -15,7 +15,8 @@
  * (`src/server/middleware/__tests__/proxy-standalone-pages.test.ts`): this server never runs the
  * proxy, so a page the proxy runs on under Next can only be served here if this server does the
  * proxy's work for it. For `/api/v1/` pages (`PROXY_POLICY_PREFIXES`) it does: before the route
- * runs it applies the proxy's whole effect on an API request, the shared
+ * runs it applies Next's request-body cap for proxied requests (`applyProxyBodyLimit` in
+ * `./next-compat.cjs`) and then the proxy middlewares' whole effect on an API request, the shared
  * `applyApiRequestPolicy` (`src/server/middleware/api-request-policy.ts`), which instrumentation
  * registers on `globalThis` under `API_POLICY_GLOBAL_KEY`. Any other page the proxy covers must
  * stay off every list; the test fails if one is added.
@@ -45,10 +46,11 @@ const TRPC_PAGES = Object.freeze([
 ]);
 
 /**
- * The route families the `api` profile adds: the public REST API and the auth endpoints, the
- * pages-API traffic the API pools still serve through Next.
+ * The route families the `api` profile adds: the public REST API. `/api/auth/` is deliberately
+ * NOT here: it costs little CPU and carries the widest blast radius of anything the API pools
+ * serve (session cookies, OAuth redirects, POST flows), so it stays on Next.
  */
-const API_PROFILE_PREFIXES = Object.freeze(['/api/v1/', '/api/auth/']);
+const API_PROFILE_PREFIXES = Object.freeze(['/api/v1/']);
 
 /** Pages the proxy runs on under Next; this server applies the proxy's API policy before them. */
 const PROXY_POLICY_PREFIXES = Object.freeze(['/api/v1/']);
