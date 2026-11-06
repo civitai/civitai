@@ -556,6 +556,12 @@ describe('the article banner', () => {
     dbMock.dbRead.image.findUnique.mockImplementation((async ({ where }: any) => ({
       userId: IMAGES.find((image) => image.id === where.id)?.userId,
     })) as never);
+    // The rows the post-commit cleanup reads before its hold filters.
+    dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+      IMAGES.filter((image) => where.id.in.includes(image.id)).map((image) => ({
+        id: image.id,
+        url: `key-${image.id}`,
+      }))) as never);
     dbMock.dbWrite.image.findFirst.mockImplementation((async ({ where }: any) => {
       const { id, ...rest } = where;
       const image = IMAGES.find((candidate) => candidate.id === id);
@@ -638,6 +644,32 @@ describe('the article banner', () => {
         ? 1
         : 0) as never);
     await save({ coverImage: NEW_BANNER });
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
+  it('keeps a replaced banner and cover while the owner has a safety report on file', async () => {
+    dbMock.dbWrite.csamReport.count.mockImplementation((async ({ where }: any) =>
+      where.userId === AUTHOR ? 1 : 0) as never);
+
+    await save({ coverImage: NEW_BANNER, bannerImage: null });
+
+    expect(saved).toEqual({ coverId: NEW_BANNER.id, bannerId: null });
+    expect(deletedIds()).toEqual([]);
+  });
+
+  it('clears a cover saved as null even when another article shows it', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(1 as never);
+
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+      coverImage: null,
+    } as never);
+
+    expect(saved.coverId).toBeNull();
     expect(deletedIds()).not.toContain(COVER.id);
   });
 

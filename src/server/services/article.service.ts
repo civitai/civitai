@@ -994,7 +994,8 @@ export const upsertArticle = async ({
     // Stays `undefined` when there is no cover — Prisma reads that as "don't write this
     // column". (It was previously seeded from `coverImage?.id`, which is dead: the only branch
     // in which that could be non-undefined is the one that immediately overwrites it.)
-    let coverId: number | undefined;
+    // undefined leaves the column alone, null clears it.
+    let coverId: number | null | undefined = coverImage === null ? null : undefined;
     if (coverImage) {
       // `id` present -> the ownership rule below runs, unchanged. `id` absent -> reuse an
       // existing row for this url, else verify the object is still in the uploads bucket
@@ -1392,9 +1393,9 @@ export const upsertArticle = async ({
     // Count-cache refresh hits Redis — run after commit, off the txn budget.
     await userArticleCountCache.refresh(result.userId);
 
-    // Remove the old cover, unless another article shows it as its cover or banner. Not
-    // `unusedAuthorImage`: a `coverImage: null` save leaves the column untouched and relies on this
-    // delete (and its SET NULL) to clear the cover, so this article's own reference must not count.
+    // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
+    // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
+    const replacedImageIds: number[] = [];
     if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
       const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
       const shownElsewhere =
@@ -1405,19 +1406,26 @@ export const upsertArticle = async ({
             OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
           },
         })) > 0;
-      if (isImgOwner && !shownElsewhere) {
-        await deleteImageById({ id: article.coverId });
-      }
+      if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
     }
-
-    // A replaced or cleared banner. Omitted (`bannerId === undefined`) leaves it in place. A banner
-    // set by id can be an image shown elsewhere (another article's cover), so only an unused one goes.
     if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
       const unused = await dbWrite.image.findFirst({
         where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
         select: { id: true },
       });
-      if (unused) await deleteImageById({ id: unused.id });
+      if (unused) replacedImageIds.push(unused.id);
+    }
+    // The same holds as article delete: a safety report or legal hold on the owner keeps them all.
+    if (replacedImageIds.length && !(await ownerUnderSafetyReport(dbWrite, result.userId))) {
+      const rows = await dbWrite.image.findMany({
+        where: { id: { in: replacedImageIds } },
+        select: { id: true, url: true },
+      });
+      const deletable = await withoutOfferingCovers(
+        dbWrite,
+        await withoutShopArtwork(dbWrite, rows)
+      );
+      for (const imageId of deletable) await deleteImageById({ id: imageId });
     }
 
     await applyArticleContentChange({
@@ -1429,7 +1437,7 @@ export const upsertArticle = async ({
         ownerId: result.userId,
         title: data.title ?? article.title ?? '',
         previousContent: article.content,
-        coverId: coverId ?? article.coverId,
+        coverId: result.coverId,
         bannerId: result.bannerId,
         publication: { status: result.status, scheduledAt: result.scheduledAt },
       },
