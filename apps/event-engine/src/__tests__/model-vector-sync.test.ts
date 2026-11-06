@@ -15,7 +15,7 @@ import {
   ModelSyncQueue,
   type ModelQueueDeps,
 } from '@/vector-sync/models/consumer';
-import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
+import { ModelMismatchError, type ModelStamp, type VectorPoint } from '@/vector-sync/qdrant';
 
 const VECTOR = Array.from({ length: 256 }, (_, i) => (i === 0 ? 1 : 0));
 const STAMP = { model: 'wemm-2b', modelRevision: 'r1', profile: 'text', dimensions: 256 };
@@ -439,7 +439,7 @@ describe('model CDC consumer', () => {
 
   // Adding a table changes the Debezium publication, and the watcher recreates the connector
   // when its list differs, so a deploy with the flag unset must leave the connector as it was.
-  async function tables(env: Record<string, string | undefined>) {
+  async function withEnv<T>(env: Record<string, string | undefined>, run: () => Promise<T>) {
     vi.resetModules();
     const saved = { ...process.env };
     for (const [k, v] of Object.entries(env)) {
@@ -447,30 +447,55 @@ describe('model CDC consumer', () => {
       else process.env[k] = v;
     }
     try {
-      const { DebeziumManager } = await import('@/services/debezium-manager');
-      return {
-        connector: DebeziumManager.getConnectorTables(),
-        watcher: DebeziumManager.getTopicsToConsume(),
-      };
+      return await run();
     } finally {
       process.env = saved;
     }
   }
+  const connectorFor = (env: Record<string, string | undefined>) =>
+    withEnv(env, async () => {
+      const { DebeziumManager } = await import('@/services/debezium-manager');
+      return {
+        tables: DebeziumManager.getConnectorTables(),
+        columns: DebeziumManager.getColumnExclusions(),
+        watcher: DebeziumManager.getTopicsToConsume(),
+      };
+    });
 
-  test('CDC_MODEL_ENABLED: off leaves the connector alone; on adds both tables, which the watcher never consumes', async () => {
-    const off = await tables({ CDC_MODEL_ENABLED: undefined, CDC_IMAGE_ENABLED: undefined });
-    expect(off.connector).not.toContain('public.Model');
-    expect(off.connector).not.toContain('public.ModelVersion');
-    const on = await tables({ CDC_MODEL_ENABLED: 'true', CDC_IMAGE_ENABLED: 'true' });
-    expect(on.connector).toEqual(
-      expect.arrayContaining(['public.Model', 'public.ModelVersion', 'public.Image'])
+  test('CDC_MODEL_ENABLED: off leaves the connector as it was; on adds both tables without their big columns', async () => {
+    const off = await connectorFor({ CDC_MODEL_ENABLED: undefined, CDC_IMAGE_ENABLED: undefined });
+    const image = await connectorFor({ CDC_MODEL_ENABLED: undefined, CDC_IMAGE_ENABLED: 'true' });
+    expect(image.tables.filter((t) => !off.tables.includes(t))).toEqual(['public.Image']);
+    expect(off.columns).toEqual({});
+    expect(image.columns).toEqual({});
+
+    const on = await connectorFor({ CDC_MODEL_ENABLED: 'true', CDC_IMAGE_ENABLED: 'true' });
+    expect(on.tables.filter((t) => !off.tables.includes(t))).toEqual([
+      'public.Image',
+      'public.Model',
+      'public.ModelVersion',
+    ]);
+    const excluded = on.columns['column.exclude.list'].split(',');
+    expect(excluded).toEqual(
+      expect.arrayContaining(['public.Model.description', 'public.ModelVersion.description'])
     );
-    expect(on.watcher).not.toContain('postgres.Model');
-    expect(on.watcher).not.toContain('postgres.ModelVersion');
+    // The consumer needs these from every event.
+    for (const key of ['public.Model.id', 'public.ModelVersion.id', 'public.ModelVersion.modelId'])
+      expect(excluded).not.toContain(key);
+    expect(on.watcher).toEqual(off.watcher);
   });
 
-  test('the embedding gate names a model table the connector does not stream', async () => {
-    const { connectorBlock } = await import('@/vector-sync/sync');
+  test('the consumer refuses to start without the flag', async () => {
+    const start = (flag: string | undefined) =>
+      withEnv({ CDC_MODEL_ENABLED: flag }, async () =>
+        (await import('@/vector-sync/models/consumer')).assertModelCdc()
+      );
+    await expect(start(undefined)).rejects.toThrow(/CDC_MODEL_ENABLED is off/);
+    await expect(start('true')).resolves.toBeUndefined();
+  });
+
+  test('embedding waits until the connector streams Model and ModelVersion, not just Image', async () => {
+    const { modelEmbedBlock } = await import('@/vector-sync/models/consumer');
     const connector = (list: string) =>
       (async (url: string | URL | Request) =>
         new Response(
@@ -483,16 +508,43 @@ describe('model CDC consumer', () => {
     const saved = process.env.DEBEZIUM_CONNECT_URL;
     process.env.DEBEZIUM_CONNECT_URL = 'http://connect';
     try {
-      const needed = ['public.Model', 'public.ModelVersion'];
-      expect(await connectorBlock(connector('public.Image,public.Model'), needed)).toBe(
+      expect(await modelEmbedBlock(connector('public.Image'))).toBe(
+        'the connector does not stream public.Model'
+      );
+      expect(await modelEmbedBlock(connector('public.Image,public.Model'))).toBe(
         'the connector does not stream public.ModelVersion'
       );
-      expect(
-        await connectorBlock(connector('public.Model,public.ModelVersion'), needed)
-      ).toBeNull();
+      expect(await modelEmbedBlock(connector('public.Model,public.ModelVersion'))).toBeNull();
     } finally {
       if (saved === undefined) delete process.env.DEBEZIUM_CONNECT_URL;
       else process.env.DEBEZIUM_CONNECT_URL = saved;
     }
+  });
+
+  test('a long flush that keeps storing vectors stays healthy; one failing without progress does not', () => {
+    const { q } = queue();
+    const start = Date.now();
+    q.lastFlushOk = start - 30 * 60_000;
+    q.lastProgress = start - 60_000;
+    expect(q.isHealthy(start)).toBe(true);
+    q.lastProgress = start - 50 * 60_000;
+    expect(q.isHealthy(start)).toBe(false);
+    q.lastProgress = start;
+    q.consecutiveFailures = 3;
+    expect(q.isHealthy(start)).toBe(false);
+  });
+
+  test('a model mismatch stops embedding for good; deletes carry on', async () => {
+    const { db, store, embedder, q } = queue();
+    db.rows.set(1, model(1));
+    vi.spyOn(embedder, 'embed').mockRejectedValueOnce(new ModelMismatchError({}, STAMP));
+    q.add(1, at(0));
+    await expect(q.flush()).rejects.toThrow(ModelMismatchError);
+    expect(q.embedStopped).toMatch(/Embedder returned/);
+    store.points.set(2, { id: 2, vector: [2], payload: {} as ModelPayload });
+    q.add(2, at(1));
+    await q.flush();
+    expect(store.points.has(2)).toBe(false);
+    expect(embedder.texts).toEqual([]);
   });
 });

@@ -20,6 +20,19 @@ export const MODEL_TOPICS = ['postgres.Model', 'postgres.ModelVersion', 'postgre
 export const MODEL_CDC_TABLES = ['public.Model', 'public.ModelVersion'];
 const MAX_PENDING = 2_000;
 
+/** Refuses to start without the flag: the topics it needs would never carry events. */
+export function assertModelCdc() {
+  if (!MODEL_CDC_TABLES.every((t) => config.kafka.cdcOnlyTables.includes(t)))
+    throw new Error('CDC_MODEL_ENABLED is off, so Model and ModelVersion events never arrive');
+}
+
+/**
+ * Why embedding must wait, or null. Without Model events an unpublish or ToS removal would not
+ * reach the index, so no new vectors until the connector streams both tables.
+ */
+export const modelEmbedBlock = (fetchImpl: typeof fetch = globalThis.fetch) =>
+  connectorBlock(fetchImpl, MODEL_CDC_TABLES);
+
 /**
  * The model id a CDC message touches. A ModelVersion delete carries only the version's own id
  * (the table's replica identity is its key), so it yields null; the backfill sweep catches it.
@@ -54,9 +67,14 @@ export class ModelSyncQueue {
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
+  /** An embed workflow returning vectors, or a flush succeeding. */
+  lastProgress = Date.now();
   consecutiveFailures = 0;
+  private progressCount = 0;
   embedStopped: string | null = null;
   gateBlocked: string | null = null;
+  /** The collection has no recorded model yet, so nothing embeds. */
+  unstamped = false;
 
   constructor(
     private readonly deps: ModelQueueDeps,
@@ -84,6 +102,11 @@ export class ModelSyncQueue {
   }
 
   private async doFlush() {
+    if (!this.pending.size && !this.offsets.size) {
+      this.lastFlushOk = Date.now();
+      return;
+    }
+    const progressAtStart = this.progressCount;
     const ids = [...this.pending];
     const offsets = [...this.offsets.values()];
     this.pending = new Set();
@@ -91,9 +114,12 @@ export class ModelSyncQueue {
     try {
       // A new collection's model is recorded by the backfill canary first, so two writers
       // cannot stamp it differently.
-      const embed =
-        !!this.deps.embedder && !this.gateBlocked && (await this.deps.store.isStamped());
       if (ids.length) {
+        const wanted = !!this.deps.embedder && !this.gateBlocked;
+        const embed = wanted && (await this.deps.store.isStamped());
+        if (wanted && !embed && !this.unstamped)
+          logger.warn('model-sync: collection has no recorded model yet; not embedding');
+        if (wanted) this.unstamped = !embed;
         const started = Date.now();
         const stats = await syncModelIds(ids, embed ? this.deps : { ...this.deps, embedder: null });
         logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, 'model-sync: flushed');
@@ -104,7 +130,9 @@ export class ModelSyncQueue {
         const key = `${o.topic}:${o.partition}`;
         if (!this.offsets.has(key)) this.offsets.set(key, o);
       }
-      this.consecutiveFailures++;
+      // A flush that stored some vectors before failing is slow, not stuck.
+      if (this.progressCount === progressAtStart) this.consecutiveFailures++;
+      else this.consecutiveFailures = 0;
       if (err instanceof ModelMismatchError || err instanceof MixedStampError) {
         // Retrying would pay for the same rejected vectors every tick.
         this.stopEmbedding((err as Error).message);
@@ -121,7 +149,13 @@ export class ModelSyncQueue {
       }
     }
     this.lastFlushOk = Date.now();
+    this.lastProgress = this.lastFlushOk;
     this.consecutiveFailures = 0;
+  }
+
+  noteProgress() {
+    this.progressCount++;
+    this.lastProgress = Date.now();
   }
 
   setGate(reason: string | null) {
@@ -140,20 +174,20 @@ export class ModelSyncQueue {
   }
 
   /**
-   * Healthy within 10 minutes of a successful flush; past that, only while flushes are not
-   * failing and one has succeeded within 45 minutes, which outlasts a batch's rate-limit backoff
-   * plus the 30-minute workflow timeout.
+   * Healthy within 10 minutes of a successful flush. Past that, a flush still storing vectors
+   * stays healthy (killing it would lose paid work), but not one whose flushes keep failing
+   * without progress. 45 minutes outlasts a batch's rate-limit backoff plus the 30-minute
+   * workflow timeout.
    */
   isHealthy(now = Date.now()) {
-    const since = now - this.lastFlushOk;
-    return since < 10 * 60_000 || (this.consecutiveFailures < 3 && since < 45 * 60_000);
+    if (now - this.lastFlushOk < 10 * 60_000) return true;
+    return this.consecutiveFailures < 3 && now - this.lastProgress < 45 * 60_000;
   }
 }
 
 async function main() {
   assertVectorSyncConfig();
-  if (!MODEL_CDC_TABLES.every((t) => config.kafka.cdcOnlyTables.includes(t)))
-    throw new Error('CDC_MODEL_ENABLED is off, so Model and ModelVersion events never arrive');
+  assertModelCdc();
   const vs = config.vectorSync;
   const pg = createGuardedPgPool(
     { connectionString: config.postgres.connectionString, max: vs.pgPoolMax },
@@ -174,10 +208,10 @@ async function main() {
   const queue = new ModelSyncQueue({ pg, store, embedder }, (offsets) =>
     consumer.commitOffsets(offsets)
   );
-  // Without Model events an unpublish or ToS removal would not reach the index, so no new
-  // vectors until the connector streams both tables; a Kafka Connect blip only pauses it.
+  if (embedder) embedder.onProgress = () => queue.noteProgress();
+  // A Kafka Connect blip only pauses embedding.
   const checkGate = () =>
-    connectorBlock(globalThis.fetch, MODEL_CDC_TABLES)
+    modelEmbedBlock()
       .then((reason) => queue.setGate(reason))
       .catch((err) => queue.setGate(`gate check failed: ${(err as Error).message}`));
   if (embedder) await checkGate();
@@ -198,7 +232,7 @@ async function main() {
         JSON.stringify({
           healthy,
           pending: queue.size,
-          embedding: !!embedder && !queue.embedStopped && !queue.gateBlocked,
+          embedding: !!embedder && !queue.embedStopped && !queue.gateBlocked && !queue.unstamped,
           embedStopped: queue.embedStopped,
           embedPaused: queue.gateBlocked,
         })
