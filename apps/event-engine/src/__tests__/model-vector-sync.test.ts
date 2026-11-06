@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { Embedder, type EmbedInput } from '@/vector-sync/embedder';
 import {
   cleanHtml,
@@ -10,6 +10,11 @@ import {
 import type { ModelPayload } from '@/vector-sync/models/source';
 import { backfillModels } from '@/vector-sync/models/backfill';
 import { syncModelIds, type ModelSyncDeps } from '@/vector-sync/models/sync';
+import {
+  modelIdFromEvent,
+  ModelSyncQueue,
+  type ModelQueueDeps,
+} from '@/vector-sync/models/consumer';
 import type { ModelStamp, VectorPoint } from '@/vector-sync/qdrant';
 
 const VECTOR = Array.from({ length: 256 }, (_, i) => (i === 0 ? 1 : 0));
@@ -76,6 +81,8 @@ class FakeStore {
   upsert = async (points: VectorPoint<ModelPayload>[]) =>
     void points.forEach((p) => this.points.set(p.id, p));
   assertModel = async (_stamp: ModelStamp) => undefined;
+  stamped = true;
+  isStamped = async () => this.stamped;
   idsInRange = async (lo: number, hi: number) =>
     [...this.points.keys()].filter((id) => id >= lo && id < hi).sort((a, b) => a - b);
 }
@@ -359,5 +366,133 @@ describe('second review fixes', () => {
     ]);
     expect(result.error).toBeUndefined();
     expect([...result.vectors.keys()].sort()).toEqual([1, 2]);
+  });
+});
+
+describe('model CDC consumer', () => {
+  const at = (offset: number, topic = 'postgres.Model') => ({
+    topic,
+    partition: 0,
+    offset: String(offset),
+  });
+  function queue() {
+    const env = setup();
+    const commits: unknown[] = [];
+    const q = new ModelSyncQueue(env.deps as unknown as ModelQueueDeps, async (o) => {
+      commits.push(o);
+    });
+    return { ...env, q, commits };
+  }
+
+  test('reads the model id from each topic; a version delete and a snapshot read yield none', () => {
+    expect(modelIdFromEvent('postgres.Model', { op: 'u', after: { id: 5, modelId: 99 } })).toBe(5);
+    expect(modelIdFromEvent('postgres.Model', { op: 'd', before: { id: 6 }, after: null })).toBe(6);
+    expect(
+      modelIdFromEvent('postgres.ModelVersion', { op: 'c', after: { id: 70, modelId: 7 } })
+    ).toBe(7);
+    expect(modelIdFromEvent('postgres.ModelVersion', { op: 'd', before: { id: 80 } })).toBeNull();
+    expect(
+      modelIdFromEvent('postgres.TagsOnModels', { op: 'd', before: { modelId: 9, tagId: 1 } })
+    ).toBe(9);
+    expect(modelIdFromEvent('postgres.Model', { op: 'r', after: { id: 10 } })).toBeNull();
+  });
+
+  test('a burst for one model is one embed; offsets commit only after a flush succeeds', async () => {
+    const { db, store, embedder, q, commits } = queue();
+    db.rows.set(1, model(1));
+    const failing = vi
+      .spyOn(store, 'payloadFields')
+      .mockRejectedValueOnce(new Error('qdrant down'));
+    for (let offset = 0; offset < 20; offset++) q.add(1, at(offset, 'postgres.ModelVersion'));
+    await expect(q.flush()).rejects.toThrow('qdrant down');
+    expect(commits).toEqual([]);
+    failing.mockRestore();
+
+    await q.flush();
+    expect(embedder.texts).toHaveLength(1);
+    expect(store.points.has(1)).toBe(true);
+    expect(commits).toEqual([[at(20, 'postgres.ModelVersion')]]);
+  });
+
+  test('unstamped or gated, nothing is embedded, but an unpublished model still loses its point', async () => {
+    const { db, store, embedder, q } = queue();
+    db.rows.set(1, model(1));
+    store.points.set(2, { id: 2, vector: [2], payload: {} as ModelPayload });
+    store.stamped = false;
+    q.add(1, at(0));
+    q.add(2, at(1));
+    await q.flush();
+    expect(embedder.texts).toEqual([]);
+    expect([...store.points.keys()]).toEqual([]);
+
+    store.stamped = true;
+    q.setGate('the connector does not stream public.ModelVersion');
+    q.add(1, at(2));
+    await q.flush();
+    expect(embedder.texts).toEqual([]);
+
+    q.setGate(null);
+    q.add(1, at(3));
+    await q.flush();
+    expect(embedder.texts).toHaveLength(1);
+  });
+
+  // Adding a table changes the Debezium publication, and the watcher recreates the connector
+  // when its list differs, so a deploy with the flag unset must leave the connector as it was.
+  async function tables(env: Record<string, string | undefined>) {
+    vi.resetModules();
+    const saved = { ...process.env };
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      const { DebeziumManager } = await import('@/services/debezium-manager');
+      return {
+        connector: DebeziumManager.getConnectorTables(),
+        watcher: DebeziumManager.getTopicsToConsume(),
+      };
+    } finally {
+      process.env = saved;
+    }
+  }
+
+  test('CDC_MODEL_ENABLED: off leaves the connector alone; on adds both tables, which the watcher never consumes', async () => {
+    const off = await tables({ CDC_MODEL_ENABLED: undefined, CDC_IMAGE_ENABLED: undefined });
+    expect(off.connector).not.toContain('public.Model');
+    expect(off.connector).not.toContain('public.ModelVersion');
+    const on = await tables({ CDC_MODEL_ENABLED: 'true', CDC_IMAGE_ENABLED: 'true' });
+    expect(on.connector).toEqual(
+      expect.arrayContaining(['public.Model', 'public.ModelVersion', 'public.Image'])
+    );
+    expect(on.watcher).not.toContain('postgres.Model');
+    expect(on.watcher).not.toContain('postgres.ModelVersion');
+  });
+
+  test('the embedding gate names a model table the connector does not stream', async () => {
+    const { connectorBlock } = await import('@/vector-sync/sync');
+    const connector = (list: string) =>
+      (async (url: string | URL | Request) =>
+        new Response(
+          JSON.stringify(
+            String(url).endsWith('/status')
+              ? { connector: { state: 'RUNNING' }, tasks: [{ id: 0, state: 'RUNNING' }] }
+              : { 'table.include.list': list }
+          )
+        )) as unknown as typeof fetch;
+    const saved = process.env.DEBEZIUM_CONNECT_URL;
+    process.env.DEBEZIUM_CONNECT_URL = 'http://connect';
+    try {
+      const needed = ['public.Model', 'public.ModelVersion'];
+      expect(await connectorBlock(connector('public.Image,public.Model'), needed)).toBe(
+        'the connector does not stream public.ModelVersion'
+      );
+      expect(
+        await connectorBlock(connector('public.Model,public.ModelVersion'), needed)
+      ).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env.DEBEZIUM_CONNECT_URL;
+      else process.env.DEBEZIUM_CONNECT_URL = saved;
+    }
   });
 });

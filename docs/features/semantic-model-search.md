@@ -58,8 +58,31 @@ orchestrator call. The embedder's config checks apply, including `VECTOR_IMAGE_L
 A model whose document changed keeps its old vector until the re-embed lands, but its payload is
 rewritten at once, so filters never act on a stale `nsfwLevel`.
 
-Run one writer per id range: the post-embed re-read covers what was embedded, not deletes and
-payload rewrites racing a second writer.
+Run one backfill per id range: the post-embed re-read covers what was embedded, not deletes and
+payload rewrites racing a second writer. The live consumer is such a writer too, but the window
+is only between a page's read and its payload write, and the model's next event repairs it.
+
+## Live sync
+
+```
+node dist/vector-sync/models/consumer.js
+```
+
+Its own process and consumer group (`VECTOR_MODEL_CONSUMER_GROUP`, default `model-vector-sync`).
+It reads `postgres.Model`, `postgres.ModelVersion` and `postgres.TagsOnModels`, collects model ids
+for `VECTOR_SYNC_DEBOUNCE_MS`, and runs the same sync as the backfill, committing offsets only
+after the writes land.
+
+- It needs `CDC_MODEL_ENABLED=true`, which adds `public.Model` and `public.ModelVersion` to the
+  connector. That changes the Debezium publication, and the metrics watcher recreates the
+  connector when its table list changes, so set it on the watcher with infra and the consumer
+  together. Off by default: a deploy without it leaves the connector as it was.
+- It embeds only with `VECTOR_SYNC_EMBED_ENABLED`, once the collection has a recorded model (the
+  backfill's first write), and while Kafka Connect reports both tables streaming. Otherwise
+  deletes and payload updates still run, and new vectors wait for the backfill.
+- A deleted version's event carries only the version id, so it is skipped; the model's next event
+  or a backfill re-run catches it.
+- `/` on `HEALTH_CHECK_PORT` reports `healthy`, `pending` and whether it is embedding.
 
 ## Caveats
 
@@ -71,8 +94,6 @@ payload rewrites racing a second writer.
 
 ## Not built yet
 
-- Change capture: Model and ModelVersion are not streamed by the Debezium connector today, so until
-  it lands an edit, unpublish or delete reaches the collection only through a backfill re-run.
 - A creator rename changes the `Creator:` line but is not detected; a re-run picks it up.
 - The 1,024-token cap from the prototype: whether the orchestrator accepts or truncates documents
   that long is being measured.
