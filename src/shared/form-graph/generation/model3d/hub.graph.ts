@@ -1,5 +1,5 @@
 import { branch, defineGraph } from 'form-graph';
-import { getEcosystemField } from '../ecosystem-gates';
+import { getEcosystemStates } from '../ecosystem-gates';
 import { ecosystemFieldSchemas, type RootCtx } from '../shared';
 
 import { polygen } from './polygen.graph';
@@ -17,26 +17,32 @@ import { pixal3d, trellis2 } from './trellis-family.graph';
 
 export const model3dHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
-    const {
-      compatibleEcosystems,
-      hiddenEcosystems,
-      ecosystemStates,
-      gatedKeys,
-      usableEcosystems,
-      defaultEcosystem,
-    } = getEcosystemField(_ext.workflow, _ext, { preferred: 'PolyGen' });
+    const { compatibleEcosystems, hiddenEcosystems, ecosystemStates } = getEcosystemStates(
+      _ext.workflow,
+      _ext
+    );
+    const disabledSet = new Set(ecosystemStates.map((e) => e.key));
+    const usableEcosystems = disabledSet.size
+      ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
+      : compatibleEcosystems;
+    const defaultValue = usableEcosystems.includes('PolyGen')
+      ? 'PolyGen'
+      : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'PolyGen';
 
     return {
-      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, gatedKeys, usableEcosystems),
-      default: defaultEcosystem,
+      ...ecosystemFieldSchemas(
+        _ext.workflow,
+        hiddenEcosystems,
+        ecosystemStates.map((e) => e.key),
+        usableEcosystems
+      ),
+      default: defaultValue,
       // The ecosystem selection is stored per OUTPUT type.
       scope: 'model3d',
       meta: {
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
-        usableEcosystems,
-        defaultEcosystem,
         mediaType: 'model3d' as const,
       },
     };
