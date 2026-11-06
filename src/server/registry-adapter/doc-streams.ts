@@ -16,14 +16,27 @@ import type {
 } from '~/server/registry-adapter/doc-feed';
 import type { Adapter } from '~/server/registry-adapter/protocol';
 import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
+import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
 import {
   APP_STORAGE_ALL_FEATURES_ON,
+  APP_STORAGE_ENABLED_FEATURES,
   isCollectionRegistryPublic,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
 
-export function resolveFromCatalog(readApps: () => Promise<CatalogApp[]>): ResolveStream {
+/**
+ * `features` is the platform's live switch, the same one submit validates against. Nothing is
+ * published while `registryExport` is off, even from an approved manifest that already declares
+ * `registry: "public"`: the manifest's SHAPE is read with every feature on (an approved
+ * manifest stays parseable when a feature it uses is switched off, as the store reads it), but
+ * whether the feature may act is this switch alone.
+ */
+export function resolveFromCatalog(
+  readApps: () => Promise<CatalogApp[]>,
+  features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES
+): ResolveStream {
   return async (schema) => {
+    if (!features.registryExport) return null;
     const ref = parseCollectionSchemaUrn(schema);
     if (!ref) return null;
     const app = (await readApps()).find(

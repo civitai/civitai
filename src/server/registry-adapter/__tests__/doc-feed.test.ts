@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { EMPTY_CURSOR, createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
-import { fixtureDocSource } from '../../../../scripts/registry-adapter-fixture/fixture-source';
+import {
+  createMemorySnapshotStore,
+  fixtureDocSource,
+} from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import type { Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
@@ -35,26 +37,12 @@ const doc = (key: string, t: string, seq: number, extra: Record<string, unknown>
   ...extra,
 });
 
-function memoryStore(): SnapshotStore & { clear(): void; puts: () => number } {
-  const m = new Map<string, string>();
-  let puts = 0;
-  return {
-    get: async (k) => m.get(k) ?? null,
-    put: async (k, v) => {
-      puts++;
-      m.set(k, v);
-    },
-    clear: () => m.clear(),
-    puts: () => puts,
-  };
-}
-
 /**
  * A feed over a catalog the test edits between polls. `world.stream` is what the resolver
  * answers (null: not published); `edits[i]` runs before poll i+1 of `changes`. The sleep stops
  * the subscription after `edits.length + 1` polls, so every drain ends on its own.
  */
-function setup(store = memoryStore()) {
+function setup(store = createMemorySnapshotStore()) {
   const world: { cat: FixtureCatalog; stream: CollectionStream | null } = {
     cat: {
       listings: [],
@@ -280,6 +268,56 @@ describe('🔴 an unpublished stream writes nothing to the store', () => {
       ['upsert', urn('n1')],
       ['upsert', urn('n2')],
     ]);
+  });
+});
+
+describe('🔴 an empty published stream reads incrementally', () => {
+  it('reads the whole collection once, then only what changed — and still sees a new document', async () => {
+    const cat: FixtureCatalog = {
+      listings: [],
+      documents: [doc('n2', 'a much longer title', 5)],
+      lastSeq: { ab_orbit_7: 5 },
+    };
+    const base = fixtureDocSource(() => cat);
+    let fullReads = 0;
+    let polls = 0;
+    const abort = new AbortController();
+    const edits = [
+      () => undefined,
+      () => {
+        cat.documents!.push(doc('n7', 'short', 6));
+        cat.lastSeq = { ab_orbit_7: 6 };
+      },
+    ];
+    const feed = createDocFeed({
+      source: {
+        ...base,
+        documents: (...args) => {
+          fullReads++;
+          return base.documents(...args);
+        },
+      },
+      resolve: async () => ({
+        appId: 'ab_orbit_7',
+        slug: 'orbit-notes',
+        collection: 'notes',
+        family: TWO_MAJORS,
+      }),
+      store: createMemorySnapshotStore(),
+      pollMs: 1,
+      sleep: async () => {
+        if (polls >= edits.length) abort.abort();
+        else edits[polls]();
+        polls++;
+      },
+    });
+    // `n2` does not fit @v1, so the @v1 stream serves nothing.
+    const snap = await feed.snapshot(V1);
+    expect([snap.entities, fullReads]).toEqual([[], 1]);
+    const out: Change[] = [];
+    for await (const c of feed.changes(V1, snap.cursor, { signal: abort.signal })) out.push(c);
+    expect(out.map(shape)).toEqual([['upsert', urn('n7')]]);
+    expect(fullReads).toBe(1);
   });
 });
 

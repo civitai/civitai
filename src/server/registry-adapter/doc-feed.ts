@@ -21,7 +21,7 @@ import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
-import { canonicalJson, sha256Hex } from '~/server/registry-adapter/release';
+import { sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
 
 export type FeedDocument = {
@@ -90,7 +90,7 @@ type FeedState = {
 // The claim set is part of the rev: a mint that makes a document claim one more major changes
 // it, so every stream that carries the document re-sends it with its new label set.
 const docRev = (d: FeedDocument, schemas: readonly string[]) =>
-  sha256Hex(canonicalJson({ version: d.version, data: d.data, schemas })).slice(0, 16);
+  sha256Hex(sortedKeyJson({ version: d.version, data: d.data, schemas })).slice(0, 16);
 
 const emptyState = (schema: string): FeedState => ({
   v: STATE_FORMAT,
@@ -122,7 +122,7 @@ export function createClaimer(maxFamilies = 200) {
 }
 
 export function familyDigest(family: CollectionStream['family']): string {
-  return sha256Hex(canonicalJson(family)).slice(0, 32);
+  return sha256Hex(sortedKeyJson(family)).slice(0, 32);
 }
 
 export type DocFeedOptions = {
@@ -141,7 +141,7 @@ export function createDocFeed(opts: DocFeedOptions) {
     // A stream of no app serving nothing needs no record: its cursor is a constant. So a
     // subscription to an unpublished (or invented) collection URN writes nothing.
     if (state.appId === null && state.served.length === 0) return EMPTY_CURSOR;
-    const raw = canonicalJson(state);
+    const raw = sortedKeyJson(state);
     const digest = sha256Hex(raw).slice(0, 32);
     await opts.store.put(digest, raw, state.schema);
     return `${STATE_FORMAT}.${digest}`;
@@ -261,7 +261,9 @@ export function createDocFeed(opts: DocFeedOptions) {
       entities.set(e.urn, e);
     };
 
-    const full = !same || prev.family !== digest || prev.served.length === 0;
+    // A full read when the stream is new to this app or its schemas changed; otherwise only what
+    // changed since the recorded seq, served or not.
+    const full = !same || prev.family !== digest;
     if (full) {
       for (const d of await readAll(appId, collection, head)) keep(d);
     } else {
@@ -282,13 +284,15 @@ export function createDocFeed(opts: DocFeedOptions) {
         v: STATE_FORMAT,
         schema,
         appId,
-        // With nothing served there is no witness to catch a purge, so the next read starts over.
-        seq: served.size > 0 ? head : 0,
+        // Recorded even when nothing is served, so an empty stream reads incrementally. A seq that
+        // goes back is still caught (above); with nothing served there is no witness, so a purge
+        // written past this seq before the next poll is not.
+        seq: head,
         family: digest,
         witness,
         served: [...served]
           .map(([urn, s]) => [urn, s.rev, s.seq] as [string, string, number])
-          .sort(),
+          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
       },
       entities,
     };
@@ -321,9 +325,10 @@ export function createDocFeed(opts: DocFeedOptions) {
         const before = state;
         const { next, entities } = await guarded(() => advance(schema, before));
         const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
+        const still = new Set(next.served.map(([urn]) => urn));
         const deletes = [...was.keys()]
-          .filter((urn) => !next.served.some(([u]) => u === urn))
-          .sort();
+          .filter((urn) => !still.has(urn))
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
         const upserts = next.served
           .filter(([urn, rev]) => was.get(urn) !== rev)
           .map(([urn]) => entities.get(urn))

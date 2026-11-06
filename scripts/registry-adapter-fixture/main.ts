@@ -22,6 +22,7 @@ import {
 import { SHARED_SCHEMA_NAMESPACE, sharedSchemaEntities } from './shared-schemas';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
 import { REGISTRY_NAMESPACE, REGISTRY_SCHEMA_SCHEMA } from '~/server/registry-adapter/urn';
+import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 function main() {
   if (process.env.NODE_ENV === 'production') {
@@ -48,7 +49,12 @@ function main() {
   });
   const docs = createDocFeed({
     source: fixtureDocSource(file),
-    resolve: resolveFromCatalog(readApps),
+    // Fixture mode exists to exercise the feed, so it turns the registry-export switch on for
+    // itself; the live entrypoint uses the platform's switch.
+    resolve: resolveFromCatalog(readApps, {
+      ...APP_STORAGE_ENABLED_FEATURES,
+      registryExport: true,
+    }),
     store,
     pollMs,
     sleep: abortableSleep,

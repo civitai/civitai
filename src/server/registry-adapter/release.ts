@@ -38,14 +38,20 @@ export function publishedManifest(manifest: unknown): Record<string, unknown> {
   return out;
 }
 
-/** Canonical JSON (sorted keys, no whitespace), so a hash names a value rather than a layout. */
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+/**
+ * JSON with object keys sorted and `undefined` properties dropped, so a hash names a value rather
+ * than a layout. Its inputs are already JSON (parsed manifests and bodies, or values built here),
+ * so it does not check them. Not the strict `canonicalJson` of `block-quote-grant.service.ts`,
+ * which refuses anything but plain JSON: that module loads the system Redis client and the
+ * server env on import, which the pure modules here and fixture mode must not.
+ */
+export function sortedKeyJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(sortedKeyJson).join(',')}]`;
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${sortedKeyJson(v)}`).join(',')}}`;
   }
   return JSON.stringify(value);
 }
@@ -81,7 +87,7 @@ export function releaseBody(args: {
     app: registryUrn({ kind: 'app', slug: release.slug }),
     version: release.version,
     manifest,
-    manifestHash: sha256Hex(canonicalJson(manifest)),
+    manifestHash: sha256Hex(sortedKeyJson(manifest)),
     runtime: args.runtimeUrn,
     ...(typeof manifest.contentRating === 'string'
       ? { contentRating: manifest.contentRating }

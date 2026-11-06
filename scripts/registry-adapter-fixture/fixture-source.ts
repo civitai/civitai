@@ -118,8 +118,10 @@ export function fixtureCatalogDeps(read: () => FixtureCatalog): CatalogReadDeps 
       (read().approved ?? [])
         .filter((r) => ids.includes(r.appBlockId))
         .map((r) => ({ ...r, reviewedAt: r.reviewedAt ? new Date(r.reviewedAt) : null })),
-    loadSourceRepoUrl: async (listingId) => read().sourceRepoUrls?.[listingId] ?? null,
-    loadForkOfListingId: async (listingId) => read().forkOf?.[listingId] ?? null,
+    loadSourceRepoUrls: async (ids) =>
+      new Map(ids.map((id) => [id, read().sourceRepoUrls?.[id] ?? null])),
+    loadForkParents: async (ids) =>
+      new Map(ids.flatMap((id) => (read().forkOf?.[id] ? [[id, read().forkOf![id]]] : []))),
   };
 }
 
@@ -127,16 +129,30 @@ export function fixtureFile(path: string): () => FixtureCatalog {
   return () => JSON.parse(readFileSync(path, 'utf8')) as FixtureCatalog;
 }
 
-export function createMemorySnapshotStore(keep: number = STATES_KEPT_PER_STREAM): SnapshotStore {
+/**
+ * The in-memory {@link SnapshotStore}, with the same per-stream bound as the Redis one. Fixture
+ * mode runs on it, and so do the adapter's tests: `puts`, `size` and `clear` are for them.
+ */
+export function createMemorySnapshotStore(
+  keep: number = STATES_KEPT_PER_STREAM
+): SnapshotStore & { puts(): number; size(): number; clear(): void } {
   const sets = new Map<string, string>();
   const streams = new Map<string, string[]>();
+  let puts = 0;
   return {
     get: async (digest) => sets.get(digest) ?? null,
     put: async (digest, value, stream) => {
+      puts++;
       sets.set(digest, value);
       const { list, evicted } = retainLatest(streams.get(stream) ?? [], digest, keep);
       streams.set(stream, list);
       for (const old of evicted) sets.delete(old);
+    },
+    puts: () => puts,
+    size: () => sets.size,
+    clear: () => {
+      sets.clear();
+      streams.clear();
     },
   };
 }

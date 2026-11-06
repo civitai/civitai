@@ -9,7 +9,7 @@ import {
   deriveCollectionMajors,
 } from '~/server/registry-adapter/collection-schema';
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
-import { canonicalJson, releaseBody, sha256Hex } from '~/server/registry-adapter/release';
+import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter/release';
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
@@ -61,7 +61,7 @@ export type EntitySets = Map<string, Entity[]>;
 
 function entity(urn: string, schema: string, body: unknown): Entity {
   const schemas = [schema];
-  return { urn, schemas, rev: sha256Hex(canonicalJson({ schemas, body })).slice(0, 16), body };
+  return { urn, schemas, rev: sha256Hex(sortedKeyJson({ schemas, body })).slice(0, 16), body };
 }
 
 export function runtimeEntity(baseUrl: string): Entity {

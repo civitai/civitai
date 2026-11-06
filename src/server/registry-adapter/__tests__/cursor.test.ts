@@ -15,16 +15,6 @@ const e = (slug: string, rev: string): Entity => ({
   body: { slug, rev },
 });
 
-function memoryStore(): SnapshotStore & { size: () => number; clear: () => void } {
-  const m = new Map<string, string>();
-  return {
-    get: async (k) => m.get(k) ?? null,
-    put: async (k, v) => void m.set(k, v),
-    size: () => m.size,
-    clear: () => m.clear(),
-  };
-}
-
 /**
  * An adapter over a scripted catalog. `states` is read in order, one per poll, the last one
  * repeating. Its sleep stops the subscription after `maxPolls` polls, so `changes` always ends.
@@ -74,7 +64,7 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
   const V2 = [e('alpha-app', 'r-a2'), e('gamma-app', 'r-g1'), e('delta-app', 'r-d1')];
 
   it('🔴 a cursor survives a restart: a new process resumes it with deletes, adds and updates', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const first = harness(store, [V1]);
     const snap = await first.adapter.snapshot(APPS, { signal: first.signal });
     expect(snap.cursor).toMatch(/^c1\.[0-9a-f]{32}$/);
@@ -96,7 +86,7 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
   });
 
   it('only the last change of a batch moves the cursor, and resuming mid-batch loses nothing', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const a = harness(store, [V1]);
     const { cursor } = await a.adapter.snapshot(APPS, { signal: a.signal });
     const changes = await harness(store, [V2]).drain(APPS, cursor);
@@ -110,7 +100,7 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
   });
 
   it('🔴 an app that leaves the catalog with no trace arrives as a delete', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const a = harness(store, [V1]);
     const { cursor } = await a.adapter.snapshot(APPS, { signal: a.signal });
     const changes = await harness(store, [[]]).drain(APPS, cursor);
@@ -122,7 +112,7 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
   });
 
   it('a change made while subscribed arrives on a later poll', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const h = harness(store, [V1, V1, V2], 4);
     const { cursor } = await h.adapter.snapshot(APPS, { signal: h.signal });
     const changes = await h.drain(APPS, cursor);
@@ -134,14 +124,14 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
   });
 
   it('nothing changed: no events', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const h = harness(store, [V1]);
     const { cursor } = await h.adapter.snapshot(APPS, { signal: h.signal });
     expect(await harness(store, [V1]).drain(APPS, cursor)).toEqual([]);
   });
 
   it('🔴 cursor_expired for a cursor whose snapshot is no longer held', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const h = harness(store, [V1]);
     const { cursor } = await h.adapter.snapshot(APPS, { signal: h.signal });
     store.clear();
@@ -153,11 +143,13 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
     ['the wrong format version', `c0.${'a'.repeat(32)}`],
     ['an unknown digest', `c1.${'b'.repeat(32)}`],
   ])('cursor_expired for %s', async (_name, cursor) => {
-    expect(await codeOf(harness(memoryStore(), [V1]).drain(APPS, cursor))).toBe('cursor_expired');
+    expect(await codeOf(harness(createMemorySnapshotStore(), [V1]).drain(APPS, cursor))).toBe(
+      'cursor_expired'
+    );
   });
 
   it('cursor_expired for a cursor of another schema', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const h = harness(store, [V1]);
     const { cursor } = await h.adapter.snapshot(RELEASES, { signal: h.signal });
     expect(await codeOf(harness(store, [V1]).drain(APPS, cursor))).toBe('cursor_expired');
@@ -170,7 +162,7 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
       read: async () => {
         throw new Error('connect ECONNREFUSED db-host-canary-58:5432');
       },
-      store: memoryStore(),
+      store: createMemorySnapshotStore(),
       pollMs: 1,
       sleep: async () => undefined,
     });
@@ -182,13 +174,15 @@ describe('polling adapter — snapshot, then changes from a durable cursor', () 
   });
 
   it('a duplicate URN is served once, first wins', async () => {
-    const h = harness(memoryStore(), [[e('alpha-app', 'r-first'), e('alpha-app', 'r-second')]]);
+    const h = harness(createMemorySnapshotStore(), [
+      [e('alpha-app', 'r-first'), e('alpha-app', 'r-second')],
+    ]);
     const snap = await h.adapter.snapshot(APPS, { signal: h.signal });
     expect((snap.entities as Entity[]).map((x) => x.rev)).toEqual(['r-first']);
   });
 
   it('the same served set always names the same cursor', async () => {
-    const store = memoryStore();
+    const store = createMemorySnapshotStore();
     const a = await harness(store, [V1]).adapter.snapshot(APPS, {
       signal: new AbortController().signal,
     });

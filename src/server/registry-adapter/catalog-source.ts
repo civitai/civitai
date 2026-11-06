@@ -54,9 +54,13 @@ export type CatalogReadDeps = {
   ) => Promise<{ items: CatalogListing[]; nextCursor?: string }>;
   loadBlocks: (ids: string[]) => Promise<CatalogBlock[]>;
   loadApproved: (appBlockIds: string[]) => Promise<CatalogApprovedRequest[]>;
-  loadSourceRepoUrl: (listingId: string) => Promise<string | null>;
-  /** The listing id this listing was forked from, or null. Never used to read the parent. */
-  loadForkOfListingId: (listingId: string) => Promise<string | null>;
+  /** Listing id → its public source-repo link, for the listings given; absent means none. */
+  loadSourceRepoUrls: (listingIds: string[]) => Promise<Map<string, string | null>>;
+  /**
+   * Fork listing id → the listing id it was forked from, for the forks among the listings given.
+   * Ids only: never used to read a parent.
+   */
+  loadForkParents: (listingIds: string[]) => Promise<Map<string, string>>;
 };
 
 /** Pages the catalog may take before the read fails. A truncated catalog would read as deletes. */
@@ -105,10 +109,16 @@ export async function readCatalog(deps: CatalogReadDeps): Promise<CatalogApp[]> 
   // slug cannot leave through a fork.
   const publicSlugById = new Map(listings.map((l) => [l.id, blockOf(l)?.blockId ?? l.slug]));
 
+  // One query each for the whole catalog, keyed by listing id, as the blocks and requests are.
+  const listingIds = listings.map((l) => l.id);
+  const [sourceRepoUrls, forkParents] = listingIds.length
+    ? await Promise.all([deps.loadSourceRepoUrls(listingIds), deps.loadForkParents(listingIds)])
+    : [new Map<string, string | null>(), new Map<string, string>()];
+
   const apps: CatalogApp[] = [];
   for (const l of listings) {
     const block = blockOf(l);
-    const parentId = await deps.loadForkOfListingId(l.id);
+    const parentId = forkParents.get(l.id) ?? null;
     apps.push({
       listing: {
         slug: l.slug,
@@ -120,7 +130,7 @@ export async function readCatalog(deps: CatalogReadDeps): Promise<CatalogApp[]> 
         iconUrl: l.iconUrl,
         creatorUsername: l.creatorUsername,
         externalUrl: l.kind === 'offsite' ? l.externalUrl : null,
-        sourceRepoUrl: await deps.loadSourceRepoUrl(l.id),
+        sourceRepoUrl: sourceRepoUrls.get(l.id) ?? null,
         forkOf: (parentId !== null && parentId !== l.id && publicSlugById.get(parentId)) || null,
       },
       block,

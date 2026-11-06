@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { Adapter } from '~/server/registry-adapter/protocol';
+import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
+import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
 const notes = (maxLength: number, extra: Record<string, unknown> = {}) => ({
   visibility: 'shared',
@@ -59,7 +62,36 @@ const V = (coll: string, n: number) => `urn:schema:civitai-apps:orbit-notes/${co
 const OPTED_IN = { notes: notes(200, { registry: 'public' }), drafts: notes(50) };
 
 describe('resolveFromCatalog', () => {
-  const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps);
+  // The live switch ships off; these cases turn it on, and the cases below keep it off.
+  const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
+  const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps, SWITCH_ON);
+
+  it('🔴 with the live switch off, an approved manifest that declares registry:"public" publishes nothing', async () => {
+    expect(APP_STORAGE_ENABLED_FEATURES.registryExport).toBe(false);
+    expect(await resolveFromCatalog(async () => [app(OPTED_IN)])(V('notes', 1))).toBeNull();
+  });
+
+  it('🔴 and its stream serves nothing and writes no state', async () => {
+    const store = createMemorySnapshotStore();
+    const feed = createDocFeed({
+      source: {
+        head: async () => 9,
+        changes: async () => ({ docs: [], tombs: [] }),
+        documents: async () => [{ key: 'k1', data: { title: 'x' }, version: 1, seq: 9 }],
+        witness: async () => ({ docSeq: null, tombSeq: null }),
+      },
+      resolve: resolveFromCatalog(async () => [app(OPTED_IN)]),
+      store,
+      pollMs: 1,
+      sleep: async () => undefined,
+    });
+    const snap = await feed.snapshot(V('notes', 1));
+    expect([snap.entities, store.puts()]).toEqual([[], 0]);
+  });
+
+  it('positive control: the same manifest with the switch on is published', async () => {
+    expect((await resolve([app(OPTED_IN)])(V('notes', 1)))?.appId).toBe('ab_orbit_31');
+  });
 
   it('an opted-in collection of a listed, approved app: its app and every major', async () => {
     const stream = await resolve([app(OPTED_IN)])(V('notes', 1));

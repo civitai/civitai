@@ -7,8 +7,8 @@ import type { CatalogReadDeps } from '~/server/registry-adapter/catalog-source';
 import { listingFromCard } from '~/server/registry-adapter/catalog-source';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 import { listAvailableListings } from '~/server/services/blocks/app-listing.service';
-import { readListingForkProvenance } from '~/server/services/blocks/app-fork.service';
-import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
+import { readListingForkParents } from '~/server/services/blocks/app-fork.service';
+import { readListingSourceRepoUrls } from '~/server/services/blocks/app-listing-source-repo.service';
 import { resolvePublicAppsCatalogScope } from '~/server/services/blocks/public-apps-catalog';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -72,13 +72,9 @@ export function liveCatalogReadDeps(): CatalogReadDeps {
       );
     },
 
-    async loadSourceRepoUrl(listingId) {
-      return (await readListingSourceRepoUrl(listingId, dbRead)).value;
-    },
+    loadSourceRepoUrls: (listingIds) => readListingSourceRepoUrls(listingIds, dbRead),
 
-    // The listing's own fork pointer only; readCatalog decides whether the parent may be named.
-    async loadForkOfListingId(listingId) {
-      return (await readListingForkProvenance(listingId, dbRead)).forkOfListingId;
-    },
+    // The listings' own fork pointers only; readCatalog decides whether a parent may be named.
+    loadForkParents: (listingIds) => readListingForkParents(listingIds, dbRead),
   };
 }

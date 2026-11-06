@@ -378,7 +378,7 @@ export type AppStorageFeature =
  *                      in place of the platform default; the storage routes do not read it
  *                      yet, so a declared limit must not read as working).
  *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
- *                      registries by the registry adapter, which is not running yet).
+ *                      registries by the registry adapter).
  *
  * Flip one only in the same change that ships the runtime behind it: an accepted
  * declaration with nothing behind it reads as a working feature to the author and the

@@ -61,8 +61,8 @@ function deps(over: Partial<CatalogReadDeps> & { calls?: string[] } = {}): Catal
       approved('pubreq_late', '1.1.0', '2026-09-20T00:00:00Z'),
       approved('pubreq_early', '1.0.0', '2026-08-01T00:00:00Z'),
     ],
-    loadSourceRepoUrl: async () => null,
-    loadForkOfListingId: async () => null,
+    loadSourceRepoUrls: async () => new Map(),
+    loadForkParents: async () => new Map(),
     ...over,
   };
 }
@@ -234,6 +234,35 @@ describe('readCatalog — the public-catalog decision comes first', () => {
   });
 });
 
+describe('readCatalog — one query per lookup, never one per listing', () => {
+  it('🔴 asks for source repos and fork parents once each, with every listing id', async () => {
+    const calls: string[][] = [];
+    await readCatalog(
+      deps({
+        listPage: async () => ({
+          items: [
+            listing({ id: 'apl_batch_1', slug: 'batch-one', kind: 'offsite', appBlockId: null }),
+            listing({ id: 'apl_batch_2', slug: 'batch-two', kind: 'offsite', appBlockId: null }),
+            listing({ id: 'apl_batch_3', slug: 'batch-three', kind: 'offsite', appBlockId: null }),
+          ],
+        }),
+        loadSourceRepoUrls: async (ids) => {
+          calls.push(['repo', ...ids]);
+          return new Map();
+        },
+        loadForkParents: async (ids) => {
+          calls.push(['fork', ...ids]);
+          return new Map();
+        },
+      })
+    );
+    expect(calls.sort()).toEqual([
+      ['fork', 'apl_batch_1', 'apl_batch_2', 'apl_batch_3'],
+      ['repo', 'apl_batch_1', 'apl_batch_2', 'apl_batch_3'],
+    ]);
+  });
+});
+
 describe('readCatalog — forkOf names a parent only when the parent is in the same public catalog', () => {
   // Pairwise-distinct slugs and ids, none equal to the default listing's.
   const parent = listing({
@@ -264,9 +293,9 @@ describe('readCatalog — forkOf names a parent only when the parent is in the s
     const apps = await readCatalog(
       deps({
         listPage: async () => ({ items }),
-        loadForkOfListingId: async (id) => {
-          asked.push(id);
-          return FORKS[id] ?? null;
+        loadForkParents: async (ids) => {
+          asked.push(...ids);
+          return new Map(ids.flatMap((id) => (FORKS[id] ? [[id, FORKS[id]]] : [])));
         },
       })
     );

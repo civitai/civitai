@@ -4,7 +4,7 @@
  * validate the adapter's entities. `service@v1` is the registry demo's, unchanged.
  */
 import type { Entity } from '~/server/registry-adapter/protocol';
-import { canonicalJson, sha256Hex } from '~/server/registry-adapter/release';
+import { sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
 import {
   APP_RELEASE_SCHEMA,
   APP_SCHEMA,
@@ -89,7 +89,7 @@ export function sharedSchemaEntities(): Entity[] {
   return SHARED_SCHEMA_DOCUMENTS.map((body) => ({
     urn: body.$id as string,
     schemas: [REGISTRY_SCHEMA_SCHEMA],
-    rev: sha256Hex(canonicalJson(body)).slice(0, 16),
+    rev: sha256Hex(sortedKeyJson(body)).slice(0, 16),
     body,
   }));
 }

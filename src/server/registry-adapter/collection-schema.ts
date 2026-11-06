@@ -165,6 +165,9 @@ export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDer
   const stepMajors = new Map<string, Map<string, number>>();
 
   for (const step of steps) {
+    // Every feature on: this replays APPROVED manifests for their shape, and a step must parse
+    // whether or not a feature it used is switched on today. Whether a feature may ACT (such as
+    // publishing a collection) is decided by the live switch where it acts (`doc-streams.ts`).
     const parsed = parseManifestStorage(step.manifest, APP_STORAGE_ALL_FEATURES_ON);
     const declaredHere = new Map<string, number>();
     stepMajors.set(step.id, declaredHere);
