@@ -7021,6 +7021,40 @@ model CsamReportArchiveObject {
   @@index([csamReportId])
 }
 
+/// One personal-data export request and its log. A moderator queues it; the
+/// `build-personal-data-exports` job builds the archive, uploads it and emails the requester a link;
+/// a separate release step sends the account owner a link after re-checking holds. The row outlives
+/// the archive, which the bucket deletes after its TTL. At most one queued or building row per user
+/// (a partial unique index in the migration).
+model PersonalDataExport {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  requestedById Int
+  /// queued | building | built | held | failed | released
+  status        String    @default("queued")
+  /// How internal moderator notes are exported: text-redacted-separate-file | count
+  modNotesMode  String    @default("text-redacted-separate-file")
+  /// Neutral codes for the holds found when the archive was built; re-checked at release.
+  holdReasons   String[]  @default([])
+  archiveKey    String?
+  modNotesKey   String?
+  /// Per-source row counts and notes: what the archive's manifest.json holds, without data.
+  manifest      Json?
+  error         String?
+  attempts      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  startedAt     DateTime?
+  builtAt       DateTime?
+  /// When the requester was emailed the link.
+  sentAt        DateTime?
+  linkExpiresAt DateTime?
+  releasedAt    DateTime?
+  releasedById  Int?
+
+  @@index([userId])
+  @@index([status])
+}
+
 /// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
 /// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
 /// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if

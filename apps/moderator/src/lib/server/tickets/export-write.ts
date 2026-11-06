@@ -1,0 +1,39 @@
+import { fail, type RequestEvent } from '@sveltejs/kit';
+import { requiresGrant } from '../access';
+import type { QueueResult } from '../personal-data-export.service';
+import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+
+export const ALREADY_QUEUED = 'An export for this account is already queued or building.';
+
+export type ExportActionDeps = TicketActionDeps & {
+  queue: (input: { userId: number; requestedById: number }) => Promise<QueueResult>;
+};
+
+/**
+ * Queueing a personal-data export from a ticket's account panel. The account is the ticket's, never
+ * the form's (`checkTicketTarget`). The build emails the moderator who queued it; nothing reaches
+ * the account owner from here.
+ */
+export function createTicketExportActions(deps: ExportActionDeps) {
+  return {
+    accountQueueDataExport: requiresGrant(
+      'user.personalDataExport.queue',
+      async (event: RequestEvent) => {
+        const ok = await checkTicketTarget(deps.linkedUser, event);
+        if (ok.refused) return ok.refused;
+        const result = await deps.queue({
+          userId: ok.userId,
+          requestedById: event.locals.user.id,
+        });
+        if (result.status === 'already-queued') return fail(409, { error: ALREADY_QUEUED });
+        if (result.status === 'no-user') return fail(404, { error: 'No such account.' });
+        return addTicketNote(
+          deps.note,
+          event,
+          ok.ticketId,
+          `Queued personal data export #${result.id} for user ${ok.userId}`
+        );
+      }
+    ),
+  };
+}

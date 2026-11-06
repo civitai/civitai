@@ -4487,6 +4487,41 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type PersonalDataExport = {
+  id: Generated<number>;
+  userId: number;
+  requestedById: number;
+  /**
+   * queued | building | built | held | failed | released
+   */
+  status: Generated<string>;
+  /**
+   * How internal moderator notes are exported: text-redacted-separate-file | count
+   */
+  modNotesMode: Generated<string>;
+  /**
+   * Neutral codes for the holds found when the archive was built; re-checked at release.
+   */
+  holdReasons: Generated<string[]>;
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  /**
+   * Per-source row counts and notes: what the archive's manifest.json holds, without data.
+   */
+  manifest: unknown | null;
+  error: string | null;
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  startedAt: Timestamp | null;
+  builtAt: Timestamp | null;
+  /**
+   * When the requester was emailed the link.
+   */
+  sentAt: Timestamp | null;
+  linkExpiresAt: Timestamp | null;
+  releasedAt: Timestamp | null;
+  releasedById: number | null;
+};
 export type Placement = {
   id: Generated<number>;
   surface: string;
@@ -6740,6 +6775,7 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  PersonalDataExport: PersonalDataExport;
   Placement: Placement;
   PlacementSpace: PlacementSpace;
   PlacementSuspension: PlacementSuspension;

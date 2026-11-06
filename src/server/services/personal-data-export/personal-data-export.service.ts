@@ -1,0 +1,560 @@
+import { Prisma } from '@prisma/client';
+import { env } from '~/env/server';
+import { clickhouse } from '~/server/clickhouse/client';
+import { dbWrite } from '~/server/db/client';
+import { pgDbReadLong } from '~/server/db/pgDb';
+import {
+  personalDataExportBuiltEmail,
+  personalDataExportReadyEmail,
+} from '~/server/email/templates/personalDataExport.email';
+import { logToAxiom } from '~/server/logging/client';
+import { accountHoldSql, getAccountLegalHold } from '~/server/services/legal-hold.service';
+import { getServerStripe } from '~/server/utils/get-server-stripe';
+import {
+  RELEASE_WINDOW_SECONDS,
+  exportObjectKey,
+  getExportBucket,
+  presignDownload,
+  putSmallObject,
+  streamArchiveToBucket,
+  type ExportBucket,
+} from './archive';
+import { redactNoteText } from './column-policy';
+import { README_LINK_TEXT, fillCoverNote } from './cover-note';
+import { csvLine, type Manifest, type ManifestFile } from './output';
+import { exportClickhouse, type ClickhouseReader } from './sources/clickhouse';
+import { exportWorkflows, type WorkflowCollection } from './sources/mongo';
+import { IMAGE_SAFETY_CONDITION, exportPostgres, type PgNote } from './sources/postgres';
+import { exportStripe, type StripeReader } from './sources/stripe';
+
+export const EXPORT_STATUSES = [
+  'queued',
+  'building',
+  'built',
+  'held',
+  'failed',
+  'released',
+] as const;
+export type ExportStatus = (typeof EXPORT_STATUSES)[number];
+export const MOD_NOTES_MODES = ['text-redacted-separate-file', 'count'] as const;
+export type ModNotesMode = (typeof MOD_NOTES_MODES)[number];
+
+/** Attempts before an export is marked failed. Each attempt writes a new object key. */
+export const MAX_ATTEMPTS = 3;
+/** A building row older than this was abandoned by a crashed run: it is retried or failed. */
+export const STALE_BUILD_HOURS = 6;
+
+const LOG = 'personal-data-export';
+
+export type ExportRow = {
+  id: number;
+  userId: number;
+  requestedById: number;
+  status: ExportStatus;
+  modNotesMode: ModNotesMode;
+  attempts: number;
+  archiveKey: string | null;
+  builtAt: Date | null;
+};
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try {
+    return JSON.stringify(e) ?? String(e);
+  } catch {
+    return String(e);
+  }
+}
+
+/**
+ * Who an export's link goes to, and the only place that decides it.
+ *
+ * - `built`: the staff member who queued it. Never the account owner: nothing reaches the owner
+ *   without a person releasing it.
+ * - `release`: the account owner's registered email, read fresh, and only that. Never a ticket's
+ *   address, never the requester.
+ */
+export function exportRecipient(
+  stage: 'built' | 'release',
+  people: { requester: { email: string | null }; owner: { email: string | null } }
+): string | null {
+  const email = stage === 'built' ? people.requester.email : people.owner.email;
+  return email?.trim() || null;
+}
+
+/** Back to queued for another attempt, or failed once the attempts are used. */
+async function recordFailure(row: Pick<ExportRow, 'id' | 'attempts'>, error: string) {
+  const next: ExportStatus = row.attempts >= MAX_ATTEMPTS ? 'failed' : 'queued';
+  // `attempts` pins the attempt: a run recovered as stale must not touch a later attempt's row.
+  await dbWrite.$executeRaw`
+    UPDATE "PersonalDataExport" SET status = ${next}, error = ${error.slice(0, 2000)}
+    WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
+  `;
+  return next;
+}
+
+/** Builds abandoned mid-run (a crash, an eviction) go back to queued or to failed. */
+export async function recoverStaleExports() {
+  const stale = await dbWrite.$queryRaw<{ id: number; attempts: number }[]>`
+    SELECT id, attempts FROM "PersonalDataExport"
+    WHERE status = 'building'
+      AND "startedAt" < ${new Date(Date.now() - STALE_BUILD_HOURS * 60 * 60 * 1000)}
+  `;
+  for (const row of stale) await recordFailure(row, 'build abandoned');
+  return stale.length;
+}
+
+/** Takes the oldest queued export, marking it building. Safe under concurrent runs. */
+export async function claimNextExport(): Promise<ExportRow | null> {
+  const [row] = await dbWrite.$queryRaw<ExportRow[]>`
+    UPDATE "PersonalDataExport" SET status = 'building', "startedAt" = now(), attempts = attempts + 1
+    WHERE id = (
+      SELECT id FROM "PersonalDataExport" WHERE status = 'queued'
+      ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
+    )
+    RETURNING id, "userId", "requestedById", status, "modNotesMode", attempts, "archiveKey", "builtAt"
+  `;
+  return row ?? null;
+}
+
+/**
+ * The account's holds as neutral codes (`legs`, with `['unconfirmed']` when they cannot be read),
+ * and whether the hold marker view exists (`markerView`, for `accountHoldSql`). Beyond the
+ * account legal holds: `safety-content` when any image of theirs is one the archive leaves out
+ * (`IMAGE_SAFETY_CONDITION`), since an archive missing those must not reach the owner, who could
+ * tell what was left out by what is missing.
+ */
+export async function exportHoldReasons(
+  userId: number
+): Promise<{ legs: string[]; markerView: boolean }> {
+  try {
+    const hold = await getAccountLegalHold(userId);
+    const [safety] = await dbWrite.$queryRaw<{ present: unknown }[]>(
+      Prisma.sql`SELECT EXISTS (
+        SELECT 1 FROM "Image" WHERE "Image"."userId" = ${userId}::int AND ${Prisma.raw(
+        IMAGE_SAFETY_CONDITION
+      )}
+      ) AS present`
+    );
+    const legs: string[] = [...hold.legs];
+    if (safety?.present !== false) legs.push('safety-content');
+    return { legs, markerView: hold.markerView };
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `hold check failed: ${errorMessage(e)}`,
+    }).catch(() => undefined);
+    return { legs: ['unconfirmed'], markerView: true };
+  }
+}
+
+export type ExportDeps = {
+  bucket: ExportBucket;
+  workflows: WorkflowCollection;
+  clickhouse: ClickhouseReader;
+  stripe: StripeReader | undefined;
+};
+
+/** Everything an export reads that is not the database itself, or why the job cannot run. */
+export async function resolveExportDeps(): Promise<ExportDeps | { missing: string[] }> {
+  const missing: string[] = [];
+  const bucket = getExportBucket();
+  if (!bucket) missing.push('PERSONAL_DATA_EXPORT_{ENDPOINT,REGION,BUCKET,KEY,SECRET}');
+  if (!env.PERSONAL_DATA_EXPORT_MONGO_URL) missing.push('PERSONAL_DATA_EXPORT_MONGO_URL');
+  if (!clickhouse) missing.push('ClickHouse');
+  if (missing.length || !bucket || !clickhouse) return { missing };
+  const { getWorkflowCollection } = await import('./mongo-client');
+  return {
+    bucket,
+    workflows: await getWorkflowCollection(env.PERSONAL_DATA_EXPORT_MONGO_URL),
+    clickhouse: clickhouse as unknown as ClickhouseReader,
+    stripe: (await getServerStripe()) as unknown as StripeReader | undefined,
+  };
+}
+
+const EXCLUDED_CATEGORIES: Manifest['excluded'] = [
+  {
+    category: 'Credentials',
+    reason:
+      'Passwords, session and sign-in tokens, API keys and similar secrets are not information about you, and returning them would be a security risk.',
+  },
+  {
+    category: "Other people's personal data",
+    reason:
+      'Other users appear by user id only. Who reported content, and staff names and ids, are not included.',
+  },
+  {
+    category: 'Safety system details',
+    reason:
+      'Scores, thresholds, matched terms and rule names from automated checks are not included; where an automated check affected you, the category and time are.',
+  },
+  {
+    category: 'Removed content',
+    reason:
+      'Content removed for violating the Terms of Service is listed as "removed" instead of a link. Some content removed for safety reasons is not listed.',
+  },
+  {
+    category: 'Structured settings and metadata',
+    reason:
+      'Some structured fields mix your data with system data and are left out; ask us and we will provide what is yours.',
+  },
+  {
+    category: 'Support tickets',
+    reason:
+      'Support conversations are held in our help desk and are provided separately on request.',
+  },
+];
+
+function csvNotes(notes: PgNote[]) {
+  return (
+    csvLine(['table', 'column', 'rowId', 'createdAt', 'note']) +
+    notes.map((n) => csvLine([n.table, n.column, n.rowId, n.createdAt, n.text])).join('')
+  );
+}
+
+async function staffForRedaction() {
+  const rows = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+    SELECT id, username FROM "User" WHERE "isModerator" = true
+  `;
+  return {
+    ids: rows.map((r) => r.id),
+    usernames: rows.map((r) => r.username).filter((u): u is string => !!u),
+  };
+}
+
+/**
+ * Builds one claimed export: the archive streamed into the bucket, the notes file beside it, the row
+ * marked built (or held) only after the upload has completed, then the requester emailed a link.
+ */
+export async function buildExport(row: ExportRow, deps: ExportDeps) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: row.userId },
+    select: { id: true, username: true, customerId: true },
+  });
+  if (!user) {
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport" SET status = 'failed', error = 'no such user'
+      WHERE id = ${row.id} AND status = 'building'
+    `;
+    return 'failed' as const;
+  }
+
+  const takenAt = new Date();
+  const archiveKey = exportObjectKey(row.id, 'archive');
+  const notes: PgNote[] = [];
+  const errors: { source: string; message: string }[] = [];
+  const onError = (source: string, e: unknown) => errors.push({ source, message: errorMessage(e) });
+  const files: ManifestFile[] = [];
+  let manifest: Manifest | undefined;
+  let modNotesKey: string | null = null;
+  let noteCount = 0;
+
+  try {
+    await streamArchiveToBucket(deps.bucket, archiveKey, async (writer) => {
+      await writer.addFile(
+        'README.txt',
+        fillCoverNote({ username: user.username ?? 'there', link: README_LINK_TEXT, takenAt })
+      );
+
+      const pg = await exportPostgres({
+        userId: user.id,
+        writer,
+        connect: () => pgDbReadLong.connect(),
+        onNote: (n) => notes.push(n),
+        onError,
+      });
+      files.push(...pg.files);
+      noteCount = pg.noteCount;
+
+      const ch = await exportClickhouse({ userId: user.id, writer, ch: deps.clickhouse, onError });
+      files.push(...ch.files);
+
+      files.push(await exportWorkflows({ userId: user.id, writer, collection: deps.workflows }));
+      files.push(
+        ...(await exportStripe({
+          customerId: user.customerId,
+          writer,
+          stripe: deps.stripe,
+          onError,
+        }))
+      );
+
+      manifest = {
+        exportId: row.id,
+        generatedAt: takenAt.toISOString(),
+        files,
+        activityCounts: ch.counts,
+        excluded: EXCLUDED_CATEGORIES,
+        lines: [
+          'Activity data (page views, impressions, searches and similar events) is summarized as counts by type in activityCounts. The raw events can be provided on request.',
+          'Files with status "unavailable" could not be read when this archive was made; ask us and we will provide them.',
+          'Files with status "partial" hit a size or time limit; ask us for the rest.',
+          'A table with no records for you has rows: 0 and no file.',
+        ],
+      };
+      await writer.addFile('manifest.json', JSON.stringify(manifest, null, 2));
+    });
+
+    if (row.modNotesMode === 'text-redacted-separate-file' && notes.length) {
+      const staff = await staffForRedaction();
+      modNotesKey = exportObjectKey(row.id, 'notes');
+      await putSmallObject(
+        deps.bucket,
+        modNotesKey,
+        csvNotes(notes.map((n) => ({ ...n, text: redactNoteText(n.text, staff) }))),
+        'text/csv'
+      );
+    }
+  } catch (e) {
+    const status = await recordFailure(row, errorMessage(e));
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `build failed: ${errorMessage(e)}`,
+      details: { exportId: row.id, attempt: row.attempts, next: status },
+    }).catch(() => undefined);
+    return status;
+  }
+
+  const { legs: holdReasons } = await exportHoldReasons(user.id);
+  // A hold that could not be READ is not a hold: retry the build rather than park it as held.
+  if (holdReasons.includes('unconfirmed')) return recordFailure(row, 'hold check failed');
+  const status: ExportStatus = holdReasons.length ? 'held' : 'built';
+  // Staff-only: the row's copy. The archive's manifest carries no note count.
+  const summary = manifest && {
+    files: manifest.files.map(({ file, rows, status }) => ({ file, rows, status })),
+    internalNotes: noteCount,
+    errors,
+  };
+  // Only now, after the upload has completed, does the row say the archive exists. A row that is no
+  // longer building at this attempt was recovered as stale while this ran (and maybe claimed again):
+  // its record is not ours to write, and the requester is not emailed about an archive it does not name.
+  const recorded = await dbWrite.$executeRaw`
+    UPDATE "PersonalDataExport"
+    SET status = ${status}, "archiveKey" = ${archiveKey}, "modNotesKey" = ${modNotesKey},
+        "holdReasons" = ${holdReasons}::text[], manifest = ${JSON.stringify(summary)}::jsonb,
+        "builtAt" = ${takenAt}, error = NULL
+    WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
+  `;
+  if (recorded !== 1) {
+    logToAxiom({
+      type: 'warning',
+      name: LOG,
+      message: 'built after the row stopped building; not recorded or emailed',
+      details: { exportId: row.id },
+    }).catch(() => undefined);
+    return 'failed' as const;
+  }
+  if (errors.length)
+    logToAxiom({
+      type: 'warning',
+      name: LOG,
+      message: 'built with unavailable sources',
+      details: { exportId: row.id, errors },
+    }).catch(() => undefined);
+
+  await emailRequester(
+    row,
+    user,
+    { archiveKey, modNotesKey, held: status === 'held' },
+    deps.bucket
+  );
+  return status;
+}
+
+async function emailRequester(
+  row: ExportRow,
+  user: { id: number; username: string | null },
+  built: { archiveKey: string; modNotesKey: string | null; held: boolean },
+  bucket: ExportBucket
+) {
+  try {
+    const requester = await dbWrite.user.findUnique({
+      where: { id: row.requestedById },
+      select: { email: true },
+    });
+    const to = exportRecipient('built', {
+      requester: { email: requester?.email ?? null },
+      owner: { email: null },
+    });
+    if (!to) throw new Error('the requester has no email');
+    const archive = await presignDownload(bucket, built.archiveKey, `civitai-data-${row.id}.zip`);
+    const notes = built.modNotesKey
+      ? await presignDownload(bucket, built.modNotesKey, `internal-notes-${row.id}.csv`)
+      : null;
+    await personalDataExportBuiltEmail.send({
+      to,
+      exportId: row.id,
+      userId: user.id,
+      username: user.username,
+      held: built.held,
+      archiveLink: archive.url,
+      notesLink: notes?.url ?? null,
+      expiresAt: archive.expiresAt,
+    });
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport" SET "sentAt" = now(), "linkExpiresAt" = ${archive.expiresAt}
+      WHERE id = ${row.id}
+    `;
+  } catch (e) {
+    // The archive is built and recorded; only the notice failed. Say so on the row.
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport" SET error = ${`built; requester email failed: ${errorMessage(e)}`}
+      WHERE id = ${row.id}
+    `;
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `requester email failed: ${errorMessage(e)}`,
+      details: { exportId: row.id },
+    }).catch(() => undefined);
+  }
+}
+
+export type ReleaseResult =
+  | { ok: true; userId: number; expiresAt: Date }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'not-releasable'
+        | 'expired'
+        | 'held'
+        | 'unconfirmed'
+        | 'no-email'
+        | 'unconfigured';
+    };
+
+/**
+ * Sends the account owner the cover note and a fresh 48-hour link. Re-checks every hold and reads
+ * the owner's email again at the moment of sending; the archive's own build-time check is not
+ * trusted for this. The internal notes file is never sent from here.
+ */
+export async function releaseExport({
+  exportId,
+  actorId,
+  bucket = getExportBucket(),
+  now = new Date(),
+}: {
+  exportId: number;
+  actorId: number;
+  bucket?: ExportBucket | null;
+  now?: Date;
+}): Promise<ReleaseResult> {
+  if (!bucket) return { ok: false, reason: 'unconfigured' };
+  const row = await dbWrite.personalDataExport.findUnique({
+    where: { id: exportId },
+    select: { id: true, userId: true, status: true, archiveKey: true, builtAt: true },
+  });
+  if (!row) return { ok: false, reason: 'not-found' };
+  // A held export is never released here, even once its hold ends: Legal releases those by hand.
+  if (row.status !== 'built' || !row.archiveKey || !row.builtAt)
+    return { ok: false, reason: 'not-releasable' };
+  if (now.getTime() - row.builtAt.getTime() > RELEASE_WINDOW_SECONDS * 1000)
+    return { ok: false, reason: 'expired' };
+
+  const { legs: holdReasons, markerView } = await exportHoldReasons(row.userId);
+  // A hold that could not be READ is not a hold: refuse this press, write nothing, let it be retried.
+  if (holdReasons.includes('unconfirmed')) return { ok: false, reason: 'unconfirmed' };
+  if (holdReasons.length) {
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport" SET status = 'held', "holdReasons" = ${holdReasons}::text[]
+      WHERE id = ${row.id} AND status = 'built'
+    `;
+    return { ok: false, reason: 'held' };
+  }
+
+  const owner = await dbWrite.user.findUnique({
+    where: { id: row.userId },
+    select: { email: true, username: true, deletedAt: true },
+  });
+  const to =
+    owner && !owner.deletedAt
+      ? exportRecipient('release', { requester: { email: null }, owner: { email: owner.email } })
+      : null;
+  if (!to) return { ok: false, reason: 'no-email' };
+
+  // Claim the release before sending, so two presses cannot both send.
+  const claimed = await dbWrite.$executeRaw`
+    UPDATE "PersonalDataExport"
+    SET status = 'released', "releasedAt" = ${now}, "releasedById" = ${actorId}, "holdReasons" = '{}'
+    WHERE id = ${row.id} AND status = 'built'
+      AND NOT ${accountHoldSql(Prisma.sql`${row.userId}::int`, markerView)}
+      AND NOT EXISTS (
+        SELECT 1 FROM "Image" WHERE "Image"."userId" = ${row.userId}::int
+          AND ${Prisma.raw(IMAGE_SAFETY_CONDITION)}
+      )
+  `;
+  // Zero rows: another press claimed it first, or a hold landed after the check above.
+  if (claimed !== 1) return { ok: false, reason: 'not-releasable' };
+
+  let link: { url: string; expiresAt: Date };
+  try {
+    link = await presignDownload(bucket, row.archiveKey, `civitai-data.zip`);
+    await personalDataExportReadyEmail.send({
+      to,
+      username: owner?.username ?? 'there',
+      link: link.url,
+      takenAt: row.builtAt,
+    });
+  } catch (e) {
+    // Not sent: put it back so it can be released again.
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport"
+      SET status = 'built', "releasedAt" = NULL, "releasedById" = NULL,
+          error = ${`release email failed: ${errorMessage(e)}`}
+      WHERE id = ${row.id} AND status = 'released'
+    `;
+    throw e;
+  }
+  // Sent. A failure from here on must not put the row back, or a second press would send again.
+  await dbWrite.$executeRaw`
+    UPDATE "PersonalDataExport" SET "linkExpiresAt" = ${link.expiresAt} WHERE id = ${row.id}
+  `.catch((e: unknown) =>
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `release recorded without expiry: ${errorMessage(e)}`,
+    }).catch(() => undefined)
+  );
+  return { ok: true, userId: row.userId, expiresAt: link.expiresAt };
+}
+
+/** One job tick: recover abandoned builds, then build queued exports one at a time. */
+export async function runPersonalDataExports({ maxPerRun = 1 }: { maxPerRun?: number } = {}) {
+  await recoverStaleExports();
+  const deps = await resolveExportDeps();
+  if ('missing' in deps) {
+    const queued = await dbWrite.$queryRaw<{ n: number }[]>(
+      Prisma.sql`SELECT count(*)::int AS n FROM "PersonalDataExport" WHERE status = 'queued'`
+    );
+    if (queued[0]?.n)
+      logToAxiom({
+        type: 'error',
+        name: LOG,
+        message: `not configured, ${queued[0].n} export(s) waiting: ${deps.missing.join(', ')}`,
+      }).catch(() => undefined);
+    return { built: 0, skipped: 'unconfigured' as const };
+  }
+  let built = 0;
+  for (let i = 0; i < maxPerRun; i++) {
+    const row = await claimNextExport();
+    if (!row) break;
+    try {
+      await buildExport(row, deps);
+    } catch (e) {
+      // Anything buildExport did not handle itself: never leave the row building until it goes stale.
+      await recordFailure(row, errorMessage(e)).catch(() => undefined);
+      logToAxiom({
+        type: 'error',
+        name: LOG,
+        message: errorMessage(e),
+        details: { exportId: row.id },
+      }).catch(() => undefined);
+    }
+    built++;
+  }
+  return { built };
+}
