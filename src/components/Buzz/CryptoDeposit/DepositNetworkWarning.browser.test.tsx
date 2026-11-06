@@ -28,8 +28,27 @@ describe('DepositNetworkWarning', () => {
     await expect.element(page.getByText('USDT · Tron')).toBeInTheDocument();
   });
 
+  it.each([
+    ['usdcsol', 'USDC', 'Solana'],
+    ['usdcerc20', 'USDC', 'Ethereum'],
+    ['usdterc20', 'USDT', 'Ethereum'],
+    ['usdtbsc', 'USDT', 'BNB Chain'],
+    ['usdcmatic', 'USDC', 'Polygon'],
+    ['usdtmatic', 'USDT', 'Polygon'],
+    ['usdcarb', 'USDC', 'Arbitrum'],
+    ['usdtarb', 'USDT', 'Arbitrum'],
+  ])('names the right token and network for %s', async (code, token, network) => {
+    renderWithProviders(<DepositNetworkWarning code={code} />);
+    await expect
+      .element(page.getByText(`Send only ${token} on the ${network} network. ` + TAIL))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('deposit-network-badge'))
+      .toHaveTextContent(`${token} · ${network}`);
+  });
+
   it('places an unmapped code from the live ticker and known network', async () => {
-    renderWithProviders(<DepositNetworkWarning code="ltc" ticker="ltc" network="ltc" />);
+    renderWithProviders(<DepositNetworkWarning code="ltc2" ticker="ltc" network="ltc" />);
     await expect
       .element(page.getByText('Send only LTC on the Litecoin network. ' + TAIL))
       .toBeInTheDocument();
@@ -40,6 +59,17 @@ describe('DepositNetworkWarning', () => {
     await expect
       .element(page.getByText('Send only FOOCOINX on the network it belongs to. ' + TAIL))
       .toBeInTheDocument();
-    await expect.element(page.getByText(/ · /)).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('deposit-network-badge')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['unmapped network', { ticker: 'foo', network: 'unknownnet' }],
+    ['no ticker', { network: 'ltc' }],
+  ])('falls back to the raw code with %s', async (_label, extra) => {
+    renderWithProviders(<DepositNetworkWarning code="foocoinx" {...extra} />);
+    await expect
+      .element(page.getByText('Send only FOOCOINX on the network it belongs to. ' + TAIL))
+      .toBeInTheDocument();
+    await expect.element(page.getByTestId('deposit-network-badge')).not.toBeInTheDocument();
   });
 });

@@ -31,11 +31,10 @@ export function getDepositTokenNetwork({
   ticker?: string | null;
   network?: string | null;
 }): DepositTokenNetwork | null {
-  const known = PAY_CURRENCY_TOKEN_NETWORK[code.toLowerCase()];
-  if (known) return known;
+  // NowPayments' own ticker/network wins; the static map covers the window before the list loads.
   const networkName = network ? getKnownNetworkDisplayName(network) : undefined;
   if (ticker && networkName) return { token: ticker.toUpperCase(), network: networkName };
-  return null;
+  return PAY_CURRENCY_TOKEN_NETWORK[code.toLowerCase()] ?? null;
 }
 
 const TAIL =
@@ -60,7 +59,15 @@ export function DepositNetworkWarning({
       />
       <div>
         {resolved && (
-          <Badge size="sm" variant="light" color="yellow" radius="sm" fw={800} mb={4}>
+          <Badge
+            data-testid="deposit-network-badge"
+            size="sm"
+            variant="light"
+            color="yellow"
+            radius="sm"
+            fw={800}
+            mb={4}
+          >
             {resolved.token} · {resolved.network}
           </Badge>
         )}
