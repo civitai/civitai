@@ -136,7 +136,7 @@
     </div>
   {:else if kind}
     <input type="hidden" name="kind" value={kind} />
-    <div class="grid gap-5 md:grid-cols-[minmax(0,1fr)_16rem]">
+    <div class="@container"><div class="grid gap-5 @3xl:grid-cols-[minmax(0,1fr)_16rem]">
       <div class="flex min-w-0 flex-col gap-4">
         {#if seed}
           <div class="flex items-center gap-3 rounded-lg border border-dark-4 bg-dark-7 p-3">
@@ -251,12 +251,12 @@
         </div>
       </div>
 
-      <aside class="flex flex-col gap-2 md:sticky md:top-0 md:self-start">
+      <aside class="flex flex-col gap-2 @3xl:sticky @3xl:top-0 @3xl:self-start">
         <p class="text-xs font-semibold uppercase tracking-wide text-dark-2">How players see it</p>
         <PlayerCard {card} variant="deal" />
         {#if description.trim()}<p class="text-xs text-dark-2">{description.trim()}</p>{/if}
       </aside>
-    </div>
+    </div></div>
 
     <div class="sticky bottom-0 -mx-5 -mb-5 flex flex-col gap-2 border-t border-dark-4 bg-popover px-5 py-3">
       {#each notices as notice (notice)}

@@ -4,18 +4,21 @@
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
   import ItemThumb from './ItemThumb.svelte';
-  import { DEAL_LABEL, KIND_ONE, humanize, titleCase, type CardModel } from './shop-view';
+  import { DEAL_LABEL, secondaryLine, type CardModel } from './shop-view';
 
   let { card, variant = 'compact' }: { card: CardModel; variant?: 'deal' | 'compact' } = $props();
 
   const detail = $derived(
-    card.kind === 'buzz_pack'
-      ? `${num(card.buzz ?? 0)} Buzz`
-      : card.kind === 'membership'
-      ? `${titleCase(card.tier)} · 1 month`
-      : card.cosmeticType
-      ? humanize(card.cosmeticType)
-      : KIND_ONE.cosmetic
+    secondaryLine({
+      kind: card.kind,
+      name: card.name,
+      price: card.listPrice ?? card.price,
+      buzz: card.buzz,
+      tier: card.tier,
+      months: 1,
+      cosmeticId: null,
+      cosmeticType: card.cosmeticType,
+    })
   );
 </script>
 
@@ -37,7 +40,7 @@
   <div class="flex min-w-0 flex-1 flex-col justify-between gap-1">
     <div class="min-w-0">
       <p class="truncate text-sm font-medium text-white">{card.name}</p>
-      <p class="truncate text-xs text-dark-2">{detail}</p>
+      {#if detail}<p class="truncate text-xs text-dark-2">{detail}</p>{/if}
     </div>
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
       <span class="inline-flex items-center gap-1 font-semibold tabular-nums text-amber-300">

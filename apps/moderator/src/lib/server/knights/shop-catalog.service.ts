@@ -190,7 +190,10 @@ export async function listShopChanges({
   let query = db()
     .selectFrom('KnightsShopItemChange as ch')
     .innerJoin('KnightsShopItem as i', 'i.id', 'ch.itemId')
+    .leftJoin('Cosmetic as c', 'c.id', 'i.cosmeticId')
     .select([
+      'c.name as cosmeticName',
+      'c.type as cosmeticType',
       'ch.id',
       'ch.itemId',
       'i.name as itemName',

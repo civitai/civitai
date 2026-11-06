@@ -5,6 +5,8 @@ import {
   cosmeticMedia,
   filterItems,
   groupByKind,
+  nameplateGradient,
+  secondaryLine,
   previewDays,
   statusCounts,
   todayOf,
@@ -141,5 +143,54 @@ describe('previewDays', () => {
     const days = previewDays('2026-12-30', '2027-03-01');
     expect(days).toHaveLength(8);
     expect(days[7].value).toBe('2027-03-01');
+  });
+});
+
+describe('sticker and nameplate rendering', () => {
+  it('shows a sticker as an image and carries whether it moves', () => {
+    expect(
+      cosmeticMedia({
+        cosmeticType: 'Sticker',
+        cosmeticData: { url: 'abc', slug: 'x', uses: 100, animated: false },
+      })
+    ).toEqual({ url: 'abc', type: undefined, animated: false });
+  });
+
+  it('turns a gradient nameplate into CSS and refuses other variants and non-hex colours', () => {
+    const gradient = { from: '#ff90b6', to: '#ffa1c1', deg: 180 };
+    expect(
+      nameplateGradient({
+        cosmeticType: 'NamePlate',
+        cosmeticData: { variant: 'gradient', gradient },
+      })
+    ).toBe('linear-gradient(180deg, #ff90b6, #ffa1c1)');
+    expect(
+      nameplateGradient({ cosmeticType: 'NamePlate', cosmeticData: { variant: 'solid' } })
+    ).toBeNull();
+    expect(
+      nameplateGradient({
+        cosmeticType: 'NamePlate',
+        cosmeticData: { variant: 'gradient', gradient: { from: 'red);x', to: '#fff' } },
+      })
+    ).toBeNull();
+    expect(
+      nameplateGradient({ cosmeticType: 'Badge', cosmeticData: { variant: 'gradient', gradient } })
+    ).toBeNull();
+  });
+});
+
+describe('secondaryLine', () => {
+  const pack = (name: string) => row(1, { name, price: 1000, buzz: 50 });
+
+  it("does not repeat a Buzz pack's name and gives its gold rate instead", () => {
+    expect(secondaryLine(pack('50 Buzz'))).toBe('20 gold / Buzz');
+    expect(secondaryLine(pack('Starter'))).toBe('50 Buzz · 20 gold / Buzz');
+  });
+
+  it("keeps a membership's tier and length and a cosmetic's type", () => {
+    expect(secondaryLine(row(2, { kind: 'membership', tier: 'bronze', months: 1 }))).toBe(
+      'Bronze · 1 month'
+    );
+    expect(secondaryLine(row(3, { kind: 'cosmetic', cosmeticType: 'Sticker' }))).toBe('Sticker');
   });
 });

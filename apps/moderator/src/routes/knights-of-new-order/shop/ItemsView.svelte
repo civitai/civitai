@@ -164,14 +164,14 @@
         {KIND_GROUP[group.kind as Kind]}
         <span class="font-normal">· {group.items.length}</span>
       </h3>
-      <Table>
+      <Table class="table-fixed">
         <TableHeader>
           <TableRow>
             <TableHead class="w-14"><span class="sr-only">Picture</span></TableHead>
             <TableHead>Item</TableHead>
-            <TableHead class="text-right">Price</TableHead>
-            <TableHead class="hidden md:table-cell">Availability</TableHead>
-            <TableHead class="hidden md:table-cell">Open to</TableHead>
+            <TableHead class="w-28 text-right">Price</TableHead>
+            <TableHead class="hidden w-64 md:table-cell">Availability</TableHead>
+            <TableHead class="hidden w-28 md:table-cell">Open to</TableHead>
             <TableHead class="w-28"><span class="sr-only">Actions</span></TableHead>
           </TableRow>
         </TableHeader>

@@ -9,6 +9,8 @@ export type AuditRow = {
   createdAt: Date | string;
   moderatorId: number | null;
   moderatorUsername: string | null;
+  cosmeticName?: string | null;
+  cosmeticType?: string | null;
 };
 
 export type Chip = { field: string; from: string | null; to: string };
@@ -40,7 +42,10 @@ function show(field: string, value: unknown): string {
 const label = (field: string) => FIELD_LABEL[field] ?? field;
 
 /** On create every column is "set from null"; only the ones that say something about the item are worth a chip. */
-function createChips(changes: Record<string, FieldChange>): Chip[] {
+function createChips(
+  changes: Record<string, FieldChange>,
+  cosmetic: { name: string | null; type: string | null }
+): Chip[] {
   const chips: Chip[] = [];
   const set = (field: string, to: unknown) =>
     chips.push({ field: label(field), from: null, to: show(field, to) });
@@ -49,6 +54,14 @@ function createChips(changes: Record<string, FieldChange>): Chip[] {
     if (to === null || to === undefined || to === '' || to === false) continue;
     if (field === 'sortOrder' && to === 0) continue;
     if (field === 'rotating') chips.push({ field: 'rotating', from: null, to: 'on' });
+    else if (field === 'cosmeticId')
+      chips.push({
+        field: 'cosmetic',
+        from: null,
+        to: cosmetic.name
+          ? `${cosmetic.name}${cosmetic.type ? ` (${cosmetic.type})` : ''}`
+          : `#${String(to)}`,
+      });
     else set(field, to);
   }
   return chips;
@@ -57,10 +70,18 @@ function createChips(changes: Record<string, FieldChange>): Chip[] {
 export function describeChange(change: {
   action: string;
   changes: Record<string, FieldChange>;
+  cosmeticName?: string | null;
+  cosmeticType?: string | null;
 }): Described {
   switch (change.action) {
     case 'create':
-      return { verb: 'added', chips: createChips(change.changes) };
+      return {
+        verb: 'added',
+        chips: createChips(change.changes, {
+          name: change.cosmeticName ?? null,
+          type: change.cosmeticType ?? null,
+        }),
+      };
     case 'retire':
       return { verb: 'retired', chips: [] };
     case 'restore':

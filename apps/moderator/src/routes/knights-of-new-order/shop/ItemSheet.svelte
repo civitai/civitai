@@ -42,7 +42,7 @@
 >
   <Sheet.Content
     side="right"
-    class="overflow-y-auto p-5 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
+    class="overflow-y-auto p-5 data-[side=right]:w-full data-[side=right]:sm:max-w-4xl"
   >
     <Sheet.Header class="p-0">
       <Sheet.Title class="text-white">

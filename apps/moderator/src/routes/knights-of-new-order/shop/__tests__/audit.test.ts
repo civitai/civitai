@@ -49,6 +49,19 @@ describe('describeChange', () => {
     expect(chips.map((c) => `${c.field} ${c.to}`)).toEqual(['buzz 50', 'price 1000']);
   });
 
+  it('names the cosmetic on a create instead of its bare id, and falls back to the id when it is gone', () => {
+    const changes = { cosmeticId: { from: null, to: 3980 } };
+    expect(
+      describeChange({
+        action: 'create',
+        changes,
+        cosmeticName: 'Gay Pride',
+        cosmeticType: 'Sticker',
+      }).chips
+    ).toEqual([{ field: 'cosmetic', from: null, to: 'Gay Pride (Sticker)' }]);
+    expect(describeChange({ action: 'create', changes }).chips[0].to).toBe('#3980');
+  });
+
   it('has no chips for a retire or a restore', () => {
     for (const [action, verb] of [
       ['retire', 'retired'],

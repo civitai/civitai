@@ -6,7 +6,7 @@
   import { num } from '$lib/format';
   import AvailabilityBadge from './AvailabilityBadge.svelte';
   import ItemThumb from './ItemThumb.svelte';
-  import { availability, rankLabel, whatItIs, type Kind, type Today } from './shop-view';
+  import { availability, rankLabel, secondaryLine, type Kind, type Today } from './shop-view';
   import type { ShopItemRow } from '$lib/server/knights/shop-catalog.service';
 
   let {
@@ -24,6 +24,7 @@
   } = $props();
 
   const status = $derived(availability(item, today));
+  const secondary = $derived(secondaryLine(item));
 </script>
 
 <TableRow class={item.active ? '' : 'opacity-70'}>
@@ -38,15 +39,15 @@
   </TableCell>
   <TableCell>
     <div class="flex min-w-0 flex-col gap-0.5">
-      <div class="flex items-baseline gap-2">
+      <div class="flex min-w-0 items-baseline gap-2">
         <button
           type="button"
-          class="truncate text-left font-medium text-white hover:underline"
+          class="min-w-0 truncate text-left font-medium text-white hover:underline"
           onclick={onedit}>{item.name}</button
         >
-        <span class="text-xs text-dark-2">#{item.id}</span>
+        <span class="shrink-0 text-xs text-dark-2">#{item.id}</span>
       </div>
-      <span class="text-xs text-dark-2">{whatItIs(item)}</span>
+      {#if secondary}<span class="truncate text-xs text-dark-2">{secondary}</span>{/if}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 md:hidden">
         <AvailabilityBadge availability={status} />
         {#if item.minRank}

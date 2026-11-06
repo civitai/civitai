@@ -369,6 +369,19 @@ describe('stockView', () => {
   });
 });
 
+describe('listShopChanges cosmetics', () => {
+  it('names the cosmetic of each change from the item row, in the same query', async () => {
+    await db.query(`INSERT INTO "Cosmetic" ("id","name","type") VALUES (7,'Gay Pride','Sticker')`);
+    const created = await createShopItem(
+      { ...newShopItemSchema.parse({ ...valid, kind: 'cosmetic', cosmeticId: '7' }) },
+      MOD
+    );
+    expect(created.ok).toBe(true);
+    const { changes } = await listShopChanges({});
+    expect(changes[0]).toMatchObject({ cosmeticName: 'Gay Pride', cosmeticType: 'Sticker' });
+  });
+});
+
 describe('listShopChanges', () => {
   it('pages newest first by id and keeps the item filter across pages', async () => {
     const pack = await seedItem('buzz-50');

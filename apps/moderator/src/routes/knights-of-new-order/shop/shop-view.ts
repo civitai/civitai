@@ -23,7 +23,7 @@ export const NOT_SOLD_REASON = 'The shop sells memberships one month at a time.'
 export const HIDDEN_REASON = 'The cosmetic no longer exists, so players do not see this item.';
 export const DEAL_LABEL = `-${DEAL_PERCENT}%`;
 
-const PREVIEWABLE = new Set(['Badge', 'ProfileDecoration', 'ProfileBackground']);
+const PREVIEWABLE = new Set(['Badge', 'ProfileDecoration', 'ProfileBackground', 'Sticker']);
 
 export const isKind = (value: string): value is Kind => value in KIND_GROUP;
 export const humanize = (text: string) => text.replace(/([a-z])([A-Z])/g, '$1 $2');
@@ -31,27 +31,76 @@ export const titleCase = (text: string | null) =>
   text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 export const rankLabel = (minRank: string | null) => (minRank ? `${minRank}+` : 'Anyone');
 
-export type Media = { url: string; type: 'image' | 'video' | 'audio' | undefined };
+export type Media = {
+  url: string;
+  type: 'image' | 'video' | 'audio' | undefined;
+  /** A sticker says whether it moves; undefined leaves the CDN default. */
+  animated: boolean | undefined;
+};
 export type Thumb = { cosmeticType: string | null; cosmeticData: unknown };
 
 /** The image a cosmetic can show; null for a nameplate or frame, which the row names by type instead. */
 export function cosmeticMedia(item: Thumb): Media | null {
   if (!item.cosmeticType || !PREVIEWABLE.has(item.cosmeticType)) return null;
-  const data = item.cosmeticData as { url?: string | null; type?: Media['type'] | null } | null;
-  return data?.url ? { url: data.url, type: data.type ?? undefined } : null;
+  const data = item.cosmeticData as {
+    url?: string | null;
+    type?: Media['type'] | null;
+    animated?: boolean | null;
+  } | null;
+  return data?.url
+    ? { url: data.url, type: data.type ?? undefined, animated: data.animated ?? undefined }
+    : null;
 }
 
-type Describable = Pick<
-  ShopItemRow,
-  'kind' | 'buzz' | 'tier' | 'months' | 'cosmeticId' | 'cosmeticName' | 'cosmeticType'
->;
+const COLOR = /^#[0-9a-f]{3,8}$/i;
 
-/** What the item is, in a few words: the second line under its name. */
+/** A nameplate's gradient as CSS; null for another variant or anything that is not a plain hex pair. */
+export function nameplateGradient(item: Thumb): string | null {
+  if (item.cosmeticType !== 'NamePlate') return null;
+  const data = item.cosmeticData as {
+    variant?: string;
+    gradient?: { from?: string; to?: string; deg?: number };
+  } | null;
+  const gradient = data?.gradient;
+  if (data?.variant !== 'gradient' || !gradient?.from || !gradient.to) return null;
+  if (!COLOR.test(gradient.from) || !COLOR.test(gradient.to)) return null;
+  const deg =
+    typeof gradient.deg === 'number' && Number.isFinite(gradient.deg) ? gradient.deg : 180;
+  return `linear-gradient(${deg}deg, ${gradient.from}, ${gradient.to})`;
+}
+
+type Describable = {
+  kind: string;
+  name: string;
+  price: number | null;
+  buzz: number | null;
+  tier: string | null;
+  months: number | null;
+  cosmeticId: number | null;
+  cosmeticType: string | null;
+};
+
+/** What the item is, in a few words. */
 export function whatItIs(item: Describable) {
   if (item.kind === 'buzz_pack') return `${(item.buzz ?? 0).toLocaleString()} Buzz`;
   if (item.kind === 'membership')
     return `${titleCase(item.tier)} · ${item.months === 1 ? '1 month' : `${item.months} months`}`;
   return item.cosmeticType ? humanize(item.cosmeticType) : `Cosmetic #${item.cosmeticId}`;
+}
+
+export const buzzRate = (price: number, buzz: number) =>
+  `${Number((price / buzz).toFixed(2)).toLocaleString()} gold / Buzz`;
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** The line under an item's name: what it is, unless the name already says so; a Buzz pack adds its rate. */
+export function secondaryLine(item: Describable): string | null {
+  const what = whatItIs(item);
+  if (item.kind === 'buzz_pack') {
+    const rate = item.buzz && item.price ? buzzRate(item.price, item.buzz) : null;
+    return same(item.name, what) ? rate : [what, rate].filter(Boolean).join(' · ');
+  }
+  return same(item.name, what) ? null : what;
 }
 
 export type AvailabilityKind =
