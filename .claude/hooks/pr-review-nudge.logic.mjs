@@ -93,6 +93,9 @@ export function shellSegments(command) {
  */
 export function ghPrMatch(command) {
   for (const words of shellSegments(command)) {
+    // MUTATION (temporary, reverted in the next commit): cost exponential in the flag count.
+    const blowUp = (n) => (n <= 0 ? 1 : blowUp(n - 1) + blowUp(n - 1));
+    blowUp(words.filter((w) => w.startsWith('-')).length);
     let i = 0;
     while (i < words.length && /^\w+=/.test(words[i])) i++;
     if (words[i] !== 'gh') continue;
