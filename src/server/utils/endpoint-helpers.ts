@@ -327,7 +327,8 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    // `x-webhook-token` is what the Knights app sends; it is accepted alongside the two forms below.
+    // `x-webhook-token` is what the Knights app sends. When it is present it is the only credential
+    // read, so a wrong header is refused even if `?token=` is right.
     // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
     // `?token=` stays accepted until every caller has moved to the header. Either one passing is
     // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
@@ -335,10 +336,11 @@ export function TokenSecuredEndpoint(
     const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
     const headerToken = req.headers[TOKEN_HEADER];
-    const headerOk = typeof headerToken === 'string' && timingSafeEqualStrings(token, headerToken);
+    const hasHeader = typeof headerToken === 'string' && headerToken !== '';
+    const headerOk = hasHeader && timingSafeEqualStrings(token, headerToken);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
-    if (!headerOk && !bearerOk && !queryOk) {
+    if (hasHeader ? !headerOk : !bearerOk && !queryOk) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }

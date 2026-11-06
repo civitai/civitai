@@ -52,6 +52,7 @@ const player = (userId: number, extra: Record<string, unknown> = {}) => ({
   userId,
   payoutBlockedAt: null,
   payoutReleaseFrom: null,
+  startAt: new Date(0),
   user: { bannedAt: null },
   ...extra,
 });

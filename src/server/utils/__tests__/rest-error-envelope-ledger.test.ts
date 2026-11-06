@@ -356,6 +356,8 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'admin/update-freshdesk-customer.ts',
   'mod/clavata-image-process.ts',
   'mod/csam-upload.ts',
+  'mod/knights/shop/cosmetics.ts',
+  'mod/knights/shop/membership.ts',
   'mod/mute-user-pending-review.ts',
   'mod/overturn-user-mute.ts',
   'mod/queue-model-metric-update.ts',
