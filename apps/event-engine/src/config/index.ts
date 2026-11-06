@@ -162,6 +162,9 @@ export const config = {
     // collection while the old one keeps serving.
     collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
     alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Semantic model search, the same way: the search service reads the alias.
+    modelCollection: process.env.VECTOR_MODEL_COLLECTION ?? 'models_wemm2b_256_v1',
+    modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
