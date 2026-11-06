@@ -20,26 +20,37 @@ const sent = vi.hoisted(() => ({
   insertRows: [] as unknown[],
   failAudit: false,
   tx: [] as string[],
+  on: [] as number[],
+  txConn: 0,
 }));
 
 vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 vi.mock('../db', () => {
-  const connection: DatabaseConnection = {
-    async executeQuery(q) {
-      sent.queries.push(q);
-      if (sent.failAudit && /^insert into "ModActivity"/i.test(q.sql))
-        throw new Error('audit down');
-      if (/^select/i.test(q.sql)) return { rows: [{ id: 7 }] } as never;
-      return { rows: sent.insertRows } as never;
-    },
-    async *streamQuery() {
-      yield* [];
-    },
+  let next = 0;
+  const connect = (): DatabaseConnection & { id: number } => {
+    const id = ++next;
+    return {
+      id,
+      async executeQuery(q) {
+        sent.queries.push(q);
+        sent.on.push(id);
+        if (sent.failAudit && /^insert into "ModActivity"/i.test(q.sql))
+          throw new Error('audit down');
+        if (/^select/i.test(q.sql)) return { rows: [{ id: 7 }] } as never;
+        return { rows: sent.insertRows } as never;
+      },
+      async *streamQuery() {
+        yield* [];
+      },
+    };
   };
   const driver: Driver = {
     init: async () => undefined,
-    acquireConnection: async () => connection,
-    beginTransaction: async () => void sent.tx.push('begin'),
+    acquireConnection: async () => connect(),
+    beginTransaction: async (c) => {
+      sent.tx.push('begin');
+      sent.txConn = (c as unknown as { id: number }).id;
+    },
     commitTransaction: async () => void sent.tx.push('commit'),
     rollbackTransaction: async () => void sent.tx.push('rollback'),
     releaseConnection: async () => undefined,
@@ -61,6 +72,7 @@ const { queuePersonalDataExport } = await import('../personal-data-export.servic
 beforeEach(() => {
   sent.queries = [];
   sent.tx = [];
+  sent.on = [];
   sent.failAudit = false;
 });
 
@@ -80,6 +92,10 @@ describe('queuePersonalDataExport', () => {
       expect.arrayContaining([4, 'user', 7, 'queuePersonalDataExport'])
     );
     expect(sent.tx).toEqual(['begin', 'commit']);
+    // Both inserts ran on the transaction's own connection, not beside it.
+    const conn = (re: RegExp) => sent.on[sent.queries.findIndex((q) => re.test(q.sql))];
+    expect(conn(/^insert into "PersonalDataExport"/i)).toBe(sent.txConn);
+    expect(conn(/^insert into "ModActivity"/i)).toBe(sent.txConn);
   });
 
   it('queues nothing when the audit row cannot be written: both roll back together', async () => {
