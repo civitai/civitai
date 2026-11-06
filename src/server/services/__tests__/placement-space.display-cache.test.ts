@@ -4,12 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementService from '~/server/services/placement.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 
 /**
  * The display read of a placement space (`resolvePlacementSpaceForDisplay`, behind
  * `placement-space-read-cache`): the same answer as the primary read, from a cache that each space
- * write busts, with misses on the replica.
+ * write busts, with space-row misses filled from the primary and the (uncached) target read from
+ * the replica.
  *
  * Two databases stand behind the Kysely reads — a primary and a replica — so a test can hold the
  * replica behind a write and see which one an answer came from. The space writes go through the
@@ -36,9 +38,9 @@ const { dbs, reads, gate } = vi.hoisted(() => {
   return {
     dbs,
     reads: [] as { db: string; what: string }[],
-    // While set, a replica row read answers from the state it saw on arrival, then waits for this
+    // While set, a space-row read answers from the state it saw on arrival, then waits for this
     // to settle: a fill whose read started before a write and lands after it.
-    gate: { replicaRows: null as Promise<void> | null },
+    gate: { rows: null as Promise<void> | null },
   };
 });
 
@@ -83,7 +85,7 @@ vi.mock('@civitai/db-queries/placement', () => ({
           freeSlots,
           settings: structuredClone(settings),
         }));
-      if (nameOf(client) === 'replica' && gate.replicaRows) await gate.replicaRows;
+      if (gate.rows) await gate.rows;
       return rows;
     }
   ),
@@ -211,10 +213,12 @@ describe('placement space display read: parity with the primary read', () => {
     expect(readsSince(mark)).toEqual([{ db: 'replica', what: 'target' }]);
   });
 
-  it('reads its misses from the replica and the primary read stays on the primary', async () => {
+  it('reads the target from the replica and every space-row miss from the primary', async () => {
     await resolvePlacementSpaceForDisplay(TARGET);
-    expect(reads.length).toBeGreaterThan(0);
-    expect(reads.every((read) => read.db === 'replica')).toBe(true);
+    expect(reads).toEqual([
+      { db: 'replica', what: 'target' },
+      { db: 'primary', what: 'rows' },
+    ]);
 
     const mark = reads.length;
     await resolvePlacementSpaceFor(TARGET);
@@ -337,15 +341,15 @@ describe('placement space display read: a space write busts it', () => {
     expect(readsSince(mark).filter((read) => read.what === 'rows')).toEqual([]);
   });
 
-  // 🔴 The race a plain SET loses: a miss fill reads the replica, the row is cleared, and the fill's
+  // 🔴 The race a plain SET loses: a miss fill reads the row, the row is cleared, and the fill's
   // write lands after the clear. Without the guard that entry is served until it expires.
   it('does not serve a fill that read the replica before a clear and landed after it', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T0);
     let release!: () => void;
-    gate.replicaRows = new Promise<void>((resolve) => (release = resolve));
+    gate.rows = new Promise<void>((resolve) => (release = resolve));
     try {
-      // Reads the image row from the replica, then stalls before writing it to the cache.
+      // Reads the image row, then stalls before writing it to the cache.
       const stale = resolvePlacementSpaceForDisplay(TARGET);
       await vi.waitFor(() => expect(reads.some((read) => read.what === 'rows')).toBe(true));
 
@@ -357,11 +361,11 @@ describe('placement space display read: a space write busts it', () => {
       });
       replicate();
 
-      gate.replicaRows = null;
+      gate.rows = null;
       release();
       expect(await stale).toMatchObject({ mode: 'auto', setPrice: 90 }); // what it read, served once
     } finally {
-      gate.replicaRows = null;
+      gate.rows = null;
       release?.();
     }
 
@@ -370,6 +374,51 @@ describe('placement space display read: a space write busts it', () => {
     const truth = await resolvePlacementSpaceFor(TARGET);
     expect(truth).toMatchObject({ mode: 'review', setPrice: 120 });
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+  });
+
+  // 🔴 An entry is trusted for the whole TTL. A miss filled from a replica still behind a write once
+  // the write window has passed would show the pre-write price and mode for that long, while the
+  // charge reads the primary's.
+  it('fills a miss past the write window from the primary, not a replica still behind the write', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T0);
+    await setPlacementSpace({
+      surface: 'sticker',
+      entityType: 'image',
+      entityId: IMAGE,
+      mode: 'off',
+      price: 333,
+      userId: OWNER,
+    });
+    // The replica never catches up in this test, and the cache is cold.
+    later(PAST_WRITE_WINDOW_MS);
+
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ mode: 'off', setPrice: 333 });
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+    // What was cached is the primary's row too: the warm read reads no rows and still agrees.
+    const mark = reads.length;
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+    expect(readsSince(mark).filter((read) => read.what === 'rows')).toEqual([]);
+  });
+});
+
+describe('placement space display read: the cache is down', () => {
+  it('answers what the primary read answers when the cache cannot be read', async () => {
+    await resolvePlacementSpaceForDisplay(TARGET); // warm: the cache holds price 90
+    // A change neither the cache nor the replica has seen, so only a primary read can show it.
+    primary().spaces = primary().spaces.map((row) =>
+      row.entityType === 'image' ? { ...row, price: 777 } : row
+    );
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ setPrice: 777 });
+
+    redisMock.redis.packed.mGet.mockRejectedValue(new Error('cache down'));
+    const mark = reads.length;
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+    expect(readsSince(mark).filter((read) => read.what === 'rows')).toEqual([
+      { db: 'primary', what: 'rows' },
+    ]);
   });
 });
 
@@ -382,7 +431,7 @@ describe('placement space display read: who calls it', () => {
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
 
   // 🔴 A ledger, failing if the set GROWS or SHRINKS. The display read takes rows from a cache and
-  // a replica, which is only safe for a caller that shows what the primary read would charge; a
+  // the target from a replica, which is only safe for a caller that shows what the primary read would charge; a
   // second caller has to be added here on purpose.
   it('is referenced by exactly one call in the getSpace route and nowhere else', () => {
     const counts: Record<string, number> = {};
@@ -412,22 +461,5 @@ describe('placement space display read: who calls it', () => {
       /resolvePlacementSpaceForDisplay\s*\(/.test(line)
     );
     expect(routerCalls).toHaveLength(1);
-  });
-
-  it('uses the display reads only inside resolvePlacementSpaceForDisplay', () => {
-    const lines = codeLines('server/services/placement-space.service.ts');
-    const start = lines.findIndex((line) =>
-      line.startsWith('export function resolvePlacementSpaceForDisplay(')
-    );
-    const end = lines.findIndex((line, i) => i > start && line === '}');
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-
-    const uses = lines
-      .map((line, i) => ({ line, i }))
-      .filter(({ line }) => /\bdisplayReads\b/.test(line) && !/const displayReads\b/.test(line));
-    expect(uses).toHaveLength(1);
-    expect(uses[0].i).toBeGreaterThan(start);
-    expect(uses[0].i).toBeLessThan(end);
   });
 });

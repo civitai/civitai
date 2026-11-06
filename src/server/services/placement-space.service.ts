@@ -405,11 +405,11 @@ async function resolveSpaceWith(
  *
  * Two changes from the primary read, and only two. The target (owner, post, media type) is read
  * from the replica, uncached, falling back to the primary for a target the replica does not have
- * yet. The space row at each level of the cascade is cached in Redis per row (see
- * `readSpaceRows`). Everything the comments above call "computed at read" stays live exactly as on
- * the primary path: the price range (score, tier, config) and the reserved free-slot count. The
- * client re-reads this route with `staleTime: 0` after a refused free claim to explain the refusal,
- * and that re-read still sees a live count.
+ * yet. The space row at each level of the cascade is cached in Redis per row, filled from the
+ * primary (see `readSpaceRows`). Everything the comments above call "computed at read" stays live
+ * exactly as on the primary path: the price range (score, tier, config) and the reserved free-slot
+ * count. The client re-reads this route with `staleTime: 0` after a refused free claim to explain
+ * the refusal, and that re-read still sees a live count.
  *
  * 🔴 What this shows is what a sticker placement is charged. The sticker flow sends no expected
  * price, so the charge is whatever the primary read resolves at that moment: a display that
@@ -434,9 +434,10 @@ export function resolvePlacementSpaceForDisplay(
  */
 const SPACE_ROW_TTL = CacheTTL.sm;
 /**
- * How far behind the primary the replica is assumed to be, at most. For this long after a write to
- * a row, the row is read from the primary and not cached; afterwards only a replica read that
- * STARTED this long after the write is trusted.
+ * How long after a write to a row a fill of that row is not cached. A fill that read the row
+ * BEFORE the write can land AFTER it, and a plain SET cannot tell; for this long after a write
+ * the row is read from the primary uncached, and afterwards only an entry whose read STARTED this
+ * long after the write is trusted.
  */
 const SPACE_ROW_WRITE_WINDOW_MS = 10_000;
 /**
@@ -447,7 +448,7 @@ const SPACE_ROW_WRITE_MARK_TTL = SPACE_ROW_TTL + 60;
 
 type CachedSpaceRow = {
   row: SpaceRow | null;
-  /** When the replica read that produced this entry STARTED (ms). */
+  /** When the primary read that produced this entry STARTED (ms). */
   readAt: number;
 };
 
@@ -459,8 +460,8 @@ const spaceWriteKey = (surface: PlacementSurface, { entityType, entityId }: Spac
 /**
  * Whether a cached entry may be served, given the time of the last write to its row.
  *
- * A fill that read the replica BEFORE a write can land AFTER it — a plain SET cannot tell — so the
- * entry carries when its read started, and loses to any write that is not at least the replica-lag
+ * A fill that read the row BEFORE a write can land AFTER it — a plain SET cannot tell — so the
+ * entry carries when its read started, and loses to any write that is not at least the write
  * window older than that read. Local to this cache rather than in the shared `createCachedObject`,
  * which has no way to express it.
  */
@@ -473,15 +474,17 @@ const SPACE_ROW_CACHE_NAME = `${REDIS_KEYS.CACHES.PLACEMENT_SPACE}:row`;
  * The space rows at these levels, through the cache. Each level is one row (or the fact that there
  * is none), so a write invalidates exactly the row it changed.
  *
- * - A cached entry is served if no write to its row is newer than its read (`isTrustedEntry`).
- * - Inside the write window of a row, the row is read from the PRIMARY and not cached: the owner's
- *   next look shows what they just set, whatever the replica says.
- * - Otherwise a miss is read from the replica and cached.
+ * - A cached entry is served only if its read started a full write window after the row's last
+ *   write (`isTrustedEntry`).
+ * - Every miss is read from the PRIMARY, never the replica: an entry is trusted for the whole TTL,
+ *   so a fill from a replica lagging past the write window would cache a pre-write price or mode
+ *   that the charge, reading the primary, no longer uses.
+ * - A miss inside the write window of its row is not cached (it could not be trusted anyway).
  *
  * A Redis failure falls back to the primary read the flag-off path makes.
  */
 async function readSpaceRows(surface: PlacementSurface, levels: SpaceLevel[]): Promise<SpaceRow[]> {
-  const { kyselyRead, kyselyWrite } = await loadKyselyDb();
+  const { kyselyWrite } = await loadKyselyDb();
   let cached: (CachedSpaceRow | number | null)[];
   try {
     cached = await redis.packed.mGet<CachedSpaceRow | number>([
@@ -494,8 +497,8 @@ async function readSpaceRows(surface: PlacementSurface, levels: SpaceLevel[]): P
 
   const now = Date.now();
   const rows: SpaceRow[] = [];
-  const fromReplica: SpaceLevel[] = [];
-  const fromPrimary: SpaceLevel[] = [];
+  const misses: SpaceLevel[] = [];
+  const toCache: SpaceLevel[] = [];
   levels.forEach((level, i) => {
     const entry = cached[i] as CachedSpaceRow | null;
     const writtenAt = (cached[levels.length + i] as number | null) ?? null;
@@ -503,41 +506,37 @@ async function readSpaceRows(surface: PlacementSurface, levels: SpaceLevel[]): P
       if (entry.row) rows.push(entry.row);
       return;
     }
-    if (writtenAt !== null && now < writtenAt + SPACE_ROW_WRITE_WINDOW_MS) fromPrimary.push(level);
-    else fromReplica.push(level);
+    misses.push(level);
+    if (writtenAt === null || now >= writtenAt + SPACE_ROW_WRITE_WINDOW_MS) toCache.push(level);
   });
 
-  const hits = levels.length - fromReplica.length - fromPrimary.length;
+  const hits = levels.length - misses.length;
   if (hits)
     cacheHitCounter.inc({ cache_name: SPACE_ROW_CACHE_NAME, cache_type: 'placementSpace' }, hits);
-  if (fromReplica.length + fromPrimary.length)
-    cacheMissCounter.inc(
-      { cache_name: SPACE_ROW_CACHE_NAME, cache_type: 'placementSpace' },
-      fromReplica.length + fromPrimary.length
-    );
+  if (!misses.length) return rows;
+  cacheMissCounter.inc(
+    { cache_name: SPACE_ROW_CACHE_NAME, cache_type: 'placementSpace' },
+    misses.length
+  );
+
+  const missRows = await listPlacementSpacesFor(kyselyWrite, { surface, levels: misses });
+  rows.push(...missRows);
 
   // Every level asked for is a distinct entity type, so a row names its level by `entityType`.
-  const [replicaRows, primaryRows] = await Promise.all([
-    fromReplica.length ? listPlacementSpacesFor(kyselyRead, { surface, levels: fromReplica }) : [],
-    fromPrimary.length ? listPlacementSpacesFor(kyselyWrite, { surface, levels: fromPrimary }) : [],
-  ]);
-  rows.push(...replicaRows, ...primaryRows);
-
-  if (fromReplica.length)
-    await Promise.all(
-      fromReplica.map((level) =>
-        redis.packed
-          .set(
-            spaceRowKey(surface, level),
-            {
-              row: replicaRows.find((row) => row.entityType === level.entityType) ?? null,
-              readAt: now,
-            } satisfies CachedSpaceRow,
-            { EX: SPACE_ROW_TTL }
-          )
-          .catch(() => undefined)
-      )
-    );
+  await Promise.all(
+    toCache.map((level) =>
+      redis.packed
+        .set(
+          spaceRowKey(surface, level),
+          {
+            row: missRows.find((row) => row.entityType === level.entityType) ?? null,
+            readAt: now,
+          } satisfies CachedSpaceRow,
+          { EX: SPACE_ROW_TTL }
+        )
+        .catch(() => undefined)
+    )
+  );
   return rows;
 }
 
