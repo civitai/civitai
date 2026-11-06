@@ -53,7 +53,7 @@ describe('article content is interpreted as HTML, never as JSON', () => {
     expect(generateHTML(doc, tiptapExtensions)).toContain('text-align: center');
   });
 
-  it('keeps a left-aligned block unstyled', () => {
+  it('keeps an unaligned block unstyled', () => {
     const doc = generateJSON('<p>hi</p>', tiptapExtensions);
 
     expect(generateHTML(doc, tiptapExtensions)).not.toContain('text-align');

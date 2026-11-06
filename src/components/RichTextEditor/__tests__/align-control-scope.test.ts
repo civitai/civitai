@@ -1,8 +1,7 @@
 import { globSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-// The alignment button is an article-editor feature. Nothing else renders or asserts on the
-// `includeControls` literal, so a dropped or leaked 'align' key would otherwise go unnoticed.
+// Guards the `includeControls` literal: a dropped or leaked 'align' key is otherwise silent.
 const files = globSync('src/**/*.tsx').filter(
   (f) => !f.includes('__tests__') && statSync(f).isFile()
 );

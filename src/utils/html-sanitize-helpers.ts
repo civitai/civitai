@@ -52,9 +52,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.strawpoll.com',
 ];
 
-// The article editor's alignment control writes `style="text-align: …"` on these blocks. Only that
-// one property with one of three values survives, so `style` is not a general-purpose vector here:
-// `allowedStyles` is an allowlist of properties, and every other declaration is dropped.
+// `style` is allowed on these tags only because `allowedStyles` limits it to text-align left|center|right.
 const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
 const TEXT_ALIGN_STYLES = Object.fromEntries(
   TEXT_ALIGN_TAGS.map((tag) => [tag, { 'text-align': [/^(left|center|right)$/] }])
@@ -219,8 +217,8 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     ...options
   } = args ?? {};
 
-  // Style filtering needs the parser. Without it the `style` attribute would pass raw, so the
-  // alignment blocks lose theirs rather than gain a way past the property allowlist.
+  // With parseStyleAttributes off, sanitize-html passes `style` raw (and throws if allowedStyles is
+  // set), so strip `style` from the align tags and pass no allowedStyles.
   const parsesStyles = options.parseStyleAttributes !== false;
   const suppliedAttributes = options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES;
   const allowedAttributes =
