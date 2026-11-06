@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { showcaseSectionsText } from '~/server/schema/user-profile.schema';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
 import {
   scamEligibleAuthors,
@@ -12,7 +13,14 @@ registerTextScanProfile({
   load: async (userIds) => {
     const rows = await dbWrite.userProfile.findMany({
       where: { userId: { in: userIds } },
-      select: { userId: true, bio: true, message: true, sfwBio: true, sfwMessage: true },
+      select: {
+        userId: true,
+        bio: true,
+        message: true,
+        sfwBio: true,
+        sfwMessage: true,
+        showcaseSections: true,
+      },
     });
     const eligible = await scamEligibleAuthors(rows.map((row) => row.userId));
     return new Map(
@@ -28,6 +36,7 @@ registerTextScanProfile({
               heading: 'Profile announcement (SFW domain)',
               text: scamTextFromHtml(row.sfwMessage),
             },
+            { heading: 'Showcase sections', text: showcaseSectionsText(row.showcaseSections) },
           ]),
         ])
     );

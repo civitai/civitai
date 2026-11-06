@@ -419,7 +419,10 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // A hub can only be served from the index, so this list is also the set `hubId`
 // cannot be combined with. Both the dispatcher and that rejection read it here so
 // the two cannot drift.
+//
+// `ids`: the index feed never filters on it, so an ids query served there returns an unrelated page.
 export function requiresImageDbPath(input: {
+  ids?: number[] | null;
   postId?: number | null;
   postIds?: number[] | null;
   collectionId?: number | null;
@@ -433,6 +436,7 @@ export function requiresImageDbPath(input: {
   hidden?: boolean | null;
 }) {
   return (
+    !!input.ids?.length ||
     !!input.hidden ||
     !!input.postId ||
     !!input.postIds?.length ||
@@ -508,7 +512,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
     generation: z.enum(ImageGenerationProcess).array().optional(),
-    ids: z.array(z.number()).optional(),
+    // Raw SQL serves ids queries, so keep it bounded; sticker-book sends up to 200.
+    ids: z.array(z.number()).max(200).optional(),
     imageId: z.number().optional(),
     include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),
