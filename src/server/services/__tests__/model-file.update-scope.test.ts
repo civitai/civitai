@@ -345,7 +345,7 @@ describe('a new upload creates a new file record', () => {
 
     vi.clearAllMocks();
     // The editor re-sends the stored type with every save.
-    await updateFile({ id: 1, type: FILE.type, overrideName: 'renamed', userId: 7 });
+    await updateFile({ id: 1, type: 'Pruned Model', overrideName: 'renamed', userId: 7 });
     expect(mockResourceDataBust).not.toHaveBeenCalled();
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
     expect(mockBustFileAirs).not.toHaveBeenCalled();
