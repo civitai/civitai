@@ -17,14 +17,16 @@ shared with ratings. What marks one is `audience` (`players` or `moderators`); a
 | `prompt` | The question as asked about this image. |
 | `audience` | `players` (served in the feed) or `moderators` (a later moderator-app queue; never served to players). |
 | `yesEffect`, `noEffect` | What the producing model would rate the image for each answer. Never selected for a page. |
-| `meta` | Provenance of the row. Never served. |
+| `meta` | Provenance of the row, plus `moderation` (who changed it and why) and `rewordOf` (the producer id a reworded copy replaces). Never served. |
 | `voteCount` | Answers so far; serving finishes questions that are under way first. |
 
-The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.yesno.<axis>`, kind `bool`, options yes and no;
+The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.yesno.<axis>`, kind `bool`, options yes and no.
+Its `prompt` is a plain fallback question for the axis (`axisPrompt` in `keys.ts`), shown only where an item or Acolyte pair has no
+question text of its own; overlapping axes share one;
 `votesToResolve` is the number of answers a consensus needs (default 5) and `maxVotes` the most it is ever asked (default 10); both are
 read from the row on every answer, so tuning it takes effect at once (`/codex` quotes the fewest across axes). A `maxVotes` below
 `votesToResolve` is treated as `votesToResolve`. The item's own `votesNeeded` is unused for yes/no.
-Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale` or `retired`). A yes/no item is never `Resolved`, so write-back, escalation and the
+Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back, escalation and the
 settle sweeps never touch it. Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
@@ -34,7 +36,24 @@ open rating item per question and image exempts yes/no items, which share an axi
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
 and `policy_preference` to `moderators`, creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`), and closes an open item the file marks inactive
-(`retired`, no outcome); a question it withdrew earlier and lists again, with no answers, is reopened. It prints counts only. Data files are never committed.
+(`retired`, no outcome), along with any open reworded copies of it; a question it withdrew earlier and lists again, with no
+answers, is reopened. It never rewrites an item a moderator changed (counted as `moderated`) and never reopens one closed as
+`moderator-retired`. It prints counts only. Data files are never committed.
+
+## Moderator cleanup
+
+The moderator app's Trials page has a Questions tab (same grant) listing player questions, filterable by axis and status and searchable
+by text or image. A moderator can:
+
+- **Retire** an open question for its image, with a required note. It closes as `moderator-retired` and its pending answers become
+  `inconclusive`; the Knights tick (`settleFinalItems`) settles them later, dropping their pending gold. Answers already recorded stay in
+  the label store.
+- **Restore** a `moderator-retired` question that has no answers.
+- **Reword** a question. This always retires it and opens a new item `<producer id>:rN` with `meta.rewordOf`, so answers under a producer
+  id are always answers to the producer's wording.
+
+Closing a row is shared with Knights (`closeYesNoItemRow` in `@civitai/db/knights`). The moderator locks only the item row and its
+votes, never player rows.
 
 ## Serving (`feed.ts`)
 
