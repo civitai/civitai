@@ -40,7 +40,8 @@ const FAMILY: CollectionStream['family'] = [
   },
 ];
 const urn = (key: string) => `urn:app-blocks:${SLUG}/board/${key}`;
-const shape = (c: Change) => ('upsert' in c ? ['upsert', c.upsert.urn] : ['delete', c.delete]);
+const shape = (c: Change) =>
+  'upsert' in c ? ['upsert', c.upsert.urn] : 'delete' in c ? ['delete', c.delete] : ['progress'];
 
 async function codeOf(p: Promise<unknown>) {
   try {
@@ -131,6 +132,9 @@ describe.each([{ rls: true }, { rls: false }])(
         ['delete', urn('b2')],
         ['upsert', urn('b2')],
         ['delete', urn('b3')],
+        // The private write moved the production namespace's seq with no change for this
+        // stream: reported as progress (spec rule 9), carrying a cursor and nothing else.
+        ['progress'],
       ]);
       const edited = changes[1];
       expect('upsert' in edited && edited.upsert.body).toEqual({ t: 'one, edited' });
