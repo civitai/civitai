@@ -254,6 +254,40 @@ export function ReviewListingModal({
 }
 
 /**
+ * A labelled "Leave a review" / "Edit review" button that renders NO modal and applies NO
+ * gate — the caller has already run {@link useCanReviewListing} and owns the one
+ * {@link ReviewListingModal} that `onOpen` opens.
+ *
+ * The listing detail's Reviews section uses this (tester feedback: the `⋮` item was the
+ * only way in, and nobody found it). The detail body owns a SINGLE modal shared by this
+ * button and the `⋮` item, so two copies of the form cannot both exist on the page.
+ *
+ * The label reads `getMyReview` (protected) on mount, which is why this must only be
+ * mounted for an eligible viewer. Same key the modal invalidates on submit, so the label
+ * flips to "Edit review" once a review lands.
+ */
+export function ReviewListingTrigger({
+  appListingId,
+  onOpen,
+}: {
+  appListingId: string;
+  onOpen: () => void;
+}) {
+  const { data: myReview } = trpc.appListings.getMyReview.useQuery({ appListingId });
+  return (
+    <Button
+      variant="light"
+      size="xs"
+      leftSection={<IconThumbUp size={14} />}
+      onClick={onOpen}
+      data-testid="apps-listing-reviews-cta"
+    >
+      {myReview ? 'Edit review' : 'Leave a review'}
+    </Button>
+  );
+}
+
+/**
  * The standalone review affordance: eligibility gate + a compact Button + the modal.
  *
  * UNCHANGED public API and unchanged behaviour — it is now composed from the two

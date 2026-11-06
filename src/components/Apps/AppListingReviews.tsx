@@ -21,7 +21,17 @@ const COLLAPSED_REVIEW_COUNT = 4;
  *
  * DARK: mounted only under the mod-only store-preview detail body today.
  */
-export function AppListingReviews({ appListingId }: { appListingId: string }) {
+export function AppListingReviews({
+  appListingId,
+  onLeaveReview,
+}: {
+  appListingId: string;
+  /**
+   * Opens the caller's review modal. Pass it ONLY for a viewer `useCanReviewListing`
+   * admits — this component applies no gate; without it the empty state stays plain text.
+   */
+  onLeaveReview?: () => void;
+}) {
   const currentUser = useCurrentUser();
   // Keyed by listing so a client-side navigation to another app (body stays mounted) starts collapsed.
   const [expandedFor, setExpandedFor] = useState<string | null>(null);
@@ -49,6 +59,23 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
   }
 
   if (items.length === 0) {
+    // For an eligible viewer the empty-state copy IS the call to action.
+    if (onLeaveReview) {
+      return (
+        <Group>
+          <Button
+            variant="subtle"
+            size="compact-sm"
+            px={0}
+            leftSection={<IconThumbUp size={14} />}
+            onClick={onLeaveReview}
+            data-testid="apps-listing-reviews-empty-cta"
+          >
+            Be the first to review this app.
+          </Button>
+        </Group>
+      );
+    }
     return (
       <Text c="dimmed" size="sm">
         Be the first to review this app.
