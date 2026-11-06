@@ -64,7 +64,6 @@ import {
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
@@ -250,7 +249,7 @@ import {
   pickServerOwnedMeta,
   RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
-  stripMinorHashMeta,
+  filterModelMetaForClient,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
   systemNsfwLockMarker,
@@ -2083,13 +2082,12 @@ export const getModelVersionsMicro = async ({
   });
 };
 
-// Mutations hand their updated row straight back to the caller, so the moderation-only
-// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
-// these rows feed many callers, and the keys are only ever read back through the
-// minor-hash service's own raw SQL.
+// Mutations hand their updated row straight back to the caller, so the keys the read path hides
+// from non-moderators have to come off here too. Stripping beats narrowing the Prisma `select`:
+// these rows feed many callers, and moderators read the keys back from the stored row.
 function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
-  const meta = stripMinorHashMeta(model.meta as ModelMeta | null);
-  return { ...model, meta: meta && filterSensitiveProfanityData(meta, false) } as T;
+  const meta = model.meta as ModelMeta | null;
+  return { ...model, meta: meta && filterModelMetaForClient(meta, false) } as T;
 }
 
 export const updateModelById = async ({
@@ -4165,11 +4163,7 @@ export const upsertModel = async (
       isModerator,
     }).catch(() => null);
 
-    const returnedMeta = stripMinorHashMeta(modelMeta);
-    return {
-      ...result,
-      meta: returnedMeta && filterSensitiveProfanityData(returnedMeta, false),
-    };
+    return { ...result, meta: modelMeta && filterModelMetaForClient(modelMeta, false) };
   } else {
     if (!beforeUpdate) return null;
 

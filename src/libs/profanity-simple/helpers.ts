@@ -25,20 +25,21 @@ export function filterSensitiveProfanityData<T extends ProfanityData>(
 }
 
 /**
- * A non-moderator's details come from a read that had the profanity fields removed, so a write
- * of them must carry the stored fields forward instead of the client's.
+ * A non-moderator's details come from a read that had the profanity fields removed, so a write of
+ * them keeps the stored fields, unless the write carries a fresh detection of its own.
  */
 export function keepStoredProfanityData<T extends ProfanityData>(
-  incoming: T | undefined,
+  incoming: T | null | undefined,
   stored: unknown
-): T | undefined {
-  if (!isObject(incoming)) return incoming;
-  const rest = filterSensitiveProfanityData(incoming, false);
-  if (!isObject(stored)) return rest;
+): T | null | undefined {
+  if (!isObject(stored)) return incoming;
   const kept: ProfanityData = {};
   if (stored.profanityMatches !== undefined)
     kept.profanityMatches = stored.profanityMatches as string[];
   if (stored.profanityEvaluation !== undefined)
     kept.profanityEvaluation = stored.profanityEvaluation;
-  return { ...rest, ...kept };
+  if (!Object.keys(kept).length) return incoming;
+  if (!isObject(incoming)) return kept as T;
+  if ('profanityMatches' in incoming || 'profanityEvaluation' in incoming) return incoming;
+  return { ...incoming, ...kept };
 }
