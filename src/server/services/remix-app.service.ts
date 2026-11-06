@@ -233,16 +233,21 @@ export type RemixAppCaller = {
 };
 
 /** What every remix submit sends for the caller: who pays, in what, and what it may show. */
+/** What a what-if needs from the caller, so it prices exactly what the submit will charge. */
+export function remixWhatIfArgs(
+  caller: RemixAppCaller,
+  currencies: ReturnType<typeof getAllowedAccountTypes>
+) {
+  return { user: caller.user, token: caller.token, currencies, flags: caller.features };
+}
+
 export function remixSubmitArgs(
   caller: RemixAppCaller,
   tags: string[],
   currencies: ReturnType<typeof getAllowedAccountTypes>
 ) {
   return {
-    user: caller.user,
-    token: caller.token,
-    flags: caller.features,
-    currencies,
+    ...remixWhatIfArgs(caller, currencies),
     tags: caller.isGreenDomain ? ['green', ...tags] : tags,
     isGreen: caller.features.isGreen,
     allowMatureContent: caller.isGreenDomain || !caller.user.showNsfw ? false : undefined,
@@ -421,10 +426,7 @@ async function quoteBuiltRun(
       () =>
         whatIfPresetImageGen({
           ...run.submit,
-          user: caller.user,
-          token: caller.token,
-          currencies,
-          flags: caller.features,
+          ...remixWhatIfArgs(caller, currencies),
         }),
       { ttl: CacheTTL.sm, lockTTL: 4 }
     );
@@ -541,10 +543,7 @@ export async function runRemixApp({
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
   const priced = await whatIfPresetImageGen({
     ...run.submit,
-    user: caller.user,
-    token: caller.token,
-    currencies,
-    flags: caller.features,
+    ...remixWhatIfArgs(caller, currencies),
   });
   assertWithinQuote(priced.cost, quote);
 
