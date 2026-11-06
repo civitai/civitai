@@ -17,7 +17,13 @@ const {
   mockApplyPendingReviewMute,
 } = vi.hoisted(() => ({
   mockUpdateUserById: vi.fn(async () => undefined),
-  mockApplyPendingReviewMute: vi.fn(async () => undefined),
+  mockApplyPendingReviewMute: vi.fn(
+    async (): Promise<UserRestrictionService.PendingReviewMuteResult> => ({
+      muted: true,
+      userRestrictionId: 1,
+      deduped: false,
+    })
+  ),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
   mockProhibited: vi.fn(),
@@ -291,5 +297,49 @@ describe('auditPromptServer — a blocked prompt with no negative prompt', () =>
       })
     );
     mockSysRedis.lRange.mockResolvedValue([]);
+  });
+});
+
+describe('auditPromptServer — the auto-mute outcome', () => {
+  const overThreshold = () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    mockSysRedis.lLen.mockResolvedValueOnce(9);
+  };
+  const tracked = () => {
+    const userActivity = vi.fn();
+    return { userActivity, track: { prohibitedRequest: mockProhibited, userActivity } };
+  };
+
+  it('records the mute and clears the stored prompts when the account is muted', async () => {
+    overThreshold();
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'Muted' }));
+  });
+
+  it('records no mute and keeps the stored prompts when the mute is skipped', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockResolvedValueOnce({ muted: false, skipped: 'system-account' });
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records no mute when the mute fails', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockRejectedValueOnce(new Error('db down'));
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).not.toHaveBeenCalled();
   });
 });
