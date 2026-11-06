@@ -261,8 +261,10 @@ export function bandcampPlayerUrl(type: 'track' | 'album', id: string) {
   return `https://bandcamp.com/EmbeddedPlayer/${type}=${id}/size=large/bgcol=333333/linkcol=0f91ff/tracklist=false/artwork=small/transparent=true/`;
 }
 
+// A repeated key is refused: the value checks read the first value, a player may read another.
 function onlyParams(url: URL, allowed: string[]) {
-  return [...url.searchParams.keys()].every((key) => allowed.includes(key));
+  const keys = [...url.searchParams.keys()];
+  return new Set(keys).size === keys.length && keys.every((key) => allowed.includes(key));
 }
 
 /**
@@ -298,7 +300,10 @@ export function isAllowedPlayerUrl(src: string | undefined | null): EmbedProvide
   if (host === 'open.spotify.com')
     return /^\/embed\/(?:track|album|playlist|episode|show|artist)\/[A-Za-z0-9]{22}\/?$/.test(
       path
-    ) && onlyParams(url, ['utm_source', 'theme'])
+    ) &&
+      onlyParams(url, ['utm_source', 'theme']) &&
+      /^\w*$/.test(url.searchParams.get('utm_source') ?? '') &&
+      /^[01]?$/.test(url.searchParams.get('theme') ?? '')
       ? 'spotify'
       : null;
 

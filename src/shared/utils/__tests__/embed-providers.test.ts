@@ -143,6 +143,9 @@ describe('sanitizeHtml embed iframes', () => {
     kept('https://bandcamp.com/EmbeddedPlayer/track=12345/size=large/tracklist=false/');
     kept('https://bandcamp.com/EmbeddedPlayer/v=2/album=9/size=large/');
     kept('https://clips.twitch.tv/embed?clip=FunnyClipSlug-abc');
+    kept(
+      'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC?utm_source=generator&theme=0'
+    );
   });
 
   // A real provider host at a non-player path: only the exact-player filter can refuse these
@@ -180,6 +183,27 @@ describe('sanitizeHtml embed iframes', () => {
     'https://evilhf.space/',
   ])('drops relative, backslash or lookalike src %s', (src) => {
     expect(sanitizeHtml(iframe(src))).not.toMatch(/src=/);
+  });
+
+  // The value checks read the first value of a key; a player may read a later one.
+  it.each([
+    'https://player.vimeo.com/video/1?h=ab&h=zz%22',
+    'https://player.twitch.tv/?channel=abc&channel=..%2Fx',
+    'https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fa%2Fb&url=https%3A%2F%2Fevil.test%2F',
+    'https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC?utm_source=%22%3E%3Cb%3E',
+  ])('drops a player src with a repeated or unchecked param %s', (src) => {
+    expect(sanitizeHtml(iframe(src))).toBe('');
+  });
+
+  // The iframe rules are set after the caller's options, so no caller can widen them.
+  it('ignores caller options that would widen the iframe allowlist', () => {
+    const widened = {
+      allowedIframeHostnames: ['evil.test'],
+      allowedIframeDomains: ['evil.test'],
+      allowIframeRelativeUrls: true,
+    };
+    for (const src of ['https://evil.test/x', '/api/x'])
+      expect(sanitizeHtml(iframe(src), widened)).not.toMatch(/src=/);
   });
 
   it('keeps a twitch player after the render-time parent is added', () => {

@@ -296,10 +296,6 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
       isRefusedEmbedIframe(frame) ||
       (exclusiveFilter?.(frame) ?? false),
-    allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
-    // Coarse gate only: any subdomain of hf.space passes here. isRefusedEmbedIframe is the
-    // exact check (one label, https, path).
-    allowedIframeDomains: ['hf.space'],
     transformTags: {
       a: function (tagName, { href, ...attr }) {
         if (!href) return { tagName: 'span', attribs: {} };
@@ -324,6 +320,11 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     },
     ...options,
     allowedAttributes,
+    // After the spread so no caller option can widen which iframes load. hf.space is a coarse
+    // gate (any subdomain); isRefusedEmbedIframe is the exact check (one label, https, path).
+    allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
+    allowedIframeDomains: ['hf.space'],
+    allowIframeRelativeUrls: false,
     // Per-tag replace, not merge: a caller's entry for a tag replaces its default (span, p, h1-h3). `*` is
     // fixed empty, after the spread, because sanitize-html merges it into every tag's rule; it
     // drops style on any tag without its own entry.
