@@ -65,6 +65,11 @@ import {
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import {
+  diffSectionItems,
+  logSectionPlacements,
+} from '~/server/services/cosmetic-shop-featured-log.service';
+import type { Tracker } from '~/server/clickhouse/client';
+import {
   excludeDeletedShopListing,
   SHOP_VERDICT_TRANSACTION,
 } from '~/server/services/creator-shop-labels.service';
@@ -192,7 +197,10 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     take,
     skip,
     select: cosmeticShopItemSelect,
-    orderBy: { createdAt: 'desc' },
+    // Resellable items are picked for featuring, where newly approved is what's fresh.
+    orderBy: input.resellable
+      ? [{ reviewedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }]
+      : { createdAt: 'desc' },
   });
 
   const [withSold, count] = await Promise.all([
@@ -615,11 +623,12 @@ async function assertSectionPlaceable(items: number[]) {
 
 export const upsertCosmeticShopSection = async ({
   userId,
+  tracker,
   id,
   items,
   image, // TODO
   ...cosmeticShopSection
-}: UpsertCosmeticShopSectionInput & { userId: number }) => {
+}: UpsertCosmeticShopSectionInput & { userId: number; tracker?: Tracker }) => {
   if (items?.length) await assertSectionPlaceable(items);
 
   const shouldCreateImage = image && !image.id;
@@ -662,6 +671,11 @@ export const upsertCosmeticShopSection = async ({
   }
 
   if (items !== undefined && id) {
+    const before = await dbWrite.cosmeticShopSectionItem.findMany({
+      where: { shopSectionId: id },
+      select: { shopItemId: true },
+    });
+
     // Delete all items:
     await dbWrite.cosmeticShopSectionItem.deleteMany({
       where: {
@@ -694,6 +708,15 @@ export const upsertCosmeticShopSection = async ({
         ON CONFLICT ("shopSectionId", "shopItemId") DO UPDATE SET "index" = EXCLUDED."index"
       `;
     }
+
+    await logSectionPlacements({
+      tracker,
+      sectionId: id,
+      ...diffSectionItems(
+        before.map((r) => r.shopItemId),
+        items
+      ),
+    });
   }
 
   return getSectionById({ id });
@@ -715,7 +738,11 @@ export const getShopItemSections = async ({
  * One item into one section, appended after what the section already holds so the curated order
  * is left alone. The same placement rules as the section editor, which replaces the whole list.
  */
-export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSectionInput) => {
+export const addShopItemToSection = async ({
+  shopItemId,
+  sectionId,
+  tracker,
+}: ShopItemSectionInput & { tracker?: Tracker }) => {
   // The editor's rules only constrain creator cosmetics; a picker on the review queue also reaches
   // creator packs and items still in review, and neither is on sale.
   const item = await dbWrite.cosmeticShopItem.findUnique({
@@ -726,23 +753,26 @@ export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSe
   if (item.status !== CosmeticShopItemStatus.Published || item.archivedAt)
     throw new Error('Only published items can be placed in a shop section');
   await assertSectionPlaceable([shopItemId]);
-  await dbWrite.$executeRaw`
+  const inserted = await dbWrite.$executeRaw`
     INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
     SELECT ${sectionId}, ${shopItemId}, COALESCE(MAX("index") + 1, 0)
     FROM "CosmeticShopSectionItem"
     WHERE "shopSectionId" = ${sectionId}
     ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING
   `;
+  if (inserted) await logSectionPlacements({ tracker, sectionId, added: [shopItemId] });
   return getShopItemSections({ shopItemId });
 };
 
 export const removeShopItemFromSection = async ({
   shopItemId,
   sectionId,
-}: ShopItemSectionInput) => {
-  await dbWrite.cosmeticShopSectionItem.deleteMany({
+  tracker,
+}: ShopItemSectionInput & { tracker?: Tracker }) => {
+  const { count } = await dbWrite.cosmeticShopSectionItem.deleteMany({
     where: { shopSectionId: sectionId, shopItemId },
   });
+  if (count) await logSectionPlacements({ tracker, sectionId, removed: [shopItemId] });
   return getShopItemSections({ shopItemId });
 };
 
@@ -830,10 +860,23 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
   }, SHOP_VERDICT_TRANSACTION);
 };
 
-export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {
-  return dbWrite.cosmeticShopSection.delete({
+export const deleteCosmeticShopSection = async ({
+  id,
+  tracker,
+}: GetByIdInput & { tracker?: Tracker }) => {
+  const items = await dbWrite.cosmeticShopSectionItem.findMany({
+    where: { shopSectionId: id },
+    select: { shopItemId: true },
+  });
+  const deleted = await dbWrite.cosmeticShopSection.delete({
     where: { id },
   });
+  await logSectionPlacements({
+    tracker,
+    sectionId: id,
+    removed: items.map((i) => i.shopItemId),
+  });
+  return deleted;
 };
 
 export const reorderCosmeticShopSections = async ({

@@ -25,6 +25,10 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
   })
 );
 
+export const shopItemsFeaturedHistoryInput = z.object({
+  ids: z.array(z.number().int().positive()).max(200),
+});
+
 // Shop context for purchases: the official Civitai shop attributes as the
 // system user (-1); creator storefronts attribute as their owner's user id.
 export const CIVITAI_SHOP_ATTRIBUTION = -1;
