@@ -9,8 +9,9 @@
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
  *     the error's name, in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
- *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended with
- *     `slow_consumer` (`RESOURCE_EXHAUSTED`).
+ *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
+ *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
+ *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).
  *
  * Served on its own port, not multiplexed with the SSE port: `@grpc/grpc-js` owns its HTTP/2
  * server and takes no connections from another, while the SSE binding is a plain `node:http`
@@ -23,6 +24,8 @@
  * runtime; `@grpc/grpc-js` and `protobufjs` stay external, like every root dependency.
  */
 import * as grpc from '@grpc/grpc-js';
+import type { ServerHttp2Stream } from 'node:http2';
+import { constants as http2Constants } from 'node:http2';
 import * as protobuf from 'protobufjs';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
@@ -306,6 +309,40 @@ export function errorInfoOf(
 
 type Call = grpc.ServerWritableStream<WireRequest, StreamEvent>;
 
+/**
+ * The HTTP/2 stream under a call. grpc-js has no public way to end a call ahead of what it
+ * already buffered, so this reaches its internals: the call's `call` (a
+ * `BaseServerInterceptingCall`, or interceptors wrapping one through `nextCall`) holds the
+ * `stream`. `@grpc/grpc-js` is pinned exactly in package.json, and `grpc.test.ts` pins the
+ * behaviour, so a version that moves it goes red rather than silently.
+ */
+function http2StreamOf(call: Call): ServerHttp2Stream | null {
+  let at: unknown = (call as unknown as { call?: unknown }).call;
+  for (let depth = 0; at && depth < 8; depth++) {
+    const stream = (at as { stream?: unknown }).stream;
+    if (stream && typeof (stream as ServerHttp2Stream).close === 'function') {
+      return stream as ServerHttp2Stream;
+    }
+    at = (at as { nextCall?: unknown }).nextCall;
+  }
+  return null;
+}
+
+/**
+ * Ends a call whose consumer stopped reading, now. A gRPC status travels as trailers at the END
+ * of the HTTP/2 stream, behind every message the consumer has not read, so it would never arrive
+ * and the call would stay open. An RST_STREAM is not flow-controlled: sent with
+ * ENHANCE_YOUR_CALM, clients map it to RESOURCE_EXHAUSTED, the status of `slow_consumer` (gRPC's
+ * HTTP/2 protocol mapping). It carries no `ErrorInfo`; the consumer's action is the same either
+ * way: reconnect with its cursor.
+ */
+function resetSlowConsumer(call: Call): boolean {
+  const stream = http2StreamOf(call);
+  if (!stream || stream.destroyed) return false;
+  stream.close(http2Constants.NGHTTP2_ENHANCE_YOUR_CALM);
+  return true;
+}
+
 function openCall(call: Call, slowConsumerMs: number): EventSink & { ended(): boolean } {
   const abort = new AbortController();
   let ended = false;
@@ -352,6 +389,13 @@ export function createGrpcServer(
           );
         } catch (err) {
           if (sink.ended() || sink.signal.aborted) return;
+          if (
+            err instanceof ProtocolError &&
+            err.code === 'slow_consumer' &&
+            resetSlowConsumer(call)
+          ) {
+            return;
+          }
           // As over HTTP: a `ProtocolError` is sent as is, anything else as `unavailable` with
           // a fixed message, since its own text can name a database or a host.
           let status: Partial<grpc.StatusObject>;

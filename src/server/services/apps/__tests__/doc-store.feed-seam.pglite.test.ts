@@ -85,6 +85,9 @@ describe.each([{ rls: true }, { rls: false }])(
           schema === V1 ? { appId: app, slug: SLUG, collection: 'board', family: FAMILY } : null,
         store: snapshots,
         pollMs: 1,
+        // Every position-only move is saved and reported here: this file pins what the real
+        // store's writes look like through the feed, not the save throttle (doc-feed.test.ts).
+        progressEveryMs: 0,
         sleep: async () => {
           if (polls >= edits.length) abort.abort();
           else await edits[polls]();

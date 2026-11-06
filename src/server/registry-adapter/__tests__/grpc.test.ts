@@ -185,6 +185,50 @@ describe('the gRPC binding', () => {
   });
 });
 
+describe('🔴 a gRPC consumer that stops reading (rule 8)', () => {
+  it('is ended at once with RESOURCE_EXHAUSTED, not left open behind its full buffer', async () => {
+    // ~8 MB of snapshot: more than any HTTP/2 window, so a paused client stalls the server.
+    const pad = 'x'.repeat(4096);
+    const entities = Array.from({ length: 2000 }, (_, i) => ent(`app-${i}`, 'r1', { pad }));
+    const many: Adapter = {
+      namespace: 'apps.civitai.com',
+      serves: (s) => s === APPS,
+      // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+      snapshot: async () => ({ cursor: 'c1.snap', entities }),
+      changes: async () =>
+        (async function* (): AsyncGenerator<Change> {
+          // no changes
+        })(),
+    };
+    const server = createGrpcServer(many, { slowConsumerMs: 200 });
+    grpcServers.push(server);
+    const port = await listenGrpc(server, 0);
+    const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+    const call = (
+      client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<StreamEvent>>
+    ).Subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '' });
+    const outcome = await new Promise<string>((resolve) => {
+      const timer = setTimeout(() => resolve('still open after 5s'), 5_000);
+      let received = 0;
+      call.on('data', () => {
+        // Stop reading after the first event, and never resume.
+        if (++received === 1) call.pause();
+      });
+      call.on('error', (err: grpc.ServiceError) => {
+        clearTimeout(timer);
+        resolve(grpc.status[err.code]);
+      });
+      call.on('end', () => {
+        clearTimeout(timer);
+        resolve('ended normally');
+      });
+    });
+    call.cancel();
+    client.close();
+    expect(outcome).toBe('RESOURCE_EXHAUSTED');
+  });
+});
+
 describe('🔴 the wire: the spec proto’s field numbers', () => {
   // Hand-encoded from the spec's proto block, not from the code's schema: Event.live = 3,
   // Event.end = 4, Event.progress = 6, Event.upsert = 1; Upsert.entity = 1, .cursor = 2;

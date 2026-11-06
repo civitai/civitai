@@ -63,26 +63,47 @@ function sendError(res: ServerResponse, err: unknown, onError?: (err: unknown) =
   } else {
     onError?.(err);
   }
+  if (res.writableEnded || res.destroyed) return;
   if (res.headersSent) {
     res.end(`event: error\ndata: ${JSON.stringify({ error: code, message })}\n\n`);
+    // A consumer that stopped reading would hold the socket (and the error frame) forever:
+    // `slow_consumer` frees it. Its consumer reconnects from its cursor either way.
+    if (code === 'slow_consumer') res.destroy();
   } else {
     sendJson(res, HTTP_STATUS[code], { error: code, message });
   }
 }
 
-function openStream(res: ServerResponse, slowConsumerMs: number): EventSink {
-  if (res.closed) return { signal: AbortSignal.abort(), send: async () => undefined };
+/**
+ * The stream's sink, and `stop`, which every path that ends the response calls FIRST (an `end`
+ * event, an error, `slow_consumer`, the consumer going away). The heartbeat timer is cleared
+ * there, not on `close`: a consumer that stopped reading delays `close` indefinitely, and a
+ * heartbeat written after the response ended would be a write after end.
+ */
+function openStream(
+  res: ServerResponse,
+  slowConsumerMs: number
+): { sink: EventSink; stop: () => void } {
   const abort = new AbortController();
   let heartbeat: ReturnType<typeof setInterval> | undefined;
-  res.on('close', () => {
+  const stop = () => {
     clearInterval(heartbeat);
+    heartbeat = undefined;
     abort.abort();
-  });
+  };
+  if (res.closed) {
+    stop();
+    return { sink: { signal: abort.signal, send: async () => undefined }, stop };
+  }
+  const ended = () => res.writableEnded || res.destroyed;
+  res.on('close', stop);
+  // A socket error (a reset mid-write) must never be unhandled: the stream just stops.
+  res.on('error', stop);
   let started = false;
-  return {
+  const sink: EventSink = {
     signal: abort.signal,
     async send(event) {
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted || ended()) return;
       if (!started) {
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -92,13 +113,21 @@ function openStream(res: ServerResponse, slowConsumerMs: number): EventSink {
         started = true;
         // Armed only once the head is written: a heartbeat before it would send default
         // headers, and the writeHead above would then throw.
-        heartbeat = setInterval(() => res.write(': heartbeat\n\n'), HEARTBEAT_MS);
+        heartbeat = setInterval(() => {
+          if (ended()) stop();
+          else res.write(': heartbeat\n\n');
+        }, HEARTBEAT_MS);
       }
       const flushed = res.write(sseFrame(event));
-      if (event.type === 'end') res.end();
-      else if (!flushed) await drained(res, abort.signal, slowConsumerMs);
+      if (event.type === 'end') {
+        stop();
+        res.end();
+      } else if (!flushed) {
+        await drained(res, abort.signal, slowConsumerMs);
+      }
     },
   };
+  return { sink, stop };
 }
 
 /**
@@ -123,6 +152,7 @@ export function handleRequest(
     if (url.pathname !== '/subscribe') {
       return sendError(res, new ProtocolError('bad_request', `no route ${url.pathname}`));
     }
+    let stream: ReturnType<typeof openStream> | undefined;
     try {
       const request = subscribeRequest({
         schema: url.searchParams.get('schema'),
@@ -130,9 +160,11 @@ export function handleRequest(
         urns: url.searchParams.getAll('urn'),
         filter: url.searchParams.get('filter'),
       });
-      await subscribe(request, openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS));
+      stream = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
+      await subscribe(request, stream.sink);
     } catch (err) {
-      if (!res.writableEnded) sendError(res, err, opts.onError);
+      stream?.stop();
+      sendError(res, err, opts.onError);
     }
   };
 }

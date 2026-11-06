@@ -22,8 +22,15 @@
  * once the major resolves its documents arrive on it as upserts. (`end` would mean never.)
  *
  * After `live`, a poll that finds the namespace's seq moved with no change for this stream (a
- * private write, another collection) yields `progress` with the new cursor (spec rule 9), so a
- * consumer's cursor follows the position instead of naming an ever older one.
+ * private write, another collection) is a POSITION-ONLY move. Its new state is saved, and
+ * reported as `progress` (spec rule 9), at most once per stream per
+ * {@link PROGRESS_EVERY_MS} (any save of the stream, a snapshot or a real change included,
+ * restarts that clock). Otherwise the newer position is kept in memory only, and the consumer's
+ * cursor is still the stream's newest stored state, so a position-only move never evicts it and
+ * a resume from it reads the (cheap, collection-scoped) seq range since. Saving on every move
+ * would fill the stream's `STATES_KEPT_PER_STREAM` with time, expiring disconnected
+ * consumers' cursors early, and multiply the writes. The seq is never put in the cursor instead:
+ * private writes share it, and a cursor must not tell their volume.
  */
 import type { ValidateFunction } from 'ajv';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
@@ -80,6 +87,9 @@ export type CollectionStream = {
 export type ResolveStream = (schema: string) => Promise<CollectionStream | null>;
 
 export const FEED_PAGE = 500;
+/** At most one position-only save (and `progress`) per stream in this interval. */
+export const PROGRESS_EVERY_MS = 10 * 60 * 1000;
+const PROGRESS_STREAMS_TRACKED = 10_000;
 const STATE_FORMAT = 'f1';
 /**
  * The cursor of a stream that holds nothing for no app; it names no stored state. So a
@@ -144,10 +154,24 @@ export type DocFeedOptions = {
   pollMs: number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   onError?: (err: unknown) => void;
+  /** {@link PROGRESS_EVERY_MS} by default. */
+  progressEveryMs?: number;
+  now?: () => number;
 };
 
 export function createDocFeed(opts: DocFeedOptions) {
   const claimer = createClaimer();
+  const progressEveryMs = opts.progressEveryMs ?? PROGRESS_EVERY_MS;
+  const now = opts.now ?? Date.now;
+  /** Stream → when its state was last saved, by any subscription of this process. */
+  const lastSaved = new Map<string, number>();
+  const noteSaved = (state: FeedState) => {
+    // Only a stream of an app takes an entry: an unpublished (or invented) URN never writes, so
+    // it must not grow this map either. The bound is a backstop.
+    if (state.appId === null) return;
+    if (lastSaved.size >= PROGRESS_STREAMS_TRACKED) lastSaved.clear();
+    lastSaved.set(state.schema, now());
+  };
 
   const save = async (state: FeedState): Promise<string> => {
     // A stream of no app serving nothing needs no record: its cursor is a constant. So a
@@ -355,21 +379,27 @@ export function createDocFeed(opts: DocFeedOptions) {
         ...deletes.map((urn) => ({ delete: urn })),
         ...upserts.map((upsert) => ({ upsert })),
       ];
-      const nextCursor = await save(next);
+      state = next;
       if (diff.length > 0) {
+        const nextCursor = await save(next);
+        noteSaved(next);
         for (let i = 0; i < diff.length; i++) {
           if (signal.aborted) return;
           const at = i === diff.length - 1 ? nextCursor : position;
           const c = diff[i];
           yield 'upsert' in c ? { upsert: c.upsert, cursor: at } : { delete: c.delete, cursor: at };
         }
-      } else if (nextCursor !== position) {
-        // The seq moved and nothing of this stream changed: the new state is saved, so its
-        // cursor resumes from here.
-        yield { progress: nextCursor };
+        position = nextCursor;
+      } else if (now() - (lastSaved.get(schema) ?? -Infinity) >= progressEveryMs) {
+        // A position-only move, and none saved for this stream lately: save it, so the
+        // `progress` cursor is one a consumer can resume from. Otherwise `position` stays the
+        // last saved cursor, which remains valid: the in-memory state only moved past seqs
+        // that changed nothing here.
+        const nextCursor = await save(next);
+        noteSaved(next);
+        if (nextCursor !== position) yield { progress: nextCursor };
+        position = nextCursor;
       }
-      position = nextCursor;
-      state = next;
       await opts.sleep(opts.pollMs, signal);
     }
   }
@@ -377,7 +407,9 @@ export function createDocFeed(opts: DocFeedOptions) {
   return {
     async snapshot(schema: string) {
       const { next, entities } = await guarded(() => advance(schema, null));
-      return { cursor: await save(next), entities: [...entities.values()] };
+      const cursor = await save(next);
+      noteSaved(next);
+      return { cursor, entities: [...entities.values()] };
     },
 
     /**

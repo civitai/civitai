@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
-import { EMPTY_CURSOR, createDocFeed } from '~/server/registry-adapter/doc-feed';
+import type { DocFeedOptions } from '~/server/registry-adapter/doc-feed';
+import { EMPTY_CURSOR, PROGRESS_EVERY_MS, createDocFeed } from '~/server/registry-adapter/doc-feed';
 import type { FixtureCatalog } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 import {
   createMemorySnapshotStore,
@@ -55,7 +56,7 @@ function setup(store = createMemorySnapshotStore()) {
     },
     stream: { appId: 'ab_orbit_7', slug: 'orbit-notes', collection: 'notes', family: TWO_MAJORS },
   };
-  const make = (edits: Array<() => void> = []) => {
+  const make = (edits: Array<() => void> = [], over: Partial<DocFeedOptions> = {}) => {
     let polls = 0;
     const abort = new AbortController();
     const feed = createDocFeed({
@@ -68,6 +69,7 @@ function setup(store = createMemorySnapshotStore()) {
         else edits[polls]();
         polls++;
       },
+      ...over,
     });
     const drain = async (schema: string, cursor: string) => {
       const out: Change[] = [];
@@ -408,24 +410,51 @@ describe('🔴 progress: the namespace seq moves with no change for this stream'
     world.cat.documents!.push(doc(`p${seq}`, 'private', seq, { scopeUid: 42 }));
     world.cat.lastSeq = { ab_orbit_7: seq };
   };
+  /** `n` private writes one second apart, then one more a whole interval later. */
+  const burst = (world: { cat: FixtureCatalog }, clock: { t: number }, n: number) => [
+    ...Array.from({ length: n }, (_, i) => () => {
+      clock.t += 1000;
+      privateWrite(world, 6 + i);
+    }),
+    () => {
+      clock.t += PROGRESS_EVERY_MS;
+      privateWrite(world, 6 + n);
+    },
+  ];
 
-  it('yields progress with a new cursor, once per move, and none while the seq stands', async () => {
+  it('a burst of private writes saves one state per interval, and progress only for it', async () => {
     const { world, store, make } = setup();
-    const h = make([() => privateWrite(world, 6), () => undefined, () => privateWrite(world, 7)]);
+    const clock = { t: 0 };
+    const h = make(burst(world, clock, 20), { now: () => clock.t });
     const { cursor } = await h.feed.snapshot(V2);
+    const before = store.puts();
     const changes = await h.drain(V2, cursor);
-    expect(changes.map(shape)).toEqual([['progress'], ['progress']]);
-    const [first, second] = changes as Array<{ progress: string }>;
-    expect(new Set([cursor, first.progress, second.progress]).size).toBe(3);
-    // Each is a saved state: a new process resumes from it.
-    expect(await store.get(first.progress.slice(3))).not.toBeNull();
+    expect(changes.map(shape)).toEqual([['progress']]);
+    expect([store.puts() - before, store.size()]).toEqual([1, 2]);
   });
 
-  it('a progress cursor resumes with only what changed after it', async () => {
+  it('within the interval a disconnected consumer keeps its cursor, however many moves', async () => {
+    // Two states kept per stream: saving each move would evict the snapshot's at the second.
+    const store = createMemorySnapshotStore(2);
+    const { world, make } = setup(store);
+    const clock = { t: 0 };
+    const h = make(burst(world, clock, 10).slice(0, 10), { now: () => clock.t });
+    const { cursor } = await h.feed.snapshot(V2);
+    expect(await h.drain(V2, cursor)).toEqual([]);
+    world.cat.documents![0] = doc('n1', 'short, edited', 30, { version: 2 });
+    world.cat.lastSeq = { ab_orbit_7: 30 };
+    const resumed = setup(store);
+    resumed.world.cat = world.cat;
+    expect((await resumed.make().drain(V2, cursor)).map(shape)).toEqual([['upsert', urn('n1')]]);
+  });
+
+  it('a progress cursor is a saved state: it resumes with only what changed after it', async () => {
     const { world, store, make } = setup();
-    const h = make([() => privateWrite(world, 6)]);
+    const clock = { t: 0 };
+    const h = make(burst(world, clock, 0), { now: () => clock.t });
     const { cursor } = await h.feed.snapshot(V2);
     const [moved] = (await h.drain(V2, cursor)) as Array<{ progress: string }>;
+    expect(moved.progress).not.toBe(cursor);
     world.cat.documents![0] = doc('n1', 'short, edited', 8, { version: 2 });
     world.cat.lastSeq = { ab_orbit_7: 8 };
     const resumed = setup(store);

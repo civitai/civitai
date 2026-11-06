@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -233,56 +234,89 @@ describe('🔴 a snapshot slower than the heartbeat', () => {
 });
 
 describe('🔴 a consumer that stops reading (rule 8)', () => {
-  // A response whose socket buffer is full from the first frame on and never drains.
-  function stalledRes() {
-    const out: string[] = [];
-    const listeners = new Map<string, Set<() => void>>();
-    const res = {
-      out,
-      closed: false,
-      writableEnded: false,
-      headersSent: false,
-      writeHead() {
-        res.headersSent = true;
-        return res;
-      },
-      write(chunk: string) {
-        out.push(chunk);
+  /**
+   * A response whose socket never drains, as Node's behaves: `end()` does NOT emit `close` while
+   * the socket is stalled (only `destroy()` does, later), and a write after `end()` emits `error`,
+   * which throws when nothing listens for it (the process would exit).
+   */
+  class StalledRes extends EventEmitter {
+    out: string[] = [];
+    writesAfterEnd = 0;
+    closed = false;
+    destroyed = false;
+    writableEnded = false;
+    headersSent = false;
+    writeHead() {
+      this.headersSent = true;
+      return this;
+    }
+    write(chunk: string) {
+      if (this.writableEnded) {
+        this.writesAfterEnd++;
+        this.emit(
+          'error',
+          Object.assign(new Error('write after end'), { code: 'ERR_STREAM_WRITE_AFTER_END' })
+        );
         return false;
-      },
-      end(chunk?: string) {
-        if (chunk) out.push(chunk);
-        res.writableEnded = true;
-        for (const fn of listeners.get('close') ?? []) fn();
-        return res;
-      },
-      on(event: string, fn: () => void) {
-        if (!listeners.has(event)) listeners.set(event, new Set());
-        listeners.get(event)!.add(fn);
-        return res;
-      },
-      once(event: string, fn: () => void) {
-        return res.on(event, fn);
-      },
-      off(event: string, fn: () => void) {
-        listeners.get(event)?.delete(fn);
-        return res;
-      },
-    };
-    return res;
+      }
+      this.out.push(chunk);
+      return false;
+    }
+    end(chunk?: string) {
+      if (chunk) this.write(chunk);
+      this.writableEnded = true;
+      return this;
+    }
+    destroy() {
+      this.destroyed = true;
+      setImmediate(() => {
+        this.closed = true;
+        this.emit('close');
+      });
+      return this;
+    }
   }
 
-  it('is ended with slow_consumer, and the source stops sending to it', async () => {
-    const res = stalledRes();
-    await handleRequest(adapter(), { slowConsumerMs: 20 })(
-      { url: sub(APPS), headers: {} } as unknown as IncomingMessage,
-      res as unknown as ServerResponse
-    );
-    // The first frame filled the buffer: nothing after it but the error.
-    expect(res.out).toEqual([
-      `event: upsert\nid:\ndata: ${JSON.stringify({ entity: one, cursor: '' })}\n\n`,
-      'event: error\ndata: {"error":"slow_consumer","message":"the consumer did not keep up with the stream"}\n\n',
-    ]);
+  it('is ended with slow_consumer, its socket freed, and no timer ever writes to it again', async () => {
+    vi.useFakeTimers();
+    try {
+      const res = new StalledRes();
+      const done = handleRequest(adapter(), { slowConsumerMs: 20 })(
+        { url: sub(APPS), headers: {} } as unknown as IncomingMessage,
+        res as unknown as ServerResponse
+      );
+      await vi.advanceTimersByTimeAsync(50);
+      await done;
+      // Well past several heartbeat periods: before the fix, the first one wrote after end.
+      await vi.advanceTimersByTimeAsync(60_000);
+      // The first frame filled the buffer: nothing after it but the error.
+      expect(res.out).toEqual([
+        `event: upsert\nid:\ndata: ${JSON.stringify({ entity: one, cursor: '' })}\n\n`,
+        'event: error\ndata: {"error":"slow_consumer","message":"the consumer did not keep up with the stream"}\n\n',
+      ]);
+      expect([res.writesAfterEnd, res.destroyed, vi.getTimerCount()]).toEqual([0, true, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a socket error on the response is never unhandled', async () => {
+    vi.useFakeTimers();
+    try {
+      const res = new StalledRes();
+      const done = handleRequest(adapter(), { slowConsumerMs: 60_000 })(
+        { url: sub(APPS), headers: {} } as unknown as IncomingMessage,
+        res as unknown as ServerResponse
+      );
+      await vi.advanceTimersByTimeAsync(10);
+      expect(() => res.emit('error', new Error('ECONNRESET'))).not.toThrow();
+      res.destroy();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await done;
+      expect([res.writesAfterEnd, vi.getTimerCount()]).toEqual([0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
