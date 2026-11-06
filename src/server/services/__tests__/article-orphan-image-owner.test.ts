@@ -627,6 +627,20 @@ describe('the article banner', () => {
     expect(deletedIds()).not.toContain(ANOTHER_ARTICLES.id);
   });
 
+  it("deletes a replaced cover, and keeps one that is another article's banner", async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+    await save({ coverImage: NEW_BANNER });
+    expect(deletedIds()).toContain(COVER.id);
+
+    deleteImageById.mockClear();
+    dbMock.dbWrite.article.count.mockImplementation((async ({ where }: any) =>
+      where.OR.some((c: any) => c.bannerId === COVER.id) && where.id.not === ARTICLE_ID
+        ? 1
+        : 0) as never);
+    await save({ coverImage: NEW_BANNER });
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
   it("deletes the author's own unused banner with the article", async () => {
     dbMock.dbWrite.article.delete.mockResolvedValue({
       coverId: null,

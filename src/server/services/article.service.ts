@@ -1392,10 +1392,20 @@ export const upsertArticle = async ({
     // Count-cache refresh hits Redis — run after commit, off the txn budget.
     await userArticleCountCache.refresh(result.userId);
 
-    // remove old cover image
+    // Remove the old cover, unless another article shows it as its cover or banner. Not
+    // `unusedAuthorImage`: a `coverImage: null` save leaves the column untouched and relies on this
+    // delete (and its SET NULL) to clear the cover, so this article's own reference must not count.
     if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
       const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
-      if (isImgOwner) {
+      const shownElsewhere =
+        isImgOwner &&
+        (await dbWrite.article.count({
+          where: {
+            id: { not: id },
+            OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
+          },
+        })) > 0;
+      if (isImgOwner && !shownElsewhere) {
         await deleteImageById({ id: article.coverId });
       }
     }
