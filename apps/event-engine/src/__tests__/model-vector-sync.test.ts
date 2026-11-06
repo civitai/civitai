@@ -11,7 +11,7 @@ import type { ModelPayload } from '@/vector-sync/models/source';
 import { backfillModels } from '@/vector-sync/models/backfill';
 import { syncModelIds, type ModelSyncDeps } from '@/vector-sync/models/sync';
 import {
-  modelIdFromEvent,
+  modelRefFromEvent,
   ModelSyncQueue,
   type ModelQueueDeps,
 } from '@/vector-sync/models/consumer';
@@ -28,7 +28,9 @@ function model(id: number, over: Partial<ModelSource & { nsfwLevel: number }> = 
     username: 'someone',
     description: '<p>A <b>soft</b> watercolor style.</p>',
     tags: ['style'],
-    versions: [{ name: 'v1', description: null, baseModel: 'SDXL 1.0', trainedWords: ['wc'] }],
+    versions: [
+      { id: id * 10, name: 'v1', description: null, baseModel: 'SDXL 1.0', trainedWords: ['wc'] },
+    ],
     checkpointType: null,
     nsfwLevel: 1,
     publishedAt: new Date('2026-01-01T00:00:00Z'),
@@ -83,6 +85,10 @@ class FakeStore {
   assertModel = async (_stamp: ModelStamp) => undefined;
   stamped = true;
   isStamped = async () => this.stamped;
+  idsMatching = async (field: keyof ModelPayload, values: number[]) =>
+    [...this.points.values()]
+      .filter((p) => (p.payload[field] as number[] | undefined)?.some((v) => values.includes(v)))
+      .map((p) => p.id);
   idsInRange = async (lo: number, hi: number) =>
     [...this.points.keys()].filter((id) => id >= lo && id < hi).sort((a, b) => a - b);
 }
@@ -125,7 +131,8 @@ describe('model document', () => {
   });
 
   test('text has the demo layout, three versions, deduped triggers and a 5,000 cap', () => {
-    const versions = ['one', 'two', 'three', 'four'].map((name) => ({
+    const versions = ['one', 'two', 'three', 'four'].map((name, i) => ({
+      id: i + 1,
       name,
       description: `<p>${name} notes</p>`,
       baseModel: name === 'one' ? 'SDXL 1.0' : 'Illustrious',
@@ -384,17 +391,49 @@ describe('model CDC consumer', () => {
     return { ...env, q, commits };
   }
 
-  test('reads the model id from each topic; a version delete and a snapshot read yield none', () => {
-    expect(modelIdFromEvent('postgres.Model', { op: 'u', after: { id: 5, modelId: 99 } })).toBe(5);
-    expect(modelIdFromEvent('postgres.Model', { op: 'd', before: { id: 6 }, after: null })).toBe(6);
-    expect(
-      modelIdFromEvent('postgres.ModelVersion', { op: 'c', after: { id: 70, modelId: 7 } })
-    ).toBe(7);
-    expect(modelIdFromEvent('postgres.ModelVersion', { op: 'd', before: { id: 80 } })).toBeNull();
-    expect(
-      modelIdFromEvent('postgres.TagsOnModels', { op: 'd', before: { modelId: 9, tagId: 1 } })
-    ).toBe(9);
-    expect(modelIdFromEvent('postgres.Model', { op: 'r', after: { id: 10 } })).toBeNull();
+  test('reads the model from each topic; a version delete yields its version, a snapshot nothing', () => {
+    const ref = modelRefFromEvent;
+    expect(ref('postgres.Model', { op: 'u', after: { id: 5, modelId: 99 } })).toEqual({ model: 5 });
+    expect(ref('postgres.Model', { op: 'd', before: { id: 6 }, after: null })).toEqual({
+      model: 6,
+    });
+    expect(ref('postgres.ModelVersion', { op: 'c', after: { id: 70, modelId: 7 } })).toEqual({
+      model: 7,
+    });
+    expect(ref('postgres.ModelVersion', { op: 'd', before: { id: 80 } })).toEqual({ version: 80 });
+    expect(ref('postgres.TagsOnModels', { op: 'd', before: { modelId: 9, tagId: 1 } })).toEqual({
+      model: 9,
+    });
+    expect(ref('postgres.Model', { op: 'r', after: { id: 10 } })).toBeNull();
+  });
+
+  test('deleting the last published version removes the point, found through its versionIds', async () => {
+    const { db, store, q } = queue();
+    db.rows.set(1, model(1));
+    db.rows.set(2, model(2));
+    q.add({ model: 1 }, at(0));
+    q.add({ model: 2 }, at(1));
+    await q.flush();
+    expect(store.points.get(1)!.payload.versionIds).toEqual([10]);
+
+    // Version 10 deleted: the model row is untouched, but it has no published version left.
+    db.rows.set(1, model(1, { versions: [] }));
+    q.add({ version: 10 }, at(2, 'postgres.ModelVersion'));
+    await q.flush();
+    expect([...store.points.keys()]).toEqual([2]);
+  });
+
+  test('a deleted version whose lookup fails is retried on the next flush', async () => {
+    const { db, store, q } = queue();
+    db.rows.set(1, model(1));
+    q.add({ model: 1 }, at(0));
+    await q.flush();
+    db.rows.set(1, model(1, { versions: [] }));
+    vi.spyOn(store, 'idsMatching').mockRejectedValueOnce(new Error('qdrant down'));
+    q.add({ version: 10 }, at(1, 'postgres.ModelVersion'));
+    await expect(q.flush()).rejects.toThrow('qdrant down');
+    await q.flush();
+    expect(store.points.has(1)).toBe(false);
   });
 
   test('a burst for one model is one embed; offsets commit only after a flush succeeds', async () => {
@@ -403,7 +442,8 @@ describe('model CDC consumer', () => {
     const failing = vi
       .spyOn(store, 'payloadFields')
       .mockRejectedValueOnce(new Error('qdrant down'));
-    for (let offset = 0; offset < 20; offset++) q.add(1, at(offset, 'postgres.ModelVersion'));
+    for (let offset = 0; offset < 20; offset++)
+      q.add({ model: 1 }, at(offset, 'postgres.ModelVersion'));
     await expect(q.flush()).rejects.toThrow('qdrant down');
     expect(commits).toEqual([]);
     failing.mockRestore();
@@ -419,20 +459,20 @@ describe('model CDC consumer', () => {
     db.rows.set(1, model(1));
     store.points.set(2, { id: 2, vector: [2], payload: {} as ModelPayload });
     store.stamped = false;
-    q.add(1, at(0));
-    q.add(2, at(1));
+    q.add({ model: 1 }, at(0));
+    q.add({ model: 2 }, at(1));
     await q.flush();
     expect(embedder.texts).toEqual([]);
     expect([...store.points.keys()]).toEqual([]);
 
     store.stamped = true;
     q.setGate('the connector does not stream public.ModelVersion');
-    q.add(1, at(2));
+    q.add({ model: 1 }, at(2));
     await q.flush();
     expect(embedder.texts).toEqual([]);
 
     q.setGate(null);
-    q.add(1, at(3));
+    q.add({ model: 1 }, at(3));
     await q.flush();
     expect(embedder.texts).toHaveLength(1);
   });
@@ -539,7 +579,7 @@ describe('model CDC consumer', () => {
     db.rows.set(1, model(1));
     vi.spyOn(store, 'upsert').mockRejectedValue(new Error('qdrant write timeout'));
     for (let i = 0; i < 3; i++) {
-      q.add(1, at(i));
+      q.add({ model: 1 }, at(i));
       await expect(q.flush()).rejects.toThrow('qdrant write timeout');
     }
     expect(q.consecutiveFailures).toBe(3);
@@ -552,7 +592,7 @@ describe('model CDC consumer', () => {
     q.consecutiveFailures = 2;
     q.lastProgress = 0;
     vi.spyOn(store, 'setPayloads').mockResolvedValueOnce().mockRejectedValueOnce(new Error('blip'));
-    q.add(1, at(0));
+    q.add({ model: 1 }, at(0));
     await expect(q.flush()).rejects.toThrow('blip');
     expect(store.points.has(1)).toBe(true);
     expect(q.consecutiveFailures).toBe(0);
@@ -576,11 +616,11 @@ describe('model CDC consumer', () => {
     const { db, store, embedder, q } = queue();
     db.rows.set(1, model(1));
     vi.spyOn(embedder, 'embed').mockRejectedValueOnce(new ModelMismatchError({}, STAMP));
-    q.add(1, at(0));
+    q.add({ model: 1 }, at(0));
     await expect(q.flush()).rejects.toThrow(ModelMismatchError);
     expect(q.embedStopped).toMatch(/Embedder returned/);
     store.points.set(2, { id: 2, vector: [2], payload: {} as ModelPayload });
-    q.add(2, at(1));
+    q.add({ model: 2 }, at(1));
     await q.flush();
     expect(store.points.has(2)).toBe(false);
     expect(embedder.texts).toEqual([]);

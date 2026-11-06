@@ -37,6 +37,7 @@ ef_construct 128, vectors and payload on disk.
 | `nsfwLevel`                                           | integer                                          | the set bits of `Model.nsfwLevel`; filter with `match.any` of the viewer's levels                                         |
 | `publishedAt`                                         | datetime                                         | RFC 3339 UTC                                                                                                              |
 | `userId`                                              | integer                                          | for hidden-user exclusion                                                                                                 |
+| `versionIds`                                          | integer                                          | the versions the document was built from (up to 8); live sync only                                                        |
 | `name`, `username`, `tags`, `triggerWords`, `docHash` | none                                             | display and the search service's dictionaries                                                                             |
 
 Collection metadata holds the model stamp (`model`, `modelRevision`, `profile`, `dimensions`) and,
@@ -88,9 +89,10 @@ after the writes land.
   backfill's first write), and while Kafka Connect reports both tables streaming. Otherwise
   deletes and payload updates still run, and new vectors and re-embeds wait for the model's next
   event once embedding resumes, or for the backfill.
-- A deleted version's event carries only the version id, so it is skipped. Deleting a model's
-  last published version writes nothing to the Model row, so its point keeps that version's text
-  until a backfill re-run.
+- A deleted version's event carries only the version id (and deleting a model's last published
+  version writes nothing to the Model row), so the consumer finds the model through the point's
+  `versionIds` and re-syncs it. A point written before `versionIds` existed is not found this
+  way; a backfill re-run gives it the field.
 - A model whose embed step fails is counted in `failed` and its offset committed; the next change
   or a backfill re-run embeds it.
 - `HEALTH_CHECK_PORT` reports `healthy`, `pending` and whether it is embedding.

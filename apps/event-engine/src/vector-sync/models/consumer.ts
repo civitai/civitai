@@ -33,11 +33,13 @@ export function assertModelCdc() {
 export const modelEmbedBlock = (fetchImpl: typeof fetch = globalThis.fetch) =>
   connectorBlock(fetchImpl, MODEL_CDC_TABLES);
 
+export type ModelRef = { model: number } | { version: number };
+
 /**
- * The model id a CDC message touches. A ModelVersion delete carries only the version's own id
- * (the table's replica identity is its key), so it yields null; the backfill sweep catches it.
+ * What a CDC message touches. A ModelVersion delete carries only the version's own id (the
+ * table's replica identity is its key); the queue finds its model through the payload.
  */
-export function modelIdFromEvent(topic: string, value: unknown): number | null {
+export function modelRefFromEvent(topic: string, value: unknown): ModelRef | null {
   const event = value as {
     op?: string;
     before?: Record<string, unknown> | null;
@@ -47,13 +49,16 @@ export function modelIdFromEvent(topic: string, value: unknown): number | null {
   const row = event.after ?? event.before;
   if (!row) return null;
   const id = topic === 'postgres.Model' ? row.id : row.modelId;
-  return typeof id === 'number' ? id : null;
+  if (typeof id === 'number') return { model: id };
+  if (topic === 'postgres.ModelVersion' && event.op === 'd' && typeof row.id === 'number')
+    return { version: row.id };
+  return null;
 }
 
 type Offset = { topic: string; partition: number; offset: string };
 
 export type ModelQueueDeps = Omit<ModelSyncDeps, 'store'> & {
-  store: ModelSyncDeps['store'] & Pick<VectorStore<ModelPayload>, 'isStamped'>;
+  store: ModelSyncDeps['store'] & Pick<VectorStore<ModelPayload>, 'isStamped' | 'idsMatching'>;
 };
 
 /**
@@ -64,6 +69,8 @@ export type ModelQueueDeps = Omit<ModelSyncDeps, 'store'> & {
  */
 export class ModelSyncQueue {
   private pending = new Set<number>();
+  /** Deleted versions, resolved to their models at flush. */
+  private deletedVersions = new Set<number>();
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
@@ -90,6 +97,7 @@ export class ModelSyncQueue {
         setPayloads: (...a) => store.setPayloads(...a),
         assertModel: (...a) => store.assertModel(...a),
         isStamped: () => store.isStamped(),
+        idsMatching: (...a) => store.idsMatching(...a),
         upsert: async (...a) => {
           await store.upsert(...a);
           this.noteProgress();
@@ -98,17 +106,18 @@ export class ModelSyncQueue {
     };
   }
 
-  add(id: number | null, offset: Offset) {
-    if (id !== null) this.pending.add(id);
+  add(ref: ModelRef | null, offset: Offset) {
+    if (ref && 'model' in ref) this.pending.add(ref.model);
+    else if (ref) this.deletedVersions.add(ref.version);
     this.offsets.set(`${offset.topic}:${offset.partition}`, offset);
   }
 
   get size() {
-    return this.pending.size;
+    return this.pending.size + this.deletedVersions.size;
   }
 
   get isFull() {
-    return this.pending.size >= MAX_PENDING;
+    return this.size >= MAX_PENDING;
   }
 
   flush(): Promise<void> {
@@ -121,10 +130,14 @@ export class ModelSyncQueue {
   private async doFlush() {
     const progressAtStart = this.progressCount;
     const ids = [...this.pending];
+    const versions = [...this.deletedVersions];
     const offsets = [...this.offsets.values()];
     this.pending = new Set();
+    this.deletedVersions = new Set();
     this.offsets = new Map();
     try {
+      // A model whose point never recorded the version has nothing in the index to fix.
+      ids.push(...(await this.deps.store.idsMatching('versionIds', versions)));
       // A new collection's model is recorded by the backfill canary first, so two writers
       // cannot stamp it differently.
       if (ids.length) {
@@ -135,6 +148,7 @@ export class ModelSyncQueue {
       }
     } catch (err) {
       for (const id of ids) this.pending.add(id);
+      for (const v of versions) this.deletedVersions.add(v);
       for (const o of offsets) {
         const key = `${o.topic}:${o.partition}`;
         if (!this.offsets.has(key)) this.offsets.set(key, o);
@@ -269,16 +283,20 @@ async function main() {
       try {
         for (const message of batch.messages) {
           if (!isRunning() || isStale() || stopping) break;
-          let id: number | null = null;
+          let ref: ModelRef | null = null;
           try {
-            id = modelIdFromEvent(batch.topic, JSON.parse(message.value?.toString() ?? 'null'));
+            ref = modelRefFromEvent(batch.topic, JSON.parse(message.value?.toString() ?? 'null'));
           } catch (err) {
             logger.error(
               { err, topic: batch.topic, offset: message.offset },
               'model-sync: unparseable message; skipping'
             );
           }
-          queue.add(id, { topic: batch.topic, partition: batch.partition, offset: message.offset });
+          queue.add(ref, {
+            topic: batch.topic,
+            partition: batch.partition,
+            offset: message.offset,
+          });
           resolveOffset(message.offset);
           while (queue.isFull) {
             await queue.flush().catch(async (err) => {
