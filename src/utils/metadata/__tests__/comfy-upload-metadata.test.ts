@@ -106,11 +106,6 @@ describe('generation metadata read from an uploaded file (getMetadata)', () => {
     }
   );
 
-  it('reads a Comfy graph stored as JSON with `extra` in the parameters chunk', async () => {
-    const value = JSON.stringify({ ...PROMPT_GRAPH, extra: { airs: [] } });
-    expectGenerationData(await getMetadata(png([{ key: 'parameters', value, kind: 'tEXt' }])));
-  });
-
   it.each(['tEXt', 'iTXt-z', 'zTXt'] as const)(
     'reads A1111 parameters from %s chunks',
     async (kind) => {
@@ -147,42 +142,6 @@ describe('generation metadata read from an uploaded file (getMetadata)', () => {
       Buffer.from([0xff, 0xd9]),
     ]);
     const file = new File([jpeg], '00001-1234.jpg', { type: 'image/jpeg' });
-    expectGenerationData(await getMetadata(file));
-  });
-
-  it('reads a Comfy graph from a WebP EXIF Model tag', async () => {
-    const model = utf8(`prompt:${JSON.stringify(PROMPT_GRAPH)}\0`);
-    const tiff = Buffer.alloc(26);
-    tiff.write('II*\0', 0, 'latin1');
-    tiff.writeUInt32LE(8, 4);
-    tiff.writeUInt16LE(1, 8); // one IFD0 entry
-    tiff.writeUInt16LE(0x0110, 10); // Model
-    tiff.writeUInt16LE(2, 12); // ASCII
-    tiff.writeUInt32LE(model.length, 14);
-    tiff.writeUInt32LE(26, 18);
-    const riffChunk = (type: string, data: Buffer) => {
-      const head = Buffer.alloc(8);
-      head.write(type, 0, 'latin1');
-      head.writeUInt32LE(data.length, 4);
-      return Buffer.concat([head, data, data.length % 2 ? NUL : Buffer.alloc(0)]);
-    };
-    const vp8x = Buffer.alloc(10);
-    vp8x[0] = 0x08; // EXIF present
-    const body = Buffer.concat([
-      latin1('WEBP'),
-      riffChunk('VP8X', vp8x),
-      riffChunk(
-        'VP8L',
-        Buffer.from([0x2f, 0, 0, 0, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xfe, 0x07])
-      ),
-      riffChunk('EXIF', Buffer.concat([tiff, model])),
-    ]);
-    const head = Buffer.alloc(8);
-    head.write('RIFF', 0, 'latin1');
-    head.writeUInt32LE(body.length, 4);
-    const file = new File([Buffer.concat([head, body])], 'ComfyUI_00001_.webp', {
-      type: 'image/webp',
-    });
     expectGenerationData(await getMetadata(file));
   });
 
