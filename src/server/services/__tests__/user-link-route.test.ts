@@ -28,13 +28,19 @@ describe('/user-link/[userId]', () => {
     expect(setHeader).toHaveBeenCalledWith('X-Robots-Tag', 'noindex');
   });
 
-  test.each(['abc', '7abc', '0', '-1', '99999999999', '1e3', ''])(
+  test.each(['abc', '7abc', '0', '-1', '99999999999', '2147483648', '1e3', ''])(
     'a malformed id %j is a 404 without a lookup',
     async (id) => {
       expect(await run(id)).toEqual({ notFound: true });
       expect(mockCreator).not.toHaveBeenCalled();
     }
   );
+
+  test('the largest int32 id is still looked up', async () => {
+    mockCreator.mockResolvedValue(null);
+    await run('2147483647');
+    expect(mockCreator).toHaveBeenCalledWith({ id: 2147483647 });
+  });
 
   test.each([
     ['unknown user', null],

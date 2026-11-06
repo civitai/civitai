@@ -45,9 +45,9 @@ function readMention(el: HTMLElement): Omit<Mention, 'rect'> | null {
   if (el.querySelector('a')) return null;
 
   const anchor = el.closest('a');
-  // The profile the renderer would have linked to. `data-label` is what it uses
-  // when present, falling back to the raw id attribute — so a mention stored
-  // without a label still validates instead of silently losing its card.
+  // The profiles the renderer can link to: `/user/<data-label>` (falling back to the raw id
+  // attribute, so a mention stored without a label still validates) and, for a stored
+  // `mention:<id>`, `/user-link/<id>`.
   const idPath = mentionUserId(idAttr) ? mentionHref({ id: idAttr }) : null;
   const matched = anchor ? linksToProfile(anchor, [`/user/${label ?? idAttr}`, idPath]) : null;
   if (anchor && !matched) return null;
@@ -192,10 +192,10 @@ export function MentionHoverCard({
         <HoverCreatorCard
           userId={mention.userId}
           username={mention.username}
-          // The href was validated against the label, but the card is keyed on
-          // the id — independent attributes, so they can disagree. A link and a
-          // card that name different people is the same borrowed identity in a
-          // quieter form.
+          // A label link was validated against the label, but the card is keyed on the id;
+          // independent attributes can disagree, and a link and a card naming different people
+          // is a borrowed identity. An id link already points at the card's own id, and its
+          // label is a pre-rename snapshot that would wrongly fail the check.
           expectUsername={mention.linked && !mention.linkedById ? mention.username : undefined}
         />
       </CreatorHoverDropdown>
