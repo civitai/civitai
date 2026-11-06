@@ -212,7 +212,13 @@ describe('closing without settling (the moderator app path)', () => {
   const snapshot = async (itemId: number) => ({
     item: await item(itemId).then((i) => ({ status: i.status, reason: i.reason })),
     votes: (
-      await pg.query(
+      await pg.query<{
+        playerId: number;
+        verdict: string;
+        gold: number;
+        xp: number;
+        settled: boolean;
+      }>(
         `SELECT "playerId", verdict, gold, xp, "settledAt" IS NOT NULL AS settled FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
         [itemId]
       )
@@ -233,7 +239,7 @@ describe('closing without settling (the moderator app path)', () => {
   }
 
   it('pays the same gold, XP and verdicts as closing through closeOpenYesNoItem, once the tick has settled', async () => {
-    const inline = await scenario((id) => closeOpenYesNoItem(db, id, 'moderator-retired', NOW));
+    const inline = await scenario((id) => closeOpenYesNoItem(db, id, 'retired', NOW));
 
     const helperOnly = await scenario(async (id) => {
       await db.transaction().execute(async (trx) => {
@@ -243,7 +249,7 @@ describe('closing without settling (the moderator app path)', () => {
           .where('id', '=', id)
           .forUpdate()
           .execute();
-        await closeYesNoItemRow(trx, id, 'moderator-retired', NOW);
+        await closeYesNoItemRow(trx, id, 'retired', NOW);
       });
       // Until the tick settles them the votes are inconclusive and unpaid.
       expect((await snapshot(id)).votes.every((v) => !v.settled)).toBe(true);
