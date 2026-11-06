@@ -232,12 +232,14 @@ async function getModelTasks(ctx: UserMetricContext) {
 }
 
 async function getReviewTasks(ctx: UserMetricContext) {
+  // Imported on use: a static import pulls the metric jobs into the image.service import cycle.
+  const { visibleReviewSql } = await import('~/server/services/resourceReview.service');
   const affected = await getAffected(ctx)`
     -- get recent user reviews
     SELECT
       "userId" as id
     FROM "ResourceReview"
-    WHERE "createdAt" > ${ctx.lastUpdate}
+    WHERE "createdAt" > ${ctx.lastUpdate} OR "updatedAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -254,6 +256,7 @@ async function getReviewTasks(ctx: UserMetricContext) {
       JOIN "ModelVersion" mv on rr."modelVersionId" = mv.id
       WHERE rr."userId" = ANY($1::int[])
         AND mv.status = 'Published'
+        AND ${visibleReviewSql('rr')}
       GROUP BY rr."userId"`,
       [ids]
     );

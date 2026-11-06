@@ -526,6 +526,8 @@ async function getUniqueGeneratorTasks(ctx: ModelMetricContext) {
 }
 
 async function getVersionRatingTasks(ctx: ModelMetricContext) {
+  // Imported on use: a static import pulls the metric jobs into the image.service import cycle.
+  const { visibleReviewSql } = await import('~/server/services/resourceReview.service');
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version reviews
     SELECT DISTINCT "modelVersionId" as id
@@ -546,6 +548,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelVersionId" = ANY($1::int[])
         AND r."modelVersionId" BETWEEN $2 AND $3
       GROUP BY r."modelVersionId"`,
@@ -627,6 +630,8 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
 }
 
 async function getModelRatingTasks(ctx: ModelMetricContext) {
+  // Imported on use: a static import pulls the metric jobs into the image.service import cycle.
+  const { visibleReviewSql } = await import('~/server/services/resourceReview.service');
   const affected = await getAffected(ctx, 'Model')`
     -- Get recent model reviews
     SELECT DISTINCT "modelId" as id
@@ -647,6 +652,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelId" = ANY($1::int[])
       GROUP BY r."modelId"`,
       [ids]

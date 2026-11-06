@@ -60,14 +60,37 @@ import type {
 } from './../schema/resourceReview.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
+/**
+ * A review written from an unpublished post stays hidden from everyone but its author until the
+ * post is live. Pending is derived at read time, so unpublishing the post hides it again.
+ */
+export const visibleReviewWhere = (viewerId?: number): Prisma.ResourceReviewWhereInput => ({
+  OR: [
+    { postId: null },
+    { post: { publishedAt: { lte: new Date() } } },
+    ...(viewerId ? [{ userId: viewerId }] : []),
+  ],
+});
+
+/** The SQL twin of `visibleReviewWhere`, without the author exception. A plain string, for the metric jobs. */
+export const visibleReviewSql = (alias: string) =>
+  `(${alias}."postId" IS NULL OR EXISTS (SELECT 1 FROM "Post" rvp WHERE rvp.id = ${alias}."postId" AND rvp."publishedAt" <= now()))`;
+
+const visibleReviewForViewerSql = (alias: string, viewerId?: number) =>
+  viewerId
+    ? Prisma.sql`(${Prisma.raw(visibleReviewSql(alias))} OR ${Prisma.raw(
+        alias
+      )}."userId" = ${viewerId})`
+    : Prisma.raw(visibleReviewSql(alias));
+
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({
   id,
   userId,
   isModerator,
 }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const result = await dbRead.resourceReview.findUnique({
-    where: { id },
+  const result = await dbRead.resourceReview.findFirst({
+    where: { id, ...visibleReviewWhere(userId) },
     select: {
       ...resourceReviewSelect,
       model: { select: { name: true, id: true, userId: true, status: true } },
@@ -127,7 +150,7 @@ export const getResourceReviewsByUserId = async ({
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {
   return await dbRead.resourceReview.findMany({
-    where: { modelVersionId: { in: resourceIds } },
+    where: { modelVersionId: { in: resourceIds }, ...visibleReviewWhere() },
     select: {
       id: true,
       modelVersionId: true,
@@ -146,8 +169,9 @@ export const getResourceReviewsInfinite = async ({
   username,
   include,
   hasDetails,
-}: GetResourceReviewsInfiniteInput) => {
-  const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [];
+  viewerId,
+}: GetResourceReviewsInfiniteInput & { viewerId?: number }) => {
+  const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [visibleReviewWhere(viewerId)];
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
 
   if (username) {
@@ -258,6 +282,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" != rr."userId"
     WHERE ${Prisma.join(AND, ' AND ')} AND NOT rr.exclude
+      AND ${Prisma.raw(visibleReviewSql('rr'))}
       AND rr.recommended -- Only expose recommended reviews
     GROUP BY rr.rating, rr.recommended
   `;
@@ -290,7 +315,9 @@ const createResourceReviewNotification = async ({
   modelVersionId,
   recommended,
   userId,
-}: ResourceReviewCreate & { userId: number }) => {
+}: Pick<ResourceReviewCreate, 'id' | 'modelId' | 'modelVersionId' | 'recommended'> & {
+  userId: number;
+}) => {
   // don't send a notification for bad reviews
   if (!recommended) return;
 
@@ -381,9 +408,21 @@ async function throwIfBlockedByModelOwners({
   await throwIfBlockedByOwners({ userId, ownerIds, isModerator });
 }
 
+/** The post id, when the reviewer owns that post and it is not live yet; otherwise nothing. */
+async function pendingPostIdFor({ postId, userId }: { postId: number; userId: number }) {
+  const post = await dbWrite.post.findUnique({
+    where: { id: postId },
+    select: { userId: true, publishedAt: true },
+  });
+  if (!post || post.userId !== userId) return undefined;
+  if (post.publishedAt && post.publishedAt <= new Date()) return undefined;
+  return postId;
+}
+
 export const upsertResourceReview = async ({
   userId,
   isModerator,
+  postId,
   ...data
 }: UpsertResourceReviewInput & { userId: number; isModerator?: boolean }) => {
   await throwOnBlockedUserContent(data.details, { isModerator, surface: 'resourceReview' });
@@ -398,10 +437,12 @@ export const upsertResourceReview = async ({
   });
 
   if (!data.id) {
+    const pendingPostId = postId ? await pendingPostIdFor({ postId, userId }) : undefined;
+    const select = { ...resourceReviewSelect, postId: true };
     const ret = await dbWrite.resourceReview
       .create({
-        data: { ...data, userId, thread: { create: {} } },
-        select: resourceReviewSelect,
+        data: { ...data, userId, postId: pendingPostId, thread: { create: {} } },
+        select,
       })
       .catch(async (err) => {
         // Concurrent create race: the (modelVersionId, userId) unique constraint
@@ -410,12 +451,13 @@ export const upsertResourceReview = async ({
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
           return dbWrite.resourceReview.findUniqueOrThrow({
             where: { modelVersionId_userId: { modelVersionId: data.modelVersionId, userId } },
-            select: resourceReviewSelect,
+            select,
           });
         }
         throw err;
       });
-    await createResourceReviewNotification({ ...ret, userId }).catch();
+    // A review linked to a post is notified when the post goes live, by releasePendingReviewsForPosts.
+    if (!ret.postId) await createResourceReviewNotification({ ...ret, userId }).catch();
     await bustRatingTotalsCache({
       modelId: data.modelId,
       modelVersionId: data.modelVersionId,
@@ -510,23 +552,23 @@ export const createResourceReview = async ({
     isModerator,
     modelIds: [data.modelId],
   });
-  const ret = await dbWrite.resourceReview
-    .create({ data, select: resourceReviewSimpleSelect })
-    .catch(async (err) => {
-      // Concurrent create race: the (modelVersionId, userId) unique constraint
-      // trips (P2002). The review already exists — resolve idempotently by
-      // returning the existing row instead of bubbling a 500.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        return dbWrite.resourceReview.findUniqueOrThrow({
-          where: {
-            modelVersionId_userId: { modelVersionId: data.modelVersionId, userId: data.userId },
-          },
-          select: resourceReviewSimpleSelect,
-        });
-      }
-      throw err;
-    });
-  await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  const select = { ...resourceReviewSimpleSelect, postId: true };
+  const ret = await dbWrite.resourceReview.create({ data, select }).catch(async (err) => {
+    // Concurrent create race: the (modelVersionId, userId) unique constraint
+    // trips (P2002). The review already exists — resolve idempotently by
+    // returning the existing row instead of bubbling a 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return dbWrite.resourceReview.findUniqueOrThrow({
+        where: {
+          modelVersionId_userId: { modelVersionId: data.modelVersionId, userId: data.userId },
+        },
+        select,
+      });
+    }
+    throw err;
+  });
+  // The race can return a review written from a post, which is notified when that post goes live.
+  if (!ret.postId) await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
   void onModelReviewsChanged([{ modelId: data.modelId, userId: data.userId }]);
   await bustRatingTotalsCache({
     modelId: data.modelId,
@@ -596,7 +638,10 @@ export const getPagedResourceReviews = async ({
 }) => {
   const { limit, page, modelVersionId, username } = input;
   const skip = page && page > 0 ? limit * (page - 1) : 0;
-  const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
+  const AND = [
+    Prisma.sql`rr."modelVersionId" = ${modelVersionId}`,
+    visibleReviewForViewerSql('rr', userId),
+  ];
   if (username) {
     const user = await dbRead.user.findFirst({ where: { username }, select: { id: true } });
     if (user) AND.push(Prisma.sql`rr."userId" = ${user.id}`);
@@ -732,6 +777,7 @@ export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" = ${userId}
     WHERE rr."userId" != ${userId} AND NOT rr.exclude
+      AND ${Prisma.raw(visibleReviewSql('rr'))}
     GROUP BY rr.rating, rr.recommended
   `;
 
@@ -750,3 +796,37 @@ export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
 
   return transformed;
 };
+
+/**
+ * Makes the reviews written from these posts public once the post is live: touched so the metric
+ * jobs recount them, the rating totals busted, the model owner notified. Reviews of a post still
+ * scheduled are left for a later call.
+ *
+ * `onlyUnreleased` skips a review touched since its post's `publishedAt`, which a release does, so a
+ * sweep that hands the same post over twice notifies once. It also skips a review created while a
+ * post was unpublished and then republished under its earlier date, so the one-off transitions
+ * (a publish, a post this run flipped live) call without it.
+ */
+export async function releasePendingReviewsForPosts(
+  postIds: number[],
+  { onlyUnreleased = false }: { onlyUnreleased?: boolean } = {}
+) {
+  if (!postIds.length) return [];
+  const released = await dbWrite.$queryRaw<
+    { id: number; modelId: number; modelVersionId: number; recommended: boolean; userId: number }[]
+  >`
+    UPDATE "ResourceReview" rr
+    SET "updatedAt" = now()
+    FROM "Post" p
+    WHERE p.id = rr."postId"
+      AND rr."postId" IN (${Prisma.join(postIds)})
+      AND p."publishedAt" <= now()
+      ${onlyUnreleased ? Prisma.sql`AND rr."updatedAt" < p."publishedAt"` : Prisma.empty}
+    RETURNING rr.id, rr."modelId", rr."modelVersionId", rr.recommended, rr."userId"
+  `;
+  if (!released.length) return released;
+  await bustRatingTotalsForRows(released).catch(() => undefined);
+  for (const review of released)
+    await createResourceReviewNotification(review).catch(() => undefined);
+  return released;
+}

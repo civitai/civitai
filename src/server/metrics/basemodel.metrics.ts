@@ -287,6 +287,8 @@ async function getReviewStatsForBatch(
   ctx: BaseModelMetricContext,
   ids: number[]
 ): Promise<{ modelId: number; baseModel: string; thumbsUpCount: string }[]> {
+  // Imported on use: a static import pulls the metric jobs into the image.service import cycle.
+  const { visibleReviewSql } = await import('~/server/services/resourceReview.service');
   const query = await ctx.pg.cancellableQuery<{
     modelId: number;
     baseModel: string;
@@ -304,6 +306,7 @@ async function getReviewStatsForBatch(
       AND mv."status" = 'Published'
       AND r.exclude = false
       AND r."tosViolation" = false
+      AND ${visibleReviewSql('r')}
     GROUP BY mv."modelId", mv."baseModel"`,
     [ids, ids[0], ids[ids.length - 1]]
   );
