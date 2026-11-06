@@ -111,6 +111,10 @@ describe.each(VIEWPORTS)('collections sidebar at $width x $height', (viewport) =
   test('pending invites share the same budget', async () => {
     fixture.invites = 3;
     await mount(viewport);
+    const invites = card().querySelector<HTMLElement>('[data-testid="invites"]');
+    expect(invites?.children).toHaveLength(3);
+    expect(box(invites!).height).toBe(3 * INVITE_HEIGHT);
+    expect(box(invites!).bottom).toBeLessThanOrEqual(box(card()).bottom);
     expect(box(scrollRoot()).bottom).toBeLessThanOrEqual(box(card()).bottom);
     scrollViewport().scrollTop = scrollViewport().scrollHeight;
     await nextLayout();
