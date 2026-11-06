@@ -1,10 +1,11 @@
 -- App Blocks document store: `(app_id, ns, seq)` indexes on `appdata.doc` and `appdata.doc_tomb`.
 -- MANUAL-APPLY migration.
 --
--- REQUIRED BEFORE THE REGISTRY FEED SERVES A LARGE APP; not required for correctness. The feed
---   (`SQL_FEED_DOCS_SINCE`, `SQL_FEED_TOMBS_SINCE` in `doc-store.ts`) reads one app namespace's
---   shared documents and tombstones by seq range. None of the existing indexes leads with seq after
---   (app_id, ns), so without these that read scans the namespace's rows on every poll.
+-- Not required for correctness; apply before the feed serves a large app. Safe before or after
+--   the code ships. The feed (`SQL_FEED_DOCS_SINCE`, `SQL_FEED_TOMBS_SINCE` in `doc-store.ts`)
+--   reads one app namespace's shared documents and tombstones by seq range. None of the existing
+--   indexes leads with seq after (app_id, ns), so without these that read scans the namespace's
+--   rows on every poll.
 --
 -- TARGET DATABASE: the App Blocks datastore, the same one
 --   `20261013120000_appdata_document_store.sql` was applied to (NOT the main civitai

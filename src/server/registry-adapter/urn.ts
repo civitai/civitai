@@ -1,7 +1,8 @@
 /**
  * The adapter's namespace and the one function that builds every URN in it.
  *
- * @ai: the namespace is PENDING a decision by the registry's owners. `civitai` is taken by
+ * The namespace is pending agreement with the registry's owners; settle it before a registry
+ * consumes it. `civitai` is taken by
  * another source and `apps` by the registry's demo; `civitai-apps` is a placeholder. URNs are
  * never rewritten once a registry has seen them, so change it here, before anything consumes it.
  */

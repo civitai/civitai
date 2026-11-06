@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
+import { sha256Hex } from '~/server/registry-adapter/release';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
@@ -13,10 +13,7 @@ export type SnapshotRedis = Pick<typeof sysRedis, 'get' | 'del' | 'multi'>;
 export const snapshotKey = (digest: string) =>
   `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.SNAPSHOT}:${digest}` as const;
 export const streamStatesKey = (stream: string) =>
-  `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.STREAM_STATES}:${createHash('sha256')
-    .update(stream)
-    .digest('hex')
-    .slice(0, 32)}` as const;
+  `${REDIS_SYS_KEYS.REGISTRY_ADAPTER.STREAM_STATES}:${sha256Hex(stream).slice(0, 32)}` as const;
 
 /**
  * Snapshots in system Redis, at most {@link STATES_KEPT_PER_STREAM} per stream, newest first.

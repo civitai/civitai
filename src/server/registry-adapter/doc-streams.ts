@@ -8,6 +8,7 @@ import {
   HEAD_STEP,
   collectionSchemaDocuments,
   deriveCollectionMajors,
+  exportedCollections,
 } from '~/server/registry-adapter/collection-schema';
 import type {
   CollectionStream,
@@ -17,19 +18,13 @@ import type {
 import type { Adapter } from '~/server/registry-adapter/protocol';
 import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
 import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
-import {
-  APP_STORAGE_ALL_FEATURES_ON,
-  APP_STORAGE_ENABLED_FEATURES,
-  isCollectionRegistryPublic,
-  parseManifestStorage,
-} from '~/shared/constants/block-storage.constants';
+import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 /**
  * `features` is the platform's live switch, the same one submit validates against. Nothing is
  * published while `registryExport` is off, even from an approved manifest that already declares
- * `registry: "public"`: the manifest's SHAPE is read with every feature on (an approved
- * manifest stays parseable when a feature it uses is switched off, as the store reads it), but
- * whether the feature may act is this switch alone.
+ * `registry: "public"` ({@link exportedCollections}, the same rule the catalog's schema entities
+ * use).
  */
 export function resolveFromCatalog(
   readApps: () => Promise<CatalogApp[]>,
@@ -43,11 +38,7 @@ export function resolveFromCatalog(
       (a) => a.block?.blockId === ref.slug && a.block.status === 'approved'
     );
     if (!app?.block) return null;
-    const declared = parseManifestStorage(
-      app.block.manifest,
-      APP_STORAGE_ALL_FEATURES_ON
-    ).collections.get(ref.collection);
-    if (!declared || !isCollectionRegistryPublic(declared)) return null;
+    if (!exportedCollections(app.block.manifest, features).has(ref.collection)) return null;
 
     const derivation = deriveCollectionMajors([
       ...app.approved.map((r) => ({ id: r.id, manifest: r.manifest })),

@@ -7,6 +7,7 @@ import {
   HEAD_STEP,
   collectionSchemaDocuments,
   deriveCollectionMajors,
+  exportedCollections,
 } from '~/server/registry-adapter/collection-schema';
 import type { ApprovedRelease } from '~/server/registry-adapter/release';
 import { sortedKeyJson, releaseBody, sha256Hex } from '~/server/registry-adapter/release';
@@ -19,6 +20,8 @@ import {
   registryUrn,
 } from '~/server/registry-adapter/urn';
 import type { UrnRef } from '~/server/registry-adapter/urn';
+import type { AppStorageFeature } from '~/shared/constants/block-storage.constants';
+import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 export const SERVED_SCHEMAS = [
   REGISTRY_SCHEMA_SCHEMA,
@@ -94,11 +97,21 @@ function urnOrSkip(ref: UrnRef, onSkip: (reason: string) => void): string | null
   }
 }
 
+/**
+ * `features` is the platform's live switch: a collection's schema entities, and its entry in a
+ * release's `collections`, are published only while it is exported ({@link exportedCollections},
+ * the rule the document streams use). With `registryExport` off, no collection schema is.
+ */
 export function buildEntities(
   apps: readonly CatalogApp[],
-  opts: { baseUrl: string; onSkip?: (reason: string) => void }
+  opts: {
+    baseUrl: string;
+    onSkip?: (reason: string) => void;
+    features?: Readonly<Record<AppStorageFeature, boolean>>;
+  }
 ): EntitySets {
   const onSkip = opts.onSkip ?? (() => undefined);
+  const features = opts.features ?? APP_STORAGE_ENABLED_FEATURES;
   const sets: EntitySets = new Map(SERVED_SCHEMAS.map((s) => [s, [] as Entity[]]));
   const add = (schema: string, e: Entity) => sets.get(schema)!.push(e);
   add(SERVICE_SCHEMA, runtimeEntity(opts.baseUrl));
@@ -121,6 +134,9 @@ export function buildEntities(
         ])
       : null;
 
+    const exported = publishable
+      ? exportedCollections(block.manifest, features)
+      : new Set<string>();
     const releases = new Map<string, Entity>();
     if (publishable && derivation) {
       for (const r of app.approved) {
@@ -128,12 +144,12 @@ export function buildEntities(
           onSkip(`release ${r.id} of ${slug} skipped: ${reason}`);
         const urn = urnOrSkip({ kind: 'release', slug, version: r.version }, skipRelease);
         if (urn === null) continue;
-        const collectionUrns = [
-          ...(derivation.stepMajors.get(r.id) ?? new Map<string, number>()),
-        ].map(([collection, major]) => [
-          collection,
-          urnOrSkip({ kind: 'collection-schema', slug, collection, major }, skipRelease),
-        ]);
+        const collectionUrns = [...(derivation.stepMajors.get(r.id) ?? new Map<string, number>())]
+          .filter(([collection]) => exported.has(collection))
+          .map(([collection, major]) => [
+            collection,
+            urnOrSkip({ kind: 'collection-schema', slug, collection, major }, skipRelease),
+          ]);
         if (collectionUrns.some(([, u]) => u === null)) continue;
         const collections = Object.fromEntries(collectionUrns);
         // A version approved twice: the later review is the release.
@@ -151,7 +167,7 @@ export function buildEntities(
           )
         );
       }
-      for (const doc of collectionSchemaDocuments(slug, derivation)) {
+      for (const doc of collectionSchemaDocuments(slug, derivation, exported)) {
         add(REGISTRY_SCHEMA_SCHEMA, entity(doc.urn, REGISTRY_SCHEMA_SCHEMA, doc.body));
       }
     }

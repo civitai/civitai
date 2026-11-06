@@ -38,6 +38,10 @@ function main() {
   const deps = fixtureCatalogDeps(file);
   const readApps = () => readCatalog(deps);
   const store = createMemorySnapshotStore();
+  // Fixture mode exists to exercise the feed, so it turns the registry-export switch on for
+  // itself, for the schema entities and the document streams alike; the live entrypoint uses the
+  // platform's switch.
+  const features = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
   const entities = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
     serves: SERVED_SCHEMAS,
@@ -45,6 +49,7 @@ function main() {
       buildEntities(await readApps(), {
         baseUrl: 'https://civitai.example',
         onSkip: (reason) => console.warn('registry-adapter (fixture):', reason),
+        features,
       }),
     store,
     pollMs,
@@ -53,12 +58,7 @@ function main() {
   });
   const docs = createDocFeed({
     source: fixtureDocSource(file),
-    // Fixture mode exists to exercise the feed, so it turns the registry-export switch on for
-    // itself; the live entrypoint uses the platform's switch.
-    resolve: resolveFromCatalog(readApps, {
-      ...APP_STORAGE_ENABLED_FEATURES,
-      registryExport: true,
-    }),
+    resolve: resolveFromCatalog(readApps, features),
     store,
     pollMs,
     sleep: abortableSleep,

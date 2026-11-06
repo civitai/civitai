@@ -1,22 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
 import { buildEntities } from '~/server/registry-adapter/entities';
+import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 const SCHEMA = 'urn:schema:registry:schema@v1';
 const APP = 'urn:schema:civitai-schemas:app@v1';
 const RELEASE = 'urn:schema:civitai-schemas:app-release@v1';
 const SERVICE = 'urn:schema:civitai-schemas:service@v1';
 
+// `cards` is exported (shared, `registry: "public"`); `drafts` never is (private, no opt-in).
 const cards = (maximum: number) => ({
   storage: {
     collections: {
       cards: {
-        visibility: 'private',
+        visibility: 'shared',
+        write: 'own',
+        registry: 'public',
         schema: { type: 'object', properties: { stars: { type: 'integer', maximum } } },
+      },
+      drafts: {
+        visibility: 'private',
+        schema: { type: 'object', properties: { body: { type: 'string' } } },
       },
     },
   },
 });
+
+const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
+const ON = { baseUrl: 'https://site.example', features: SWITCH_ON };
 
 const listing = (over: Partial<CatalogApp['listing']>): CatalogApp['listing'] => ({
   slug: 'orbit-notes',
@@ -78,7 +89,7 @@ const urns = (sets: ReturnType<typeof buildEntities>, schema: string) =>
   (sets.get(schema) ?? []).map((e) => e.urn);
 
 describe('buildEntities', () => {
-  const sets = buildEntities([ORBIT, TIDE, SUSPENDED], { baseUrl: 'https://site.example' });
+  const sets = buildEntities([ORBIT, TIDE, SUSPENDED], ON);
 
   it('one app entity per listed app, whatever its rating', () => {
     expect(urns(sets, APP)).toEqual([
@@ -96,6 +107,29 @@ describe('buildEntities', () => {
     expect(urns(sets, SCHEMA)).toEqual([
       'urn:schema:civitai-apps:orbit-notes/cards@v1',
       'urn:schema:civitai-apps:orbit-notes/cards@v2',
+    ]);
+  });
+
+  it('🔴 a collection that is not exported publishes no schema and is in no release', () => {
+    // `drafts` is declared by every manifest but never opted in: before, its schema (field names
+    // and constraints) was published and every release listed it.
+    expect(urns(sets, SCHEMA).filter((u) => u.includes('/drafts@'))).toEqual([]);
+    for (const e of sets.get(RELEASE) ?? []) {
+      expect(Object.keys((e.body as { collections: object }).collections)).toEqual(['cards']);
+    }
+  });
+
+  it('🔴 with the registryExport switch off (the default), no collection schema is published', () => {
+    const off = buildEntities([ORBIT], { baseUrl: 'https://site.example' });
+    expect(urns(off, SCHEMA)).toEqual([]);
+    // A release with nothing exported carries no `collections` at all.
+    expect(
+      (off.get(RELEASE) ?? []).map((e) => Object.hasOwn(e.body as object, 'collections'))
+    ).toEqual([false, false]);
+    // The releases themselves are still published.
+    expect(urns(off, RELEASE)).toEqual([
+      'urn:civitai-apps:app/orbit-notes@1.0.0',
+      'urn:civitai-apps:app/orbit-notes@1.1.0',
     ]);
   });
 
@@ -206,7 +240,7 @@ describe('buildEntities', () => {
   });
 
   it('rev changes with the body and only with it', () => {
-    const again = buildEntities([ORBIT, TIDE, SUSPENDED], { baseUrl: 'https://site.example' });
+    const again = buildEntities([ORBIT, TIDE, SUSPENDED], ON);
     const renamed = buildEntities([{ ...ORBIT, listing: listing({ name: 'Orbit Notes II' }) }], {
       baseUrl: 'https://site.example',
     });
@@ -225,7 +259,7 @@ describe('buildEntities', () => {
         manifest: { blockId: 'orbit-notes', ...cards(30) },
       },
     };
-    const out = buildEntities([diverged], { baseUrl: 'https://site.example' });
+    const out = buildEntities([diverged], ON);
     expect(urns(out, SCHEMA)).toEqual([
       'urn:schema:civitai-apps:orbit-notes/cards@v1',
       'urn:schema:civitai-apps:orbit-notes/cards@v2',

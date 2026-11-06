@@ -27,11 +27,8 @@ export interface SnapshotStore {
 }
 
 /**
- * States kept per stream. A document stream's state holds every document it served, and a new
- * one is written on every poll that changed something, so without a bound storage grows with
- * polls × documents for the retention period. A cursor older than the newest
- * `STATES_KEPT_PER_STREAM` states of its stream answers `cursor_expired`, and the consumer
- * re-snapshots — the same path as a cursor whose state expired.
+ * States kept per stream, so storage does not grow with polls × documents. A cursor older than
+ * these answers `cursor_expired`, as an expired one does.
  */
 export const STATES_KEPT_PER_STREAM = 64;
 

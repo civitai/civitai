@@ -10,10 +10,12 @@
 import { jsonEqual } from '~/server/services/apps/doc-store-schema';
 import type {
   AppStorageCollectionSchema,
+  AppStorageFeature,
   DeclaredStorageCollection,
 } from '~/shared/constants/block-storage.constants';
 import {
   APP_STORAGE_ALL_FEATURES_ON,
+  isCollectionRegistryPublic,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
 import { registryUrn } from '~/server/registry-adapter/urn';
@@ -21,8 +23,9 @@ import { registryUrn } from '~/server/registry-adapter/urn';
 export const JSON_SCHEMA_DIALECT = 'https://json-schema.org/draft/2020-12/schema';
 
 /**
- * Annotation on an old major naming the URN of the major that replaced it.
- * @ai: the keyword name is pending the registry's owners (whether it belongs in the spec).
+ * Annotation on an old major naming the URN of the major that replaced it. Name pending agreement
+ * with the registry's owners (whether it belongs in the spec); settle it before a registry
+ * consumes it.
  */
 export const SUCCESSOR_ANNOTATION = 'x-successor';
 
@@ -200,14 +203,38 @@ export function deriveCollectionMajors(steps: readonly ManifestStep[]): MajorDer
   };
 }
 
-/** Every schema entity body of one app: each major of each collection its newest manifest declares. */
+/**
+ * The collections an enforced manifest publishes to registries: opted in (`registry: "public"`,
+ * shared only) AND the platform's live `registryExport` switch on. The one rule for schema
+ * entities, a release's `collections` and document streams: a collection that is not exported
+ * publishes nothing, not even its schema. The manifest's SHAPE is read with every feature on (an
+ * approved manifest stays parseable when a feature it uses is switched off); whether the feature
+ * may act is `features` alone.
+ */
+export function exportedCollections(
+  manifest: unknown,
+  features: Readonly<Record<AppStorageFeature, boolean>>
+): Set<string> {
+  if (!features.registryExport) return new Set();
+  return new Set(
+    [...parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).collections]
+      .filter(([, c]) => isCollectionRegistryPublic(c))
+      .map(([name]) => name)
+  );
+}
+
+/**
+ * Every schema entity body of one app: each major of each collection its newest manifest declares,
+ * or, with `only`, of those collections alone.
+ */
 export function collectionSchemaDocuments(
   slug: string,
-  derivation: MajorDerivation
+  derivation: MajorDerivation,
+  only?: ReadonlySet<string>
 ): Array<{ urn: string; body: Record<string, unknown> }> {
   const out: Array<{ urn: string; body: Record<string, unknown> }> = [];
   for (const [collection, state] of derivation.collections) {
-    if (!state.declared) continue;
+    if (!state.declared || (only && !only.has(collection))) continue;
     state.majors.forEach((declared, i) => {
       const major = i + 1;
       const urn = registryUrn({ kind: 'collection-schema', slug, collection, major });
