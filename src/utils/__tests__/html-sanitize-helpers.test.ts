@@ -44,10 +44,16 @@ describe('sanitizeHtml span styles', () => {
     ['color', 'oklch(0.7 0.1 200 / 50%)', 'oklch(var(--x))'],
     ['background-color', 'color(srgb 1 0.5 0)', 'color(srgb url(x))'],
     ['font-size', 'large', 'large)x'],
-    ['font-size', '2em', '100rem'],
+    ['font-size', '2em', '10rem'],
+    ['font-size', '99px', '100px'],
+    ['font-size', '24pt', '5000px'],
+    ['line-height', '9.5', '10'],
     ['line-height', 'normal', 'normal)x'],
     ['font-family', `"Segoe UI", Roboto, sans-serif`, 'x(y)'],
     ['font-family', 'Arial', 'a'.repeat(301)],
+    ['font-family', 'Arial', 'url(x)'],
+    ['font-family', 'Arial', 'var(--x)'],
+    ['font-family', 'Arial', 'expression(x)'],
   ])('keeps a valid %s and drops an invalid one', (prop, valid, invalid) => {
     expect(sanitizeHtml(span(`${prop}:${valid}`))).toBe(span(`${prop}:${valid}`));
     expect(sanitizeHtml(span(`${prop}:${invalid}`))).toBe('<span>x</span>');
@@ -73,6 +79,20 @@ describe('sanitizeHtml span styles', () => {
         allowedAttributes: { p: [{ name: 'style', multiple: false, values: [] }], '*': ['style'] },
       })
     ).toBe('<p>x</p>');
+    expect(
+      sanitizeHtml('<p style="color:red">x</p>', {
+        parseStyleAttributes: false,
+        allowedAttributes: { p: ['s*'], '*': ['*'] },
+      })
+    ).toBe('<p>x</p>');
+  });
+
+  it("ignores a caller's `*` style entry", () => {
+    expect(
+      sanitizeHtml(span('margin-top:4px;color:red'), {
+        allowedStyles: { '*': { 'margin-top': [/.*/] } },
+      })
+    ).toBe(span('color:red'));
   });
 
   it('drops styles on a tag with no style allowlist of its own', () => {

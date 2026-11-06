@@ -537,7 +537,7 @@ export const modelVersionUpsertSchema2 = z.object({
     // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
     // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
     // `color` property alone, narrower than the app-wide SPAN_ALLOWED_STYLES. Without it a blurb's
-    // colour is stripped here and nowhere else, which is the silent per-surface divergence this
+    // color is stripped here and nowhere else, which is the silent per-surface divergence this
     // whole paragraph exists to prevent.
     allowedAttributes: {
       ...DEFAULT_ALLOWED_ATTRIBUTES,
