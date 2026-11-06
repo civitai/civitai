@@ -1,0 +1,14 @@
+-- A sticker's movement over a video. Shape: `StickerTrack` in
+-- src/shared/utils/sticker-track.ts. Null for every existing row and every still sticker; `data`
+-- keeps the pose at time zero either way. Its own column because the feed reads `data` on every card.
+--
+-- Nullable with no default, so this is metadata-only and take no table rewrite.
+--
+-- APPLY BEFORE DEPLOYING the client that knows these columns: Prisma selects every scalar column
+-- when a query has no `select`, so a deployed client would fail reading a table that lacks one.
+-- Per writable env:
+--   1. Dry run: this file inside BEGIN; ... ROLLBACK;
+--   2. Apply.
+--   3. Scoped drift check (read-only role):
+--        pnpm --filter @civitai/db-schema drift --migration prisma/migrations/20261224140000_sticker_tracks/migration.sql
+ALTER TABLE "Placement" ADD COLUMN IF NOT EXISTS "track" JSONB;
