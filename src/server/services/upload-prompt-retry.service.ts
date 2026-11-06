@@ -91,7 +91,21 @@ export async function takeDueUploadPromptRetries({
   for (const raw of members) {
     // The Sentinel sysRedis client can hand members back as Buffers.
     const member = String(raw);
-    if (!(await store.zRem(QUEUE, member))) continue;
+    let removed: number;
+    try {
+      removed = await store.zRem(QUEUE, member);
+    } catch (error) {
+      // Entries already removed this call are ours alone: hand them back rather than lose them.
+      // This one, and the rest, stay queued for the next run.
+      logToAxiom({
+        name: 'upload-prompt-scan',
+        type: 'error',
+        message: `retry take stopped: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        taken: due.length,
+      }).catch(() => null);
+      break;
+    }
+    if (!removed) continue;
     // The entry is ours now. If its attempt cannot be read it still runs, as the last retry.
     const stored = await store
       .hGet(ATTEMPTS, member)
