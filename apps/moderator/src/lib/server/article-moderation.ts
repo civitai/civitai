@@ -185,7 +185,7 @@ async function restoreArticle(id: number): Promise<void> {
     delete meta.unpublishedAt;
     delete meta.unpublishedBy;
     delete meta.statusBeforeViolation;
-    const status = restoreStatus(article.metadata as ArticleMetadata);
+    const status = restoreStatus(article.metadata as ArticleMetadata, article.publishedAt);
 
     await trx
       .updateTable('Article')

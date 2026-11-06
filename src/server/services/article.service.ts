@@ -1282,7 +1282,7 @@ export const upsertArticle = async ({
       await lockAccessTokens(tx, id as number);
       const stored = await tx.article.findUnique({
         where: { id: id as number },
-        select: { title: true, content: true },
+        select: { title: true, content: true, metadata: true },
       });
       const textChanged =
         (data.title !== undefined && data.title !== stored?.title) ||
@@ -1302,7 +1302,11 @@ export const upsertArticle = async ({
           ...data,
           ...(sharedSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
-          metadata: { ...prevMetadata, ...data.metadata },
+          // The locked read: a block may have written its own keys since the first read.
+          metadata: {
+            ...((stored?.metadata as ArticleMetadata | null) ?? prevMetadata),
+            ...data.metadata,
+          },
           publishedAt,
           scheduledAt: scheduledAtWrite,
           coverId,

@@ -300,6 +300,26 @@ describe('saving a shared draft from the editor', () => {
     expect(submitTextModerationOrScan).toHaveBeenCalled();
   });
 
+  // A block landing between a moderator's first read and the save records where a restore
+  // returns the draft. Saving the stale copy over it would make that restore publish it.
+  it("keeps what a block recorded after the save's first read", async () => {
+    dbMock.dbWrite.article.findUnique
+      .mockResolvedValueOnce({ ...stored, metadata: { theme: 'x' } } as never)
+      .mockResolvedValue({
+        ...stored,
+        status: ArticleStatus.UnpublishedViolation,
+        metadata: { theme: 'x', statusBeforeViolation: 'Draft' },
+      } as never);
+    await upsertArticle({
+      id: ARTICLE,
+      userId: 99,
+      isModerator: true,
+      title: 'Title',
+      content: '<p>Old body</p>',
+    } as never);
+    expect(formWrite().metadata).toEqual({ theme: 'x', statusBeforeViolation: 'Draft' });
+  });
+
   it('leaves ingestion alone on an unshared draft', async () => {
     dbMock.dbWrite.accessToken.findMany.mockResolvedValue([]);
     await save();

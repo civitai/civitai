@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -189,8 +190,13 @@ export async function getArticleByShareToken({
   if (!row || row.resourceId !== articleId) return UNAVAILABLE;
 
   // One read, so the text shown is the text whose state was checked.
-  const article = await readSharedArticle(row.resourceId);
+  const { article, check, required, holds } = await readSharedArticle(row.resourceId);
   if (!article) return UNAVAILABLE;
+  if (holdBarsRead(check, holds)) {
+    // A failed check (its hold write failed, or a partial result) clears only by a rescan.
+    if (check?.status === EntityModerationStatus.Failed) await recheckSharedArticle(article.id);
+    return UNAVAILABLE;
+  }
   // A transfer, or a banned, muted or deleted author, makes the link answer unavailable meanwhile.
   if (article.userId !== row.createdById) return UNAVAILABLE;
   if (article.user.bannedAt || article.user.muted || article.user.deletedAt) return UNAVAILABLE;
@@ -211,16 +217,6 @@ export async function getArticleByShareToken({
 
   // The read requires the verdict of the current text's check.
   if (articleHasText(article.title, article.content)) {
-    const [check, required] = await Promise.all([
-      dbWrite.entityModeration.findUnique({
-        where: { entityType_entityId: { entityType: 'Article', entityId: article.id } },
-        select: { status: true, blocked: true, workflowId: true },
-      }),
-      dbWrite.articleShareCheck.findUnique({
-        where: { articleId: article.id },
-        select: { workflowId: true, textHash: true },
-      }),
-    ]);
     if (check?.blocked) return UNAVAILABLE;
     const current =
       !!required?.workflowId &&
@@ -238,7 +234,56 @@ export async function getArticleByShareToken({
   return { status: 'ok', article: toSharedArticle(article) };
 }
 
-function readSharedArticle(id: number) {
+/** Everything the read decides on, from one snapshot. */
+async function readSharedArticle(id: number) {
+  const [article, check, required, holds] = await dbWrite.$transaction(
+    [
+      readSharedArticleRow(id),
+      dbWrite.entityModeration.findUnique({
+        where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+        select: {
+          status: true,
+          blocked: true,
+          workflowId: true,
+          triggeredLabels: true,
+          result: true,
+        },
+      }),
+      dbWrite.articleShareCheck.findUnique({
+        where: { articleId: id },
+        select: { workflowId: true, textHash: true },
+      }),
+      dbWrite.textScanHold.findMany({
+        where: { entityType: 'Article', entityId: id, label: 'csam', status: { not: 'Confirmed' } },
+        select: { status: true, textHash: true, meta: true },
+      }),
+    ],
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }
+  );
+  return { article, check, required, holds };
+}
+
+/**
+ * A hold awaiting a moderator bars the read. So does a verdict that raises one, until a moderator
+ * dismisses the hold for that text: the verdict is recorded before its hold is written.
+ */
+function holdBarsRead(
+  check: { triggeredLabels: string[]; result: Prisma.JsonValue } | null,
+  holds: { status: string; textHash: string; meta: Prisma.JsonValue }[]
+) {
+  if (holds.some((hold) => hold.status === 'Pending')) return true;
+  if (!check?.triggeredLabels.includes('csam')) return false;
+  const textHash = (check.result as { textHash?: unknown } | null)?.textHash;
+  // A superseded hold was closed without a ruling.
+  return !holds.some(
+    (hold) =>
+      hold.status === 'Dismissed' &&
+      hold.textHash === textHash &&
+      (hold.meta as { decision?: unknown } | null)?.decision !== 'superseded'
+  );
+}
+
+function readSharedArticleRow(id: number) {
   return dbWrite.article.findUnique({
     where: { id },
     select: {
@@ -257,7 +302,7 @@ function readSharedArticle(id: number) {
 }
 
 /** Only what the read-only view renders. */
-function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readSharedArticle>>>) {
+function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>) {
   const { id, title, content, nsfwLevel, updatedAt, coverImage } = article;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
   const showCover = coverImage?.ingestion === 'Scanned' && !coverImage.needsReview;

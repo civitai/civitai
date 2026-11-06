@@ -102,6 +102,8 @@ const textCheck = (over: Record<string, unknown> = {}) =>
     status: EntityModerationStatus.Succeeded,
     blocked: false,
     workflowId: 'wf',
+    triggeredLabels: [],
+    result: null,
     updatedAt: new Date(Date.now() + 1000),
     ...over,
   } as never);
@@ -203,6 +205,63 @@ describe('getArticleByShareToken: the text check', () => {
       expect(await read()).toEqual({ status });
     }
   );
+
+  // A passed check is not enough while a hold on the text is open: the link must answer exactly
+  // as a revoked one does, saying nothing of why.
+  const holds = (rows: { status: string; textHash?: string; meta?: unknown }[]) =>
+    dbMock.dbWrite.textScanHold.findMany.mockImplementationOnce((async ({
+      where,
+    }: {
+      where: Record<string, unknown>;
+    }) =>
+      where.entityType === 'Article' && where.entityId === ARTICLE
+        ? rows.map((row) => ({ textHash: 'scanned', meta: null, ...row }))
+        : []) as never);
+  const flagged = () => textCheck({ triggeredLabels: ['csam'], result: { textHash: 'scanned' } });
+
+  it('refuses while a hold on this article awaits a decision, though its check passed', async () => {
+    holds([{ status: 'Pending' }]);
+    expect(await read()).toEqual({ status: 'unavailable' });
+    // Read in the same snapshot as the article and its verdict, not as a later lookup.
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledWith(
+      [expect.anything(), expect.anything(), expect.anything(), expect.anything()],
+      { isolationLevel: 'RepeatableRead' }
+    );
+  });
+
+  // The verdict is recorded before its hold is written, so the verdict alone must bar the read.
+  it.each([
+    ['before its hold is written', []],
+    ['when the hold dismissed was for other text', [{ status: 'Dismissed', textHash: 'older' }]],
+    [
+      'when the dismissed hold was superseded, not ruled on',
+      [{ status: 'Dismissed', meta: { decision: 'superseded' } }],
+    ],
+  ])('refuses text whose verdict raises a hold, %s', async (_, rows) => {
+    flagged();
+    holds(rows);
+    expect(await read()).toEqual({ status: 'unavailable' });
+  });
+
+  // Barred with no hold to rule on, only a rescan can raise one; reads must still start it.
+  it('runs the check again when the verdict that bars the read failed', async () => {
+    textCheck({
+      status: EntityModerationStatus.Failed,
+      triggeredLabels: ['csam'],
+      result: { textHash: 'scanned' },
+    });
+    holds([]);
+    expect(await read()).toEqual({ status: 'unavailable' });
+    expect(submitTextModerationOrScan).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: ARTICLE, force: true })
+    );
+  });
+
+  it('opens it once a moderator dismissed the hold for this text', async () => {
+    flagged();
+    holds([{ status: 'Dismissed' }]);
+    expect((await read()).status).toBe('ok');
+  });
 
   it.each([
     ['no check on record', null],

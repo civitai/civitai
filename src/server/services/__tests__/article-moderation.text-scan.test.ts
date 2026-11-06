@@ -173,13 +173,22 @@ describe('articleModerationAdapter — a block', () => {
 
   // Scheduling is the author asking for it to go live, so it is a publish taken down, as before
   // share links: the author is told, and a restore publishes it.
+  // A published one restores by its publishedAt. A scheduled one returns to Draft, keeping its
+  // schedule, so the go-live job publishes it.
   it.each([
-    ['published', { status: 'Published' }],
-    ['scheduled', { status: 'Draft', scheduledAt: new Date('2027-01-01') }],
-  ])('tells the author of a %s article, and records no status to restore to', async (_, row) => {
-    const tx = await block({ userId: 9, metadata: { statusBeforeViolation: 'Draft' }, ...row });
-    // A status an earlier block left goes too, or the next restore would unpublish it.
-    expect(written(tx)).toEqual({ status: 'UnpublishedViolation', metadata: {} });
-    expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
-  });
+    ['published', { status: 'Published' }, {}],
+    [
+      'scheduled',
+      { status: 'Draft', scheduledAt: new Date('2027-01-01') },
+      { statusBeforeViolation: 'Draft' },
+    ],
+  ])(
+    'tells the author of a %s article, and records where a restore returns it',
+    async (_, row, metadata) => {
+      const tx = await block({ userId: 9, metadata: { statusBeforeViolation: 'Draft' }, ...row });
+      // A status an earlier block left goes too, or the next restore would unpublish it.
+      expect(written(tx)).toEqual({ status: 'UnpublishedViolation', metadata });
+      expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
+    }
+  );
 });

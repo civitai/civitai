@@ -76,8 +76,8 @@ export const articleModerationAdapter: ModerationAdapter = {
     }
 
     // If blocked, auto-unpublish and notify. Its share links end in the same write, under the
-    // lock a link being created takes, so none outlives the block. The row lock keeps an unpublish
-    // racing this from being overwritten with what was read before it.
+    // lock a link being created takes, so none outlives the block. The row is read FOR UPDATE, so
+    // this writes from the row as it is now, and a write to it that starts later waits for this one.
     if (blocked) {
       const article = await dbWrite.$transaction(async (tx) => {
         await lockAccessTokens(tx, entityId);

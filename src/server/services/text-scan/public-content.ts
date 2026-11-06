@@ -38,26 +38,34 @@ export function isShareableArticleStatus(status: ArticleStatus) {
 
 /**
  * A block took this article down before its author asked for it to go live (an unscheduled Draft,
- * or Unpublished), so a moderator's restore must return it to its author, not publish it.
- * Processing and a scheduled Draft are publishes the author asked for, as before share links.
+ * or Unpublished), so there is no publish to tell them was taken down. Processing and a scheduled
+ * Draft are publishes the author asked for, as before share links.
  */
 export function blockReturnsToAuthor(article: { status: ArticleStatus; scheduledAt: Date | null }) {
   return isShareableArticleStatus(article.status) && !isPublicArticle(article);
 }
 
 /**
- * The metadata a block moving an article to UnpublishedViolation writes: the status the restore
- * returns it to, when `blockReturnsToAuthor`, and never a status an earlier block left behind.
+ * The metadata a block moving an article to UnpublishedViolation writes: the status a restore
+ * returns it to, replacing any an earlier block left behind. A Draft, scheduled or not, returns as a
+ * Draft (its schedule untouched, so the go-live job still publishes it), and Unpublished as
+ * Unpublished. Processing records Published, as it may have no `publishedAt` yet to restore by; a
+ * Published article needs no key, since a row without one restores by `publishedAt`.
  */
 export function violationMetadata(
-  article: { status: ArticleStatus; scheduledAt: Date | null },
+  article: { status: ArticleStatus },
   metadata: ArticleMetadata
 ): ArticleMetadata {
   const rest = { ...metadata };
   delete rest.statusBeforeViolation;
-  return blockReturnsToAuthor(article)
-    ? { ...rest, statusBeforeViolation: article.status as 'Draft' | 'Unpublished' }
-    : rest;
+  if (article.status === ArticleStatus.Published) return rest;
+  return {
+    ...rest,
+    statusBeforeViolation:
+      article.status === ArticleStatus.Processing
+        ? 'Published'
+        : (article.status as 'Draft' | 'Unpublished'),
+  };
 }
 
 // Processing and a scheduled Draft go live only once the text verdict is in.

@@ -42,7 +42,7 @@ CREATE TYPE "ArticleIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', '
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY);
 CREATE TABLE "Article" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "status" TEXT NOT NULL,
-  "publishedAt" TIMESTAMP(3), "metadata" JSONB, "coverId" INTEGER, "title" TEXT, "content" TEXT,
+  "publishedAt" TIMESTAMP(3), "scheduledAt" TIMESTAMP(3), "metadata" JSONB, "coverId" INTEGER, "title" TEXT, "content" TEXT,
   "ingestion" "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned', "contentScannedAt" TIMESTAMP(3),
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "userNsfwLevel" INTEGER NOT NULL DEFAULT 1,
   "moderatorNsfwLevel" INTEGER
@@ -130,6 +130,48 @@ describe("a moderator's article restore", () => {
     const { publishedAt } = await row();
     await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
     expect(await row()).toEqual({ status: 'Unpublished', publishedAt, metadata: {} });
+  });
+
+  // A row blocked before blocks recorded a status: publish it only if it had been published.
+  it('returns a never-published blocked article with no recorded status to its author as a draft', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation', "publishedAt" = NULL,
+      metadata = '{"unpublishedReason":"tos"}' WHERE id = ${ARTICLE}`);
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    expect(await row()).toEqual({ status: 'Draft', publishedAt: null, metadata: {} });
+  });
+
+  it('restores a once-published blocked article with no recorded status as published', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation',
+      metadata = '{"unpublishedReason":"tos"}' WHERE id = ${ARTICLE}`);
+    const { publishedAt } = await row();
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    expect(await row()).toEqual({ status: 'Published', publishedAt, metadata: {} });
+  });
+
+  // A scheduled draft goes back to its author still scheduled: the go-live job publishes it.
+  it('returns a blocked scheduled draft to Draft with its schedule unchanged', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation', "publishedAt" = NULL,
+      "scheduledAt" = '2027-01-01T00:00:00Z',
+      metadata = '{"statusBeforeViolation":"Draft"}' WHERE id = ${ARTICLE}`);
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    const { rows } = await db.query<{
+      status: string;
+      publishedAt: Date | null;
+      scheduledAt: Date;
+    }>(`SELECT status, "publishedAt", "scheduledAt" FROM "Article" WHERE id = ${ARTICLE}`);
+    expect(rows[0]).toEqual({
+      status: 'Draft',
+      publishedAt: null,
+      scheduledAt: new Date('2027-01-01T00:00:00Z'),
+    });
+  });
+
+  // A Processing article may have no publishedAt yet; its block records that it goes live.
+  it('publishes a never-published article whose block recorded Published', async () => {
+    await db.exec(`UPDATE "Article" SET status = 'UnpublishedViolation', "publishedAt" = NULL,
+      metadata = '{"statusBeforeViolation":"Published"}' WHERE id = ${ARTICLE}`);
+    await moderateArticle({ action: 'restore', articleId: ARTICLE, userId: 1 });
+    expect((await row()).status).toBe('Published');
   });
 
   // A moderator's unpublish takes down a published article: a status an earlier block recorded

@@ -364,13 +364,21 @@ describe('textScan.resolveCsamHold', () => {
         expect(labelCalls()).toHaveLength(1);
       });
 
-      // A Draft or Unpublished one records its status, so a moderator's restore returns it to its
-      // author instead of publishing it. Processing and a scheduled Draft were publishes the author
-      // asked for.
+      // A Draft (scheduled or not) or Unpublished one records its status, so a moderator's restore
+      // returns it to its author as it was. Processing was a publish the author asked for, and
+      // records that, since it need have no publishedAt to restore by.
       it.each([
         ['a draft', { status: 'Draft', scheduledAt: null }, { statusBeforeViolation: 'Draft' }],
-        ['a scheduled draft', { status: 'Draft', scheduledAt: new Date('2027-01-01') }, {}],
-        ['a processing article', { status: 'Processing', scheduledAt: null }, {}],
+        [
+          'a scheduled draft',
+          { status: 'Draft', scheduledAt: new Date('2027-01-01') },
+          { statusBeforeViolation: 'Draft' },
+        ],
+        [
+          'a processing article',
+          { status: 'Processing', scheduledAt: null },
+          { statusBeforeViolation: 'Published' },
+        ],
         [
           'an owner-unpublished article',
           { status: 'Unpublished', scheduledAt: null },

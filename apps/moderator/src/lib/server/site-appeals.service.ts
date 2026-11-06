@@ -279,7 +279,14 @@ async function getSubjects(
     const articles = await dbRead
       .selectFrom('Article as a')
       .leftJoin('User as u', 'u.id', 'a.userId')
-      .select(['a.id', 'a.title', 'a.status', 'a.metadata', 'u.bannedAt as ownerBannedAt'])
+      .select([
+        'a.id',
+        'a.title',
+        'a.status',
+        'a.metadata',
+        'a.publishedAt',
+        'u.bannedAt as ownerBannedAt',
+      ])
       .where('a.id', 'in', ids)
       .execute();
     for (const a of articles)
@@ -287,7 +294,7 @@ async function getSubjects(
         kind: 'article',
         title: a.title,
         status: a.status,
-        restoresTo: restoreStatus(a.metadata as ArticleMetadata),
+        restoresTo: restoreStatus(a.metadata as ArticleMetadata, a.publishedAt),
         ownerBanned: a.ownerBannedAt !== null,
         ...unpublishStamp(a.metadata),
       });
