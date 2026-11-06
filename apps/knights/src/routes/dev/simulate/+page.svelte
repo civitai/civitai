@@ -21,6 +21,7 @@
 
 <svelte:head>
   <title>Simulate voters (dev) · Knights of New Order</title>
+  <meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
 <h1>Simulate other voters</h1>

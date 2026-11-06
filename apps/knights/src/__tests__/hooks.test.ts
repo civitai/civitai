@@ -106,6 +106,12 @@ describe('knights access gate', () => {
     expect(resolve).toHaveBeenCalled();
     expect(guardCheck).not.toHaveBeenCalled();
   });
+
+  it('serves robots.txt to a crawler without a session', async () => {
+    const { resolve } = await run('/robots.txt');
+    expect(resolve).toHaveBeenCalled();
+    expect(guardCheck).not.toHaveBeenCalled();
+  });
 });
 
 describe('welcome screen', () => {
