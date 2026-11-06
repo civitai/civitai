@@ -114,6 +114,32 @@ test.describe('generation cost quote (gold)', () => {
     return null;
   }
 
+  /**
+   * The tRPC error messages carried in a raw response body, for a failure message.
+   * A batched response is HTTP 200 even when one procedure in it failed, so a whatIf
+   * that the server refused still matches the 200 wait; without this the failure only
+   * says "no cost", not why. Collects every `message` string that sits beside a
+   * `code` (the tRPC error shape, at whatever depth the wire format puts it), and
+   * nothing else, so the sibling procedures' data never reaches the log.
+   */
+  function errorMessages(raw: string): string[] {
+    const messages: string[] = [];
+    const walk = (value: unknown) => {
+      if (value === null || typeof value !== 'object') return;
+      const node = value as Record<string, unknown>;
+      if (typeof node.message === 'string' && 'code' in node) messages.push(node.message);
+      for (const child of Object.values(node)) walk(child);
+    };
+    for (const line of raw.split('\n')) {
+      try {
+        walk(JSON.parse(line));
+      } catch {
+        // Not a JSON line: nothing to report from it.
+      }
+    }
+    return messages;
+  }
+
   // 1. Primary, network-based: whatIf fires on /generate load and quotes a cost.
   test('whatIfFromGraph fires on /generate and returns a numeric cost', async ({ page }) => {
     // /generate is the heaviest SSR page; on a cold/contended single-replica preview
@@ -194,7 +220,12 @@ test.describe('generation cost quote (gold)', () => {
     ).finally(() => page.unrouteAll({ behavior: 'ignoreErrors' }));
 
     const total = extractCostTotal(body);
-    expect(total, 'cost.total parsed from whatIfFromGraph response').not.toBeNull();
+    expect(
+      total,
+      `cost.total parsed from whatIfFromGraph response (errors in it: ${JSON.stringify(
+        errorMessages(body)
+      )})`
+    ).not.toBeNull();
     expect(typeof total, 'cost.total is numeric').toBe('number');
     expect(total as number, 'cost.total is a non-negative quote').toBeGreaterThanOrEqual(0);
   });
