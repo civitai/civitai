@@ -13,9 +13,7 @@ export type RemixAppDefinition = {
   /** `mature` absent = the app refuses mature sources. */
   engine: { safe: RemixAppEngine; mature?: RemixAppEngine };
   prompt: string;
-  caption?: { instructions: string };
   params: { aspectRatio: 'source' | GenerationAspectRatio; quantity: 1 | 2 | 4 };
-  after: 'queue' | 'post' | 'remixGallery';
 };
 
 const editEngine = (tier: RemixTier): RemixAppEngine => ({
@@ -38,7 +36,6 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     engine: DEFAULT_ENGINE,
     prompt: 'Turn this image into a realistic photograph, keeping the subject and composition.',
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'toy-figure',
@@ -48,7 +45,6 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     engine: DEFAULT_ENGINE,
     prompt: 'Turn the subject into a collectible toy figure in its packaging box, product photo.',
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'pixel-art',
@@ -58,7 +54,6 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     engine: DEFAULT_ENGINE,
     prompt: 'Redraw this image as detailed 16-bit pixel art, keeping the composition.',
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'pencil-sketch',
@@ -68,7 +63,6 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     engine: DEFAULT_ENGINE,
     prompt: 'Redraw this image as a detailed graphite pencil sketch on paper.',
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
   {
     slug: 'claymation',
@@ -78,7 +72,6 @@ export const SYSTEM_REMIX_APPS: RemixAppDefinition[] = [
     engine: DEFAULT_ENGINE,
     prompt: 'Recreate this image as a stop-motion claymation scene with plasticine figures.',
     params: { aspectRatio: 'source', quantity: 1 },
-    after: 'queue',
   },
 ];
 
@@ -101,7 +94,6 @@ export const TEAM_REMIX_APP: RemixAppDefinition = {
   engine: { safe: editEngine('safe') },
   prompt: TEAM_REMIX_PROMPT,
   params: { aspectRatio: 'source', quantity: 1 },
-  after: 'remixGallery',
 };
 
 export function teamRemixApp(team: string): RemixAppDefinition {

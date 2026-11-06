@@ -15,7 +15,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useState, useSyncExternalStore } from 'react';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
@@ -46,7 +46,6 @@ import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import dayjs from '~/shared/utils/dayjs';
 import {
   isMarketplaceCategory,
   marketplaceCategoryLabel,
@@ -56,6 +55,8 @@ import {
   listingPlaceholderGradient,
 } from '~/shared/constants/app-listing-placeholder.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 /**
  * App Store Listings (W13) — the unified store CARD, over BOTH kinds.
@@ -217,22 +218,6 @@ export function ListingCover({
   );
 }
 
-const noopSubscribe = () => () => undefined;
-
-/**
- * `false` on the server AND during hydration, `true` once rendered on the client. A relative
- * date ("3 days ago") depends on the clock, so rendering it before then would make the server
- * HTML and the first client paint disagree. Not `useIsClient`: that needs a provider some
- * surfaces that render this card do not mount.
- */
-function useRenderedOnClient() {
-  return useSyncExternalStore(
-    noopSubscribe,
-    () => true,
-    () => false
-  );
-}
-
 export interface AppListingCardProps {
   card: ListingCard;
   /**
@@ -273,7 +258,7 @@ export function AppListingCard({
   const currentUser = useCurrentUser();
   // The relative date is client-only, so the whole "Updated …" part waits for the client:
   // no "Updated" with a hole in it, and the server and first client paint stay identical.
-  const isClient = useRenderedOnClient();
+  const isClient = useIsClient();
   const cta = getListingCta(card, { canOpenPage });
   // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
   // second inline copy. #3539 already gave each CTA its own icon; what was still
@@ -532,10 +517,7 @@ export function AppListingCard({
           {categoryLabel && showUpdated && ' · '}
           {showUpdated && card.updatedAt && (
             <span data-testid="apps-listing-card-updated">
-              Updated{' '}
-              <time dateTime={card.updatedAt} title={dayjs(card.updatedAt).format()}>
-                {dayjs(card.updatedAt).fromNow()}
-              </time>
+              Updated <DaysFromNow date={card.updatedAt} />
             </span>
           )}
           {/* A zero-width space keeps the line box when there is nothing else to show yet
@@ -557,7 +539,6 @@ export function AppListingCard({
             {/* AUTHOR-DECLARED beta label: PUBLIC (the `Incomplete` badge is owner-only), and no
                 tooltip because the card DTO carries no `betaMessage`. `card.isBeta` is `false`
                 both for "not in beta" and while the manual-apply migration is outstanding. */}
-            {/* MODERATOR-SET provenance marker ("made by Civitai"); never author-controlled. */}
             {card.isOfficial && <AppListingOfficialBadge size="xs" />}
             {card.isBeta && (
               <Badge

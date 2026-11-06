@@ -481,30 +481,37 @@ describe('GET /api/v1/apps/{slug} — sourceRepoUrl parity', () => {
   });
 });
 
-describe('🔴 the viewer-scoped `restrictedAudience` never crosses the public REST boundary', () => {
+describe('🔴 the viewer-scoped `restrictedAudience` and the undocumented `isOfficial` never cross the public REST boundary', () => {
   // The service always reads these endpoints as an anonymous, floor-`public` viewer, so the
   // field could only ever be `null` here — and serving it would change a hand-documented
   // contract for nothing. Fed a NON-null value on purpose: a handler that forgot to strip it
   // would publish exactly that, and a `null` input could not tell "stripped" from "passed
-  // through".
+  // through". `isOfficial` is fed `true` for the same reason: `false` cannot tell "stripped"
+  // from "served". It is tRPC-only and absent from the hand-documented REST contract.
   it('list: every item is served WITHOUT the key, and the rest of the card is untouched', async () => {
     mockList.mockResolvedValueOnce({
-      items: [{ ...card('a'), restrictedAudience: 'testers' }],
+      items: [{ ...card('a'), restrictedAudience: 'testers', isOfficial: true }],
       nextCursor: undefined,
     });
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, undefined);
     const [item] = (res._json() as { items: Record<string, unknown>[] }).items;
     expect(item).not.toHaveProperty('restrictedAudience');
+    expect(item).not.toHaveProperty('isOfficial');
     expect(item).toEqual(card('a'));
   });
 
   it('detail: served WITHOUT the key, and the rest of the detail is untouched', async () => {
-    mockDetail.mockResolvedValueOnce({ ...detail('a'), restrictedAudience: 'moderators' });
+    mockDetail.mockResolvedValueOnce({
+      ...detail('a'),
+      restrictedAudience: 'moderators',
+      isOfficial: true,
+    });
     const { req, res } = createMocks({ query: { slug: 'a' } });
     await (detailHandler as unknown as Handler)(req, res, MOD);
     expect(res._status()).toBe(200);
     expect(res._json()).not.toHaveProperty('restrictedAudience');
+    expect(res._json()).not.toHaveProperty('isOfficial');
     expect(res._json()).toEqual(detail('a'));
   });
 });

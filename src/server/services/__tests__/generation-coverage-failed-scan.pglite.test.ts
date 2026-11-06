@@ -5,8 +5,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * The GenerationCoverage view in force (the last migration that defines it) run against real rows:
- * a version with a file whose scan found danger or errored is not covered, under any arm. Pending is
- * deliberately left covered: it holds unscanned files and trained models' results. Ids are invented.
+ * a version with a file whose scan found danger, or a loadable file whose scan errored, is not
+ * covered, under any arm. An errored file the generator never loads leaves the version covered, and
+ * Pending is deliberately left covered: it holds unscanned files and trained models' results. Ids are
+ * invented.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -75,21 +77,31 @@ const DANGER_BESIDE_CLEAN = 7;
 const VIRUS_ERROR = 8;
 const PENDING = 9;
 const TRAINED_PENDING = 10;
+// Beside a clean weight file, so only the second file decides.
+const CONFIG_ERROR = 11;
+const CONFIG_DANGER = 12;
+const LAST_ID = 12;
 
 let db: PGlite;
 
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(SCHEMA);
-  for (let id = 1; id <= 10; id++) {
+  for (let id = 1; id <= LAST_ID; id++) {
     await db.query(`INSERT INTO "Model" (id) VALUES ($1)`, [id]);
     await db.query(`INSERT INTO "ModelVersion" (id, "modelId") VALUES ($1, $1)`, [id]);
   }
-  const file = (versionId: number, pickle: string, virus = 'Success', metadata?: string) =>
+  const file = (
+    versionId: number,
+    pickle: string,
+    virus = 'Success',
+    metadata?: string,
+    type = 'Model'
+  ) =>
     db.query(
-      `INSERT INTO "ModelFile" ("modelVersionId", "pickleScanResult", "virusScanResult", metadata)
-       VALUES ($1, $2, $3, COALESCE($4::jsonb, '{"format":"SafeTensor"}'))`,
-      [versionId, pickle, virus, metadata ?? null]
+      `INSERT INTO "ModelFile" ("modelVersionId", "pickleScanResult", "virusScanResult", metadata, type)
+       VALUES ($1, $2, $3, COALESCE($4::jsonb, '{"format":"SafeTensor"}'), $5)`,
+      [versionId, pickle, virus, metadata ?? null, type]
     );
   await file(CLEAN, 'Success');
   await file(PICKLE_DANGER, 'Danger');
@@ -103,6 +115,10 @@ beforeAll(async () => {
   await file(VIRUS_ERROR, 'Success', 'Error');
   await file(PENDING, 'Pending', 'Pending');
   await file(TRAINED_PENDING, 'Pending', 'Pending', '{"trainingResults":{}}');
+  await file(CONFIG_ERROR, 'Success');
+  await file(CONFIG_ERROR, 'Error', 'Success', undefined, 'Config');
+  await file(CONFIG_DANGER, 'Success');
+  await file(CONFIG_DANGER, 'Danger', 'Success', undefined, 'Config');
 
   await db.exec(currentViewSql());
 });
@@ -112,10 +128,15 @@ afterAll(async () => {
 });
 
 describe('GenerationCoverage and failed scans', () => {
-  it('covers no version with a Danger or Error file; Pending, trained results included, stays covered', async () => {
+  it('covers no version with a Danger file or an errored loadable file; Pending and an errored config stay covered', async () => {
     const { rows } = await db.query<{ modelVersionId: number }>(
       `SELECT "modelVersionId" FROM "GenerationCoverage" WHERE covered OR "coveredNext" ORDER BY 1`
     );
-    expect(rows.map((r) => r.modelVersionId)).toEqual([CLEAN, PENDING, TRAINED_PENDING]);
+    expect(rows.map((r) => r.modelVersionId)).toEqual([
+      CLEAN,
+      PENDING,
+      TRAINED_PENDING,
+      CONFIG_ERROR,
+    ]);
   });
 });

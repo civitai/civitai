@@ -67,7 +67,8 @@ export function ListingPermissionsDisclosure({
 
 /**
  * `check` marks a permission the app HAS (store listing, settings, grants). `neutral` is for a
- * prompt asking for permissions not yet given, where a green check would read as "already allowed".
+ * permission not yet given — a consent prompt's whole list, or one row of a grant list — where a
+ * green check would read as "already allowed".
  */
 export type PermissionRowMarker = 'check' | 'neutral';
 
@@ -81,15 +82,20 @@ export function ListingPermissionGroups({
   permissions,
   renderDetail,
   revokedIds,
+  notGrantedIds,
   marker = 'check',
 }: {
   permissions: ListingPermission[];
   renderDetail?: (id: string) => ReactNode;
   /** Permissions the viewer withdrew: struck through and greyed, never dropped. */
   revokedIds?: string[];
+  /** Permissions the viewer has not given yet: the `neutral` marker whatever `marker` says. */
+  notGrantedIds?: string[];
   marker?: PermissionRowMarker;
 }) {
   const groupId = useId();
+  const markerFor = (id: string): PermissionRowMarker =>
+    notGrantedIds?.includes(id) ? 'neutral' : marker;
   const { sensitive, other } = groupListingPermissions(permissions);
   const labelled = sensitive.length > 0 && other.length > 0;
   return (
@@ -114,7 +120,7 @@ export function ListingPermissionGroups({
                 permission={p}
                 extra={renderDetail?.(p.id)}
                 revoked={revokedIds?.includes(p.id)}
-                marker={marker}
+                marker={markerFor(p.id)}
               />
             </Fragment>
           ))}
@@ -140,7 +146,7 @@ export function ListingPermissionGroups({
                 permission={p}
                 extra={renderDetail?.(p.id)}
                 revoked={revokedIds?.includes(p.id)}
-                marker={marker}
+                marker={markerFor(p.id)}
               />
             </Fragment>
           ))}

@@ -39,11 +39,11 @@ const record = (first: any, rest: unknown[]) => {
   }
 };
 
-// The whole path is on the WRITE client: `getUserWithProfile` reads through `tx ?? dbWrite`
-// (user-profile.service.ts:86), the preferences statement is `dbWrite.$executeRaw` (:242) and the
-// links/profile write is `dbWrite.$transaction` (:275). The one replica read on the path is the
-// stat lookup at :110. The mock this replaces aliased dbRead and dbWrite to a single object, so a
-// mis-attributed call could not have shown up.
+// The whole path is on the WRITE client: the profile read, the preferences `$executeRaw` and the
+// links/profile `$transaction` all go through dbWrite (with `kysely-hot-reads-9` on, the read goes
+// through kyselyWrite, also the primary). The one replica read on the path is the userStat lookup.
+// The mock this replaces aliased dbRead and dbWrite to a single object, so a mis-attributed call
+// could not have shown up.
 const profileRow = { userId: 1, coverImage: null };
 
 // 🔴 The transaction client stays a SEPARATE object rather than inheriting the canonical

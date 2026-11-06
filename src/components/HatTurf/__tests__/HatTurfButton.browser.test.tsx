@@ -232,7 +232,9 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
     expect(button.textContent).toBe('');
     const box = button.getBoundingClientRect();
-    expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(2);
+    // The chips' height, so the tip row does not grow.
+    expect(box.height).toBe(22);
+    expect(box.width).toBe(26);
     // The viewer is on blue: the theme's blue at its primary shade (#228be6), not the grey fallback.
     expect(getComputedStyle(button).backgroundColor).toBe('rgb(34, 139, 230)');
     const gear = q('hat-turf-gear')!;
@@ -270,15 +272,14 @@ describe('Hat Turf button on a feed ImageCard', () => {
       expect(hit(x, y)).toBe(button);
   });
 
-  test('the hat button is a full circle', async () => {
+  test('the hat button is a rounded square, not a circle', async () => {
     renderCard();
     await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
     const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    // A rounded square still takes a tap 3px in from its corner; a circle does not.
     const b = button.getBoundingClientRect();
-    expect(b.width).toBe(b.height);
-    // A rounded square still takes a tap 2px in from its corner; a circle does not.
-    const corner = document.elementFromPoint(b.left + 2, b.bottom - 2)?.closest('button');
-    expect(corner).not.toBe(button);
+    const corner = document.elementFromPoint(b.left + 3, b.bottom - 3)?.closest('button');
+    expect(corner).toBe(button);
   });
 
   test('pressing drops a draft hat on the picture without opening the card', async () => {

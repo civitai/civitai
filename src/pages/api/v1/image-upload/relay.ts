@@ -5,7 +5,7 @@ import {
   recordImageUploadRelay,
   type ImageUploadRelayOutcome,
 } from '~/server/prom/image-upload-relay.metrics';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -311,9 +311,10 @@ export async function authorizeRelayRequest(
     return { outcome: 'forbidden_origin' };
   }
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  if (session === false) return { outcome: 'unauthorized' };
   const userId = session?.user?.id;
-  if (!userId || session.user?.bannedAt) {
+  if (!userId) {
     res.status(401).json({ error: 'Unauthorized' });
     return { outcome: 'unauthorized' };
   }
