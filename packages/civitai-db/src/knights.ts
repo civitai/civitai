@@ -17,6 +17,11 @@ export const REFERENCE_STATUS = {
   retired: 'retired',
 } as const;
 
+/** Longest question a player yes/no item may carry; the import and the moderator app both enforce it. */
+export const YESNO_QUESTION_MAX = 600;
+/** `reason` of a yes/no item a moderator closed. The import never reopens one. */
+export const MODERATOR_RETIRED = 'moderator-retired';
+
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
 /**

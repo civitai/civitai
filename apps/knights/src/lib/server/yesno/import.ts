@@ -1,6 +1,7 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import { closeOpenYesNoItem } from './close';
 import type { DB } from '@civitai/db-schema/kysely';
+import { MODERATOR_RETIRED, YESNO_QUESTION_MAX } from '@civitai/db/knights';
 import {
   axisKey,
   axisPrompt,
@@ -31,7 +32,6 @@ export type Skipped = Partial<
 >;
 
 const MAX_ID = 200;
-const MAX_QUESTION = 600;
 const MAX_EFFECT = 40;
 const META_COLUMNS = {
   caseId: 'case_id',
@@ -52,6 +52,10 @@ const utcNow = sql<Date>`(now() AT TIME ZONE 'utc')`;
 
 /** An item the import closed as withdrawn. */
 const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "KnightsQueueItem"."reason" = 'retired')`;
+
+/** An item a moderator retired, reworded or restored (`meta.moderation`): the import leaves it as the moderator left it. */
+const moderated = sql<SqlBool>`(COALESCE("KnightsQueueItem"."meta" ? 'moderation', false)
+  OR "KnightsQueueItem"."reason" IS NOT DISTINCT FROM ${MODERATOR_RETIRED})`;
 
 const clip = (value: string | undefined, max: number) => (value ?? '').trim().slice(0, max);
 
@@ -101,7 +105,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
       skip('bad-kind');
       continue;
     }
-    const prompt = clip(r.question, MAX_QUESTION);
+    const prompt = clip(r.question, YESNO_QUESTION_MAX);
     if (!prompt) {
       skip('bad-question');
       continue;
@@ -217,7 +221,7 @@ export async function importYesNo(
             resolvedAt: sql<Date | null>`CASE WHEN ${retired} THEN NULL ELSE "KnightsQueueItem"."resolvedAt" END`,
           }))
           .where(
-            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND (${retired} OR
+            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND NOT ${moderated} AND (${retired} OR
               ("KnightsQueueItem"."questionKey", "KnightsQueueItem"."imageId", "KnightsQueueItem"."audience", "KnightsQueueItem"."prompt",
                "KnightsQueueItem"."yesEffect", "KnightsQueueItem"."noEffect", "KnightsQueueItem"."meta")
               IS DISTINCT FROM

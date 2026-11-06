@@ -292,4 +292,49 @@ describe('importYesNo', () => {
       ['b', 'Closed', 'retired', expect.anything()],
     ]);
   });
+
+  describe('respects moderator actions', () => {
+    const mark = (id: string, patch: string, sets = '') =>
+      pg.exec(
+        `UPDATE "KnightsQueueItem" SET "meta" = COALESCE("meta",'{}'::jsonb) || '${patch}'::jsonb ${sets} WHERE "externalId" = '${id}'`
+      );
+
+    it('never reopens a question a moderator retired, whether or not the file still lists it', async () => {
+      await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
+      await mark(
+        'a',
+        '{"moderation":{"action":"retired"}}',
+        `, "status"='Closed', "reason"='moderator-retired'`
+      );
+      await pg.exec(
+        `UPDATE "KnightsQueueItem" SET "status"='Closed', "reason"='moderator-retired' WHERE "externalId" = 'b'`
+      );
+
+      await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b', question: 'Changed?' })));
+
+      expect((await items()).map((i) => [i.externalId, i.status, i.reason, i.prompt])).toEqual([
+        ['a', 'Closed', 'moderator-retired', 'Is a hat worn?'],
+        ['b', 'Closed', 'moderator-retired', 'Is a hat worn?'],
+      ]);
+    });
+
+    it('keeps the prompt a moderator rewrote in place, and still updates a question nobody touched', async () => {
+      await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
+      await pg.exec(
+        `UPDATE "KnightsQueueItem" SET "prompt" = 'Reworded by a moderator?' WHERE "externalId" = 'a'`
+      );
+      await mark('a', '{"moderation":{"action":"reworded","by":4,"note":"clearer"}}');
+
+      const again = await importYesNo(
+        db,
+        load(line({ id: 'a' }), line({ id: 'b', question: 'Is a cap worn?' }))
+      );
+
+      expect(again).toMatchObject({ updated: 1, unchanged: 1 });
+      const [a, b] = await items();
+      expect(a).toMatchObject({ status: 'Open', prompt: 'Reworded by a moderator?' });
+      expect(a.meta).toMatchObject({ moderation: { action: 'reworded', by: 4 } });
+      expect(b.prompt).toBe('Is a cap worn?');
+    });
+  });
 });
