@@ -50,3 +50,39 @@ export async function gradeKnightsVotes(
     .where('verdict', '=', 'pending')
     .execute();
 }
+
+/**
+ * Closes a yes/no item with no outcome: the item becomes `Closed` with `reason`, and its pending votes become `inconclusive`.
+ * The caller holds the item row lock and runs this in a transaction. It pays nothing: `settleFinalItems` (Knights) settles an
+ * inconclusive vote on a closed item, as `closeYesNoItem` does inline. Lock order: item row, then its vote rows, never player rows,
+ * so the moderator app can call it without taking the player locks the Knights close path takes.
+ * `metaPatch` is merged into the item's `meta`.
+ */
+export async function closeYesNoItemRow(
+  trx: Kysely<DB> | Transaction<DB>,
+  itemId: number,
+  reason: string,
+  now: Date,
+  metaPatch?: Record<string, unknown>
+) {
+  const at = sql<Date>`${now.toISOString()}::timestamp`;
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({
+      status: 'Closed',
+      reason,
+      resolvedAt: at,
+      updatedAt: at,
+      ...(metaPatch
+        ? { meta: sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb` }
+        : {}),
+    })
+    .where('id', '=', itemId)
+    .execute();
+  await trx
+    .updateTable('KnightsVote')
+    .set({ verdict: 'inconclusive' })
+    .where('itemId', '=', itemId)
+    .where('verdict', '=', 'pending')
+    .execute();
+}
