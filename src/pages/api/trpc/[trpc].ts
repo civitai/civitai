@@ -22,6 +22,7 @@ import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { isWebClient } from '~/server/utils/client-version-saturation';
 import {
+  callsRemovedProcedure,
   clientNeedsUpdate,
   peekFreshClientConfig,
   peekSiteAlertsVersion,
@@ -111,11 +112,16 @@ const trpcHandler = createNextApiHandler({
     }
 
     // Set here rather than in a middleware: on a streamed batch the head is written before any
-    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    // procedure finishes. Nothing here may await Redis; the CLIENT hash is read from this pod's cache.
     if (isWebClient(ctx?.req?.headers)) {
       // Never on a response the edge keeps: it would reach current bundles too.
       const client = peekFreshClientConfig();
-      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+      const reqHeaders = ctx?.req?.headers;
+      if (
+        !edgeCached &&
+        ((client && clientNeedsUpdate(reqHeaders, client)) ||
+          callsRemovedProcedure(reqHeaders, info?.calls))
+      )
         headers['x-update-required'] = 'true';
       const alertsVersion = peekSiteAlertsVersion();
       if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
