@@ -1,6 +1,6 @@
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
@@ -15,7 +15,7 @@ const schema = z.object({
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
-      const session = await getServerAuthSession({ req, res });
+      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
       // 🔴 civitai#3845 TIER 1 — see `generation/data.ts` for the full reasoning.
       // Same shape of bug and same fix: the catch answered EVERY failure with

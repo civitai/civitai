@@ -319,6 +319,23 @@
   {/if}
 {/snippet}
 
+<!-- The "Starting at" total, shared by the summary aside and the mobile sticky bar. -->
+{#snippet totalTag(size: string, iconSize: number)}
+  {#if total != null}
+    <span class="whitespace-nowrap font-mono {size} font-bold text-buzz"
+      ><IconBoltFilled size={iconSize} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}</span
+    >
+  {:else}
+    <span class="font-mono {size} font-bold text-dark-2">—</span>
+  {/if}
+{/snippet}
+
+{#snippet continueButton(placement: string)}
+  <Button class="h-11 {placement}" disabled={customIncomplete} onclick={continueToData}>
+    Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
+  </Button>
+{/snippet}
+
 <!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
      when it offers one (the embed's resource-select modal). -->
 {#snippet customAirInput(run: Run, runIndex: number)}
@@ -782,22 +799,14 @@
     </div>
     <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm font-semibold text-white">Starting at</span>
-      {#if total != null}
-        <span class="font-mono text-2xl font-bold text-buzz">
-          <IconBoltFilled size={20} stroke={2} class="mb-0.5 inline" /> {total.toLocaleString()}
-        </span>
-      {:else}
-        <span class="font-mono text-2xl font-bold text-dark-2">—</span>
-      {/if}
+      {@render totalTag('text-2xl', 20)}
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
       price depends on data and settings
     </div>
     <!-- Below lg the summary sits under the whole form, so the action lives in the sticky bar instead. -->
     <div class="hidden lg:block">
-      <Button class="mt-4 h-11 w-full" disabled={customIncomplete} onclick={continueToData}>
-        Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
-      </Button>
+      {@render continueButton('mt-4 w-full')}
       {@render customIncompleteNote()}
     </div>
   </aside>
@@ -830,18 +839,10 @@
       {#if total != null}
         <div class="min-w-0 flex-1 leading-tight">
           <div class="font-mono text-xs text-dark-2">Starting at</div>
-          <span class="font-mono text-lg font-bold text-buzz">
-            <IconBoltFilled size={16} stroke={2} class="mb-0.5 inline" />{total.toLocaleString()}
-          </span>
+          {@render totalTag('text-lg', 16)}
         </div>
       {/if}
-      <Button
-        class="h-11 {total != null ? 'shrink-0' : 'w-full'}"
-        disabled={customIncomplete}
-        onclick={continueToData}
-      >
-        Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
-      </Button>
+      {@render continueButton(total != null ? 'shrink-0' : 'w-full')}
     </div>
     {@render customIncompleteNote()}
   </div>

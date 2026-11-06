@@ -53,15 +53,13 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
     const cbRef = callbackRef as { current: ResizeFunc };
 
     let mutationObserver: MutationObserver | undefined;
-    const observedElements = observeChildren ? ([...node.children] as Element[]) : [node];
+    const observedElements: Element[] = [];
 
     const observeElements = (elems: Element[]) => {
       for (const elem of elems) {
         const callbacks = callbackMap.get(elem as Element) ?? [];
-        if (!callbackMap.has(elem)) {
-          observer.observe(elem);
-          observedElements.push(elem);
-        }
+        if (!callbackMap.has(elem)) observer.observe(elem);
+        observedElements.push(elem);
         callbackMap.set(elem, callbacks.concat(cbRef));
       }
     };
@@ -90,8 +88,11 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
       mutationObserver?.disconnect();
       mutationObserver = new MutationObserver((entries) => {
         for (const entry of entries) {
-          unobserveElements(entry.removedNodes as any);
-          observeElements(entry.addedNodes as any);
+          // ResizeObserver.observe throws on a text node.
+          const elements = (nodes: NodeList) =>
+            [...nodes].filter((n): n is Element => n instanceof Element);
+          unobserveElements(elements(entry.removedNodes));
+          observeElements(elements(entry.addedNodes));
         }
       });
       mutationObserver.observe(node, { childList: true });
@@ -102,7 +103,7 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
     return () => {
       if (observeChildren) {
         mutationObserver?.disconnect();
-        unobserveElements(observedElements);
+        unobserveElements([...observedElements]);
       } else {
         unobserveElements([node]);
       }

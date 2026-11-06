@@ -8,9 +8,9 @@ import {
   Loader,
   RingProgress,
   Text,
-  Tooltip,
   Anchor,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import {

@@ -2083,6 +2083,113 @@ describe('PageBlockHost missing-permissions notice (the host-side backstop)', ()
     await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
   });
 
+  // ── A REFUSAL BRINGS A DISMISSED NOTICE BACK ─────────────────────────────────
+  // The rule is `resolveConsentNoticeAfterRefusal` (unit-tested in
+  // `__tests__/requestConsentGate.test.ts`); these pin that THIS host wires a reaction
+  // refused as `needs-consent` to it, and that REQUEST_CONSENT does not revive it.
+  const REACT = 'social:react:self';
+  const reactionRequest = {
+    requestId: 'react-1',
+    entityType: 'image',
+    entityId: 5,
+    reaction: 'Heart',
+    reacted: true,
+  };
+
+  async function dismissNotice() {
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+  }
+
+  test('🔴 dismissed, then a reaction is refused for a MISSING permission → the notice is back, highlighted', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={['ai:write:budgeted', REACT]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      // The refusal itself happened — the block was told why.
+      await vi.waitFor(() =>
+        expect(posts.of('ENTITY_REACTION_RESULT').map((m) => m.payload)).toEqual([
+          { requestId: 'react-1', error: 'needs-consent' },
+        ])
+      );
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+      expect((noticeQuery() as HTMLElement).getAttribute('data-highlight')).toBe('true');
+      // Back as a notice, not as a modal.
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 ONE revival per mount: dismissed again, later refusals do NOT bring it back', async () => {
+    // An app can send this request whenever it likes, with no user gesture, so an
+    // uncapped revival would make the notice impossible to get rid of.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        missingScopes={['ai:write:budgeted', REACT]}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull()); // first revival
+      await dismissNotice();
+      for (let i = 2; i <= 3; i++) {
+        postFromBlock('SET_ENTITY_REACTION', { ...reactionRequest, requestId: `react-${i}` });
+        // Positive control: each later refusal still reached the app.
+        await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(i));
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('CONTROL — the same refusal for a permission the viewer CANNOT grant here leaves it dismissed', async () => {
+    // `social:react:self` is not in the missing set, so consent cannot add it: the
+    // block is still refused (positive control below), but the notice must not come
+    // back offering an "Allow…" that cannot help.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForHostPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 dismissed, then REQUEST_CONSENT for a missing scope opens the modal and does NOT bring the notice back', async () => {
+    // That path already answers the request with the consent modal, so a notice
+    // reappearing behind it (and staying after the viewer declines) would only undo
+    // the dismissal. The modal is the positive control that the request was handled.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
   test('not before BLOCK_READY — no notice over a still-loading block', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
     await vi.waitFor(() => {

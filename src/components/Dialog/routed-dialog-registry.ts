@@ -26,7 +26,7 @@ export const CollectionEditModal = dynamic(
   }
 );
 export const HiddenCommentsModal = dynamic(
-  () => import('~/components/CommentsV2/HiddenCommentsModal'),
+  () => import('~/components/Model/ModelDiscussion/HiddenCommentsModal'),
   {
     ssr: false,
   }

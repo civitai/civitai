@@ -1,3 +1,4 @@
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
@@ -2179,6 +2180,8 @@ export const blocksRouter = router({
         // NSFW-APP-RED-ONLY: mature (r/x) apps render in a model slot only on a
         // red-capable host. Threaded from the request host.
         redCapable: isRedCapableRequest(ctx),
+        // …and only for a viewer whose browsing level includes that rating (else omitted).
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),
 
@@ -4441,7 +4444,9 @@ export const blocksRouter = router({
         !ctx.user?.isModerator,
         // NSFW-APP-RED-ONLY: a mature (r/x) app's detail resolves to NOT_FOUND
         // off a red-capable host (mirrors the run-page SSR 404).
-        isRedCapableRequest(ctx)
+        isRedCapableRequest(ctx),
+        // …and on one, an r/x app the viewer's browsing level excludes is NOT_FOUND too.
+        getRequestBrowsingLevel(ctx)
       );
       if (!detail) throw throwNotFoundError('App block not found');
       // LISTING-VISIBILITY GATE: a testers-only / private app the viewer may not see is
@@ -8815,6 +8820,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // A write credential lets the caller file versions, so the caller (owner or collaborator)
+      // must have accepted, as on submitVersion.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
 
       const slug = block.blockId;
 
@@ -9077,6 +9088,13 @@ export const blocksRouter = router({
           message: 'Account is not eligible to edit apps',
         });
       }
+      // The owner too: the commit below files its review request in the owner's name, which
+      // refuses after the commit has landed if the owner has not accepted.
+      const { assertAcceptedAppDeveloperTermsTrpc, assertOwnerAcceptedAppDeveloperTerms } =
+        await import('~/server/services/blocks/app-developer-terms.service');
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
+      if (block.app.userId !== ctx.user!.id)
+        await assertOwnerAcceptedAppDeveloperTerms(block.app.userId);
       // The canonical Forgejo repo only exists once the first version is
       // ZIP-approved (approveRequest pre-creates civitai-apps/<slug>); until
       // then there's nothing to commit to.
@@ -9314,6 +9332,12 @@ export const blocksRouter = router({
           message: 'Account is not eligible for git access',
         });
       }
+      // Gated like getMyAppRepo although it grants only `read`: the token it returns is the same
+      // push token, and an accepted collaborator already holds `write` from accepting the invite.
+      const { assertAcceptedAppDeveloperTermsTrpc } = await import(
+        '~/server/services/blocks/app-developer-terms.service'
+      );
+      await assertAcceptedAppDeveloperTermsTrpc(ctx.user!.id);
       const slug = block.blockId;
       if (block.status !== 'approved') {
         return {

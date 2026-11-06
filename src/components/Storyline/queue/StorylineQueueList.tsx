@@ -1,4 +1,5 @@
-import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconCheck, IconStar, IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {

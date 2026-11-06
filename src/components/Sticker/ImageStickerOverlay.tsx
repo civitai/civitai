@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
 import { DraftStickerLayer } from '~/components/Sticker/DraftStickerLayer';
+import { EVENT_HAT_CORNERS } from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementOverlay } from '~/components/Sticker/StickerPlacementOverlay';
 import { useStickerPlacements } from '~/components/Sticker/placement.util';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
@@ -25,7 +26,14 @@ const ARM_AT = 0.6;
  * the box *is* the coordinate system, so it is what the draft store measures drags
  * against and what every stored fraction means.
  */
-export function ImageStickerOverlay({ imageId }: { imageId: number }) {
+export function ImageStickerOverlay({
+  imageId,
+  wearsHat = false,
+}: {
+  imageId: number;
+  /** The image wears an event hat, which the owner's peek toggle must not sit under. */
+  wearsHat?: boolean;
+}) {
   const currentUser = useCurrentUser();
   const treatment = useStickerTreatment();
   const revealed = useStickerRevealStore(stickersRevealed);
@@ -128,6 +136,7 @@ export function ImageStickerOverlay({ imageId }: { imageId: number }) {
               placements={placements}
               viewerId={currentUser?.id}
               treatment={treatment}
+              takenCorners={wearsHat ? EVENT_HAT_CORNERS : undefined}
               // Every time they arrive on screen (Justin, 2026-08-12) — hence
               // `armed`, which tracks intersection rather than mount, because the
               // carousel mounts a slide long before anyone looks at it and keeps it

@@ -8,7 +8,7 @@ import {
   getStoredComment,
   insertComment,
   isCommentWriteLocked,
-  isV3WriteTarget,
+  isTopicMuted,
   setCommentFlags,
   toggleCommentMute,
   toggleTopicLock,
@@ -226,6 +226,26 @@ describe('comment v3 writes', () => {
     expect(await toggleTopicMute(db, topic)).toEqual({ muted: false });
   });
 
+  it('a mute is the caller’s alone: one user’s toggle never lifts another’s', async () => {
+    const c = await post(1, 8);
+    await toggleCommentMute(db, { userId: 8, commentId: c.id });
+    expect(await toggleCommentMute(db, { userId: 9, commentId: c.id })).toEqual({ muted: true });
+    expect(await toggleCommentMute(db, { userId: 8, commentId: c.id })).toEqual({ muted: false });
+    const topic = { entityType: 'article', entityId: 4 };
+    await toggleTopicMute(db, { ...topic, userId: 8 });
+    expect(await toggleTopicMute(db, { ...topic, userId: 9 })).toEqual({ muted: true });
+    expect(await toggleTopicMute(db, { ...topic, userId: 8 })).toEqual({ muted: false });
+  });
+
+  it('a section reads as muted only to the user who muted it, and only that section', async () => {
+    const topic = { entityType: 'article', entityId: 5 };
+    await toggleTopicMute(db, { ...topic, userId: 8 });
+    expect(await isTopicMuted(db, { ...topic, userId: 8 })).toBe(true);
+    expect(await isTopicMuted(db, { ...topic, userId: 9 })).toBe(false);
+    expect(await isTopicMuted(db, { ...topic, entityId: 6, userId: 8 })).toBe(false);
+    expect(await isTopicMuted(db, { ...topic, entityType: 'post', userId: 8 })).toBe(false);
+  });
+
   it('an old-table update copies only what it changed, so it never undoes a CommentV3 edit', async () => {
     const thread = await one<{ id: number }>(
       `INSERT INTO "Thread"("articleId") VALUES (2) RETURNING id`
@@ -289,13 +309,5 @@ describe('comment v3 writes', () => {
     await pg.exec(`UPDATE "CommentV3" SET locked = false WHERE id = ${root.id}`);
     await toggleTopicLock(db, { entityType: 'article', entityId: 33 });
     expect(await locked()).toBe(true);
-  });
-
-  it('a commentv2 write target is a CommentV3 surface by its own row, not by what it is addressed as', async () => {
-    const article = await post(1, 1);
-    expect(await isV3WriteTarget(db, { entityType: 'article', entityId: 1 })).toBe(true);
-    expect(await isV3WriteTarget(db, { entityType: 'comment', entityId: article.id })).toBe(true);
-    expect(await isV3WriteTarget(db, { entityType: 'image', entityId: 10 })).toBe(false);
-    expect(await isV3WriteTarget(db, { entityType: 'comment', entityId: 99_999 })).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import type { NextApiResponse } from 'next';
+import { AppDeveloperTermsNotAcceptedError } from '~/shared/constants/app-developer-terms.constants';
 import { isProd } from '~/env/other';
 import {
   submitVersionParseErrorMessage,
@@ -146,12 +147,25 @@ export default AuthedEndpoint(
         version: result.version,
         status: 'pending',
         listing: result.listing ?? null,
+        storageMigrationWarnings: result.storageMigrationWarnings ?? [],
       });
     } catch (err) {
       // Service throws plain Errors with human-readable messages (bundle too
       // large, missing manifest, invalid blockId / version / name, etc).
       // Surface as 400 so the form can render them inline.
-      res.status(400).json({ message: (err as Error).message });
+      if (err instanceof AppDeveloperTermsNotAcceptedError) {
+        res.status(403).json({ message: err.message });
+        return;
+      }
+      const { isStorageMigrationRefusal } = await import(
+        '~/server/services/apps/storage-schema-migrations'
+      );
+      // A schema-migration refusal also carries the structured list (collection, pointer,
+      // keyword, old → new) so a client can show each breaking change.
+      res.status(400).json({
+        message: (err as Error).message,
+        ...(isStorageMigrationRefusal(err) ? { storageBreakingChanges: err.breaking } : {}),
+      });
     }
   },
   ['POST']

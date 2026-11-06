@@ -129,6 +129,7 @@ function RenderFilters() {
         attribute="baseModel"
         limit={SEARCH_FACET_LIMIT}
         searchable
+        remoteSearch={false}
         renderOption={renderBaseModelOption}
       />
     </>

@@ -406,6 +406,13 @@ export async function setListingVisibilityAsOwner(args: {
   if (!access || access.role == null) {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_NOT_OWNED_MESSAGE });
   }
+  if (args.visibility === 'public') {
+    const { assertAcceptedAppDeveloperTermsTrpc, assertOwnerAcceptedAppDeveloperTerms } =
+      await import('~/server/services/blocks/app-developer-terms.service');
+    await assertAcceptedAppDeveloperTermsTrpc(args.userId);
+    if (access.ownerUserId !== args.userId)
+      await assertOwnerAcceptedAppDeveloperTerms(access.ownerUserId);
+  }
   // 🔴 `access.seatListingId`, NOT `args.appListingId` — THE PARENT. The caller may have
   // arrived with a SHADOW revision id: `resolveListingAccess` resolves the role THROUGH the
   // parent (`seatListingId = revisionOfId ?? id`) and admits it, so without this the write

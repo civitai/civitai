@@ -2,6 +2,7 @@
 // generation hot path, and pulling stripe/email in here made three of its
 // suites fail to collect. Verdict handling lives in
 // `user-restriction-resolve.service.ts` for that reason.
+import { isSystemAccountRow } from '~/server/auth/moderation-account';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
@@ -82,8 +83,8 @@ export function unwiredRulingReason(type: string): string | null {
 }
 
 export type PendingReviewMuteResult =
-  | { muted: true; userRestrictionId: number; deduped: boolean }
-  | { muted: false; skipped: 'protected' | 'moderator' | 'banned' | 'deleted' };
+  | { muted: true; userRestrictionId: number; deduped: boolean; wasMuted: boolean }
+  | { muted: false; skipped: 'protected' | 'system-account' | 'moderator' | 'banned' | 'deleted' };
 
 async function bestEffort(name: string, userId: number, fn: () => Promise<unknown>) {
   try {
@@ -148,9 +149,7 @@ export async function applyPendingReviewMute({
     claimPendingReviewMute(tx, { userId, triggers, type })
   );
   if (claim.muted) await announcePendingReviewMute({ userId, type, updateSource, claim });
-  return claim.muted
-    ? { muted: true, userRestrictionId: claim.userRestrictionId, deduped: claim.deduped }
-    : claim;
+  return claim;
 }
 
 type RestrictionClient = Pick<Prisma.TransactionClient, 'user' | 'userRestriction'>;
@@ -173,9 +172,18 @@ export async function claimPendingReviewMute(
   // a just-promoted moderator or a just-banned account through the wrong branch.
   const user = await client.user.findUnique({
     where: { id: userId },
-    select: { isModerator: true, muted: true, bannedAt: true, deletedAt: true },
+    select: {
+      id: true,
+      username: true,
+      meta: true,
+      isModerator: true,
+      muted: true,
+      bannedAt: true,
+      deletedAt: true,
+    },
   });
   if (!user) throw new Error(`No user with id ${userId}`);
+  if (isSystemAccountRow(user)) return { muted: false, skipped: 'system-account' };
   if (user.isModerator) return { muted: false, skipped: 'moderator' };
   if (user.deletedAt) return { muted: false, skipped: 'deleted' };
   if (user.bannedAt) return { muted: false, skipped: 'banned' };

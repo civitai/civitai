@@ -31,6 +31,7 @@
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import ModelFlagDetailFrame from '$lib/components/minor-flags/ModelFlagDetailFrame.svelte';
+  import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
   import ReasonPicker from '$lib/components/triage/ReasonPicker.svelte';
@@ -205,6 +206,7 @@
       appealedAt={row.appealCreatedAt}
       nthThisYear={row.appealNthThisYear}
     />
+    <ComFaceCard face={row.comFace} />
     <section class="rounded-md border border-dark-4 p-3 text-sm">
       <h3 class="m-0 mb-2 text-xs font-semibold uppercase text-dark-2">Settings asked about</h3>
       <ul class="m-0 flex list-none flex-col gap-1 p-0">

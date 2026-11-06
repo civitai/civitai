@@ -1,4 +1,4 @@
-import { Tooltip } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

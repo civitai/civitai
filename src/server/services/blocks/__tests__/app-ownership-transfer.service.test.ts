@@ -1,4 +1,16 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Listing COLLABORATORS — OWNERSHIP TRANSFER.
@@ -756,6 +768,18 @@ describe('acceptTransfer — 🔴 ATOMICITY of the two ownership columns (ONSITE
       where: Record<string, unknown>;
     };
     expect(listing.where).toEqual({ id: LISTING });
+  });
+
+  it('the new owner must have accepted the App Developer Terms; nothing changes hands until then', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    await expect(
+      acceptTransfer({ transferId: TRANSFER, userId: NEW_OWNER, now: NOW })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(terms.assertAcceptedAppDeveloperTermsTrpc).toHaveBeenCalledWith(NEW_OWNER);
+    expect(mockDb.oauthClient.updateMany).not.toHaveBeenCalled();
   });
 
   it('only the ADDRESSEE can accept', async () => {

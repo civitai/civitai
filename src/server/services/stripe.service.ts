@@ -54,7 +54,7 @@ const log = createLogger('stripe', 'blue');
 const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
 // The `canceled_at` of the cancel a ban / restriction flow made. reinstateSubscription resumes only
 // while it matches: a member's own later cancel gets a new `canceled_at`.
-const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
+export const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
 // A gift subscription's own `cancel_at` (the end of all its gifted months), saved when a moderation
 // cancel cuts it to the current period so a reinstate can put it back.
 const MODERATION_PREV_CANCEL_AT = 'civitai_moderation_prev_cancel_at';
@@ -879,11 +879,7 @@ export const upsertSubscription = async (
   await invalidateSubscriptionCaches(user.id);
 };
 
-export const toDateTime = (secs: number) => {
-  const t = new Date('1970-01-01T00:30:00Z'); // Unix epoch start.
-  t.setSeconds(secs);
-  return t;
-};
+export const toDateTime = (secs: number) => new Date(secs * 1000);
 
 export const upsertProductRecord = async (product: Stripe.Product) => {
   const productData = {

@@ -1,6 +1,7 @@
 import type { ImageAnalysisInput } from '~/server/schema/image.schema';
 import type { PopoverProps } from '@mantine/core';
-import { Stack, Text, Code, Popover, Group, SimpleGrid, Divider } from '@mantine/core';
+import { Stack, Text, Code, Group, SimpleGrid, Divider } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { capitalize } from 'lodash-es';
 import React from 'react';
 

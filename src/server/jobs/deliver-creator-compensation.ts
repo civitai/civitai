@@ -93,7 +93,9 @@ export async function payDueCompensation(now: Date) {
     log(`Paid ${dateStr}, updated last payout date`);
 
     try {
-      await clickhouse.$query`
+      // $exec, not $query: $query appends FORMAT JSONEachRow, and ClickHouse then accepts this
+      // INSERT ... VALUES while writing 0 rows, so the event never reaches Kafka.
+      await clickhouse.$exec`
         INSERT INTO kafka.manual_events VALUES
           (now(), 'update-compensation', '{"date":"${dateStr}"}');
       `;
@@ -277,8 +279,9 @@ export async function runPayout(lastUpdate: Date) {
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
 
-      // Drop creator-compensation rows where earnings stopped: the orchestrator's stored
-      // payoutEnabled can predate the base model's license change.
+      // Drop compensation and license-fee rows where earnings stopped: the orchestrator's stored
+      // payoutEnabled can predate the base model's license change, and a non-commercial license
+      // bars paying a fee on it. Tips still pay, by owner decision.
       const earningsStoppedIds = modelVersionIds.filter((_, i) =>
         stopsCreatorEarnings(baseModels[i])
       );
@@ -286,7 +289,7 @@ export async function runPayout(lastUpdate: Date) {
         ...batch.filter(
           (r) =>
             modelVersionIds.includes(r.modelVersionId) &&
-            !(r.source === 'compensation' && earningsStoppedIds.includes(r.modelVersionId))
+            !(r.source !== 'tip' && earningsStoppedIds.includes(r.modelVersionId))
         )
       );
     }

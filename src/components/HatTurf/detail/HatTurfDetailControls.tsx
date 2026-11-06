@@ -1,26 +1,23 @@
 import { useState } from 'react';
-import { Button, Drawer, Popover, Switch, Text } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
-import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useTeamColor } from '~/components/Events/events.utils';
+import { Button } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
+import { useLocalStorage } from '@mantine/hooks';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import buttonClasses from '~/components/HatTurf/HatTurfButton.module.css';
+import { HatButtonFace, HatTurfGear } from '~/components/HatTurf/HatTurfButton';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
+import { DEFAULT_SPOT, HatTurfPanelPopover } from '~/components/HatTurf/HatTurfPanel';
 import { TeamHat } from '~/components/HatTurf/TeamHat';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import classes from '~/components/HatTurf/detail/HatTurfDetailControls.module.css';
-import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
-import { badgeLeader, orderedTeams } from '~/components/HatTurf/hat-turf.utils';
-import { useChosenHat, useHatStock } from '~/components/HatTurf/useHatTurf';
+import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
+import { showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const DEFAULT_SPOT = { x: 0.5, y: 0.4 };
 const INVITE_SNOOZE_MS = 24 * 60 * 60 * 1000;
-const FALLBACK = 'var(--mantine-color-gray-6)';
 const COVER_HATS = [
   { left: '8%', top: '30%', rotate: -15, color: 'var(--mantine-color-blue-4)' },
   { left: '32%', top: '8%', rotate: 10, color: 'var(--mantine-color-pink-4)' },
@@ -28,24 +25,24 @@ const COVER_HATS = [
   { left: '82%', top: '6%', rotate: 14, color: 'var(--mantine-color-green-4)' },
 ];
 
-const capitalise = (team: string) => team[0].toUpperCase() + team.slice(1);
-
-/** The hat button and the standings badge for the picture on screen. Nothing when Hat Turf is off. */
-export function HatTurfDetailControls({ imageId }: { imageId: number }) {
-  return useTurfFeed() ? (
-    <div className={classes.group} data-testid="hat-turf-detail-controls">
-      <HatTurfDetailBadge imageId={imageId} />
+/** The hat button for the picture on screen. Nothing when Hat Turf is off or the picture is a contest entry. */
+export function HatTurfDetailControls({
+  imageId,
+  large,
+}: {
+  imageId: number;
+  /** A 36px circle, as the phone bottom bar's other buttons are. */
+  large?: boolean;
+}) {
+  const feed = useTurfFeed();
+  return feed && !feed.hidden?.[imageId] ? (
+    <div
+      className={clsx(classes.group, large && classes.large)}
+      data-testid="hat-turf-detail-controls"
+    >
       <HatButton imageId={imageId} />
     </div>
   ) : null;
-}
-
-function useJoin() {
-  const utils = trpc.useUtils();
-  return trpc.hatTurf.setOptIn.useMutation({
-    onSuccess: () => void utils.hatTurf.getStock.invalidate(),
-    onError: (error) => showErrorNotification({ title: "Couldn't update Hat Turf", error }),
-  });
 }
 
 function HatButton({ imageId }: { imageId: number }) {
@@ -61,17 +58,17 @@ function HatButton({ imageId }: { imageId: number }) {
   });
   const [inviteOpen, setInviteOpen] = useState<boolean | undefined>(undefined);
   const join = useJoin();
-  // Same query as the layer's, so one request. The feed's sticker list is capped at 5 per image.
-  const { data: image } = trpc.hatTurf.getImageStickers.useQuery(
-    { event: feed?.event ?? '', imageId },
-    { enabled: !!feed && !!user, staleTime: 30_000 }
-  );
+  const placed = usePlacedHere(imageId);
 
-  if (!feed || !card || !user || feed.open[imageId] === false) return null;
+  // Closed images still invite: an unjoined viewer has no other way to opt in.
+  const closed = feed?.open[imageId] === false;
+  if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
-  const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
-  const placed = card.placed || image?.mine;
+  // Only someone who never joined is invited unprompted; a leaver rejoins from the button. Owner-off
+  // users are refused on Join, so they are not invited either.
+  const showInvite =
+    inviteOpen ?? (!!stock && !joined && !stock.left && !stock.ownerOff && !snoozed);
   const empty = joined && stock?.available === 0 && !placed;
 
   const press = () => {
@@ -104,21 +101,20 @@ function HatButton({ imageId }: { imageId: number }) {
       shadow="md"
     >
       <Popover.Target>
-        <button
-          type="button"
-          className={clsx(
-            classes.hat,
-            joined && classes.hatOn,
-            !!card.draft && classes.hatActive,
-            (empty || !!placed) && classes.hatEmpty
-          )}
-          data-testid="hat-turf-detail-hat"
-          aria-label={joined ? 'Place your cap' : 'Join Hat Turf'}
-          aria-pressed={joined ? !!card.draft : undefined}
-          onClick={press}
-        >
-          <HatIcon size={18} />
-        </button>
+        <span className={buttonClasses.wrap}>
+          <HatButtonFace
+            joined={joined}
+            empty={empty}
+            active={!!card.draft}
+            placed={placed}
+            className={classes.hat}
+            data-testid="hat-turf-detail-hat"
+            aria-label={joined ? 'Place your cap' : 'Join Hat Turf'}
+            aria-pressed={joined ? !!card.draft : undefined}
+            onClick={press}
+          />
+          {joined && <HatTurfGear imageId={imageId} surface="image-detail" placed={placed} />}
+        </span>
       </Popover.Target>
       <Popover.Dropdown className={classes.invite} data-testid="hat-turf-detail-invite">
         <div className={classes.cover} aria-hidden="true">
@@ -166,222 +162,55 @@ function HatButton({ imageId }: { imageId: number }) {
   );
 }
 
-/** The feed's badge, tap for every team's count, the hat to place, show hats and leaving. */
+/** The feed's badge, in the picture's action row after Tip; a tap opens the Hat Turf panel. */
 export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();
+  const placed = usePlacedHere(imageId);
   const [open, setOpen] = useState(false);
-  const [tray, setTray] = useState(false);
-  if (!feed || (!summary && !user)) return null;
+  // A signed-out viewer keeps the badge: its card is their only invite (sign in, then join). A
+  // signed-in viewer who has not joined is invited by the hat button instead.
+  if (!feed || feed.hidden?.[imageId] || (user && !feed.joined)) return null;
 
   return (
-    <>
-      <Popover
-        opened={open}
-        onChange={setOpen}
-        position="top"
-        width={230}
-        withArrow
-        withinPortal
-        shadow="md"
-      >
-        <Popover.Target>
-          <button
-            type="button"
-            className={classes.badgeButton}
-            data-testid="hat-turf-detail-badge"
-            aria-label="Hat Turf standings"
-            aria-expanded={open}
-            onClick={() => setOpen((value) => !value)}
-          >
-            {summary ? (
-              <HatTurfBadge imageId={imageId} />
-            ) : (
-              <span className={classes.badgeEmpty}>
-                <HatIcon size={18} />
-              </span>
-            )}
-          </button>
-        </Popover.Target>
-        <Popover.Dropdown className={classes.stats} data-testid="hat-turf-detail-stats">
-          <StatsCard
-            imageId={imageId}
-            onChange={() => {
-              setOpen(false);
-              setTray(true);
-            }}
-          />
-        </Popover.Dropdown>
-      </Popover>
-      <HatTray imageId={imageId} opened={tray} onClose={() => setTray(false)} />
-    </>
-  );
-}
-
-function StatsCard({ imageId, onChange }: { imageId: number; onChange: () => void }) {
-  const feed = useTurfFeed();
-  const summary = useTurfSummary(imageId);
-  const user = useCurrentUser();
-  const teamColor = useTeamColor();
-  const stock = useHatStock();
-  const showHats = useHatTurfStore((state) => state.showHats);
-  const setShowHats = useHatTurfStore((state) => state.setShowHats);
-  const { hats, cosmeticId } = useChosenHat();
-  const { data: named } = trpc.event.getMyHats.useQuery(
-    { event: feed?.event ?? '' },
-    { enabled: !!user, staleTime: 5 * 60_000 }
-  );
-  const join = useJoin();
-  if (!feed) return null;
-
-  const counted = summary?.counted ?? {};
-  const leader = summary ? badgeLeader(summary) : null;
-  const teams = orderedTeams(counted)
-    .filter((team) => (counted[team] ?? 0) > 0)
-    .sort((a, b) => (counted[b] ?? 0) - (counted[a] ?? 0) || a.localeCompare(b));
-  const color = (team: string) => teamColor(team) ?? FALLBACK;
-  const activeIndex = hats?.findIndex((hat) => hat.cosmeticId === cosmeticId) ?? -1;
-  const activeName =
-    named?.find((hat) => hat.cosmeticId === cosmeticId)?.name ??
-    (activeIndex >= 0 ? `Hat ${activeIndex + 1}` : null);
-
-  return (
-    <div>
-      {!teams.length && <Text size="xs">No hats on this image yet.</Text>}
-      {teams.map((team) => (
-        <div key={team} className={classes.row} data-testid="hat-turf-detail-team">
-          {summary?.hatted && team === leader && <IconLock size={12} />}
-          <i className={classes.dot} style={{ backgroundColor: color(team) }} />
-          {capitalise(team)}
-          {team === leader && (
-            <span className={classes.tag}>{summary?.hatted ? 'would lead' : 'leads'}</span>
-          )}
-          <span className={classes.count}>{counted[team]}</span>
-        </div>
-      ))}
-      {summary?.hatted && leader && (
-        <Text size="xs" c="dimmed" mt={4}>
-          Protected by the owner&apos;s hat. {capitalise(leader)} takes the image if it comes off.
-        </Text>
-      )}
-      <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
-      {user && stock?.optedIn && (
-        <>
-          <div className={classes.row}>
-            <span className={classes.tag} data-testid="hat-turf-detail-left">
-              {stock.available} {stock.available === 1 ? 'hat' : 'hats'} left
+    <HatTurfPanelPopover
+      imageId={imageId}
+      surface="image-detail"
+      placed={placed}
+      opened={open}
+      onOpenChange={setOpen}
+      target={
+        <button
+          type="button"
+          className={classes.badgeButton}
+          data-testid="hat-turf-detail-badge"
+          aria-label="Hat Turf standings"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {summary ? (
+            <HatTurfBadge imageId={imageId} className={classes.rowBadge} />
+          ) : (
+            <span className={classes.badgeEmpty}>
+              <HatIcon size={18} />
             </span>
-          </div>
-          <Text size="xs" c="dimmed">
-            Your supply grows during the event.
-          </Text>
-          <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
-        </>
-      )}
-      {user && stock?.optedIn && activeName && (
-        <div className={classes.row}>
-          <TeamHat color={(feed.team && color(feed.team)) || FALLBACK} size={16} />
-          {activeName}
-          <button type="button" className={classes.link} onClick={onChange}>
-            change ▸
-          </button>
-        </div>
-      )}
-      <div className={classes.row}>
-        <Switch
-          size="xs"
-          label="Show hats"
-          labelPosition="left"
-          checked={showHats}
-          onChange={(event) => setShowHats(event.currentTarget.checked)}
-          styles={{ root: { width: '100%' }, body: { justifyContent: 'space-between' } }}
-        />
-      </div>
-      {user && stock?.optedIn && (
-        <>
-          <hr style={{ border: 0, borderTop: '1px solid var(--mantine-color-default-border)' }} />
-          <button
-            type="button"
-            className={classes.link}
-            disabled={join.isPending}
-            onClick={() => join.mutate({ event: feed.event, optedIn: false })}
-          >
-            Leave Hat Turf
-          </button>
-          <Text size="xs" c="dimmed">
-            Hats already on your images keep counting. No new ones can be placed.
-          </Text>
-        </>
-      )}
-    </div>
+          )}
+        </button>
+      }
+    />
   );
 }
 
-/** The hats a player owns, most used first; picking one makes it the active hat and drops it. */
-function HatTray({
-  imageId,
-  opened,
-  onClose,
-}: {
-  imageId: number;
-  opened: boolean;
-  onClose: () => void;
-}) {
+/** The viewer's hat is on this image: placed just now, or found by the image's own sticker read. */
+function usePlacedHere(imageId: number) {
   const feed = useTurfFeed();
+  const user = useCurrentUser();
   const card = useHatTurfCard();
-  const mobile = useIsMobile({ type: 'media' });
-  const teamColor = useTeamColor();
-  const pick = useHatTurfStore((state) => state.pick);
-  const { hats, cosmeticId } = useChosenHat();
-  const { data: named } = trpc.event.getMyHats.useQuery(
-    { event: feed?.event ?? '' },
-    { enabled: opened, staleTime: 5 * 60_000 }
+  // Same query as the layer's, so one request. The feed's sticker list is capped at 5 per image.
+  const { data: image } = trpc.hatTurf.getImageStickers.useQuery(
+    { event: feed?.event ?? '', imageId },
+    { enabled: !!feed?.joined && !!user, staleTime: 30_000 }
   );
-  if (!feed || !card) return null;
-
-  const color = (feed.team && teamColor(feed.team)) || FALLBACK;
-  const ordered = [...(hats ?? [])].sort(
-    (a, b) => b.usageCount - a.usageCount || a.cosmeticId - b.cosmeticId
-  );
-  const body = (
-    <div data-testid="hat-turf-detail-tray">
-      <Text size="xs" c="dimmed">
-        Most used first
-      </Text>
-      {!ordered.length && <Text size="sm">You have no hats to place yet.</Text>}
-      <div className={classes.tiles}>
-        {ordered.map((hat, index) => (
-          <button
-            type="button"
-            key={hat.cosmeticId}
-            aria-pressed={hat.cosmeticId === cosmeticId}
-            className={clsx(classes.tile, hat.cosmeticId === cosmeticId && classes.tileActive)}
-            onClick={() => {
-              pick(hat.cosmeticId);
-              card.setDraft(card.draft ?? DEFAULT_SPOT);
-              onClose();
-            }}
-          >
-            <TeamHat color={color} size={34} />
-            {named?.find((h) => h.cosmeticId === hat.cosmeticId)?.name ?? `Hat ${index + 1}`}
-            <span>{hat.usageCount} used</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-
-  return (
-    <Drawer
-      opened={opened}
-      onClose={onClose}
-      position={mobile ? 'bottom' : 'right'}
-      size={mobile ? '45%' : 340}
-      title="Your hats"
-      data-image-id={imageId}
-    >
-      {body}
-    </Drawer>
-  );
+  return !!card?.placed || !!image?.mine;
 }

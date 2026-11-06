@@ -3,15 +3,14 @@ import {
   Badge,
   Center,
   getPrimaryShade,
-  HoverCard,
   Loader,
   Paper,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import type { IconProps } from '@tabler/icons-react';
 import {
   IconAutomaticGearbox,

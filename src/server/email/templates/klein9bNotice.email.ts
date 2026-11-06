@@ -1,9 +1,5 @@
 import { escape as escapeHtml } from 'he';
-import { unified } from 'unified';
-import remarkBreaks from 'remark-breaks';
-import remarkParse from 'remark-parse';
-import remarkRehype from 'remark-rehype';
-import rehypeStringify from 'rehype-stringify';
+import { renderNoticeMarkdown } from '~/server/email/notice-markdown';
 import { createEmail } from '~/server/email/templates/base.email';
 import { simpleEmailWithTemplate } from '~/server/email/templates/util';
 import type { Klein9bNoticeVariant } from '~/shared/constants/klein9b-notice.constants';
@@ -19,28 +15,13 @@ export type Klein9bNoticeData = {
 };
 
 const rendered: Partial<Record<Klein9bNoticeVariant, string>> = {};
-function renderMarkdown(variant: Klein9bNoticeVariant) {
-  // Email clients drop <style> blocks, so lists are styled inline.
-  return String(
-    unified()
-      .use(remarkParse)
-      .use(remarkBreaks)
-      .use(remarkRehype)
-      .use(rehypeStringify)
-      .processSync(KLEIN9B_NOTICE[variant].markdown)
-  ).replace(
-    /<(ul|ol)>/g,
-    (_, tag: string) => `<${tag} style="margin: 8px 0 8px 20px; padding: 0;">`
-  );
-}
-
 export function getKlein9bNoticeHtml({
   variant,
   username,
   date,
   versions = [],
 }: Omit<Klein9bNoticeData, 'to'>) {
-  rendered[variant] ??= renderMarkdown(variant);
+  rendered[variant] ??= renderNoticeMarkdown(KLEIN9B_NOTICE[variant].markdown);
   const list = `<ul style="margin: 8px 0 8px 20px; padding: 0;">${versions
     .map((v) => `<li>${escapeHtml(v)}</li>`)
     .join('')}</ul>`;

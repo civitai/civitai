@@ -198,6 +198,17 @@ describe('keep-training currencies', () => {
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 
+  it('a paid-only choice is charged in the paid account only, for both the quote and the submit', async () => {
+    getWorkflow.mockResolvedValue(sourceRun);
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 1400 } } });
+    await continueTrainingWhatIf(client, { ...opts, currencies: ['green'] });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, { ...opts, currencies: ['green'] }, { checkText });
+    const [quoted, submitted] = submitWorkflow.mock.calls.slice(-2);
+    expect(quoted![0].body.currencies).toEqual(['green']);
+    expect(submitted![0].body.currencies).toEqual(['green']);
+  });
+
   it('falls back to blue + yellow when none (or none valid) are sent', async () => {
     getWorkflow.mockResolvedValue(sourceRun);
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
@@ -334,6 +345,35 @@ describe('retired base', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan' } });
     await submitTrainingBatch(client, [wanRun(wan21.air)], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
+  });
+
+  it('refuses an Ideogram 4 run that names no model, which would train on the ecosystem default', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), ecosystem: 'ideogram4' }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.ecosystem/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses to keep training an Ideogram 4 run, quote or submit', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'ideogram4', epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const calls = submitWorkflow.mock.calls.length;
+    const opts = { workflowId: 'wf-id4', fromEpoch: 10, addEpochs: 5 };
+    await expect(continueTrainingWhatIf(client, opts)).rejects.toThrow(/no longer offered/);
+    await expect(continueTraining(client, opts, { checkText })).rejects.toThrow(
+      /no longer offered/
+    );
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });
 
@@ -592,6 +632,14 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(body.currencies).toEqual(['blue', 'yellow']);
     });
 
+    it('a paid-only mature run is charged in Yellow only — no Blue, never Green', async () => {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-c2' } });
+      await submitTraining(client, { ...baseRun(), currencies: ['green'], matureAck: true });
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.allowMatureContent).toBe(true);
+      expect(body.currencies).toEqual(['yellow']);
+    });
+
     it('refuses an unconfirmed mature dataset before anything is charged, rating a sweep once', async () => {
       headBlob.mockReset();
       headBlob.mockImplementation(rateSpicy);
@@ -691,6 +739,20 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(body.allowMatureContent).toBe(true);
       expect(body.currencies).toEqual(['blue', 'yellow']);
       expect(body.metadata.matureCount).toBe(1);
+    });
+
+    it('a paid-only mature continuation is charged in Yellow only — no Blue, never Green', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-r3'));
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-r3', currencies: ['green'], matureAck: true },
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.allowMatureContent).toBe(true);
+      expect(body.currencies).toEqual(['yellow']);
     });
 
     it('a non-mature source: manual, no unlock, currencies unchanged, ack or not', async () => {

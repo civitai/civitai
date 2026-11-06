@@ -4,7 +4,7 @@ import type { AssistantTool, ToolResult } from './tool';
  * What App Assistant can read about the open app's feedback, and the one thing it may change:
  * - the MODERATOR review of the app (`get_review_feedback`): its submissions with their status and
  *   the moderator's reason or notes, and the listing problems that keep it from being published, as
- *   the author sees them on My apps;
+ *   the author sees them on My builds;
  * - what END USERS wrote about it (`get_user_feedback`), the app's private feedback inbox;
  * - an OFFER to change those items' status (`set_feedback_status`), which changes nothing: the user
  *   sees a card, and only their press writes the status, as them.
@@ -76,7 +76,7 @@ export const feedbackNotRead = (ids: readonly number[]) =>
 export interface ReviewListing {
   /** `draft | pending | approved | rejected | removed`. */
   status: string;
-  /** What My apps lists under "cannot be published yet" (`blocking`) or recommends (the rest). */
+  /** What My builds lists under "cannot be published yet" (`blocking`) or recommends (the rest). */
   problems: { label: string; blocking: boolean }[];
 }
 
@@ -370,7 +370,7 @@ export function createFeedbackTools({
 
   const get_review_feedback: AssistantTool = {
     description:
-      'Read the moderator review of the open app, as the user sees it on My apps: each submission (newest first) with its status (pending, approved, rejected, withdrawn), dates and the moderator’s rejection reason or approval notes, whether an approved version is live or failed to build, and the store-listing problems that keep it from being published (cannot publish yet) or are recommended. Call it when the user asks why the app was rejected, what the review said, whether it is live, or before sending it for review again.',
+      'Read the moderator review of the open app, as the user sees it on My builds: each submission (newest first) with its status (pending, approved, rejected, withdrawn), dates and the moderator’s rejection reason or approval notes, whether an approved version is live or failed to build, and the store-listing problems that keep it from being published (cannot publish yet) or are recommended. Call it when the user asks why the app was rejected, what the review said, whether it is live, or before sending it for review again.',
     activity: 'Reading your app’s review…',
     inputSchema: { properties: {} },
     async execute() {

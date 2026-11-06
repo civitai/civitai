@@ -410,7 +410,15 @@ describe('returning the slot when a fee is cleared', () => {
 
 // The spoke writes the fee with its own SQL, so the licence check has to hold here too.
 describe('licensing fee on a non-commercial base model', () => {
-  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base', 'Flux.3 Klein'])(
+  it.each([
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
+  ])(
     'refuses a fee on %s, and writes nothing',
     async (baseModel) => {
       state.rows = [version({ baseModel })];
@@ -435,8 +443,8 @@ describe('licensing fee on a non-commercial base model', () => {
     expect(state.written).toEqual([]);
   });
 
-  it('allows the same fee on Flux.2 Klein 4B (control)', async () => {
-    state.rows = [version({ baseModel: 'Flux.2 Klein 4B' })];
+  it.each(['Flux.2 Klein 4B', 'Flux.1 D'])('allows the same fee on %s (control)', async (baseModel) => {
+    state.rows = [version({ baseModel })];
 
     const result = await setLicensingFee(7, GOLD, 1, 1, true);
 

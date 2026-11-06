@@ -35,7 +35,6 @@ const routers = {
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
   comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
-  commentv2: () => import('./commentv2.router').then((m) => m.commentv2Router),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),
   content: () => import('./content.router').then((m) => m.contentRouter),
@@ -133,6 +132,7 @@ const routers = {
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter),
   orchestrator: () =>
     import('~/server/routers/orchestrator.router').then((m) => m.orchestratorRouter),
+  remixApp: () => import('~/server/routers/remix-app.router').then((m) => m.remixAppRouter),
   moderator: () => import('~/server/routers/moderator').then((m) => m.modRouter),
   entityCollaborator: () =>
     import('~/server/routers/entity-collaborator.router').then((m) => m.entityCollaboratorRouter),

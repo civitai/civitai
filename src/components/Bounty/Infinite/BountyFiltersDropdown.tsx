@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Popover, Group, Indicator, Stack, Divider, Chip, Drawer } from '@mantine/core';
+import { Group, Indicator, Stack, Divider, Chip, Drawer } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { BountyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';

@@ -1,6 +1,7 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { createCache } from './cache';
+import { loadComFaces } from './com-face';
 import { dbRead, dbWrite } from './db';
 import { MODEL_COVER_ORDER, modelCoverImages } from './model-covers';
 import { getUserNotes } from './moderation-memory.service';
@@ -32,6 +33,7 @@ import type {
   PriorClearView,
   RedetectionView,
 } from '$lib/minor-flags/text-scan-verdicts';
+import type { ComFace } from '$lib/com-face';
 import type { ModelFlagDetail, ScanRows } from '$lib/minor-flags/model-detail';
 import type { AppealCounts } from '$lib/minor-flags/appeal-row';
 import type { FlaggedSource } from '$lib/minor-flags/flagged-decision';
@@ -312,6 +314,8 @@ export type MinorFlagAppealRow = {
   /** Needs review lists this model too (a held detection or a file match). */
   alsoInNeedsReview: boolean;
   scanRows: ScanRows;
+  /** The model's civitai.com face, null when it has none. */
+  comFace: ComFace | null;
 };
 
 export type AppealQuery = Page & { filters?: AppealFilters };
@@ -542,10 +546,13 @@ export async function getMinorFlagAppealsForReview({
       ? sql`pg."flaggedAt" DESC NULLS LAST, pg."appealCreatedAt", pg."appealId"`
       : sql`pg."appealCreatedAt", pg."appealId"`;
 
-  const rows = await sql<MinorFlagAppealRow>`
+  const rows = await sql<
+    Omit<MinorFlagAppealRow, 'comFace'> & { sfwName: string | null; sfwCoverImageId: number | null }
+  >`
     WITH pg AS (
       SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
              m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+             m."sfwName", m."sfwCoverImageId",
              m.status::text AS status, m.minor, m.poi, m.type::text AS "modelType",
              CASE WHEN ${isLockReviewSql} THEN a.context->'locks' END AS "lockReview",
              COALESCE(m."lockedProperties", '{}') AS "lockedProperties",
@@ -627,7 +634,15 @@ export async function getMinorFlagAppealsForReview({
     ORDER BY ${outer}
   `.execute(dbRead);
 
-  return { items: rows.rows.slice(0, limit), hasMore: rows.rows.length > limit };
+  const page = rows.rows.slice(0, limit);
+  const comFaces = await loadComFaces(
+    page.map((r) => ({ id: r.modelId, sfwName: r.sfwName, sfwCoverImageId: r.sfwCoverImageId }))
+  );
+  const items: MinorFlagAppealRow[] = page.map(({ sfwName: _n, sfwCoverImageId: _c, ...r }) => ({
+    ...r,
+    comFace: comFaces.get(r.modelId) ?? null,
+  }));
+  return { items, hasMore: rows.rows.length > limit };
 }
 
 /** Cross-tabbed on source and flag state so both chip rows come from one scan. */

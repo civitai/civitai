@@ -268,20 +268,17 @@ describe('remove-deleted-user-images under a legal hold', () => {
 });
 
 describe("a held author's comment on a drained user's post", () => {
-  it.each([
-    ['keeps', MARKED, [1]],
-    ['takes, as a control,', UNHELD, []],
-  ])('%s a comment by an author on its thread', async (_, author, left) => {
+  it('takes the comment with the post', async () => {
     await holder.db.exec(`
       INSERT INTO "Thread" (id, "postId") VALUES (100, 902);
-      INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
+      INSERT INTO "CommentV2" VALUES (1, ${MARKED}, 100);
     `);
 
     await run();
 
     expect(await postsOf(UNHELD)).toBe(0);
     const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
-    expect(rows.map((r) => r.id)).toEqual(left);
+    expect(rows).toEqual([]);
   });
 });
 

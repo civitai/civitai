@@ -277,8 +277,12 @@ describe('SEAM — one shared cache, two host classes, two viewers', () => {
     expect(optedIn.coverUrl).toBe('edge:b.png@1200');
     expect(anonymous.coverUrl).toBe('edge:a.png@1200');
     expect(anonymous.iconUrl).toBeNull();
-    // Shared cache entry (same host class): the viewer term is applied BELOW the cache.
-    expect(cacheStats).toEqual({ misses: 1, hits: 1 });
+    // Whether R/X listings are allowed is a literal cache-key segment, so an R viewer and an
+    // anonymous one are two entries. The MEDIA term is still applied below the cache: a second
+    // viewer with the same R/X state (PG|R, distinct from R_VIEWER_LEVEL) shares the entry.
+    expect(cacheStats).toEqual({ misses: 2, hits: 0 });
+    expect((await card(true, PG | R)).coverUrl).toBe('edge:b.png@1200');
+    expect(cacheStats).toEqual({ misses: 2, hits: 1 });
   });
 
   it('off a red host the listing rating caps media even for an R viewer', async () => {
@@ -368,6 +372,9 @@ describe('T7 — the in-app "Recently run" menu icon: getListingDetail.iconUrl f
   it('red host: an R icon shows to a viewer who opted into R, and not to an anonymous one', async () => {
     shape = { contentRating: 'r', iconId: 12, coverId: null, screenshotIds: [], onsite: true };
     expect(await icon(true, R_VIEWER_LEVEL)).toBe('edge:b.png@256');
+    // An anonymous viewer is not served an `r` listing at all now, so its icon cannot reach
+    // them; a PG-13 listing carries the same R icon to them to show the image gate still holds.
+    shape = { contentRating: 'pg13', iconId: 12, coverId: null, screenshotIds: [], onsite: true };
     expect(await icon(true, undefined)).toBeNull();
   });
 });

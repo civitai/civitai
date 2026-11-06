@@ -64,7 +64,9 @@ const RECENTS_CALL_SITES = [
   'components/AppBlocks/IframeHost.tsx', // app-chrome "Recently run" menu (read)
   'components/Apps/AppListingCard.tsx', // off-site "Visit" CTA (write)
   'components/Apps/AppListingDetailBody.tsx', // detail "Visit" / "Open live" (write)
-  'components/Apps/AppListingsMarketplaceBody.tsx', // the /apps store rail (read + write)
+  // The `/apps` "My apps" home (read + write). It took over the recents READ from the store
+  // body, whose "Recently opened" strip was removed when the store moved to `/apps/store`.
+  'components/Apps/AppsHomeBody.tsx',
   'components/Apps/MarketplaceBody.tsx', // legacy /apps grid (read + write)
   'pages/apps/run/[slug]/[[...path]].tsx', // the on-site run page (write)
 ] as const;

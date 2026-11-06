@@ -718,22 +718,27 @@ jobs:
     env:
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      # The same throwaway server for the hot-reads-2, placement-reads, hot-reads-3 and hot-reads-4
-      # Kysely suites (pinned to the values the retired Prisma reads returned), which drop and
-      # recreate their own `hot_reads_2_parity`, `placement_parity`, `hot_reads_3_parity` and
-      # `hot_reads_4_parity` schemas there. Each fails in CI if this is missing rather than skipping
-      # itself.
+      # The same throwaway server for the hot-reads-2, placement-reads, hot-reads-3, hot-reads-4,
+      # hot-reads-5 and hot-reads-6 Kysely suites (pinned to the values the retired Prisma reads
+      # returned), which drop and recreate their own `hot_reads_2_parity`, `placement_parity` and
+      # `hot_reads_<n>_parity` schemas there. Each fails in CI if this is missing rather than
+      # skipping itself.
       KYSELY_HOT_READS_2_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       KYSELY_HOT_READS_4_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      # Likewise for the kysely-hot-reads-5 suite (its own `hot_reads_5_parity` schema).
       KYSELY_HOT_READS_5_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      # Likewise for the kysely-hot-reads-6 suite (its own `hot_reads_6_parity` schema).
       KYSELY_HOT_READS_6_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-7 suite (its own `hot_reads_7_parity` schema).
       KYSELY_HOT_READS_7_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-8 suite (its own `hot_reads_8_parity` schema).
       KYSELY_HOT_READS_8_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-9 suite (its own `hot_reads_9_parity` schema).
+      KYSELY_HOT_READS_9_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-10 suite (its own `hot_reads_10_parity` schema).
+      KYSELY_HOT_READS_10_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # The image_delivery_lookup(url) parity suite: creates and drops its own database and roles
+      # on this server, so it needs the superuser URL.
+      IMAGE_DELIVERY_LOOKUP_FN_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v7
         with:
@@ -993,10 +998,35 @@ jobs:
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   component:
-    name: Component + geometry tests
+    name: Component + geometry tests (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
     if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1, QUARANTINE ON SHARD 2 ──
+    #
+    # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
+    # EVERY shard, and geometry rides on shard 1. 3, not 4: a fourth shard saves under a minute
+    # of wall clock while adding another setup and one more slot of the plan's org-wide
+    # concurrent-job limit (see the `unit` job's "WHY 4 AND NOT MORE" for that trade). Geometry
+    # and the quarantine run are put on DIFFERENT shards so neither stacks on the other; shard 3
+    # carries `component` only.
+    #
+    # `--shard` is not cost-aware: it splits by FILE COUNT, so READ THE THREE DURATIONS after
+    # any change to this matrix or to the suite's heaviest files.
+    #
+    # Every test file is still accounted for: each shard runs the zero check
+    # on its own report, and the `component-ledger` job below merges the three reports, fails
+    # on a missing shard, and runs the full ledger (zero check,
+    # on-disk file ledger, floor) on the union — the same gate the unsharded run had.
+    #
+    # `fail-fast: false`: a red shard must not cancel its siblings, or their files go
+    # unreported and the ledger can only say "missing".
+    strategy:
+      fail-fast: false
+      matrix:
+        # `only: geometry` runs geometry alone, which lives on shard 1, so it needs only that.
+        # The `--shard=<n>/3` denominator stays 3 whatever the matrix holds.
+        shard: ${{ inputs.only == 'geometry' && fromJSON('[1]') || fromJSON('[1, 2, 3]') }}
     # The three browser-mode suites, in one job so ONE checkout, install and Chromium install
     # serves all of them: `component` (blocking), `geometry` (report-only on PRs) and the
     # `component-quarantine` run (push to `main` and dispatch only). Each was its own job until
@@ -1022,11 +1052,9 @@ jobs:
     # is the PR's. (`main` has no required checks; this cannot block a merge, only
     # show red on it.) There is no job-level `continue-on-error`: report-only is per step.
     #
-    # 35, not the 25 `component` alone had: geometry and the quarantine run each add a few
-    # minutes behind it on a push, and this keeps about the headroom over the combined runtime
-    # that 25 gave `component` alone. Re-read the step durations before raising it; if
-    # `component` alone is near the limit, shard it (see its step) rather than raising this.
-    timeout-minutes: 35
+    # Per shard. 25, not 35/3: setup does not shard. If a shard nears the limit, raise the
+    # shard count rather than this.
+    timeout-minutes: 25
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.
     env:
@@ -1131,15 +1159,39 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
-      # Not sharded, and `pnpm run test:component` takes NO arguments, on purpose:
-      # its wrapper hands the JSON report to scripts/ci/assert-component-suite-ran.mjs,
-      # which fails a run that executed nothing, fell under the test floor, or left
-      # any `*.browser.test.tsx` on disk out of the report. Any argument (`--shard`,
-      # `--max-workers`) marks the run narrowed and switches the floor and the file
-      # ledger off. Shard only together with a per-shard ledger.
+      # vitest directly rather than `pnpm run test:component`: that wrapper deletes its JSON
+      # report once its own gate has read it, and the `component-ledger` job needs this
+      # shard's report. A `--shard` run is narrowed, so the gate here is `--narrowed` — the
+      # zero check only (a shard that ran nothing fails HERE, by name). The floor and the
+      # on-disk file ledger need every shard's files, so they run on the merge in
+      # `component-ledger`. The gate only ever adds a failure; it never turns vitest's red
+      # into green.
+      #
+      # 🔴 NO `--` SEPARATOR before `--shard` — see the `unit` job's `Unit tests` step:
+      # vitest discards everything after a bare `--`, and the run would be the whole suite.
       - name: Component tests
         if: env.SUITE_COMPONENT == 'true'
-        run: pnpm run test:component
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          rc=0
+          pnpm exec vitest run --project component --shard="$SHARD/3" \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/component-report.json" || rc=$?
+          node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/component-report.json" --narrowed || exit 1
+          exit $rc
+
+      # For `component-ledger`. `!cancelled()` so a RED shard still hands over its report —
+      # the ledger must account for its files either way. A shard that wrote no report uploads
+      # nothing (`warn`, not `error`: the shard is already red, and the ledger then names it as
+      # the missing one). Kept briefly: it is read by the next job in the same run.
+      - name: Upload component report
+        if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: component-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/component-report.json
+          if-no-files-found: warn
+          retention-days: 3
 
       # ── GEOMETRY: REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ──────────────────
       #
@@ -1182,7 +1234,7 @@ jobs:
       # component suite, and must not run, and fail a second time, when setup never finished.
       - name: Geometry tests
         id: geometry
-        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true' }}
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true' && matrix.shard == 1 }}
         continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --outputFile=geometry-report.json
 
@@ -1217,7 +1269,7 @@ jobs:
       # missing report exits 1 with its own message.
       - name: Assert the geometry tier actually collected something
         id: geometry-ledger
-        if: always() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true'
+        if: always() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true' && matrix.shard == 1
         continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           node - <<'JS'
@@ -1297,7 +1349,7 @@ jobs:
       # same gate as the blocking suite (`--narrowed`: a floor and file ledger make no sense for
       # one file). The gate only ever adds a failure; it never turns vitest's red into green.
       - name: Quarantined component tests
-        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && github.event_name != 'pull_request' && env.SUITE_COMPONENT == 'true' }}
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && github.event_name != 'pull_request' && env.SUITE_COMPONENT == 'true' && matrix.shard == 2 }}
         run: |
           rc=0
           pnpm exec vitest run --project component-quarantine \
@@ -1310,7 +1362,7 @@ jobs:
       # `continue-on-error` turned it into) and writes a titled annotation plus a summary line.
       # It never fails the job.
       - name: Report-only results
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.shard == 1 }}
         env:
           GEOMETRY: ${{ steps.geometry.outcome }}
           GEOMETRY_LEDGER: ${{ steps.geometry-ledger.outcome }}
@@ -1322,3 +1374,50 @@ jobs:
               echo "::error title=$name failed (report-only on pull requests)::$name failed. It does not fail this job on a PR, and its step reads success in the API. Open the step log for the cause."
             fi
           done
+
+  # ── THE WHOLE-SUITE VERDICT FOR THE SHARDED `component` JOB ─────────────────────────────
+  #
+  # Named `Component + geometry tests`, the unsharded job's check name, so anything that reads
+  # that check by name keeps working. Red when any shard job did not succeed (geometry stays
+  # report-only on PRs via its own `continue-on-error`) or when the merged reports fail the
+  # full ledger. On an `only: geometry` dispatch this job is skipped — there are no component
+  # reports to grade — so geometry's verdict is only on the `(1/3)` shard job.
+  component-ledger:
+    name: Component + geometry tests
+    needs: component
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    timeout-minutes: 10
+    steps:
+      # The ledger walks `src/` for `*.browser.test.tsx` and imports scripts/ci only, so no
+      # submodules and no install.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download component reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: component-report-*
+          path: ${{ runner.temp }}/component-reports
+
+      # Both checks always run, so a missing shard and a missing file are both named; the
+      # step fails if either did. The ledger reads the merged report written even on failure.
+      - name: Assert every component test file ran
+        run: |
+          rc=0
+          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/component-reports" 3 "$RUNNER_TEMP/component-merged.json" || rc=1
+          node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/component-merged.json" || rc=1
+          exit $rc
+
+      - name: Every shard succeeded
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS: ${{ needs.component.result }}
+        run: |
+          if [ "$SHARDS" != success ]; then
+            echo "::error title=Component shard did not succeed::the component shard jobs concluded '$SHARDS'. Open the red 'Component + geometry tests (n/3)' job for the cause."
+            exit 1
+          fi

@@ -76,6 +76,42 @@ describe('showCreatePostError', () => {
     expect(args.error.message).toBe(clampRefusal);
   });
 
+  it('adds the retry time from the refusal meta to the linked daily limit', () => {
+    const rateLimit = { retryAfterSeconds: 900, retryAt: '2030-02-03T16:12:00.000Z' };
+    showCreatePostError(
+      { message: dailyRefusal as string, data: { rateLimit } } as { message: string },
+      { journey: true }
+    );
+
+    const [args] = showErrorNotification.mock.calls[0];
+    const el = document.createElement('div');
+    const root = createRoot(el);
+    const act = (React as unknown as { act: typeof actType }).act;
+    act(() =>
+      root.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement('span', { 'data-reason': '' }, args.reason)
+        )
+      )
+    );
+    const text = el.querySelector('[data-reason]')?.textContent ?? '';
+    expect(text.startsWith(`${dailyRefusal} Try again at `)).toBe(true);
+    expect(text).toMatch(/Try again at .+\. See your journey$/);
+    act(() => root.unmount());
+  });
+
+  it('hands the refusal meta on to the toast when the limit is not linked', () => {
+    const error = {
+      message: clampRefusal as string,
+      data: { rateLimit: { retryAfterSeconds: 60 } },
+    };
+    showCreatePostError(error, { journey: true });
+
+    expect(showErrorNotification.mock.calls[0][0].error).toBe(error);
+  });
+
   it('does not link the daily limit while Creator Journey is off', () => {
     showCreatePostError(dailyRefusal as string, { journey: false });
 

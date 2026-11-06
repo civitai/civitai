@@ -51,6 +51,11 @@ const {
   mockRefundMultiAccountTransaction: vi.fn(),
 }));
 
+const { onStorySparkPostsHidden } = vi.hoisted(() => ({ onStorySparkPostsHidden: vi.fn() }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsHidden,
+}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -294,6 +299,15 @@ describe('unpublishModelById merges into the meta it reads under its lock', () =
 
 // Every model-rules route (a literal hold before publish, a live take-down on edit or version add,
 // a moderator's keep-down ruling) unpublishes through this one function.
+describe('unpublishModelById and story sparks', () => {
+  it("forfeits the spark of each of the owner's posts on the model", async () => {
+    setupModel({ locked: { status: ModelStatus.Published, meta: {} } });
+    mockDbWrite.post.findMany.mockResolvedValue([{ id: 5 }, { id: 6 }]);
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+    expect(onStorySparkPostsHidden).toHaveBeenCalledExactlyOnceWith({ postIds: [5, 6] });
+  });
+});
+
 describe('unpublishForModelRules', () => {
   const modelRules = {
     ruleIds: [3],

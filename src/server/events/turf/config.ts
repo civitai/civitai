@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { scoreTierKey } from '~/shared/constants/creator-journey.constants';
-import type { CreditStep, SupplyStep } from '~/server/events/turf/schedule';
+import type { CatchUpStep, CreditStep, SupplyStep } from '~/server/events/turf/schedule';
 
 // New accounts earn turf from this Creator Journey tier's threshold (its CreatorMilestone row). A
 // missing row fails closed: none earn.
@@ -19,6 +19,9 @@ export type EventTurfConfig = {
   // Flipt flag naming who may place while the mode is shadow.
   testerFlag: string;
   supply: SupplyStep[];
+  // Scales each team's supply by how far its live points are from the teams' mean. None (or an empty
+  // list) leaves supply as `supply` says.
+  catchUp?: CatchUpStep[];
   // How many of the leading team's earliest eligible stickerers one action on the image credits.
   creditedPlayers: CreditStep[];
   // Most stickers drawn on an image; the rest are counted, not drawn.
@@ -45,6 +48,14 @@ const overrideSchema = z
         })
       )
       .min(1),
+    catchUp: z.array(
+      z.object({
+        from: stepDate,
+        max: z.number().min(1),
+        min: z.number().min(0).max(1),
+        gap: z.number().positive(),
+      })
+    ),
     creditedPlayers: z
       .array(z.object({ from: stepDate, players: z.number().int().positive() }))
       .min(1),

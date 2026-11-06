@@ -4,6 +4,12 @@ import type * as ImageService from '~/server/services/image.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks';
 
+const { onStorySparkPostsRestored } = vi.hoisted(() => ({ onStorySparkPostsRestored: vi.fn() }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsRestored,
+}));
+
 const postCountRefresh = vi.fn();
 const imageVideoCountRefresh = vi.fn();
 const queueImageSearchIndexUpdate = vi.fn();
@@ -89,5 +95,15 @@ describe('afterPostsUnpublish', () => {
     });
     expect(postCountRefresh).toHaveBeenCalledWith([10]);
     expect(imageVideoCountRefresh).toHaveBeenCalledWith([10]);
+  });
+});
+
+describe('afterPostsPublish and story sparks', () => {
+  it('gives back the spark of a story whose chapter 1 is published again', async () => {
+    await afterPostsPublish([
+      { postId: 300, userId: 10 },
+      { postId: 301, userId: 11 },
+    ]);
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [300, 301] });
   });
 });

@@ -74,10 +74,18 @@ function mockStored({
   complete = false,
   poi = false,
   meta = null as unknown,
-}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean; meta?: unknown } = {}) {
+  details = null as unknown,
+}: {
+  lockedProperties?: string[];
+  complete?: boolean;
+  poi?: boolean;
+  meta?: unknown;
+  details?: unknown;
+} = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
+    details,
     entryLimit: null,
     complete,
     poi,
@@ -264,6 +272,60 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data).not.toHaveProperty('nsfw');
     expect(data).not.toHaveProperty('lockedProperties');
     expect(data.details).toEqual(expect.objectContaining({ profanityMatches: ['bad'] }));
+  });
+
+  describe('the stored detection on an edit', () => {
+    const storedDetails = {
+      baseModel: 'SD 1.5',
+      profanityMatches: ['term'],
+      profanityEvaluation: { reason: 'test reason', correctedAt: '2026-01-01' },
+    };
+    beforeEach(() => {
+      mockStored({ details: storedDetails });
+      mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false });
+    });
+
+    it("keeps it over the owner's details, and ignores a pair the owner sends", async () => {
+      await upsert({ details: { baseModel: 'SDXL 1.0', profanityMatches: ['other'] } });
+
+      expect(updateData().details).toEqual({
+        baseModel: 'SDXL 1.0',
+        profanityMatches: ['term'],
+        profanityEvaluation: { reason: 'test reason', correctedAt: '2026-01-01' },
+      });
+    });
+
+    it('keeps it when the edit sends no details', async () => {
+      await upsert({ details: undefined });
+
+      expect(updateData().details).toEqual({
+        profanityMatches: ['term'],
+        profanityEvaluation: { reason: 'test reason', correctedAt: '2026-01-01' },
+      });
+    });
+
+    it('writes a moderator edit as sent, which can clear it', async () => {
+      await upsert({ isModerator: true, details: { baseModel: 'SDXL 1.0' } });
+
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0' });
+    });
+
+    it('replaces it with a fresh detection', async () => {
+      mockEvaluateContent.mockReturnValue({
+        shouldMarkNSFW: true,
+        matchedWords: ['new'],
+        reason: 'fresh',
+        metrics: {},
+      });
+
+      await upsert({ details: { baseModel: 'SD 1.5' } });
+
+      expect(updateData().details).toEqual({
+        baseModel: 'SD 1.5',
+        profanityMatches: ['new'],
+        profanityEvaluation: { reason: 'fresh', metrics: {} },
+      });
+    });
   });
 
   it('does not run for a moderator', async () => {

@@ -53,15 +53,15 @@ describe('getExperimentAssignments', () => {
   });
 
   it('returns the rolled-out arm as a randomised assignment', async () => {
-    answers.set(FEED, hit('count-button'));
+    answers.set(FEED, hit('badge-popover'));
     const out = await getExperimentAssignments({ user });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'rule' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'rule' });
   });
 
   it('marks a pin-segment match as pinned, so the readout can drop it', async () => {
-    answers.set(FEED, hit('count-button', ['exp-pin-hat-turf-feed-card-count-button']));
+    answers.set(FEED, hit('badge-popover', ['exp-pin-hat-turf-feed-card-badge-popover']));
     const out = await getExperimentAssignments({ user });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'pinned' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'pinned' });
   });
 
   it.each([
@@ -78,9 +78,9 @@ describe('getExperimentAssignments', () => {
     answers.set(FEED, hit('control'));
     const out = await getExperimentAssignments({
       user: moderator,
-      overrideCookie: 'hatTurfFeedCard:count-button,hatTurfImageDetail:bogus',
+      overrideCookie: 'hatTurfFeedCard:badge-popover,hatTurfImageDetail:bogus',
     });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'override' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'override' });
     expect(evals.map((e) => e.flag)).toEqual([DETAIL]);
   });
 
@@ -94,16 +94,16 @@ describe('getExperimentAssignments', () => {
   });
 
   it('marks a dev local override as an override', async () => {
-    answers.set(FEED, hit('count-button', ['local-override']));
+    answers.set(FEED, hit('badge-popover', ['local-override']));
     const out = await getExperimentAssignments({ user });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'override' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'override' });
   });
 
   it('ignores the preview cookie for everyone else', async () => {
     answers.set(FEED, hit('control'));
     const out = await getExperimentAssignments({
       user,
-      overrideCookie: 'hatTurfFeedCard:count-button',
+      overrideCookie: 'hatTurfFeedCard:badge-popover',
     });
     expect(out.hatTurfFeedCard).toEqual({ variant: 'control', assignment: 'rule' });
   });

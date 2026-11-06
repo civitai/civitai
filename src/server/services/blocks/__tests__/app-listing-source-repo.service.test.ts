@@ -4,6 +4,7 @@ import {
   isMissingColumnError,
   isSourceRepoColumnAvailable,
   readListingSourceRepoUrl,
+  readListingSourceRepoUrls,
   sourceRepoWriteFragment,
   type SourceRepoReadClient,
 } from '~/server/services/blocks/app-listing-source-repo.service';
@@ -196,5 +197,43 @@ describe('sourceRepoWriteFragment — an unavailable column is OMITTED, never wr
     expect(unset).not.toEqual(unreadable);
     expect(Object.keys(unset)).toEqual(['sourceRepoUrl']);
     expect(Object.keys(unreadable)).toEqual([]);
+  });
+});
+
+describe('readListingSourceRepoUrls — many listings in one query', () => {
+  it('maps each listing id to its value, in one call', async () => {
+    const findMany = vi.fn(async () => [
+      { id: 'apl_repo_a1', sourceRepoUrl: 'https://git.example/a1' },
+      { id: 'apl_repo_b2', sourceRepoUrl: null },
+    ]);
+    const map = await readListingSourceRepoUrls(['apl_repo_a1', 'apl_repo_b2', 'apl_repo_c3'], {
+      appListing: { findMany },
+    });
+    expect([...map]).toEqual([
+      ['apl_repo_a1', 'https://git.example/a1'],
+      ['apl_repo_b2', null],
+    ]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('a missing column reads as an empty map; any other error propagates', async () => {
+    const missing = {
+      appListing: { findMany: vi.fn(async () => Promise.reject(missingColumnError())) },
+    };
+    await expect(readListingSourceRepoUrls(['apl_repo_a1'], missing)).resolves.toEqual(new Map());
+    const broken = {
+      appListing: { findMany: vi.fn(async () => Promise.reject(new Error('connection reset'))) },
+    };
+    await expect(readListingSourceRepoUrls(['apl_repo_a1'], broken)).rejects.toThrow(
+      'connection reset'
+    );
+  });
+
+  it('asks nothing for no listings', async () => {
+    const findMany = vi.fn(async () => []);
+    await expect(readListingSourceRepoUrls([], { appListing: { findMany } })).resolves.toEqual(
+      new Map()
+    );
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

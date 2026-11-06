@@ -11,8 +11,8 @@ import {
   Textarea,
   ThemeIcon,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconCheck, IconChevronDown, IconConfetti } from '@tabler/icons-react';
 import React, { useEffect, useRef, useState } from 'react';

@@ -48,7 +48,7 @@ export const deepLinkParentId = (alias: string) =>
 
 /**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
- * project, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
+ * project and position, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
  * nowhere in the URL). LEFT joins, paired with `v3AppListingResolved`: an app-listing comment whose
  * listing does not resolve is dropped rather than emitted with a `/apps/store-preview/undefined` link.
  */
@@ -85,6 +85,7 @@ export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'threadParentId', ${v3ThreadParentId('c')},
             'threadType', ${v3ThreadType('c')},
             'appListingSlug', al.slug,
+            'comicChapterPosition', cch.position,
             'commentParentId', COALESCE(${deepLinkParentId('c')}, ${v3ThreadParentId('c')}),
             'commentParentType', CASE WHEN c."parentId" IS NULL THEN ${v3ThreadType(
               'c'
@@ -179,6 +180,11 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     commentParentId: details.commentParentId,
     threadId: details.threadId,
   });
+  // The reader takes the chapter from the second path segment and ignores the slug before it.
+  const comicUrl =
+    details.comicChapterPosition != null
+      ? `/comics/${threadParentId}/comic/${details.comicChapterPosition + 1}?${queryString}`
+      : `/comics/${threadParentId}?${queryString}`;
 
   return {
     model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,
@@ -191,8 +197,8 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     challenge: `/challenges/${threadParentId}?${queryString}`,
     crucible: `/crucibles/${threadParentId}?${queryString}`,
     storyline: `${storylineUrl(threadParentId)}?${queryString}`,
-    comicChapter: `/comics/${threadParentId}?${queryString}`,
-    comicProject: `/comics/${threadParentId}?${queryString}`,
+    comicChapter: comicUrl,
+    comicProject: comicUrl,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
     // The one SLUG-addressed entry — see `v3EntityJoins`. `threadParentId` is NOT the
     // address here (it is `app_listings.serial_id`, which the URL never contains), so this
@@ -238,8 +244,9 @@ export const commentDedupeKeyByShape = `concat('comment:', case when details->>'
  *
  * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
  * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
- * key deliberately (see `comics.router.ts`), and is inserted synchronously at comment-creation, so its
- * `PendingNotification` is drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
+ * key deliberately (see `notifyComicOwner` in `commentv3/surfaces.ts`), and is queued at comment
+ * creation (after the commit, not awaited), ahead of the cron sweeps, so its `PendingNotification`
+ * is normally drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
  * gets the one deep-linked comic notification; a non-owner thread participant, whom `new-comic-comment`
  * never targets, gets this working `/comics/<project>` link instead of the dead one it used to render.
  *

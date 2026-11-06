@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CommentV2Controller from '~/server/controllers/commentv2.controller';
 import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as ReadService from '~/server/services/commentv3/read.service';
+import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 import type * as UserService from '~/server/services/user.service';
 
@@ -25,11 +25,17 @@ vi.mock('~/server/services/commentv3/read.service', async (importOriginal) => ({
   ...read,
 }));
 
-const gate = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('~/server/controllers/commentv2.controller', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentV2Controller>()),
-  assertCommentEntityVisible: gate,
-}));
+const gate = vi.hoisted(() => vi.fn(async (_entity: unknown, _ctx: unknown) => undefined));
+vi.mock('~/server/services/commentv3/surfaces', async (importOriginal) => {
+  const actual = await importOriginal<typeof Surfaces>();
+  return {
+    ...actual,
+    commentSurface: (entityType: string) => ({
+      ...actual.commentSurface(entityType),
+      assertVisible: (entityId: number, ctx: unknown) => gate({ entityType, entityId }, ctx),
+    }),
+  };
+});
 
 const prefs = vi.hoisted(() => ({
   hidden: [] as number[],
@@ -52,13 +58,50 @@ vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   isViewerContentOwner: ownsContent,
 }));
 
+const authors = vi.hoisted(() =>
+  vi.fn(async (..._a: unknown[]) => (_id: number) => ({}))
+);
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
-  getCosmeticsAndProfilePicturesForUsers: vi.fn(async () => () => ({})),
+  getCosmeticsAndProfilePicturesForUsers: authors,
 }));
 
-const { getCommentSectionHandler, getCommentRepliesHandler, getCommentThreadHandler } =
-  await import('../commentv3.controller');
+const section = vi.hoisted(() => ({
+  getSectionMuted: vi.fn(async () => ({ muted: false, exists: true })),
+  toggleSectionMute: vi.fn(async () => ({ muted: true, exists: true })),
+  getThreadMuted: vi.fn(async () => ({ muted: false, viaAncestor: false, canMute: true })),
+  toggleThreadMute: vi.fn(async () => ({ muted: true })),
+}));
+
+const stored = vi.hoisted(() =>
+  vi.fn(
+    async (..._a: unknown[]): Promise<unknown> => ({
+      id: 5,
+      entityType: 'bounty',
+      entityId: 7,
+      tosViolation: false,
+    })
+  )
+);
+vi.mock('~/server/services/commentv3/write.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getV3WriteComment: stored,
+}));
+vi.mock('~/server/services/commentv3/section.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...section,
+}));
+
+const {
+  getCommentSectionHandler,
+  getCommentRepliesHandler,
+  getCommentThreadHandler,
+  getSectionLockHandler,
+  getSectionMutedHandler,
+  toggleSectionMuteHandler,
+  getThreadMutedHandler,
+  toggleThreadMuteHandler,
+} = await import('../commentv3.controller');
 
 const ctxFor = (user?: { id: number; isModerator?: boolean }) => ({ user } as never);
 const sectionInput = { entityType: 'article', entityId: 10, sort: 'Oldest' } as never;
@@ -112,10 +155,7 @@ describe('getReplies and getThread take the entity from the stored comment', () 
       ctx: ctxFor({ id: 2 }),
       input: { parentId: 5, sort: 'Oldest' } as never,
     });
-    expect(gate).toHaveBeenCalledWith(
-      { entityType: 'image', entityId: 7, path: '5' },
-      expect.anything()
-    );
+    expect(gate).toHaveBeenCalledWith({ entityType: 'image', entityId: 7 }, expect.anything());
   });
 
   it('is not found when the comment does not exist, or the read finds nothing to show', async () => {
@@ -141,5 +181,100 @@ describe('getReplies and getThread take the entity from the stored comment', () 
     expect(read.getCommentThread.mock.calls[0][3]).toMatchObject({
       entity: { entityType: 'article', entityId: 10 },
     });
+  });
+});
+
+describe('each comment carries its author as the cache has them', () => {
+  const withAuthor = { ...page, comments: [{ id: 5, user: { id: 3, username: 'ann' } }] };
+  beforeEach(() =>
+    authors.mockResolvedValue((id: number) =>
+      id === 3 ? { profilePicture: { id: 9 }, showcaseHat: { id: 4 } } : {}
+    )
+  );
+
+  it.each([
+    ['a section', () => getCommentSectionHandler({ ctx: ctxFor({ id: 2 }), input: sectionInput })],
+    [
+      'replies',
+      () => {
+        read.getCommentEntity.mockResolvedValue({ entityType: 'article', entityId: 10, path: '5' });
+        return getCommentRepliesHandler({
+          ctx: ctxFor({ id: 2 }),
+          input: { parentId: 5, sort: 'Oldest' } as never,
+        });
+      },
+    ],
+    [
+      'a thread',
+      async () => {
+        read.getCommentEntity.mockResolvedValue({ entityType: 'article', entityId: 10, path: '5' });
+        read.getCommentThread.mockResolvedValue({
+          comment: withAuthor.comments[0],
+          replies: { ...page, comments: [] },
+        });
+        const thread = await getCommentThreadHandler({
+          ctx: ctxFor({ id: 2 }),
+          input: { commentId: 5, entityType: 'article', entityId: 10, sort: 'Oldest' } as never,
+        });
+        // The deep-linked comment heads the thread, so its author is hydrated too.
+        return { comments: [thread.comment] };
+      },
+    ],
+  ])('on %s: picture, cosmetics and showcase hat', async (_, call) => {
+    read.getCommentSection.mockResolvedValue(withAuthor);
+    read.getCommentReplies.mockResolvedValue(withAuthor);
+    const result = (await call()) as { comments: { user: unknown }[] };
+    expect(authors).toHaveBeenCalledWith([3], { showcaseHat: true });
+    expect(result.comments[0].user).toEqual({
+      id: 3,
+      username: 'ann',
+      profilePicture: { id: 9 },
+      showcaseHat: { id: 4 },
+    });
+  });
+});
+
+describe('the section controls answer only where the section is visible', () => {
+  const input = { entityType: 'bounty', entityId: 7 } as const;
+  const member = { user: { id: 2, isModerator: false } } as never;
+
+  it.each([
+    ['lock state', () => getSectionLockHandler({ ctx: member, input })],
+    ['mute state', () => getSectionMutedHandler({ ctx: member, input })],
+    ['mute toggle', () => toggleSectionMuteHandler({ ctx: member, input })],
+  ])('%s is not found on a hidden section', async (_, call) => {
+    gate.mockRejectedValueOnce(Object.assign(new Error('hidden'), { code: 'NOT_FOUND' }));
+    await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(gate).toHaveBeenCalledWith({ entityType: 'bounty', entityId: 7 }, expect.anything());
+    expect(read.getCommentLock).not.toHaveBeenCalled();
+    expect(section.getSectionMuted).not.toHaveBeenCalled();
+    expect(section.toggleSectionMute).not.toHaveBeenCalled();
+  });
+
+  it('answers for a visible one, as the caller (control)', async () => {
+    await toggleSectionMuteHandler({ ctx: member, input });
+    expect(section.toggleSectionMute).toHaveBeenCalledWith({ ...input, userId: 2 });
+  });
+
+  // A thread mute takes a bare comment id, so it is gated on the stored comment's section.
+  it.each([
+    ['thread mute state', () => getThreadMutedHandler({ ctx: member, input: { commentId: 5 } })],
+    ['thread mute toggle', () => toggleThreadMuteHandler({ ctx: member, input: { commentId: 5 } })],
+  ])('%s is not found in a hidden section', async (_, call) => {
+    gate.mockRejectedValueOnce(Object.assign(new Error('hidden'), { code: 'NOT_FOUND' }));
+    await expect(call()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(gate).toHaveBeenCalledWith({ entityType: 'bounty', entityId: 7 }, expect.anything());
+    expect(section.getThreadMuted).not.toHaveBeenCalled();
+    expect(section.toggleThreadMute).not.toHaveBeenCalled();
+  });
+
+  it('mutes a thread in a visible section, as the caller (control)', async () => {
+    await toggleThreadMuteHandler({ ctx: member, input: { commentId: 5 } });
+    // Hands on the row the gate read, so the service does not read it again.
+    expect(section.toggleThreadMute).toHaveBeenCalledWith(
+      { commentId: 5, userId: 2 },
+      { comment: expect.objectContaining({ id: 5, entityType: 'bounty' }) }
+    );
+    expect(stored).toHaveBeenCalledTimes(1);
   });
 });

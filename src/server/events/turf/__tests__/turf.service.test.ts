@@ -43,7 +43,7 @@ const input = {
 // The placer row, then the image row, as placeTurfSticker reads them before its transaction.
 function given(
   placer: { optedIn: boolean; team: string | null },
-  image: { ownerId: number; visible: boolean; ownerOptedIn: boolean } | null,
+  image: { ownerId: number; visible: boolean; ownerActive: boolean; ownerAllows: boolean } | null,
   stock?: number
 ) {
   dbMock.dbWrite.$queryRaw
@@ -52,7 +52,7 @@ function given(
     .mockResolvedValueOnce(stock === undefined ? [] : [{ stock, refilledAt: NOW }]);
 }
 const OK_PLACER = { optedIn: true, team: 'Blue' };
-const OK_IMAGE = { ownerId: 77, visible: true, ownerOptedIn: true };
+const OK_IMAGE = { ownerId: 77, visible: true, ownerActive: true, ownerAllows: true };
 
 // The UPDATE that spends a sticker, with the stock it writes.
 const spent = () =>
@@ -70,29 +70,20 @@ describe('placeTurfSticker', () => {
   });
 
   it.each([
-    [
-      'the placer has not opted in',
-      { optedIn: false, team: 'Blue' },
-      OK_IMAGE,
-      /accept team hat stickers/,
-    ],
+    ['the placer has not opted in', { optedIn: false, team: 'Blue' }, OK_IMAGE, /Join Hat Turf/],
     [
       "the placer doesn't own that hat",
       { optedIn: true, team: null },
       OK_IMAGE,
       /don't have that hat/,
     ],
+    // The hat art is the sticker: a Pink hat scoring for Blue would show one team and count another.
+    ["the hat is another team's", { optedIn: true, team: 'Pink' }, OK_IMAGE, /isn't your team's/],
     [
       "the image isn't publicly visible",
       OK_PLACER,
       { ...OK_IMAGE, visible: false },
       /published post/,
-    ],
-    [
-      "the owner hasn't opted in",
-      OK_PLACER,
-      { ...OK_IMAGE, ownerOptedIn: false },
-      /doesn't accept/,
     ],
   ])('refuses when %s, spending nothing', async (_, placer, image, message) => {
     given(placer, image, 10);
@@ -137,6 +128,15 @@ describe('placeTurfSticker', () => {
     });
     expect(spent()).toHaveLength(1);
     expect(spent()[0].values[0]).toBe(2);
+  });
+
+  // Robustness: a hat whose team is spelled in another case still counts as the player's team.
+  it("places a hat whose team differs from the player's only in case", async () => {
+    given({ optedIn: true, team: 'blue' }, OK_IMAGE, 3);
+    await placeTurfSticker(input, NOW);
+    expect(dbMock.dbWrite.eventTurfSticker.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ team: 'Blue' }),
+    });
   });
 
   it('a second sticker on the same image is refused by the unique key, in words', async () => {

@@ -289,7 +289,8 @@ describe('per-app drill-down: the App name is never a top-level navigation', () 
  * stays green, which is what attributes the red to the gate rather than to the render.
  */
 describe('the empty state offers /apps only to a viewer /apps would serve', () => {
-  const cta = () => document.querySelectorAll('a[href="/apps"]');
+  // The store moved to `/apps/store` (`/apps` is the viewer's app home).
+  const cta = () => document.querySelectorAll('a[href="/apps/store"]');
 
   test('🔴 a page-apps-only viewer gets NO marketplace link', async () => {
     // The exact newly-admitted cohort: the page's gate passes on `appBlocksPages`, the

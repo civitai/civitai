@@ -5,14 +5,13 @@ import {
   Button,
   Container,
   CopyButton,
-  Menu,
   SegmentedControl,
   Select,
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useMediaQuery } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -57,7 +56,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { ChapterComments } from '~/components/Comics/ChapterComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import {
   ChapterExportButton,
   ChapterDownloadButton,
@@ -1607,10 +1606,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             {/* user's choice across navigation via localStorage. */}
             {activeChapter && (commentsVisible || hasCommentHighlight) && (
               <Container size="sm" py="xl">
-                <ChapterComments
-                  projectId={project.id}
-                  chapterPosition={activeChapter.position}
-                  userId={project.user.id}
+                <CommentSection
+                  entityType="comicChapter"
+                  entityId={activeChapter.id}
+                  ownerId={project.user.id}
                 />
               </Container>
             )}

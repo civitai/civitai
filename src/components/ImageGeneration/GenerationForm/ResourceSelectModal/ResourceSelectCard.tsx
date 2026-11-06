@@ -4,10 +4,10 @@ import {
   Group,
   Stack,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconBrush,
   IconCheck,

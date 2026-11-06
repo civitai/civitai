@@ -11,7 +11,9 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
 export const promptKeyName = (key: PromptKey): string =>
   key === 'base'
     ? 'General instructions'
-    : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
+    : key === 'label:model-com-face-intent'
+      ? 'civitai.com face definition'
+      : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
 export const blankPromptKeys = (prompts: Partial<Record<PromptKey, unknown>>): PromptKey[] =>
   (Object.keys(prompts) as PromptKey[]).filter((k) => {

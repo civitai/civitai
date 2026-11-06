@@ -6,13 +6,13 @@ import {
   Group,
   Loader,
   Paper,
-  Popover,
   SegmentedControl,
   Stack,
   Text,
   Title,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconSelector } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import clsx from 'clsx';
@@ -453,7 +453,7 @@ export function AppAssistantWorkspace({
         },
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
         openApp: () => live.current.active?.app ?? null,
-        // The open app's review and user feedback, through My apps' own reads as the user; a status
+        // The open app's review and user feedback, through My builds' own reads as the user; a status
         // changes only when the user presses its card. (On the server runner the runner reads it.)
         feedback: {
           source: createAppFeedbackSource({

@@ -83,14 +83,23 @@ const LAPTOP_VIEWPORT = { width: 1280, height: 800 } as const;
 
 const APP_NAME = 'Background Remover';
 
+/**
+ * A real missing set, so every measurement below is of the LONGEST sentence the notice
+ * can show (two named permissions, the cap), not of the short generic fallback.
+ */
+const MISSING_SCOPES = ['social:react:self', 'social:tip:self'];
+
 /** The sentence the wide form shows, and the phrase the narrow form shows instead. */
-const LONG_MESSAGE = `${APP_NAME} is missing permissions it needs to work fully.`;
+const LONG_MESSAGE = `${APP_NAME} can't tip on your behalf or react to images for you until you allow it.`;
 const SHORT_MESSAGE = 'Missing permissions';
+/** The review button's visible word, and its whole accessible name. */
+const ALLOW_LABEL = 'Allow…';
 
 function render(viewport: { readonly width: number; readonly height: number }) {
   return renderAtViewport(
     <BlockConsentNotice
       appName={APP_NAME}
+      missingScopes={MISSING_SCOPES}
       onReview={() => undefined}
       onDismiss={() => undefined}
     />,
@@ -286,7 +295,7 @@ describe('the notice at 390x844 — a phone', () => {
     // is the browser's own rendered-text computation and sees it.
     expect(renderedLabel(reviewByTestId()), 'the review button renders a word at 390px').toBe('');
     expect(renderedLabel(dismissByTestId()), 'the dismiss button renders a word at 390px').toBe('');
-    for (const label of ['Review permissions', 'Dismiss']) {
+    for (const label of [ALLOW_LABEL, 'Dismiss']) {
       expect(texts, `"${label}" is still in the swap set as visible text`).not.toContain(label);
     }
 
@@ -366,7 +375,7 @@ describe('the notice at 390x844 — a phone', () => {
     // defect. The defect it pins did not exist until the narrow form did. What it IS
     // demonstrably able to catch is the `aria-label` being dropped as redundant once the
     // wide form shows the same words: mutation-tested by deleting
-    // `aria-label="Review permissions"` from the review button, which reds this arm with
+    // the review button's `aria-label` (then "Review permissions"), which redded this arm with
     // `Cannot find element with locator: getByRole('button', { name: 'Review permissions' })`
     // while the other seven tests in this file stay green — i.e. it dies for THIS guard's
     // own reason, not as collateral from a different assertion.
@@ -374,7 +383,7 @@ describe('the notice at 390x844 — a phone', () => {
     expect(observed).toEqual({ width: 390, height: 844 });
     expectCascade();
 
-    await expect.element(page.getByRole('button', { name: 'Review permissions' })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: ALLOW_LABEL })).toBeVisible();
     await expect
       .element(page.getByRole('button', { name: 'Dismiss the missing-permissions notice' }))
       .toBeVisible();
@@ -434,6 +443,16 @@ describe('the notice at 390x844 — a phone', () => {
       );
       expect(b.width, `the ${label} action collapsed to nothing`).toBeGreaterThan(0);
     }
+
+    // 🔴 THE WARNING ICON IS LAID OUT TOO, INSIDE THE BAR AND LEFT OF THE ACTIONS. It is
+    // the one element the narrow form gained, so it is the one that could push the row
+    // past the edge or be squeezed to nothing by `min-w-0`.
+    const icon = box(page.getByTestId('block-consent-notice-icon').element());
+    expect(icon.width, 'the warning icon collapsed to nothing at 390px').toBeGreaterThan(0);
+    expect(icon.left).toBeGreaterThanOrEqual(noticeBox.left);
+    expect(icon.right, 'the warning icon overlaps the actions').toBeLessThanOrEqual(
+      box(reviewByTestId().element()).left
+    );
   });
 
   test('🔴 the icon-only button REVEALS ITS LABEL ON KEYBOARD FOCUS — the tooltip opt-in', async () => {
@@ -508,13 +527,13 @@ describe('the notice at 1280x800 — a laptop', () => {
     const texts = visibleTexts();
     expect(texts).toContain(LONG_MESSAGE);
     expect(texts).not.toContain(SHORT_MESSAGE);
-    expect(texts).toContain('Review permissions');
+    expect(texts).toContain(ALLOW_LABEL);
     expect(texts).toContain('Dismiss');
 
     // The mirror of the narrow block's `innerText` reading: here the words must be
     // RENDERED, and the icons must not. Without this pair, a wide form whose labels
     // escaped the swap set would satisfy every assertion above.
-    expect(renderedLabel(reviewByTestId())).toBe('Review permissions');
+    expect(renderedLabel(reviewByTestId())).toBe(ALLOW_LABEL);
     expect(renderedLabel(dismissByTestId())).toBe('Dismiss');
     expect(iconIsRendered(reviewByTestId()), 'the swap icon is still laid out at 1280').toBe(false);
     expect(iconIsRendered(dismissByTestId()), 'the swap icon is still laid out at 1280').toBe(
@@ -531,7 +550,7 @@ describe('the notice at 1280x800 — a laptop', () => {
 
   test('⚠️ INVARIANT GUARD — the accessible names are the SAME at both widths', async () => {
     // ⚠️ GREEN ON PRE-CHANGE CODE, so this is not regression coverage: at 1280 the review
-    // button's visible text was already `Review permissions` and dismiss already carried
+    // button's visible text was already its whole name (then `Review permissions`) and dismiss already carried
     // `aria-label="Dismiss the missing-permissions notice"`, so both lookups passed.
     //
     // 🔴 THE PAIR IS STILL THE CLAIM. `aria-label` overrides visible text, so a label that
@@ -542,14 +561,14 @@ describe('the notice at 1280x800 — a laptop', () => {
     expect(observed).toEqual({ width: 1280, height: 800 });
     expectCascade();
 
-    await expect.element(page.getByRole('button', { name: 'Review permissions' })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: ALLOW_LABEL })).toBeVisible();
     await expect
       .element(page.getByRole('button', { name: 'Dismiss the missing-permissions notice' }))
       .toBeVisible();
     // …and the RENDERED word on the review button is that exact string, not a paraphrase.
     // `innerText`, not `textContent`: the latter concatenates the hidden icon's span too
     // and would keep matching if the wrong half were showing.
-    expect(renderedLabel(reviewByTestId())).toBe('Review permissions');
+    expect(renderedLabel(reviewByTestId())).toBe(ALLOW_LABEL);
   });
 
   test('the actions are still on ONE row, right of the message', async () => {

@@ -27,6 +27,8 @@ import {
 } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
+import { registryExportDiff } from '~/shared/constants/block-storage.constants';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
 // the notifications client in its body). approve/reject call it POST-COMMIT to notify
 // the submitting developer of the moderator decision — best-effort, wrapped in a
@@ -68,6 +70,10 @@ import {
 // invariant that module documents holds on all write paths — not just the
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
+import {
+  appOwnerTermsRefusalMessage,
+  AppDeveloperTermsNotAcceptedError,
+} from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 
@@ -100,6 +106,25 @@ import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-run
  *   - Rate limit per submitter (Phase 6).
  */
 
+/**
+ * Whose terms acceptance an app's publish needs: the listing's canonical owner, resolved as the
+ * listing gates resolve it.
+ */
+async function resolveAppTermsOwner(appBlockId: string, blockOwnerUserId: number | undefined) {
+  const { dbRead } = await import('~/server/db/client');
+  const listing = await dbRead.appListing.findUnique({
+    where: { appBlockId },
+    select: { kind: true, userId: true },
+  });
+  if (!listing) return blockOwnerUserId;
+  const { resolveCanonicalListingOwner } = await import('./app-access.service');
+  return resolveCanonicalListingOwner({
+    kind: listing.kind,
+    blockOwnerUserId,
+    listingUserId: listing.userId,
+  });
+}
+
 export type FileMeta = {
   path: string;
   sha256: string;
@@ -113,14 +138,22 @@ export type FileSummary = {
   changed: string[];
 };
 
-export type ManifestDiffSummary =
+export type ManifestDiffSummary = (
   | { kind: 'first-version'; fields: string[] }
   | {
       kind: 'update';
       added: string[];
       removed: string[];
       changed: Array<{ field: string; from: unknown; to: unknown }>;
-    };
+    }
+) & {
+  /**
+   * Collections published to registries (`storage.collections.<c>.registry`), for the reviewer.
+   * Present only when this version or the previous one publishes any; absent on rows written
+   * before it existed.
+   */
+  registryExports?: RegistryExportDiff;
+};
 
 /** `submitVersion`'s refusal of a version of an existing app the submitter may not ship. */
 export const appOwnedByAnotherUser = (slug: string) =>
@@ -166,6 +199,15 @@ export type SubmitVersionResult = {
    * submit never fails over it) or for an update to an app with no on-site listing.
    */
   listing: SubmitListingReadiness | null;
+  /**
+   * App Storage schema-migration notes for this submission: declared migration ops that cover
+   * no breaking change since the previous approved version (they will not run), collections no
+   * longer declared (their documents are kept), and optional properties newly declared on an open
+   * schema (stored documents may hold them with another type). Empty when there is nothing to
+   * say. A breaking change that
+   * nothing covers is not a warning: the submit is refused (`StorageMigrationRefusal`).
+   */
+  storageMigrationWarnings?: string[];
 };
 
 /**
@@ -934,10 +976,14 @@ export function computeManifestDiff(
   currentManifest: Record<string, unknown>,
   previousManifest: Record<string, unknown> | null
 ): ManifestDiffSummary {
+  const exports = registryExportDiff(currentManifest, previousManifest);
+  const registryExports =
+    exports.exported.length > 0 || exports.removed.length > 0 ? { registryExports: exports } : {};
   if (previousManifest === null) {
     return {
       kind: 'first-version',
       fields: Object.keys(currentManifest).sort(),
+      ...registryExports,
     };
   }
   const allKeys = new Set([...Object.keys(currentManifest), ...Object.keys(previousManifest)]);
@@ -966,7 +1012,7 @@ export function computeManifestDiff(
   added.sort();
   removed.sort();
   changed.sort((a, b) => a.field.localeCompare(b.field));
-  return { kind: 'update', added, removed, changed };
+  return { kind: 'update', added, removed, changed, ...registryExports };
 }
 
 /**
@@ -1012,9 +1058,9 @@ async function getPreviousApprovedState(
     select: { manifest: true, fileSummary: true },
   });
   if (!prior) return null;
-  const fileSummary = prior.fileSummary as unknown as FileSummary;
+  const fileSummary = prior.fileSummary as unknown as FileSummary | null;
   return {
-    files: fileSummary.files ?? [],
+    files: fileSummary?.files ?? [],
     manifest: prior.manifest as Record<string, unknown>,
   };
 }
@@ -1033,6 +1079,9 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     ]);
   const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
     params;
+
+  const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+  await assertAcceptedAppDeveloperTerms(submittedByUserId);
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1115,12 +1164,23 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // read: the row gated here is the row the request links to below (`appBlockId`).
   const existingApp = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
-    select: { id: true, appId: true },
+    select: { id: true, appId: true, app: { select: { userId: true } } },
   });
   if (existingApp && !submitterIsModerator) {
     const { mayShipAppVersion } = await import('./app-access.service');
     if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
       throw new Error(appOwnedByAnotherUser(slug));
+  }
+  // An editor ships in the owner's name, so the owner must have accepted too.
+  const ownerUserId = existingApp
+    ? await resolveAppTermsOwner(existingApp.id, existingApp.app?.userId)
+    : undefined;
+  if (typeof ownerUserId === 'number' && ownerUserId !== submittedByUserId) {
+    const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
   }
 
   // Block double-submit on the same slug — only one pending request per
@@ -1258,6 +1318,25 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const previous = await getPreviousApprovedState(slug);
   const fileSummary = computeFileDiff(files, previous?.files ?? null);
   const manifestDiffSummary = computeManifestDiff(manifest, previous?.manifest ?? null);
+
+  // 🔴 APP STORAGE SCHEMA MIGRATIONS — refused HERE, before the upload and the review-repo push:
+  // a collection schema this version narrows (against what the store enforces today) can leave
+  // documents already stored unwritable, for this app and every fork writing its collections,
+  // unless a declared migration op covers each breaking change. Static diff of the manifests; no
+  // document is read. Approve runs the same check again (a push-originated request never passes
+  // here). See `storage-schema-migrations.ts`.
+  const [
+    { assertStorageMigrationsCover, checkStorageMigrations },
+    { loadStorageMigrationBaseline },
+  ] = await Promise.all([
+    import('~/server/services/apps/storage-schema-migrations'),
+    import('~/server/services/apps/storage-migration-run.service'),
+  ]);
+  const baseline = existingApp
+    ? await loadStorageMigrationBaseline({ slug })
+    : { prev: null, history: [] };
+  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+  assertStorageMigrationsCover(storageMigrations);
 
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
   // retry after an upstream error reuses the same key safely.
@@ -1433,6 +1512,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     fileSummary,
     manifestDiffSummary,
     listing,
+    storageMigrationWarnings: storageMigrations.warnings,
   };
 }
 
@@ -1742,6 +1822,24 @@ async function deleteOnsiteDraftListingForSlug(opts: { slug: string }): Promise<
 }
 
 /**
+ * Close a decided-against request's App Storage migration runs (reserved at a refused or failed
+ * approve) at once, so they stop gating the app's next approve. Fire-and-forget and never rejects,
+ * like the review teardowns beside its calls; the resume job closes them anyway.
+ */
+function closeStorageMigrationRunsOf(publishRequestId: string): void {
+  void (async () => {
+    try {
+      const { closeStorageMigrationRunsForRequest } = await import(
+        '~/server/services/apps/storage-migration-run.service'
+      );
+      await closeStorageMigrationRunsForRequest(publishRequestId);
+    } catch {
+      // The job's `loadTarget` closes a run whose request is no longer pending or approved.
+    }
+  })();
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1842,6 +1940,7 @@ export async function withdrawRequest(opts: {
     void teardownAgentReviewForRequest(publishRequestId);
     // Review document-store data — unconditional for the same reason (no preview needed).
     void teardownReviewStorageForRequest(publishRequestId);
+    closeStorageMigrationRunsOf(publishRequestId);
     return;
   }
   if (count === 0) {
@@ -1861,6 +1960,7 @@ export async function withdrawRequest(opts: {
       // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
       void teardownAgentReviewForRequest(publishRequestId);
       void teardownReviewStorageForRequest(publishRequestId);
+      closeStorageMigrationRunsOf(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -2095,11 +2195,40 @@ export async function recordPendingFromPush(args: {
   appBlockId: string;
   manifest: object;
   version: string;
+  /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
+  pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
   ]);
+
+  // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
+  // is required + FK-constrained, and the owner is the most meaningful actor for
+  // a commit to their repo.
+  const ownerRow = await dbRead.appBlock.findUnique({
+    where: { id: args.appBlockId },
+    select: { app: { select: { userId: true } } },
+  });
+  const ownerUserId = ownerRow?.app?.userId;
+  if (typeof ownerUserId !== 'number') {
+    throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
+  }
+  // A push has no checkbox, so the app owner, in whose name the request is filed, must have accepted.
+  // Before the refresh and supersede below, so a refused push leaves pending requests untouched.
+  const { assertAcceptedAppDeveloperTerms, hasAcceptedAppDeveloperTerms } = await import(
+    './app-developer-terms.service'
+  );
+  if (args.pusherUserId != null && args.pusherUserId !== ownerUserId) {
+    // The pusher sees this message, so it names the owner when the owner is the blocker.
+    if (!(await hasAcceptedAppDeveloperTerms(ownerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
+    await assertAcceptedAppDeveloperTerms(args.pusherUserId);
+  } else {
+    await assertAcceptedAppDeveloperTerms(ownerUserId);
+  }
 
   // Already captured this exact (slug, sha) as pending? Refresh + done.
   const existingForSha = await dbWrite.appBlockPublishRequest.findFirst({
@@ -2122,17 +2251,6 @@ export async function recordPendingFromPush(args: {
     data: { status: 'withdrawn' },
   });
 
-  // Attribute the row to the app owner (OauthClient.userId). submittedByUserId
-  // is required + FK-constrained, and the owner is the most meaningful actor for
-  // a commit to their repo.
-  const ownerRow = await dbRead.appBlock.findUnique({
-    where: { id: args.appBlockId },
-    select: { app: { select: { userId: true } } },
-  });
-  const ownerUserId = ownerRow?.app?.userId;
-  if (typeof ownerUserId !== 'number') {
-    throw new Error(`could not resolve owner userId for appBlock ${args.appBlockId}`);
-  }
   const publishRequestId = `pubreq_${newUlid()}`;
 
   // Park the review IMMEDIATELY with an empty summary, then enrich the real
@@ -2878,10 +2996,24 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       appId: true,
       repoUrl: true,
       trustTier: true,
-      app: { select: { allowedScopes: true, allowedOrigins: true } },
+      app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
   const isFirstVersion = !existingAppBlock;
+
+  // A request filed before the owner accepted must not go live.
+  // A first version has no app yet, so its submitter is the owner.
+  const termsOwnerUserId =
+    (existingAppBlock &&
+      (await resolveAppTermsOwner(existingAppBlock.id, existingAppBlock.app?.userId))) ??
+    request.submittedByUserId;
+  {
+    const { hasAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
+    if (!(await hasAcceptedAppDeveloperTerms(termsOwnerUserId)))
+      throw new AppDeveloperTermsNotAcceptedError(
+        appOwnerTermsRefusalMessage((await import('~/server/utils/url-helpers')).getBaseUrl())
+      );
+  }
 
   // SECURITY: trust tier is moderator-controlled, NOT publisher-declared.
   // A manifest must never be able to self-escalate to `internal`/`verified`
@@ -2968,6 +3100,29 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     );
   }
 
+  // APP STORAGE SCHEMA MIGRATIONS — the submit gate, again, against what the store enforces now
+  // (`app_blocks.manifest`; or, when an earlier failed attempt of THIS approve already wrote this
+  // request's storage there, the latest approved request; earlier approvals, this request
+  // excluded, for a re-declared collection): a push-originated request never passed
+  // `submitVersion`, and this is the comparison the plan below must be computed from. Refused
+  // before anything is written. The plan is reserved further down (after every other refusal).
+  const [
+    { assertStorageMigrationsCover, checkStorageMigrations },
+    { reserveStorageMigrationRuns, loadStorageMigrationBaseline },
+  ] = await Promise.all([
+    import('~/server/services/apps/storage-schema-migrations'),
+    import('~/server/services/apps/storage-migration-run.service'),
+  ]);
+  const baseline = isFirstVersion
+    ? { prev: null, history: [] }
+    : await loadStorageMigrationBaseline({
+        slug: request.slug,
+        excludePublishRequestId: request.id,
+        selfManifest: manifest,
+      });
+  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+  assertStorageMigrationsCover(storageMigrations);
+
   // The listing writes below log and continue on failure, so a split decision they could not
   // write is refused HERE, before anything is written or built — otherwise the app would deploy
   // with its listing left `draft` (or, on a reset re-approve, `pending` with the block still
@@ -3017,6 +3172,20 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           access
         );
     }
+  }
+
+  // APP STORAGE SCHEMA MIGRATIONS — the approve gate, LAST among the refusals and still before
+  // anything is written (so a refused approve reserves nothing): refused while an earlier run of
+  // the app is unfinished on a collection this version touches, or when a plan could not be
+  // recorded. The plan is reserved here, under a per-app lock, so it survives a later failure of
+  // this approve.
+  if (existingAppBlock) {
+    await reserveStorageMigrationRuns({
+      appBlockId: existingAppBlock.id,
+      publishRequestId: request.id,
+      manifest,
+      plans: storageMigrations.plans,
+    });
   }
 
   let appBlockId: string;
@@ -3902,6 +4071,32 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           err instanceof Error ? err.message : String(err)
         }`
     );
+  }
+
+  // (6c) APP STORAGE SCHEMA MIGRATIONS — the new manifest (and so every collection's new schema)
+  // has been live on `app_blocks` since (3); run the plan computed above over the existing
+  // production documents. Recorded synchronously, run in the background, resumed by the
+  // `run-storage-migrations` job. LOG-AND-CONTINUE: never fails an approve whose code is
+  // committed (`startStorageMigrationsOnApprove` never rejects).
+  if (storageMigrations.plans.size > 0) {
+    try {
+      const { startStorageMigrationsOnApprove } = await import(
+        '~/server/services/apps/storage-migration-run.service'
+      );
+      await startStorageMigrationsOnApprove({
+        publishRequestId: request.id,
+        appBlockId,
+        plans: storageMigrations.plans,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] storage migrations not started (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — stored documents keep their old shape: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
   }
 
   // Review document-store data of this request, started the moment the decision is durable:
@@ -6014,6 +6209,7 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   void teardownAgentReviewForRequest(row.id);
   // Review document-store data — unconditional too (an on-site run needs no preview).
   void teardownReviewStorageForRequest(row.id);
+  closeStorageMigrationRunsOf(row.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

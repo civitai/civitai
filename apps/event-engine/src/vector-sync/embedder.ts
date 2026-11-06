@@ -6,7 +6,10 @@ import { parseRetryAfter, RateLimiter } from './ratelimit';
 
 // The orchestration client has no type for this step yet; this is the subset we send and read.
 // One step embeds exactly one input; a workflow carries many steps.
-export type EmbedInput = { id: string; imageUrl?: string; videoUrl?: string };
+export type EmbedInput = { id: string; imageUrl?: string; videoUrl?: string; text?: string };
+type InputKind = 'image' | 'video' | 'text';
+const kindOf = (input: EmbedInput): InputKind =>
+  input.videoUrl ? 'video' : input.text !== undefined ? 'text' : 'image';
 type StepOutput = {
   model: string;
   modelRevision: string;
@@ -188,6 +191,7 @@ export class MixedStampError extends Error {
 
 /** A rejected workflow is split at most this many times (128 down to groups of 8). */
 const MAX_SPLIT_DEPTH = 4;
+const PACE_CREDIT_MS = 100;
 /**
  * 429s are the orchestrator's flow control, not errors: they are budgeted by time, and longer
  * than one workflow can run (30 min), since another process may hold the account's quota.
@@ -267,8 +271,8 @@ export type EmbedderOptions = {
 
 type EmbedCall = {
   result: EmbedResult;
-  /** The accepted stamp per media type: image and video steps report different profiles. */
-  stamps: Map<'image' | 'video', ModelStamp>;
+  /** The accepted stamp per input kind: image, video and text steps may report different profiles. */
+  stamps: Map<InputKind, ModelStamp>;
   /** Checked for every step's stamp before its vector is accepted; throwing rejects the workflow. */
   acceptStamp?: (stamp: ModelStamp) => Promise<void>;
   /** Given each workflow's accepted vectors as it returns, so they can be stored before the call ends. */
@@ -445,7 +449,7 @@ export class Embedder {
 
     // Each step stands alone: a failed step fails only its own image.
     const steps = new Map((workflow.steps ?? []).map((step) => [step.name, step]));
-    const accepted: Array<[number, number[], ModelStamp, 'image' | 'video']> = [];
+    const accepted: Array<[number, number[], ModelStamp, InputKind]> = [];
     const failed: string[] = [];
     for (const input of batch) {
       const out = steps.get(stepName(input.id));
@@ -462,7 +466,7 @@ export class Embedder {
         failed.push(input.id);
         continue;
       }
-      const kind = input.videoUrl ? 'video' : 'image';
+      const kind = kindOf(input);
       const stamp: ModelStamp = {
         model: output.model,
         modelRevision: output.modelRevision,
@@ -498,7 +502,7 @@ export class Embedder {
     }
 
     // Every distinct stamp in this workflow is checked before any of its vectors is kept.
-    const distinct = new Map<string, [ModelStamp, 'image' | 'video']>();
+    const distinct = new Map<string, [ModelStamp, InputKind]>();
     for (const [, , stamp, kind] of accepted) distinct.set(JSON.stringify(stamp), [stamp, kind]);
     for (const [stamp, kind] of distinct.values()) {
       const seen = call.stamps.get(kind);
@@ -545,7 +549,8 @@ export class Embedder {
     const rate = this.stepsPerSecond;
     if (!rate) return;
     const now = this.now();
-    const at = Math.max(now, this.nextSubmitAt);
+    // Timers wake a millisecond or more late; without crediting that, hundreds of steps/s fall short.
+    const at = this.nextSubmitAt >= now - PACE_CREDIT_MS ? this.nextSubmitAt : now;
     this.nextSubmitAt = at + (steps * 1000) / rate;
     if (at > now) await this.sleep(at - now);
   }
@@ -606,7 +611,11 @@ export class Embedder {
           model: EMBED_MODEL,
           dimensions: VECTOR_DIMENSIONS,
           precision: 'float32',
-          ...(input.videoUrl ? { videoUrl: input.videoUrl } : { imageUrl: input.imageUrl }),
+          ...(input.videoUrl
+            ? { videoUrl: input.videoUrl }
+            : input.text !== undefined
+            ? { text: input.text }
+            : { imageUrl: input.imageUrl }),
         },
       })),
       tier: 'paid',

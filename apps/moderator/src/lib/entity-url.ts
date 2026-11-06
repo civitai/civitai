@@ -70,6 +70,13 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 export const csamReportUrl = (civitaiUrl: string, userId: number) =>
   `${civitaiUrl}/moderator/csam/${userId}`;
 
+/** The main site's generator evidence page for a user, with one restriction's triggers preselected. */
+export const csamGeneratorEvidenceUrl = (
+  civitaiUrl: string,
+  userId: number,
+  restrictionId: number
+) => `${civitaiUrl}/moderator/csam/generator/${userId}?restrictionId=${restrictionId}`;
+
 /** The same page filing a report that supplements `priorReportId`, with `imageIds` preselected. */
 export function csamSupplementalReportUrl(
   civitaiUrl: string,
