@@ -750,6 +750,9 @@ export function buildBeaconCases(ctx) {
 // The job's database is empty, so DB-backed routes answer "not found" or an empty list, on both
 // sides; that is still compared byte for byte.
 
+const PROXY_STREAMED_451 =
+  "Next's proxy answers the blocked region with a middleware response, which router-server streams (Transfer-Encoding: chunked). The standalone server answers it from applyApiRequestPolicy, the function the tRPC route also uses, which ends the response with the whole body (Content-Length). Status, every other header and the body are the same; only the framing differs.";
+
 const API_UNKNOWN_PATH =
   'Next answers a path no route matches by rendering its 404 page (and, under /api/v1/, after running the proxy). The api profile renders no pages; it answers the plain 404, as for the tRPC paths above. Routing sends it only paths of served shapes.';
 
@@ -767,6 +770,23 @@ export function buildApiCases(ctx) {
       id: 'v1-blocked-region',
       path: '/api/v1/enums',
       headers: { ...apiClient, 'cf-ipcountry': 'GB' },
+      divergence: {
+        reason: PROXY_STREAMED_451,
+        candidate: {
+          status: 451,
+          statusMessage: 'Unavailable For Legal Reasons',
+          headers: [
+            'content-length: 117',
+            'content-type: application/json',
+            'x-frame-options: DENY',
+          ],
+          body: JSON.stringify({
+            error:
+              'Access to this service is not available in your region due to legal restrictions.',
+            code: 'REGION_BLOCKED',
+          }),
+        },
+      },
     },
     {
       id: 'v1-spoofed-verified-bot-header',
@@ -842,7 +862,9 @@ export function buildApiCases(ctx) {
 
     // --- /api/auth/ ----------------------------------------------------------------------------
     { id: 'auth-session-anonymous', path: '/api/auth/session', headers: edge },
-    { id: 'auth-session-signed-in', path: '/api/auth/session', headers: signedIn },
+    // No signed-in /api/auth/session case: its body carries the session's `expires`, computed at
+    // request time to the millisecond, so two sends never match. The signed-in cookie path is
+    // covered by v1-signed-in-cookie.
     { id: 'auth-jwks', path: '/api/auth/jwks', headers: edge },
     { id: 'auth-accounts-anonymous', path: '/api/auth/accounts', headers: edge },
     { id: 'auth-catch-all', path: '/api/auth/oauth/unknown/x', headers: edge },

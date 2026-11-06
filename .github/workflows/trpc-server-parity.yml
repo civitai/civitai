@@ -588,7 +588,7 @@ jobs:
         run: |
           node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3004 \
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-mutant.json" \
-            --cases api --expect-red v1-blocked-region --expect-red-diff '451 '
+            --cases api --expect-red v1-blocked-region --expect-red-diff 'pinned 451 '
 
       - name: The alerted span is still emitted
         if: ${{ !cancelled() }}
