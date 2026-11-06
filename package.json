@@ -456,7 +456,8 @@
       "react-dom@18.3.1": "patches/react-dom@18.3.1.patch",
       "@mantine/core@7.17.8": "patches/@mantine__core@7.17.8.patch",
       "@trpc/next@11.17.0": "patches/@trpc__next@11.17.0.patch",
-      "@civitai/cybertipline-tools@0.1.0": "patches/@civitai__cybertipline-tools@0.1.0.patch"
+      "@civitai/cybertipline-tools@0.1.0": "patches/@civitai__cybertipline-tools@0.1.0.patch",
+      "@civitai/generation-metadata@0.4.0": "patches/@civitai__generation-metadata@0.4.0.patch"
     }
   }
 }
