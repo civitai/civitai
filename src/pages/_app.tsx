@@ -20,7 +20,10 @@ import {
   SHELL_REQ_KEY,
 } from '~/shared/constants/shell.constants';
 import type { ShellRender } from '~/server/shell/shell-render';
-import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
+import {
+  BOT_CACHE_REQ_KEY,
+  BOT_LEAN_CHROME_REQ_KEY,
+} from '~/shared/constants/bot-cache.constants';
 import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
@@ -550,6 +553,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     [SHELL_RENDERED_REQ_KEY]?: string;
     [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
     [BOT_CACHE_REQ_KEY]?: BotCacheRouteName;
+    [BOT_LEAN_CHROME_REQ_KEY]?: boolean;
   };
   // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
   // which must then carry no edge-cache header a shell attempt may have left.
@@ -716,6 +720,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     if (route) botCache = { route, seed: botCacheSeed(request.url) };
   }
   renderRequest[BOT_CACHE_REQ_KEY] = botCache?.route;
+  // The bot lean render does not draw this chrome, so it must know whether there is any.
+  renderRequest[BOT_LEAN_CHROME_REQ_KEY] = botCache
+    ? !!navBanners?.length || !!siteAlerts?.alerts?.length
+    : undefined;
 
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');

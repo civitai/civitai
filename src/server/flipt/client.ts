@@ -399,6 +399,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // On: a request `bot-html-edge-cache` marked as a cacheable crawler render of an allowlisted page
+  // with a lean renderer (`/images/[imageId]` only) is answered with a template-string page carrying
+  // the same SEO content, instead of the React render (`~/server/bot-cache/bot-lean`). Off (and
+  // unknown, or a client that has not initialised): the full render, as before. Needs
+  // `bot-html-edge-cache` on as well, since only its mark makes a request a candidate.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  BOT_LEAN_RENDER = 'bot-lean-render',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

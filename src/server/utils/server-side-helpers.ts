@@ -39,6 +39,9 @@ import {
 } from '~/shared/constants/bot-cache.constants';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
+import type { BotLeanResult } from '~/server/bot-cache/bot-lean';
+import { isBotLeanCandidate, sendBotLeanRender } from '~/server/bot-cache/bot-lean';
+import type { BotCacheRouteName } from '~/server/bot-cache/bot-cache-routes';
 
 /**
  * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
@@ -176,6 +179,7 @@ export function createServerSideProps<P>({
   prefetch = 'once',
   requireModerator = false,
   shell,
+  botLean,
 }: CreateServerSidePropsProps<P>) {
   return async function (
     context: GetServerSidePropsContext
@@ -292,6 +296,16 @@ export function createServerSideProps<P>({
       botCacheReq[BOT_CACHE_PREFETCH_FAILED_REQ_KEY] = true;
     }
 
+    // A verified crawler's bot-cache render, answered from the same query cache without the React
+    // render (`~/server/bot-cache/bot-lean`). `false` from the send: the page renders as always.
+    if (botLean && ssg && isBotLeanCandidate(context.req, botLean.route)) {
+      const sent = await sendBotLeanRender(botLean.route, context.req, context.res, () =>
+        botLean.render({ req: context.req, query: context.query, ssg, features })
+      );
+      // Next returns without rendering once the response is sent (`render.js`, `isResSent`).
+      if (sent) return { props: {} as NonNullable<P> };
+    }
+
     const adsGated = resolveAdsGated(result, features);
 
     const pageProps = {
@@ -333,6 +347,17 @@ type CreateServerSidePropsProps<P> = {
    *  it with the shell's props and headers, and keep the route's cookie in step with its flag on
    *  every other response. */
   shell?: ShellRouteName;
+  /** The page's bot lean renderer (`~/server/bot-cache/bot-lean`), run after the resolver for a
+   *  request `_app` marked as this route's bot-cache render, when `bot-lean-render` is on. */
+  botLean?: {
+    route: BotCacheRouteName;
+    render: (args: {
+      req: GetServerSidePropsContext['req'];
+      query: GetServerSidePropsContext['query'];
+      ssg: SsgHelpers;
+      features: FeatureAccess;
+    }) => Promise<BotLeanResult>;
+  };
   resolver?: (context: CustomGetServerSidePropsContext) => Promise<
     | (GetServerSidePropsResult<P> & {
         gating?: AdGatingDeclaration;

@@ -5,6 +5,14 @@
  */
 export const BOT_CACHE_REQ_KEY = 'civBotCacheRoute';
 
+/**
+ * Set by `_app.getInitialProps` on a request it marked with `BOT_CACHE_REQ_KEY`: whether the
+ * settings bootstrap handed the render site chrome with content (nav banners, site alerts) that
+ * the full page shows around every route. The bot lean render (`~/server/bot-cache/bot-lean`) does
+ * not reproduce that chrome, so it answers only when this is `false`.
+ */
+export const BOT_LEAN_CHROME_REQ_KEY = 'civBotLeanChrome';
+
 /** Set by `createServerSideProps` when a prefetch of a bot-cache candidate failed. */
 export const BOT_CACHE_PREFETCH_FAILED_REQ_KEY = 'civBotCachePrefetchFailed';
 
