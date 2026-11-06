@@ -5,6 +5,7 @@ import {
   isGlbFormat,
   isInlineViewableModel3DFile,
   normalizeModel3DFormat,
+  pickModel3DPreviewFile,
 } from '~/shared/orchestrator/model3d-output';
 
 const mesh = (format: string, available = true) => ({ type: 'model3d', available, format });
@@ -50,6 +51,40 @@ describe('isUnratedOutput — 3D meshes', () => {
   it('never holds a GLB mesh, which is rated through its preview render', async () => {
     const { isUnratedOutput } = await import('~/shared/orchestrator/workflow-data');
     expect(isUnratedOutput({ ...base, format: 'glb' })).toBe(false);
+  });
+});
+
+describe('pickModel3DPreviewFile', () => {
+  const file = (id: number, format: string, variant: string, isPrimary = false) => ({
+    id,
+    format,
+    variant,
+    isPrimary,
+  });
+
+  it('previews a GLB variant when the primary is FBX', () => {
+    const glb = file(2, 'glb', 'rigged');
+    expect(pickModel3DPreviewFile([file(1, 'fbx', 'primary', true), glb])).toBe(glb);
+  });
+
+  it('keeps a viewable primary over other GLBs', () => {
+    const primary = file(1, 'glb', 'primary', true);
+    expect(pickModel3DPreviewFile([file(2, 'glb', 'walking'), primary])).toBe(primary);
+  });
+
+  // An armature-only GLB has no geometry, so the FBX primary's download fallback is the better result.
+  it('skips armature-only GLBs and falls back to the primary', () => {
+    const primary = file(1, 'fbx', 'primary', true);
+    expect(pickModel3DPreviewFile([primary, file(2, 'glb', 'walking-armature')])).toBe(primary);
+  });
+
+  it('falls back to the first file when none is primary or viewable', () => {
+    const first = file(1, 'obj', 'primary');
+    expect(pickModel3DPreviewFile([first, file(2, 'fbx', 'rigged')])).toBe(first);
+  });
+
+  it('returns null for no files', () => {
+    expect(pickModel3DPreviewFile([])).toBeNull();
   });
 });
 
