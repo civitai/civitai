@@ -408,6 +408,9 @@ export const constants = {
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
+    // 4:1, shown full width across the top of the article page.
+    bannerImageHeight: 600,
+    bannerImageWidth: 2400,
   },
   profanity: {
     thresholds: {
