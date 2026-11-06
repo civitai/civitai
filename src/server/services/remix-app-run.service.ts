@@ -30,6 +30,7 @@ import {
   loadSource,
   remixRunId,
   remixSubmitArgs,
+  remixWhatIfArgs,
   runtimeSourceOf,
   viewerOf,
   type RemixAppCaller,
@@ -250,10 +251,7 @@ async function optionPrices({
         });
         const { cost } = await whatIfPresetImageGen({
           graphInput: run.graphInput,
-          user: caller.user,
-          token: caller.token,
-          currencies,
-          flags: caller.features,
+          ...remixWhatIfArgs(caller, currencies),
         });
         return [value, cost] as const;
       } catch {
@@ -412,10 +410,7 @@ async function advance({
 
   const priced = await whatIfPresetImageGen({
     graphInput: run.graphInput,
-    user: caller.user,
-    token: caller.token,
-    currencies,
-    flags: caller.features,
+    ...remixWhatIfArgs(caller, currencies),
   });
   if (quote == null) return { status: 'priced', runId, ...priced };
   assertWithinQuote(priced.cost, quote);
