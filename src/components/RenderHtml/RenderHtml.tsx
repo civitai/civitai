@@ -7,6 +7,12 @@ import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { needsColorSwap } from '~/utils/html-helpers';
 import { DEFAULT_ALLOWED_ATTRIBUTES, sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
+import { useMaybeAppContext } from '~/providers/AppProvider';
+import {
+  embedRenderAttrs,
+  embedRenderSrc,
+  isAllowedPlayerUrl,
+} from '~/shared/utils/embed-providers';
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
@@ -37,7 +43,7 @@ function embedKindFromUrl(url: string | undefined): string {
   if (hostMatches(host, 'youtube.com') || hostMatches(host, 'youtu.be')) return 'youtube';
   if (hostMatches(host, 'instagram.com')) return 'instagram';
   if (hostMatches(host, 'strawpoll.com')) return 'strawpoll';
-  return 'embed';
+  return isAllowedPlayerUrl(url) ?? 'embed';
 }
 
 export function RenderHtml({
@@ -54,6 +60,7 @@ export function RenderHtml({
   const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const toCurrentDomain = useCurrentDomainHref();
+  const host = useMaybeAppContext()?.host;
 
   html = useMemo(() => {
     let processedHtml = html;
@@ -71,7 +78,10 @@ export function RenderHtml({
       parseStyleAttributes: allowCustomStyles,
       allowedAttributes: {
         ...DEFAULT_ALLOWED_ATTRIBUTES,
-        div: ['data-youtube-video', 'data-type', 'style', 'data-consent-blocked'],
+        div: ['data-youtube-video', 'data-type', 'data-provider', 'style', 'data-consent-blocked'],
+        // Set by the iframe transform below from the validated provider; any stored value is
+        // dropped there first.
+        iframe: [...DEFAULT_ALLOWED_ATTRIBUTES.iframe, 'allow', 'sandbox'],
         // Attributes are filtered against the tag a transform produced, so the
         // mention span's data attributes are dropped once it becomes a link
         // unless `a` allows them too. The hover card reads the user from them.
@@ -86,8 +96,19 @@ export function RenderHtml({
         // For unconsented CA visitors, replace third-party iframes with a
         // placeholder div so no third-party network request fires. The kind
         // attribute drives the CSS-only placeholder shown in its place.
-        iframe: function (_tagName, attribs) {
-          if (thirdPartyAllowed) return { tagName: 'iframe', attribs };
+        iframe: function (_tagName, { allow: _allow, sandbox: _sandbox, ...attribs }) {
+          if (thirdPartyAllowed) {
+            const provider = isAllowedPlayerUrl(attribs.src);
+            if (!provider) return { tagName: 'iframe', attribs };
+            return {
+              tagName: 'iframe',
+              attribs: {
+                ...attribs,
+                src: embedRenderSrc(provider, attribs.src, host),
+                ...embedRenderAttrs(provider),
+              },
+            };
+          }
           return {
             tagName: 'div',
             attribs: {
@@ -174,6 +195,7 @@ export function RenderHtml({
     thirdPartyAllowed,
     allowStickers,
     toCurrentDomain,
+    host,
   ]);
 
   // Stored comment content carries stickers as empty `<span data-type="sticker">`

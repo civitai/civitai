@@ -1,12 +1,16 @@
 import { Button, Card, Stack, Text } from '@mantine/core';
 import type { Icon } from '@tabler/icons-react';
 import {
+  IconBrandBandcamp,
   IconBrandInstagram,
+  IconBrandSoundcloud,
+  IconBrandSpotify,
   IconBrandTwitch,
   IconBrandVimeo,
   IconBrandX,
   IconBrandYoutube,
   IconChartBar,
+  IconCode,
   IconShieldLock,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -19,6 +23,10 @@ export type ConsentEmbedKind =
   | 'twitter'
   | 'twitch'
   | 'vimeo'
+  | 'bandcamp'
+  | 'soundcloud'
+  | 'spotify'
+  | 'huggingface'
   | 'generic';
 
 const KIND_LABELS: Record<ConsentEmbedKind, string> = {
@@ -28,6 +36,10 @@ const KIND_LABELS: Record<ConsentEmbedKind, string> = {
   twitter: 'X (Twitter)',
   twitch: 'Twitch',
   vimeo: 'Vimeo',
+  bandcamp: 'Bandcamp',
+  soundcloud: 'SoundCloud',
+  spotify: 'Spotify',
+  huggingface: 'Hugging Face',
   generic: 'third-party',
 };
 
@@ -38,6 +50,10 @@ const KIND_ICONS: Record<ConsentEmbedKind, Icon> = {
   twitter: IconBrandX,
   twitch: IconBrandTwitch,
   vimeo: IconBrandVimeo,
+  bandcamp: IconBrandBandcamp,
+  soundcloud: IconBrandSoundcloud,
+  spotify: IconBrandSpotify,
+  huggingface: IconCode,
   generic: IconShieldLock,
 };
 

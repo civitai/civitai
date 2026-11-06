@@ -1,8 +1,9 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { cacheIt } from '~/server/middleware.trpc';
+import { cacheIt, rateLimit } from '~/server/middleware.trpc';
 import { getMarkdownContent, getStaticContent } from '~/server/services/content.service';
-import { publicProcedure, router } from '~/server/trpc';
+import { resolveBandcampEmbed } from '~/server/services/embed-lookup.service';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const slugSchema = z.object({
@@ -25,4 +26,10 @@ export const contentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ key: z.string() }))
     .query(({ input }) => getMarkdownContent(input)),
+  /** Bandcamp page URL -> player URL, for the editor's Embed dialog. Fetches bandcamp.com only. */
+  resolveBandcampEmbed: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(z.object({ url: z.string().max(500) }))
+    .use(rateLimit({ limit: 30, period: 60 * 60 }))
+    .mutation(({ input }) => resolveBandcampEmbed(input.url)),
 });

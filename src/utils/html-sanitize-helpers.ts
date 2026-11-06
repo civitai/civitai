@@ -3,6 +3,11 @@ import type { Transformer } from 'sanitize-html';
 import sanitize from 'sanitize-html';
 import { removeTags } from '~/utils/string-helpers';
 import { isValidURL } from '~/utils/type-guards';
+import {
+  EMBED_PLAYER_HOSTS,
+  isAllowedPlayerUrl,
+  isEmbedPlayerHost,
+} from '~/shared/utils/embed-providers';
 
 const DEFAULT_ALLOWED_TAGS = [
   'p',
@@ -50,6 +55,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.youtube.com',
   'www.instagram.com',
   'www.strawpoll.com',
+  ...EMBED_PLAYER_HOSTS,
 ];
 
 export const DEFAULT_ALLOWED_ATTRIBUTES = {
@@ -74,7 +80,7 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   // `data-id` is load-bearing for blurbs: it is the only thing tying a stored blurb back to its
   // row, and every host body passes through here on save. Drop it and the fan-out has nothing
   // left to find — the words stay and silently stop updating.
-  div: ['data-youtube-video', 'data-type', 'data-id'],
+  div: ['data-youtube-video', 'data-type', 'data-id', 'data-provider'],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
@@ -198,6 +204,14 @@ export type santizeHtmlOptions = sanitize.IOptions & {
   /** Opt-in for surfaces registered with the blurb fan-out. */
   allowBlurbs?: boolean;
 };
+// The hostname allowlist admits any path on a player host. A new-provider iframe must also be
+// exactly a player URL embed-providers would produce, or it is dropped whole.
+function isRefusedEmbedIframe(frame: sanitize.IFrame) {
+  if (frame.tag !== 'iframe') return false;
+  const src = frame.attribs.src;
+  return isEmbedPlayerHost(src) && !isAllowedPlayerUrl(src);
+}
+
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   const {
     stripEmpty = false,
@@ -230,8 +244,12 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     exclusiveFilter: (frame) =>
       (!allowStickers && isStickerSpan(frame)) ||
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
+      isRefusedEmbedIframe(frame) ||
       (exclusiveFilter?.(frame) ?? false),
     allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
+    // Coarse gate only: any subdomain of hf.space passes here. isRefusedEmbedIframe is the
+    // exact check (one label, https, path).
+    allowedIframeDomains: ['hf.space'],
     transformTags: {
       a: function (tagName, { href, ...attr }) {
         const updatedHref = href.startsWith('http') ? href : `http://${href}`;
