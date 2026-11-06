@@ -7,6 +7,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as NotificationsMod from '~/utils/notifications';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import type { MyAppRow } from '~/server/services/blocks/my-apps.logic';
 
@@ -31,6 +32,12 @@ const mocks = vi.hoisted(() => ({
   listeners: new Set<() => void>(),
   /** Bumped per test, so a server model left over from an earlier test cannot publish. */
   modelId: 0,
+  showErrorNotification: vi.fn(),
+}));
+
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showErrorNotification: (...a: unknown[]) => mocks.showErrorNotification(...a),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -190,6 +197,7 @@ beforeEach(() => {
   }));
   mocks.unhide = vi.fn(async (input: { slug: string }) => ({ slug: input.slug }));
   mocks.invalidate = vi.fn(async () => undefined);
+  mocks.showErrorNotification = vi.fn();
   mocks.modelId++;
   mocks.listAvailableItems = [];
   mocks.listAvailableInputs = [];
@@ -925,6 +933,63 @@ describe('Remove from My apps', () => {
       await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
       await expect.poll(names).toEqual(['Third App']);
       await advance(60_000);
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    });
+
+    test('🔴 a failed Undo keeps the app removed (the server still holds the hide), says so, and refetches once', async () => {
+      // The unhide rejects on cue; the refetch is held, so what the grid shows in between comes
+      // from the CACHED rows — which predate the hide and still list Pixel Forge.
+      const unhide = deferred<never>();
+      mocks.unhide = vi.fn(() => unhide.promise);
+      const refetch = deferred<void>();
+      const serverInvalidate = mocks.invalidate;
+      mocks.invalidate = vi.fn(async () => {
+        await refetch.promise;
+        return serverInvalidate();
+      });
+      await renderAndRemove('Pixel Forge');
+      await userEvent.click(page.getByTestId('apps-home-undo'));
+      // Undo puts the tile back at once, before its unhide settles.
+      await expect.poll(names).toEqual(['Pixel Forge', 'Prompt Lab']);
+      unhide.reject(new Error('nope'));
+      await expect.poll(() => mocks.showErrorNotification.mock.calls.length).toBe(1);
+      expect(mocks.showErrorNotification.mock.calls[0][0]).toMatchObject({
+        title: "Couldn't restore Pixel Forge",
+      });
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      // The refetch has not landed (Third App is not in), so only the restored hide keeps the
+      // still-cached row off the grid.
+      await frame();
+      expect(names()).toEqual(['Prompt Lab']);
+      refetch.resolve();
+      await expect.poll(names).toEqual(['Prompt Lab', 'Third App']);
+      for (let i = 0; i < 3; i++) await frame();
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+      expect(mocks.unhide).toHaveBeenCalledTimes(1);
+    });
+
+    test('🔴 leaving the page inside the Undo window still refetches once, after the hide settles', async () => {
+      const hide = deferred<void>();
+      const serverHide = mocks.hide;
+      mocks.hide = vi.fn(async (input: { slug: string }) => {
+        await hide.promise;
+        return serverHide(input);
+      });
+      const { unmount } = await renderWithProviders(<AppsHomeBody />);
+      await expect.element(page.getByText('Pixel Forge')).toBeVisible();
+      await removeViaMenu('Pixel Forge');
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(1);
+      await expect
+        .element(page.getByRole('button', { name: 'Undo removing Pixel Forge' }))
+        .toBeVisible();
+      await unmount();
+      // Gone mid-window, hide still in flight: the refetch is owed but must not run yet, or it
+      // could read the list before the hide lands.
+      for (let i = 0; i < 3; i++) await frame();
+      expect(mocks.invalidate).not.toHaveBeenCalled();
+      hide.resolve();
+      await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
+      for (let i = 0; i < 3; i++) await frame();
       expect(mocks.invalidate).toHaveBeenCalledTimes(1);
     });
 

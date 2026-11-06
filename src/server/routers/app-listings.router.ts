@@ -2068,10 +2068,8 @@ export const appListingsRouter = router({
    *
    * Returns the derived `apps`, the viewer's "Remove from My apps" `hidden` map (slug → ISO
    * time), `removedCount` and `removedSlugsByListingId` (listing id → slug of each row a hide
-   * dropped). Hidden apps are filtered out BEFORE the row cap, so they do not take slots; the
-   * client merge still applies the same rule (`isHiddenFromHome`) to this browser's
-   * recently-opened entries (`mergeHomeApps`), judging an entry stored under an older slug by
-   * the dropped row's slug.
+   * dropped). Hidden apps are filtered out BEFORE the row cap, so they do not take slots. The
+   * rule and why the dropped-row map exists: `my-apps-hidden.ts`.
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)

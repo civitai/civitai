@@ -42,13 +42,8 @@ import { isHiddenFromHome, latestUseMs } from '~/shared/utils/my-apps-hidden';
  * rule mostly matters for recents-only tiles and for this page's optimistic removes. An app
  * the server dropped but this browser has since opened renders from its recents entry.
  *
- * A dropped row is no longer there to claim its recents entry, and an off-site entry can carry
- * an OLDER slug than the row (matched above by listing id) — a slug no hide names, since
- * "Remove" writes the row's. So the server also sends `removedSlugsByListingId`, and an entry
- * whose `id` is in it is judged EXACTLY as a matched one: under the row's slug, with the
- * entry's opens under either slug, claiming the listing id. It shows (under the row's slug,
- * so removing it again writes the hide the server reads) only when opened after the hide.
- * Hidden tiles are skipped BEFORE they claim a slug, so nothing else shifts.
+ * A recents entry for a dropped row is judged via `removedSlugsByListingId` — why and how: see
+ * `my-apps-hidden.ts`. Hidden tiles are skipped BEFORE they claim a slug, so nothing else shifts.
  *
  * ── LAUNCH ORIGIN ──────────────────────────────────────────────────────────────
  * An in-site run href gets `?from=home` (`withHomeLaunchOrigin`) so the run chrome's way out

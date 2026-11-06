@@ -325,7 +325,7 @@ describe('mergeHomeApps — hidden apps (the single re-appear predicate)', () =>
 });
 
 describe('mergeHomeApps — a row the server dropped as hidden still claims its recents entry', () => {
-  // The F1 shape: an OFF-SITE recent stored under an OLDER slug than its listing's
+  // An OFF-SITE recent stored under an OLDER slug than its listing's
   // (`prompt-lab-old` vs `prompt-lab`), the hide written under the ROW's slug, and the row no
   // longer served because the server dropped it. Every id/slug below is pairwise distinct.
   const drifted = (openedAt?: number) => {

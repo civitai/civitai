@@ -64,7 +64,7 @@ import { trpc } from '~/utils/trpc';
 export const APPS_HOME_GRID_COLS = { base: 4, xs: 5, sm: 6, md: 7, lg: 8 } as const;
 const APPS_HOME_SKELETON_TILES = 8;
 export const APPS_HOME_ICON_PX = 60;
-/** ≈ 22% of the icon side, like a launcher icon. */
+/** A launcher-icon corner radius. */
 const APPS_HOME_ICON_RADIUS = 14;
 const APPS_HOME_UNDO_MS = 8000;
 
@@ -371,14 +371,10 @@ export function AppsHomeBody() {
   // ── "Remove from My apps", optimistic ────────────────────────────────────────
   // A removal hides the tile at once (a local override), then persists. On failure the
   // override is dropped, so the grid falls back to the cached server state — which never had
-  // the hide — and the tile returns. Undo is the same in reverse.
+  // the hide — and the tile returns. A failed Undo instead re-applies the hide (see below).
   //
-  // The list is NOT refetched while an Undo is on offer. The server drops a hidden row from
-  // `listMyApps`, so a refetch right after the hide would evict the very row an Undo needs.
-  // Instead each write marks a refetch as owed, and it runs once the bar closes (timeout,
-  // Dismiss or Undo alike), after every write still in flight has settled, so it reads the
-  // server's final state — including the next app past the cap. One bar shows at a time, so a
-  // second removal keeps the bar open and moves the single refetch past ITS window.
+  // Don't refetch while an Undo is offered: the server drops hidden rows from `listMyApps`, so
+  // a refetch would evict the row Undo restores. The owed refetch runs once the bar closes.
   const [overrides, setOverrides] = useState<HiddenOverrides>({});
   const [removed, setRemoved] = useState<{ slug: string; name: string; hiddenAt: string } | null>(
     null

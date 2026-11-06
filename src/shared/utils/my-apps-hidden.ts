@@ -18,7 +18,9 @@
  * than the row's (the hide is written under the row's). So `buildMyApps` also returns each
  * dropped row's listing id → slug (`removedSlugsByListingId`), and the merge judges an entry
  * with that id exactly as it judges a matched one — under the row's slug, with the entry's
- * opens under either slug — rather than under its stale slug, which no hide names.
+ * opens under either slug — rather than under its stale slug, which no hide names. It shows
+ * only when opened after the hide, and under the row's slug, so removing it again writes the
+ * hide the server reads.
  *
  * KNOWN LIMITATIONS:
  *  - when the run page's clear does not happen (its read fails open to "not hidden", or the

@@ -106,13 +106,7 @@ export type MyAppsHome = {
    * yet" would be false.
    */
   removedCount: number;
-  /**
-   * listing id → slug, for exactly the rows a hide kept off `apps` (so it has `removedCount`
-   * entries). The client merge needs it for a recents entry stored under an OLDER slug: the
-   * store keys an off-site entry by listing id, so this lets the merge judge that entry under
-   * the slug the hide was written for, instead of under its stale one (which no hide names, so
-   * the removed app would come back as a recents-only tile).
-   */
+  /** listing id → slug of exactly the rows a hide kept off `apps`; why: `my-apps-hidden.ts`. */
   removedSlugsByListingId: Record<string, string>;
 };
 

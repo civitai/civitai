@@ -515,16 +515,21 @@ describe('launch href — page vs off-site', () => {
 });
 
 describe('"Remove from My apps" is applied BEFORE the row cap', () => {
-  // 130 page apps, each used at a distinct minute: app i (0..129) at BASE + i min, so a
-  // higher i is more recent. 130 overshoots the cap (100), and 17 hides leave 113 visible —
-  // still past it, so the cap really does cut.
-  const COUNT = 130;
+  // Sized off the cap, so a deliberate cap change does not fail here. COUNT page apps, each
+  // used at a distinct minute: app i at BASE + i min, so a higher i is more recent. INSIDE
+  // hides fall in the top CAP (the old cutoff) and 2 well below it; COUNT overshoots the cap
+  // by more than the hides, so the cap still cuts and the freed slots are filled from below.
+  const CAP = MY_APPS_MAX_ROWS;
+  const INSIDE = 15;
+  const COUNT = CAP + 2 * INSIDE;
+  const BELOW_IDX = [5, 3];
   const BASE_MS = Date.parse('2026-10-03T00:00:00.000Z');
-  const pad = (i: number) => String(i).padStart(3, '0');
+  const pad = (i: number) => String(i).padStart(String(COUNT - 1).length, '0');
+  const id = (i: number) => `apl_app_${pad(i)}`;
   const usedAtMs = (i: number) => BASE_MS + i * 60_000;
   const many = Array.from({ length: COUNT }, (_, i) =>
     pageApp({
-      id: `apl_app_${pad(i)}`,
+      id: id(i),
       slug: `app-${pad(i)}`,
       name: `App ${pad(i)}`,
       appBlockId: `blk_${pad(i)}`,
@@ -538,26 +543,40 @@ describe('"Remove from My apps" is applied BEFORE the row cap', () => {
       revokedAt: null,
     })),
   };
-  // 15 hides inside the old top 100 (i >= 30), 2 below it — each 37s AFTER that app's use,
-  // so every one is in force.
-  const HIDDEN_IDX = [129, 127, 122, 118, 111, 104, 99, 93, 86, 77, 68, 59, 47, 38, 31, 5, 3];
+  // INSIDE hides spread across the old top CAP (from the most recent app down), plus the 2
+  // below it — each 37s AFTER that app's use (never on a minute), so every one is in force.
+  const INSIDE_IDX = Array.from(
+    { length: INSIDE },
+    (_, k) => COUNT - 1 - Math.floor((k * CAP) / INSIDE)
+  );
+  const HIDDEN_IDX = [...INSIDE_IDX, ...BELOW_IDX];
   const hidden = Object.fromEntries(
     HIDDEN_IDX.map((i) => [`app-${pad(i)}`, new Date(usedAtMs(i) + 37_000).toISOString()])
   );
+  // The first app below the old cutoff, and the first one the freed slots do NOT reach.
+  const OLD_CUTOFF = COUNT - CAP;
+  const FIRST_LEFT_OUT = OLD_CUTOFF - INSIDE - 1;
+
+  it('the fixture has the shape the cases below rely on', () => {
+    expect(new Set(HIDDEN_IDX).size).toBe(INSIDE + BELOW_IDX.length);
+    for (const i of INSIDE_IDX) expect(i).toBeGreaterThanOrEqual(OLD_CUTOFF);
+    for (const i of BELOW_IDX) expect(i).toBeLessThan(FIRST_LEFT_OUT);
+    expect(HIDDEN_IDX).not.toContain(COUNT - 2);
+  });
 
   it('🔴 a removed app takes no slot: exactly the cap, filled by the apps past the old cutoff', () => {
     const { apps, removedCount } = buildMyAppsHome(manySignals, many, { ...BASE_OPTS, hidden });
-    expect(MY_APPS_MAX_ROWS).toBe(100);
-    expect(apps).toHaveLength(100);
-    expect(removedCount).toBe(17);
+    expect(apps).toHaveLength(CAP);
+    expect(removedCount).toBe(HIDDEN_IDX.length);
     const ids = apps.map((r) => r.listingId);
     // Most recent visible first; no hidden app anywhere.
-    expect(ids[0]).toBe('apl_app_128');
-    for (const i of HIDDEN_IDX) expect(ids).not.toContain(`apl_app_${pad(i)}`);
-    // Without the fix the list ended at app 030; now the 15 apps below it fill the freed
-    // slots (029..015), and app 014 is the first one left out.
-    expect(ids.slice(-15)).toEqual(Array.from({ length: 15 }, (_, k) => `apl_app_${pad(29 - k)}`));
-    expect(ids).not.toContain('apl_app_014');
+    expect(ids[0]).toBe(id(COUNT - 2));
+    for (const i of HIDDEN_IDX) expect(ids).not.toContain(id(i));
+    // The INSIDE apps just below the old cutoff fill the freed slots; the next one is left out.
+    expect(ids.slice(-INSIDE)).toEqual(
+      Array.from({ length: INSIDE }, (_, k) => id(OLD_CUTOFF - 1 - k))
+    );
+    expect(ids).not.toContain(id(FIRST_LEFT_OUT));
   });
 
   it('🔴 removedSlugsByListingId is EXACTLY the hidden rows, listing id → slug, inside and below the old cutoff', () => {
@@ -566,15 +585,15 @@ describe('"Remove from My apps" is applied BEFORE the row cap', () => {
       hidden,
     });
     expect(removedSlugsByListingId).toStrictEqual(
-      Object.fromEntries(HIDDEN_IDX.map((i) => [`apl_app_${pad(i)}`, `app-${pad(i)}`]))
+      Object.fromEntries(HIDDEN_IDX.map((i) => [id(i), `app-${pad(i)}`]))
     );
     expect(Object.keys(removedSlugsByListingId)).toHaveLength(removedCount);
   });
 
-  it('no hidden map (or an empty one) → the plain top 100, nothing removed', () => {
+  it('no hidden map (or an empty one) → the plain top CAP, nothing removed', () => {
     const plain = buildMyAppsHome(manySignals, many, BASE_OPTS);
     const empty = buildMyAppsHome(manySignals, many, { ...BASE_OPTS, hidden: {} });
-    const expected = Array.from({ length: 100 }, (_, k) => `apl_app_${pad(129 - k)}`);
+    const expected = Array.from({ length: CAP }, (_, k) => id(COUNT - 1 - k));
     expect(plain.apps.map((r) => r.listingId)).toEqual(expected);
     expect(plain.removedCount).toBe(0);
     expect(plain.removedSlugsByListingId).toStrictEqual({});

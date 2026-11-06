@@ -14,14 +14,14 @@ import { TRPCError } from '@trpc/server';
  * router's import graph never loads Prisma.
  */
 
-const { mockResolveStoreVisibilityScope, mockListMyApps, mockHidden, mockHide, mockUnhide } =
-  vi.hoisted(() => ({
+const { mockResolveStoreVisibilityScope, mockListMyApps, mockHide, mockUnhide } = vi.hoisted(
+  () => ({
     mockResolveStoreVisibilityScope: vi.fn(),
     mockListMyApps: vi.fn(),
-    mockHidden: vi.fn(),
     mockHide: vi.fn(),
     mockUnhide: vi.fn(),
-  }));
+  })
+);
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
@@ -31,7 +31,6 @@ vi.mock('~/server/services/blocks/my-apps.service', () => ({
   listMyApps: (...a: unknown[]) => mockListMyApps(...a),
 }));
 vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
-  getMyHiddenApps: (...a: unknown[]) => mockHidden(...a),
   hideMyApp: (...a: unknown[]) => mockHide(...a),
   unhideMyApp: (...a: unknown[]) => mockUnhide(...a),
 }));
@@ -81,10 +80,6 @@ beforeEach(() => {
     apps: [{ listingId: `apl_for_${args.userId}` }],
     removedCount: args.userId,
     hidden: { [`hidden-for-${args.userId}`]: '2026-10-10T11:22:33.000Z' },
-  }));
-  mockHidden.mockReset();
-  mockHidden.mockImplementation(async (userId: number) => ({
-    [`hidden-for-${userId}`]: '2026-10-10T11:22:33.000Z',
   }));
   mockHide.mockReset();
   mockHide.mockImplementation(async (args: { slug: string }) => ({
@@ -136,8 +131,6 @@ describe('appListings.listMyApps', () => {
       removedCount: 73,
       hidden: { 'hidden-for-73': '2026-10-10T11:22:33.000Z' },
     });
-    // One hides read per request, inside the service — not a second one here.
-    expect(mockHidden).not.toHaveBeenCalled();
     expect(mockListMyApps.mock.calls.map(([args]) => (args as { userId: number }).userId)).toEqual([
       41, 73,
     ]);
