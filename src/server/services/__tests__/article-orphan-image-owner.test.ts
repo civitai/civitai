@@ -557,11 +557,16 @@ describe('the article banner', () => {
       userId: IMAGES.find((image) => image.id === where.id)?.userId,
     })) as never);
     // The rows the post-commit cleanup reads before its hold filters.
+    // An id-only read is the cleanup's; anything else is the content change's orphan lookup.
     dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
-      IMAGES.filter((image) => where.id.in.includes(image.id)).map((image) => ({
-        id: image.id,
-        url: `key-${image.id}`,
-      }))) as never);
+      Object.keys(where).length === 1
+        ? IMAGES.filter((image) => where.id.in.includes(image.id)).map((image) => ({
+            id: image.id,
+            url: `key-${image.id}`,
+          }))
+        : [...UNLINKED, ...COVERS]
+            .filter((row) => matches(row, where))
+            .map((row) => ({ id: row.id }))) as never);
     dbMock.dbWrite.image.findFirst.mockImplementation((async ({ where }: any) => {
       const { id, ...rest } = where;
       const image = IMAGES.find((candidate) => candidate.id === id);
@@ -671,6 +676,32 @@ describe('the article banner', () => {
 
     expect(saved.coverId).toBeNull();
     expect(deletedIds()).not.toContain(COVER.id);
+  });
+
+  it('still applies the content change when deleting the replaced banner fails', async () => {
+    deleteImageById.mockImplementation((async ({ id }: { id: number }) => {
+      if (id === BANNER.id) throw new Error('storage down');
+    }) as never);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      upsertArticle({
+        id: ARTICLE_ID,
+        userId: AUTHOR,
+        title: 'A title',
+        content: '<p>no images left</p>',
+        status: 'Draft',
+        coverImage: { id: COVER.id, url: 'u' },
+        bannerImage: { id: NEW_BANNER.id, url: 'u' },
+      } as never)
+    ).resolves.toBeTruthy();
+
+    // The content change, which runs after the cleanup, links the new body's image urls.
+    const linkedContent = dbMock.dbWrite.image.findMany.mock.calls.some(
+      ([arg]: any) => 'url' in arg.where
+    );
+    expect(linkedContent).toBe(true);
+    deleteImageById.mockImplementation((async () => undefined) as never);
   });
 
   it("deletes the author's own unused banner with the article", async () => {

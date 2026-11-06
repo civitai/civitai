@@ -1393,39 +1393,48 @@ export const upsertArticle = async ({
     // Count-cache refresh hits Redis — run after commit, off the txn budget.
     await userArticleCountCache.refresh(result.userId);
 
-    // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
-    // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
-    const replacedImageIds: number[] = [];
-    if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
-      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
-      const shownElsewhere =
-        isImgOwner &&
-        (await dbWrite.article.count({
-          where: {
-            id: { not: id },
-            OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
-          },
-        })) > 0;
-      if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
-    }
-    if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
-      const unused = await dbWrite.image.findFirst({
-        where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
-        select: { id: true },
-      });
-      if (unused) replacedImageIds.push(unused.id);
-    }
-    // The same holds as article delete: a safety report or legal hold on the owner keeps them all.
-    if (replacedImageIds.length && !(await ownerUnderSafetyReport(dbWrite, result.userId))) {
-      const rows = await dbWrite.image.findMany({
-        where: { id: { in: replacedImageIds } },
-        select: { id: true, url: true },
-      });
-      const deletable = await withoutOfferingCovers(
-        dbWrite,
-        await withoutShopArtwork(dbWrite, rows)
-      );
-      for (const imageId of deletable) await deleteImageById({ id: imageId });
+    // The save has committed: a failed cleanup is logged, and must not skip the content change below.
+    try {
+      // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
+      // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
+      const replacedImageIds: number[] = [];
+      if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
+        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
+        const shownElsewhere =
+          isImgOwner &&
+          (await dbWrite.article.count({
+            where: {
+              id: { not: id },
+              OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
+            },
+          })) > 0;
+        if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
+      }
+      if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
+        const unused = await dbWrite.image.findFirst({
+          where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
+          select: { id: true },
+        });
+        if (unused) replacedImageIds.push(unused.id);
+      }
+      // The same holds as article delete: a safety report or legal hold on the owner keeps them all.
+      if (replacedImageIds.length && !(await ownerUnderSafetyReport(dbWrite, result.userId))) {
+        const rows = await dbWrite.image.findMany({
+          where: { id: { in: replacedImageIds } },
+          select: { id: true, url: true },
+        });
+        const deletable = await withoutOfferingCovers(
+          dbWrite,
+          await withoutShopArtwork(dbWrite, rows)
+        );
+        // Per image, so one failed delete does not stop the rest.
+        for (const imageId of deletable)
+          await deleteImageById({ id: imageId }).catch((error) =>
+            handleLogError(error, 'article-replaced-image-cleanup', { articleId: id, imageId })
+          );
+      }
+    } catch (error) {
+      handleLogError(error as Error, 'article-replaced-image-cleanup', { articleId: id });
     }
 
     await applyArticleContentChange({
