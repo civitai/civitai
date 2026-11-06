@@ -207,9 +207,7 @@ function simpleMeta(data: GenerationData) {
         meta[key] != null
     )
     .map((key) => ({ key, value: meta[key] }))
-    .filter(
-      ({ value }) => !!value && typeof value !== 'object' && typeof value !== 'boolean'
-    );
+    .filter(({ value }) => !!value && typeof value !== 'object' && typeof value !== 'boolean');
 }
 
 /** `ImageGenerationData` (collapsible, open on the server): `ImageResources`, `ImageMeta`. */
