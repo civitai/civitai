@@ -15,7 +15,7 @@ import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
-import { getImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import type { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -246,7 +246,7 @@ export function ImagesInfiniteContent({
                 const height = data?.height ? data.height : 450;
                 return { width, height };
               }}
-              adjustHeight={({ height, width }) => getImagesCardHeight(height, width)}
+              adjustHeight={(args) => adjustImagesCardHeight(args, !!MasonryItem)}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCardMemoized}
               itemId={(data) => data.id}

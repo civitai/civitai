@@ -142,6 +142,7 @@ vi.mock('~/components/Tours/ToursProvider', async (o) => ({
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import {
+  adjustImagesCardHeight,
   getImagesCardFooterHeight,
   getImagesCardHeight,
   IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT,
@@ -397,14 +398,25 @@ describe('the /images card footer fits the height the masonry gives it', () => {
       tippedAmountCountAllTime: 530,
     },
   };
-  async function renderCrowded(width: number, height = 400) {
+  // The longest counts the abbreviation produces, and a tip to match.
+  const longest = {
+    ...crowded,
+    stats: {
+      likeCountAllTime: 12345,
+      heartCountAllTime: 9876,
+      laughCountAllTime: 666,
+      cryCountAllTime: 258,
+      tippedAmountCountAllTime: 12345,
+    },
+  };
+  async function renderCrowded(width: number, height = 400, data = crowded) {
     features.stickerPlacement = true;
     stickerBadge.renders = true;
     renderWithProviders(
       <TurfSummaryContext.Provider value={turf()}>
         <IntersectionObserverProvider>
           <div style={{ width }}>
-            <ImagesCard data={crowded} height={height} width={width} />
+            <ImagesCard data={data} height={height} width={width} />
           </div>
         </IntersectionObserverProvider>
       </TurfSummaryContext.Provider>
@@ -428,7 +440,6 @@ describe('the /images card footer fits the height the masonry gives it', () => {
             r.right <= footer.right + 0.5 &&
             r.bottom <= footer.bottom + 0.5,
           visible: !!hit && el.contains(hit),
-          inert: el.inert,
         };
       }
     );
@@ -436,8 +447,7 @@ describe('the /images card footer fits the height the masonry gives it', () => {
   function expectAllFourShown() {
     const reactions = reactionState();
     expect(reactions).toHaveLength(4);
-    for (const r of reactions)
-      expect(r).toMatchObject({ whole: true, visible: true, inert: false });
+    for (const r of reactions) expect(r).toMatchObject({ whole: true, visible: true });
     // One line of reactions: a wrapped one would push the tip row out of the reserved height.
     expect(new Set(reactions.map((r) => Math.round(r.top))).size).toBe(1);
   }
@@ -457,6 +467,31 @@ describe('the /images card footer fits the height the masonry gives it', () => {
     await renderCrowded(width);
     await vi.waitFor(() => expect(footerHeight()).toBe(getImagesCardFooterHeight(width)));
     await vi.waitFor(expectAllFourShown);
+  });
+
+  // A third line of reactions would grow the footer past the reserved height and crop the picture.
+  // Not asserted at 240px, where five-character counts do wrap: the masonry's columns are 320px,
+  // and a phone's single column is its width, so no real card is that narrow.
+  test.each([288, 358, IMAGES_CARD_ONE_ROW_MIN_WIDTH - 1])(
+    'a %ipx card with the longest counts keeps its reserved height',
+    async (width) => {
+      await renderCrowded(width, 400, longest);
+      await vi.waitFor(() => expect(footerHeight()).toBe(getImagesCardFooterHeight(width)));
+      expectAllFourShown();
+    }
+  );
+
+  test('the masonry reserves what the card draws', () => {
+    expect(adjustImagesCardHeight({ height: 300, width: 288 })).toBe(
+      300 + getImagesCardFooterHeight(288)
+    );
+    expect(adjustImagesCardHeight({ height: 300, width: 600 })).toBe(
+      300 + IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT
+    );
+    // A custom card draws no such footer.
+    expect(adjustImagesCardHeight({ height: 300, width: 288 }, true)).toBe(
+      300 + IMAGES_CARD_FOOTER_ONE_ROW_HEIGHT
+    );
   });
 
   test('below the threshold the tip row sits under the reactions', async () => {

@@ -27,3 +27,14 @@ export function getImagesCardFooterHeight(width?: number) {
 export function getImagesCardHeight(pictureHeight: number, width?: number) {
   return Math.max(Math.min(pictureHeight, 600), 150) + getImagesCardFooterHeight(width);
 }
+
+/**
+ * The masonry's height callback for ImagesCard feeds. A custom card draws no such footer, so it
+ * keeps the one-row gap it always had.
+ */
+export function adjustImagesCardHeight(
+  { height, width }: { height: number; width: number },
+  customCard?: boolean
+) {
+  return getImagesCardHeight(height, customCard ? undefined : width);
+}

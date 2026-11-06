@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
-import { getImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
@@ -175,7 +175,7 @@ export function SemanticImageSearch() {
             <MasonryColumnsVirtual
               data={items}
               imageDimensions={(d) => ({ width: d?.width ?? 450, height: d?.height ?? 450 })}
-              adjustHeight={({ height, width }) => getImagesCardHeight(height, width)}
+              adjustHeight={(args) => adjustImagesCardHeight(args)}
               maxItemHeight={600}
               render={ImagesCardMemoized}
               itemId={(d) => d.id}
