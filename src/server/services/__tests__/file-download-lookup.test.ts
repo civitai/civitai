@@ -753,7 +753,7 @@ describe('getFileForModelVersion — names against every file on the version', (
     id,
     url: `https://abcd1234.r2.cloudflarestorage.com/civitai/files/${id}.safetensors`,
     name: 'shared.safetensors',
-    overrideName: null,
+    overrideName: null as string | null,
     type,
     visibility,
     metadata: { format: 'SafeTensor' },
@@ -828,6 +828,34 @@ describe('getFileForModelVersion — names against every file on the version', (
 
     expect(resolveDownloadUrlMock.mock.calls[0][0]).toBe(1);
     expect(servedName()).toBe(advertisedName(1));
+  });
+
+  // Stored names reach the delivery path as they are, so they are made header-safe on read.
+  it('hands the delivery path a stored override name without an encoded line break', async () => {
+    versionFiles = [{ ...file(1, 'Model', 'Public'), overrideName: 'old%0D%0Aname.safetensors' }];
+
+    await getFileForModelVersion({ modelVersionId: 1, user: { id: 1 }, attribution: ATTRIBUTION });
+
+    expect(servedName()).toBe('old_0D_0Aname.safetensors');
+    expect(advertisedName(1)).toBe('old_0D_0Aname.safetensors');
+  });
+
+  it('cleans the uploaded name a LoRA keeps, and leaves an ordinary one byte-identical', () => {
+    const lora = { name: 'BB Bunny', type: 'LORA' as ModelType };
+    const named = (name: string) => {
+      const f = { ...file(1, 'Model', 'Public'), name };
+      return getDownloadFilename({
+        model: lora,
+        modelVersion: version,
+        file: f,
+        versionFiles: [f],
+      });
+    };
+
+    expect(named('bunny%0d%0a\u200e"x".safetensors')).toBe('bunny_0d_0a_x_.safetensors');
+    expect(named('AshleyGraves_Krea2_byKonan (v2) 100%.safetensors')).toBe(
+      'AshleyGraves_Krea2_byKonan (v2) 100%.safetensors'
+    );
   });
 });
 

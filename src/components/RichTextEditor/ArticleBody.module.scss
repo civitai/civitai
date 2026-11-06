@@ -8,11 +8,6 @@ div.articleBody {
     font-size: 18px;
   }
 
-  > div > :is(p, h1, h2, h3, h4, ul, ol, blockquote) {
-    max-width: 40rem;
-    margin-inline: auto;
-  }
-
   p {
     margin: 0 0 1.2em;
   }
@@ -127,9 +122,10 @@ div.articleBody {
     border-radius: var(--mantine-radius-md);
   }
 
+  // Block only: margin-inline centres a sized image (RichTextEditorComponent.module.scss).
   img,
   video {
-    margin: 1.6em 0;
+    margin-block: 1.6em;
     border-radius: var(--mantine-radius-md);
   }
 

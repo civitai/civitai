@@ -4,24 +4,17 @@ import { jsonBuildObject } from './infra/helpers';
 
 // The Kysely port of the user profile read (`getUserWithProfile`, user-profile.service.ts), served
 // behind the default-off server Flipt flag `kysely-hot-reads-9`; off, the Prisma read runs
-// unchanged. Prisma fans that read out into one statement per relation (the user, its profile
-// picture, its cosmetics and their cosmetics, its links, its rank, its profile, and each of the
-// profile's two cover images with their tags and those tags' tags). This is ONE statement. The
-// app-side wrapper (<civitai>/src/server/services/hot-reads-9.reads.ts) maps the row to the exact
-// Prisma payload, and <civitai>/src/server/services/__tests__/hot-reads-9.kysely-parity.test.ts
-// compares the two against a real database.
+// unchanged. This is ONE statement. The app-side wrapper
+// (<civitai>/src/server/services/hot-reads-9.reads.ts) maps the row to the exact Prisma payload,
+// and <civitai>/src/server/services/__tests__/hot-reads-9.kysely-parity.test.ts compares the two
+// against a real database.
 //
 // Shape notes, each pinned by the parity suite:
-// - The to-one relations (profile picture, rank, profile, the two cover images) are LEFT JOINs, so
-//   a dangling id reads as no relation, as it does in Prisma. Their timestamps are top-level
-//   columns, parsed by the pg parsers @civitai/db/kysely registers.
-// - The to-many relations (links, cosmetics, each cover image's tags) are correlated `json_agg`
-//   subqueries. Every column in them survives JSON unchanged (integers, booleans, text, enums as
-//   text, JSON columns) EXCEPT the cosmetics' two timestamps, which are sent as epoch milliseconds
-//   (`obtainedAtMs`, `equippedAtMs`) and turned back into Dates by the wrapper. Both columns are
-//   TIMESTAMP(3), so the value is a whole number of milliseconds, and `round` takes back the
-//   sub-microsecond error of `date_part`'s double. (`date_part`, not `extract(epoch FROM …)`: the
-//   parity suite's relation ledger reads every `from "<name>"` as a relation.)
+// - The cosmetics' two timestamps are sent as epoch milliseconds (`obtainedAtMs`, `equippedAtMs`)
+//   and turned back into Dates by the wrapper. Both columns are TIMESTAMP(3), so the value is a
+//   whole number of milliseconds, and `round` takes back the sub-microsecond error of
+//   `date_part`'s double. (`date_part`, not `extract(epoch FROM …)`: the parity suite's relation
+//   ledger reads every `from "<name>"` as a relation.)
 // - None of the Prisma relation reads has an `orderBy`. Here each aggregate is ordered by its
 //   table's key (links by id, cosmetics by cosmetic id then claim key, tags by tag id), so the
 //   order is defined; the parity suite compares the lists sorted.
@@ -251,8 +244,7 @@ export function getUserWithProfileRow(db: Kysely<DB>, where: UserWithProfileWher
     .where('User.deletedAt', 'is', null);
   if (where.id !== undefined) query = query.where('User.id', '=', where.id);
   if (where.username !== undefined) query = query.where('User.username', '=', where.username);
-  // An aggregate always yields one row and `coalesce` turns an empty one into `[]`, so the four
-  // arrays are never null. A type-only narrowing; no SQL changes.
+  // `coalesce` makes the aggregates non-null; type-only narrowing.
   return query
     .limit(1)
     .$narrowType<{

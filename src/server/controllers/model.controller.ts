@@ -194,6 +194,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { getMatureLockReason } from '~/server/services/mature-lock-reason.service';
 import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
@@ -576,6 +577,13 @@ export const getModelHandler = async ({
         })
       : null;
 
+    const matureLockReason = forEditor
+      ? await getMatureLockReason({
+          model: { ...model, userId: model.user.id },
+          viewerId: ctx.user?.id,
+        })
+      : null;
+
     const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
       getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
       getCosmeticsAndProfilePicturesForUsers([model.user.id]),
@@ -623,6 +631,7 @@ export const getModelHandler = async ({
         meta: model.meta as ModelMeta | null,
       }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
+      matureLockReason,
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
@@ -653,11 +662,16 @@ export const getModelsInfiniteHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
+  // The input schema leaves `browsingLevel` optional with no default, so a signed-in
+  // caller who omits it where the domain caps nothing would otherwise reach the query
+  // with no level and get no rows.
+  resolveRequestBrowsingLevels(input, ctx);
+  return getModelsFeed(input, ctx);
+};
+
+/** model.getAll's query, at whatever levels `input` already carries. */
+export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
-    // The input schema leaves `browsingLevel` optional with no default, so a signed-in
-    // caller who omits it where the domain caps nothing would otherwise reach the query
-    // with no level and get no rows.
-    resolveRequestBrowsingLevels(input, ctx);
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
@@ -724,7 +738,7 @@ export const getModelsInfiniteHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
-};
+}
 
 export const getModelsPagedSimpleHandler = async ({
   input,
