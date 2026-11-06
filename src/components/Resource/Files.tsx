@@ -704,7 +704,6 @@ function FileCard({
 
   const handleRenameSave = () => {
     if (!versionFile.id) return;
-    // The server applies the same rule; running it here keeps the row in step with what is saved.
     const next = sanitizeOverrideName(renameValue, versionFile.name);
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };

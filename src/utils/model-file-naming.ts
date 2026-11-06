@@ -110,7 +110,7 @@ const genericNamePatterns = [
 
 /**
  * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID, Crockford
- * alphabet, so no I, L, O or U), and since #6243 the 8-character key token `uniqueAssetKey` adds.
+ * alphabet, so no I, L, O or U), optionally followed by the 8-character token `uniqueAssetKey` adds.
  * Deliberately this exact shape and nothing looser, so no name a creator typed is ever replaced.
  */
 const trainerBlobFileName = /^[0-9A-HJKMNP-TV-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
@@ -244,8 +244,9 @@ export function resolveModelFileName({
   file: NameableFile;
   versionFiles?: NameableFile[];
 }): string {
-  if (file.overrideName) return file.overrideName;
-  if (!versionFiles?.length) return preferredFileName({ model, modelVersion, file });
+  if (file.overrideName) return headerSafeName(file.overrideName);
+  if (!versionFiles?.length)
+    return headerSafeName(preferredFileName({ model, modelVersion, file }));
 
   // API callers pass a destructured copy of the file, so find it by id, or by content without one.
   let index = versionFiles.indexOf(file);
@@ -261,14 +262,26 @@ export function resolveModelFileName({
     );
   }
   const files = index < 0 ? [file, ...versionFiles] : versionFiles;
-  return nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index];
+  return headerSafeName(nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index]);
+}
+
+/**
+ * Applied to every name at read time, because names saved before write-time sanitising, and the
+ * uploaded names LoRAs keep, were never cleaned. Removes only what can break a header, so an
+ * ordinary name comes back byte-identical.
+ */
+function headerSafeName(fileName: string) {
+  return fileName
+    .replace(unsafeNameChars, '')
+    .replace(/["\\]/g, '_')
+    .replace(/%(?=[0-9a-f]{2})/gi, '_');
 }
 
 /** UTF-8 bytes, under the 255 most file systems allow, with room for a browser's ` (1)`. */
 export const MAX_OVERRIDE_NAME_BYTES = 200;
 
-// eslint-disable-next-line no-control-regex
-const unsafeNameChars = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+// Control and format characters: line breaks, NUL, bidi overrides, zero-width characters.
+const unsafeNameChars = /[\p{Cc}\p{Cf}]/gu;
 
 /** The stored name comes from a client too, so an extension that is not plain is not kept. */
 function fileExtension(fileName: string) {

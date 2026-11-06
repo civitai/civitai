@@ -20,7 +20,8 @@ primary file of any model, uploaded or trained. Persisted through
 
 The server rewrites every new value with `sanitizeOverrideName` (`src/utils/model-file-naming.ts`):
 one path segment, no control, quote or `%XX` characters, at most 200 UTF-8 bytes, and the stored file's
-extension when that is plain alphanumerics. The in-repo S3 links and the training epoch download
+extension when that is plain alphanumerics. Every download name `resolveModelFileName` returns is
+also made header-safe at read time, so older names and kept upload names are covered. The in-repo S3 links and the training epoch download
 build their header with `attachmentContentDisposition` (`src/utils/content-disposition.ts`), an
 ASCII `filename` plus an RFC 5987 `filename*`.
 
