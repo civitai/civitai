@@ -194,6 +194,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { getMatureLockReason } from '~/server/services/mature-lock-reason.service';
 import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
@@ -576,6 +577,14 @@ export const getModelHandler = async ({
         })
       : null;
 
+    // The editor only, for the owner only: a moderator's view has the full detection already.
+    const matureLockReason = forEditor
+      ? await getMatureLockReason({
+          model: { ...model, userId: model.user.id },
+          viewerId: ctx.user?.id,
+        })
+      : null;
+
     const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
       getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
       getCosmeticsAndProfilePicturesForUsers([model.user.id]),
@@ -623,6 +632,7 @@ export const getModelHandler = async ({
         meta: model.meta as ModelMeta | null,
       }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
+      matureLockReason,
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,

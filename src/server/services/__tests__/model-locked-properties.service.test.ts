@@ -121,6 +121,7 @@ import {
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { autoNsfwTextHash } from '~/server/services/auto-nsfw';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -350,7 +351,10 @@ describe('upsertModel — ownership guard', () => {
 describe('upsertModel — profanity lock', () => {
   it('marks the model nsfw and locks nsfw for a non-moderator', async () => {
     mockStored({ lockedProperties: [] });
-    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    // Only the name matches, so the lock is attributed to it alone.
+    mockEvaluateContent.mockImplementation((text: string) =>
+      text.includes('Renamed') ? profaneEvaluation : cleanEvaluation
+    );
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
 
@@ -360,7 +364,17 @@ describe('upsertModel — profanity lock', () => {
     expect(data.meta).toEqual(
       expect.objectContaining({
         profanityMatches: ['badword'],
-        systemNsfwLock: { source: 'profanity-filter', at: expect.any(String) },
+        profanityEvaluation: {
+          reason: profaneEvaluation.reason,
+          metrics: profaneEvaluation.metrics,
+        },
+        systemNsfwLock: {
+          source: 'profanity-filter',
+          at: expect.any(String),
+          fields: ['name'],
+          category: 'mature-language',
+          textHash: autoNsfwTextHash('Renamed Model', 'A description'),
+        },
       })
     );
   });
