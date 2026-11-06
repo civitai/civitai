@@ -107,9 +107,6 @@ importers:
       '@civitai/sdk':
         specifier: ^0.24.0
         version: 0.24.0
-      '@civitai/search':
-        specifier: workspace:*
-        version: link:packages/civitai-search
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
@@ -1409,40 +1406,6 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
-  apps/search:
-    dependencies:
-      '@civitai/orchestration-client':
-        specifier: 0.2.0
-        version: 0.2.0
-      '@civitai/redis':
-        specifier: workspace:*
-        version: link:../../packages/civitai-redis
-      '@civitai/search':
-        specifier: workspace:*
-        version: link:../../packages/civitai-search
-      fastify:
-        specifier: ^5.12.6
-        version: 5.12.7
-      prom-client:
-        specifier: ^14.2.0
-        version: 14.2.0
-      zod:
-        specifier: ^4.0.17
-        version: 4.6.7
-    devDependencies:
-      '@types/node':
-        specifier: ^20.19.9
-        version: 20.19.9
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(@swc/core@1.15.11(@swc/helpers@0.5.23))(jiti@2.7.0)(postcss@8.5.23)(tsx@4.20.3)(typescript@5.9.3)(yaml@2.9.1)
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
-
   apps/storage:
     dependencies:
       '@aws-sdk/client-s3':
@@ -1794,16 +1757,6 @@ importers:
       '@types/lodash-es':
         specifier: ^4.17.7
         version: 4.17.12
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
-
-  packages/civitai-search:
-    dependencies:
-      zod:
-        specifier: ^4.0.17
-        version: 4.6.7
-    devDependencies:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
