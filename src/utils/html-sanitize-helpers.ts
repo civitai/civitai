@@ -127,6 +127,24 @@ export const CSS_COLOR = [
   /^[a-z]+$/i,
 ];
 
+const CSS_GLOBAL = /^(?:inherit|initial|unset)$/i;
+const CSS_LENGTH = /^(?:\d{1,3}(?:\.\d+)?|\.\d+)(?:px|pt|%)$|^(?:\d{1,2}(?:\.\d+)?|\.\d+)r?em$/i;
+
+// The properties TextStyleKit (the editor's `colors` control) writes on a span; any other span
+// style is dropped.
+export const SPAN_ALLOWED_STYLES = {
+  color: CSS_COLOR,
+  'background-color': CSS_COLOR,
+  'font-size': [
+    CSS_LENGTH,
+    CSS_GLOBAL,
+    /^(?:xx-small|x-small|small|medium|large|x-large|xx-large|smaller|larger)$/i,
+  ],
+  'line-height': [CSS_LENGTH, CSS_GLOBAL, /^normal$/i, /^\d{1,2}(?:\.\d+)?$/],
+  // Font names only: letters, digits, spaces, quotes, commas and hyphens.
+  'font-family': [/^[\p{L}\p{N} "',-]{1,300}$/u],
+};
+
 export const BLURB_INTERIOR_SANITIZE_OPTIONS = {
   allowedTags: BLURB_INTERIOR_ALLOWED_TAGS,
   allowedAttributes: BLURB_INTERIOR_ALLOWED_ATTRIBUTES,
@@ -210,6 +228,18 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     ...options
   } = args ?? {};
 
+  // With parseStyleAttributes off, sanitize-html passes `style` through unfiltered (and throws if
+  // allowedStyles is set), so `style` is dropped from span and no allowedStyles is passed.
+  const parsesStyles = options.parseStyleAttributes !== false;
+  const suppliedAttributes = options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES;
+  const allowedAttributes =
+    parsesStyles || !suppliedAttributes || !Array.isArray(suppliedAttributes.span)
+      ? suppliedAttributes
+      : {
+          ...suppliedAttributes,
+          span: suppliedAttributes.span.filter((attr) => attr !== 'style'),
+        };
+
   const stripBlurbMarker: Transformer = (tagName, attribs) => {
     const supplied = transformTags?.div;
     const applied =
@@ -226,7 +256,6 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
 
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
-    allowedAttributes: DEFAULT_ALLOWED_ATTRIBUTES,
     exclusiveFilter: (frame) =>
       (!allowStickers && isStickerSpan(frame)) ||
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||
@@ -234,6 +263,7 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     allowedIframeHostnames: DEFAULT_ALLOWED_IFRAME_HOSTNAMES,
     transformTags: {
       a: function (tagName, { href, ...attr }) {
+        if (!href) return { tagName: 'span', attribs: {} };
         const updatedHref = href.startsWith('http') ? href : `http://${href}`;
         const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;
         if (!hrefDomain) return { tagName: 'span', ...attr };
@@ -254,5 +284,10 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
       div: stripBlurbMarker,
     },
     ...options,
+    allowedAttributes,
+    // A caller's entry for a tag replaces the default one for that tag; other tags keep theirs.
+    allowedStyles: parsesStyles
+      ? { span: SPAN_ALLOWED_STYLES, ...options.allowedStyles }
+      : undefined,
   });
 }
