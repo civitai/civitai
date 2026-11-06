@@ -35,12 +35,11 @@ const idsOf = (values: unknown[]) =>
   );
 const isFrameLookup = (strings: TemplateStringsArray) =>
   strings.join('?').includes(`IS DISTINCT FROM 'string'`);
-const frameLookups = () =>
-  queryRaw.mock.calls.filter(([strings]: [TemplateStringsArray]) => isFrameLookup(strings));
+// The recorded calls of the primary's tagged-template query: [strings, ...values].
+const calls = () => queryRaw.mock.calls as unknown as [TemplateStringsArray, ...unknown[]][];
+const frameLookups = () => calls().filter((call) => isFrameLookup(call[0]));
 const lookedUp = (id: number) =>
-  frameLookups().filter(([, ...values]: [TemplateStringsArray, ...unknown[]]) =>
-    idsOf(values).includes(id)
-  ).length;
+  frameLookups().filter((call) => idsOf(call.slice(1)).includes(id)).length;
 
 beforeEach(() => {
   vi.clearAllMocks();
