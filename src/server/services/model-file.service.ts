@@ -31,8 +31,8 @@ import {
   ModelHashType,
   ModelStatus,
   ModelUploadType,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
-import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
@@ -543,7 +543,9 @@ export async function deleteFile({
     !isModerator
   )
     throw throwBadRequestError(
-      "Training data can't be deleted while its training run is in progress or awaiting review."
+      file.modelVersion.trainingStatus === TrainingStatus.InReview
+        ? "Training data for a training run that hasn't been published yet can't be deleted. Publish this version first."
+        : "Training data can't be deleted while its training run is in progress or awaiting review."
     );
 
   const modelStatus = file.modelVersion.model.status;
