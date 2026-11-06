@@ -21,8 +21,7 @@ div.articleBody {
     margin-bottom: 0;
   }
 
-  p:empty,
-  p:has(> br:only-child) {
+  p:empty {
     margin: 0;
     line-height: 0.6;
   }
@@ -114,6 +113,10 @@ div.articleBody {
   code {
     font-size: 1em;
     padding: 0.15em 0.4em;
+  }
+
+  pre code {
+    padding: 0;
   }
 
   pre {
