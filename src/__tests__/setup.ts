@@ -192,6 +192,8 @@ afterAll(failOnUnmockedNotificationCalls);
 process.env.FLIPT_LOCAL_OVERRIDES = [
   process.env.FLIPT_LOCAL_OVERRIDES,
   'app-blocks-legacy-stores-removed=off',
+  // Read on every image-delivery lookup; pinned off so those suites never reach for a Flipt.
+  'image-delivery-lookup-fn=off',
 ]
   .filter(Boolean)
   .join(',');

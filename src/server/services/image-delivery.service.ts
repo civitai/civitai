@@ -1,5 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordImageDeliveryBustFailure } from '~/server/prom/image-delivery.metrics';
@@ -74,7 +75,8 @@ const deliverableSource = Prisma.sql`NOT (
 
 // The origin statement. Several rows can share a url (a copied image keeps its source's url);
 // rows sharing a url resolve to the most restrictive setting, hence the ORDER BY.
-const imageDeliveryStatement = (url: string) => Prisma.sql`
+// Exported for the parity test, which pins it against `imageDeliveryFunctionStatement`.
+export const imageDeliveryStatement = (url: string) => Prisma.sql`
   SELECT
     id,
     url,
@@ -88,15 +90,23 @@ const imageDeliveryStatement = (url: string) => Prisma.sql`
   LIMIT 1
 `;
 
+// The same row through the `image_delivery_lookup(url)` SQL function (migration
+// 20261106120000_image_delivery_lookup_fn), which holds the rule above so that a service granted
+// EXECUTE on it reads the same answer as this endpoint. Behind IMAGE_DELIVERY_LOOKUP_FN.
+export const imageDeliveryFunctionStatement = (url: string) => Prisma.sql`
+  SELECT id, url, "hideMeta", type, "mimeType" FROM image_delivery_lookup(${url})
+`;
+
 // Origin read, with the dbRead -> dbWrite (primary) fallback so a read-replica error still
 // resolves. Only an error falls back: an empty result from the replica is a not-found.
 const queryImageDeliveryMetadata = async (url: string): Promise<ImageDeliveryMetadata | null> => {
-  const [image] = await dbRead
-    .$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url))
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
-      return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>(imageDeliveryStatement(url));
-    });
+  const statement = (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_DELIVERY_LOOKUP_FN))
+    ? imageDeliveryFunctionStatement
+    : imageDeliveryStatement;
+  const [image] = await dbRead.$queryRaw<ImageDeliveryMetadataRow[]>(statement(url)).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
+    return dbWrite.$queryRaw<ImageDeliveryMetadataRow[]>(statement(url));
+  });
 
   if (!image) return null;
 
