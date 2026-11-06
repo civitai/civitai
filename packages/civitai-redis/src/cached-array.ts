@@ -834,9 +834,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         // refresh was called to replace.
         const cached = new Set(cacheable.map(([rid]) => rid));
         const toRemove = ids.map(String).filter((rid) => !cached.has(rid));
-        await Promise.all(
-          layouts.flatMap((keyOf) => toRemove.map((rid) => redis.del(keyOf(rid))))
-        );
+        await Promise.all(layouts.flatMap((keyOf) => toRemove.map((rid) => redis.del(keyOf(rid)))));
       } catch (error) {
         // Refresh is best-effort: swallow and fall back to bust semantics so the next reader
         // re-fetches from primary. A committed mutation must not 500 because the refill failed.
