@@ -1,3 +1,5 @@
+import { asOrdinal } from '~/utils/number-helpers';
+
 /**
  * The note sent with a personal-data export, and the archive's README. The wording is the approved
  * template: change it only with the same sign-off. `{username}`, `{link}` and `{taken_at}` are filled
@@ -32,22 +34,13 @@ export const README_LINK_TEXT = '(the link in the email this archive came with)'
 
 /** "November 6th, 2026 at 3:15 PM UTC": American English, as the note is. */
 export function formatTakenAt(date: Date): string {
-  const day = date.getUTCDate();
-  const suffix =
-    day % 10 === 1 && day !== 11
-      ? 'st'
-      : day % 10 === 2 && day !== 12
-      ? 'nd'
-      : day % 10 === 3 && day !== 13
-      ? 'rd'
-      : 'th';
   const month = date.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
   const time = date.toLocaleString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
     timeZone: 'UTC',
   });
-  return `${month} ${day}${suffix}, ${date.getUTCFullYear()} at ${time} UTC`;
+  return `${month} ${asOrdinal(date.getUTCDate())}, ${date.getUTCFullYear()} at ${time} UTC`;
 }
 
 /** The note with its placeholders filled. Values are inserted literally (no `$` patterns). */

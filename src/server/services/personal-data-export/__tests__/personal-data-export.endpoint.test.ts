@@ -43,4 +43,19 @@ describe('release endpoint handler', () => {
     await expect(releaseForModerator(actor, 5, release)).rejects.toThrow(/try again/);
     expect(m.audit).not.toHaveBeenCalled();
   });
+
+  it('still reports the release when the audit write fails, and says the audit is missing', async () => {
+    m.audit.mockRejectedValue(new Error('db down'));
+    expect(await releaseForModerator(actor, 5, release)).toMatchObject({
+      released: true,
+      auditRecorded: false,
+    });
+  });
+
+  it('answers an unknown export as not found', async () => {
+    release.mockResolvedValue({ ok: false, reason: 'not-found' });
+    await expect(releaseForModerator(actor, 5, release)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
 });

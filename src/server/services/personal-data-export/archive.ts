@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
 import stream, { Readable } from 'stream';
 import archiver from 'archiver';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
+import { getGetUrlByKey } from '~/utils/s3-utils';
 import type { ExportWriter } from './output';
 
 /** How long a download link works. */
@@ -60,15 +60,12 @@ export async function presignDownload(
   key: string,
   filename: string
 ): Promise<{ url: string; expiresAt: Date }> {
-  const url = await getSignedUrl(
-    bucket.client,
-    new GetObjectCommand({
-      Bucket: bucket.Bucket,
-      Key: key,
-      ResponseContentDisposition: `attachment; filename="${filename}"`,
-    }),
-    { expiresIn: LINK_TTL_SECONDS }
-  );
+  const { url } = await getGetUrlByKey(key, {
+    s3: bucket.client,
+    bucket: bucket.Bucket,
+    expiresIn: LINK_TTL_SECONDS,
+    fileName: filename,
+  });
   return { url, expiresAt: new Date(Date.now() + LINK_TTL_SECONDS * 1000) };
 }
 

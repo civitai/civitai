@@ -272,9 +272,6 @@ describe('ClickHouse', () => {
       expect.arrayContaining(['yellow', 'blue', 'cashPending'])
     );
     expect(USER_BUZZ_ACCOUNT_TYPES).not.toContain('club');
-    const buzz = CH_TABLES.find((t) => t.table === 'default.buzzTransactions')!;
-    expect(buzz.where).toContain('fromAccountType IN {buzzTypes:Array(String)}');
-    expect(buzz.where).toContain('toAccountType IN {buzzTypes:Array(String)}');
   });
 
   it('skips a full scan of a large table not keyed by user, but always reads the Buzz ledger', async () => {

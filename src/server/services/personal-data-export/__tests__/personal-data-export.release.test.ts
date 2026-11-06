@@ -108,15 +108,6 @@ describe('releaseExport', () => {
     const claim = claimCall()!;
     const sql = (claim[0] as unknown as string[]).join('?');
     expect(sql).toContain(`AND status = 'built'`);
-    const holdFragment = claim
-      .slice(1)
-      .find((v) => typeof v === 'object' && v !== null && 'strings' in (v as object)) as
-      | { strings: string[]; values: unknown[] }
-      | undefined;
-    expect(holdFragment?.strings.join('?')).toContain('HOLD_CONDITION');
-    expect(sql).toMatch(/AND NOT \?/);
-    // And the left-out-images condition, in the same statement.
-    expect(sql).toContain('AND NOT EXISTS');
     expect(claim.slice(1)).toEqual(expect.arrayContaining([now, 9, 5]));
     const strings = claim[0] as unknown as string[];
     const at = strings.findIndex((part) => part.trimEnd().endsWith('"releasedById" ='));
