@@ -3245,6 +3245,21 @@ export type EvidenceHold = {
   releasedById: number | null;
   releaseReason: string | null;
 };
+export type EvidenceHoldComment = {
+  commentId: number;
+  userId: number;
+  threadId: number | null;
+  content: string;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+  nsfw: boolean | null;
+  tosViolation: boolean | null;
+  hidden: boolean | null;
+  metadata: unknown | null;
+  thread: unknown | null;
+  source: string;
+  keptAt: Generated<Timestamp>;
+};
 export type EvidenceHoldImage = {
   imageId: number;
   userId: number;
@@ -6650,6 +6665,7 @@ export type DB = {
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
+  EvidenceHoldComment: EvidenceHoldComment;
   EvidenceHoldImage: EvidenceHoldImage;
   EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;

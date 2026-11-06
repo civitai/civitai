@@ -4313,6 +4313,22 @@ export interface EvidenceHoldPost {
   keptAt: Date;
 }
 
+export interface EvidenceHoldComment {
+  commentId: number;
+  userId: number;
+  threadId: number | null;
+  content: string;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  nsfw: boolean | null;
+  tosViolation: boolean | null;
+  hidden: boolean | null;
+  metadata: JsonValue | null;
+  thread: JsonValue | null;
+  source: string;
+  keptAt: Date;
+}
+
 export interface EvidenceHeldUser {
   userId: number;
   heldUntil: Date | null;

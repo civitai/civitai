@@ -7076,6 +7076,26 @@ model EvidenceHoldPost {
   keptAt         DateTime  @default(now())
 }
 
+/// An archived comment kept for a held owner, with its thread row in `thread`. Held here is a
+/// marker or a report that still holds (`evidence_hold_comment_owner_held`); purged once neither does.
+model EvidenceHoldComment {
+  commentId    Int       @id
+  userId       Int
+  threadId     Int?
+  content      String
+  createdAt    DateTime?
+  updatedAt    DateTime?
+  nsfw         Boolean?
+  tosViolation Boolean?
+  hidden       Boolean?
+  metadata     Json?
+  thread       Json?
+  source       String
+  keptAt       DateTime  @default(now())
+
+  @@index([userId])
+}
+
 /// @view
 /// The owners with at least one active `EvidenceHold`.
 model EvidenceHeldUser {

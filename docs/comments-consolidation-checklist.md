@@ -830,6 +830,9 @@ With the old tables (before the drops below):
 - [ ] Remove any remaining Thread entries from `schema-drift/drift-baseline.json` + update
       remediation plan and `production-plan.test.ts`
 - [ ] `DROP SCHEMA archive CASCADE` (the ten purge-archive tables) once the old tables are gone
+      and `SELECT evidence_hold_keep_archived_comments()` has been run again on prod right before the
+      drop (it is idempotent; an owner held since the first run is only kept by a re-run); drop that
+      function with it
 - [ ] `EntityType` values `Comment`/`CommentV2` **left in place** (read-time aliases only)
 - [ ] `job-queue.ts` unused mappings deleted; schema reverse-relations cleaned;
       `db:generate` + `db:check-generated` clean
