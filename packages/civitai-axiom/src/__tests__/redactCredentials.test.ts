@@ -23,6 +23,7 @@ describe('redactCredentialsInString', () => {
       'fetch failed: GET https://x.test/a?token=[redacted] 500',
     ],
     [`token=${FAKE_KEY}&page=2`, 'token=[redacted]&page=2'],
+    [`retrying with token=${FAKE_KEY} now`, 'retrying with token=[redacted] now'],
     [`/oauth/cb?code=${FAKE_KEY}&state=s`, '/oauth/cb?code=[redacted]&state=s'],
     [`https://cdn.test/f?sig=${FAKE_KEY}&w=450`, 'https://cdn.test/f?sig=[redacted]&w=450'],
     [`Authorization: Bearer ${FAKE_KEY}`, 'Authorization: Bearer [redacted]'],
@@ -36,7 +37,7 @@ describe('redactCredentialsInString', () => {
     '/api/x?tokenizer=clip&cursor=abc',
     '/api/x?keyword=cat',
     'the bearer of bad news',
-    'see token=abc in prose',
+    'retrying with tokens=5 and promptTokens=120',
   ])('leaves %s intact', (input) => {
     expect(redactCredentialsInString(input)).toBe(input);
   });

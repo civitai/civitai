@@ -66,8 +66,9 @@ export const isCredentialField = (name: string) => {
   );
 };
 
-// `name=value` after `?`, `&`, `#` or at the start (a bare query string such as OTel's `url.query`).
-const QUERY_PARAM_RE = /(^|[?&#])([^=?&#\s"'<>]+)=([^&#\s"'<>]*)/g;
+// `name=value` at the start, after `?`, `&`, `#` (a URL or bare query string such as OTel's
+// `url.query`), or after whitespace ("retrying with token=..." in a message).
+const QUERY_PARAM_RE = /(^|[?&#\s])([^=?&#\s"'<>]+)=([^&#\s"'<>]*)/g;
 // 16+ chars so prose ("the bearer of bad news") is not mistaken for a credential.
 const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi;
 
