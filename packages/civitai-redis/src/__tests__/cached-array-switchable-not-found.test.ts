@@ -42,13 +42,18 @@ function build(cacheNotFound: boolean | (() => boolean | Promise<boolean>)) {
     setNxKeepTtlWithEx: async () => true,
   };
   const noop = () => undefined;
+  // Every hit/miss metric call, as [kind, cacheType, count].
+  const metricCalls: [string, string, number][] = [];
+  const record = (kind: string) => (_key: string, type: string, count: number) => {
+    metricCalls.push([kind, type, count]);
+  };
   const { createCachedObject } = createCacheBuilders({
     redis: redis as unknown as CacheBuilderDeps['redis'],
     defaultTtl: 300,
     metrics: {
-      hit: noop,
-      miss: noop,
-      revalidate: noop,
+      hit: record('hit'),
+      miss: record('miss'),
+      revalidate: record('revalidate'),
       failOpenDegraded: noop,
       failOpenOriginFetch: noop,
       missWouldJoin: noop,
@@ -76,7 +81,7 @@ function build(cacheNotFound: boolean | (() => boolean | Promise<boolean>)) {
     },
   });
   const lookedUp = (id: number) => lookups.filter((l) => l.includes(id)).length;
-  return { cache, db, lookups, lookedUp, sets, store };
+  return { cache, db, lookups, lookedUp, metricCalls, sets, store };
 }
 
 const FRAMELESS = 4242;
@@ -91,6 +96,25 @@ describe('switchable cacheNotFound', () => {
     await w.cache.fetch([FRAMELESS]); // false: marker ignored, origin read again
     expect(sw).toHaveBeenCalledTimes(2);
     expect(w.lookedUp(FRAMELESS)).toBe(2);
+  });
+
+  it('switch off: a marker found is ignored, looked up again and never counted a notFound hit', async () => {
+    let on = true;
+    const w = build(() => on);
+    await w.cache.fetch([FRAMELESS]); // on: marker written
+    expect(w.store.has(`${KEY}:${FRAMELESS}`)).toBe(true);
+    on = false;
+    w.metricCalls.length = 0;
+    await w.cache.fetch([FRAMELESS]);
+    expect(w.lookedUp(FRAMELESS)).toBe(2);
+    // Counted as `cacheNotFound: false` counts it: the lookup found nothing, so no metric at all.
+    expect(w.metricCalls).toEqual([]);
+    // A row the lookup then finds is an ordinary miss.
+    w.db.set(FRAMELESS, 'bronze-9');
+    expect(await w.cache.fetch([FRAMELESS])).toEqual({
+      [FRAMELESS]: expect.objectContaining({ id: FRAMELESS, frame: 'bronze-9' }),
+    });
+    expect(w.metricCalls).toEqual([['miss', 'cachedArray', 1]]);
   });
 
   it('a throwing switch is off', async () => {

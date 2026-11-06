@@ -137,4 +137,24 @@ describe('frame caches: FRAME_CACHE_NEGATIVE', () => {
     const after = await page();
     expect(Object.keys(after).sort()).toEqual([String(FRAMELESS), String(FRAMED)].sort());
   });
+
+  it('on, off, on: a frame fetched while off replaces the old marker, so it stays visible', async () => {
+    flagOn = true;
+    await page(); // "no frame" marker written
+    worn.set(FRAMELESS, FRAME_COSMETIC);
+    flagOn = false;
+    await page(); // marker ignored; the frame is read and cached by a plain SET
+    const packedSet = (redisMock.redis as unknown as { packed: { set: Mock } }).packed.set;
+    const sets = packedSet.mock.calls as unknown as [
+      string,
+      unknown,
+      { EX?: number; NX?: boolean }
+    ][];
+    const frameless = sets.filter(([key]) => key.endsWith(`:Image:${FRAMELESS}`));
+    expect(frameless.map(([, , o]) => o)).toEqual([{ EX: 3600, NX: true }, { EX: 86400 }]);
+    flagOn = true;
+    const after = await page();
+    expect(Object.keys(after).sort()).toEqual([String(FRAMELESS), String(FRAMED)].sort());
+    expect(lookedUp(FRAMELESS)).toBe(2);
+  });
 });
