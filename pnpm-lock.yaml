@@ -27,6 +27,9 @@ patchedDependencies:
   '@civitai/generation-metadata@0.4.0':
     hash: 784a3c8758faaa98273e1937cc9d161e11c103bca62047e084681366ebd772b8
     path: patches/@civitai__generation-metadata@0.4.0.patch
+  '@civitai/next-axiom@0.17.0':
+    hash: 1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02
+    path: patches/@civitai__next-axiom@0.17.0.patch
   '@mantine/core@7.17.8':
     hash: 35f18881be9a89ce42df2638cbce6563d7d11e3a3c8b96047325c10d9e82a4fd
     path: patches/@mantine__core@7.17.8.patch
@@ -106,7 +109,7 @@ importers:
         version: link:packages/civitai-moderation
       '@civitai/next-axiom':
         specifier: ^0.17.0
-        version: 0.17.0(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))
+        version: 0.17.0(patch_hash=1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02)(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/orchestration-client':
         specifier: 0.2.0
         version: 0.2.0
@@ -13556,7 +13559,7 @@ snapshots:
       exifreader: 4.52.0
       zod: 4.6.7
 
-  '@civitai/next-axiom@0.17.0(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
+  '@civitai/next-axiom@0.17.0(patch_hash=1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02)(next@16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0))':
     dependencies:
       next: 16.4.5(patch_hash=dde872863bd73ced5476e38d96e0daf51a898238f0f4f6e770bfd1c0e28b7399)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       whatwg-fetch: 3.6.20

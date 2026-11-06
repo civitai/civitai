@@ -457,7 +457,8 @@
       "@mantine/core@7.17.8": "patches/@mantine__core@7.17.8.patch",
       "@trpc/next@11.17.0": "patches/@trpc__next@11.17.0.patch",
       "@civitai/cybertipline-tools@0.1.0": "patches/@civitai__cybertipline-tools@0.1.0.patch",
-      "@civitai/generation-metadata@0.4.0": "patches/@civitai__generation-metadata@0.4.0.patch"
+      "@civitai/generation-metadata@0.4.0": "patches/@civitai__generation-metadata@0.4.0.patch",
+      "@civitai/next-axiom@0.17.0": "patches/@civitai__next-axiom@0.17.0.patch"
     }
   }
 }

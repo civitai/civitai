@@ -1,5 +1,6 @@
 import { Client } from '@axiomhq/axiom-node';
 import { loadAxiomEnv, type AxiomConfig } from './env';
+import { redactCredentials } from './redact-credentials';
 
 // Package-local alias (not a `declare global`) so a consumer transpiling this package doesn't need the main
 // app's ambient MixedObject global in scope. Same shape, so main-app callers are unaffected.
@@ -291,7 +292,7 @@ export function createAxiomLogger(
   }
 
   async function logToAxiom(data: MixedObject, datastream?: string) {
-    const sendData = { pod: config.podName, ...data };
+    const sendData = redactCredentials({ pod: config.podName, ...data });
     if (config.isProd) {
       datastream ??= config.datastream;
 
