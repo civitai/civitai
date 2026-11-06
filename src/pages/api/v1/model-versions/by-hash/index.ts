@@ -4,7 +4,7 @@ import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { showsSfwFace } from '~/shared/utils/model-sfw-face';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -47,7 +47,7 @@ export default PublicEndpoint(
     // Versions the caller may not see are left out, as if their hashes had not matched.
     const hidden = await getHiddenModelVersionIds(
       matched.map((file) => file.modelVersion),
-      async () => (await getServerAuthSession({ req, res }))?.user
+      async () => (await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }))?.user
     );
     const files = matched.filter((file) => !hidden.has(file.modelVersion.id));
 
