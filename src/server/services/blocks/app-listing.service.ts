@@ -29,7 +29,7 @@ import {
 // the field is `// @no-type` and therefore absent from the generated client entirely. See its
 // module header for the production 500 that forced that.
 import {
-  noteDegradedVisibilityRead,
+  VISIBILITY_READ_DEGRADED_EVENT,
   readListingVisibility,
   readListingVisibilityMany,
   readListingVisibilityManyForRender,
@@ -73,6 +73,7 @@ import {
 } from '~/server/services/blocks/app-sub-listing-store.service';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { logToAxiom } from '~/server/logging/client';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
 import {
@@ -1725,7 +1726,7 @@ export async function listAvailableListings(
     const page = withSubListings ? withSubListingsPage : parentsOnlyPage;
     return page(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
       if (!isMissingColumnError(err)) throw err;
-      noteDegradedVisibilityRead(err);
+      noteDegradedRead(VISIBILITY_READ_DEGRADED_EVENT, err);
       return page(Prisma.sql`al.status = 'approved'`);
     });
   };

@@ -557,7 +557,6 @@ export function AppListingCard({
             {/* AUTHOR-DECLARED beta label: PUBLIC (the `Incomplete` badge is owner-only), and no
                 tooltip because the card DTO carries no `betaMessage`. `card.isBeta` is `false`
                 both for "not in beta" and while the manual-apply migration is outstanding. */}
-            {/* MODERATOR-SET provenance marker ("made by Civitai"); never author-controlled. */}
             {card.isOfficial && <AppListingOfficialBadge size="xs" />}
             {card.isBeta && (
               <Badge
