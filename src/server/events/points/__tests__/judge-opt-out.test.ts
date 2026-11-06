@@ -107,7 +107,7 @@ describe('eventPoints: false', () => {
 // exact, so a call added, removed or rewritten without an object literal fails here rather than
 // slipping past the walk.
 const JUDGE_CALLS: Record<string, Record<'toggleReaction' | 'upsertComment', number>> = {
-  'src/server/jobs/daily-challenge-processing.ts': { toggleReaction: 1, upsertComment: 0 },
+  'src/server/services/challenge-judge-review.service.ts': { toggleReaction: 1, upsertComment: 0 },
   'src/server/services/commentv3/comment-write.service.ts': { toggleReaction: 0, upsertComment: 1 },
 };
 
