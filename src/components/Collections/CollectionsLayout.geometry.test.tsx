@@ -72,13 +72,15 @@ const scrollRoot = () => card().querySelector<HTMLElement>('.mantine-ScrollArea-
 const toggle = () => card().querySelector<HTMLElement>('[class*="sidebarToggle"]')!;
 
 async function mount(viewport: (typeof VIEWPORTS)[number]) {
-  document.documentElement.style.setProperty('--header-height', '60px');
   document.documentElement.style.setProperty('--footer-height', '0px');
   const { observed } = await renderAtViewport(
     <CollectionsLayout>{null}</CollectionsLayout>,
     viewport
   );
   expect(observed).toEqual(viewport);
+  expect(getComputedStyle(document.documentElement).getPropertyValue('--header-height')).toBe(
+    '60px'
+  );
   expect(cascadeEvidence().probeBoxSizing).toBe('border-box');
   expect(card()).toBeTruthy();
   expect(scrollViewport()).toBeTruthy();
