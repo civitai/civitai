@@ -127,7 +127,7 @@ export async function listMyApps(
   for (const i of invocations) if (i.appBlockId) appBlockIds.add(i.appBlockId);
   const connectClientIds = new Set(consents.map((c) => c.clientId));
   if (appBlockIds.size === 0 && connectClientIds.size === 0) {
-    return { apps: [], removedCount: 0, hidden };
+    return { apps: [], removedCount: 0, removedSlugsByListingId: {}, hidden };
   }
 
   const candidates = await resolved.loadCandidates(

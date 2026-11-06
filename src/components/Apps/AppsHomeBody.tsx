@@ -383,8 +383,10 @@ export function AppsHomeBody() {
   const [removed, setRemoved] = useState<{ slug: string; name: string; hiddenAt: string } | null>(
     null
   );
-  // An Undo waits for its own hide to settle, so the two writes reach the server in order.
+  // An Undo waits for its own hide to settle, and a re-remove for the Undo's unhide, so the
+  // writes for one slug reach the server in the order they were made.
   const pendingHides = useRef(new Map<string, Promise<unknown>>());
+  const pendingUnhides = useRef(new Map<string, Promise<unknown>>());
   // Every hide/unhide still in flight (settled-only, never rejecting); the refetch waits on them.
   const inFlight = useRef(new Set<Promise<unknown>>());
   const refetchOwed = useRef(false);
@@ -442,7 +444,12 @@ export function AppsHomeBody() {
     const optimistic = new Date().toISOString();
     setOverrides((prev) => ({ ...prev, [app.slug]: optimistic }));
     setRemoved({ slug: app.slug, name: app.name, hiddenAt: optimistic });
-    const write = hideMutation.mutateAsync({ slug: app.slug });
+    // Remove → Undo → remove again before the unhide settles: sent at once, the hide could
+    // land first and the unhide after it, leaving the server unhidden under a removed tile.
+    const unhide = pendingUnhides.current.get(app.slug);
+    const write = unhide
+      ? unhide.then(() => hideMutation.mutateAsync({ slug: app.slug }))
+      : hideMutation.mutateAsync({ slug: app.slug });
     pendingHides.current.set(app.slug, track(write));
     try {
       await write;
@@ -466,7 +473,11 @@ export function AppsHomeBody() {
       await pendingHides.current.get(slug);
       return unhideMutation.mutateAsync({ slug });
     })();
-    track(write);
+    const settled = track(write);
+    pendingUnhides.current.set(slug, settled);
+    void settled.then(() => {
+      if (pendingUnhides.current.get(slug) === settled) pendingUnhides.current.delete(slug);
+    });
     // Closing the bar flushes the owed refetch, which waits for this unhide to settle.
     closeRemovedBar();
     try {
@@ -542,8 +553,9 @@ export function AppsHomeBody() {
         recents,
         canOpenPage,
         hidden,
+        removedSlugsByListingId: myApps.data?.removedSlugsByListingId,
       }),
-    [myApps.data?.apps, recents, canOpenPage, hidden]
+    [myApps.data?.apps, myApps.data?.removedSlugsByListingId, recents, canOpenPage, hidden]
   );
 
   return (
@@ -613,6 +625,7 @@ export function AppsHomeBody() {
               recents,
               canOpenPage,
               hidden,
+              removedSlugsByListingId: myApps.data?.removedSlugsByListingId,
               removedCount: myApps.data?.removedCount,
             })}
           />

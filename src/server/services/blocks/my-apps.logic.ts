@@ -106,6 +106,14 @@ export type MyAppsHome = {
    * yet" would be false.
    */
   removedCount: number;
+  /**
+   * listing id → slug, for exactly the rows a hide kept off `apps` (so it has `removedCount`
+   * entries). The client merge needs it for a recents entry stored under an OLDER slug: the
+   * store keys an off-site entry by listing id, so this lets the merge judge that entry under
+   * the slug the hide was written for, instead of under its stale one (which no hide names, so
+   * the removed app would come back as a recents-only tile).
+   */
+  removedSlugsByListingId: Record<string, string>;
 };
 
 /** True when `a` is a later instant than `b`; a null never wins, and anything beats null. */
@@ -203,14 +211,21 @@ export function buildMyApps(
 
   const hidden = opts.hidden ?? {};
   const shown: MyAppRow[] = [];
+  const removedSlugsByListingId: Record<string, string> = {};
   let removedCount = 0;
   for (const row of [...byListing.values()].sort(compareMyApps)) {
     // Own-property lookup: a slug like `constructor` must not read Object.prototype.
     const hiddenAt = Object.prototype.hasOwnProperty.call(hidden, row.slug)
       ? hidden[row.slug]
       : undefined;
-    if (isHiddenFromHome(hiddenAt, row.lastUsedAt?.getTime() ?? null)) removedCount++;
-    else shown.push(row);
+    if (isHiddenFromHome(hiddenAt, row.lastUsedAt?.getTime() ?? null)) {
+      removedCount++;
+      removedSlugsByListingId[row.listingId] = row.slug;
+    } else shown.push(row);
   }
-  return { apps: shown.slice(0, opts.limit ?? MY_APPS_MAX_ROWS), removedCount };
+  return {
+    apps: shown.slice(0, opts.limit ?? MY_APPS_MAX_ROWS),
+    removedCount,
+    removedSlugsByListingId,
+  };
 }

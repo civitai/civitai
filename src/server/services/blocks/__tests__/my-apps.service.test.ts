@@ -223,7 +223,7 @@ describe('listMyApps — reads only the caller’s rows', () => {
       { ...ARGS, userId: 3 },
       { db, loadCandidates, loadHidden: noHides, now: () => NOW }
     );
-    expect(res).toEqual({ apps: [], removedCount: 0, hidden: {} });
+    expect(res).toEqual({ apps: [], removedCount: 0, removedSlugsByListingId: {}, hidden: {} });
     expect(loadCandidates).not.toHaveBeenCalled();
   });
 });
@@ -249,6 +249,7 @@ describe('listMyApps — the caller’s hides', () => {
       'apl_cli_u1',
     ]);
     expect(res.removedCount).toBe(1);
+    expect(res.removedSlugsByListingId).toStrictEqual({ apl_blk_u1_grant: 'slug-blk_u1_grant' });
     expect(res.hidden).toEqual(hides);
   });
 });

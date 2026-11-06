@@ -560,12 +560,24 @@ describe('"Remove from My apps" is applied BEFORE the row cap', () => {
     expect(ids).not.toContain('apl_app_014');
   });
 
+  it('🔴 removedSlugsByListingId is EXACTLY the hidden rows, listing id → slug, inside and below the old cutoff', () => {
+    const { removedCount, removedSlugsByListingId } = buildMyAppsHome(manySignals, many, {
+      ...BASE_OPTS,
+      hidden,
+    });
+    expect(removedSlugsByListingId).toStrictEqual(
+      Object.fromEntries(HIDDEN_IDX.map((i) => [`apl_app_${pad(i)}`, `app-${pad(i)}`]))
+    );
+    expect(Object.keys(removedSlugsByListingId)).toHaveLength(removedCount);
+  });
+
   it('no hidden map (or an empty one) → the plain top 100, nothing removed', () => {
     const plain = buildMyAppsHome(manySignals, many, BASE_OPTS);
     const empty = buildMyAppsHome(manySignals, many, { ...BASE_OPTS, hidden: {} });
     const expected = Array.from({ length: 100 }, (_, k) => `apl_app_${pad(129 - k)}`);
     expect(plain.apps.map((r) => r.listingId)).toEqual(expected);
     expect(plain.removedCount).toBe(0);
+    expect(plain.removedSlugsByListingId).toStrictEqual({});
     expect(empty).toEqual(plain);
   });
 
@@ -587,6 +599,16 @@ describe('"Remove from My apps" is applied BEFORE the row cap', () => {
     });
     expect(apps.map((r) => r.listingId)).toEqual(['apl_alpha']);
     expect(removedCount).toBe(1);
+    // Only the row still hidden; the reshown one is not reported as dropped.
+    expect(
+      buildMyAppsHome(signals, [ALPHA, BRAVO], {
+        ...BASE_OPTS,
+        hidden: {
+          'alpha-slug': '2026-10-12T03:00:00.000Z',
+          'bravo-slug': '2026-10-13T05:00:00.000Z',
+        },
+      }).removedSlugsByListingId
+    ).toStrictEqual({ apl_bravo: 'bravo-slug' });
   });
 
   it('the boundary follows the shared predicate: used AT hiddenAt stays hidden, 1ms after shows', () => {

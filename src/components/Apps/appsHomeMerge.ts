@@ -41,6 +41,13 @@ import { isHiddenFromHome, latestUseMs } from '~/shared/utils/my-apps-hidden';
  * has already dropped rows hidden by their OWN `lastUsedAt` (before its row cap), so here the
  * rule mostly matters for recents-only tiles and for this page's optimistic removes. An app
  * the server dropped but this browser has since opened renders from its recents entry.
+ *
+ * A dropped row is no longer there to claim its recents entry, and an off-site entry can carry
+ * an OLDER slug than the row (matched above by listing id) — a slug no hide names, since
+ * "Remove" writes the row's. So the server also sends `removedSlugsByListingId`, and an entry
+ * whose `id` is in it is judged EXACTLY as a matched one: under the row's slug, with the
+ * entry's opens under either slug, claiming the listing id. It shows (under the row's slug,
+ * so removing it again writes the hide the server reads) only when opened after the hide.
  * Hidden tiles are skipped BEFORE they claim a slug, so nothing else shifts.
  *
  * ── LAUNCH ORIGIN ──────────────────────────────────────────────────────────────
@@ -101,8 +108,13 @@ export function mergeHomeApps(args: {
   canOpenPage: boolean;
   /** The viewer's hides, slug → ISO time. Absent → nothing hidden. */
   hidden?: Readonly<Record<string, unknown>>;
+  /** `listMyApps`' listing id → slug of each row its hides dropped. Absent → none. */
+  removedSlugsByListingId?: Readonly<Record<string, string>>;
 }): AppsHomeTile[] {
   const hidden = args.hidden ?? {};
+  const removed = args.removedSlugsByListingId ?? {};
+  const removedSlug = (listingId: string) =>
+    Object.prototype.hasOwnProperty.call(removed, listingId) ? removed[listingId] : undefined;
   // Own-property lookup: a slug like `constructor` must not read Object.prototype.
   const hiddenAt = (slug: string) =>
     Object.prototype.hasOwnProperty.call(hidden, slug) ? hidden[slug] : undefined;
@@ -139,21 +151,28 @@ export function mergeHomeApps(args: {
     seenSlugs.add(entry.slug);
 
     const row = bySlug.get(entry.slug) ?? byListingId.get(entry.id);
+    // No served row: a row the server dropped as hidden still claims the entry by listing id.
+    const dropped = row ? undefined : removedSlug(entry.id);
+    const listingId = row?.listingId ?? (dropped !== undefined ? entry.id : undefined);
+    if (listingId !== undefined) {
+      if (placed.has(listingId)) continue;
+      // Claimed even when hidden, so nothing below re-adds it.
+      placed.add(listingId);
+    }
+    // The slug the tile shows — and the one "Remove" writes, so the one its hide is under.
+    const slug = row?.slug ?? dropped ?? entry.slug;
+    seenSlugs.add(slug);
+    if (isHidden(slug, row, entry.slug)) continue;
     if (row) {
-      if (placed.has(row.listingId)) continue;
-      // Claimed even when hidden, so the server pass below does not re-add it.
-      placed.add(row.listingId);
-      if (isHidden(row.slug, row, entry.slug)) continue;
       out.push(fromServerRow(row, 'both'));
       continue;
     }
 
-    if (isHidden(entry.slug, undefined)) continue;
-    const target = getRecentRailTarget(entry, { canOpenPage: args.canOpenPage });
+    const target = getRecentRailTarget({ ...entry, slug }, { canOpenPage: args.canOpenPage });
     out.push({
-      key: `recent:${entry.slug}`,
-      slug: entry.slug,
-      name: sanitizeAppChromeName(entry.name) || entry.slug,
+      key: `recent:${slug}`,
+      slug,
+      name: sanitizeAppChromeName(entry.name) || slug,
       category: null,
       kind: entry.kind,
       iconUrl: null,

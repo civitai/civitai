@@ -13,6 +13,13 @@
  * Keyed by SLUG, not listing id: a recents-only tile has no listing id, and the slug is the
  * merge's join key. A renamed slug orphans its entry, which fails OPEN (the app shows again).
  *
+ * Why dropping a row server-side is safe for the merge: the dropped row can no longer claim
+ * this browser's recents entry for it, and an off-site entry may be stored under an OLDER slug
+ * than the row's (the hide is written under the row's). So `buildMyApps` also returns each
+ * dropped row's listing id → slug (`removedSlugsByListingId`), and the merge judges an entry
+ * with that id exactly as it judges a matched one — under the row's slug, with the entry's
+ * opens under either slug — rather than under its stale slug, which no hide names.
+ *
  * KNOWN LIMITATIONS:
  *  - when the run page's clear does not happen (its read fails open to "not hidden", or the
  *    write fails), the server keeps dropping the row: the app still shows, as a recents-only

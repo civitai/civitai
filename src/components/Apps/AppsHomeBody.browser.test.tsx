@@ -170,10 +170,16 @@ function launch(name: string): HTMLAnchorElement {
 }
 
 /** The `listMyApps` payload: the derived apps plus the viewer's hides. */
-const served = (apps: MyAppRow[], hidden: Record<string, string> = {}, removedCount = 0) => ({
+const served = (
+  apps: MyAppRow[],
+  hidden: Record<string, string> = {},
+  removedCount = 0,
+  removedSlugsByListingId: Record<string, string> = {}
+) => ({
   apps,
   hidden,
   removedCount,
+  removedSlugsByListingId,
 });
 
 beforeEach(() => {
@@ -681,6 +687,35 @@ describe('Remove from My apps', () => {
     await expect.element(page.getByText('Pixel Forge', { exact: true })).toBeVisible();
   });
 
+  test('🔴 an off-site recent under an OLDER slug stays removed once the server drops its row', async () => {
+    // Recorded under the stale slug; the hide is under the listing's current one, and AFTER
+    // the open (stamped with the real clock), so the app is still removed.
+    recordRecentlyOpenedApp(
+      {
+        id: 'apl_off1',
+        slug: 'prompt-lab-old',
+        kind: 'offsite',
+        name: 'Prompt Lab',
+        externalUrl: 'https://promptlab.example.org/app',
+      },
+      41
+    );
+    const hiddenAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const payload = (map: Record<string, string>) =>
+      served([PAGE_APP], { 'prompt-lab': hiddenAt }, 1, map);
+    mocks.myApps = { data: payload({ apl_off1: 'prompt-lab' }), isLoading: false, isError: false };
+    const { unmount } = await renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Pixel Forge', { exact: true })).toBeVisible();
+    expect(page.getByText('Prompt Lab', { exact: true }).elements()).toHaveLength(0);
+    await unmount();
+
+    // Control: the same payload without the dropped-row map resurrects it — the fixture
+    // reaches the path the map closes.
+    mocks.myApps = { data: payload({}), isLoading: false, isError: false };
+    renderWithProviders(<AppsHomeBody />);
+    await expect.element(page.getByText('Prompt Lab', { exact: true })).toBeVisible();
+  });
+
   /**
    * The list refetch waits for the Undo window. Each test runs against a SERVER MODEL that
    * behaves like the real `listMyApps`: a refetch (the stable `invalidate` spy) re-reads the
@@ -791,6 +826,41 @@ describe('Remove from My apps', () => {
       await expect.poll(() => mocks.invalidate.mock.calls.length).toBe(1);
       await frame();
       expect(names()).toEqual(['Pixel Forge', 'Prompt Lab']);
+    });
+
+    test('🔴 remove → Undo → remove again before the unhide settles: the hide waits for it', async () => {
+      const unhide = deferred<void>();
+      const order: string[] = [];
+      const serverHide = mocks.hide;
+      const serverUnhide = mocks.unhide;
+      mocks.hide = vi.fn(async (input: { slug: string }) => {
+        order.push(`hide:${input.slug}`);
+        return serverHide(input);
+      });
+      mocks.unhide = vi.fn(async (input: { slug: string }) => {
+        order.push(`unhide:${input.slug}`);
+        await unhide.promise;
+        order.push(`unhide-settled:${input.slug}`);
+        return serverUnhide(input);
+      });
+      await renderAndRemove('Pixel Forge');
+      await userEvent.click(page.getByTestId('apps-home-undo'));
+      await expect.poll(() => mocks.unhide.mock.calls.length).toBe(1);
+      await expect.poll(names).toContain('Pixel Forge');
+      await removeViaMenu('Pixel Forge');
+      // Removed at once on screen, but the second hide is held behind the pending unhide.
+      await expect.poll(names).not.toContain('Pixel Forge');
+      await frame();
+      await frame();
+      expect(mocks.hide).toHaveBeenCalledTimes(1);
+      unhide.resolve();
+      await expect.poll(() => mocks.hide.mock.calls.length).toBe(2);
+      expect(order).toEqual([
+        'hide:pixel-forge',
+        'unhide:pixel-forge',
+        'unhide-settled:pixel-forge',
+        'hide:pixel-forge',
+      ]);
     });
 
     test('🔴 no Undo → exactly one refetch, after the window, bringing in the next app', async () => {
