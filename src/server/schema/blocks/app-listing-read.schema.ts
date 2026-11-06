@@ -262,9 +262,9 @@ export type ListingCard = {
    * so neither identifies a user, neither reveals WHO opened or installed the app or
    * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
    *
-   *   1. A NEW PUBLIC FACT, not added precision. The store's `popular` sort ranks by
-   *      `open_count` first (see `listAppListingsSchema`), so the ordering is already
-   *      public.
+   *   1. The raw count is a new public fact; only the relative ordering was already
+   *      public, through the `popular` sort (`open_count` first, see
+   *      `listAppListingsSchema`).
    *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
    *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
    *      — a public, anon-capable REST list returning up to 50 cards per page — so an

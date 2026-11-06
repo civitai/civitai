@@ -22,7 +22,16 @@ type FakeWorkflow = {
   allowMatureContent?: boolean;
   externalId?: string;
   createdAt: string;
-  steps: { output?: { images: { url: string; available?: boolean; nsfwLevel?: string }[] } }[];
+  /** As the orchestrator returns them: `$type` decides whether images sit under `images` or `blobs`. */
+  steps: {
+    $type?: string;
+    name?: string;
+    status?: string;
+    output?: Record<
+      string,
+      { url: string; available?: boolean; nsfwLevel?: string; [field: string]: unknown }[]
+    >;
+  }[];
   cost: { total: number };
 };
 
@@ -306,6 +315,8 @@ import {
 } from '~/server/services/remix-app-run.service';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
 import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { RESTYLE_EXTRA_MAX_LENGTH, RESTYLE_STYLES } from '~/shared/remix-apps/system-apps';
 
 const USER_ID = 1;
 const SOURCE_ID = 7;
@@ -347,15 +358,16 @@ const submits = () => h.workflows;
 const whatIfs = () =>
   h.submitWorkflow.mock.calls.filter(([args]) => (args as { query?: object }).query);
 
+/** Lands a workflow's outputs in the shape the orchestrator returns for its graph. */
 function finish(workflowId: string, urls: string[], nsfwLevel: Record<string, string> = {}) {
   const workflow = h.workflows.find((w) => w.id === workflowId)!;
   workflow.status = 'succeeded';
+  const blobs = urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] }));
   workflow.steps = [
-    {
-      output: {
-        images: urls.map((url) => ({ url, available: true, nsfwLevel: nsfwLevel[url] })),
-      },
-    },
+    // img2img:upscale runs as a comfy step, whose output is `blobs`, not `images`.
+    workflow.tags.includes('img2img:upscale')
+      ? { $type: 'comfy', output: { blobs: blobs.map((b) => ({ ...b, type: 'image' })) } }
+      : { $type: 'imageGen', output: { images: blobs } },
   ];
 }
 
@@ -613,24 +625,36 @@ describe('remix app runs', () => {
 
   it('a step with no usable output ends the run as failed', async () => {
     const runId = await runToPick('nonce-0012');
-    submits()[0].steps = [{ output: { images: [{ url: blob('gone'), available: false }] } }];
+    submits()[0].steps = [
+      { $type: 'imageGen', output: { images: [{ url: blob('gone'), available: false }] } },
+    ];
     await expect(
       advanceRemixRun({ runId, answers: [0], quote: 30, caller: caller() })
     ).resolves.toMatchObject({ status: 'failed', reason: 'This step has no usable output.' });
     expect(submits()).toHaveLength(1);
   });
 
-  it('refuses an app that asks before its first workflow, and submits nothing', async () => {
+  it('asks first without submitting, then records the answer on the first workflow', async () => {
     addImage(SOURCE_ID);
-    const start = startRemixRun({
-      slug: 'asks-first',
-      imageId: SOURCE_ID,
-      nonce: 'nonce-0019',
-      quote: 30,
-      caller: caller(),
-    });
-    await expect(start).rejects.toMatchObject({ code: 'CONFLICT' });
+    const args = { slug: 'asks-first', imageId: SOURCE_ID, nonce: 'nonce-0019', caller: caller() };
+
+    const ask = await startRemixRun({ ...args, quote: 30 });
+    expect(ask).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
     expect(submits()).toHaveLength(0);
+
+    const running = await startRemixRun({ ...args, answers: ['anime'], quote: 30 });
+    expect(running).toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(1);
+    expect(submits()[0].metadata?.remixRun).toMatchObject({ answers: ['anime'] });
+
+    // The run replays from its workflow alone: the answer lives there, and a repeat tap reloads it.
+    finish(submits()[0].id, [blob('styled')]);
+    const { runId } = running as { runId: string };
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'done' });
+    expect(await startRemixRun({ ...args, answers: ['anime'], quote: 30 })).toMatchObject({
+      status: 'done',
+    });
+    expect(submits()).toHaveLength(1);
   });
 
   it(`stops a run at ${MAX_RUN_SEGMENTS} steps`, async () => {
@@ -888,7 +912,7 @@ describe('posting a finished run', () => {
       status: 'succeeded',
       tags: ['gen'],
       createdAt: new Date().toISOString(),
-      steps: [{ output: { images: [{ url: blob('plain') }] } }],
+      steps: [{ $type: 'imageGen', output: { images: [{ url: blob('plain') }] } }],
       cost: { total: 0 },
     });
 
@@ -1024,6 +1048,50 @@ describe('Pick of four', () => {
     );
   });
 
+  it('ends an upscaled pick done and postable, from the comfy step the upscale graph returns', async () => {
+    const { runId } = await atFinish('nonce-p4-upscaled');
+    await advanceRemixRun({
+      runId,
+      answers: [2, 'upscale'],
+      quote: h.upscalePrice,
+      caller: caller(),
+    });
+    const upscale = submits()[1];
+    const upscaled = blob('upscaled');
+    upscale.status = 'succeeded';
+    // As the orchestrator returns img2img:upscale: one comfy step, its image under `blobs`.
+    upscale.steps = [
+      {
+        $type: 'comfy',
+        name: '0',
+        status: 'succeeded',
+        output: {
+          blobs: [
+            {
+              type: 'image',
+              id: 'upscaled.jpeg',
+              available: true,
+              url: upscaled,
+              nsfwLevel: 'pg',
+              width: 2048,
+              height: 2048,
+            },
+          ],
+        },
+      },
+    ];
+
+    const state = await advanceRemixRun({ runId, caller: caller() });
+
+    expect(state).toMatchObject({ status: 'done', outputs: [{ url: upscaled }] });
+    await postRemixResult({ runId, caller: caller(), ctx: {} as never });
+    expect(h.headlessPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        media: [expect.objectContaining({ workflowId: upscale.id, url: upscaled })],
+      })
+    );
+  });
+
   it('keeps the pick, and a run that ends on that answer stays ended', async () => {
     const { runId } = await atFinish('nonce-p4-keep');
 
@@ -1142,5 +1210,87 @@ describe('replay', () => {
     await expect(replayRemixApp(app, source, [{ type: 'ask', answer: 0 }])).rejects.toBeInstanceOf(
       RemixReplayError
     );
+  });
+});
+
+describe('Restyle', () => {
+  const start = (answers: (string | number)[], quote?: number, nonce = 'nonce-restyle') => {
+    addImage(SOURCE_ID);
+    return startRemixRun({
+      slug: 'restyle',
+      imageId: SOURCE_ID,
+      nonce,
+      answers,
+      quote,
+      caller: caller(),
+    });
+  };
+  const submittedPrompt = () => JSON.stringify(h.submitWorkflow.mock.calls.at(-1));
+  const blockedText = 'something the audit refuses';
+
+  beforeEach(() => {
+    vi.mocked(auditPromptServer).mockImplementation(async ({ prompt }) => {
+      if (prompt.includes(blockedText))
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged.' });
+    });
+  });
+
+  it('asks for an optional addition, then a style priced on every option, and spends nothing until a style is tapped', async () => {
+    expect(await start([])).toMatchObject({
+      status: 'ask',
+      ask: { kind: 'text', optional: true, maxLength: RESTYLE_EXTRA_MAX_LENGTH },
+    });
+
+    const style = await start(['']);
+    expect(style).toMatchObject({ status: 'ask', ask: { kind: 'choice' } });
+    expect((style as { prices: Record<string, number> }).prices).toEqual(
+      Object.fromEntries(RESTYLE_STYLES.map(({ value }) => [value, h.price]))
+    );
+    expect(submits()).toHaveLength(0);
+
+    expect(await start(['', 'ukiyo-e'], h.price)).toMatchObject({ status: 'running' });
+    expect(submits()).toHaveLength(1);
+    expect(submittedPrompt()).toContain('ukiyo-e woodblock print');
+    expect(submittedPrompt()).not.toContain('Also add to the scene');
+  });
+
+  it("adds the viewer's text to the edit", async () => {
+    await start(['a red paper umbrella', 'watercolor'], h.price);
+    expect(submittedPrompt()).toContain('watercolor painting');
+    expect(submittedPrompt()).toContain('Also add to the scene: a red paper umbrella');
+  });
+
+  it(`takes up to ${RESTYLE_EXTRA_MAX_LENGTH} characters and refuses more, or blank text that is not a skip`, async () => {
+    // POSITIVE CONTROL: at the cap, the text is taken.
+    await expect(
+      start(['x'.repeat(RESTYLE_EXTRA_MAX_LENGTH)], undefined, 'nonce-cap')
+    ).resolves.toMatchObject({
+      status: 'ask',
+      ask: { kind: 'choice' },
+    });
+    for (const text of ['x'.repeat(RESTYLE_EXTRA_MAX_LENGTH + 1), '   '])
+      await expect(
+        start([text, 'watercolor'], h.price, `nonce-${text.length}`)
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it('refuses text the prompt audit blocks, cleanly and without charging', async () => {
+    // POSITIVE CONTROL: the same flow with text the audit passes submits.
+    await start(['a lantern', 'claymation'], h.price, 'nonce-audit-ok');
+    expect(submits()).toHaveLength(1);
+    expect(vi.mocked(auditPromptServer)).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: expect.stringContaining('a lantern') })
+    );
+
+    await expect(
+      start([blockedText, 'claymation'], h.price, 'nonce-audit-blocked')
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Your prompt was flagged.',
+    });
+    expect(submits()).toHaveLength(1);
   });
 });
