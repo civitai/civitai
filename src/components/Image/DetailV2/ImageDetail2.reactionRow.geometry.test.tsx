@@ -431,3 +431,35 @@ describe.each([360, 390])('image detail on a %ipx phone', (width) => {
     expect(middles(bar).size).toBe(1);
   });
 });
+
+// Where each control renders is decided in JS (`narrowStage`) and where the phone bar shows in CSS
+// (`@md:hidden`). Between phone and desktop the two must agree, or a control renders hidden.
+const allDrawn = (selector: string) =>
+  Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(
+    (el) => el.getBoundingClientRect().width > 0
+  );
+const tipControls = () => [
+  ...allDrawn('[data-testid="image-detail-tip"]'),
+  // The Buzz chip: the reaction row's one button without a label of its own.
+  ...allDrawn('button').filter(
+    (b) =>
+      !b.hasAttribute('aria-label') && b.parentElement === label('Like reaction')?.parentElement
+  ),
+];
+
+describe.each([480, 600, 768, 900, 1023, 1024, 1100])('image detail at %ipx', (width) => {
+  test('the sticker pill, the hat button and a tip control are each drawn once', async () => {
+    await renderDetail(width);
+    await vi.waitFor(() => expect(label('Like reaction')).not.toBeNull());
+    expect(allDrawn('[data-testid="sticker-bar"]')).toHaveLength(1);
+    expect(allDrawn('[data-testid="hat-turf-detail-hat"]')).toHaveLength(1);
+    expect(tipControls().length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('with reactions hidden, a tip control is still drawn', async () => {
+    ctx.hideReactions = true;
+    await renderDetail(width);
+    await vi.waitFor(() => expect(allDrawn('[data-testid="sticker-bar"]')).toHaveLength(1));
+    expect(tipControls().length).toBeGreaterThanOrEqual(1);
+  });
+});
