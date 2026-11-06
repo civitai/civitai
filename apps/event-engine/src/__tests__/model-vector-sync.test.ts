@@ -534,6 +534,44 @@ describe('model CDC consumer', () => {
     expect(q.isHealthy(start)).toBe(false);
   });
 
+  test('progress is vectors stored: a flush whose upserts keep failing counts as failing', async () => {
+    const { db, store, q } = queue();
+    db.rows.set(1, model(1));
+    vi.spyOn(store, 'upsert').mockRejectedValue(new Error('qdrant write timeout'));
+    for (let i = 0; i < 3; i++) {
+      q.add(1, at(i));
+      await expect(q.flush()).rejects.toThrow('qdrant write timeout');
+    }
+    expect(q.consecutiveFailures).toBe(3);
+    expect(q.isHealthy(Date.now() + 11 * 60_000)).toBe(false);
+  });
+
+  test('a flush that stored vectors before failing is slow, not stuck', async () => {
+    const { db, store, q } = queue();
+    db.rows.set(1, model(1));
+    q.consecutiveFailures = 2;
+    q.lastProgress = 0;
+    vi.spyOn(store, 'setPayloads').mockResolvedValueOnce().mockRejectedValueOnce(new Error('blip'));
+    q.add(1, at(0));
+    await expect(q.flush()).rejects.toThrow('blip');
+    expect(store.points.has(1)).toBe(true);
+    expect(q.consecutiveFailures).toBe(0);
+    expect(q.lastProgress).toBeGreaterThan(0);
+  });
+
+  test('an idle tick touches neither Qdrant nor the stamp; the stamp state follows the collection', async () => {
+    const { store, q } = queue();
+    const stampReads = vi.spyOn(store, 'isStamped');
+    await q.flush();
+    expect(stampReads).not.toHaveBeenCalled();
+    store.stamped = false;
+    expect(await q.refreshStamp()).toBe(false);
+    expect(q.unstamped).toBe(true);
+    store.stamped = true;
+    expect(await q.refreshStamp()).toBe(true);
+    expect(q.unstamped).toBe(false);
+  });
+
   test('a model mismatch stops embedding for good; deletes carry on', async () => {
     const { db, store, embedder, q } = queue();
     db.rows.set(1, model(1));

@@ -62,7 +62,8 @@ Run one writer per model: the post-embed re-read covers what was embedded, not d
 payload rewrites racing a second writer. Two writers that both sync a model while it changes can
 leave the older read's payload, including its `nsfwLevel`, until the model's next change or a
 re-run. The live consumer is such a writer, so run one replica of it; a backfill alongside it
-races only within one page's read and payload write.
+races only within one page's read and payload write. The reverse race, a page that read a model as
+ineligible deleting a point the consumer just made, leaves the model missing until its next event.
 
 ## Live sync
 
@@ -76,16 +77,17 @@ for `VECTOR_SYNC_DEBOUNCE_MS`, and runs the same sync as the backfill, committin
 after the writes land.
 
 - It needs `CDC_MODEL_ENABLED=true`, which adds `public.Model` and `public.ModelVersion` to the
-  connector, without their text and JSON columns (a record over the producer's size limit would
+  connector, without their large text and JSON columns (a record over the producer's size limit would
   fail the connector for every table). That changes the Debezium publication, and the metrics
-  watcher recreates the connector when its table list changes, so set it on the watcher with
+  watcher recreates the connector when its table or column list changes, so set it on the watcher with
   infra and the consumer together. Off by default: a deploy without it leaves the connector as
   it was.
 - Start it before the backfill. A new consumer group starts at the latest offset, so changes
   before its first join are only covered by a backfill that runs after it.
 - It embeds only with `VECTOR_SYNC_EMBED_ENABLED`, once the collection has a recorded model (the
   backfill's first write), and while Kafka Connect reports both tables streaming. Otherwise
-  deletes and payload updates still run, and new vectors wait for the backfill.
+  deletes and payload updates still run, and new vectors and re-embeds wait for the model's next
+  event once embedding resumes, or for the backfill.
 - A deleted version's event carries only the version id, so it is skipped. Deleting a model's
   last published version writes nothing to the Model row, so its point keeps that version's text
   until a backfill re-run.

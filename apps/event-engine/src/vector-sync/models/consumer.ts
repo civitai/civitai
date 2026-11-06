@@ -67,7 +67,7 @@ export class ModelSyncQueue {
   private offsets = new Map<string, Offset>();
   private flushing: Promise<void> | null = null;
   lastFlushOk = Date.now();
-  /** An embed workflow returning vectors, or a flush succeeding. */
+  /** Vectors stored, or a flush succeeding. */
   lastProgress = Date.now();
   consecutiveFailures = 0;
   private progressCount = 0;
@@ -76,10 +76,27 @@ export class ModelSyncQueue {
   /** The collection has no recorded model yet, so nothing embeds. */
   unstamped = false;
 
-  constructor(
-    private readonly deps: ModelQueueDeps,
-    private readonly commit: (offsets: Offset[]) => Promise<void>
-  ) {}
+  private readonly deps: ModelQueueDeps;
+
+  constructor(deps: ModelQueueDeps, private readonly commit: (offsets: Offset[]) => Promise<void>) {
+    // Progress is vectors stored, not returned: a flush whose writes keep failing would otherwise
+    // read as slow, stay healthy, and pay to re-embed the same models every tick.
+    const { store } = deps;
+    this.deps = {
+      ...deps,
+      store: {
+        payloadFields: (...a) => store.payloadFields(...a),
+        delete: (...a) => store.delete(...a),
+        setPayloads: (...a) => store.setPayloads(...a),
+        assertModel: (...a) => store.assertModel(...a),
+        isStamped: () => store.isStamped(),
+        upsert: async (...a) => {
+          await store.upsert(...a);
+          this.noteProgress();
+        },
+      },
+    };
+  }
 
   add(id: number | null, offset: Offset) {
     if (id !== null) this.pending.add(id);
@@ -102,10 +119,6 @@ export class ModelSyncQueue {
   }
 
   private async doFlush() {
-    if (!this.pending.size && !this.offsets.size) {
-      this.lastFlushOk = Date.now();
-      return;
-    }
     const progressAtStart = this.progressCount;
     const ids = [...this.pending];
     const offsets = [...this.offsets.values()];
@@ -115,11 +128,7 @@ export class ModelSyncQueue {
       // A new collection's model is recorded by the backfill canary first, so two writers
       // cannot stamp it differently.
       if (ids.length) {
-        const wanted = !!this.deps.embedder && !this.gateBlocked;
-        const embed = wanted && (await this.deps.store.isStamped());
-        if (wanted && !embed && !this.unstamped)
-          logger.warn('model-sync: collection has no recorded model yet; not embedding');
-        if (wanted) this.unstamped = !embed;
+        const embed = !!this.deps.embedder && !this.gateBlocked && (await this.refreshStamp());
         const started = Date.now();
         const stats = await syncModelIds(ids, embed ? this.deps : { ...this.deps, embedder: null });
         logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, 'model-sync: flushed');
@@ -156,6 +165,15 @@ export class ModelSyncQueue {
   noteProgress() {
     this.progressCount++;
     this.lastProgress = Date.now();
+  }
+
+  /** Whether the collection has a recorded model; logs once when it does not. */
+  async refreshStamp() {
+    const stamped = await this.deps.store.isStamped();
+    if (!stamped && !this.unstamped)
+      logger.warn('model-sync: collection has no recorded model yet; not embedding');
+    this.unstamped = !stamped;
+    return stamped;
   }
 
   setGate(reason: string | null) {
@@ -208,10 +226,10 @@ async function main() {
   const queue = new ModelSyncQueue({ pg, store, embedder }, (offsets) =>
     consumer.commitOffsets(offsets)
   );
-  if (embedder) embedder.onProgress = () => queue.noteProgress();
   // A Kafka Connect blip only pauses embedding.
   const checkGate = () =>
-    modelEmbedBlock()
+    Promise.all([modelEmbedBlock(), queue.refreshStamp().catch(() => undefined)])
+      .then(([reason]) => reason)
       .then((reason) => queue.setGate(reason))
       .catch((err) => queue.setGate(`gate check failed: ${(err as Error).message}`));
   if (embedder) await checkGate();
