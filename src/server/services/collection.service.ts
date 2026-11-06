@@ -51,7 +51,7 @@ import type {
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex } from '~/server/search-index';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -4114,10 +4114,6 @@ export const setCollectionItemNsfwLevel = async ({
     },
   });
   if (count === 0) throw throwBadRequestError('This image is blocked and cannot be rated.');
-
-  await imagesSearchIndex.queueUpdate([
-    { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
 };
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';

@@ -1,18 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as SearchIndex from '~/server/search-index';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
-vi.mock('~/server/search-index', async (importOriginal) => ({
-  ...(await importOriginal<typeof SearchIndex>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
-}));
-
 const { setCollectionItemNsfwLevel } = await import('~/server/services/collection.service');
-const { imagesSearchIndex } = await import('~/server/search-index');
 
 const COLLECTION_ID = 10;
 const ITEM_ID = 20;
@@ -61,13 +54,11 @@ describe('setCollectionItemNsfwLevel and blocked images', () => {
       ingestion: ImageIngestionStatus.Scanned,
       blockedFor: null,
     });
-    expect(imagesSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses when the image is Blocked, and queues no index update', async () => {
+  it('refuses when the image is Blocked', async () => {
     arrange(0);
 
     await expect(rate()).rejects.toThrow(/blocked/i);
-    expect(imagesSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
 });

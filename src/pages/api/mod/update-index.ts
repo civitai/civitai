@@ -5,7 +5,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   METRICS_IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
@@ -15,7 +14,6 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { inJobContext } from '~/server/jobs/job';
 import {
   articlesSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
   imagesMetricsSearchIndex,
@@ -31,7 +29,6 @@ import { commaDelimitedEnumArray, commaDelimitedNumberArray } from '~/utils/zod-
 const searchIndexes = {
   [MODELS_SEARCH_INDEX]: modelsSearchIndex,
   [USERS_SEARCH_INDEX]: usersSearchIndex,
-  [IMAGES_SEARCH_INDEX]: imagesSearchIndex,
   [ARTICLES_SEARCH_INDEX]: articlesSearchIndex,
   [METRICS_IMAGES_SEARCH_INDEX]: imagesMetricsSearchIndex,
   [COLLECTIONS_SEARCH_INDEX]: collectionsSearchIndex,
@@ -47,7 +44,6 @@ export const schema = z.object({
   index: z.enum([
     MODELS_SEARCH_INDEX,
     USERS_SEARCH_INDEX,
-    IMAGES_SEARCH_INDEX,
     ARTICLES_SEARCH_INDEX,
     METRICS_IMAGES_SEARCH_INDEX,
     COLLECTIONS_SEARCH_INDEX,

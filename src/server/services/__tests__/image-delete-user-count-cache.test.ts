@@ -41,7 +41,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -55,7 +54,7 @@ import {
 } from '~/server/redis/caches';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const { deleteImageById, deleteImages } = imageService;
@@ -122,7 +121,7 @@ describe('deleteImageById', () => {
 
     await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
 
-    expect(vi.mocked(imagesSearchIndex.queueUpdate)).toHaveBeenCalledWith([
+    expect(vi.mocked(imagesMetricsSearchIndex.queueUpdate)).toHaveBeenCalledWith([
       { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
     ]);
     expect(bustSpy).toHaveBeenCalledWith([OWNER_ID]);
@@ -143,7 +142,7 @@ describe('deleteImageById', () => {
 
     await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
 
-    expect(vi.mocked(imagesSearchIndex.queueUpdate)).toHaveBeenCalledWith([
+    expect(vi.mocked(imagesMetricsSearchIndex.queueUpdate)).toHaveBeenCalledWith([
       { id: IMAGE_ID, action: SearchIndexUpdateQueueAction.Delete },
     ]);
     expect(bustSpy).not.toHaveBeenCalled();
@@ -154,7 +153,7 @@ describe('deleteImageById', () => {
 
     await deleteImageById({ id: IMAGE_ID });
 
-    expect(vi.mocked(imagesSearchIndex.queueUpdate)).not.toHaveBeenCalled();
+    expect(vi.mocked(imagesMetricsSearchIndex.queueUpdate)).not.toHaveBeenCalled();
   });
 });
 

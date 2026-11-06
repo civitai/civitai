@@ -27,7 +27,6 @@ const WEBHOOK_ROUTES = [
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
-  'mark-poi-images-search',
   'mod-rules',
   'mute-user-pending-review',
   'new-order/manage-queue',
