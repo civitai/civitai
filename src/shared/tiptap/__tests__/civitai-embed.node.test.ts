@@ -11,7 +11,7 @@ const items = [
   { type: 'model', id: 12, versionId: 99 },
   { type: 'image', id: 13 },
 ];
-const doc = (attrs: unknown) => ({
+const doc = (attrs: Record<string, unknown>) => ({
   type: 'doc',
   content: [
     { type: 'paragraph', content: [{ type: 'text', text: 'before' }] },
