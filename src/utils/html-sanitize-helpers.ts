@@ -127,14 +127,21 @@ export const CSS_COLOR = [
   /^[a-z]+$/i,
 ];
 
+// Pasted text keeps the source page's colour syntax, so spans also accept the numeric-only
+// space-separated forms (oklch(), lab(), color(srgb …), rgb(0 0 0 / 50%)).
+const SPAN_COLOR = [
+  ...CSS_COLOR,
+  /^(?:rgba?|hsla?|lab|lch|oklab|oklch)\(\s*[-\d.%\s/]+\)$/i,
+  /^color\(\s*(?:srgb|srgb-linear|display-p3)\s+[-\d.%\s/]+\)$/i,
+];
 const CSS_GLOBAL = /^(?:inherit|initial|unset)$/i;
 const CSS_LENGTH = /^(?:\d{1,3}(?:\.\d+)?|\.\d+)(?:px|pt|%)$|^(?:\d{1,2}(?:\.\d+)?|\.\d+)r?em$/i;
 
 // The properties TextStyleKit (the editor's `colors` control) writes on a span; any other span
 // style is dropped.
 export const SPAN_ALLOWED_STYLES = {
-  color: CSS_COLOR,
-  'background-color': CSS_COLOR,
+  color: SPAN_COLOR,
+  'background-color': SPAN_COLOR,
   'font-size': [
     CSS_LENGTH,
     CSS_GLOBAL,
@@ -229,16 +236,19 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   } = args ?? {};
 
   // With parseStyleAttributes off, sanitize-html passes `style` through unfiltered (and throws if
-  // allowedStyles is set), so `style` is dropped from span and no allowedStyles is passed.
+  // allowedStyles is set), so `style` is dropped from every tag and no allowedStyles is passed.
+  // `allowedAttributes: false` (allow everything) is left as the caller's explicit choice.
   const parsesStyles = options.parseStyleAttributes !== false;
   const suppliedAttributes = options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES;
   const allowedAttributes =
-    parsesStyles || !suppliedAttributes || !Array.isArray(suppliedAttributes.span)
+    parsesStyles || !suppliedAttributes
       ? suppliedAttributes
-      : {
-          ...suppliedAttributes,
-          span: suppliedAttributes.span.filter((attr) => attr !== 'style'),
-        };
+      : Object.fromEntries(
+          Object.entries(suppliedAttributes).map(([tag, attrs]) => [
+            tag,
+            attrs.filter((attr) => (typeof attr === 'string' ? attr : attr.name) !== 'style'),
+          ])
+        );
 
   const stripBlurbMarker: Transformer = (tagName, attribs) => {
     const supplied = transformTags?.div;
@@ -286,8 +296,9 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
     ...options,
     allowedAttributes,
     // A caller's entry for a tag replaces the default one for that tag; other tags keep theirs.
+    // The empty `*` entry drops style on any tag that has no entry of its own.
     allowedStyles: parsesStyles
-      ? { span: SPAN_ALLOWED_STYLES, ...options.allowedStyles }
+      ? { '*': {}, span: SPAN_ALLOWED_STYLES, ...options.allowedStyles }
       : undefined,
   });
 }

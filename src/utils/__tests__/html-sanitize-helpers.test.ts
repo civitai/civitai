@@ -39,7 +39,15 @@ describe('sanitizeHtml span styles', () => {
     ['font-size', '16px', '16vw'],
     ['font-size', '1.2rem', 'calc(100vh)'],
     ['line-height', '1.5', '9999px'],
+    ['background-color', 'rgb(1, 2, 3)', 'rgb(1, 2, 3) url(x)'],
+    ['color', 'hsl(0, 50%, 50%)', '#ggg'],
+    ['color', 'oklch(0.7 0.1 200 / 50%)', 'oklch(var(--x))'],
+    ['background-color', 'color(srgb 1 0.5 0)', 'color(srgb url(x))'],
+    ['font-size', 'large', 'large)x'],
+    ['font-size', '2em', '100rem'],
+    ['line-height', 'normal', 'normal)x'],
     ['font-family', `"Segoe UI", Roboto, sans-serif`, 'x(y)'],
+    ['font-family', 'Arial', 'a'.repeat(301)],
   ])('keeps a valid %s and drops an invalid one', (prop, valid, invalid) => {
     expect(sanitizeHtml(span(`${prop}:${valid}`))).toBe(span(`${prop}:${valid}`));
     expect(sanitizeHtml(span(`${prop}:${invalid}`))).toBe('<span>x</span>');
@@ -57,13 +65,29 @@ describe('sanitizeHtml span styles', () => {
     ).toBe(span('color:red'));
   });
 
-  it('drops span styles when style parsing is off', () => {
+  it('drops styles when style parsing is off', () => {
     expect(sanitizeHtml(span('color:red'), { parseStyleAttributes: false })).toBe('<span>x</span>');
+    expect(
+      sanitizeHtml('<p style="color:red">x</p>', {
+        parseStyleAttributes: false,
+        allowedAttributes: { p: [{ name: 'style', multiple: false, values: [] }], '*': ['style'] },
+      })
+    ).toBe('<p>x</p>');
+  });
+
+  it('drops styles on a tag with no style allowlist of its own', () => {
+    expect(
+      sanitizeHtml('<p style="color:red">x</p>', { allowedAttributes: { p: ['style'] } })
+    ).toBe('<p>x</p>');
   });
 });
 
 describe('sanitizeHtml links', () => {
   it('turns a link without href into plain text', () => {
     expect(sanitizeHtml('<a>x</a>')).toBe('<span>x</span>');
+  });
+
+  it('turns a link with an unparseable href into plain text', () => {
+    expect(sanitizeHtml('<a href="not a url">x</a>')).toBe('<span>x</span>');
   });
 });
