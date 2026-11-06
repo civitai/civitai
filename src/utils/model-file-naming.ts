@@ -266,9 +266,8 @@ export function resolveModelFileName({
 }
 
 /**
- * Applied to every name at read time, because names saved before write-time sanitising, and the
- * uploaded names LoRAs keep, were never cleaned. Removes only what can break a header, so an
- * ordinary name comes back byte-identical.
+ * Read-time header safety for every returned name; stored and uploaded names were never cleaned.
+ * Strips control/format characters; replaces quote, backslash and %XX with _.
  */
 function headerSafeName(fileName: string) {
   return fileName
@@ -291,10 +290,8 @@ function fileExtension(fileName: string) {
 }
 
 /**
- * The server's copy of a creator's download name, whatever the client sent: one path segment, no
- * character that ends a header or a quoted string, no `%XX` the delivery path would decode into
- * one, capped in bytes, and always the stored file's extension. Null when nothing is left, which
- * clears the override.
+ * The server's copy of a creator's download name, ending in the stored file's extension when that
+ * extension is plain. Null when nothing is left, which clears the override.
  */
 export function sanitizeOverrideName(value: string | null | undefined, storedName: string) {
   if (value == null) return null;

@@ -214,8 +214,8 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
-  // A re-sent stored name is left as it was: rewriting it would make a name saved before this rule
-  // look changed, and send it back through the blocklist on every save.
+  // Skip a re-sent stored name: sanitising it would make it look changed and rescan it against
+  // the blocklist.
   if (inputData.overrideName != null && inputData.overrideName !== modelFile.overrideName)
     inputData.overrideName = sanitizeOverrideName(
       inputData.overrideName,

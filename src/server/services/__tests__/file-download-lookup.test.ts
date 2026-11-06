@@ -830,9 +830,7 @@ describe('getFileForModelVersion — names against every file on the version', (
     expect(servedName()).toBe(advertisedName(1));
   });
 
-  // Names saved before write-time sanitising, and the uploaded names LoRAs keep, were never
-  // cleaned; the delivery path percent-decodes what it is handed, so `%0D%0A` would become a
-  // line break there. Every branch is cleaned at read time instead.
+  // Stored names reach the delivery path as they are, so they are made header-safe on read.
   it('hands the delivery path a stored override name without an encoded line break', async () => {
     versionFiles = [{ ...file(1, 'Model', 'Public'), overrideName: 'old%0D%0Aname.safetensors' }];
 

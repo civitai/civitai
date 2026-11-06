@@ -27,6 +27,13 @@ describe('attachmentContentDisposition', () => {
     expect(header.match(/filename="/g)).toHaveLength(1);
   });
 
+  it('cannot escape the closing quote with a backslash', () => {
+    // In a quoted-string `\"` is an escaped quote, so a trailing backslash would swallow the close.
+    const header = attachmentContentDisposition('a.safetensors\\');
+    expect(quotedFilename(header)).toBe('a.safetensors_');
+    expect(header).toContain('filename="a.safetensors_"; ');
+  });
+
   it('carries a non-ASCII name in filename* (RFC 5987) and an ASCII fallback in filename', () => {
     const header = attachmentContentDisposition("キュア (v1)'s.safetensors");
     expect(quotedFilename(header)).toBe("___ (v1)'s.safetensors");
