@@ -35,6 +35,9 @@ const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${F
 const BLOCKED_REASON_MODERATED = 'moderated';
 const BLOCKED_REASON_CSAM = 'CSAM';
 
+/** An image a block leaves held: its owner notice and report actioning do not run. */
+const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM})`;
+
 /**
  * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
  * out here for the same reason `BLOCKED_REASON_MODERATED` is: this app does not import from the
@@ -65,10 +68,10 @@ const resetBlockedNsfwLevel = (imageId: number) =>
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
-/** An accept refused because the image is removed with only the review flag left. */
+/** An accept refused because the image is removed with only the review flag left, or `HELD_IMAGE`. */
 export class FlagOnlyRemovedError extends Error {
   constructor(readonly imageId: number) {
-    super(`Image ${imageId} is removed with only its review flag left`);
+    super(`Image ${imageId} is removed, and a review queue cannot put it back`);
   }
 }
 
@@ -123,7 +126,9 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    .$if(!restoreRemoved, (qb) =>
+      qb.where(NOT_FLAG_ONLY_REMAINING).where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    )
     .executeTakeFirst();
   if (!numUpdatedRows) {
     if (restoreRemoved) return;
@@ -190,6 +195,16 @@ export async function isModerationBlocked(imageId: number): Promise<boolean> {
   return !!row;
 }
 
+/** `HELD_IMAGE`, read on the primary, for a path that acts on an image without blocking it. */
+export async function isHeldImage(imageId: number): Promise<boolean> {
+  const row = await dbWrite
+    .selectFrom('Image')
+    .select(HELD_IMAGE.as('held'))
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return !!row?.held;
+}
+
 export async function blockImage({
   imageId,
   userId,
@@ -213,7 +228,11 @@ export async function blockImage({
   source?: string;
   /** The actor may confirm re-removals themselves, or this IS the confirmation. */
   skipAppealCheck?: boolean;
-}): Promise<{ held?: HeldRemoval }> {
+}): Promise<{
+  held?: HeldRemoval;
+  /** `HELD_IMAGE`: the caller leaves its reports open. */
+  skipped?: true;
+}> {
   const img = await dbRead
     .selectFrom('Image')
     .select([
@@ -238,7 +257,7 @@ export async function blockImage({
     if (held.length) return { held: held[0] };
   }
 
-  const { numUpdatedRows } = await dbWrite
+  const blocked = await dbWrite
     .updateTable('Image')
     .set({
       // The moderator-only review flag survives a block: only its own queue, a filed report or an
@@ -264,8 +283,14 @@ export async function blockImage({
     // Already removed with only the review flag left: blocking again would only notify the uploader a
     // second time. Decided here, not off the replica read above.
     .where(NOT_FLAG_ONLY_REMAINING)
+    .returning([
+      HELD_IMAGE.as('held'),
+      sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
+    ])
     .executeTakeFirst();
-  if (!numUpdatedRows) return {};
+  // Nothing matched, so there is no RETURNING to read: the primary decides, straight after. A row
+  // changing in between can only gain or lose one effect, never repeat one.
+  if (!blocked) return (await isHeldImage(imageId)) ? { skipped: true } : {};
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
   await bustProfilePictures({ imageIds: [imageId] });
@@ -281,8 +306,10 @@ export async function blockImage({
     userAgent,
     violationType,
     violationDetails,
+    heldImage: blocked.held,
+    underReview: blocked.underReview,
   });
-  return {};
+  return blocked.held ? { skipped: true } : {};
 }
 
 export type DismissResult = { ok: true } | { ok: false; reason: 'changed' | 'unavailable' };
@@ -427,6 +454,16 @@ async function keepPendingAppealFlag(imageId: number) {
 
 export type AppealDecision = 'Approved' | 'Rejected';
 
+export const APPEAL_RESTORE_REFUSED =
+  'This image is removed, and approving its appeal cannot put it back. The appeal is still pending: reject it, or restore the image explicitly.';
+
+/** An approval refused because the image is `HELD_IMAGE`: the appeal stays Pending. */
+export class AppealRestoreRefusedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} is removed, and approving its appeal cannot put it back`);
+  }
+}
+
 /**
  * Closes the image's pending appeal and returns it, or nothing when another resolution closed it
  * first. Closing and reading must stay one statement, or concurrent resolutions both refund the fee.
@@ -451,6 +488,12 @@ function closePendingAppeal(
       .where('status', '=', 'Pending')
       // Removed-content appeals are decided on /images/removed-appeals, not here.
       .where('entityRemovedAt', 'is', null)
+      // An approval never closes over a `HELD_IMAGE`; the restore below re-checks it.
+      .$if(decision.status === 'Approved', (qb) =>
+        qb.where(
+          sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "id" = ${imageId} AND ${HELD_IMAGE})`
+        )
+      )
       .returning(['id', 'userId', 'buzzTransactionId'])
       .executeTakeFirst()
   );
@@ -561,6 +604,8 @@ export async function resolveImageAppeal({
     ...(internalNotes ? { internalNotes } : {}),
     resolvedAt: new Date(),
   });
+  if (!appeal && approved && (await isHeldImage(imageId)))
+    throw new AppealRestoreRefusedError(imageId);
   if (!appeal) {
     // Another resolution decided it, so this verdict must not reach the image. Only the queue flag is
     // cleared: an image flagged for appeal with no pending appeal would otherwise never leave the queue.
@@ -588,6 +633,7 @@ export async function resolveImageAppeal({
       .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
       .where('id', '=', imageId)
       .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+      .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
       .executeTakeFirst();
     restored = numUpdatedRows > 0n;
     if (restored) {
