@@ -10,7 +10,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 
 /** The classic trainer's view of a run held for review: the expected wait and, once the run has
- *  waited long enough, a way to raise it with support. Same copy and threshold as Training Studio. */
+ *  waited long enough, a way to raise it with support. */
 export function TrainingReviewNotice({
   heldSince,
   runId,
