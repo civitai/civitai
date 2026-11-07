@@ -33,7 +33,7 @@ export const DEFAULT_IMAGES_PER_RUN = 0;
 
 /**
  * Two cursors because the populations move in opposite directions and one cursor cannot serve
- * both: a fresh self-deletion has to be purged within a tick or two, while the 74,828-account
+ * both: a fresh self-deletion has to be purged within a tick or two, while the account
  * backlog takes months. FRESH is an ascending high-water mark over accounts deleted after the
  * mark; BACKLOG is a descending cursor over everything below it. Collapsing them back into a
  * single cursor strands every new deletion behind the whole backlog — in *either* direction,
