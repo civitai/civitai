@@ -20,7 +20,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { ExperimentSurface } from '~/shared/constants/experiments.constants';
 import dayjs from '~/shared/utils/dayjs';
-import { trpc } from '~/utils/trpc';
 
 export const DEFAULT_SPOT = { x: 0.5, y: 0.4 };
 
@@ -282,17 +281,7 @@ function Supply({
   nextAt: Date | null;
   color: string;
 }) {
-  const utils = trpc.useUtils();
-  // Reread when the next hat is due, so the count and the countdown move on together.
-  // Keyed on the time, not the Date: the hook builds a new Date every render.
-  const due = nextAt?.getTime();
-  useEffect(() => {
-    if (!due) return;
-    const wait = Math.max(0, due - Date.now()) + 500;
-    const timer = window.setTimeout(() => void utils.hatTurf.getStock.invalidate(), wait);
-    return () => window.clearTimeout(timer);
-  }, [due, utils]);
-
+  // useHatStock rereads the stock when the next hat is due, so the count and countdown move on.
   return (
     <div className={classes.supply} data-testid="hat-turf-panel-supply">
       <div className={classes.supplyRow}>
