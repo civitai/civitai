@@ -91,8 +91,11 @@ export function StickerPlacementOverlay({
   paced = true,
   step = null,
   takenCorners,
+  hiddenIds,
 }: {
   placements: PlacedSticker[];
+  /** Hidden but kept mounted, so showing one again does not replay the reveal. */
+  hiddenIds?: ReadonlySet<number>;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
   viewerId?: number;
@@ -498,7 +501,14 @@ export function StickerPlacementOverlay({
             <div
               key={placement.id}
               ref={placement.isPending ? measureSticker(placement) : undefined}
-              className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
+              className={clsx(
+                'absolute',
+                interactive && 'pointer-events-auto',
+                revealClassName,
+                // Important: the reveal animation fills `visibility: visible`, which only an
+                // important rule beats.
+                hiddenIds?.has(placement.id) && '!invisible'
+              )}
               style={{
                 left: `${placement.data.x * 100}%`,
                 top: `${placement.data.y * 100}%`,
