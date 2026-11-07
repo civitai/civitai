@@ -16,7 +16,8 @@ import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
-import { profileImageSelect } from '../selectors/image.selector';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 
@@ -397,10 +398,10 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       WHERE toi."imageId" IN (${Prisma.join(imageIds)}) AND NOT toi."disabled"
     `;
 
-    const profilePictures = await db.image.findMany({
-      where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },
-      select: profileImageSelect,
-    });
+    const profilePictures = await getServableProfilePictures(
+      db,
+      bounties.map((b) => b.user.profilePictureId).filter(isDefined)
+    );
 
     logger(`PullData :: Pulled tags & profile pics.`);
 
