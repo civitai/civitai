@@ -3,6 +3,7 @@ import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementService from '~/server/services/placement.service';
+import type * as Blocklist from '~/server/services/blocklist.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
@@ -89,6 +90,9 @@ vi.mock('@civitai/db-queries/placement', () => ({
     }
   ),
   countPlacements: vi.fn(async () => 1),
+  // Imported by the sticker charge path; never reached by these tests.
+  listStickerPlacementRows: vi.fn(),
+  listApprovedPlacementRows: vi.fn(),
 }));
 vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads5>()),
@@ -99,12 +103,37 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
   placementPriceRange: async () => ({ min: 0, max: 400, freeSlotCap: 3, score: 0, tier: 'free' }),
 }));
 
+// The sticker charge path's own collaborators, stubbed at their boundaries: what is under test is
+// which space row the charge reads, so the escrow hold only records the amount it was asked for.
+type HoldEscrow = (args: { amount: number }) => Promise<undefined>;
+type Settle = (args: unknown) => Promise<{ settled: boolean }>;
+const { holdPlacementEscrow, settlePlacement } = vi.hoisted(() => ({
+  holdPlacementEscrow: vi.fn<HoldEscrow>(async () => undefined),
+  settlePlacement: vi.fn<Settle>(async () => ({ settled: true })),
+}));
+vi.mock('~/server/services/placement-escrow.service', () => ({
+  holdPlacementEscrow,
+  settlePlacement,
+  MAX_LEG_ATTEMPTS: 5,
+}));
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  assertCanPlace: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/sticker.service', () => ({
+  spendStickerUsesFor: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Blocklist>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 const {
   resolvePlacementSpaceFor,
   resolvePlacementSpaceForDisplay,
   setPlacementSpace,
   clearPlacementSpace,
 } = await import('~/server/services/placement-space.service');
+const { createStickerPlacement } = await import('~/server/services/sticker-placement.service');
 
 // Pairwise distinct, so an answer names the row it came from.
 const OWNER = 7;
@@ -346,7 +375,7 @@ describe('placement space display read: a space write busts it', () => {
       entityId: IMAGE,
       userId: OWNER,
     });
-    // Behind: the replica still has the image row. Inside the write window the row is the primary's.
+    // The replica still has the image row, but a miss reads the primary, which no longer does.
     const cleared = { mode: 'review', setPrice: 120 };
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject(cleared);
 
@@ -360,7 +389,7 @@ describe('placement space display read: a space write busts it', () => {
 
   // 🔴 The race a plain SET loses: a miss fill reads the row, the row is cleared, and the fill's
   // write lands after the clear. Without the guard that entry is served until it expires.
-  it('does not serve a fill that read the replica before a clear and landed after it', async () => {
+  it('does not serve a fill that read the row before a clear and landed after it', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(T0);
     let release!: () => void;
@@ -445,6 +474,98 @@ describe('placement space display read: a space write busts it', () => {
     const truth = await resolvePlacementSpaceFor(TARGET);
     expect(truth).toMatchObject({ mode: 'off', setPrice: 333 });
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+  });
+
+  // 🔴 The other direction: a drop that fails must not take the mark with it. The stale entry is
+  // still in the cache, and only the mark stops it being served for the whole TTL.
+  it('distrusts the cached entry even when it cannot be dropped', async () => {
+    await resolvePlacementSpaceForDisplay(TARGET); // warm: the cache holds the image row at 90
+
+    const del = redisMock.redis.del;
+    del.mockRejectedValue(new Error('drop failed'));
+
+    await setPlacementSpace({
+      surface: 'sticker',
+      entityType: 'image',
+      entityId: IMAGE,
+      mode: 'off',
+      price: 333,
+      userId: OWNER,
+    });
+    // The failing drop was really attempted, so the case below is the one it names.
+    expect(del.mock.calls.some(([key]) => String(key).includes(':row:'))).toBe(true);
+
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ mode: 'off', setPrice: 333 });
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+  });
+});
+
+/**
+ * The cached rows are for SHOWING a space. Every path that decides on one or charges for one reads
+ * the primary, so a stale entry — a lost invalidation, bounded only by the TTL — can at worst show a
+ * wrong price, never take one.
+ */
+describe('placement space display read: deciding and charging never read it', () => {
+  const PLACER = 88;
+  const COSMETIC = 1234;
+  const SELLER = 3;
+  const PLACEMENT_ID = 4321;
+
+  /** Warm the display cache with the image row at 90 / auto, then move the primary on WITHOUT a bust. */
+  async function staleCache() {
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject({
+      mode: 'auto',
+      setPrice: 90,
+    });
+    primary().spaces = primary().spaces.map((row) =>
+      row.entityType === 'image' ? { ...row, mode: 'review', price: 333 } : row
+    );
+    replicate();
+    // The precondition: the display read really does still serve the stale entry.
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject({
+      mode: 'auto',
+      setPrice: 90,
+    });
+  }
+
+  it('resolvePlacementSpaceFor answers from the primary, not a stale cached row', async () => {
+    await staleCache();
+    expect(await resolvePlacementSpaceFor(TARGET)).toMatchObject({
+      mode: 'review',
+      setPrice: 333,
+      price: 333,
+    });
+  });
+
+  it('a sticker placement is charged and decided at the primary’s price and mode', async () => {
+    await staleCache();
+
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('AS spendable')
+        ? [{ spendable: 5, unlimited: false }]
+        : [
+            { id: COSMETIC, createdById: SELLER, owned: true, flags: 0, imageNsfwLevel: 1 },
+          ]) as never);
+    dbMock.dbWrite.placement.count.mockResolvedValue(0 as never);
+    dbMock.dbWrite.placement.create.mockResolvedValue({ id: PLACEMENT_ID } as never);
+
+    const result = await createStickerPlacement({
+      placerId: PLACER,
+      imageId: IMAGE,
+      data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.1, rotation: 0 },
+      spendType: 'yellow',
+    });
+
+    const created = dbMock.dbWrite.placement.create.mock.calls[0][0] as unknown as {
+      data: { amount: number; ownerId: number };
+    };
+    expect(created.data).toMatchObject({ amount: 333, ownerId: OWNER });
+    expect(holdPlacementEscrow).toHaveBeenCalledTimes(1);
+    expect(holdPlacementEscrow.mock.calls[0][0]).toMatchObject({ amount: 333 });
+    // The primary's mode is review: the cached auto would have approved it on the spot.
+    expect(result).toEqual({ placementId: PLACEMENT_ID, status: 'pending' });
+    expect(settlePlacement).not.toHaveBeenCalled();
   });
 });
 
