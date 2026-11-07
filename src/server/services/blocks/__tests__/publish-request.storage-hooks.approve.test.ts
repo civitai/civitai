@@ -184,7 +184,11 @@ function expectNothingShipped() {
 const hookEntry = { path: HOOK_FILE, sha256: HOOK_SHA, sizeBytes: Buffer.byteLength(HOOK_SRC) };
 
 describe('approveRequest — App Storage permission hooks', () => {
-  it('🔴 refuses a reviewed file list that disagrees with the bundle’s hook file', async () => {
+  // INVARIANT GUARD, not regression coverage: a normal flow cannot produce this request. A bundle
+  // request's file list is computed at submit from the same content-addressed bundle approve
+  // reads, and a push-originated request's list is empty until enrichment fills it from the same
+  // sha. The row is hand-built here to pin that `summary_mismatch` would still refuse one.
+  it('invariant guard: refuses a reviewed file list that disagrees with the bundle’s hook file', async () => {
     await setBundle({ 'block.manifest.json': '{}', [HOOK_FILE]: HOOK_SRC });
     pendingRequest({
       manifest: manifestPinning(HOOK_SHA),
@@ -224,13 +228,13 @@ describe('approveRequest — App Storage permission hooks', () => {
     expectNothingShipped();
   });
 
-  it('🔴 refuses when the submitter has left the hooks cohort since submitting', async () => {
+  it('🔴 refuses a new hook when the submitter has left the hooks cohort since submitting', async () => {
     await setBundle({ 'block.manifest.json': '{}', [HOOK_FILE]: HOOK_SRC });
     pendingRequest({ manifest: manifestPinning(HOOK_SHA), files: [hookEntry] });
     h.isFlipt.mockResolvedValue(false);
     const err = await rejection(approve());
     expect(err?.problems).toEqual([
-      { collection: 'cards', file: HOOK_FILE, reason: 'not_available' },
+      { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
     ]);
     // The SUBMITTER is evaluated, not the approving moderator.
     expect(h.getSessionUserById).toHaveBeenCalledWith(SUBMITTER);
@@ -253,6 +257,53 @@ describe('approveRequest — App Storage permission hooks', () => {
       },
     ]);
     expectNothingShipped();
+  });
+
+  describe('a later version of an approved app', () => {
+    /** An existing app whose approved manifest pins `approvedSha`. */
+    const existingApp = (approvedSha: string) => {
+      dbMock.dbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'ab_hooks',
+        appId: 'appblk-hooks',
+        repoUrl: null,
+        trustTier: 'unverified',
+        app: { allowedScopes: 0, allowedOrigins: [], userId: SUBMITTER },
+      });
+      const approved = { ...manifestPinning(approvedSha), version: '0.9.0' };
+      dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: 'ab_hooks', manifest: approved });
+      dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+        { id: 'pubreq_prev', manifest: approved },
+      ]);
+    };
+
+    it('🔴 does not re-gate a hook pinned exactly as approved: passes with the submitter outside the cohort', async () => {
+      existingApp(HOOK_SHA);
+      await setBundle({ 'block.manifest.json': '{}', [HOOK_FILE]: HOOK_SRC });
+      pendingRequest({ manifest: manifestPinning(HOOK_SHA), files: [hookEntry] });
+      h.isFlipt.mockResolvedValue(false);
+      const err = await rejection(approve());
+      expect(err?.name).not.toBe('StorageHookRefusal');
+      expect(h.isFlipt).not.toHaveBeenCalledWith(
+        'app-blocks-storage-hooks',
+        expect.anything(),
+        expect.anything()
+      );
+      // Pinned all the same: its bytes verified and its source recorded.
+      expect(sourceInserts()).toEqual([[HOOK_SHA]]);
+    });
+
+    it('🔴 cohort-gates a hook whose sha256 changed since the approved version', async () => {
+      existingApp(OTHER_SHA);
+      await setBundle({ 'block.manifest.json': '{}', [HOOK_FILE]: HOOK_SRC });
+      pendingRequest({ manifest: manifestPinning(HOOK_SHA), files: [hookEntry] });
+      h.isFlipt.mockResolvedValue(false);
+      const err = await rejection(approve());
+      expect(err?.problems).toEqual([
+        { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
+      ]);
+      expect(h.getSessionUserById).toHaveBeenCalledWith(SUBMITTER);
+      expectNothingShipped();
+    });
   });
 
   // Positive control for the refusals above: the same request, consistent, passes the hook pin

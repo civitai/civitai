@@ -86,6 +86,12 @@ const HOOK_SRC =
 const sha256 = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 const HOOK_SHA = sha256(HOOK_SRC);
 const WRONG_SHA = 'f'.repeat(64);
+/** A valid pin of SOME earlier file: what an approved version pinned before this one changed it. */
+const APPROVED_OLD_SHA = 'a'.repeat(64);
+const PUSHER = 9177;
+
+const NOT_IN_COHORT_MESSAGE =
+  'storage hooks: storage.collections.cards.hook is new or changed since the approved version, and adding or changing a permission hook is not enabled for this account yet — permission hooks are in a limited rollout; keep the approved hook or remove hook (the collection schema still applies)';
 
 const V1_MANIFEST = {
   blockId: SLUG,
@@ -199,12 +205,14 @@ describe('submitVersion — App Storage permission hooks', () => {
     expectNothingWritten();
   });
 
-  it('🔴 refuses a hook from an author outside the app-blocks-storage-hooks cohort', async () => {
+  it('🔴 refuses a new hook from an author outside the app-blocks-storage-hooks cohort, as not_in_cohort', async () => {
     h.isFlipt.mockResolvedValue(false);
     const err = await rejection(submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
     expect(err?.problems).toEqual([
-      { collection: 'cards', file: HOOK_FILE, reason: 'not_available' },
+      { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
     ]);
+    // Its own message: not the "arrives in a later phase" text of the feature switch.
+    expect(err?.message).toBe(NOT_IN_COHORT_MESSAGE);
     // Evaluated per author: entityId = the submitter's id, with their Flipt context.
     expect(h.isFlipt).toHaveBeenCalledWith(
       'app-blocks-storage-hooks',
@@ -214,14 +222,118 @@ describe('submitVersion — App Storage permission hooks', () => {
     expectNothingWritten();
   });
 
-  it('🔴 refuses a hook when the author does not resolve (fails closed)', async () => {
+  it('🔴 refuses a hook when the author does not resolve (fails closed, not_in_cohort)', async () => {
     h.getSessionUserById.mockResolvedValue(null);
     const err = await rejection(submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
     expect(err?.problems).toEqual([
-      { collection: 'cards', file: HOOK_FILE, reason: 'not_available' },
+      { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
     ]);
     expect(h.isFlipt).not.toHaveBeenCalled();
     expectNothingWritten();
+  });
+
+  it('🔴 refuses a hook when Flipt throws (fails closed, not_in_cohort)', async () => {
+    h.isFlipt.mockRejectedValue(new Error('flipt down'));
+    const err = await rejection(submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
+    expect(err?.problems).toEqual([
+      { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
+    ]);
+    expectNothingWritten();
+  });
+
+  describe('a hook the approved version already pins', () => {
+    /** The app's approved manifest (what the store enforces, and its latest approved request). */
+    const approve = (storage: unknown) => {
+      const manifest = { ...V1_MANIFEST, storage };
+      dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: EXISTING_APP, manifest });
+      dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+        { id: 'pubreq_v1', manifest },
+      ]);
+    };
+
+    it('🔴 passes an unchanged hook with the author outside the cohort, bytes still verified', async () => {
+      approve(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }));
+      h.isFlipt.mockResolvedValue(false);
+      const result = await submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }));
+      expect(result.slug).toBe(SLUG);
+      expect(h.isFlipt).not.toHaveBeenCalledWith(
+        'app-blocks-storage-hooks',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(sourceInserts()).toEqual([[[HOOK_SHA], [HOOK_SRC], [Buffer.byteLength(HOOK_SRC)]]]);
+    });
+
+    it('🔴 still refuses an unchanged pin whose bundled file no longer matches it', async () => {
+      approve(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }));
+      h.isFlipt.mockResolvedValue(false);
+      const shipped = `${HOOK_SRC}// edited\n`;
+      const err = await rejection(
+        submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }), { [HOOK_FILE]: shipped })
+      );
+      expect(err?.problems).toEqual([
+        {
+          collection: 'cards',
+          file: HOOK_FILE,
+          reason: 'sha_mismatch',
+          expected: HOOK_SHA,
+          actual: sha256(shipped),
+        },
+      ]);
+      expectNothingWritten();
+    });
+
+    it('🔴 cohort-gates a changed sha256', async () => {
+      approve(hooked({ file: HOOK_FILE, sha256: APPROVED_OLD_SHA }));
+      h.isFlipt.mockResolvedValue(false);
+      const err = await rejection(submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
+      expect(err?.problems).toEqual([
+        { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
+      ]);
+      expect(h.isFlipt).toHaveBeenCalledWith(
+        'app-blocks-storage-hooks',
+        String(AUTHOR),
+        expect.anything()
+      );
+      expectNothingWritten();
+    });
+
+    it('🔴 cohort-gates a changed file at the same sha256', async () => {
+      approve(hooked({ file: 'hooks/old.js', sha256: HOOK_SHA }));
+      h.isFlipt.mockResolvedValue(false);
+      const err = await rejection(submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
+      expect(err?.problems).toEqual([
+        { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
+      ]);
+      expectNothingWritten();
+    });
+
+    it('🔴 refuses only the new hook when one is unchanged and one is new', async () => {
+      approve(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }));
+      h.isFlipt.mockResolvedValue(false);
+      const err = await rejection(
+        submit({
+          collections: {
+            cards: { visibility: 'private', hook: { file: HOOK_FILE, sha256: HOOK_SHA } },
+            notes: { visibility: 'private', hook: { file: HOOK_FILE, sha256: HOOK_SHA } },
+          },
+        })
+      );
+      expect(err?.problems).toEqual([
+        { collection: 'notes', file: HOOK_FILE, reason: 'not_in_cohort' },
+      ]);
+      expectNothingWritten();
+    });
+
+    it('🔴 the feature switch still refuses an unchanged hook, as not_available', async () => {
+      approve(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }));
+      h.features.hooks = false;
+      const err = await rejection(submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
+      expect(err?.problems).toEqual([
+        { collection: 'cards', file: HOOK_FILE, reason: 'not_available' },
+      ]);
+      expectNothingWritten();
+    });
   });
 
   it('🔴 refuses a sha256 that is not the bundled file’s', async () => {
@@ -346,14 +458,20 @@ describe('submitVersion — App Storage permission hooks', () => {
 
 describe('recordPendingFromPush — App Storage permission hooks', () => {
   const SHA = '0123456789abcdef0123456789abcdef01234567';
-  const push = (storage: unknown) =>
+  const push = (storage: unknown, pusherUserId: number | null = AUTHOR) =>
     recordPendingFromPush({
       slug: SLUG,
       sha: SHA,
       appBlockId: EXISTING_APP,
       manifest: { blockId: SLUG, version: '2.0.0', storage },
       version: '2.0.0',
+      pusherUserId,
     });
+  /** The cohort holds exactly these users. */
+  const cohort = (...ids: number[]) =>
+    h.isFlipt.mockImplementation(async (_flag: string, entityId: string) =>
+      ids.map(String).includes(entityId)
+    );
   const pushFile = (path: string, content: string) => {
     h.tree.set(path, `blob-${path}`);
     h.blobs.set(`blob-${path}`, Buffer.from(content));
@@ -378,16 +496,74 @@ describe('recordPendingFromPush — App Storage permission hooks', () => {
     expect(sourceInserts()).toEqual([]);
   });
 
-  it('🔴 refuses a pushed hook while the owner is outside the cohort', async () => {
+  it('🔴 gates the PUSHER, not the owner: a pusher outside the cohort is refused', async () => {
     pushFile(HOOK_FILE, HOOK_SRC);
-    h.isFlipt.mockResolvedValue(false);
-    const err = await rejection(push(hooked({ file: HOOK_FILE, sha256: HOOK_SHA })));
+    cohort(AUTHOR); // the owner is in, the pusher is not
+    const err = await rejection(push(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }), PUSHER));
     expect(err?.problems).toEqual([
-      { collection: 'cards', file: HOOK_FILE, reason: 'not_available' },
+      { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
     ]);
-    // The OWNER is the author of a push.
-    expect(h.getSessionUserById).toHaveBeenCalledWith(AUTHOR);
+    expect(err?.message).toBe(NOT_IN_COHORT_MESSAGE);
+    expect(h.getSessionUserById).toHaveBeenCalledWith(PUSHER);
+    expect(h.getSessionUserById).not.toHaveBeenCalledWith(AUTHOR);
+    expect(dbMock.dbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 gates the PUSHER, not the owner: a pusher in the cohort passes with the owner outside it', async () => {
+    pushFile(HOOK_FILE, HOOK_SRC);
+    cohort(PUSHER);
+    const res = await push(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }), PUSHER);
+    expect(res.publishRequestId).toMatch(/^pubreq_/);
+    expect(h.isFlipt).toHaveBeenCalledWith(
+      'app-blocks-storage-hooks',
+      String(PUSHER),
+      expect.anything()
+    );
+    expect(sourceInserts()).toEqual([[[HOOK_SHA], [HOOK_SRC], [Buffer.byteLength(HOOK_SRC)]]]);
+  });
+
+  it('🔴 refuses a new pushed hook when the pusher does not resolve to a user (fails closed)', async () => {
+    pushFile(HOOK_FILE, HOOK_SRC);
+    const err = await rejection(push(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }), null));
+    expect(err?.problems).toEqual([
+      { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
+    ]);
+    expect(h.getSessionUserById).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  describe('a pushed hook the approved version already pins', () => {
+    beforeEach(() => {
+      const manifest = { ...V1_MANIFEST, storage: hooked({ file: HOOK_FILE, sha256: HOOK_SHA }) };
+      dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: EXISTING_APP, manifest });
+      dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+        { id: 'pubreq_v1', manifest },
+      ]);
+      pushFile(HOOK_FILE, HOOK_SRC);
+      cohort();
+    });
+
+    it('🔴 passes unchanged with the pusher outside the cohort (or unresolved)', async () => {
+      const res = await push(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }), null);
+      expect(res.publishRequestId).toMatch(/^pubreq_/);
+      expect(h.isFlipt).not.toHaveBeenCalledWith(
+        'app-blocks-storage-hooks',
+        expect.anything(),
+        expect.anything()
+      );
+      expect(sourceInserts()).toEqual([[[HOOK_SHA], [HOOK_SRC], [Buffer.byteLength(HOOK_SRC)]]]);
+    });
+
+    it('🔴 treats the hook as new when the approved manifest cannot be read (fails closed)', async () => {
+      dbMock.dbWrite.appBlock.findFirst.mockRejectedValue(new Error('db down'));
+      const err = await rejection(push(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }), PUSHER));
+      expect(err?.problems).toEqual([
+        { collection: 'cards', file: HOOK_FILE, reason: 'not_in_cohort' },
+      ]);
+      expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+      expect(sourceInserts()).toEqual([]);
+    });
   });
 
   it('🔴 refuses a pushed hook file the commit does not contain', async () => {
