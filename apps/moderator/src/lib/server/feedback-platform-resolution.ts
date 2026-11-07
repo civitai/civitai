@@ -140,7 +140,8 @@ export function platformResolutionContext(
  * back to `new`, which nulls `handledAt`. Only this key then says the row changed. So every
  * triage write in `feedback.service.ts` that sets a status or a resolution stamps it.
  *
- * Changes only the one key, for the same reason as above. Decided by the stored row, never the form:
+ * Touches only the `changedAt` key (see `platformResolutionContext` for why `context` is never
+ * read-modify-written). Decided by the stored row, never the form:
  * any other area is left as it is, even with a `server` key of its own, and so is an `apps-platform`
  * row whose `server` is not an object, because `jsonb_set` through a scalar is an error.
  */

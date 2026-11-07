@@ -221,7 +221,8 @@ describe('listPlatformFeedbackChanges', () => {
       },
     ]);
 
-    // A resolution-only save leaves `handledAt` alone; it surfaces by `resolution.at`.
+    // A resolution-only save leaves `handledAt` alone; it surfaces by `resolution.at` and the
+    // write's `changedAt`. Each time on its own is pinned by the legacy-row test below.
     at(9 * MINUTE);
     expect(
       await triageFeedback({
@@ -328,18 +329,6 @@ describe('listPlatformFeedbackChanges', () => {
     expect((await drain(resume)).items).toMatchObject([
       { id: idOf(regressed.ref), regressionOf: idOf(a.ref), reopenOf: null, status: 'new' },
     ]);
-  });
-
-  it('holds a change back until it is older than the settle window', async () => {
-    const a = await send(alice, 'submit refused', 'submit.server-refused');
-    at(PLATFORM_FEEDBACK_CHANGES_SETTLE_MS - 1_000);
-    expect(await listPlatformFeedbackChanges({})).toEqual({
-      items: [],
-      nextCursor: null,
-      hasMore: false,
-    });
-    at(SETTLED);
-    expect((await listPlatformFeedbackChanges({})).items.map((i) => i.id)).toEqual([idOf(a.ref)]);
   });
 
   it('pages rows that changed in the same millisecond in id order, none twice or skipped', async () => {
@@ -487,7 +476,7 @@ describe('listPlatformFeedbackChanges', () => {
     );
   });
 
-  it('holds a change back for 30 seconds, by the clock', async () => {
+  it('holds a change back until it is 30 seconds old, by the clock', async () => {
     const a = await send(alice, 'submit refused', 'submit.server-refused');
     at(29_000);
     const early = await listPlatformFeedbackChanges({});
@@ -535,5 +524,46 @@ describe('listPlatformFeedbackChanges', () => {
     expect(server.reports).toBe(2);
     expect(server).not.toHaveProperty('reporterIds');
     expect(server).not.toHaveProperty('fingerprint');
+  });
+
+  /**
+   * Rows a moderator triaged before `changedAt` existed carry only `handledAt` or `resolution.at`,
+   * and a row whose `server` lacks `lastSeenAt` carries only `createdAt`. The moderator write now
+   * stamps `changedAt` as well, so only rows shaped like these show that each older time is read.
+   */
+  it('hands out a legacy row by the one time it carries', async () => {
+    const triaged = idOf((await send(alice, 'submit refused', 'submit.server-refused')).ref);
+    const resolved = idOf((await send(bob, 'the docs page is wrong')).ref);
+    const created = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "Feedback" ("area", "userId", "message", "context", "createdAt")
+         VALUES ('apps-platform', $1, 'no times in server', '{"server": {"reports": 1}}'::jsonb, $2)
+         RETURNING "id"`,
+        [alice, new Date(t0 + 2 * MINUTE)]
+      )
+    ).rows[0].id;
+    at(2 * MINUTE + SETTLED);
+    const { resume, items: first } = await drain();
+    expect(first.map((i) => [i.id, i.updatedAt])).toEqual([
+      [triaged, new Date(t0).toISOString()],
+      [resolved, new Date(t0).toISOString()],
+      [created, new Date(t0 + 2 * MINUTE).toISOString()],
+    ]);
+
+    // Written as the moderator app wrote them before it stamped `changedAt`.
+    await pg.query(
+      `UPDATE "Feedback" SET "status" = 'reviewed', "handledById" = $2, "handledAt" = $3 WHERE "id" = $1`,
+      [triaged, moderator, new Date(t0 + 5 * MINUTE)]
+    );
+    await pg.query(
+      `UPDATE "Feedback" SET "context" = jsonb_set("context", '{server,resolution}', $2::jsonb) WHERE "id" = $1`,
+      [resolved, JSON.stringify({ publicNote: 'n', at: new Date(t0 + 7 * MINUTE).toISOString() })]
+    );
+    at(7 * MINUTE + SETTLED);
+    const { items } = await drain(resume);
+    expect(items.map((i) => [i.id, i.updatedAt])).toEqual([
+      [triaged, new Date(t0 + 5 * MINUTE).toISOString()],
+      [resolved, new Date(t0 + 7 * MINUTE).toISOString()],
+    ]);
   });
 });
