@@ -74,7 +74,9 @@ const updateMany =
       .map(([col, v]) => `"${col}" = ${param(v)}`)
       .join(', ');
     const conds = Object.entries(where).map(([col, v]) =>
-      v && typeof v === 'object' && 'in' in v
+      v === null
+        ? `"${col}" IS NULL`
+        : v && typeof v === 'object' && 'in' in v
         ? `"${col === 'id' ? 'id' : col}" = ANY(${param(v.in)})`
         : `"${col}" = ${param(v)}`
     );
@@ -115,7 +117,11 @@ beforeAll(async () => {
       "resolvedBy" int,
       "resolvedAt" timestamp(3),
       "internalNotes" text,
-      "resolvedMessage" text
+      "resolvedMessage" text,
+      "resolvedReason" text,
+      "entityRemovedAt" timestamp(3),
+      category text,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
   `);
 });
@@ -135,7 +141,7 @@ beforeEach(async () => {
     await updateMany('Appeal')({ where, data });
     return (
       await holder.db.query(
-        `SELECT id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId"
+        `SELECT id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId", "createdAt"
          FROM "Appeal" WHERE "entityId" = ANY($1) AND status = $2`,
         [where.entityId.in, data.status]
       )
@@ -151,6 +157,15 @@ beforeEach(async () => {
     if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE/.test(flat.text))
       return 0;
     return (await run(flat)).affectedRows ?? 0;
+  }) as never);
+  // `writeModeratorBlock` returns rows; every other raw read here has its own fake.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    if (!/"blockedFor" = CASE|AND "blockedFor" = \$/.test(flat.text)) return [];
+    return (await run(flat)).rows;
   }) as never);
   await holder.db.exec(`
     TRUNCATE "Image", "Appeal" CASCADE;
@@ -461,6 +476,49 @@ describe('reportCsamImages', () => {
     } as never);
 
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
+  });
+});
+
+describe('approving an image appeal', () => {
+  const approve = () =>
+    resolveEntityAppeal({
+      ids: [APPEALED],
+      entityType: 'Image',
+      status: 'Approved',
+      userId: 2,
+    } as never);
+  const pendingAppeals = async () =>
+    (
+      await holder.db.query(
+        `SELECT id FROM "Appeal" WHERE "entityType" = 'Image' AND "entityId" = $1 AND status = 'Pending'`,
+        [APPEALED]
+      )
+    ).rows.length;
+
+  beforeEach(() => {
+    dbMock.dbWrite.image.update.mockImplementation((async ({ where, data }: any) => {
+      await updateMany('Image')({ where: { id: where.id }, data });
+      return { postId: null, pHash: null };
+    }) as never);
+  });
+
+  it('is refused for an image blocked for CSAM, and leaves the appeal pending', async () => {
+    await holder.db.query(`UPDATE "Image" SET "blockedFor" = $1 WHERE id = $2`, [
+      BlockedReason.CSAM,
+      APPEALED,
+    ]);
+
+    await expect(approve()).rejects.toThrow('cannot put it back');
+
+    expect(await pendingAppeals()).toBe(1);
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Blocked' });
+  });
+
+  it('still restores an image blocked for another reason', async () => {
+    await approve();
+
+    expect(await pendingAppeals()).toBe(0);
+    expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Scanned' });
   });
 });
 

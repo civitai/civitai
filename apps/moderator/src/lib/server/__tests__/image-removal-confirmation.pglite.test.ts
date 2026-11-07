@@ -445,6 +445,19 @@ describe('deciding a held removal', () => {
     expect(setReportStatus.mock.calls.map(([a]) => a.id)).toEqual([7, 8]);
   });
 
+  it('leaves the reports open when the image was removed with its block reason kept meanwhile', async () => {
+    const id = await hold();
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = $1`,
+      [IMAGE]
+    );
+
+    expect(await confirmRemoval({ id, userId: CONFIRMER })).toMatchObject({ ok: true });
+
+    expect((await image()).ingestion).toBe('Blocked');
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
   it('voids the request, leaving the image up, when a later appeal was approved', async () => {
     const id = await hold();
     await approve({ resolvedAt: '2026-10-15 09:00:00' });

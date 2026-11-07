@@ -266,11 +266,28 @@ function presenceTest(sql: string, key: string) {
     doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
 }
 
+/** `writeModeratorBlock`, returning the rows it blocked. */
+function moderatorBlock(values: unknown[]) {
+  const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
+  const blocked: { id: number; held: boolean }[] = [];
+  for (const row of store.images) {
+    if (!ids.includes(row.id)) continue;
+    row.ingestion = 'Blocked';
+    row.nsfwLevel = nsfwLevel;
+    row.blockedFor = row.blockedFor === kept ? kept : reason;
+    fireQueueTrigger(row);
+    blocked.push({ id: row.id, held: row.blockedFor === kept });
+  }
+  return blocked;
+}
+
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
   const sql = Array.isArray(strings)
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
+
+  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values);
 
   if (sql.includes('FROM "CsamReport"')) return [];
 
@@ -361,20 +378,6 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
     for (const entityId of ids)
       store.modActivity.push({ userId, entityType, activity, entityId, createdAt: tick() });
     return ids.length;
-  }
-
-  if (sql.includes('"blockedFor" = CASE')) {
-    const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
-    let n = 0;
-    for (const row of store.images) {
-      if (!ids.includes(row.id)) continue;
-      row.ingestion = 'Blocked';
-      row.nsfwLevel = nsfwLevel;
-      row.blockedFor = row.blockedFor === kept ? kept : reason;
-      fireQueueTrigger(row);
-      n++;
-    }
-    return n;
   }
 
   // The account-deletion marker strip the moderation block sites now issue.
