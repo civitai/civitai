@@ -1524,6 +1524,50 @@ describe('recording who took a file', () => {
     });
   });
 
+  describe('a removed file', () => {
+    async function removedTarget() {
+      const { finalId } = await completedDeal();
+      await q(`UPDATE "ServiceDealFile" SET "removedAt" = now() WHERE id = $1`, [finalId]);
+      const target = await files.resolveServiceDealFileDownload({
+        fileId: finalId,
+        userId: MOD,
+        isModerator: true,
+        canReviewCsam: true,
+      });
+      expect(target).toMatchObject({ removed: true });
+      s3.getGetUrlByKey.mockClear();
+      return target!;
+    }
+
+    it('is signed only after its access is recorded', async () => {
+      const target = await removedTarget();
+      let signedBeforeRecorded = false;
+      tracker.serviceDealFileAccess.mockImplementation(async () => {
+        signedBeforeRecorded = s3.getGetUrlByKey.mock.calls.length > 0;
+        return true;
+      });
+      expect(await take(target)).toMatch(/^https:\/\/get\//);
+      expect(signedBeforeRecorded).toBe(false);
+      expect(tracked()).toEqual([expect.objectContaining({ userId: MOD, role: 'Moderator' })]);
+    });
+
+    it.each([
+      ['fails', () => Promise.reject(new Error('tracker down'))],
+      ['is switched off', () => Promise.resolve(false)],
+    ])('is refused when the access write %s', async (_, write) => {
+      const target = await removedTarget();
+      tracker.serviceDealFileAccess.mockImplementation(write);
+      await expect(take(target)).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      expect(s3.getGetUrlByKey).not.toHaveBeenCalled();
+    });
+  });
+
+  it('still signs a live file when the access write fails', async () => {
+    const { finalId } = await completedDeal();
+    tracker.serviceDealFileAccess.mockRejectedValue(new Error('tracker down'));
+    expect(await take(await download(finalId, BUYER))).toMatch(/^https:\/\/get\//);
+  });
+
   it('tracks a moderator who is the buyer, fetching through the dispute tool, as the buyer', async () => {
     const { finalId } = await completedDeal();
     await take(

@@ -22,6 +22,7 @@ import {
   throwBadRequestError,
   throwConflictError,
   throwNotFoundError,
+  throwServiceUnavailableError,
 } from '~/server/utils/errorHandling';
 import {
   buildScanCopy,
@@ -567,7 +568,7 @@ const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
 
 /**
  * A removed file whose scans finished clean, with an uploader not on a report, has nothing left to
- * keep: it goes as a delete would have. A removed file that failed stays for the moderators.
+ * keep: it goes as a delete would have, once its scan copies are gone. A removed file that failed stays for the moderators.
  */
 export async function purgeRemovedFiles({ limit = 50 } = {}) {
   const purged = await dbWrite.$transaction(async (tx) => {
@@ -576,6 +577,9 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
       WHERE f."removedAt" IS NOT NULL
         AND f."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
         AND NOT ${mustKeep(Prisma.sql`f`)}
+        -- Scan copies of its images go first (deleteEntryScanCopies).
+        AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+          WHERE e."fileId" = f."id" AND e."imageId" IS NOT NULL)
       ORDER BY f."id" LIMIT ${limit}::int
       FOR UPDATE OF f SKIP LOCKED`;
     if (!rows.length) return rows;
@@ -919,6 +923,8 @@ export type ServiceDealFileDownload = {
   key: string;
   fileName: string;
   access: ServiceDealFileAccess;
+  /** A removed file is signed only once its access is recorded. */
+  removed: boolean;
 };
 
 /**
@@ -1017,6 +1023,7 @@ export async function resolveServiceDealFileDownload({
   return {
     bucket: await getBucket(),
     key,
+    removed: !!row.removedAt,
     fileName: row.fileName,
     access: {
       dealId: row.dealId,
@@ -1029,16 +1036,23 @@ export async function resolveServiceDealFileDownload({
 }
 
 /** Not awaited, so recording never slows or fails a download; it still awaits delivery so a lost
- *  row is logged. */
+ *  row is logged. A removed file is the exception: it is not signed unless the access was recorded. */
 export async function getServiceDealFileDownloadUrl(
   target: ServiceDealFileDownload,
   tracker: Pick<Tracker, 'serviceDealFileAccess'>
 ) {
-  const { url } = await getGetUrlByKey(target.key, {
-    bucket: target.bucket,
-    fileName: target.fileName,
-    expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
-  });
+  if (target.removed) {
+    const sent = await Promise.resolve()
+      .then(() => tracker.serviceDealFileAccess(target.access, { awaitDelivery: true }))
+      .catch((error: unknown) => {
+        logAccessFailure(target.access)(error);
+        return null;
+      });
+    if (sent === false) logAccessFailure(target.access)(new Error('Tracker not configured'));
+    if (!sent) throw throwServiceUnavailableError('This file cannot be downloaded right now.');
+    return signDownload(target);
+  }
+  const url = await signDownload(target);
   try {
     tracker
       .serviceDealFileAccess(target.access, { awaitDelivery: true })
@@ -1052,6 +1066,15 @@ export async function getServiceDealFileDownloadUrl(
   }
   return url;
 }
+
+const signDownload = async (target: ServiceDealFileDownload) =>
+  (
+    await getGetUrlByKey(target.key, {
+      bucket: target.bucket,
+      fileName: target.fileName,
+      expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
+    })
+  ).url;
 
 const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
   logToAxiom({

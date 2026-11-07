@@ -1251,6 +1251,33 @@ describe('a removed file that is kept', () => {
     expect(await keptRows(reportedId)).toHaveLength(1);
   });
 
+  it('waits for its scan copies to be deleted before it goes', async () => {
+    const dealId = await accepted();
+    const fileId = await attach(
+      dealId,
+      'dataset.zip',
+      buildZip([{ name: 'a.png', data: IMAGE_A }])
+    );
+    await unpack.unpackFinals();
+    // Removed while its image is still being scanned, so it is kept.
+    await files.deleteServiceDealAttachment({ fileId, userId: BUYER });
+    expect(await keptRows(fileId)).toHaveLength(1);
+    await verdict('Scanned');
+    await verdictLands(fileId, 'Passed');
+    await settle();
+    expect((await fileRow(fileId)).scanStatus).toBe('Passed');
+    const [{ imageId }] = await entries(fileId);
+    expect(imageId).not.toBeNull();
+
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await keptRows(fileId)).toHaveLength(1);
+
+    expect(await unpack.deleteEntryScanCopies()).toBe(1);
+    expect(await files.purgeRemovedFiles()).toBe(1);
+    expect(await fileRow(fileId)).toBeUndefined();
+    expect(await q(`SELECT id FROM "Image" WHERE id = $1`, [imageId])).toEqual([]);
+  });
+
   it('holds nothing when its malware scan is given up after the round was delivered', async () => {
     const dealId = await accepted();
     const removedId = await removedInFlight(dealId);
