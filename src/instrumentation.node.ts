@@ -17,6 +17,7 @@ import {
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
+import { CredentialRedactingSpanProcessor } from '~/server/otel-redact-span-processor';
 import { trace } from '@opentelemetry/api';
 import {
   buildOtelInstrumentations,
@@ -246,7 +247,7 @@ if (!OTEL_ENABLED) {
     const sdk = new NodeSDK({
       resource,
       sampler,
-      spanProcessor: new BatchSpanProcessor(traceExporter),
+      spanProcessor: new CredentialRedactingSpanProcessor(new BatchSpanProcessor(traceExporter)),
       // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
       // the highest-frequency span source (~4 spans/request) and the dominant
       // async_hooks context-propagation cost a CPU pin profile attributed to OTEL

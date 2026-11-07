@@ -8,6 +8,7 @@ import {
   commentDedupeKeyByShape,
   isV1Shaped,
   legacyId,
+  notOnUnpublishedArticle,
   threadTypeLabel,
   threadUrlMap,
   v3AppListingResolved,
@@ -96,6 +97,7 @@ export const mentionNotifications = createNotificationProcessor({
           -- Same slug-resolution guard the reply processors carry: those threads are addressed by
           -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
           AND ${v3AppListingResolved('c')}
+          AND ${notOnUnpublishedArticle('c')}
 
         UNION
 

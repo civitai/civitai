@@ -186,6 +186,7 @@ describe('toolsFor', () => {
       'search_accounts',
       'buzz_flows',
       'placement_flows',
+      'crucible_judging',
       'abuse_findings',
     ])
       expect(offered).not.toContain(lookupOnly);

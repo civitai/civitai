@@ -19,11 +19,18 @@ import { trpc } from '~/utils/trpc';
 
 type ExpiryDays = (typeof articleShareExpiryDays)[number];
 
-export function openArticleShareDraftModal(articleId: number) {
-  dialogStore.trigger({ component: ArticleShareDraftModal, props: { articleId } });
+/** `canCreate: false` is a moderator's view of someone else's draft: list and revoke only. */
+export function openArticleShareDraftModal(articleId: number, { canCreate = true } = {}) {
+  dialogStore.trigger({ component: ArticleShareDraftModal, props: { articleId, canCreate } });
 }
 
-export function ArticleShareDraftModal({ articleId }: { articleId: number }) {
+export function ArticleShareDraftModal({
+  articleId,
+  canCreate = true,
+}: {
+  articleId: number;
+  canCreate?: boolean;
+}) {
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
   const [expiresInDays, setExpiresInDays] = useState<ExpiryDays>(7);
@@ -47,52 +54,57 @@ export function ArticleShareDraftModal({ articleId }: { articleId: number }) {
   });
 
   return (
-    <Modal {...dialog} title="Share draft" size="md">
+    <Modal {...dialog} title={canCreate ? 'Share draft' : 'Draft share links'} size="md">
       <Stack gap="md">
-        <Text size="sm" c="dimmed">
-          Anyone with the link can read this draft, signed in or not, once it passes our content
-          checks, until it expires or you revoke it. They can&apos;t comment, react or edit.
-        </Text>
-        <Stack gap={4}>
-          <Text size="sm" fw={500}>
-            Expires after
-          </Text>
-          <SegmentedControl
-            value={String(expiresInDays)}
-            onChange={(value) => setExpiresInDays(Number(value) as ExpiryDays)}
-            data={articleShareExpiryDays.map((days) => ({
-              value: String(days),
-              label: days === 1 ? '1 day' : `${days} days`,
-            }))}
-          />
-        </Stack>
-        <Button
-          loading={createMutation.isPending}
-          onClick={() => createMutation.mutate({ articleId, expiresInDays })}
-        >
-          Create link
-        </Button>
-        {createdUrl && (
-          <Stack gap={4}>
+        {canCreate && (
+          <>
             <Text size="sm" c="dimmed">
-              Copy it now: the link is shown only once.
+              Anyone with the link can read this draft, signed in or not, once it passes our content
+              checks, until it expires or you revoke it. Signed-in readers can comment; comments
+              stay on the article if you publish it. Nobody can edit it.
             </Text>
-            <Group gap="xs" wrap="nowrap">
-              <TextInput value={createdUrl} readOnly className="flex-1" />
-              <CopyButton value={createdUrl}>
-                {({ copied, copy, Icon, color }) => (
-                  <Button
-                    variant="light"
-                    color={color}
-                    onClick={copy}
-                    leftSection={<Icon size={16} />}
-                  >
-                    {copied ? 'Copied' : 'Copy'}
-                  </Button>
-                )}
-              </CopyButton>
-            </Group>
-          </Stack>
+            <Stack gap={4}>
+              <Text size="sm" fw={500}>
+                Expires after
+              </Text>
+              <SegmentedControl
+                value={String(expiresInDays)}
+                onChange={(value) => setExpiresInDays(Number(value) as ExpiryDays)}
+                data={articleShareExpiryDays.map((days) => ({
+                  value: String(days),
+                  label: days === 1 ? '1 day' : `${days} days`,
+                }))}
+              />
+            </Stack>
+            <Button
+              loading={createMutation.isPending}
+              onClick={() => createMutation.mutate({ articleId, expiresInDays })}
+            >
+              Create link
+            </Button>
+            {createdUrl && (
+              <Stack gap={4}>
+                <Text size="sm" c="dimmed">
+                  Copy it now: the link is shown only once.
+                </Text>
+                <Group gap="xs" wrap="nowrap">
+                  <TextInput value={createdUrl} readOnly className="flex-1" />
+                  <CopyButton value={createdUrl}>
+                    {({ copied, copy, Icon, color }) => (
+                      <Button
+                        variant="light"
+                        color={color}
+                        onClick={copy}
+                        leftSection={<Icon size={16} />}
+                      >
+                        {copied ? 'Copied' : 'Copy'}
+                      </Button>
+                    )}
+                  </CopyButton>
+                </Group>
+              </Stack>
+            )}
+          </>
         )}
         <Stack gap={4}>
           <Text size="sm" fw={500}>
