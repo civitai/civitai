@@ -641,12 +641,18 @@ export const getPagedResourceReviews = async ({
     AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
-  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
-    SELECT COUNT(rr.id)::int as count
-    FROM "ResourceReview" rr
-    WHERE ${Prisma.join(AND, ' AND ')}
-  `;
-  const itemsRaw = await dbRead.$queryRaw<ResourceReviewRow[]>`
+  // writtenOnly's regex would run on every review of the version in an exact COUNT, so that
+  // path pages by hasMore (one extra row) instead.
+  const count = writtenOnly
+    ? undefined
+    : (
+        await dbRead.$queryRaw<{ count: number }[]>`
+          SELECT COUNT(rr.id)::int as count
+          FROM "ResourceReview" rr
+          WHERE ${Prisma.join(AND, ' AND ')}
+        `
+      )[0].count;
+  const rows = await dbRead.$queryRaw<ResourceReviewRow[]>`
     SELECT
       rr.id,
       rr."modelVersionId",
@@ -673,9 +679,11 @@ export const getPagedResourceReviews = async ({
     FROM "ResourceReview" rr
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC
-    LIMIT ${limit}
+    LIMIT ${writtenOnly ? limit + 1 : limit}
     OFFSET ${skip}
   `;
+  const hasMore = writtenOnly ? rows.length > limit : undefined;
+  const itemsRaw = rows.slice(0, limit);
 
   const userIds = itemsRaw.map((item) => item.userId);
   const users = await getBasicDataForUsers(userIds);
@@ -703,7 +711,7 @@ export const getPagedResourceReviews = async ({
     })
     .sort((a, b) => b.quality - a.quality);
 
-  return getPagingData({ items, count }, limit, page);
+  return getPagingData({ items, count, hasMore }, limit, page);
 };
 
 export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
