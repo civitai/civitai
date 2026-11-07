@@ -7,6 +7,7 @@ const CLEAN_USER = 1;
 const BLOCKED_USER = 2;
 const FLAGGED_USER = 3;
 const PENDING_USER = 4;
+const OTHER_REVIEW_USER = 5;
 
 let pg: PGlite;
 
@@ -40,9 +41,10 @@ beforeAll(async () => {
       (10, 'clean', 'Scanned', NULL),
       (20, 'blocked', 'Blocked', NULL),
       (30, 'flagged', 'Scanned', 'csam'),
-      (40, 'pending', 'Pending', NULL);
+      (40, 'pending', 'Pending', NULL),
+      (50, 'other-review', 'Scanned', 'other-review');
     INSERT INTO "User" (id, "profilePictureId") VALUES
-      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40);
+      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40), (${OTHER_REVIEW_USER}, 50);
   `);
 });
 afterAll(() => pg.close());
@@ -54,10 +56,12 @@ describe('profilePictures cache', () => {
       BLOCKED_USER,
       FLAGGED_USER,
       PENDING_USER,
+      OTHER_REVIEW_USER,
     ]);
 
     expect(result[CLEAN_USER]).toMatchObject({ id: 10, url: 'clean' });
     expect(result[PENDING_USER]).toMatchObject({ id: 40, url: 'pending' });
+    expect(result[OTHER_REVIEW_USER]).toMatchObject({ id: 50, url: 'other-review' });
     expect(result).not.toHaveProperty(String(BLOCKED_USER));
     expect(result).not.toHaveProperty(String(FLAGGED_USER));
   });
