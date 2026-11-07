@@ -11,7 +11,13 @@ vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
 
-const { getNavBanners } = await import('~/server/services/nav-banner.service');
+// The real join check reads the event's team cosmetic; tests below set what it returns.
+const cosmetic = vi.hoisted(() => ({ getEventCosmetic: vi.fn(async () => ({ obtained: false })) }));
+vi.mock('~/server/services/event.service', () => cosmetic);
+
+const { getNavBanners, JOINED_READ_DEADLINE_MS } = await import(
+  '~/server/services/nav-banner.service'
+);
 const { logToAxiom } = await import('~/server/logging/client');
 
 const TESTER = { id: 10 };
@@ -327,13 +333,25 @@ describe('the cta for a viewer already on a team', () => {
     ).toBe('Join a team');
   });
 
-  it('the birthday strip carries a joined cta', async () => {
+  it('a read slower than the deadline keeps the strip, with the join cta', async () => {
+    const slow = () =>
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => resolve(true), JOINED_READ_DEADLINE_MS * 3)
+      );
+    expect(await cta(TESTER, slow)).toBe('Join a team');
+  });
+
+  // The default check: the home block's test of joining, the event's team cosmetic obtained.
+  it("the birthday strip reads the viewer's team cosmetic for its joined cta", async () => {
     testerFlag.reset({ public: true });
-    const [banner] = await getNavBanners({
-      viewer: TESTER,
-      now: DURING,
-      hasJoined: async () => true,
-    });
+    cosmetic.getEventCosmetic.mockResolvedValueOnce({ obtained: true });
+    const [banner] = await getNavBanners({ viewer: MOD, now: DURING });
     expect(banner.cta).toBe('See the standings');
+    expect(cosmetic.getEventCosmetic).toHaveBeenCalledWith({
+      event: 'birthday2026',
+      user: { id: MOD.id, isModerator: true },
+    });
+    cosmetic.getEventCosmetic.mockResolvedValueOnce({ obtained: false });
+    expect((await getNavBanners({ viewer: MOD, now: DURING }))[0].cta).toBe('Join a team');
   });
 });

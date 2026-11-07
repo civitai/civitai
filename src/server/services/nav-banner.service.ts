@@ -4,6 +4,7 @@ import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
 import { logToAxiom } from '~/server/logging/client';
 import { getEventCosmetic } from '~/server/services/event.service';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import type { EventPromo, NavBanner } from '~/shared/constants/nav-banner.constants';
 
 type BannerEvent = GatedEvent & {
@@ -63,20 +64,23 @@ export async function getNavBanners({
   return entries.filter((x): x is NavBanner => !!x).sort((a, b) => b.priority - a.priority);
 }
 
-// The home block's own test of joining: the event's team cosmetic is obtained. Cached per user and
-// cleared on join (event.service.ts), so this costs one Redis read per signed-in bootstrap.
+// The home block's own test of joining: the event's team cosmetic is obtained. Cached per user for
+// an hour and cleared on join (event.service.ts); a miss reads the database.
 async function viewerHasJoined(event: string, user: { id: number; isModerator?: boolean }) {
   return !!(await getEventCosmetic({ event, user })).obtained;
 }
 
-// A failed read keeps the default cta rather than dropping the strip.
+// A failed or slow read keeps the default cta rather than dropping the strip: this runs in the
+// settings bootstrap, whose deadline would drop the whole strip from the first paint.
+export const JOINED_READ_DEADLINE_MS = 300;
+
 async function joinedOrNot(
   hasJoined: typeof viewerHasJoined,
   event: BannerEvent,
   user: { id: number; isModerator?: boolean }
 ) {
   try {
-    return await hasJoined(event.name, user);
+    return await withTimeoutFallback(hasJoined(event.name, user), JOINED_READ_DEADLINE_MS, false);
   } catch (e) {
     logToAxiom({
       type: 'error',
