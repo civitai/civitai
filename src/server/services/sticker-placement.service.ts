@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
-import { listApprovedPlacementRows, listStickerPlacementRows } from '@civitai/db-queries/placement';
+import {
+  listApprovedPlacementRows,
+  listPlacementTrackRows,
+  listStickerPlacementRows,
+} from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { logToAxiom } from '~/server/logging/client';
@@ -895,6 +899,28 @@ export async function getStickerPlacements({
     : await keptOffPlacementIds(keptOffInputs(parsed));
 
   return toStickerPlacementViews(parsed, keptOff, viewerId);
+}
+
+/** For the detail view of one video; the listing never carries tracks. */
+export async function getStickerPlacementTracks({
+  imageId,
+  isModerator = false,
+}: {
+  imageId: number;
+  isModerator?: boolean;
+}) {
+  const rows = (await listPlacementTrackRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: imageId,
+  })) as { id: number; targetId: number; data: Prisma.JsonValue; track: unknown }[];
+  // Same withholding as the listing: only a moderator gets kept-off placements.
+  const keptOff = isModerator
+    ? new Set<number>()
+    : await keptOffPlacementIds(keptOffInputs(parseRows(rows)));
+  return rows
+    .filter(({ id }) => !keptOff.has(id))
+    .map(({ id, track }) => ({ id, track: track as StickerTrack }));
 }
 
 /** Approved placements per image, for the reaction-bar count. */

@@ -113,6 +113,20 @@ export function badgeFigure(
   };
 }
 
+/**
+ * How far the badge's disc fills: the image's points against the most it can earn per action (the
+ * players the event credits now). Full on a hatted image, whose 1 point is not counted against the
+ * cap, and while the cap is unknown.
+ */
+export function badgeFill(
+  figure: Pick<BadgeFigure, 'points'>,
+  hatted: boolean,
+  creditedPlayers: number | null | undefined
+) {
+  if (hatted || !creditedPlayers || creditedPlayers <= 0) return 1;
+  return Math.min(1, Math.max(0, figure.points / creditedPlayers));
+}
+
 /** "+3", "\u22123", "0". */
 export const formatMargin = (margin: number) =>
   margin > 0 ? `+${margin}` : margin < 0 ? `\u2212${-margin}` : '0';

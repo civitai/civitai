@@ -1,5 +1,6 @@
 /**
- * A sticker that moves over a video: its pose over time.
+ * A sticker's pose over time on a video. It either moves (a recorded path) or holds one pose
+ * and shows only for a window (a moment sticker, built by `momentStickerTrack`).
  *
  * `Placement.data` keeps the position, scale and rotation at time zero, so every
  * reader that ignores the track still draws the sticker where it starts. `data`
@@ -50,7 +51,7 @@ export type StickerTrackPose = {
   show: boolean;
 };
 
-/** One capture, as the recorder takes it. `show` defaults to visible. */
+/** One capture of a pose. `show` defaults to visible. */
 export type StickerTrackSample = Omit<StickerTrackPose, 'show'> & { show?: boolean };
 
 export const STICKER_TRACK_VERSION = 1;
@@ -125,6 +126,24 @@ export function encodeStickerTrack(
   };
 }
 
+/** How long a moment sticker shows, in the choices the placer gets. */
+export const STICKER_MOMENT_DURATIONS_MS = [500, 1000, 1500, 2000, 3000] as const;
+export const STICKER_MOMENT_DEFAULT_DURATION_MS = 1000;
+
+/** One pose, shown for `durationMs` from `startMs` and hidden the rest of the video. */
+export function momentStickerTrack(
+  pose: Omit<StickerTrackPose, 'show'>,
+  startMs: number,
+  durationMs: number
+): StickerTrack {
+  const startTick = Math.round(startMs / STICKER_TRACK_DEFAULT_MS);
+  const endTick = startTick + Math.max(1, Math.round(durationMs / STICKER_TRACK_DEFAULT_MS));
+  const samples: StickerTrackSample[] = [];
+  for (let tick = 0; tick <= endTick; tick++)
+    samples.push({ ...pose, show: tick >= startTick && tick < endTick });
+  return encodeStickerTrack(samples);
+}
+
 /** Index of the last pair at or before `tick`; -1 when `tick` is before the first. */
 function pairAtOrBefore(pairs: StickerTrackPair[], tick: number) {
   let low = 0;
@@ -179,7 +198,7 @@ const BOUNDS: Record<ContinuousChannel, [number, number]> = {
 
 /**
  * Why a track is unusable, or null. Refused rather than repaired: a track
- * arrives from the recorder, so a malformed one is a bug or a crafted request,
+ * arrives from the client's encoder, so a malformed one is a bug or a crafted request,
  * and silently fixing it would store a motion the placer never made.
  *
  * Assumes the shape (numbers in pairs) is already checked, as the zod schema does.

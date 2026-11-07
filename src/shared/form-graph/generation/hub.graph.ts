@@ -5,7 +5,12 @@ import {
   getOutputTypeForWorkflow,
   workflowConfigByKey,
 } from '~/shared/generation/config/workflows';
-import { mergeGateStates, rulesToStates } from '~/shared/generation/gates';
+import {
+  WORKFLOW_UNAVAILABLE,
+  gateRefusalText,
+  mergeGateStates,
+  rulesToStates,
+} from '~/shared/generation/gates';
 import { selectorCoherence } from './selector-coherence';
 import type { GenerationCtx } from '~/shared/generation/context';
 
@@ -104,14 +109,21 @@ const workflowKinds = branch('workflowKind', [
 ] as const);
 
 const WORKFLOW_INPUT = z.string().optional().transform(migrateWorkflowKey);
-const workflowOutput = defFamily((gatedKey: string) => {
-  const gated = new Set(gatedKey ? gatedKey.split('|') : []);
-  return gated.size
-    ? z.string().refine((v) => !gated.has(v), {
-        message: 'Workflow is currently unavailable',
-      })
-    : z.string();
-});
+// Hidden workflows refuse with the bare text; shown-but-gated ones carry the
+// rule's copy so an API caller can say WHY (`gateRefusalText`).
+const workflowOutput = defFamily(
+  (hidden: readonly string[], states: readonly { key: string; message?: string }[]) => {
+    const refusals = new Map<string, string>(hidden.map((key) => [key, WORKFLOW_UNAVAILABLE]));
+    for (const { key, message } of states)
+      refusals.set(key, gateRefusalText(WORKFLOW_UNAVAILABLE, message));
+    return refusals.size
+      ? z.string().superRefine((v, ctx) => {
+          const refusal = refusals.get(v);
+          if (refusal) ctx.addIssue({ code: 'custom', message: refusal });
+        })
+      : z.string();
+  }
+);
 const priorityInput = defFamily((isMember: boolean) =>
   z
     .enum(priorityOptions)
@@ -128,10 +140,9 @@ export const generationHub = defineGraph<GenerationCtx>()
       undefined,
       rulesToStates(_ext.gateRules ?? []).workflows
     );
-    const gated = [...new Set([...hidden, ...states.map((s) => s.key)])].sort();
     return {
       input: WORKFLOW_INPUT,
-      output: workflowOutput(gated.join('|')),
+      output: workflowOutput(hidden, states),
       default: 'txt2img',
       // hiddenWorkflows leave the picker; workflowStates are badged
       meta: { hiddenWorkflows: hidden, workflowStates: states },

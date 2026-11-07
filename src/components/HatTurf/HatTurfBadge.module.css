@@ -67,6 +67,15 @@
   transition: fill 0.3s ease;
 }
 
+/* The unfilled part of the disc, toward the scoring cap. */
+.discTrack {
+  opacity: 0.35;
+}
+
+.level {
+  transition: y 0.4s ease, height 0.4s ease;
+}
+
 .neutral {
   fill: rgba(255, 255, 255, 0.2);
 }

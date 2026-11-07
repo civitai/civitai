@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Popover } from '~/components/MantineOverlays';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -11,6 +11,7 @@ import {
   RING_LENGTH,
   RING_RADIUS,
   badgeFigure,
+  badgeFill,
   formatMargin,
   badgeLeader,
   ringArcs,
@@ -61,6 +62,8 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
     enabled: !!feed?.arm,
   });
   const [open, setOpen] = useState(false);
+  // An id safe in url(#...) whatever characters React's ids use.
+  const clipId = `turf-fill${useId().replace(/[^\w-]/g, '')}`;
   const leader = summary ? badgeLeader(summary) : null;
   // A hatted image scores for its hat's team alone; a different leader's count is shown as blocked.
   const guard = summary?.hatted ? summary.hattedTeam : null;
@@ -84,6 +87,10 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
   const discTeam = figure?.pointsTeam ?? null;
   const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
+  // Fills from the bottom toward the scoring cap, over a dimmed disc of the same colour.
+  const fill =
+    figure && discColor ? badgeFill(figure, !!summary.hatted, stock?.creditedPlayers) : 1;
+  const fillTop = 24 + DISC_RADIUS - 2 * DISC_RADIUS * fill;
 
   const label = `${figure?.pointsTeam ? 'Hat Turf:' : standingsLabel(summary, feed.team)}${
     figure ? figureLabel(figure) : ''
@@ -132,13 +139,35 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
             ))}
           </g>
           <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
+          {fill < 1 && (
+            <>
+              <clipPath id={clipId}>
+                <rect
+                  className={classes.level}
+                  x="0"
+                  y={fillTop}
+                  width="48"
+                  height={48 - fillTop}
+                />
+              </clipPath>
+              <circle
+                className={clsx(classes.discFill, classes.discTrack)}
+                cx="24"
+                cy="24"
+                r={DISC_RADIUS}
+                fill={discColor}
+              />
+            </>
+          )}
           <circle
             className={clsx(classes.discFill, !discColor && classes.neutral)}
             cx="24"
             cy="24"
             r={DISC_RADIUS}
             fill={discColor}
+            clipPath={fill < 1 ? `url(#${clipId})` : undefined}
             data-testid="hat-turf-disc-fill"
+            data-fill={fill}
           />
         </svg>
         <span className={classes.disc} data-testid="hat-turf-disc">

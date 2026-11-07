@@ -103,6 +103,10 @@ export const getStickerPlacementsSchema = z.object({
   imageIds: z.array(z.number().int().positive()).min(1).max(100),
 });
 
+export const getStickerTracksSchema = z.object({
+  imageId: z.number().int().positive(),
+});
+
 export const actOnStickerPlacementSchema = z.object({
   placementId: z.number().int().positive(),
   action: z.enum(['approve', 'decline', 'remove']),
