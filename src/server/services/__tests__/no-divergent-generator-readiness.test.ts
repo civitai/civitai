@@ -28,9 +28,9 @@ const ALLOWLIST = [
   'src/server/selectors/model.selector.ts',
   'src/server/selectors/modelVersion.selector.ts',
   'src/server/search-index/filterable-attributes.ts',
-  // Both index writers, which compose the field through the helper — pinned by the last test.
-  'src/server/search-index/models.search-index.ts',
-  'src/pages/api/mod/search/models-update.ts',
+  // The version mapping both index writers use, which composes the field through the helper —
+  // pinned by the last test.
+  'src/server/search-index/models-index-versions.ts',
   // Restates the rule in SQL, where the helper cannot be called — pinned by 'the SQL restatement
   // keeps both halves of the readiness rule' below.
   'src/server/services/generation/coverage-source.ts',
@@ -145,10 +145,7 @@ describe('generator readiness is derived in one place', () => {
   });
 
   it('the allowlisted index writers compose the field through the helper', () => {
-    for (const rel of [
-      'src/server/search-index/models.search-index.ts',
-      'src/pages/api/mod/search/models-update.ts',
-    ]) {
+    for (const rel of ['src/server/search-index/models-index-versions.ts']) {
       const text = sourceFiles.find((f) => f.rel === rel)?.text ?? '';
       expect(text, `${rel} must write the indexed field through isGeneratorReady`).toMatch(
         /generatorLoaded:\s*isGeneratorReady\(/

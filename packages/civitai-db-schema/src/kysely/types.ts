@@ -138,6 +138,7 @@ import type {
   OutboxEntity,
   StorylineStatus,
   StorylineWhoCanContinue,
+  StorylineFollowScope,
   ServiceOfferingStatus,
   ServicePreviewKind,
   ServiceBuzzType,
@@ -155,6 +156,16 @@ import type {
   PrizeSourceType,
 } from './enums';
 
+export type AccessToken = {
+  id: Generated<number>;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+  revokedAt: Timestamp | null;
+};
 export type Account = {
   id: Generated<number>;
   userId: number;
@@ -427,6 +438,11 @@ export type AppCollaborator = {
   last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   responded_at: Timestamp | null;
+};
+export type AppDeveloperTermsAcceptance = {
+  user_id: number;
+  version: string;
+  accepted_at: Generated<Timestamp>;
 };
 export type AppDevForgejoIdentity = {
   user_id: number;
@@ -801,6 +817,7 @@ export type Article = {
   content: string;
   cover: string | null;
   coverId: number | null;
+  bannerId: number | null;
   publishedAt: Timestamp | null;
   scheduledAt: Timestamp | null;
   contentScannedAt: Timestamp | null;
@@ -951,6 +968,13 @@ export type ArticleReaction = {
 export type ArticleReport = {
   articleId: number;
   reportId: number;
+};
+export type ArticleShareCheck = {
+  articleId: number;
+  generation: Generated<number>;
+  workflowId: string | null;
+  textHash: string | null;
+  updatedAt: Timestamp;
 };
 export type ArticleStat = {
   articleId: number;
@@ -3382,22 +3406,6 @@ export type GenerationSizePreset = {
   height: number;
   createdAt: Generated<Timestamp>;
 };
-export type HeldAnswer = {
-  /**
-   * The original Answer id.
-   */
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-  heldAt: Generated<Timestamp>;
-  /**
-   * The holds on the author when it was copied.
-   */
-  holdReasons: string[];
-};
 export type HeldResourceReview = {
   /**
    * The original ResourceReview id.
@@ -4489,6 +4497,11 @@ export type Placement = {
   ownerId: number;
   placerId: number;
   data: Generated<unknown>;
+  /**
+   * A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+   * `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+   */
+  track: unknown | null;
   status: string;
   /**
    * 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
@@ -5698,6 +5711,12 @@ export type StorylineEarlyAccessSignup = {
   storylineId: number | null;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineFollow = {
+  storylineId: number;
+  userId: number;
+  scope: Generated<StorylineFollowScope>;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylinePendingChapter = {
   postId: number;
   storylineId: number;
@@ -6202,6 +6221,7 @@ export type UserProfile = {
   privacySettings: Generated<unknown>;
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
+  showcaseSections: Generated<unknown>;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;
@@ -6441,6 +6461,7 @@ export type WorkerDevice = {
 };
 export type DB = {
   _LicenseToModel: LicenseToModel;
+  AccessToken: AccessToken;
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
@@ -6459,6 +6480,7 @@ export type DB = {
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_developer_terms_acceptances: AppDeveloperTermsAcceptance;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;
@@ -6486,6 +6508,7 @@ export type DB = {
   ArticleRatingReview: ArticleRatingReview;
   ArticleReaction: ArticleReaction;
   ArticleReport: ArticleReport;
+  ArticleShareCheck: ArticleShareCheck;
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
@@ -6644,7 +6667,6 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
-  HeldAnswer: HeldAnswer;
   HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
@@ -6810,6 +6832,7 @@ export type DB = {
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
+  StorylineFollow: StorylineFollow;
   StorylinePendingChapter: StorylinePendingChapter;
   StorylineReport: StorylineReport;
   Tag: Tag;

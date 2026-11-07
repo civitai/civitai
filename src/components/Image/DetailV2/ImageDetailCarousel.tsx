@@ -67,7 +67,7 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
 // VIDEO is here so arrow keys still seek a focused player with native controls
 const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
 
-function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
+export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
     return false;
   const target = event.target;
@@ -75,6 +75,8 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
   if (target.isContentEditable) return false;
   if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
   if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // An element that uses the arrows itself (a sticker being nudged into place).
+  if (target.closest('[data-arrow-keys]')) return false;
   // A dialog stacked on top of the detail view (report, add-to-collection) owns
   // its own arrow handling. The detail view's own modal shell is also a dialog,
   // but it contains the carousel, which is what tells the two apart.

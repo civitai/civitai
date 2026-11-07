@@ -80,7 +80,12 @@ function rawClient(pg: PGlite): ForkRawClient {
   return { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
 }
 
-const sfwPublic = { scope: 'full', floor: 'public', redCapable: false } as const;
+const sfwPublic = {
+  scope: 'full',
+  floor: 'public',
+  redCapable: false,
+  viewerBrowsingLevel: 1,
+} as const;
 
 async function seed(pg: PGlite) {
   await pg.exec(`
@@ -199,6 +204,8 @@ describe('with the migration applied', () => {
       scope: 'full',
       floor: 'public',
       redCapable: true,
+      // A viewer with X enabled (PG|PG13|R|X): an X fork also needs X in the browsing level.
+      viewerBrowsingLevel: 15,
     });
     expect(red.totalCount).toBe(4);
     expect(red.items.map((f) => f.id)).toContain('apl_fork_x4_0404');
@@ -212,6 +219,7 @@ describe('with the migration applied', () => {
         scope: 'public-external',
         floor: 'public',
         redCapable: false,
+        viewerBrowsingLevel: 1,
       })
     ).resolves.toEqual({ totalCount: 0, items: [], nextCursor: null });
   });
@@ -227,5 +235,51 @@ describe('with the migration applied', () => {
       items: [{ id: 'apl_fork_x8_0408', slug: 'fork-of-other', name: 'Other Parent Fork' }],
       nextCursor: null,
     });
+  });
+});
+
+/**
+ * 🔴 The public fork list follows the viewer's browsing level for R/X forks, with the same rule as
+ * the store grid: on a red-capable host an R fork is listed only to a viewer with R, an X fork
+ * only to one with X, and a missing level is PG. G/PG/PG-13 forks are listed as before.
+ */
+describe("the fork list — R/X forks follow the viewer's browsing level", () => {
+  const pg = new PGlite();
+  const db = rawClient(pg);
+  const R_FORK = 'apl_fork_x4_0404';
+  const red = { scope: 'full', floor: 'public', redCapable: true } as const;
+
+  beforeAll(async () => {
+    await pg.exec(BASE_SCHEMA);
+    await pg.exec(readFileSync(MIGRATION, 'utf8'));
+    await seed(pg);
+    await linkForks(pg);
+    // The mature fork, rated R here (it is X in the shared seed).
+    await pg.exec(`UPDATE "app_listings" SET "content_rating" = 'r' WHERE "id" = '${R_FORK}'`);
+  });
+  afterAll(async () => {
+    await pg.close();
+  });
+
+  const forks = (viewerBrowsingLevel: number | null | undefined) =>
+    listListingForks(db, { parentListingId: PARENT, limit: 10, ...red, viewerBrowsingLevel });
+
+  it.each([
+    ['PG only', 1],
+    ['PG + PG-13', 3],
+    ['X but not R', 9],
+    ['signed out (no level)', undefined],
+  ])('🔴 %s: the R fork is neither counted nor listed', async (_label, level) => {
+    const page = await forks(level);
+    expect(page.totalCount).toBe(3);
+    expect(page.items.map((f) => f.id)).not.toContain(R_FORK);
+    // The PG forks are still there: the list did not just go empty.
+    expect(page.items.map((f) => f.id).sort()).toEqual([...VISIBLE].sort());
+  });
+
+  it('an R-enabled viewer gets the R fork too', async () => {
+    const page = await forks(7);
+    expect(page.totalCount).toBe(4);
+    expect(page.items.map((f) => f.id)).toContain(R_FORK);
   });
 });

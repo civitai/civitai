@@ -46,7 +46,10 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
 import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
+import {
+  blockedCustomModels,
+  isClassicTrainerRetired,
+} from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
@@ -81,6 +84,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -532,6 +536,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         reason: error.message ?? 'An unexpected error occurred. Please try again later.',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
 
       if (idx > 0) {
@@ -1606,6 +1611,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               blockedModels.includes(formBaseModel ?? '') ||
               !!unacknowledgedRun ||
               !status.available ||
+              isClassicTrainerRetired() ||
               !allLabeled ||
               awaitInvalidate ||
               confirmOpen ||

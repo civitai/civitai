@@ -36,6 +36,8 @@ type Props<TData> = {
    * the cap on that wide item's total height.
    */
   spanLandscapeMaxHeight?: number;
+  /** More pages are coming, so a wide item waits for the items that could fill beside it. */
+  hasMore?: boolean;
 };
 
 export function MasonryColumnsVirtual<TData>({
@@ -48,6 +50,7 @@ export function MasonryColumnsVirtual<TData>({
   withAds,
   overscan,
   spanLandscapeMaxHeight,
+  hasMore,
 }: Props<TData>) {
   const { columnCount, columnWidth } = useMasonryContext();
 
@@ -60,7 +63,7 @@ export function MasonryColumnsVirtual<TData>({
     maxItemHeight,
     withAds,
     spanLandscapeMaxHeight
-      ? { minRatio: MASONRY_SPAN_MIN_RATIO, maxHeight: spanLandscapeMaxHeight }
+      ? { minRatio: MASONRY_SPAN_MIN_RATIO, maxHeight: spanLandscapeMaxHeight, holdTail: hasMore }
       : undefined
   );
 

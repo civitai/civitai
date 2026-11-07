@@ -3,14 +3,12 @@ import { COMMENT_V3_SURFACES } from './comment-v3';
 
 /**
 ## Metrics driven by commentv2 table:
-- PostMetric.commentCount (create/delete)
-- ImageMetric.commentCount (create/delete)
-- ArticleMetric.commentCount (create/delete)
-- BountyMetric.commentCount (create/delete)
 - UserMetric.commentCount (create/delete) — comments *received* by the owner of the commented-on
-  entity, across every surface CommentsV2 serves, not just the four with their own entity metric.
+  entity, on the threads CommentV3 does not count: model, 3D model review and club post. An
+  orphaned thread has no owner, so it counts nothing.
 
-A surface in COMMENT_V3_SURFACES is counted by comment-v3.ts instead, so it is skipped here.
+A surface in COMMENT_V3_SURFACES is counted by comment-v3.ts instead, entity metrics included, so it
+is skipped here.
 */
 
 interface CommentV2Record {
@@ -30,18 +28,22 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
     //
     // A Thread carries exactly one entity FK, so the owner COALESCE has at most one non-null input
     // and its argument order carries no meaning.
-    const thread = await pg.queryOne<{
-      postId: number | null;
-      imageId: number | null;
-      articleId: number | null;
-      bountyId: number | null;
-      ownerId: number | null;
-    }>(
+    const thread = await pg.queryOne<{ surface: string | null; ownerId: number | null }>(
       `SELECT
-        COALESCE(r."postId", t."postId") AS "postId",
-        COALESCE(r."imageId", t."imageId") AS "imageId",
-        COALESCE(r."articleId", t."articleId") AS "articleId",
-        COALESCE(r."bountyId", t."bountyId") AS "bountyId",
+        CASE
+          WHEN COALESCE(r."postId", t."postId") IS NOT NULL THEN 'post'
+          WHEN COALESCE(r."imageId", t."imageId") IS NOT NULL THEN 'image'
+          WHEN COALESCE(r."articleId", t."articleId") IS NOT NULL THEN 'article'
+          WHEN COALESCE(r."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
+          WHEN COALESCE(r."reviewId", t."reviewId") IS NOT NULL THEN 'review'
+          WHEN COALESCE(r."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
+          WHEN COALESCE(r."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+          WHEN COALESCE(r."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicChapter'
+          WHEN COALESCE(r."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+          WHEN COALESCE(r."appListingId", t."appListingId") IS NOT NULL THEN 'appListing'
+          WHEN COALESCE(r."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'
+          WHEN COALESCE(r."storylineId", t."storylineId") IS NOT NULL THEN 'storyline'
+        END AS "surface",
         COALESCE(
           p."userId", i."userId", a."userId", b."userId",
           rev."userId", be."userId", ch."createdById", cp."userId", clp."createdById",
@@ -67,16 +69,7 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
     );
 
     if (!thread) return;
-    const surface = thread.articleId
-      ? 'article'
-      : thread.imageId
-      ? 'image'
-      : thread.postId
-      ? 'post'
-      : thread.bountyId
-      ? 'bounty'
-      : null;
-    if (surface && COMMENT_V3_SURFACES.includes(surface)) return;
+    if (thread.surface && COMMENT_V3_SURFACES.includes(thread.surface)) return;
 
     // A creator answering their own commenters is not engagement received. Left in, it dominates:
     // 71.4% / 60.9% / 57.6% of the raw total for userIds 1421581 / 2895 / 1279061. Keep this in step
@@ -86,28 +79,6 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
     if (thread.ownerId && thread.ownerId !== record.userId) {
       actions.forMetric('User', thread.ownerId).as(record.userId).add('commentCount', value);
     }
-
-    // Entity metrics stay at the four surfaces with a registered (entityType, metricType) row in
-    // default.entityMetricKind — an unregistered pair silently counts distinct commenters instead.
-    if (thread.postId) {
-      const postMetric = actions.forMetric('Post', thread.postId).as(record.userId);
-      postMetric.add('commentCount', value);
-    }
-
-    if (thread.imageId) {
-      const imageMetric = actions.forMetric('Image', thread.imageId).as(record.userId);
-      imageMetric.add('commentCount', value);
-    }
-
-    if (thread.articleId) {
-      const articleMetric = actions.forMetric('Article', thread.articleId).as(record.userId);
-      articleMetric.add('commentCount', value);
-    }
-
-    if (thread.bountyId) {
-      const bountyMetric = actions.forMetric('Bounty', thread.bountyId).as(record.userId);
-      bountyMetric.add('commentCount', value);
-    }
   },
   debug: (faker) => ({
     sample: () => ({
@@ -115,24 +86,11 @@ export const commentV2Handler = createEventHandler<CommentV2Record>({
       threadId: faker.number.int({ min: 1, max: 5000 }),
     }),
     pg: (sql: string) => {
-      if (sql.includes('Thread')) {
-        const entityType = faker.helpers.arrayElement([
-          'post',
-          'image',
-          'article',
-          'bounty',
-          'review',
-          'model',
-        ]);
-
+      if (sql.includes('Thread'))
         return {
-          postId: entityType === 'post' ? faker.number.int({ min: 1, max: 5000 }) : null,
-          imageId: entityType === 'image' ? faker.number.int({ min: 1, max: 5000 }) : null,
-          articleId: entityType === 'article' ? faker.number.int({ min: 1, max: 5000 }) : null,
-          bountyId: entityType === 'bounty' ? faker.number.int({ min: 1, max: 5000 }) : null,
+          surface: faker.helpers.arrayElement([null, 'image', 'post']),
           ownerId: faker.number.int({ min: 1, max: 1000 }),
         };
-      }
       return null;
     },
   }),

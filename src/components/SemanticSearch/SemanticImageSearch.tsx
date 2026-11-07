@@ -3,10 +3,8 @@ import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import {
-  IMAGES_CARD_FOOTER_HEIGHT,
-  ImagesCardMemoized,
-} from '~/components/Image/Infinite/ImagesCard';
+import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
@@ -177,9 +175,7 @@ export function SemanticImageSearch() {
             <MasonryColumnsVirtual
               data={items}
               imageDimensions={(d) => ({ width: d?.width ?? 450, height: d?.height ?? 450 })}
-              adjustHeight={({ height }) =>
-                Math.max(Math.min(height, 600), 150) + IMAGES_CARD_FOOTER_HEIGHT
-              }
+              adjustHeight={(args) => adjustImagesCardHeight(args)}
               maxItemHeight={600}
               render={ImagesCardMemoized}
               itemId={(d) => d.id}

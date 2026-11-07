@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as Caches from '~/server/redis/caches';
 import type * as TagService from '~/server/services/tag.service';
 import type { SessionUser } from '~/types/session';
@@ -8,6 +9,17 @@ import type { SessionUser } from '~/types/session';
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
   getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
+  getKyselyWithoutLag: vi.fn(async () => (await import('~/server/db/kyselyDb')).kyselyRead),
+}));
+// The post detail is read through Kysely: the post row, then its user.
+const { getPostDetailRow, getUserWithCosmetics } = vi.hoisted(() => ({
+  getPostDetailRow: vi.fn(),
+  getUserWithCosmetics: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getPostDetailRow,
+  getUserWithCosmetics,
 }));
 vi.mock('~/server/services/tag.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TagService>()),
@@ -33,14 +45,24 @@ const givenPost = ({
 }: {
   publishedAt: Date | null;
   modelVersionId: number | null;
-}) =>
-  vi.mocked(dbMock.dbRead.post.findFirst).mockResolvedValue({
+}) => {
+  getPostDetailRow.mockResolvedValue({
     id: 1,
     publishedAt,
     modelVersionId,
-    user: { id: POST_OWNER },
+    publishedModelVersionId: null,
+    userId: POST_OWNER,
     tags: [],
-  } as never);
+  });
+  getUserWithCosmetics.mockResolvedValue({
+    id: POST_OWNER,
+    username: 'owner',
+    deletedAt: null,
+    image: null,
+    profilePictureId: null,
+    cosmetics: [],
+  });
+};
 
 const givenVersionOf = (model: { id: number; userId: number; name?: string } | null) =>
   vi.mocked(dbMock.dbRead.modelVersion.findUnique).mockResolvedValue(model && ({ model } as never));

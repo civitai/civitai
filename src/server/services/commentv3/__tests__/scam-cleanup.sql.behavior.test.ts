@@ -54,22 +54,22 @@ const OTHER = 6;
 
 // Article 1. 41-44 are the scammer's: 41 written to CommentV3 only, 42 written to CommentV2 before
 // the flip (mirrored), 43 already hidden, 44 deleted. 45 is someone else's. 50 is the scammer's
-// image comment, on CommentV2 (mirrored, and not a CommentV3-write surface); 51 an image comment
-// with no CommentV2 row, which only the CommentV2 arm could reach, so it stays.
+// model comment, on CommentV2 (mirrored; model is the one surface not written to CommentV3); 51 a
+// model comment with no CommentV2 row, which only the CommentV2 arm could reach, so it stays.
 beforeEach(async () => {
   await pg.exec(`
     DELETE FROM "CommentV2"; DELETE FROM "CommentV3"; DELETE FROM "Thread"; DELETE FROM "CommentTopic";
-    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1), ('image', 10);
+    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('article', 1), ('model', 1);
     INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "deletedAt") VALUES
       (41, 'article', 1, ${SCAMMER}, 'v3 only', false, NULL),
       (43, 'article', 1, ${SCAMMER}, 'hidden already', true, NULL),
       (44, 'article', 1, ${SCAMMER}, '', false, now()),
       (45, 'article', 1, ${OTHER}, 'someone else', false, NULL),
-      (51, 'image', 10, ${SCAMMER}, 'not a CommentV3-write surface', false, NULL);
+      (51, 'model', 1, ${SCAMMER}, 'not a CommentV3-write surface', false, NULL);
     INSERT INTO "Thread"(id, "articleId") VALUES (900, 1);
-    INSERT INTO "Thread"(id, "imageId") VALUES (901, 10);
+    INSERT INTO "Thread"(id, "modelId") VALUES (901, 1);
     INSERT INTO "CommentV2"(id, content, "userId", "threadId") VALUES
-      (42, 'from v2', ${SCAMMER}, 900), (50, 'image', ${SCAMMER}, 901);
+      (42, 'from v2', ${SCAMMER}, 900), (50, 'model', ${SCAMMER}, 901);
   `);
 });
 
@@ -91,7 +91,7 @@ describe('scam cleanup of comments', () => {
     // 42 through the mirror and the CommentV3 arm alike; the deleted 44 and the other user's 45 stay.
     expect(await hidden('CommentV3')).toEqual([41, 42, 43, 50]);
     // 42 is written CommentV3 first, as every write on its surface is; the CommentV2 statement
-    // takes only the image comment.
+    // takes only the model comment.
     expect(oldTableWrite()).toEqual([50]);
   });
 

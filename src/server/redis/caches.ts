@@ -318,7 +318,9 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      cacheNotFound: false,
+      // Caches "no frame" for an hour while FRAME_CACHE_NEGATIVE is on. Every writer that puts a frame on content must call refresh(), which overwrites or removes the marker; one that does not stays hidden up to an hour.
+      cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
+      notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
       // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
       debounceTime: 1,

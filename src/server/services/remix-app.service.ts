@@ -11,9 +11,14 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
 import { getTeamWaiverStanding } from '~/server/services/remix-gallery.service';
+import {
+  getEnabledRemixApps,
+  getRemixAppRegistry,
+} from '~/server/services/remix-app-registry.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
+  buildPresetGraphInput,
   submitPresetImageGen,
   whatIfPresetImageGen,
   type PresetEngine,
@@ -23,16 +28,15 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GenerationAspectRatio } from '~/shared/constants/generation.constants';
 import {
-  getSystemRemixApp,
-  SYSTEM_REMIX_APPS,
   TEAM_REMIX_SLUG,
   teamRemixApp,
   type RemixAppDefinition,
 } from '~/shared/constants/remix-apps.constants';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
-import type { RemixApp, RemixWorkflowRequest } from '~/shared/remix-apps/define';
-import { replayRemixApp } from '~/shared/remix-apps/replay';
-import { REMIX_MENU_APPS, SYSTEM_RUNTIME_APPS } from '~/shared/remix-apps/system-apps';
+import type { RemixApp, RemixImage, RemixWorkflowRequest } from '~/shared/remix-apps/define';
+import { firstAnswer } from '~/shared/remix-apps/mock-host';
+import { type RemixLogEntry, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { remixRunTags } from '~/shared/remix-apps/tags';
 import {
   getRemixSourceUrl,
   REMIX_FALLBACK_DIMENSIONS,
@@ -58,14 +62,20 @@ const ASPECT_BUCKETS: GenerationAspectRatio[] = [
 /** One source image per run; a cap above it would let a definition change send more. */
 const MAX_REFERENCE_IMAGES = 1;
 
-export function listRemixApps() {
-  return REMIX_MENU_APPS.map(({ slug, name, icon, description }) => ({
-    slug,
-    name,
-    icon,
-    description,
-    output: 'image' as const,
-  }));
+/** Every remix app, disabled ones too, so the tray can name a run of one; the menu lists `enabled`. */
+export async function listRemixApps() {
+  return (await getRemixAppRegistry()).map(
+    ({ slug, name, icon, description, target, enabled, app }) => ({
+      slug,
+      name,
+      icon,
+      description,
+      target,
+      enabled,
+      engine: app.engine,
+      output: 'image' as const,
+    })
+  );
 }
 
 export function snapAspectRatio(dims: { width?: number | null; height?: number | null }) {
@@ -111,7 +121,10 @@ export function buildRemixAppRun({
   };
 }
 
-/** `buildRemixAppRun` for one workflow a runtime app asks for. */
+/**
+ * The graph input for one workflow a runtime app asks for. Throws when the source may not reach
+ * the app's engines, for an upscale too: the app's mature rule covers every step it runs.
+ */
 export function buildRuntimeRequest({
   app,
   image,
@@ -126,34 +139,61 @@ export function buildRuntimeRequest({
   const resolved = resolveRemixAppEngine(app, image, viewer);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
   const { tier, engine } = resolved;
-  const aspectRatio =
-    request.aspectRatio === 'source' ? snapAspectRatio(image) : request.aspectRatio;
-  const images = request.images.map(({ url, width, height }) => ({
+  const sized = ({ url, width, height }: RemixImage) => ({
     url,
     width: width || REMIX_FALLBACK_DIMENSIONS.width,
     height: height || REMIX_FALLBACK_DIMENSIONS.height,
-  }));
-  const modelConfig: PresetEngine = { ...engine, maxReferenceImages: images.length };
+  });
+
+  if (request.kind === 'upscale') {
+    const input = sized(request.image);
+    return {
+      tier,
+      // The upscaler prices by the output size, so by the input's.
+      shape: `upscale:${request.scale}:${input.width}x${input.height}`,
+      inputUrls: [input.url],
+      graphInput: {
+        workflow: 'img2img:upscale',
+        images: [input],
+        upscaleSelection: { type: 'multiplier', multiplier: request.scale },
+      },
+    };
+  }
+
+  const aspectRatio =
+    request.aspectRatio === 'source' ? snapAspectRatio(image) : request.aspectRatio;
+  const images = request.images.map(sized);
   return {
     tier,
-    aspectRatio,
+    // An edit prices by its output, which the snapped aspect ratio sizes, not by its inputs.
+    shape: ['image', aspectRatio, request.quantity, images.length].join(':'),
     inputUrls: images.map((i) => i.url),
-    submit: {
+    graphInput: buildPresetGraphInput({
       prompt: request.prompt,
       aspectRatio,
       quantity: request.quantity,
       images,
-      modelConfig,
-    },
+      ecosystem: engine.ecosystem,
+      versionId: engine.versionId,
+    }),
   };
 }
 
-/** The workflow a runtime app runs first, or `null` when it asks something before any spend. */
+/** The first workflow the app runs, through any asks before it on their first answers; `null` if none is reached. */
 export async function firstRuntimeRequest(app: RemixApp, image: RemixSourceImage) {
-  const outcome = await replayRemixApp(app, runtimeSourceOf(image), []);
-  return outcome.status === 'effect' && outcome.effect.type === 'workflow'
-    ? outcome.effect.request
-    : null;
+  const log: RemixLogEntry[] = [];
+  // Bounded: an app that only ever asks has no first workflow to price.
+  for (let asked = 0; asked <= 8; asked++) {
+    const outcome = await replayRemixApp(app, runtimeSourceOf(image), log).catch((error) => {
+      if (error instanceof RemixReplayError) return null;
+      throw error;
+    });
+    if (outcome?.status !== 'effect') return null;
+    const { effect } = outcome;
+    if (effect.type === 'workflow') return effect.request;
+    log.push({ type: 'ask', answer: firstAnswer(effect.spec) });
+  }
+  return null;
 }
 
 export function runtimeSourceOf(image: RemixSourceImage) {
@@ -180,6 +220,15 @@ export function remixAppExternalId(args: {
   return `remix-app_${digest}`;
 }
 
+/** One tap (one nonce) is one run, so a repeated start finds the run it already made. */
+export function remixRunId(args: { userId: number; slug: string; imageId: number; nonce: string }) {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([args.userId, args.slug, args.imageId, args.nonce]))
+    .digest('hex')
+    .slice(0, 20);
+  return `r${digest}`;
+}
+
 export type RemixAppCaller = {
   user: SessionUser;
   token: string;
@@ -189,6 +238,29 @@ export type RemixAppCaller = {
   isApiCaller: boolean;
   track?: unknown;
 };
+
+/** What every remix submit sends for the caller: who pays, in what, and what it may show. */
+/** What a what-if needs from the caller, so it prices exactly what the submit will charge. */
+export function remixWhatIfArgs(
+  caller: RemixAppCaller,
+  currencies: ReturnType<typeof getAllowedAccountTypes>
+) {
+  return { user: caller.user, token: caller.token, currencies, flags: caller.features };
+}
+
+export function remixSubmitArgs(
+  caller: RemixAppCaller,
+  tags: string[],
+  currencies: ReturnType<typeof getAllowedAccountTypes>
+) {
+  return {
+    ...remixWhatIfArgs(caller, currencies),
+    tags: caller.isGreenDomain ? ['green', ...tags] : tags,
+    isGreen: caller.features.isGreen,
+    allowMatureContent: caller.isGreenDomain || !caller.user.showNsfw ? false : undefined,
+    track: caller.track,
+  };
+}
 
 export const viewerOf = (caller: Pick<RemixAppCaller, 'isGreenDomain' | 'user'>) => ({
   isGreen: caller.isGreenDomain,
@@ -261,10 +333,10 @@ export async function quoteRemixApps({
   await assertInputsUsable([getRemixSourceUrl(image)], caller, 'remixAppQuote');
   const pricing = await pricingFor(caller);
 
-  const prices = await Promise.all([
-    ...SYSTEM_RUNTIME_APPS.map((app) => quoteRuntimeApp(app, image, caller, pricing)),
-    ...SYSTEM_REMIX_APPS.map((app) => quoteApp(app, image, caller, pricing)),
-  ]);
+  const apps = (await getEnabledRemixApps()).filter((entry) => entry.target === 'image.remix');
+  const prices = await Promise.all(
+    apps.map(({ app }) => quoteRuntimeApp(app, image, caller, pricing))
+  );
   return { prices };
 }
 
@@ -291,7 +363,12 @@ function featureDigest(features: Partial<FeatureAccess>) {
 }
 
 type Pricing = Awaited<ReturnType<typeof pricingFor>>;
-type BuiltRun = Pick<ReturnType<typeof buildRemixAppRun>, 'tier' | 'aspectRatio' | 'submit'>;
+/** What a quote prices: `shape` is everything in `submit` the price can depend on, minus urls. */
+type BuiltRun = {
+  tier: string;
+  shape: string;
+  submit: ReturnType<typeof buildRemixAppRun>['submit'] | { graphInput: Record<string, unknown> };
+};
 
 async function quoteApp(
   app: RemixAppDefinition,
@@ -301,8 +378,11 @@ async function quoteApp(
 ) {
   const resolved = resolveRemixAppEngine(app, image, viewerOf(caller));
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
-  const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
-  return { slug: app.slug, ...(await quoteBuiltRun(app.slug, run, caller, pricing)) };
+  const { tier, aspectRatio, submit } = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
+  return {
+    slug: app.slug,
+    ...(await quoteBuiltRun(app.slug, { tier, shape: aspectRatio, submit }, caller, pricing)),
+  };
 }
 
 async function quoteRuntimeApp(
@@ -315,7 +395,13 @@ async function quoteRuntimeApp(
   if ('refusal' in resolved) return { slug: app.slug, refusal: resolved.refusal };
   const request = await firstRuntimeRequest(app, image);
   if (!request) return { slug: app.slug, refusal: PRICE_UNAVAILABLE };
-  const run = buildRuntimeRequest({ app, image, request, viewer: viewerOf(caller) });
+  const { tier, shape, graphInput } = buildRuntimeRequest({
+    app,
+    image,
+    request,
+    viewer: viewerOf(caller),
+  });
+  const run = { tier, shape, submit: { graphInput } };
   return {
     slug: app.slug,
     ...(await quoteBuiltRun(`${app.slug}@${app.version}`, run, caller, pricing)),
@@ -334,7 +420,7 @@ async function quoteBuiltRun(
   const cacheKey = [
     key,
     run.tier,
-    run.aspectRatio,
+    run.shape,
     caller.user.tier ?? 'free',
     caller.user.isModerator ? 'mod' : 'user',
     currencies.join('+'),
@@ -347,10 +433,7 @@ async function quoteBuiltRun(
       () =>
         whatIfPresetImageGen({
           ...run.submit,
-          user: caller.user,
-          token: caller.token,
-          currencies,
-          flags: caller.features,
+          ...remixWhatIfArgs(caller, currencies),
         }),
       { ttl: CacheTTL.sm, lockTTL: 4 }
     );
@@ -427,18 +510,30 @@ export async function quoteTeamRemix({
   return { team: offer.team, price };
 }
 
+/** Refuses a step that now costs more than the price the viewer tapped. */
+export function assertWithinQuote(cost: number, quote: number) {
+  if (cost > quote)
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: `The price changed to ${cost.toLocaleString()} Buzz. Check it and run again.`,
+    });
+}
+
+/** `quote`: the price the viewer tapped; a run that now costs more is refused before it submits. */
 export async function runRemixApp({
   slug,
   imageId,
   nonce,
+  quote,
   caller,
 }: {
   slug: string;
   imageId: number;
   nonce: string;
+  quote: number;
   caller: RemixAppCaller;
 }) {
-  let app: RemixAppDefinition | undefined;
+  let app: RemixAppDefinition;
   let image: RemixSourceImage;
   if (slug === TEAM_REMIX_SLUG) {
     const offer = await resolveTeamRemix(imageId, caller, { onPrimary: true });
@@ -446,24 +541,27 @@ export async function runRemixApp({
     app = offer.app;
     image = await readSource(imageId);
   } else {
-    app = getSystemRemixApp(slug);
-    if (!app) throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
-    image = await loadSource(imageId, caller, true);
+    // Every menu app runs through `start` now; a page loaded before that change still calls this.
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Remix apps were updated. Reload the page and run it again.',
+    });
   }
   const run = buildRemixAppRun({ app, image, viewer: viewerOf(caller) });
   await assertInputsUsable([run.sourceUrl], caller, 'remixAppRun');
+  const currencies = getAllowedAccountTypes(caller.features, ['blue']);
+  const priced = await whatIfPresetImageGen({
+    ...run.submit,
+    ...remixWhatIfArgs(caller, currencies),
+  });
+  assertWithinQuote(priced.cost, quote);
 
-  const tags = [`remix-app:${app.slug}`];
+  // A one-segment run, so the tray lists it beside the runtime apps' runs.
+  const runId = remixRunId({ userId: caller.user.id, slug, imageId: image.id, nonce });
+  const tags = remixRunTags({ slug: app.slug, runId, segment: 0, runtime: false });
   const result = await submitPresetImageGen({
     ...run.submit,
-    user: caller.user,
-    token: caller.token,
-    flags: caller.features,
-    currencies: getAllowedAccountTypes(caller.features, ['blue']),
-    tags: caller.isGreenDomain ? ['green', ...tags] : tags,
-    isGreen: caller.features.isGreen,
-    allowMatureContent: caller.isGreenDomain || !caller.user.showNsfw ? false : undefined,
-    track: caller.track,
+    ...remixSubmitArgs(caller, tags, currencies),
     remixOfId: image.id,
     externalId: remixAppExternalId({ userId: caller.user.id, slug, imageId: image.id, nonce }),
   });

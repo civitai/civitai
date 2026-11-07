@@ -156,7 +156,7 @@ export const HERO_VIDEO_OPTIONS = {
   original: true,
 } satisfies Omit<EdgeUrlProps, 'src'>;
 
-export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
+export type ScoredSection = 'standings' | 'turf' | 'hats' | 'shop' | 'topHats' | 'rules';
 
 /**
  * The page's sections below the hero, in the order the viewer needs them: how it works first for a
@@ -169,9 +169,10 @@ export function scoredSectionOrder({
   joined: boolean;
   ended: boolean;
 }): ScoredSection[] {
-  if (ended) return ['standings', 'topHats', 'hats'];
-  if (joined) return ['hats', 'standings', 'shop', 'topHats', 'rules'];
-  return ['rules', 'shop', 'standings', 'topHats'];
+  // Once ended, Hat Turf (while its gate is open) sits under the result.
+  if (ended) return ['standings', 'turf', 'topHats', 'hats'];
+  if (joined) return ['hats', 'turf', 'standings', 'shop', 'topHats', 'rules'];
+  return ['rules', 'shop', 'turf', 'standings', 'topHats'];
 }
 
 type Settling = { endDate: Date; finalAt?: Date };

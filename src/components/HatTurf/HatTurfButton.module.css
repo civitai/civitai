@@ -9,12 +9,12 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: 24px;
   /* The reaction chips' height: any taller and the card's tip row grows. */
+  width: 22px;
   height: 22px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 50%;
   background-color: var(--mantine-color-gray-6);
   color: var(--mantine-color-white);
   cursor: pointer;
@@ -22,6 +22,17 @@
 
   & svg {
     filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.4));
+  }
+}
+
+/* The feed card's button sits beside the reaction bar and tip pill, so it takes their corner radius, not the detail view's circle. */
+.feed {
+  width: 26px;
+  border-radius: var(--mantine-radius-sm);
+
+  & svg {
+    width: 14px;
+    height: 14px;
   }
 }
 

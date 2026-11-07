@@ -238,6 +238,137 @@ describe('upsertModelVersion — a stored fee moving onto a non-commercial base 
   });
 });
 
+describe('upsertModelVersion — changing the base model of a non-commercial version', () => {
+  const relabel = ({
+    stored = KLEIN_9B,
+    to = 'SDXL 1.0',
+    publishedAt = new Date('2026-09-01') as Date | null,
+    initialPublishedAt = publishedAt,
+    status = publishedAt ? ModelStatus.Published : ModelStatus.Draft,
+    isModerator = false,
+    locked,
+  }: {
+    stored?: string;
+    to?: string;
+    publishedAt?: Date | null;
+    initialPublishedAt?: Date | null;
+    status?: ModelStatus;
+    isModerator?: boolean;
+    /** The row the transaction reads under its lock, when it differs from the first read. */
+    locked?: Record<string, unknown>;
+  } = {}) => {
+    dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
+      nsfw: false,
+      meta: null,
+      userId: OWNER_ID,
+      poi: false,
+      availability: 'Public',
+      type: 'LORA',
+    });
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      status,
+      trainingStatus: null,
+      publishedAt,
+      initialPublishedAt,
+      baseModel: stored,
+      usageControl: ModelUsageControl.Download,
+      licensingFee: null,
+      meta: null,
+      model: { id: MODEL_ID, meta: null, availability: 'Public', type: 'LORA' },
+      monetization: null,
+    });
+    if (locked)
+      mockTx.$queryRaw.mockResolvedValueOnce([
+        { name: 'v1', trainedWords: [], trainingStatus: null, ...locked },
+      ] as never);
+    mockTx.modelVersion.update.mockRejectedValue(new Error(REACHED_WRITE));
+    return upsertModelVersion({
+      id: VERSION_ID,
+      modelId: MODEL_ID,
+      name: 'v1',
+      baseModel: to,
+      usageControl: ModelUsageControl.Download,
+      actorUserId: OWNER_ID,
+      isModerator,
+    } as never);
+  };
+  const KEEPS_BASE_MODEL = new RegExp(
+    `published on "${KLEIN_9B}", which is licensed for non-commercial use, so its base model can't be changed`
+  );
+
+  it.each(['SDXL 1.0', KLEIN_4B, 'Flux.1 Krea'])(
+    'refuses an owner moving a published 9B version to %s',
+    async (to) => {
+      await expect(relabel({ to })).rejects.toThrowError(KEEPS_BASE_MODEL);
+      expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses when the version was published between the first read and the lock', async () => {
+    await expect(
+      relabel({
+        publishedAt: null,
+        locked: {
+          baseModel: KLEIN_9B,
+          status: ModelStatus.Published,
+          publishedAt: new Date(),
+          initialPublishedAt: new Date(),
+        },
+      })
+    ).rejects.toThrowError(KEEPS_BASE_MODEL);
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  // The private-model flow sends published versions back to Draft with publishedAt cleared.
+  it('refuses a 9B version that was published and is a draft again', async () => {
+    await expect(
+      relabel({ publishedAt: null, initialPublishedAt: new Date('2026-09-01') })
+    ).rejects.toThrowError(KEEPS_BASE_MODEL);
+  });
+
+  it('refuses an unpublished 9B version with no publish dates (legacy row)', async () => {
+    await expect(
+      relabel({ publishedAt: null, status: ModelStatus.Unpublished })
+    ).rejects.toThrowError(KEEPS_BASE_MODEL);
+  });
+
+  // Deliberate: scheduling locks the base model. A version published ahead of its schedule keeps the
+  // future date in initialPublishedAt, so a date check would unlock it once it went back to Draft.
+  it('refuses a 9B version scheduled for later', async () => {
+    const later = new Date(Date.now() + 86_400_000);
+    await expect(
+      relabel({ publishedAt: later, status: ModelStatus.Scheduled })
+    ).rejects.toThrowError(KEEPS_BASE_MODEL);
+  });
+
+  it('refuses a 9B draft that went live ahead of a schedule and was sent back to Draft', async () => {
+    await expect(
+      relabel({
+        publishedAt: null,
+        initialPublishedAt: new Date(Date.now() + 86_400_000),
+        status: ModelStatus.Draft,
+      })
+    ).rejects.toThrowError(KEEPS_BASE_MODEL);
+  });
+
+  it('lets a moderator correct a published 9B version (control)', async () => {
+    await expect(relabel({ isModerator: true })).rejects.toThrowError(REACHED_WRITE);
+  });
+
+  it('lets an owner relabel a 9B draft that was never published (control)', async () => {
+    await expect(relabel({ publishedAt: null })).rejects.toThrowError(REACHED_WRITE);
+  });
+
+  it('lets an owner save a published 9B version without changing its base model (control)', async () => {
+    await expect(relabel({ to: KLEIN_9B })).rejects.toThrowError(REACHED_WRITE);
+  });
+
+  it('lets an owner move a published commercial version to another base model (control)', async () => {
+    await expect(relabel({ stored: KLEIN_4B })).rejects.toThrowError(REACHED_WRITE);
+  });
+});
+
 describe('updateModelVersionPaidAccess — non-commercial base model', () => {
   const update = (baseModel: string, paidAccess: unknown) => {
     dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({

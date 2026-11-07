@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { DeliveryWorkerError, getDownloadUrl } from '~/utils/delivery-worker';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist } from '~/server/utils/client-ip';
 import { isClientAbortError } from '~/server/utils/errorHandling';
@@ -24,7 +24,8 @@ export default async function downloadTrainingData(req: NextApiRequest, res: Nex
   const key = keyParts.join('/');
   if (!key) return res.status(400).json({ error: 'Missing key' });
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {
     if (req.headers['content-type'] === 'application/json')

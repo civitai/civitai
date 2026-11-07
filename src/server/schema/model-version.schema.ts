@@ -536,10 +536,9 @@ export const modelVersionUpsertSchema2 = z.object({
     // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
     // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
     // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
-    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
-    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
-    // stripped here and nowhere else, which is the silent per-surface divergence this whole
-    // paragraph exists to prevent.
+    // `color` property alone, narrower than the app-wide SPAN_ALLOWED_STYLES. Without it a blurb's
+    // color is stripped here and nowhere else, which is the silent per-surface divergence this
+    // whole paragraph exists to prevent.
     allowedAttributes: {
       ...DEFAULT_ALLOWED_ATTRIBUTES,
       span: ['data-type', 'data-id', 'style'],

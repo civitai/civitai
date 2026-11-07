@@ -28,7 +28,7 @@ export const usePostFilters = () => {
   return removeEmpty({ browsingLevel, ...storeFilters, ...query });
 };
 
-const postQueryParamSchema = z
+export const postQueryParamSchema = z
   .object({
     tags: numericStringArray(),
     modelId: numericString(),

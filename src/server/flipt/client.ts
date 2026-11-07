@@ -51,28 +51,6 @@ export enum FLIPT_FEATURE_FLAGS {
   //    maps a pool timeout to TIMEOUT.
   // The ON window therefore also changes `pgDbRead` contention, not only query-engine CPU.
   KYSELY_IMAGE_REACTIONS = 'kysely-image-reactions',
-  // The reads in packages/civitai-db-queries/src/hot-reads-5.db.ts, through Kysely instead of Prisma.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // several of these reads run on most page views.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_5 = 'kysely-hot-reads-5',
-  // The reads in packages/civitai-db-queries/src/hot-reads-6.db.ts, through Kysely instead of Prisma.
-  //
-  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
-  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
-  // several of these reads run on most page views.
-  //
-  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
-  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
-  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
-  // Failures surface as pg errors, not Prisma P2024/P1008.
-  KYSELY_HOT_READS_6 = 'kysely-hot-reads-6',
   // The reads in packages/civitai-db-queries/src/hot-reads-7.db.ts, through Kysely instead of Prisma.
   //
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
@@ -95,6 +73,36 @@ export enum FLIPT_FEATURE_FLAGS {
   // environment must set a non-zero value before flipping. Failures surface as pg errors, not
   // Prisma P2024/P1008.
   KYSELY_HOT_READS_8 = 'kysely-hot-reads-8',
+  // The user profile read (`getUserWithProfile`, userProfile.get) through
+  // packages/civitai-db-queries/src/hot-reads-9.db.ts: one Kysely statement in place of Prisma's
+  // one per relation. Evaluated with no entity id, once per call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // this read runs on every profile page view.
+  //
+  // 🔴 ON MOVES THIS READ OFF PRISMA'S PRIMARY POOL ONTO `pgDbWrite` (kyselyWrite), keeping it on
+  // the primary as the Prisma read is. That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`,
+  // default 0 = WAIT FOREVER (packages/civitai-db/src/env.ts), so the environment must set a
+  // non-zero value before flipping. Failures surface as pg errors, not Prisma P2024/P1008; a
+  // missing user still rejects with P2025 (NOT_FOUND).
+  KYSELY_HOT_READS_9 = 'kysely-hot-reads-9',
+  // The collection read (`getCollectionById`: collection.getById, the collection pages, home
+  // blocks, the v1 collection endpoints) through packages/civitai-db-queries/src/hot-reads-10.db.ts:
+  // one Kysely statement in place of Prisma's one per relation. Evaluated with no entity id, once
+  // per call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call, and
+  // this read runs on every collection page view.
+  //
+  // 🔴 ON MOVES THIS READ OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
+  // (kyselyWrite) when the replication-lag check sent the Prisma read to the primary. Those pools'
+  // acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before
+  // flipping. Failures surface as pg errors, not Prisma P2024/P1008; a missing collection still
+  // throws NOT_FOUND.
+  KYSELY_HOT_READS_10 = 'kysely-hot-reads-10',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -112,6 +120,20 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON caches "this entity wears no frame" in the per-entity frame caches (`cosmeticEntityCaches`
+  // in ~/server/redis/caches) for an hour, instead of re-querying the primary for every frameless
+  // id on every page. OFF reads them uncached, as before, and ignores any marker
+  // written while it was on. Boolean, evaluated with no entity id, once per frame-cache fetch.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call, on every feed page.
+  FRAME_CACHE_NEGATIVE = 'frame-cache-negative',
+  // ON serves `getImageContestCollectionDetails` from the shared Redis cache instead of the per-pod
+  // LRU. Boolean, evaluated with no entityId, so a per-user or percentage rollout is all-or-nothing.
+  //
+  // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
+  // makes evaluateBoolean throw and log on every call.
+  CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -272,6 +294,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
+  // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
+  // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
+  // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
+  // uncached primary read. Global boolean, evaluated with no entity or context. Every other
+  // caller of the space (anything that decides or charges) stays on the primary regardless. See
+  // `resolvePlacementSpaceForDisplay`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it.
+  PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.
@@ -399,15 +431,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // KYSELY_IMAGE_REACTIONS.
   CREATOR_FEED_SHORTCIRCUIT = 'creator-feed-shortcircuit',
 
-  // On: the internal image-delivery lookup (`image-delivery.service.ts`) sends its statement
-  // through the raw pg pools (`pgDbRead`, falling back to `pgDbWrite` on a replica error) instead
-  // of Prisma's `dbRead`/`dbWrite`. Off (and unknown, or a client that has not initialised): Prisma,
-  // as before. Same statement, parameters, row and fallback trigger either way.
+  // On: a verified crawler's page render may be stored by the origin cache and served to other
+  // crawlers (`~/server/bot-cache/bot-cache`). Off (and unknown, or a client that has not
+  // initialised): nothing is stored or served, as before. The key keeps its original name.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, and read at most once per 5s per process
-  // (`createCachedFlagGate`), so `enabled` IS the switch. The key must exist in flag state
-  // (enabled: false is fine) before this code serves traffic.
-  IMAGE_DELIVERY_PG_LOOKUP = 'image-delivery-pg-lookup',
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
+  // serves traffic.
+  BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

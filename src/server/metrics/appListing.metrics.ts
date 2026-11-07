@@ -44,12 +44,13 @@ type AffectedListing = { id: string; appBlockId: string | null };
 //     has NO soft-delete/`deletedAt` column; a toggle-off flips `enabled=false`
 //     (which bumps `updated_at` via @updatedAt, so the incremental affected-query
 //     catches it). A hard uninstall (row DELETE) is NOT catchable incrementally —
-//     see the SQL note in appListing.metrics.sql. This drives the store `popular`
-//     sort (`install_count DESC`) and the top-rated Bayesian tiebreak.
+//     see the SQL note in appListing.metrics.sql. It is the tie-break of the store
+//     `popular` sort (after plays) and of the top-rated Bayesian sort (after plays).
 //
 //   • openCount     — on-site listings: PLAYS, derived from the ClickHouse
 //     `App_Open` event stream that the `/apps/run/<slug>` SSR resolver emits per
-//     launch (`app-listing-open.service.ts`). See below.
+//     launch (`app-listing-open.service.ts`). See below. It is the store
+//     `popular` sort's primary key and the top-rated sort's first tie-break.
 //
 // 🔴 OWNERSHIP CONTRACT: `thumbs_up_count` / `thumbs_down_count` are owned by the
 // SYNCHRONOUS writer in app-listing-review.service.ts (upsert tx). This job MUST

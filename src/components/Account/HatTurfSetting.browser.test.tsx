@@ -97,8 +97,8 @@ describe('Take part in Hat Turf, in profile settings', () => {
   });
 });
 
-// Show hats off drops the card's gear too, and a viewer with Hat Turf on feeds only has no image
-// page switch, so settings must carry it whenever any surface runs.
+// A viewer with Hat Turf on feeds only has no image page switch, so settings must carry it
+// whenever any surface runs.
 describe('Show hats, in profile settings', () => {
   const showHats = () =>
     document.body.querySelector<HTMLInputElement>('[data-testid="hat-turf-show-hats-setting"]');

@@ -2,7 +2,7 @@ import { dbRead } from '~/server/db/client';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import { isDefined } from '~/utils/type-guards';
 
 /**
@@ -40,7 +40,7 @@ export async function assertCoverImagesValid({
       throw throwBadRequestError(
         'The civitai.com cover must be one of your published images on this model.'
       );
-    if (!image.nsfwLevel || (image.nsfwLevel & sfwBrowsingLevelsFlag) !== image.nsfwLevel)
+    if (!isComSafeLevel(image.nsfwLevel))
       throw throwBadRequestError('The civitai.com cover must be an image rated PG or PG-13.');
   }
 }

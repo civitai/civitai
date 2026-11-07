@@ -459,6 +459,11 @@ export type StartAppForkInput = {
   scope: StoreVisibilityScope;
   /** Whether this request may see mature listings (a red-capable host). */
   redCapable: boolean;
+  /**
+   * The viewer's browsing level: an R/X parent must be visible to them. Required (nullable;
+   * `null`/`undefined` read as PG).
+   */
+  viewerBrowsingLevel: number | null | undefined;
   /** The request, for the App Assistant feature gate. */
   req?: NextApiRequest | IncomingMessage;
 };
@@ -515,7 +520,12 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
   );
   const parent = await getStoreVisibleListingSummary(
     { id: input.listingId },
-    { redCapable: input.redCapable, scope: input.scope, floor: 'public' }
+    {
+      redCapable: input.redCapable,
+      scope: input.scope,
+      floor: 'public',
+      viewerBrowsingLevel: input.viewerBrowsingLevel,
+    }
   );
   if (!parent) {
     throw new TRPCError({ code: 'NOT_FOUND', message: FORK_PARENT_UNAVAILABLE_MESSAGE });

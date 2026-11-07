@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconCheck, IconX } from '@tabler/icons-react';
+import { Button } from '@mantine/core';
 import clsx from 'clsx';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import type { HatSpot } from '~/components/HatTurf/HatTurfCardProvider';
+import revealClasses from '~/components/Sticker/placement-reveal.module.scss';
+import { hatRevealDelays, useHatReveal } from '~/components/HatTurf/useHatReveal';
 import classes from '~/components/HatTurf/HatTurfLayer.module.css';
 import { TurfHatArt } from '~/components/HatTurf/TurfHatArt';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
@@ -13,23 +15,43 @@ import { useChosenHat } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import {
   FALLBACK_COLOR,
-  HAT_DEFAULT_SCALE,
   badgeLeader,
-  clampSpot,
   hatTone,
   readHatPose,
   turfTopic,
 } from '~/components/HatTurf/hat-turf.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { offsetWithin } from '~/components/Sticker/CardStickerOverlay';
-import type { HatSticker } from '~/components/HatTurf/hat-turf.utils';
+import type { HatPose, HatSticker } from '~/components/HatTurf/hat-turf.utils';
+import { DraftSticker } from '~/components/Sticker/DraftSticker';
+import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
+import { useDraftGestures } from '~/components/Sticker/useDraftGestures';
+import { HAT_MAX_SCALE } from '~/server/schema/turf.schema';
+import {
+  createStickerPlacementDraftStore,
+  DraftStoreContext,
+} from '~/store/sticker-placement-draft.store';
+import type { DraftStoreHook } from '~/store/sticker-placement-draft.store';
 import { mediaContentRectOf } from '~/components/Sticker/media-content-rect';
 import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider. */
-type Box = { width: number; height: number; left: number; top: number; shownWidth: number };
+/**
+ * `shownWidth` is the part of the picture's width the card shows; a cropped picture is wider.
+ * `visible` is that shown part as fractions of the picture, inset so a hat's controls stay on the card.
+ */
+type Box = {
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  shownWidth: number;
+  visible: Visible;
+};
+type Visible = { x0: number; x1: number; y0: number; y1: number };
+/** How far a dragged hat's centre stays inside the card's edge, in px, so its controls stay reachable. */
+const DRAG_MARGIN = 28;
 
 /** Mounted only with Hat Turf on, so the signals hub isn't required otherwise. */
 function HatTurfLive({ imageId }: { imageId: number }) {
@@ -42,8 +64,117 @@ function HatTurfLive({ imageId }: { imageId: number }) {
 
 const NARROW_PICTURE = 220;
 const LOAD_EVENTS = ['load', 'loadedmetadata', 'resize'] as const;
-/** How far a dragged hat's centre stays from the card's edge, in px, so its buttons stay reachable. */
-const DRAG_MARGIN = 28;
+const UNDRESSED = resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false });
+
+type HatDraftProps = {
+  imageId: number;
+  cosmeticId: number;
+  spot: HatSpot;
+  surface: HTMLElement;
+  /** The drawn picture's width in px, to size the art like the draft's frame. */
+  width: number;
+  /** Where on the picture the card shows it; the hat is kept there. */
+  visible: Visible;
+  artwork: (scale: number) => React.ReactNode;
+  saving: boolean;
+  onSave: (pose: HatPose) => void;
+  onDiscard: () => void;
+};
+
+/**
+ * The hat being placed, on the sticker editor: drag, corner resize, rotate knob, flip, remove
+ * and arrow keys, all from `DraftSticker`. Its own draft store, so it never joins the
+ * sticker tray's session; only the commit is a hat's.
+ */
+function HatDraft(props: HatDraftProps) {
+  const [useStore] = useState(createStickerPlacementDraftStore);
+  return (
+    <DraftStoreContext.Provider value={useStore}>
+      <HatDraftSticker {...props} useStore={useStore} />
+    </DraftStoreContext.Provider>
+  );
+}
+
+function HatDraftSticker({
+  imageId,
+  cosmeticId,
+  spot,
+  surface,
+  width,
+  visible,
+  artwork,
+  saving,
+  onSave,
+  onDiscard,
+  useStore,
+}: HatDraftProps & { useStore: DraftStoreHook }) {
+  const draft = useStore((state) => state.drafts[0]);
+  const onGesture = useDraftGestures(HAT_MAX_SCALE);
+
+  // A cropped feed card hides part of the picture; a hat dragged there would take its
+  // controls with it. The store only keeps it on the picture, so this keeps it on the card.
+  const { x0, x1, y0, y1 } = visible;
+  useEffect(() => {
+    if (!draft) return;
+    const x = Math.min(x1, Math.max(x0, draft.x));
+    const y = Math.min(y1, Math.max(y0, draft.y));
+    if (x !== draft.x || y !== draft.y) useStore.getState().move(draft.id, { x, y });
+  }, [draft, x0, x1, y0, y1, useStore]);
+
+  useEffect(() => useStore.getState().setSurface(surface), [useStore, surface]);
+  useEffect(() => {
+    const store = useStore.getState();
+    store.open(imageId);
+    store.begin(cosmeticId, spot);
+    store.closeTray();
+    return () => useStore.getState().close();
+    // Started once per placement: `spot` is only where it begins.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useStore, imageId]);
+
+  // The editor's own remove control ends the placement.
+  const started = useRef(false);
+  useEffect(() => {
+    if (draft) started.current = true;
+    else if (started.current) onDiscard();
+  }, [draft, onDiscard]);
+
+  if (!draft) return null;
+  const { x, y, scale, rotation, flip } = draft;
+  return (
+    <DraftSticker
+      draft={draft}
+      artwork={
+        <span style={{ display: 'block', transform: flip ? 'scaleX(-1)' : undefined }}>
+          {artwork(scale)}
+        </span>
+      }
+      selected
+      dressed={UNDRESSED}
+      price={0}
+      creatorMaxScale={HAT_MAX_SCALE}
+      freeOffer={null}
+      ownerShare={undefined}
+      ownerUsername={null}
+      onGesture={onGesture}
+      opaque
+      commit={
+        <Button
+          size="sm"
+          radius="xl"
+          loading={saving}
+          disabled={!width}
+          // A placed hat has no move or undo (only a moderator can remove it).
+          aria-label="Place hat (free, can't be moved afterwards)"
+          title="Free. Can't be moved afterwards."
+          onClick={() => onSave({ x, y, scale, rotation, flip, opacity: 1 })}
+        >
+          Place hat
+        </Button>
+      }
+    />
+  );
+}
 
 /**
  * Measures the picture like the sticker overlay, so a spot is a fraction of the drawn image, not
@@ -90,6 +221,7 @@ function HatTurfLayerContent({
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();
   const showHats = useHatTurfStore((state) => state.showHats);
+  const reveal = useHatReveal(showHats, !!card?.draft);
   const { cosmeticId, hats } = useChosenHat();
   const chosenArt = hats?.find((hat) => hat.cosmeticId === cosmeticId)?.art;
   const teamColor = useTeamColor();
@@ -98,6 +230,7 @@ function HatTurfLayerContent({
   const track = useHatTurfAction('feed-card');
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<Box | null>(null);
+  const [surface, setSurface] = useState<HTMLElement | null>(null);
   const stickers = stickersProp ?? feed?.stickers[imageId];
   const active = !!card && (!!card.draft || !!card.placed || !!stickers?.length || !!corner);
 
@@ -120,12 +253,22 @@ function HatTurfLayerContent({
       const self = offsetWithin(node, stop);
       if (!at || !self) return;
       const drawn = mediaContentRectOf(media);
+      const left = at.x - self.x + drawn.left;
+      const top = at.y - self.y + drawn.top;
+      const span = (start: number, size: number, frame: number) => {
+        const lo = Math.max(0, (DRAG_MARGIN - start) / size);
+        const hi = Math.min(1, (frame - DRAG_MARGIN - start) / size);
+        return lo < hi ? [lo, hi] : [0, 1];
+      };
+      const [x0, x1] = span(left, drawn.width, node.offsetWidth);
+      const [y0, y1] = span(top, drawn.height, node.offsetHeight);
       const next = {
         width: drawn.width,
         height: drawn.height,
-        left: at.x - self.x + drawn.left,
-        top: at.y - self.y + drawn.top,
+        left,
+        top,
         shownWidth: Math.min(drawn.width, media.offsetWidth),
+        visible: { x0, x1, y0, y1 },
       };
       setBox((current) =>
         current &&
@@ -133,7 +276,11 @@ function HatTurfLayerContent({
         current.height === next.height &&
         current.left === next.left &&
         current.top === next.top &&
-        current.shownWidth === next.shownWidth
+        current.shownWidth === next.shownWidth &&
+        current.visible.x0 === x0 &&
+        current.visible.x1 === x1 &&
+        current.visible.y0 === y0 &&
+        current.visible.y1 === y1
           ? current
           : next
       );
@@ -167,15 +314,29 @@ function HatTurfLayerContent({
   const colorOf = (team: string | null | undefined) => (team && teamColor(team)) || FALLBACK_COLOR;
   const leader = summary ? badgeLeader(summary) : null;
   const protectedImage = !!summary?.hatted;
-  // Capped so a wide image-detail picture does not draw hats past a sticker's size.
-  const hatSize = (scale: number) => (box ? Math.min(96, Math.max(22, box.shownWidth * scale)) : 0);
+  // A fraction of the drawn picture's width, as a sticker's is.
+  const hatSize = (scale: number) => (box ? box.width * scale : 0);
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
   const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
-  const drawn = showHats ? mineDrawn.slice(0, limit) : [];
+  const drawn = reveal.visible ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
-  const overflow = showHats ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
+  const overflow = reveal.visible ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
+  const delays = reveal.revealGen ? hatRevealDelays(drawn) : null;
+  // The reveal is on the art's wrapper, not the hat: its opacity keyframes would override `.dim`.
+  const revealed = (key: string, art: React.ReactNode) =>
+    delays ? (
+      <div
+        key={reveal.revealGen}
+        className={revealClasses.appear}
+        style={{ ['--sticker-delay' as string]: `${delays.get(key) ?? 0}ms` }}
+      >
+        {art}
+      </div>
+    ) : (
+      art
+    );
 
   const stop = (event: React.SyntheticEvent) => {
     // The card is a link and this sits on top of it.
@@ -183,43 +344,14 @@ function HatTurfLayerContent({
     event.stopPropagation();
   };
 
-  const move = (event: React.PointerEvent) => {
-    if (!box || !ref.current || !(event.buttons & 1 || event.pointerType === 'touch')) return;
-    const rect = ref.current.getBoundingClientRect();
-    // On a cropped picture the drawn image is larger than the card: keep the hat on what is visible.
-    const px = Math.min(rect.width - DRAG_MARGIN, Math.max(DRAG_MARGIN, event.clientX - rect.left));
-    const py = Math.min(rect.height - DRAG_MARGIN, Math.max(DRAG_MARGIN, event.clientY - rect.top));
-    setDraft(clampSpot({ x: (px - box.left) / box.width, y: (py - box.top) / box.height }));
-  };
-
-  const nudge = (event: React.KeyboardEvent) => {
-    const step = 0.03;
-    const delta: Record<string, [number, number]> = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step],
-      ArrowDown: [0, step],
-    };
-    const move = delta[event.key];
-    if (!move || !draft) return;
-    event.preventDefault();
-    setDraft(clampSpot({ x: draft.x + move[0], y: draft.y + move[1] }));
-  };
-
-  const save = (spot: HatSpot) => {
+  const save = (pose: HatPose) => {
     if (!cosmeticId) return;
     place.mutate(
-      {
-        event: feed.event,
-        imageId,
-        cosmeticId,
-        source,
-        data: { x: spot.x, y: spot.y, scale: HAT_DEFAULT_SCALE, rotation: 0, flip: false },
-      },
+      { event: feed.event, imageId, cosmeticId, source, data: { ...pose, opacity: 1 } },
       {
         onSuccess: () => {
           setDraft(null);
-          setPlaced(spot);
+          setPlaced(pose);
           if (source === 'feed') track('feed_place_save', feed.event);
           void utils.hatTurf.getStock.invalidate();
           void utils.hatTurf.getSummaries.invalidate();
@@ -231,16 +363,37 @@ function HatTurfLayerContent({
     );
   };
 
-  const at = (x: number, y: number) => ({ left: `${x * 100}%`, top: `${y * 100}%` });
+  // Rotation and flip on the art, so the landing animation's transform cannot drop them.
+  const poseStyle = (pose: HatPose) => ({
+    left: `${pose.x * 100}%`,
+    top: `${pose.y * 100}%`,
+    transform: 'translate(-50%, -50%)',
+  });
+  const hatArt = (art: HatSticker['art'], team: string | null | undefined, pose: HatPose) => (
+    <span
+      style={{
+        display: 'block',
+        transform: `rotate(${pose.rotation}deg) scaleX(${pose.flip ? -1 : 1})`,
+      }}
+    >
+      <TurfHatArt art={art} color={colorOf(team)} size={hatSize(pose.scale)} />
+    </span>
+  );
 
   return (
-    <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
+    <div
+      ref={ref}
+      className={clsx(classes.layer, (source !== 'feed' || draft) && classes.raised)}
+      data-testid="hat-turf-layer"
+      data-sticker-overlay
+    >
       {feed?.joined && <HatTurfLive imageId={imageId} />}
       {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
       {!box && corner && <div className={classes.corner}>{corner}</div>}
       {box && (
         <div
-          className={classes.box}
+          ref={setSurface}
+          className={clsx(classes.box, reveal.fading && classes.fading)}
           style={{ width: box.width, height: box.height, left: box.left, top: box.top }}
         >
           {corner && <div className={classes.corner}>{corner}</div>}
@@ -261,97 +414,40 @@ function HatTurfLayerContent({
                   protectedImage ? classes.muted : tone === 'dim' && classes.dim,
                   !protectedImage && tone === 'lead' && classes.lead
                 )}
-                style={{
-                  ...at(pose.x, pose.y),
-                  transform: `translate(-50%, -50%) rotate(${pose.rotation}deg) scaleX(${
-                    pose.flip ? -1 : 1
-                  })`,
-                  ['--hat-glow' as string]: colorOf(sticker.team),
-                }}
+                style={{ ...poseStyle(pose), ['--hat-glow' as string]: colorOf(sticker.team) }}
               >
-                <TurfHatArt
-                  art={sticker.art}
-                  color={colorOf(sticker.team)}
-                  size={hatSize(pose.scale)}
-                />
+                {revealed(String(sticker.id), hatArt(sticker.art, sticker.team, pose))}
               </div>
             );
           })}
-          {showHats && placed && (
+          {reveal.visible && placed && (
             <div
               className={clsx(classes.placed, classes.landed, protectedImage && classes.muted)}
-              style={{ ...at(placed.x, placed.y), transform: 'translate(-50%, -50%)' }}
+              style={poseStyle(placed)}
               data-testid="hat-turf-placed"
             >
-              <TurfHatArt
-                art={chosenArt}
-                color={colorOf(feed.team)}
-                size={hatSize(HAT_DEFAULT_SCALE)}
-              />
+              {hatArt(chosenArt, feed.team, placed)}
             </div>
           )}
-          {draft && showHats && (
-            <>
-              <div
-                className={classes.draft}
-                style={at(draft.x, draft.y)}
-                data-testid="hat-turf-draft"
-                tabIndex={0}
-                role="group"
-                aria-label="Hat position. Drag it, or use the arrow keys."
-                onKeyDown={nudge}
-                onPointerDown={(event) => {
-                  stop(event);
-                  try {
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                  } catch {
-                    // pointer already ended
-                  }
-                }}
-                onPointerMove={(event) => {
-                  stop(event);
-                  move(event);
-                }}
-                onClick={stop}
-              >
-                <TurfHatArt
-                  art={chosenArt}
-                  color={colorOf(feed.team)}
-                  size={hatSize(HAT_DEFAULT_SCALE)}
-                />
-              </div>
-              <div
-                className={classes.actions}
-                style={{
-                  left: `${draft.x * 100}%`,
-                  top: `calc(${draft.y * 100}% + ${hatSize(HAT_DEFAULT_SCALE) / 2 + 10}px)`,
-                }}
-              >
-                <button
-                  type="button"
-                  className={classes.save}
-                  aria-label="Place hat (free, can't be moved afterwards)"
-                  disabled={place.isPending || !cosmeticId}
-                  onClick={(event) => {
-                    stop(event);
-                    save(draft);
-                  }}
-                >
-                  <IconCheck size={18} stroke={3} />
-                </button>
-                <button
-                  type="button"
-                  className={classes.discard}
-                  aria-label="Discard hat"
-                  onClick={(event) => {
-                    stop(event);
-                    setDraft(null);
-                  }}
-                >
-                  <IconX size={14} stroke={3} />
-                </button>
-              </div>
-            </>
+          {/* Shown with Show hats off too: placing a hat is still the game. */}
+          {draft && surface && cosmeticId != null && (
+            // The card is a link: a press on the editor must not follow it.
+            <div className="contents" data-testid="hat-turf-draft" onClick={stop}>
+              <HatDraft
+                imageId={imageId}
+                cosmeticId={cosmeticId}
+                spot={draft}
+                surface={surface}
+                width={box.width}
+                visible={box.visible}
+                artwork={(scale) => (
+                  <TurfHatArt art={chosenArt} color={colorOf(feed.team)} size={hatSize(scale)} />
+                )}
+                saving={place.isPending}
+                onSave={save}
+                onDiscard={() => setDraft(null)}
+              />
+            </div>
           )}
           {overflow > 0 &&
             (onMore ? (

@@ -27,8 +27,10 @@ export async function getRestrictedVerdicts(limit = 100): Promise<RestrictedVerd
       m.minor, m.poi, m."sfwOnly", m.nsfw, (m.availability::text = 'Private') AS "isPrivate",
       (m.meta ? 'systemNsfwLock' AND 'nsfw' = ANY(m."lockedProperties")) AS "systemLocked",
       (m.meta->'restrictedNsfwVerdict' ? 'applied') AS "autoApplied",
-      (m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
-        AND NOT m.minor AND NOT m.poi) AS unticked,
+      ((m.meta->'restrictedNsfwVerdict'->>'restriction' IN ('minor', 'poi')
+        AND NOT m.minor AND NOT m.poi)
+        OR m.meta->'restrictedNsfwVerdict' ? 'liftedBy') AS unticked,
+      m.meta->'restrictedNsfwVerdict'->>'liftedBy' AS "liftedBy",
       m.meta->'restrictedNsfwVerdict'->>'at' AS "heldAt",
       m.meta->'restrictedNsfwVerdict'->>'source' AS source,
       em."nsfwLevel" AS "scanLevel",

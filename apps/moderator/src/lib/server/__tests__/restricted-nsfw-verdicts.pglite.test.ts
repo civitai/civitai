@@ -154,6 +154,37 @@ describe('restricted-verdict leads', () => {
     });
   });
 
+  it('marks an SFW-only lead whose lock a moderator lifted, so the note says who cleared it', async () => {
+    const { restrictedNsfwVerdict } = lead('sfwOnly', '2026-11-01T00:00:00Z');
+    await model(1, {
+      meta: { restrictedNsfwVerdict: { ...restrictedNsfwVerdict, liftedBy: 'moderator' } },
+    });
+    await model(2, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-02T00:00:00Z') });
+    const rows = await getRestrictedVerdicts();
+    expect(Object.fromEntries(rows.map((r) => [r.modelId, r.unticked]))).toEqual({
+      1: true,
+      2: false,
+    });
+  });
+
+  it('says who cleared the flag when it was not the owner', async () => {
+    await model(1, { meta: lead('minor', '2026-11-01T00:00:00Z') });
+    const lifted = (liftedBy: string) => ({
+      restrictedNsfwVerdict: {
+        ...lead('poi', '2026-11-02T00:00:00Z').restrictedNsfwVerdict,
+        liftedBy,
+      },
+    });
+    await model(2, { meta: lifted('moderator') });
+    await model(3, { meta: lifted('hashRevert') });
+    const rows = await getRestrictedVerdicts();
+    expect(Object.fromEntries(rows.map((r) => [r.modelId, r.liftedBy]))).toEqual({
+      1: null,
+      2: 'moderator',
+      3: 'hashRevert',
+    });
+  });
+
   it('marks a Private model, whose rating applies when it is published', async () => {
     await model(1, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-01T00:00:00Z') });
     await model(2, { sfwOnly: true, meta: lead('sfwOnly', '2026-11-02T00:00:00Z') });

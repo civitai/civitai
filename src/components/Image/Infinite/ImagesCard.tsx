@@ -44,6 +44,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
+import {
+  getImagesCardFooterHeight,
+  isImagesCardFooterOneRow,
+} from '~/components/Image/Infinite/images-card-footer';
 import classes from './ImagesCard.module.scss';
 
 function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
@@ -52,9 +56,6 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
   const minIndex = index - 50 > -1 ? index - 50 : 0;
   return images.slice(minIndex, index + 50);
 }
-
-/** The masonry adds this to each card's image height for the reaction footer. */
-export const IMAGES_CARD_FOOTER_HEIGHT = 38;
 
 export function ImagesCard({
   data,
@@ -188,60 +189,59 @@ function ImagesCardContent({
                 )}
                 {safe && <HatTurfLayer imageId={image.id} />}
                 {/* Steps clear of an event decoration sitting on the corner. */}
-                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-col items-start gap-1">
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-[4] flex flex-nowrap items-center gap-1">
                   <HatTurfBadge imageId={image.id} />
-                  <div className="flex flex-nowrap items-center gap-1">
-                    <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
-                    {safe && storyline && (
-                      <StorylinePill
-                        title={storyline.title}
-                        depth={storyline.depth}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          triggerRoutedDialog({
-                            name: 'imageDetail',
-                            state: {
-                              imageId: image.id,
-                              images: getDialogState(image.id, getImages()),
-                              ...contextProps,
-                              storylineChapterId: storyline.chapterId,
-                            },
-                          });
-                        }}
-                      />
+                  {/* This row's chips take the Hat Turf badge's 24px so they read as one line. */}
+                  <ImageGuard2.BlurToggle radius="xl" h={24} style={{ pointerEvents: 'auto' }} />
+                  {safe && storyline && (
+                    <StorylinePill
+                      title={storyline.title}
+                      depth={storyline.depth}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        triggerRoutedDialog({
+                          name: 'imageDetail',
+                          state: {
+                            imageId: image.id,
+                            images: getDialogState(image.id, getImages()),
+                            ...contextProps,
+                            storylineChapterId: storyline.chapterId,
+                          },
+                        });
+                      }}
+                    />
+                  )}
+                  {safe &&
+                    image.type === MediaType.video &&
+                    image.metadata &&
+                    'duration' in image.metadata && (
+                      <DurationBadge duration={image.metadata.duration ?? 0} h={24} />
                     )}
-                    {safe &&
-                      image.type === MediaType.video &&
-                      image.metadata &&
-                      'duration' in image.metadata && (
-                        <DurationBadge duration={image.metadata.duration ?? 0} />
-                      )}
-                    {safe && image.judgeScore && (
-                      <JudgeScoreBadge
-                        score={image.judgeScore}
-                        imageId={image.id}
-                        judgeInfo={contextProps.judgeInfo}
-                        judgingCategories={contextProps.judgingCategories}
-                      />
+                  {safe && image.judgeScore && (
+                    <JudgeScoreBadge
+                      score={image.judgeScore}
+                      imageId={image.id}
+                      judgeInfo={contextProps.judgeInfo}
+                      judgingCategories={contextProps.judgingCategories}
+                    />
+                  )}
+                  {isModerator && image.poi && (
+                    <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                      POI
+                    </Badge>
+                  )}
+                  {(currentUser?.id === data.user.id || isModerator) &&
+                    data.collectionItemStatus === CollectionItemStatus.REVIEW && (
+                      <Tooltip
+                        label="Still being reviewed — not yet eligible for judging"
+                        withinPortal
+                      >
+                        <Badge variant="filled" radius="xl" h={26} color="yellow">
+                          Pending review
+                        </Badge>
+                      </Tooltip>
                     )}
-                    {isModerator && image.poi && (
-                      <Badge variant="filled" radius="xl" h={26} color="pink.3">
-                        POI
-                      </Badge>
-                    )}
-                    {(currentUser?.id === data.user.id || isModerator) &&
-                      data.collectionItemStatus === CollectionItemStatus.REVIEW && (
-                        <Tooltip
-                          label="Still being reviewed — not yet eligible for judging"
-                          withinPortal
-                        >
-                          <Badge variant="filled" radius="xl" h={26} color="yellow">
-                            Pending review
-                          </Badge>
-                        </Tooltip>
-                      )}
-                  </div>
                 </div>
                 {safe && (
                   <div className="absolute right-2 top-2 z-[4] flex flex-col gap-2">
@@ -380,6 +380,7 @@ function ImagesCardContent({
               </div>
               {!contextProps.hideReactions && (
                 <ImageReactions
+                  width={width}
                   image={image}
                   readonly={!safe || (isScanned && isBlocked)}
                   showStickerBadge={features.stickerPlacement && !contextProps.hideStickerBadge}
@@ -398,11 +399,14 @@ export const ImagesCardMemoized = memo(ImagesCard);
 
 // Shares the action-row layout (and its container query) with Cards/ImageCard via Cards.module.css.
 function ImageReactions({
+  width,
   image,
   readonly,
   showStickerBadge,
   safe,
 }: {
+  /** The card's width: it decides between one footer row and two. */
+  width?: number;
   image: ImagesInfiniteModel;
   readonly: boolean;
   showStickerBadge: boolean;
@@ -412,6 +416,7 @@ function ImageReactions({
   // Read here, not in the card: a hat push re-renders every mounted card's row, but not the card.
   const turf = !!useTurfFeed() && safe;
   const inView = useElementInView();
+  const oneRow = isImagesCardFooterOneRow(width);
   return (
     <Metrics
       entityType="Image"
@@ -441,7 +446,7 @@ function ImageReactions({
         return (
           <div
             className={clsx(cardClasses.footer, classes.actionsFooter)}
-            style={{ ['--footer-height' as string]: `${IMAGES_CARD_FOOTER_HEIGHT}px` }}
+            style={{ ['--footer-height' as string]: `${getImagesCardFooterHeight(width)}px` }}
             onClick={(e) => {
               // The padding around the buttons must not open the card's image link.
               if (!readonly) {
@@ -450,10 +455,16 @@ function ImageReactions({
               }
             }}
           >
-            <div className={clsx(cardClasses.actions, cardClasses.oneLine)}>
+            <div
+              className={clsx(cardClasses.actions, oneRow && [cardClasses.oneLine, classes.fitRow])}
+            >
               <div className={cardClasses.actionRow}>
                 <Reactions
-                  className={clsx(cardClasses.reactions, classes.bar)}
+                  className={clsx(
+                    cardClasses.reactions,
+                    classes.bar,
+                    oneRow && classes.fitReactions
+                  )}
                   entityId={image.id}
                   entityType="image"
                   reactions={image.reactions}

@@ -1,31 +1,16 @@
-import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import {
-  SelectedWorkflowDisplay,
-  WorkflowInput,
-  WorkflowPicker,
-} from '~/components/generation_v2/inputs/WorkflowInput';
-import type { ButtonGroupOption } from '~/libs/form/components/ButtonGroupInput';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
+import { WorkflowPicker } from '~/components/generation_v2/inputs/WorkflowPicker';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import type { ChoiceOption } from '~/libs/form/components/ChoiceGroup';
 import { workflowConfigByKey } from '~/shared/generation/config/workflows';
-
-/** These render their own workflow display, with their panels. */
-const SELF_DISPLAYED = new Set(['img2meta', 'prompt:enhance']);
-
-type WorkflowProps = {
-  /** The mobile generator's layout. */
-  mobile: boolean;
-  workflow: string;
-  ecosystemId?: number;
-  onBack?: () => void;
-};
+import { RenderGenerationSetupModel } from '~/components/generation_v2/GenerationLayout';
+import classes from './WorkflowRow.module.scss';
 
 /**
- * The form's top row: the workflow control and the ecosystem picker. On a phone the workflow is a
- * card above the ecosystem; elsewhere it is the category icons beside it.
+ * The form's top: two cards. The workflow with its modes, then the model card, headed by the
+ * ecosystem that decides it, holding the form's model and versions from `GenerationSetupModel`.
  */
 export function WorkflowRow({
-  mobile,
   workflow,
   ecosystemId,
   onBack,
@@ -33,61 +18,42 @@ export function WorkflowRow({
   isCompatible,
   isMember,
   ecosystemInput,
-}: WorkflowProps & {
+  modes,
+}: {
+  workflow: string;
+  ecosystemId?: number;
+  onBack?: () => void;
   onChange: (graphKey: string) => void;
   isCompatible?: (optionId: string) => boolean;
   isMember?: boolean;
   ecosystemInput: ReactNode;
+  modes: ChoiceOption[];
 }) {
-  const common = {
-    value: workflow,
-    ecosystemId,
-    onChange: (graphKey: string) => onChange(graphKey),
-    isCompatible,
-    isMember,
-  };
   return (
-    <div
-      className={clsx(
-        'flex w-full min-w-0 gap-2 sm:gap-4',
-        mobile ? 'flex-col' : 'items-center overflow-hidden'
-      )}
-    >
-      {!mobile ? (
-        <WorkflowInput {...common} />
-      ) : (
-        !SELF_DISPLAYED.has(workflow) && <WorkflowPicker {...common} onBack={onBack} />
-      )}
-      {ecosystemInput}
-    </div>
-  );
-}
-
-/** Below the row: the selected workflow (desktop; on a phone the card shows it) and its modes. */
-export function WorkflowModes({
-  mobile,
-  workflow,
-  ecosystemId,
-  onBack,
-  modes,
-  onChange,
-}: WorkflowProps & {
-  modes: ButtonGroupOption[];
-  onChange: (workflow: string) => void;
-}) {
-  if (mobile && modes.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-1">
-      {!mobile && (
-        <SelectedWorkflowDisplay workflowId={workflow} ecosystemId={ecosystemId} onBack={onBack} />
-      )}
-      {modes.length > 0 && (
-        <ButtonGroupInput
-          value={workflowConfigByKey.get(workflow)?.variantOf ?? workflow}
-          onChange={onChange}
-          data={modes}
+    <div className="flex w-full min-w-0 flex-col gap-3">
+      <div className={classes.setupCard}>
+        <WorkflowPicker
+          value={workflow}
+          ecosystemId={ecosystemId}
+          onChange={(graphKey) => onChange(graphKey)}
+          isCompatible={isCompatible}
+          isMember={isMember}
+          onBack={onBack}
         />
-      )}
+        {modes.length > 0 && (
+          <ChoiceGroup
+            className={classes.modes}
+            aria-label="Mode"
+            value={workflowConfigByKey.get(workflow)?.variantOf ?? workflow}
+            onChange={onChange}
+            data={modes}
+          />
+        )}
+      </div>
+      <div className={classes.setupCard}>
+        {ecosystemInput}
+        <RenderGenerationSetupModel className={classes.model} />
+      </div>
     </div>
   );
 }

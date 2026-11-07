@@ -53,6 +53,7 @@
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
   import BulkBar from '$lib/components/BulkBar.svelte';
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
+  import MakeSafeDialog from '$lib/components/MakeSafeDialog.svelte';
   import type { BulkAction } from '$lib/monetization/bulk-actions';
 
   import {
@@ -271,6 +272,11 @@
   // never think to look for them. A reactive Set — in-place add/delete/clear stay fine-grained.
   const selected = new SvelteSet<number>();
   let bulkAction = $state<BulkAction | null>(null);
+  let makeSafe = $state<ReturnType<typeof MakeSafeDialog>>();
+  // Only models on this page: the face is per model, and the page is what the creator has reviewed.
+  const makeSafeModels = $derived(
+    view.models.filter((model) => model.versions.some((version) => selected.has(version.id)))
+  );
   // Prices the creator can still apply this month (null limit = unlimited).
   const remainingPricingSlots = $derived(
     data.caps.pricingLimit === null
@@ -804,6 +810,12 @@
     {exportHref}
     onAction={(a) => (bulkAction = a)}
     onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+    onMakeSafe={() =>
+      makeSafe?.start(
+        makeSafeModels,
+        selected.size -
+          view.models.flatMap((m) => m.versions).filter((v) => selected.has(v.id)).length
+      )}
     salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
       for (const id of view.matchingVersionIds) selected.add(id);
@@ -811,6 +823,8 @@
     onClear={() => selected.clear()}
   />
 {/if}
+
+<MakeSafeDialog bind:this={makeSafe} />
 
 <BulkActionDialog
   bind:action={bulkAction}

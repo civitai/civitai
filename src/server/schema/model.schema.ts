@@ -38,6 +38,7 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import type { MatureLockAttribution } from '~/shared/constants/mature-lock-reason.constants';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import {
   SFW_DESCRIPTION_MAX_LENGTH,
@@ -407,6 +408,8 @@ export type RestrictedNsfwVerdict = {
   restriction: 'minor' | 'poi' | 'sfwOnly';
   /** On an SFW-only model the scan applied the rating at once (SFW-only cleared); what it replaced. */
   applied?: { at: string; prior: RestrictedNsfwPrior };
+  /** The flag was lifted other than by the owner's save; the lead waits for a moderator's ruling. */
+  liftedBy?: 'moderator' | 'appeal' | 'hashRevert';
 };
 
 /** One ruling on a restricted-verdict lead, with the values it replaced. `autoApply` is the scan's own
@@ -420,6 +423,8 @@ export type RestrictedNsfwVerdictRulingRecord = {
   verdict?: RestrictedNsfwVerdict;
   prior: RestrictedNsfwPrior;
 };
+
+export type ComFaceRemovedReason = 'detected' | 'recheck-unverified';
 
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
@@ -481,6 +486,8 @@ export type ModelMeta = Partial<{
     /** Absent on records written before it was kept. */
     prevGalleryLevel?: number | null;
   };
+  /** Flags the owner declared, kept when a moderator's ruling drops `ownerFlagOverride`. Server-owned. */
+  ownerDeclaredFlags: { at: string; flags: ('minor' | 'poi')[] };
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
@@ -489,8 +496,13 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
-  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
-  systemNsfwLock: { source: string; at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. The save-time text
+   *  filter also records which field set it off, for the owner's explanation. */
+  systemNsfwLock: { source: string; at: string } & Partial<MatureLockAttribution>;
+  /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
+   *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
+   *  verdict. A save that sets a .com cover clears it. Server-owned. */
+  comFaceRemoved: { at: string; sfwCoverImageId: number; reason: ComFaceRemovedReason };
   /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
    *  in Needs review. Server-owned, moderator-only. */
   restrictedNsfwVerdict: RestrictedNsfwVerdict;

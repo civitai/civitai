@@ -45,8 +45,10 @@ import {
   getPlacementSpaceRow,
   getPlacementSpaces,
   resolvePlacementSpaceFor,
+  resolvePlacementSpaceForDisplay,
   setPlacementSpace,
 } from '~/server/services/placement-space.service';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import {
   countPendingPlacementsFrom,
   isPlacementSuspended,
@@ -181,7 +183,9 @@ function assertStorylinesEnabled(ctx: Context) {
 export const placementRouter = router({
   getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
     assertPromotionSurfaceReadable(ctx, input.surface);
-    return resolvePlacementSpaceFor(input);
+    return isFliptSync(FLIPT_FEATURE_FLAGS.PLACEMENT_SPACE_READ_CACHE) === true
+      ? resolvePlacementSpaceForDisplay(input)
+      : resolvePlacementSpaceFor(input);
   }),
 
   // The row for one level, so a toggle shows what that level is set to rather
@@ -293,6 +297,8 @@ export const placementRouter = router({
    */
   createSticker: guardedProcedure.input(createStickerPlacementSchema).mutation(({ input, ctx }) => {
     assertPlacementEnabled(ctx);
+    if (input.track && !ctx.features.stickerVideoTracks)
+      throw throwAuthorizationError('placement: moving stickers are not available yet');
     return createStickerPlacement({
       ...input,
       // After the spread, and the schema has no `placerId` to strip anyway —

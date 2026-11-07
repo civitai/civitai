@@ -3,9 +3,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { jsonArrayFrom } from './infra/helpers';
 
 // Kysely ports of the model page's comment reads (`comment.getAll` and
-// `comment.getVisibleCountByModel`, <civitai>/src/server/services/comment.service.ts). They
-// replaced the Prisma reads (formerly behind a server Flipt flag); a cursor page or another sort of
-// the unpinned list still reads through Prisma. The app-side wrappers
+// `comment.getVisibleCountByModel`, <civitai>/src/server/services/comment.service.ts). A cursor
+// page or another sort of the unpinned list still reads through Prisma. The app-side wrappers
 // (<civitai>/src/server/services/hot-reads-4.reads.ts) map these rows to the exact Prisma payload,
 // and <civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts pins them, against
 // a real database, to the values the Prisma reads returned.

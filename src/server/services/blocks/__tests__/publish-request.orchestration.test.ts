@@ -3,6 +3,17 @@ import type * as AppListingRating from '~/server/services/blocks/app-listing-rat
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * Orchestration coverage for the W1 publish-request service. The existing
@@ -485,7 +496,11 @@ describe('submitVersion', () => {
     ownerUserId: number,
     seats: { userId: number; status: string }[] = []
   ) => {
-    mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      app: { userId: ownerUserId },
+    });
     mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: 'apb_existing',
       app: { userId: ownerUserId },
@@ -511,6 +526,49 @@ describe('submitVersion', () => {
     expect(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.appBlockId).toBe(
       'apb_existing'
     );
+  });
+
+  it('🔴 refuses an accepted editor while the OWNER has not accepted the App Developer Terms, inserting nothing', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    // An off-site listing backed by a block: its owner is the listing column (8), which a
+    // transfer moves while the block's OauthClient (7) stays put.
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
   });
 
   it.each(['pending', 'declined'])(
@@ -2017,6 +2075,78 @@ describe('approveRequest', () => {
     // ...and the app_blocks row stores the same canonical value.
     const abArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
     expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
+  });
+
+  it('🔴 refuses to approve while the app owner has not accepted the App Developer Terms; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+      expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("approve checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it('a first version, with no app yet, checks the submitter; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms)
+      .mockClear()
+      .mockImplementation(async (userId) => userId !== 42);
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(42);
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
   });
 
   it('🔴 W13 onsite reset re-approve (SUBSEQUENT-version): restores the listing AND UN-SUSPENDS the block', async () => {
@@ -3928,6 +4058,7 @@ describe('recordPendingFromPush', () => {
 
   it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
     // A pending row for THIS exact (slug, sha) already exists → refresh + done.
     mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
       id: 'pubreq_existing_sha',
@@ -3949,9 +4080,9 @@ describe('recordPendingFromPush', () => {
       })
     );
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
-    // No supersede, no owner lookup — the early-return short-circuits them.
+    // No supersede: the early-return short-circuits it. The owner IS looked up first, because the
+    // App Developer Terms gate (keyed on the owner) must cover a refresh too.
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
-    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('(b) supersede-then-create happy path — no existing row → supersedes other pending, then creates', async () => {

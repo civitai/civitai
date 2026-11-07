@@ -73,9 +73,7 @@ const buttonNamed = (label: string) => {
   return el;
 };
 
-// ButtonGroupInput marks the active option with a ring in the Mantine filled color.
-const isActive = (label: string) =>
-  buttonNamed(label).className.includes('mantine-color-blue-filled');
+const isActive = (label: string) => buttonNamed(label).getAttribute('aria-checked') === 'true';
 
 describe('VersionGroupSelector', () => {
   test('a model outside the group still lists every version, none selected', async () => {

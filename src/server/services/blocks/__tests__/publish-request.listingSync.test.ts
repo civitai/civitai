@@ -1,6 +1,17 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * `approveRequest` (3b) — onsite AppListing CREATE vs manifest-governed COPY RE-SYNC.

@@ -2,32 +2,53 @@ import { useState } from 'react';
 import { Popover } from '~/components/MantineOverlays';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { HatIcon } from '~/components/HatTurf/HatIcon';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
-import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
+  type BadgeFigure,
   RING_LENGTH,
   RING_RADIUS,
+  badgeFigure,
+  formatMargin,
   badgeLeader,
   ringArcs,
   standingsLabel,
 } from '~/components/HatTurf/hat-turf.utils';
+import { useHatStock } from '~/components/HatTurf/useHatTurf';
 import { useHatTurfAction } from '~/components/HatTurf/useHatTurfAction';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { useExperimentExposure } from '~/components/Experiments/useExperimentExposure';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
+// In the ring's 48-unit viewBox.
+const RING_STROKE = 4;
+const DISC_RADIUS = 14;
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+const figureLabel = (figure: BadgeFigure) => {
+  if (!figure.pointsTeam) return '';
+  const earns = `This image earns ${plural(figure.points, 'point', 'points')} for ${
+    figure.pointsTeam
+  }.`;
+  if (figure.margin === null) return ` ${earns}`;
+  const { margin } = figure;
+  const position =
+    margin > 0
+      ? `up by ${plural(margin, 'hat', 'hats')}`
+      : margin < 0
+      ? `behind by ${plural(-margin, 'hat', 'hats')}`
+      : 'level with the lead';
+  return ` ${earns} Your team is ${position}.`;
+};
+
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
   // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
   const joined = !!useTurfFeed()?.joined;
-  const showHats = useHatTurfStore((state) => state.showHats);
-  return joined && showHats ? (
-    <HatTurfBadgeContent imageId={imageId} className={className} />
-  ) : null;
+  return joined ? <HatTurfBadgeContent imageId={imageId} className={className} /> : null;
 }
 
 function HatTurfBadgeContent({ imageId, className }: { imageId: number; className?: string }) {
@@ -41,7 +62,13 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   });
   const [open, setOpen] = useState(false);
   const leader = summary ? badgeLeader(summary) : null;
-  const shownCount = summary && leader ? summary.counted[leader] : null;
+  // A hatted image scores for its hat's team alone; a different leader's count is shown as blocked.
+  const guard = summary?.hatted ? summary.hattedTeam : null;
+  const holder = guard ?? leader;
+  const blocked = guard && leader && leader !== guard ? leader : null;
+  const stock = useHatStock();
+  const figure = summary ? badgeFigure(summary, feed?.team, stock?.creditedPlayers) : null;
+  const shownCount = figure ? figure.points : null;
   // Pops only when a count the viewer already saw changes, not when the first one arrives. Held in
   // state, not derived per render, so an unrelated re-render mid-animation does not cancel it.
   const [seenCount, setSeenCount] = useState(shownCount);
@@ -55,69 +82,103 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
   const arcs = ringArcs(summary.counted);
   const count = shownCount ?? 0;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
-  // A protected image is held by its hat's team, whoever leads the count.
-  const holder = summary.hatted && summary.hattedTeam ? summary.hattedTeam : leader;
-  const discColor = holder ? colorOf(holder) : undefined;
+  const discTeam = figure?.pointsTeam ?? null;
+  const discColor = discTeam ? colorOf(discTeam) : summary.hatted ? FALLBACK_COLOR : undefined;
 
-  const label = `${standingsLabel(summary, feed.team)}${
+  const label = `${figure?.pointsTeam ? 'Hat Turf:' : standingsLabel(summary, feed.team)}${
+    figure ? figureLabel(figure) : ''
+  }${
     summary.hatted
       ? summary.hattedTeam
         ? ` A ${summary.hattedTeam} hat protects this image.`
         : ' A hat protects this image.'
       : ''
   }`;
+  // The dial's centre is always the number; from 10 up its font shrinks so both digits fit the disc.
+  const countEl = (
+    <span
+      key={count}
+      className={clsx(
+        classes.count,
+        classes.countInside,
+        count >= 10 && classes.countTwo,
+        bump && classes.bump
+      )}
+      data-testid="hat-turf-count"
+    >
+      {abbreviateNumber(count)}
+    </span>
+  );
   const face = (
     <>
-      <svg viewBox="0 0 48 48" className={classes.ring} aria-hidden="true">
-        <circle className={classes.track} cx="24" cy="24" r={RING_RADIUS} />
-        {arcs.map((arc) => (
+      <span className={classes.dial}>
+        {/* The disc is in the ring's SVG: as a CSS box it snapped to the pixel grid on its own and,
+            at a fractional x, painted up to a pixel off the ring's centre. */}
+        <svg viewBox="0 0 48 48" className={classes.ring} aria-hidden="true">
+          <g transform="rotate(-90 24 24)">
+            <circle className={classes.track} cx="24" cy="24" r={RING_RADIUS} />
+            {arcs.map((arc) => (
+              <circle
+                key={arc.team}
+                className={classes.arc}
+                data-team={arc.team}
+                cx="24"
+                cy="24"
+                r={RING_RADIUS}
+                stroke={colorOf(arc.team)}
+                strokeDasharray={`${arc.length} ${RING_LENGTH - arc.length}`}
+                strokeDashoffset={-arc.offset}
+              />
+            ))}
+          </g>
+          <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
           <circle
-            key={arc.team}
-            className={classes.arc}
-            data-team={arc.team}
+            className={clsx(classes.discFill, !discColor && classes.neutral)}
             cx="24"
             cy="24"
-            r={RING_RADIUS}
-            stroke={colorOf(arc.team)}
-            strokeDasharray={`${arc.length} ${RING_LENGTH - arc.length}`}
-            strokeDashoffset={-arc.offset}
+            r={DISC_RADIUS}
+            fill={discColor}
+            data-testid="hat-turf-disc-fill"
           />
-        ))}
-      </svg>
-      <div
-        className={clsx(classes.disc, !discColor && classes.neutral)}
-        style={discColor ? { backgroundColor: discColor } : undefined}
-        data-testid="hat-turf-disc"
-      >
-        <span
-          className={classes.hat}
-          style={discColor ? { color: `color-mix(in srgb, ${discColor} 55%, black)` } : undefined}
-        >
-          <HatIcon size={discColor ? 26 : 20} />
+        </svg>
+        <span className={classes.disc} data-testid="hat-turf-disc">
+          {countEl}
         </span>
-        {leader && (
+      </span>
+      {figure?.margin != null && (
+        <span
+          className={clsx(classes.count, classes.margin)}
+          data-testid="hat-turf-margin"
+          data-margin={figure.margin}
+        >
+          {formatMargin(figure.margin)}
+        </span>
+      )}
+      {blocked && (
+        <span className={classes.blocked} data-testid="hat-turf-blocked" data-team={blocked}>
+          <span className={classes.blockedDot} style={{ backgroundColor: colorOf(blocked) }} />
           <span
-            key={count}
-            className={clsx(classes.count, bump && classes.bump)}
-            data-testid="hat-turf-count"
+            className={clsx(classes.count, classes.struck)}
+            data-testid="hat-turf-blocked-count"
           >
-            {abbreviateNumber(count)}
+            {abbreviateNumber(summary.counted[blocked] ?? 0)}
           </span>
-        )}
-      </div>
+        </span>
+      )}
       {summary.hatted && (
         <span className={classes.lock} data-testid="hat-turf-badge-lock">
-          <IconLock size={10} stroke={2.75} />
+          <IconLock stroke={2.5} />
         </span>
       )}
     </>
   );
+  const chip = summary.hatted || figure?.margin != null;
 
   if (feed.arm !== 'badge-popover') {
     return (
       <div
         ref={exposureRef}
-        className={clsx(classes.badge, classes.passive, className)}
+        className={clsx(classes.badge, chip && classes.chip, classes.passive, className)}
         role="img"
         aria-label={label}
         data-testid="hat-turf-badge"
@@ -141,7 +202,7 @@ function HatTurfBadgeContent({ imageId, className }: { imageId: number; classNam
         <button
           ref={exposureRef}
           type="button"
-          className={clsx(classes.badge, className)}
+          className={clsx(classes.badge, chip && classes.chip, className)}
           aria-label={`${label} Show teams`}
           aria-expanded={open}
           data-testid="hat-turf-badge"

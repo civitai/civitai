@@ -503,6 +503,10 @@
                   "type": "boolean",
                   "description": "Whether other apps may reach this collection through their `storage.imports` (with the viewer's consent). Default true; false refuses every import of it with 403 `not_exportable`."
                 },
+                "registry": {
+                  "enum": ["public"],
+                  "description": "RESERVED — civitai.com refuses this field until publishing to registries is enabled, so do not declare it yet. Shared collections only. \"public\" publishes the collection's visible shared documents, read-only, to every registry that follows Civitai's apps, as entities of the collection's schema; hidden documents and every private document never leave. Absent (the default): the collection is not published. A moderator sees the change at review."
+                },
                 "ownedModelVersions": {
                   "type": "array",
                   "description": "Shared collections with `write` \"own\" only. Fields of a document's `data` that, when present, must hold a Civitai model version id owned by the viewer writing the document — for example [\"/workflow/modelVersionId\"] for a collection where viewers publish their own workflows. Each entry is a pointer of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _; 1 to 4 distinct pointers. A pointer names one field of nested objects: it never indexes into an array, and a step through an array or any other non-object finds nothing. On every create and update the server resolves each pointer in the new `data`: a field that is absent is allowed; a field that is present must be a positive integer naming a model version whose model the writer owns, and is otherwise refused with 403 `resource_not_owned` — a version that is someone else's, missing or deleted, and a value that is not a positive integer, are all refused the same way. The check runs before moderation and before any write budget is spent. Ownership is checked when a document is written, not afterwards: if the model later changes hands or is deleted, documents already stored keep the id.",
@@ -549,7 +553,8 @@
                       "marks": false,
                       "showAuthor": false,
                       "dailyWritesPerAuthor": false,
-                      "ownedModelVersions": false
+                      "ownedModelVersions": false,
+                      "registry": false
                     }
                   }
                 },

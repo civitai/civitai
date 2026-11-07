@@ -33,6 +33,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
+const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
  * The two `Image.metadata` breadcrumbs the main app's account-deletion grace block writes, spelled
@@ -247,7 +248,7 @@ export async function blockImage({
       >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: BLOCKED_REASON_MODERATED,
+      blockedFor: sql<string>`CASE WHEN "blockedFor" = ${BLOCKED_REASON_CSAM} THEN "blockedFor" ELSE ${BLOCKED_REASON_MODERATED} END`,
       updatedAt: new Date(),
       // Two things happen to `metadata` on a block, and they compose in one expression:
       //   - the account-deletion breadcrumbs come off, always. `jsonb - key` NULL-propagates, so a

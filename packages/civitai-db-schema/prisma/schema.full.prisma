@@ -564,6 +564,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  accessTokens               AccessToken[]
   ratingRequests             ImageRatingRequest[]
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
@@ -607,6 +608,7 @@ model User {
   // Storylines
   storylines                 Storyline[]
   storylineCollaborations    StorylineCollaborator[]
+  storylineFollows           StorylineFollow[]
   storylineEarlyAccess       StorylineEarlyAccessSignup?
   storylineBranchChoices     StorylineBranchChoice[]
   storylineCreateClicks      StorylineCreateClick[]
@@ -1923,23 +1925,6 @@ model HeldResourceReview {
   @@index([userId])
 }
 
-/// A copy of a held author's Answer, written in the same statement as a Question delete that would
-/// cascade it. Purged once the author's hold ends.
-model HeldAnswer {
-  /// The original Answer id.
-  id          Int      @id
-  questionId  Int
-  userId      Int
-  content     String
-  createdAt   DateTime
-  updatedAt   DateTime
-  heldAt      DateTime @default(now())
-  /// The holds on the author when it was copied.
-  holdReasons String[]
-
-  @@index([userId])
-}
-
 model ResourceReview {
   id             Int                      @id @default(autoincrement())
   modelId        Int
@@ -2243,7 +2228,8 @@ model Image {
   clubAvatar          Club[]                @relation("avatarImage")
   clubTierCover       ClubTier[]
   clubPostCoverImage  ClubPost[]
-  article             Article?
+  article             Article?              @relation("ArticleCover")
+  articleBanner       Article?              @relation("ArticleBanner")
   purchasableRewards  PurchasableReward[]
   tools               ImageTool[]
   techniques          ImageTechnique[]
@@ -3637,6 +3623,14 @@ model AppListing {
   revisionOfId    String?      @map("revision_of_id")
   revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
   revisions       AppListing[] @relation("AppListingRevision")
+  // MODERATOR-SET "Official" flag: the app is made by the Civitai team. A provenance claim
+  // like `Model.isOfficial` / `Article.isOfficial` — set only by `setListingOfficialAsModerator`,
+  // never from an author input or the manifest; renders a badge on the store card and page.
+  // 🔴 CARRIES THE no-type ANNOTATION — stripped from the generated client, read and written
+  // by raw SQL in `app-listing-official.service.ts` only, for the reason `visibility` above
+  // documents (a Prisma-declared scalar is named by every select-less query and would 500
+  // them until the manual migration `20261224120200_app_listing_official` is applied).
+  isOfficial      Boolean      @default(false) @map("is_official") // @no-type
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
@@ -4963,6 +4957,18 @@ model AppStorageImportGrant {
   @@map("app_storage_import_grants")
 }
 
+// App Developer Terms acceptance: one row per (developer, terms version). A developer accepts with
+// the checkbox at app publish; bumping APP_DEVELOPER_TERMS_VERSION asks everyone again. The FK to
+// "User" lives only in migration `20261223120000_app_developer_terms_acceptance`, applied by hand.
+model AppDeveloperTermsAcceptance {
+  userId     Int      @map("user_id")
+  version    String
+  acceptedAt DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  @@id([userId, version])
+  @@map("app_developer_terms_acceptances")
+}
+
 // App Blocks App Storage schema migrations: one run per (approved publish request, collection)
 // over that collection's stored documents. RAW SQL ONLY (`storage-migration-run.service.ts`), so
 // the model is stripped from the generated client; the migration
@@ -5044,6 +5050,36 @@ model TrustedSpokeDomain {
   enabled           Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt
+}
+
+// A bearer link to one resource (first use: a private share link to a draft article). Only the
+// sha256 of the token is stored; the raw token is shown to its creator once. A row grants nothing
+// once `revokedAt` is set or `expiresAt` has passed, and readers check both on every lookup.
+// `resourceType` is text, not an enum, so a new kind of link needs no enum migration.
+model AccessToken {
+  id           Int       @id @default(autoincrement())
+  resourceType String
+  resourceId   Int
+  tokenHash    String    @unique
+  createdById  Int
+  createdBy    User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+
+  @@index([resourceType, resourceId])
+  @@index([createdById])
+}
+
+// The check a shared draft's read requires: the workflow whose verdict covers the draft's text, and
+// a hash of that text. Written under the share-token lock.
+model ArticleShareCheck {
+  articleId  Int      @id
+  // Bumped by every write that changes a shared draft's text.
+  generation Int      @default(0)
+  workflowId String?
+  textHash   String?
+  updatedAt  DateTime @updatedAt
 }
 
 model AdToken {
@@ -6284,7 +6320,10 @@ model Article {
   content          String
   cover            String?
   coverId          Int?          @unique
-  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
+  coverImage       Image?        @relation("ArticleCover", fields: [coverId], references: [id], onDelete: SetNull)
+  // Optional wide banner across the top of the article page; coverId stays the feed card image.
+  bannerId         Int?          @unique
+  bannerImage      Image?        @relation("ArticleBanner", fields: [bannerId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
   // Go-live time for a never-published Draft; publishedAt stays NULL until then.
   scheduledAt      DateTime?
@@ -9226,6 +9265,7 @@ model UserProfile {
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
+  showcaseSections        Json      @default("[]")
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
@@ -10381,6 +10421,9 @@ model Placement {
   placerId              Int
   placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
   data                  Json      @default("{}")
+  /// A sticker's movement over a video, in the shape of `StickerTrack`. Null for a still sticker;
+  /// `data` holds the pose at time zero either way. Its own column because the feed reads `data`.
+  track                 Json?
   status                String
   /// 'owner' | 'moderator' | 'cosmeticTakedown' | 'placer', set with status 'removed'. The
   /// removals refund different amounts, so the status alone cannot settle the
@@ -10593,6 +10636,7 @@ model Storyline {
   chapters      StorylineChapter[]
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
+  followers     StorylineFollow[]
   reports       StorylineReport[]
   coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
@@ -10752,6 +10796,30 @@ model StorylineCollaborator {
   createdAt   DateTime  @default(now())
   /// When the user accepted the invitation; null while it is pending. Declining deletes the row.
   acceptedAt  DateTime?
+
+  @@id([storylineId, userId])
+  @@index([userId])
+}
+
+/// Which new chapters of a storyline a follower is told about. Each scope includes the one before.
+enum StorylineFollowScope {
+  /// Chapters on the main path.
+  Canon
+  /// Also chapters by the owner or an accepted collaborator, judged when the notification is sent.
+  Endorsed
+  /// Every live chapter.
+  Everything
+}
+
+/// A user following a storyline for 'storyline-chapter-added'. The owner and each accepted
+/// collaborator get a row when they start or join, and may delete it; unfollowing deletes it.
+model StorylineFollow {
+  storylineId Int
+  storyline   Storyline            @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  userId      Int
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope       StorylineFollowScope @default(Canon)
+  createdAt   DateTime             @default(now())
 
   @@id([storylineId, userId])
   @@index([userId])

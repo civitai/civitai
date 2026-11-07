@@ -45,6 +45,10 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
+import {
+  CLASSIC_TRAINER_RETIRED_MESSAGE,
+  isClassicTrainerRetired,
+} from '~/shared/constants/training.constants';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
@@ -365,6 +369,9 @@ export const createTrainingWorkflow = async ({
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
   const { id: userId, isModerator } = user;
+
+  // Only the classic trainer submits here; Training Studio has its own submit path.
+  if (isClassicTrainerRetired()) throw throwBadRequestError(CLASSIC_TRAINER_RETIRED_MESSAGE);
 
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)

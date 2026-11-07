@@ -161,6 +161,15 @@ export const createPostHandler = async ({
 };
 
 /**
+ * The router's image input, plus what only a server caller may set: the schema has neither field,
+ * so a client value never reaches here. See `addPostImage`.
+ */
+type PostWithImagesImage = CreatePostWithImagesInput['images'][number] & {
+  generationWorkflowId?: string;
+  serverMintedUrl?: boolean;
+};
+
+/**
  * Composite create-with-images handler for headless/agent (MCP) use.
  *
  * Creates the post, attaches each image in order, and optionally publishes —
@@ -179,7 +188,7 @@ export const createPostWithImagesHandler = async ({
   input,
   ctx,
 }: {
-  input: CreatePostWithImagesInput;
+  input: Omit<CreatePostWithImagesInput, 'images'> & { images: PostWithImagesImage[] };
   ctx: ProtectedContext;
 }) => {
   const { images, publish, collectionId, ...createInput } = input;

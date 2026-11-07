@@ -5,6 +5,7 @@ import {
 import {
   deletePushSubscriptionInput,
   getUserNotificationsSchema,
+  markImageMilestonesReadInput,
   markReadNotificationInput,
   toggleEmailSettingInput,
   toggleNotificationSettingInput,
@@ -16,6 +17,7 @@ import {
   getUserEmailSettings,
   getUserPushSettings,
   getUserPushSubscriptions,
+  markImageMilestonesRead,
   markNotificationsRead,
   toggleEmailSetting,
   togglePushSetting,
@@ -33,6 +35,10 @@ export const notificationRouter = router({
     .meta({ requiredScope: TokenScope.NotificationsWrite })
     .input(markReadNotificationInput)
     .mutation(({ input, ctx }) => markNotificationsRead({ ...input, userId: ctx.user.id })),
+  markImageMilestonesRead: protectedProcedure
+    .meta({ requiredScope: TokenScope.NotificationsWrite })
+    .input(markImageMilestonesReadInput)
+    .mutation(({ input, ctx }) => markImageMilestonesRead({ ...input, userId: ctx.user.id })),
   updateUserSettings: protectedProcedure
     .meta({ requiredScope: TokenScope.NotificationsWrite })
     .input(toggleNotificationSettingInput)

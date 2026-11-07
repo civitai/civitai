@@ -7,6 +7,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * every future continuation silently unshifted.
  */
 
+import type * as TrainingConstants from '~/shared/constants/training.constants';
+
+// The classic trainer's submit is date-gated; these cases cover a run it still accepts.
+vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingConstants>()),
+  isClassicTrainerRetired: () => false,
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),

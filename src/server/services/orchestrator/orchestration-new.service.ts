@@ -118,6 +118,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { REMIX_APP_TAG } from '~/shared/remix-apps/tags';
 import { getPolyGenPrimaryModel } from '~/server/orchestrator/polygen/polygen-output';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -2100,7 +2101,7 @@ export async function generateFromGraph({
       tips,
       experimental,
       metadata,
-      callbacks: getOrchestratorCallbacks(userId),
+      callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,

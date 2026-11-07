@@ -1,6 +1,6 @@
 # Handler Metric Output Report
 
-Generated: 2026-10-29T18:01:59.922Z
+Generated: 2026-11-05T21:08:26.570Z
 
 ## Summary
 
@@ -122,9 +122,6 @@ Generated: 2026-10-29T18:01:59.922Z
 **Operations**: create, delete
 
 **Metric Outputs**:
-- `Bounty.commentCount`
-- `Image.commentCount`
-- `Post.commentCount`
 - `User.commentCount`
 
 ### commentV3Handler
@@ -134,6 +131,9 @@ Generated: 2026-10-29T18:01:59.922Z
 
 **Metric Outputs**:
 - `Article.commentCount`
+- `Bounty.commentCount`
+- `Image.commentCount`
+- `Post.commentCount`
 - `User.commentCount`
 
 ### imageResourceHandler

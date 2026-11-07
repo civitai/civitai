@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRPCError } from '@trpc/server';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
@@ -10,6 +11,11 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createReport,
   getAppealCount,
+}));
+
+const commentGate = vi.hoisted(() => vi.fn(async (..._a: unknown[]) => undefined));
+vi.mock('~/server/controllers/commentv3.controller', () => ({
+  assertCommentActionable: commentGate,
 }));
 
 const { createReportHandler, getRecentAppealsHandler } = await import(
@@ -65,6 +71,37 @@ describe('report.create response', () => {
       _def: { output?: unknown };
     };
     expect(procedure._def.output).toBe(createReportOutputSchema);
+  });
+});
+
+describe('reporting a comment', () => {
+  const report = (type: string) =>
+    createReportHandler({
+      input: { type, id: 17, reason: ReportReason.TOSViolation, details: {} } as never,
+      ctx,
+    });
+
+  it.each([ReportEntity.CommentV3, ReportEntity.CommentV2])(
+    'refuses a %s report the comment gate refuses, filing nothing',
+    async (type) => {
+      commentGate.mockRejectedValueOnce(new TRPCError({ code: 'NOT_FOUND' }));
+      await expect(report(type)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(commentGate).toHaveBeenCalledTimes(1);
+      expect(commentGate).toHaveBeenCalledWith(17, ctx);
+      expect(createReport).not.toHaveBeenCalled();
+    }
+  );
+
+  it('leaves reports on other content to their own checks', async () => {
+    createReport.mockResolvedValue(storedReport);
+    await report(ReportEntity.Crucible);
+    expect(commentGate).not.toHaveBeenCalled();
+  });
+
+  it('files one the gate allows (control)', async () => {
+    createReport.mockResolvedValue(storedReport);
+    await report(ReportEntity.CommentV3);
+    expect(createReport).toHaveBeenCalledTimes(1);
   });
 });
 

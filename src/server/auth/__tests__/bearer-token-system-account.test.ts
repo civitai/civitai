@@ -116,6 +116,12 @@ describe('a bearer key owned by a system account', () => {
       });
     });
 
+    it('is refused when the primary has no row for the account', async () => {
+      dbMock.dbWrite.user.findUnique.mockResolvedValue(null as never);
+      await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+      expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalled();
+    });
+
     // The session copy (beforeEach) still shows no access: a grant it has not caught up with counts.
     it.each(MODERATOR_ACCESS)('is refused while the account holds %s', async (_, held) => {
       primaryHolds(held);

@@ -22,6 +22,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client, recordB2PresignIssued } from '~/server/prom/b2-put.metrics';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { isUpstreamNetworkError } from '~/server/utils/errorHandling';
+import { attachmentContentDisposition } from '~/utils/content-disposition';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -1351,7 +1352,7 @@ export async function getGetUrl(
     Bucket: bucket,
     Key: parsedKey,
   };
-  if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
+  if (fileName) command.ResponseContentDisposition = attachmentContentDisposition(fileName);
 
   const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
   return { url, bucket, key: parsedKey };
@@ -1368,7 +1369,7 @@ export async function getGetUrlByKey(
     Bucket: bucket,
     Key: key,
   };
-  if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
+  if (fileName) command.ResponseContentDisposition = attachmentContentDisposition(fileName);
 
   const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
   return { url, bucket, key };

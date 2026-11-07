@@ -41,8 +41,8 @@ import {
  *
  * The unpinned list is compared with `findTopLevelCommentsViaPrisma` live: it still serves the
  * pages Kysely does not (a cursor page or another sort). The counts and the pinned block are
- * compared with fixtures/hot-reads-4-golden.json, printed by the deleted Prisma readers against these
- * same fixture rows in CI. A change to the fixture rows needs the golden re-derived by hand.
+ * compared with fixtures/hot-reads-4-golden.json, the Prisma reads' output for these same fixture
+ * rows. A change to the fixture rows needs the golden re-derived by hand.
  *
  * Every viewer-dependent branch of the filter is a case of its own, with literal fixtures: no
  * exclusions, hidden and blocked authors excluded, one author only (which wins over exclusions), the
