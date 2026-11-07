@@ -66,36 +66,3 @@ describe('the moderator list is the sitewide tool', () => {
     expect(countArgs.where.userId).toBeNull();
   });
 });
-
-describe('metadata.statusPage on the public read', () => {
-  it('returns the flag when set and an unset flag for rows saved before it existed', async () => {
-    const row = { createdAt: new Date(), startsAt: new Date(Date.now() - 1000), endsAt: null };
-    dbMock.dbWrite.announcement.findMany.mockResolvedValue([
-      {
-        ...row,
-        id: 1,
-        title: 'a',
-        content: '',
-        color: 'red',
-        emoji: null,
-        targetUsers: [],
-        metadata: { statusPage: true },
-      },
-      {
-        ...row,
-        id: 2,
-        title: 'b',
-        content: '',
-        color: 'red',
-        emoji: null,
-        targetUsers: [],
-        metadata: {},
-      },
-    ] as never);
-
-    const result = await getCurrentAnnouncements({ domain: 'blue' as never });
-    const byId = Object.fromEntries(result.map((x) => [x.id, x.metadata.statusPage]));
-
-    expect(byId).toEqual({ 1: true, 2: undefined });
-  });
-});

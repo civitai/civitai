@@ -21,9 +21,7 @@ describe('metadata.statusPage', () => {
   it('saves an absent flag as off', () => {
     const parsed = upsertAnnouncementSchema.parse({ ...base, metadata: {} });
     expect(parsed.metadata.statusPage).toBe(false);
-  });
 
-  it('parsing metadata that predates the flag yields off', () => {
     const legacy = announcementMetaSchema.parse({
       dismissible: false,
       targetAudience: 'authenticated',

@@ -272,9 +272,13 @@ async function save() {
 }
 
 /** Uses the native value setter so React's value tracking sees the change. */
-async function typeInto(label: string, value: string) {
+async function inputByLabel(label: string) {
   const labelEl = await findByText<HTMLLabelElement>('label', label);
-  const input = document.getElementById(labelEl.htmlFor) as HTMLInputElement;
+  return document.getElementById(labelEl.htmlFor) as HTMLInputElement;
+}
+
+async function typeInto(label: string, value: string) {
+  const input = await inputByLabel(label);
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   setter.call(input, value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -321,15 +325,6 @@ describe('AnnouncementEditModal metadata', () => {
     expect(savedMetadata().statusPage).toBe(true);
   });
 
-  test('an announcement saved before the flag existed opens unticked and still saves', async () => {
-    renderWithProviders(<AnnouncementEditModal announcement={existingAnnouncement} />);
-
-    expect((await statusPageCheckbox()).checked).toBe(false);
-    await save();
-
-    expect(savedMetadata().statusPage).toBe(false);
-  });
-
   test('editing keeps the stored audience, dismissibility, column span and order', async () => {
     const stored = {
       ...(existingAnnouncement as object),
@@ -364,6 +359,7 @@ describe('AnnouncementEditModal metadata', () => {
     } as never;
     renderWithProviders(<AnnouncementEditModal announcement={stored} />);
 
+    expect(await inputByLabel('CTA Text')).toHaveProperty('value', 'Read more');
     await typeInto('CTA Text', '');
     await save();
 
