@@ -596,6 +596,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 1,
   },
+  'src/server/services/image.service.ts#setImageNsfwLevelFromKnights': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/image.service.ts#handleUnblockImages': {
     decision: 'raw-server-keys',
     sites: 1,

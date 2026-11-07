@@ -41,6 +41,8 @@ import {
 import { ticketSnapshot } from './tickets/snapshot';
 import { peekTicketCounts } from './tickets/view-counts';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
+import { countInquisitorQueue } from './knights/inquisitor.service';
+import { countPendingLinkReviews } from './knights/link-review.service';
 import { getRestrictedVerdictCount } from './restricted-nsfw-verdicts';
 
 export type SidebarCounts = Record<string, number>;
@@ -138,6 +140,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     csamTextHolds,
     siteAppeals,
     evidenceHoldsEnding,
+    knightsInquisitor,
+    knightsLinkReviews,
     ticketCounts,
     bountyUnpaidAwards,
   ] = await Promise.all([
@@ -203,6 +207,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
+    bounded(countInquisitorQueue),
+    bounded(countPendingLinkReviews),
     // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
     bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
     // Bounded: the legacy half filters ModActivity on `activity`, which no index covers.
@@ -221,6 +227,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
     stuckIngestion,
     ingestionErrors,
+    knightsInquisitor,
+    knightsLinkReviews,
     bountyUnpaidAwards,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);

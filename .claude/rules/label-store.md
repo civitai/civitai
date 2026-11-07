@@ -7,6 +7,7 @@ paths:
   - "**/*appeal*"
   - "**/*moderat*"
   - "**/creator-shop-label*"
+  - "apps/knights/src/lib/server/conversion/labels.ts"
 ---
 
 # Label store

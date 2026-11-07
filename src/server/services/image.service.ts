@@ -59,6 +59,7 @@ import {
 } from '~/server/common/constants';
 import {
   hasBlockMarker,
+  hasBlockMarkerSql,
   imageReviewedSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
@@ -330,6 +331,7 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
+import { queueOwnerRatingForKnights } from '~/server/services/knights/sources';
 import { readUserIdByUsernameViaKysely } from '~/server/services/hot-reads-6.reads';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
@@ -8113,6 +8115,34 @@ export async function reportCsamImages({
   });
 }
 
+async function afterImageNsfwLevelSet({
+  id,
+  postId,
+  userId,
+  status,
+  activity,
+}: {
+  id: number;
+  postId: number | null;
+  userId: number;
+  status?: UpdateImageNsfwLevelOutput['status'];
+  activity: ImageModActivity['activity'];
+}) {
+  await Promise.all([
+    imageMetadataCache.refresh(id),
+    refreshThumbnailCache(id),
+    refreshProfilePicturesForImages([id]),
+  ]);
+  if (status) {
+    await dbWrite.imageRatingRequest.updateMany({
+      where: { imageId: id, status: 'Pending' },
+      data: { status },
+    });
+  }
+  await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId });
+  await trackModActivity(userId, { entityType: 'image', entityId: id, activity });
+}
+
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
@@ -8144,24 +8174,11 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await Promise.all([
-      imageMetadataCache.refresh(id),
-      refreshThumbnailCache(id),
-      refreshProfilePicturesForImages([id]),
-    ]);
-    // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
-    // Commenting this out should solve the problem.
-    // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    if (status) {
-      await dbWrite.imageRatingRequest.updateMany({
-        where: { imageId: id, status: 'Pending' },
-        data: { status },
-      });
-    }
-    await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: id,
+    await afterImageNsfwLevelSet({
+      id,
+      postId: image.postId,
+      userId,
+      status,
       activity: activity ?? 'setNsfwLevel',
     });
     // Knights consensus locks through this branch too, but it is a vote, not a moderator's
@@ -8211,11 +8228,70 @@ export async function updateImageNsfwLevel({
           rankType: NewOrderRankType.Knight,
           priority: 1,
         });
+        await queueOwnerRatingForKnights(id);
       }
     }
   }
 
   return nsfwLevel;
+}
+
+export type KnightsNsfwLevelResult =
+  | { applied: true }
+  | { applied: false; reason: 'missing' | 'blocked' | 'locked'; currentLevel: number | null };
+
+/**
+ * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
+ * hands: it exists, carries no block marker, and is unlocked or locked by an earlier Knights vote.
+ * The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a read
+ * and the write cannot be overwritten.
+ */
+export async function setImageNsfwLevelFromKnights({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: number;
+  userId: number;
+}): Promise<KnightsNsfwLevelResult> {
+  const [updated] = await dbWrite.$queryRaw<{ postId: number | null }[]>`
+    UPDATE "Image" i
+    SET "nsfwLevel" = ${nsfwLevel},
+        "nsfwLevelLocked" = TRUE,
+        "metadata" = COALESCE(i."metadata", '{}'::jsonb)
+          || jsonb_build_object('nsfwLevelReason', ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}::text),
+        "updatedAt" = NOW()
+    WHERE i."id" = ${id}
+      AND NOT ${hasBlockMarkerSql('i')}
+      AND (
+        NOT i."nsfwLevelLocked"
+        OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}
+      )
+    RETURNING i."postId"
+  `;
+
+  if (!updated) {
+    const image = await dbWrite.image.findUnique({
+      where: { id },
+      select: { nsfwLevel: true, ingestion: true, blockedFor: true },
+    });
+    if (!image) return { applied: false, reason: 'missing', currentLevel: null };
+    return {
+      applied: false,
+      reason: hasBlockMarker(image) ? 'blocked' : 'locked',
+      currentLevel: image.nsfwLevel,
+    };
+  }
+
+  await afterImageNsfwLevelSet({
+    id,
+    postId: updated.postId,
+    userId,
+    status: 'Actioned',
+    activity: 'setNsfwLevelKono',
+  });
+  return { applied: true };
 }
 
 /**

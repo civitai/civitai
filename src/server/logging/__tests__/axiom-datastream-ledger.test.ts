@@ -80,6 +80,8 @@ const LOKI_ONLY: Record<string, string> = {
   'db-logs': 'Slow-query reports from the Prisma client. Latent — it has never had a dataset.',
   'eventloop-longtask':
     'Event-loop long tasks. The aggregate lives in metrics and the per-event payload in the log store; both are what every existing dashboard and alert already read.',
+  'knights-v2-sources':
+    'Knights of New Order queue-source enqueue failures; a non-fatal catch path. Confirmed absent (404, with the control) on 2026-10-28.',
   'moderator-app':
     'Moderator-app request failures; the caller rethrows, so the throw is the signal.',
   settings:
@@ -95,6 +97,7 @@ const LOKI_ONLY: Record<string, string> = {
 const FORWARDING_FILES: ReadonlySet<string> = new Set([
   'packages/civitai-axiom/src/client.ts',
   'apps/auth/src/lib/server/axiom.ts',
+  'apps/knights/src/lib/server/axiom.ts',
   'apps/moderator/src/lib/server/axiom.ts',
   'apps/notifications/src/lib/server/clients/axiom.ts',
 ]);

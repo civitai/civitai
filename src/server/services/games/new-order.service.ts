@@ -28,6 +28,7 @@ import {
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
+  legacyRank,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -173,7 +174,11 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
     getVotingCooldownUntil(playerId),
   ]);
 
-  return { ...playerData, ...user, stats, cooldownUntil };
+  // Paladin has no pools in this game; see `legacyRank`.
+  // Typed as the full enum: the client cache also stores the rank a rank-up signal carries.
+  const rankType = legacyRank(playerData.rankType) as NewOrderRankType;
+
+  return { ...playerData, rankType, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -1447,8 +1452,15 @@ export async function resetPlayer({
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
+    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays.
+    // startAt must be set here (database clock, under the row lock), not by the Prisma data: Knights' conversion ordering depends on it.
+    dbWrite.$executeRaw`
+      UPDATE "NewOrderPlayer"
+      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted"
+      WHERE "userId" = ${playerId}
+    `,
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
       where: { targetPlayerId: playerId, cleansedAt: null },

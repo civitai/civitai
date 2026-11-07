@@ -69,8 +69,8 @@ rather than reading it end to end.
   first; the procedure covers the second. Both are needed.
 - REST endpoints under `src/pages/api/` do not get tRPC's middleware. Check they use the helpers in
   `src/server/utils/endpoint-helpers.ts` — an API-key or bearer path that skips the same checks the
-  tRPC route makes is a finding. `WebhookEndpoint` guards `src/pages/api/testing/*`; a debug endpoint
-  without it is one too.
+  tRPC route makes is a finding. `WebhookEndpoint` guards `src/pages/api/testing/*` and server-to-server routes such as
+  `src/pages/api/mod/image/kono-set-nsfw-level.ts`; a debug endpoint without it is a finding too.
 - Moderator-only fields leaking into a public selector: a `select` that returns
   `nsfwLevel`/`blockedFor`/report details, or a report's reporter, to a non-moderator caller.
 

@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 const APP_EXECUTABLE = new Set([
   'attach_bytes',
   'exclude',
+  // Knights records why a label write failed. Granted to the Knights role with its table rights.
+  'note_failure',
   'person_hash',
   'record_label',
   'submit_predictions',
@@ -33,8 +35,13 @@ function walk(dir: string, extensions: Set<string>, out: string[] = []): string[
   return out;
 }
 
+// `INSERT INTO label_store.rule (cols)` names a table and its columns, not a routine call.
+const TABLE_REFERENCE = /\b(?:into|from|join|update|table)\s+$/i;
+
 const routinesCalled = (source: string) =>
-  [...source.matchAll(ROUTINE_CALL)].map((m) => m[1].toLowerCase());
+  [...source.matchAll(ROUTINE_CALL)]
+    .filter((m) => !TABLE_REFERENCE.test(source.slice(Math.max(0, m.index - 20), m.index)))
+    .map((m) => m[1].toLowerCase());
 
 const calls = SCANNED.flatMap((dir) => walk(path.join(ROOT, dir), CODE_EXTENSIONS))
   .map((file) => path.relative(ROOT, file).split(path.sep).join('/'))
@@ -68,6 +75,14 @@ describe('🔴 app code calls only the allowlisted label_store routines', () => 
     ['LABEL_STORE.RECORD_PREDICTION(', 'record_prediction'],
   ])('reads the routine name from %j', (source, routine) => {
     expect(routinesCalled(source)).toEqual([routine]);
+  });
+
+  it.each([
+    'INSERT INTO label_store.rule ("question", "minHuman")',
+    'SELECT * FROM label_store.label (x)',
+    'UPDATE "label_store"."rule" (',
+  ])('does not read a table reference as a routine call: %j', (source) => {
+    expect(routinesCalled(source)).toEqual([]);
   });
 
   it('allowlists only routines the migrations define', () => {

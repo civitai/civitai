@@ -14,7 +14,7 @@ import {
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import {
-  notificationCategoryTypes,
+  notificationSettingGroups,
   notificationTypes,
   optInNotificationTypes,
 } from '~/server/notifications/utils.notifications';
@@ -36,7 +36,7 @@ export default function NotificationsCard() {
     updateNotificationSettingMutation.mutate({ toggle, type });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    const categoryTypes = notificationCategoryTypes[category]
+    const categoryTypes = notificationSettingGroups[category]
       ?.filter((x) => toggle === false || !x.optIn)
       .map((x) => x.type);
     if (!categoryTypes?.length) return;
@@ -75,7 +75,7 @@ export default function NotificationsCard() {
             </Group>
           ) : (
             <>
-              {Object.entries(notificationCategoryTypes).map(([category, settings]) => (
+              {Object.entries(notificationSettingGroups).map(([category, settings]) => (
                 <React.Fragment key={category}>
                   <Card.Section withBorder inheritPadding py="xs">
                     <Group justify="space-between">
