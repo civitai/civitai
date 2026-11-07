@@ -26,18 +26,25 @@ export type TextScanNsfwPreview =
  * The text-scan's verdict for `label` on text that is not stored yet, with production's prompts,
  * model and config. It registers no callback and names no entity, so it writes no moderation record
  * and acts on nothing. A label with no prompt row is logged as missing and comes back unavailable.
+ * `promptOverrides` (prompt key → content) replaces active rows for this call only, so an eval can
+ * score a draft prompt through the same path.
  */
-async function previewTextScanLabel<L extends TextScanLabel>({
+export async function previewTextScanLabel<L extends TextScanLabel>({
   label,
   fields,
   waitSeconds,
+  promptOverrides = {},
 }: {
   label: L;
   fields: TextScanField[];
   waitSeconds: number;
+  promptOverrides?: Record<string, string>;
 }): Promise<{ status: 'ok'; output: NonNullable<TextScanOutput[L]> } | { status: 'unavailable' }> {
   const labels = [label];
-  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+  const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+  const prompts = { ...active };
+  for (const [key, content] of Object.entries(promptOverrides))
+    prompts[key] = { id: -1, key, content };
   let composed: ReturnType<typeof composeTextScanMessages>;
   try {
     composed = composeTextScanMessages({

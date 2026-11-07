@@ -24,7 +24,11 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   })),
 }));
 
-import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
+import {
+  previewComFaceIntent,
+  previewTextScanLabel,
+  previewTextScanNsfw,
+} from '~/server/services/text-scan/preview';
 import { getActiveTextScanPrompts } from '~/server/services/text-scan/prompt';
 
 const reply = (content: unknown, status = 'succeeded') => ({
@@ -107,5 +111,30 @@ describe('previewComFaceIntent', () => {
       status: 'ok',
       output: { detected: true, reason: 'stub reason' },
     });
+  });
+
+  it('scores a draft prompt in place of the active row, for that call only', async () => {
+    const rows = {
+      base: { id: 1, key: 'base', content: 'BASE PROMPT' },
+      'label:model-com-face-intent': { id: 3, key: 'label:model-com-face-intent', content: 'LIVE' },
+    };
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValueOnce(rows).mockResolvedValueOnce(rows);
+    mockSubmitWorkflow.mockResolvedValue(
+      reply({ 'model-com-face-intent': { detected: false, reason: 'r' } })
+    );
+    await previewTextScanLabel({
+      label: 'model-com-face-intent',
+      fields,
+      waitSeconds: 10,
+      promptOverrides: { 'label:model-com-face-intent': 'DRAFT' },
+    });
+    await previewComFaceIntent({ fields, waitSeconds: 10 });
+
+    const system = (call: number) =>
+      mockSubmitWorkflow.mock.calls[call][0].body.steps[0].input.messages[0].content;
+    expect(system(0)).toContain('DRAFT');
+    expect(system(0)).not.toContain('LIVE');
+    expect(system(1)).toContain('LIVE');
+    expect(rows['label:model-com-face-intent'].content).toBe('LIVE');
   });
 });

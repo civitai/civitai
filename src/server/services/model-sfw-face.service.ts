@@ -119,6 +119,24 @@ export const COM_FACE_CHECK_UNAVAILABLE_MESSAGE = "We couldn't check this right 
  * The intent check on a model's own listing: its .red title, description and trigger words.
  * `unavailable` when no verdict came back.
  */
+/** The listing text the .com face intent check reads: one request, every part together. */
+export function comFaceIntentFields({
+  name,
+  description,
+  triggerWords,
+}: {
+  name: string;
+  description?: string | null;
+  triggerWords: string[];
+}): TextScanField[] {
+  const text = removeTags(description ?? '').trim();
+  return [
+    { heading: 'Name', text: name },
+    ...(text ? [{ heading: 'Description', text }] : []),
+    ...(triggerWords.length ? [{ heading: 'Trained words', text: triggerWords.join(', ') }] : []),
+  ];
+}
+
 export async function checkComFaceIntent({
   name,
   description,
@@ -128,14 +146,8 @@ export async function checkComFaceIntent({
   description?: string | null;
   triggerWords: string[];
 }): Promise<'allowed' | 'detected' | 'unavailable'> {
-  const text = removeTags(description ?? '').trim();
-  const fields: TextScanField[] = [
-    { heading: 'Name', text: name },
-    ...(text ? [{ heading: 'Description', text }] : []),
-    ...(triggerWords.length ? [{ heading: 'Trained words', text: triggerWords.join(', ') }] : []),
-  ];
   const verdict = await previewComFaceIntent({
-    fields,
+    fields: comFaceIntentFields({ name, description, triggerWords }),
     waitSeconds: SFW_FACE_CHECK_WAIT_SECONDS,
   }).catch((error) => {
     logToAxiom({
