@@ -3,6 +3,7 @@ import { IconEye } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import { useEffect, useMemo } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { Page } from '~/components/AppLayout/Page';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Gated } from '~/components/Gated/Gated';
@@ -146,6 +147,12 @@ function SharedArticleView({ article }: { article: SharedArticle }) {
               <RenderRichText content={article.contentJson} fallbackHtml={article.content} />
             </article>
           )}
+          <Divider />
+          <Text size="sm" c="dimmed">
+            Comments you leave are visible to the author and other link holders, and stay on the
+            article if it is published.
+          </Text>
+          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
         </Stack>
       </Container>
     </Gated>

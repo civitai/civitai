@@ -74,15 +74,19 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
 }
 
 async function invalidateVersions(versionIds: number[], userId?: number) {
+  const airs = await versionAirs(versionIds);
+  if (airs.length) await invalidateAirs(airs, userId);
+}
+
+async function versionAirs(versionIds: number[]) {
   const versions = (await dbWrite.modelVersion.findMany({
     where: { id: { in: versionIds } },
     select: modelVersionAirSelect,
   })) as ModelVersionAirInput[];
-  if (!versions.length) return;
 
   // The orchestrator caches per AIR string, and a Checkpoint whose generation file is a diffusion
   // model or UNet is reachable under both its file-kind AIR and the plain `checkpoint` one.
-  const airs = [
+  return [
     ...new Set(
       versions.flatMap((version) => [
         modelVersionToAir(version),
@@ -90,8 +94,38 @@ async function invalidateVersions(versionIds: number[], userId?: number) {
       ])
     ),
   ];
+}
 
-  await invalidateAirs(airs, userId);
+/**
+ * The versions' AIRs as derived now. Read them before a write that deletes a version or changes its
+ * AIR kind, and pass them to `bustOrchestratorAirs` after the commit: a bust after the write derives
+ * only the new AIRs, and one before it can be refilled while the write runs. Never throws.
+ */
+export async function getOrchestratorVersionAirs(versionIds: number[]): Promise<string[]> {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return [];
+  return versionAirs(versionIds).catch((error) => {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `reading version AIRs failed: ${(error as Error).message}`,
+      versionIds: versionIds.slice(0, 10),
+    }).catch(() => undefined);
+    return [];
+  });
+}
+
+/** Evicts AIRs read earlier with `getOrchestratorVersionAirs`. Never throws. */
+export async function bustOrchestratorAirs(airs: string[]) {
+  if (!airs.length || !env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+  try {
+    await invalidateAirs(airs);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+    }).catch(() => undefined);
+  }
 }
 
 /** Evicts the file-pinned AIR a scan resolves; the version busts above never reach it. Never throws. */
