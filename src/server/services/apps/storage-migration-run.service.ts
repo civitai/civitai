@@ -41,7 +41,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreMaintenance, MigrationCursor } from '~/server/services/apps/doc-store';
 import { getDocStoreMaintenance } from '~/server/services/apps/doc-store-maintenance.instance';
-import { resolveSchemaMajor } from '~/server/services/apps/doc-store-schema-major';
+import {
+  enforcedManifestOf,
+  resolveSchemaMajor,
+} from '~/server/services/apps/doc-store-schema-major';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
 import type { MigrationMutationOp } from '~/server/services/apps/storage-schema-migrations';
@@ -497,11 +500,11 @@ async function loadTarget(
   if (!config) return { collection: null, superseded: false };
   const head = await dbWrite.appBlock.findUnique({
     where: { id: run.appBlockId },
-    select: { manifest: true },
+    select: { manifest: true, updatedAt: true },
   });
   const schemaMajor = await resolveSchemaMajor({
     appBlockId: run.appBlockId,
-    head: head?.manifest,
+    head: enforcedManifestOf(head),
     collection: run.collection,
   });
   return { collection: { name: run.collection, config, schemaMajor }, superseded: false };

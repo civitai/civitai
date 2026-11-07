@@ -6,7 +6,12 @@ import {
   type DocStore,
 } from '~/server/services/apps/doc-store';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
-import { createPgliteHarness, MIGRATION_SCHEMA_MAJOR_UP, type Harness } from './doc-store.harness';
+import {
+  createPgliteHarness,
+  MIGRATION_SCHEMA_MAJOR_DOWN,
+  MIGRATION_SCHEMA_MAJOR_UP,
+  type Harness,
+} from './doc-store.harness';
 import { BOARD, ctx, freshApp, NS_PROD, PREFS, TALLIES } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -33,6 +38,21 @@ async function stamps(h: Harness, app: string, ns = NS_PROD): Promise<Record<str
     [app, ns]
   );
   return Object.fromEntries(rows.map((r) => [r.key as string, r.schema_major]));
+}
+
+/**
+ * Which of `schema_major` and `seq` the doc table has, from the catalog. `seq` always exists, so it
+ * is the positive control that the query can find a column at all.
+ */
+async function docColumns(h: Harness): Promise<string[]> {
+  const rows = await h.raw(
+    `SELECT a.attname FROM pg_catalog.pg_attribute a
+       JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'appdata' AND c.relname = 'doc' AND a.attname IN ('schema_major', 'seq')
+       AND NOT a.attisdropped ORDER BY a.attname`
+  );
+  return rows.map((r) => r.attname as string);
 }
 
 const PROBE = /SELECT d\.schema_major FROM appdata\.doc d/;
@@ -133,6 +153,26 @@ describe('with the schema_major column applied', () => {
     const listed = await store.list(c, PREFS, {});
     expect(listed.items).toEqual([written]);
   });
+
+  // Last in this block: it drops the column.
+  it('the up migration is idempotent; the rollback drops the column, and a store that had found it fails one write, then writes unstamped', async () => {
+    const app = freshApp('MAJORDOWN');
+    const c = ctx(app, NS_PROD, ALICE);
+    const own = createDocStore({ db: h.db });
+    await own.put(c, at(PREFS, 73), 'k1', { theme: 'moss' });
+    await h.raw(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
+    expect(await stamps(h, app)).toEqual({ k1: 73 });
+
+    await h.raw(readFileSync(MIGRATION_SCHEMA_MAJOR_DOWN, 'utf8'));
+    expect(await docColumns(h)).toEqual(['seq']);
+
+    await expect(own.put(c, at(PREFS, 79), 'k2', { theme: 'fern' })).rejects.toMatchObject({
+      code: '42703',
+    });
+    const after = await own.put(c, at(PREFS, 83), 'k3', { theme: 'ivy' });
+    expect(after.data).toEqual({ theme: 'ivy' });
+    expect(await own.get(c, PREFS, 'k2')).toBeNull();
+  });
 });
 
 describe('without the schema_major column', () => {
@@ -150,15 +190,7 @@ describe('without the schema_major column', () => {
   });
 
   it('control: the column really is absent here', async () => {
-    const cols = await h.raw(
-      `SELECT a.attname FROM pg_catalog.pg_attribute a
-         JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
-         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'appdata' AND c.relname = 'doc' AND a.attname IN ('schema_major', 'seq')
-         AND NOT a.attisdropped ORDER BY a.attname`
-    );
-    // `seq` is the positive control: the same query does find a column that exists.
-    expect(cols.map((r) => r.attname)).toEqual(['seq']);
+    expect(await docColumns(h)).toEqual(['seq']);
   });
 
   it('🔴 every kind of body write still succeeds with a major passed, and the column is probed once', async () => {

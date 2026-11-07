@@ -39,6 +39,10 @@ export const MIGRATION_SCHEMA_MAJOR_UP = path.resolve(
   __dirname,
   '../migrations/20261106130000_appdata_doc_schema_major.sql'
 );
+export const MIGRATION_SCHEMA_MAJOR_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261106130000_appdata_doc_schema_major.down.sql'
+);
 
 export type Row = Record<string, unknown>;
 

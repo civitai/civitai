@@ -116,7 +116,11 @@ async function storeMajor(
       throw err;
     },
   });
-  return resolve({ appBlockId: APP, head, collection: 'cards' });
+  return resolve({
+    appBlockId: APP,
+    head: { manifest: head, revision: null },
+    collection: 'cards',
+  });
 }
 
 describe('store and registry adapter derive the same current major', () => {

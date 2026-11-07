@@ -457,7 +457,7 @@ describe("the runner after a later approval (F1: loadTarget supersedes only on a
     });
     expect(dbMock.dbWrite.appBlock.findUnique).toHaveBeenCalledWith({
       where: { id: 'ab_GATE_MAJOR_4102' },
-      select: { manifest: true },
+      select: { manifest: true, updatedAt: true },
     });
   });
 

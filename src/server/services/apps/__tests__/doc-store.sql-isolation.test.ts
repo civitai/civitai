@@ -407,7 +407,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/migrations/20261102120000_appdata_usage_user_by_user.sql',
     // The registry feed's seq indexes on doc and doc_tomb (DDL only).
     'server/services/apps/migrations/20261106120000_appdata_feed_seq.sql',
-    // The nullable schema_major column on doc (DDL only).
+    // The nullable schema_major column on doc, and its rollback (DDL only).
+    'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.down.sql',
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.sql',
   ];
   const PATTERN =
