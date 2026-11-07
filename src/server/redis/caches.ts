@@ -276,33 +276,37 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
   ttl: CacheTTL.day,
 });
 
+/** A user whose profile picture is Blocked gets no entry, the same as a user with none. */
+export async function lookupProfilePictures(ids: (number | undefined)[], fromWrite?: boolean) {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const profilePictures = await db.$queryRaw<ProfileImage[]>`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i."nsfwLevel",
+      i.hash,
+      i."userId",
+      i.ingestion,
+      i.type,
+      i.width,
+      i.height,
+      i.metadata
+    FROM "User" u
+    JOIN "Image" i ON i.id = u."profilePictureId"
+    WHERE u.id IN (${Prisma.join(goodIds)})
+      AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+  `;
+  return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
+}
+
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = (ids as (number | undefined)[]).filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const profilePictures = await db.$queryRaw<ProfileImage[]>`
-      SELECT
-        i.id,
-        i.name,
-        i.url,
-        i."nsfwLevel",
-        i.hash,
-        i."userId",
-        i.ingestion,
-        i.type,
-        i.width,
-        i.height,
-        i.metadata
-      FROM "User" u
-      JOIN "Image" i ON i.id = u."profilePictureId"
-      WHERE u.id IN (${Prisma.join(goodIds)})
-    `;
-    return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupProfilePictures(ids as (number | undefined)[], fromWrite),
   ttl: CacheTTL.day,
 });
 
@@ -318,12 +322,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      // Almost no entity wears a frame, so without a marker every frameless id on every feed page
-      // is a miss and the page pays a primary query for it. FRAME_CACHE_NEGATIVE caches that
-      // miss for an hour (as eventDecorationEntityCaches does), not the day a frame is cached. A
-      // frame put on, taken off or moved reaches the cache through refresh(), which overwrites or
-      // removes the marker: every writer that puts a frame on content must refresh (equip, the
-      // holiday event, the daily-challenge grant); the hour bounds a writer that does not.
+      // Caches "no frame" for an hour while FRAME_CACHE_NEGATIVE is on. Every writer that puts a frame on content must call refresh(), which overwrites or removes the marker; one that does not stays hidden up to an hour.
       cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
       notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,

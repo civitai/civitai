@@ -70,6 +70,9 @@ export const isCredentialField = (name: string) => {
 const QUERY_PARAM_RE = /(^|[?&#\s])([^=?&#\s"'<>]+)=([^&#\s"'<>]*)/g;
 // 16+ chars so prose ("the bearer of bad news") is not mistaken for a credential.
 const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi;
+// A download link carries its credential in the path, not the query: `/api/download/l/<id>`.
+const DOWNLOAD_LINK_PREFIX = '/api/download/l/';
+const DOWNLOAD_LINK_PATH_RE = /(\/api\/download\/l\/)[^/?#&\s"'<>]+/g;
 
 function safeDecode(s: string) {
   try {
@@ -79,7 +82,10 @@ function safeDecode(s: string) {
   }
 }
 
-/** Blank credential query params and `Bearer` values in a string, leaving the rest intact. */
+/**
+ * Blank credential query params, `Bearer` values and download-link ids in a string, leaving the rest
+ * intact.
+ */
 export function redactCredentialsInString(input: string): string {
   if (typeof input !== 'string' || input.length === 0) return input;
   let out = input;
@@ -90,6 +96,8 @@ export function redactCredentialsInString(input: string): string {
     });
   }
   if (/bearer/i.test(out)) out = out.replace(BEARER_RE, `$1 ${REDACTED_CREDENTIAL}`);
+  if (out.includes(DOWNLOAD_LINK_PREFIX))
+    out = out.replace(DOWNLOAD_LINK_PATH_RE, `$1${REDACTED_CREDENTIAL}`);
   return out;
 }
 

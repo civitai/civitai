@@ -29,8 +29,11 @@ import { InputRTE, InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SfwFaceCheckField, SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
+import type { ComCoverState } from '~/shared/utils/model-sfw-face';
 import {
-  COM_FACE_REFUSED_MESSAGE,
+  COM_COVER_NOT_LISTED_LABEL,
+  comCoverStateMessages,
+  comFaceRemovedMessage,
   isComSafeLevel,
   normalizeSfwFaceText,
   SFW_DESCRIPTION_MAX_LENGTH,
@@ -61,11 +64,14 @@ export function ModelListingTabs({
   modelId,
   redFields,
   comFaceRemoved,
+  comCoverState,
 }: {
   modelId?: number;
   redFields: ReactNode;
   /** The listing re-check took the model off civitai.com. */
-  comFaceRemoved?: boolean;
+  comFaceRemoved?: 'detected' | 'recheck-unverified' | null;
+  /** Why the saved .com cover does not list the model on .com; null when it does. */
+  comCoverState?: ComCoverState | null;
 }) {
   const form = useFormContext<ListingForm>();
   const [sfwName, sfwDescription, nsfw] = useWatch({
@@ -77,6 +83,14 @@ export function ModelListingTabs({
   const [site, setSite] = useState<Site>(features.isGreen ? 'com' : 'red');
   const ownComContent = sfwName != null;
   const cardState: CardState = ownComContent ? 'custom' : nsfw ? 'redOnly' : 'same';
+  const coverNotListed = ownComContent && nsfw && comCoverState ? comCoverState : null;
+  const comCardState: CardState = coverNotListed ? 'notListed' : cardState;
+  const removedMessage = comFaceRemoved ? comFaceRemovedMessage(comFaceRemoved, !!nsfw) : null;
+  const removedAlert = removedMessage && (
+    <Alert color="red" p="xs" mb="md">
+      <Text size="xs">{removedMessage}</Text>
+    </Alert>
+  );
 
   const nameVerdict = useSfwFaceVerdict(
     'sfwName',
@@ -120,7 +134,7 @@ export function ModelListingTabs({
           <Tabs.List>
             <Tabs.Tab
               value="com"
-              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={cardState} />}
+              rightSection={comHasErrors ? <ErrorDot /> : <CardBadge state={comCardState} />}
             >
               civitai.com
             </Tabs.Tab>
@@ -133,6 +147,7 @@ export function ModelListingTabs({
           </Tabs.List>
 
           <Tabs.Panel value="red" pt="md">
+            {removedAlert}
             <Stack>
               {redFields}
               {modelId && <SiteCoverPicker site="red" modelId={modelId} />}
@@ -140,10 +155,10 @@ export function ModelListingTabs({
           </Tabs.Panel>
 
           <Tabs.Panel value="com" pt="md">
-            {/* Not mature: the model is listed on .com by its images, so the banner would be false. */}
-            {comFaceRemoved && nsfw && (
-              <Alert color="red" p="xs" mb="md">
-                <Text size="xs">{COM_FACE_REFUSED_MESSAGE}</Text>
+            {removedAlert}
+            {coverNotListed && (
+              <Alert color="yellow" p="xs" mb="md" title={COM_COVER_NOT_LISTED_LABEL}>
+                <Text size="xs">{comCoverStateMessages[coverNotListed]}</Text>
               </Alert>
             )}
             <ComListing
@@ -398,11 +413,12 @@ function SiteCoverPicker({ site, modelId }: { site: Site; modelId: number }) {
   );
 }
 
-type CardState = 'custom' | 'same' | 'redOnly';
+type CardState = 'custom' | 'same' | 'redOnly' | 'notListed';
 const cardBadges: Record<CardState, { label: string; color: string }> = {
   custom: { label: 'Custom for this site', color: 'green' },
   same: { label: 'Same on both sites', color: 'gray' },
   redOnly: { label: 'Only on civitai.red', color: 'yellow' },
+  notListed: { label: COM_COVER_NOT_LISTED_LABEL, color: 'yellow' },
 };
 
 function CardBadge({ state }: { state: CardState }) {

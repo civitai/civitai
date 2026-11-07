@@ -12,7 +12,7 @@ import {
   registerHistogram,
 } from '~/server/prom/client';
 import { redis, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { ProbeEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
 function logError({ error, name, details }: { error: Error; name: string; details: unknown }) {
@@ -419,7 +419,7 @@ export async function runHealthChecksReusingCleanRun(
   return run;
 }
 
-export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+export default ProbeEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
   // Create AbortController for all health checks

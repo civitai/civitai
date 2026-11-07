@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { createContext } from '~/server/createContext';
@@ -8,11 +9,22 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
+import {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+  isComSafeLevel,
+} from '~/shared/utils/model-sfw-face';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
 const createCaller = createCallerFactory(appRouter);
+
+const cardMessages: Record<string, string> = {
+  [COM_FACE_REFUSED_MESSAGE]:
+    "Its civitai.red title, description or trigger words can't be shown on civitai.com. Edit them in the model editor.",
+  [COM_FACE_CHECK_UNAVAILABLE_MESSAGE]:
+    "Couldn't check its civitai.red listing just now. Try again later.",
+};
 
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('draft'), modelId: z.number().int().positive() }),
@@ -136,7 +148,12 @@ export default AuthedEndpoint(
         .status(200)
         .json({ listedOnCom: ((after?.nsfwLevel ?? 0) & sfwBrowsingLevelsFlag) !== 0 });
     } catch (error) {
-      return handleEndpointError(res, error);
+      // Creator Studio shows the message on the model's card, away from the editor's tabs.
+      const message = error instanceof Error ? cardMessages[error.message] : undefined;
+      return handleEndpointError(
+        res,
+        message ? new TRPCError({ code: 'BAD_REQUEST', message }) : error
+      );
     }
   },
   ['POST']

@@ -404,15 +404,11 @@ async function resolveSpaceWith(
  * `resolvePlacementSpaceFor` for SHOWING a space, never for deciding on one. Behind
  * `placement-space-read-cache`, only the public `placement.getSpace` route reaches it.
  *
- * One change from the primary read, and only one: the space row at each level of the cascade is
- * cached in Redis per row, filled from the primary (see `readSpaceRows`). The target (owner, post,
- * media type) is the primary read's own, from the primary, uncached, so a cache miss reads the
- * space rows from the primary; the reserved free-slot count reads the replica on both paths
- * (`displayedReservedFreeSlots`). Everything the comments above call "computed at read" stays live
- * exactly as on the primary path: the price range (score, tier, config) and the reserved free-slot
- * count. The client
- * re-reads this route with `staleTime: 0` after a refused free claim to explain the refusal, and
- * that re-read still sees a live count.
+ * One change from the primary read: the space row at each level is cached in Redis per row, filled
+ * from the primary (see `readSpaceRows`). The target is the primary read's own, uncached; the
+ * reserved free-slot count reads the replica on both paths (`displayedReservedFreeSlots`). The
+ * price range and the reserved free-slot count stay live. The client re-reads this route with
+ * `staleTime: 0` after a refused free claim and still sees a live count.
  *
  * 🔴 What this shows is what a sticker placement is charged. The sticker flow sends no expected
  * price, so the charge is whatever the primary read resolves at that moment: a display that

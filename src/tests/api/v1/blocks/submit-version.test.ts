@@ -509,6 +509,29 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect((res._getJSONData() as { message: string }).message).toContain('50 MiB');
   });
 
+  it('🔴 a permission-hook refusal also returns the structured storageHookErrors', async () => {
+    const { StorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
+    const problems = [
+      {
+        collection: 'cards',
+        file: 'hooks/cards.js',
+        reason: 'sha_mismatch' as const,
+        expected: 'a'.repeat(64),
+        actual: 'b'.repeat(64),
+      },
+    ];
+    const refusal = new StorageHookRefusal(problems);
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockRejectedValueOnce(refusal);
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(400);
+    expect(res._getJSONData()).toEqual({ message: refusal.message, storageHookErrors: problems });
+  });
+
   // ---------------------------------------------------------------------------
   // #4059 build provenance. 🔴 THIS is the route the `civitai` CLI posts to —
   // the session route beside it is the mod-browser front door. Wiring only that

@@ -4,6 +4,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { servableBanner } from '~/shared/utils/article-card-image';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -68,7 +69,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-const transformData = async ({
+export const transformData = async ({
   articles,
   cosmetics,
 }: {
@@ -76,8 +77,9 @@ const transformData = async ({
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
 }) => {
   const records = articles
-    .map(({ tags, stats, ...articleRecord }) => {
-      const coverImage = articleRecord.coverImage;
+    .map(({ tags, stats, bannerImage, ...articleRecord }) => {
+      // A banner stands in for a missing cover on the card, once it is servable.
+      const coverImage = articleRecord.coverImage ?? servableBanner(bannerImage);
       if (!coverImage) return null;
       return {
         ...articleRecord,
@@ -126,6 +128,7 @@ export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>
 
 const articleSelect = {
   ...articleDetailSelect,
+  bannerImage: articleDetailSelect.coverImage,
   stats: {
     select: {
       favoriteCountAllTime: true,

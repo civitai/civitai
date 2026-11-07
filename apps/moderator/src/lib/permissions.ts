@@ -56,6 +56,14 @@ export const PERMISSIONS = [
   // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
   // (`ModeratorGrantId`), so rename the two together.
   { id: 'user.removeReactions', label: 'Remove all of an account’s reactions (erasure request)' },
+  // An access request: queueing builds an archive of the account's data and emails the queuer a
+  // link. Nothing reaches the account owner until release, a separate grant. The main app checks the
+  // release literal (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.personalDataExport.queue', label: 'Queue a personal data export (access request)' },
+  {
+    id: 'user.personalDataExport.release',
+    label: 'Send a built personal data export to the account owner',
+  },
   // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.

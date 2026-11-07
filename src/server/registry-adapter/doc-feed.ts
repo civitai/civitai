@@ -42,7 +42,7 @@
  */
 import type { ValidateFunction } from 'ajv';
 import type { Audience } from '~/server/registry-adapter/audience';
-import { ANONYMOUS_AUDIENCE, audienceAdmits } from '~/server/registry-adapter/audience';
+import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
@@ -441,13 +441,9 @@ export function createDocFeed(opts: DocFeedOptions) {
     }
   }
 
-  /** The subscription's audience: absent is anonymous, the narrowest. */
-  const audienceOf = (ctx?: Pick<AdapterContext, 'audience'>) =>
-    ctx?.audience ?? ANONYMOUS_AUDIENCE;
-
   return {
     async snapshot(schema: string, ctx?: Pick<AdapterContext, 'audience'>) {
-      const audience = audienceOf(ctx);
+      const audience = contextAudience(ctx);
       const { next, entities } = await guarded(() => advance(schema, null, audience));
       const cursor = await save(next);
       noteSaved(next);
@@ -460,7 +456,7 @@ export function createDocFeed(opts: DocFeedOptions) {
      * checks too, so each of them rejects before `live` rather than after it.
      */
     async changes(schema: string, cursor: string, ctx: AdapterContext) {
-      const audience = audienceOf(ctx);
+      const audience = contextAudience(ctx);
       const state = await guarded(() => load(schema, cursor, audience));
       const first = await guarded(() => advance(schema, state, audience));
       return follow(schema, cursor, state, first, ctx.signal, audience);

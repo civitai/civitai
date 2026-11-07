@@ -72,8 +72,13 @@ vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
   };
 });
 
-const { updateImageNsfwLevel, handleBlockImages, updateNsfwLevel, resetBlockedNsfwLevel } =
-  await import('../image.service');
+const {
+  updateImageNsfwLevel,
+  handleBlockImages,
+  handleUnblockImages,
+  updateNsfwLevel,
+  resetBlockedNsfwLevel,
+} = await import('../image.service');
 
 const AVATAR = 7301;
 const OTHER_IMAGE = 7302;
@@ -180,8 +185,6 @@ describe('a recompute of the rating from tags', () => {
 
 describe('a moderator block', () => {
   beforeEach(() => {
-    // The block chains `.then` off this write; the shared db mock has no default for `updateMany`.
-    dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 2 } as never);
     dbMock.dbRead.image.findMany.mockResolvedValue([
       { id: AVATAR, userId: AVATAR_OWNER, postId: null, nsfwLevel: 1, blockedFor: null },
       { id: OTHER_IMAGE, userId: AVATAR_OWNER, postId: null, nsfwLevel: 1, blockedFor: null },
@@ -194,7 +197,7 @@ describe('a moderator block', () => {
     expect(pictureLookups()).toEqual([[AVATAR, OTHER_IMAGE]]);
     expect(refreshPicture).toHaveBeenCalledTimes(1);
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
-    expect(dbMock.dbWrite.image.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       refreshPicture.mock.invocationCallOrder[0]
     );
   });
@@ -212,5 +215,26 @@ describe('a moderator block', () => {
     await expect(
       handleBlockImages({ ids: [AVATAR, OTHER_IMAGE], moderatorId: MOD } as never)
     ).resolves.toBeDefined();
+  });
+});
+
+describe('a moderator unblock', () => {
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: AVATAR, userId: AVATAR_OWNER, postId: null, nsfwLevel: 1, blockedFor: null },
+    ] as never);
+  });
+
+  it('refreshes the cached profile picture after the image is set back to Scanned', async () => {
+    await handleUnblockImages({ ids: [AVATAR], moderatorId: MOD } as never);
+
+    expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
+    const unblock = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes(`"ingestion" = 'Scanned'`)
+    );
+    expect(unblock).toBeGreaterThanOrEqual(0);
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[unblock]).toBeLessThan(
+      refreshPicture.mock.invocationCallOrder[0]
+    );
   });
 });

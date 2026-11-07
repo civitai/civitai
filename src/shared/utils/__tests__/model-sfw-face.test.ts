@@ -5,6 +5,8 @@ import {
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  comCoverState,
+  comFaceRemovedMessage,
   hasCompleteSfwFace,
   hoistCoverImage,
   normalizeSfwFaceInput,
@@ -135,5 +137,81 @@ describe('hoistCoverImage', () => {
     expect(hoistCoverImage(images, { id: 3 }).map((i) => i.id)).toEqual([3, 1, 2]);
     expect(hoistCoverImage(images, { id: 9 }).map((i) => i.id)).toEqual([9, 1, 2, 3]);
     expect(hoistCoverImage(images, undefined)).toBe(images);
+  });
+});
+
+describe('comCoverState', () => {
+  const counts = {
+    nsfwLevel: 1,
+    needsReview: null,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+    ingestion: 'Scanned',
+    ownPost: true,
+    postPublished: true,
+    sameModel: true,
+    versionPublished: true,
+  };
+
+  it('is null for a cover that lists the model', () => {
+    expect(comCoverState(counts)).toBeNull();
+  });
+
+  // Moderation decision: waiting on a moderator must read the same as being flagged. Do not map any
+  // review state to `scanning`, which would tell the owner a review is under way.
+  it.each(['minor', 'csam', 'poi', 'tag'])(
+    'says an image under %s review cannot be used, not that it is being reviewed',
+    (needsReview) => {
+      expect(comCoverState({ ...counts, needsReview })).toBe('unusable');
+      expect(comCoverState({ ...counts, needsReview, ingestion: 'Pending' })).toBe('unusable');
+    }
+  );
+
+  it.each([
+    { tosViolation: true },
+    { acceptableMinor: true },
+    { blockedFor: 'tos' },
+    { ingestion: 'Blocked' },
+    { ingestion: 'PendingManualAssignment' },
+    { nsfwLevel: 4 },
+  ])('says an image with %o cannot be used', (flag) => {
+    expect(comCoverState({ ...counts, ...flag })).toBe('unusable');
+  });
+
+  it.each([{ tosViolation: true }, { acceptableMinor: true }, { blockedFor: 'tos' }])(
+    'says an unscanned image with %o cannot be used, not that it is being reviewed',
+    (flag) => {
+      expect(comCoverState({ ...counts, ingestion: 'Pending', ...flag })).toBe('unusable');
+    }
+  );
+
+  it('says a missing image cannot be used', () => {
+    expect(comCoverState(null)).toBe('unusable');
+  });
+
+  it('says only an unflagged image the scanner has not finished is being reviewed', () => {
+    expect(comCoverState({ ...counts, ingestion: 'Pending', nsfwLevel: 0 })).toBe('scanning');
+  });
+
+  it.each([
+    { sameModel: false },
+    { versionPublished: false },
+    { postPublished: false },
+    { ownPost: false },
+  ])('asks for a cover from this model’s published version when %o', (miss) => {
+    expect(comCoverState({ ...counts, ...miss })).toBe('version');
+  });
+});
+
+describe('comFaceRemovedMessage', () => {
+  it('tells a removal without a verdict apart from a refusal', () => {
+    expect(comFaceRemovedMessage('recheck-unverified', true)).toMatch(/not a decision/);
+    expect(comFaceRemovedMessage('detected', true)).not.toMatch(/not a decision/);
+  });
+
+  it('does not tell a non-mature model it left civitai.com', () => {
+    expect(comFaceRemovedMessage('detected', false)).toMatch(/still on civitai\.com/);
+    expect(comFaceRemovedMessage('recheck-unverified', false)).toBeNull();
   });
 });
