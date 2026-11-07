@@ -1,6 +1,4 @@
 import type { Session } from '~/types/session';
-import { env } from '~/env/server';
-import { logToAxiom } from '~/server/logging/client';
 import { sessionClient } from './session-client';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -25,42 +23,7 @@ import {
 export type BearerTokenOptions = {
   /** Accept a client-credentials token; only the catalog endpoints pass this. */
   allowClientCredentialsOnly?: boolean;
-  /** Where the request came from, for the API-key meter below. Never the credential itself. */
-  request?: {
-    method?: string;
-    /** Logged without its query string. */
-    path?: string;
-    /** From `getTrustedClientIp`: the edge-attested address, else the transport peer. */
-    ip?: string | null;
-    /** Cloudflare's `cf-ipcountry`, when present. */
-    country?: string;
-    /** How the credential was presented. */
-    via?: 'bearer' | 'query';
-  };
 };
-
-/**
- * Records each request authenticated by an ApiKey listed in `AUTH_METER_API_KEY_IDS`, by key id
- * only, so the callers still using a key can be found before it is retired.
- */
-function meterApiKeyUse(
-  apiKeyId: number,
-  source: 'cache' | 'db',
-  request: BearerTokenOptions['request']
-) {
-  if (!env.AUTH_METER_API_KEY_IDS.includes(String(apiKeyId))) return;
-  logToAxiom({
-    name: 'api-key-meter',
-    type: 'info',
-    apiKeyId,
-    source,
-    method: request?.method,
-    path: request?.path?.split('?')[0],
-    ip: request?.ip ?? null,
-    country: request?.country ?? null,
-    via: request?.via ?? null,
-  }).catch(() => undefined);
-}
 
 /**
  * The session a bearer credential stands for, or null. A client-credentials token is
@@ -99,7 +62,6 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
     if (apiKey && cached.fill) await cacheApiKey(token, apiKey, lookup);
   }
   if (!apiKey) return null;
-  meterApiKeyUse(apiKey.id, cached.apiKey ? 'cache' : 'db', options.request);
   if (
     !options.allowClientCredentialsOnly &&
     ((apiKey.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0

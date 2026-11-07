@@ -456,9 +456,6 @@ export const serverSchema = z
     // Mints (reused ones included) per minute.
     DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
     DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
-    // ApiKey ids whose every authenticated request is logged by id (never the key), to find what
-    // still uses them.
-    AUTH_METER_API_KEY_IDS: commaDelimitedStringArray().default([]),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),

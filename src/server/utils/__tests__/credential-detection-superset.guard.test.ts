@@ -76,8 +76,6 @@ const NON_CREDENTIAL_MODULES: Record<string, string> = {
   'server/utils/url-helpers.ts': 'builds a base URL from config; reads nothing off the request',
   'env/server.ts': 'environment config; reads nothing off the request',
   'env/other.ts': 'environment config; reads nothing off the request',
-  'server/utils/client-ip.ts':
-    "the caller's address, logged by the API-key meter after a credential is already resolved; authenticates nobody",
 };
 
 /** Workspace packages the entry point imports. Not scanned, so declared. */
@@ -88,8 +86,6 @@ const NON_CREDENTIAL_PACKAGES: Record<string, string> = {
 
 const NON_CREDENTIAL_HEADERS: Record<string, string> = {
   host: 'response-side only — the cookie domain for maybeRollHubCookie / maybeUpgradeLegacySession, never read to identify a caller',
-  'cf-ipcountry':
-    'the edge-stamped country, logged by the API-key meter only once a bearer token is present; authenticates nobody',
 };
 const NON_CREDENTIAL_QUERY: Record<string, string> = {};
 const NON_CREDENTIAL_COOKIES: Record<string, string> = {

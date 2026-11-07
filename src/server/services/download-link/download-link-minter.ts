@@ -3,7 +3,6 @@ import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbRead } from '~/server/db/client';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
 import { isAllowlistedMinter } from '~/server/services/download-link/download-link.store';
-import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -25,15 +24,7 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
   const match = typeof header === 'string' ? BEARER_RE.exec(header) : null;
   if (!match || requestCarriesQueryToken(req)) return { ok: false, status: 401 };
 
-  const session = await getSessionFromBearerToken(match[1], {
-    allowClientCredentialsOnly: true,
-    request: {
-      method: req.method,
-      path: '/api/v1/download-links',
-      ip: getTrustedClientIp(req),
-      via: 'bearer',
-    },
-  });
+  const session = await getSessionFromBearerToken(match[1], { allowClientCredentialsOnly: true });
   if (!session?.user) return { ok: false, status: 401 };
 
   if (session.subject.type === 'oauth') {
