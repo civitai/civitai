@@ -55,8 +55,13 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 const deriveId = (secret: string, linkId: string) =>
   toBase62(createHmac('sha256', secret).update(linkId).digest().subarray(0, 16));
 
-// Read on every call, never cached, so a rotated secret applies at once.
-const linkSecret = () => env.DOWNLOAD_LINK_SECRET?.trim() || undefined;
+const MIN_SECRET_LENGTH = 32;
+// Read on every call, never cached, so a rotated secret applies at once. Ids are derived from
+// linkIds, which are logged, so a short secret is treated as no secret.
+const linkSecret = () => {
+  const secret = env.DOWNLOAD_LINK_SECRET?.trim();
+  return secret && secret.length >= MIN_SECRET_LENGTH ? secret : undefined;
+};
 
 const linkKey = (hash: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK}:${hash}` as const;
 const linkIdKey = (linkId: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK_ID}:${linkId}` as const;
@@ -140,6 +145,7 @@ export async function findReusableLink({
   now,
   minRemainingMs,
   maxFetches,
+  maxExpiresAt,
 }: {
   credential: DownloadLinkCredential;
   fileId: number;
@@ -147,6 +153,8 @@ export async function findReusableLink({
   now: number;
   minRemainingMs: number;
   maxFetches: number;
+  /** A repeat mint never returns a link that outlives the lifetime it asked for. */
+  maxExpiresAt: number;
 }): Promise<{ id: string; link: StoredDownloadLink } | null> {
   const secret = linkSecret();
   if (!secret) return null;
@@ -160,6 +168,7 @@ export async function findReusableLink({
     link.fileId !== fileId ||
     link.onBehalfOfUserId !== onBehalfOfUserId ||
     link.expiresAt - now < minRemainingMs ||
+    link.expiresAt > maxExpiresAt ||
     link.fetches >= maxFetches
   )
     return null;

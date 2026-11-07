@@ -23,6 +23,7 @@ import {
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
 import type { Session } from '~/types/session';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 export const DEFAULT_LINK_TTL_SECONDS = 24 * 60 * 60;
@@ -134,6 +135,7 @@ async function mintOne(
     now,
     minRemainingMs: env.DOWNLOAD_LINK_MIN_REUSE_SECONDS * 1000,
     maxFetches: env.DOWNLOAD_LINK_MAX_FETCHES,
+    maxExpiresAt: now + item.ttlSeconds * 1000,
   });
   if (reusable) {
     return {
@@ -213,9 +215,19 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
   }
   const client = await dbRead.oauthClient.findUnique({
     where: { id: credential.id },
-    select: { grants: true },
+    select: {
+      grants: true,
+      allowedScopes: true,
+      user: { select: { bannedAt: true, deletedAt: true } },
+    },
   });
-  return !!client && client.grants.includes('client_credentials');
+  return (
+    !!client &&
+    client.grants.includes('client_credentials') &&
+    (client.allowedScopes & TokenScope.DownloadLink) !== 0 &&
+    !client.user.bannedAt &&
+    !client.user.deletedAt
+  );
 }
 
 function logUse(linkId: string, outcome: string, fetch?: number) {

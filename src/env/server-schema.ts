@@ -442,8 +442,8 @@ export const serverSchema = z
     DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
-    // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset: every
-    // mint is a new link.
+    // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
+    // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),

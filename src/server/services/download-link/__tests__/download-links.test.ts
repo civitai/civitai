@@ -29,7 +29,15 @@ const { mockIsFlipt, mockSessions, mockResolveDownloadUrl, mockModelVersionEvent
       grants: [] as { userId: number; versionId: number; permissions: number }[],
       users: new Map<number, { id: number; bannedAt: Date | null; deletedAt: Date | null }>(),
       apiKeys: new Map<number, { expiresAt: Date | null }>(),
-      clients: new Map<string, { userId: number; grants: string[] }>(),
+      clients: new Map<
+        string,
+        {
+          userId: number;
+          grants: string[];
+          allowedScopes: number;
+          user: { bannedAt: Date | null; deletedAt: Date | null };
+        }
+      >(),
     },
   }));
 
@@ -381,7 +389,12 @@ function seedWorld() {
   world.files.find((f) => f.versionId === FAILED_SCAN)!.virusScanResult = 'Danger';
   version(INTERNAL_ONLY, { usageControl: 'InternalGeneration' });
 
-  world.clients.set('orch-client', { userId: 900, grants: ['client_credentials'] });
+  world.clients.set('orch-client', {
+    userId: 900,
+    grants: ['client_credentials'],
+    allowedScopes: TokenScope.UserRead | TokenScope.DownloadLink,
+    user: { bannedAt: null, deletedAt: null },
+  });
   world.apiKeys.set(555, { expiresAt: null });
   world.apiKeys.set(777, { expiresAt: null });
 
@@ -734,6 +747,20 @@ describe('use', () => {
     expect((await fetchLink(url)).status).toBe(404);
   });
 
+  it('refuses HEAD without spending a fetch', async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    const id = url.split('/api/download/l/')[1];
+    const { res, captured } = makeRes();
+    await linkHandler(
+      { method: 'HEAD', url: '/x', headers: {}, query: { id } } as unknown as NextApiRequest,
+      res
+    );
+    expect(captured.status).toBe(405);
+    expect(mockModelVersionEvent).not.toHaveBeenCalled();
+    expect((await fetchLink(url)).status).toBe(302);
+    expect(mockModelVersionEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('404s an unknown id without creating a key', async () => {
     const res = await fetchLink('https://civitai.com/api/download/l/AAAAAAAAAAAAAAAAAAAAAA');
     expect(res.status).toBe(404);
@@ -751,6 +778,18 @@ describe('revoke', () => {
   it('an expired minting ApiKey kills its links at use', async () => {
     const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
     world.apiKeys.set(555, { expiresAt: new Date(Date.now() - 1000) });
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it("a banned minting client's owner kills the client's links at use", async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    world.clients.get('orch-client')!.user.bannedAt = new Date();
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('a client that lost DownloadLink from its allowed scopes kills its links at use', async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    world.clients.get('orch-client')!.allowedScopes = TokenScope.UserRead;
     expect((await fetchLink(url)).status).toBe(404);
   });
 
@@ -805,6 +844,22 @@ describe('reuse', () => {
     // Both work: a rotation changes what can be rebuilt, not which links are valid.
     expect((await fetchLink(first.url)).status).toBe(302);
     expect((await fetchLink(second.url)).status).toBe(302);
+  });
+
+  it('never returns a link that outlives the lifetime asked for', async () => {
+    const long = await mintOne(userItem(PUBLIC_VERSION));
+    const short = await mintOne(userItem(PUBLIC_VERSION, USER, { ttlSeconds: 7200 }));
+    expect(short.reused).toBe(false);
+    expect(short.url).not.toBe(long.url);
+    expect(Date.parse(short.expiresAt)).toBeLessThan(Date.parse(long.expiresAt));
+  });
+
+  it('treats a short secret as no secret', async () => {
+    setEnv({ DOWNLOAD_LINK_SECRET: 'too-short' });
+    const first = await mintOne(userItem(PUBLIC_VERSION));
+    const second = await mintOne(userItem(PUBLIC_VERSION));
+    expect(second.reused).toBe(false);
+    expect(second.url).not.toBe(first.url);
   });
 
   it('never reuses without a secret', async () => {
