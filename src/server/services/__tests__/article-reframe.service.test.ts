@@ -44,6 +44,7 @@ import {
   keepArticleReframe,
   submitArticleReframe,
 } from '~/server/services/article-reframe.service';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
 import { centreCropBox, MATURE_BANNER_REFUSAL } from '~/shared/utils/article-reframe';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
@@ -130,6 +131,15 @@ describe('keepArticleReframe', () => {
     expect({ width: kept.width, height: kept.height }).toEqual({ width: 2520, height: 630 });
   });
 
+  it("reads the take with the author's own orchestrator token", async () => {
+    h.takeBytes = await png(2520, 1080);
+    h.workflow = succeeded('article-reframe:banner');
+    await keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller });
+    expect(vi.mocked(getWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ token: caller.token, path: { workflowId: 'wf-1' } })
+    );
+  });
+
   it('refuses a workflow that is not a take for this target', async () => {
     h.workflow = succeeded('article-reframe:cover');
     await expect(
@@ -157,6 +167,8 @@ describe('nothing is attached before Keep', () => {
     h.workflow = succeeded('article-reframe:cover');
     const kept = await keepArticleReframe({ workflowId: 'wf-1', target: 'cover', caller });
     expect(kept).not.toHaveProperty('id');
+    // 1920x1080 trimmed top and bottom to 850:400.
+    expect(kept).toMatchObject({ url: expect.any(String), width: 1920, height: 904 });
     for (const write of attachWrites()) expect(write).not.toHaveBeenCalled();
   });
 
@@ -173,6 +185,9 @@ describe('nothing is attached before Keep', () => {
     expect(h.generateFromGraph).not.toHaveBeenCalled();
   });
 });
+
+const engineOf = (call: unknown[] | undefined) =>
+  (call?.[0] as { input: { model: { id: number } } }).input.model.id;
 
 describe('mature sources', () => {
   const mature = { ...source, nsfwLevel: 8 };
@@ -202,9 +217,21 @@ describe('mature sources', () => {
       nonce: 'nonce-0004',
       caller: shownMature,
     });
-    expect(h.generateFromGraph).toHaveBeenCalledOnce();
-    expect(JSON.stringify(h.generateFromGraph.mock.calls[0])).toContain(
-      String(REMIX_ENGINES.edit.mature.modelVersionId)
+    expect(engineOf(h.generateFromGraph.mock.calls[0])).toBe(
+      REMIX_ENGINES.edit.mature.modelVersionId
+    );
+  });
+
+  it('a safe source makes its cover on the safe engine', async () => {
+    await submitArticleReframe({
+      imageId: 11,
+      target: 'cover',
+      quote: 40,
+      nonce: 'nonce-0005',
+      caller,
+    });
+    expect(engineOf(h.generateFromGraph.mock.calls[0])).toBe(
+      REMIX_ENGINES.edit.safe.modelVersionId
     );
   });
 });

@@ -71,6 +71,7 @@ const reframeSource = z.object({ imageId: z.number().int().positive(), target: r
 /** Each quote and each submit runs an orchestrator what-if. */
 const reframeRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
+/** Mirrors `getCaller` in remix-app.router.ts; change both. */
 async function reframeCaller(ctx: Context & { user: SessionUser }): Promise<RemixAppCaller> {
   return {
     user: ctx.user,

@@ -12,6 +12,8 @@ type ReframeSpec = {
   app: RemixAppDefinition;
   /** width / height of the kept image. */
   keepAspect: number;
+  /** The suggested width; a narrower take is kept but looks soft. */
+  targetWidth: number;
 };
 
 const reframeApp = (
@@ -36,6 +38,7 @@ const reframeApp = (
 export const ARTICLE_REFRAME: Record<ArticleReframeTarget, ReframeSpec> = {
   banner: {
     keepAspect: constants.article.bannerImageWidth / constants.article.bannerImageHeight,
+    targetWidth: constants.article.bannerImageWidth,
     app: reframeApp('banner', {
       name: 'Banner generation',
       aspectRatio: '21:9',
@@ -46,6 +49,7 @@ export const ARTICLE_REFRAME: Record<ArticleReframeTarget, ReframeSpec> = {
   },
   cover: {
     keepAspect: constants.article.coverImageWidth / constants.article.coverImageHeight,
+    targetWidth: constants.article.coverImageWidth,
     app: reframeApp('cover', {
       name: 'Cover generation',
       aspectRatio: '16:9',

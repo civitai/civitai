@@ -120,6 +120,7 @@ export async function submitArticleReframe({
   return { workflowId: result.id as string, cost: result.cost?.total ?? 0 };
 }
 
+/** The predicate of `outputImages` in remix-app-run.service.ts, kept private there; change both. */
 function firstOutputImage(workflow: Workflow) {
   return (workflow.steps ?? [])
     .flatMap((step) => normalizeStepOutput(step as Parameters<typeof normalizeStepOutput>[0]))

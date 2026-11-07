@@ -188,6 +188,7 @@ describe('ArticleReframeContent', () => {
     await setItems([take('succeeded')]);
     await page.getByRole('button', { name: 'Retry' }).click();
     await expect.element(page.getByRole('button', { name: /Generate banner/ })).toBeVisible();
+    await expect.element(page.getByRole('img', { name: 'Generated take' })).not.toBeInTheDocument();
     expect(onKeep).not.toHaveBeenCalled();
     expect(h.keep).not.toHaveBeenCalled();
   });

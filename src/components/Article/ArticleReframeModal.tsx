@@ -49,7 +49,9 @@ export function ArticleReframeContent({
   const [workflowId, setWorkflowId] = useState<string>();
   // One nonce per take: a repeated tap on the same take names the same workflow.
   const [nonce, setNonce] = useState(() => crypto.randomUUID());
-  const { keepAspect, app } = ARTICLE_REFRAME[target];
+  const { keepAspect, targetWidth, app } = ARTICLE_REFRAME[target];
+  const keptWidth = (width: number, height: number) =>
+    centreCropBox(width, height, keepAspect).width;
   const noun = target === 'banner' ? 'banner' : 'cover';
 
   const quote = trpc.article.reframeQuote.useQuery(
@@ -161,6 +163,11 @@ export function ArticleReframeContent({
         </Alert>
       )}
 
+      {take?.width && take.height && keptWidth(take.width, take.height) < targetWidth ? (
+        <Text size="xs" c="dimmed">
+          This take is narrower than the suggested {targetWidth}px, so it may look soft.
+        </Text>
+      ) : null}
       {take && (
         <TakeWithCrop
           url={take.url}
