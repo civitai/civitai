@@ -137,8 +137,10 @@ export function platformResolutionContext(
  * `context` (or the given expression over it) with `server.changedAt` set to `at`. The moderator
  * change feed (`platformFeedback.listChanges`) reads this beside `handledAt` and `resolution.at`.
  * Some writes remove those two times rather than move them: clearing a resolution, or moving a row
- * back to `new`, which nulls `handledAt`. Only this key then says the row changed. So every
- * triage write in `feedback.service.ts` that sets a status or a resolution stamps it.
+ * back to `new`, which nulls `handledAt`. Only this key then says the row changed. So the triage
+ * writes in `feedback.service.ts` (single-row and bulk) stamp it on every save, a note-only save
+ * included. `linkInTransaction` does not: it only moves `handledAt` forward, which surfaces the row
+ * by itself.
  *
  * Touches only the `changedAt` key (see `platformResolutionContext` for why `context` is never
  * read-modify-written). Decided by the stored row, never the form:
