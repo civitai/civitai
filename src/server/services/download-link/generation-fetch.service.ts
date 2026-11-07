@@ -1,3 +1,4 @@
+import { LRUCache } from 'lru-cache';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -48,6 +49,34 @@ export type GenerationFetchResult =
   | ({ ok: true } & GenerationFetchFile)
   | { ok: false; error: GenerationFetchRefusal };
 
+/**
+ * A version's link GETs share the version and file reads for 30s: a worker fetching a large file as
+ * ranges GETs a link hundreds of times. Every decision made from those rows (takedown, unpublish,
+ * ownership, scan state, file visibility) can take up to 30s to reach a live link; the storage URL
+ * a GET already handed out outlives that. Credential, user and grant checks are never cached.
+ */
+const GATE_READ_TTL_MS = 30_000;
+const gateReads = new LRUCache<string, Promise<unknown>>({
+  max: 10_000,
+  ttl: GATE_READ_TTL_MS,
+  ttlResolution: 0,
+  perf: { now: () => Date.now() },
+});
+
+function cachedGateRead<T>(key: string, read: () => Promise<T>): Promise<T> {
+  const hit = gateReads.get(key) as Promise<T> | undefined;
+  if (hit) return hit;
+  const pending = read();
+  gateReads.set(key, pending);
+  pending.catch(() => {
+    if (gateReads.get(key) === pending) gateReads.delete(key);
+  });
+  return pending;
+}
+
+/** For tests: drops every cached gate read. */
+export const clearGateReadCache = () => gateReads.clear();
+
 const refuse = (error: GenerationFetchRefusal): GenerationFetchResult => ({ ok: false, error });
 
 /**
@@ -65,13 +94,20 @@ export async function checkGenerationFetch({
   modelVersionId,
   fileId,
   principal,
+  cacheReads = false,
 }: {
   modelVersionId: number;
   fileId?: number;
   principal: GenerationFetchPrincipal | null;
+  /** Share the version and file reads across a link's GETs (see `gateReads`). Mint reads fresh. */
+  cacheReads?: boolean;
 }): Promise<GenerationFetchResult> {
   const { kyselyRead } = await loadKyselyDb();
-  const version = await readModelVersionForFileViaKysely(kyselyRead, modelVersionId);
+  const read = <T>(key: string, fn: () => Promise<T>) =>
+    cacheReads ? cachedGateRead(`${modelVersionId}:${key}`, fn) : fn();
+  const version = await read('version', () =>
+    readModelVersionForFileViaKysely(kyselyRead, modelVersionId)
+  );
   if (!version) return refuse('not-found');
   if (
     isModelDeleted(version) ||
@@ -106,11 +142,13 @@ export async function checkGenerationFetch({
   }
 
   // Resolved as the download route does: an explicit file, or the version's primary file.
-  const files = await readDownloadFilesViaKysely(kyselyRead, {
-    modelVersionId,
-    publicOnly: !isOwner,
-    notReplaced: !fileId,
-  });
+  const files = await read(`files:${isOwner}:${!fileId}`, () =>
+    readDownloadFilesViaKysely(kyselyRead, {
+      modelVersionId,
+      publicOnly: !isOwner,
+      notReplaced: !fileId,
+    })
+  );
   const file = fileId
     ? files.find((candidate) => candidate.id === fileId)
     : getPrimaryFile(files as Array<(typeof files)[number] & { metadata: FileMetadata }>);
@@ -118,7 +156,9 @@ export async function checkGenerationFetch({
   if (hasFailedScan(file)) return refuse('failed-scan');
 
   // Named against every file on the version, as the download route names it.
-  const versionFiles = await readDownloadFilesViaKysely(kyselyRead, { modelVersionId });
+  const versionFiles = await read('files', () =>
+    readDownloadFilesViaKysely(kyselyRead, { modelVersionId })
+  );
   return {
     ok: true,
     modelId: version.model.id,

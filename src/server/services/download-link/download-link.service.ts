@@ -336,6 +336,7 @@ export async function fetchDownloadLink({
     modelVersionId: link.modelVersionId,
     fileId: link.fileId,
     principal,
+    cacheReads: true,
   });
   if (!check.ok || check.fileId !== link.fileId)
     return refuseUse(link.linkId, check.ok ? 'not-found' : check.error, fetch);

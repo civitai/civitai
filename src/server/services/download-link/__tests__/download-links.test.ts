@@ -30,6 +30,7 @@ const {
   mockModelVersionEvent: vi.fn(),
   mockTrackerSession: vi.fn(),
   world: {
+    reads: { version: 0, files: 0 },
     versions: new Map<number, Record<string, any>>(),
     files: [] as Record<string, any>[],
     paidAccess: new Map<number, { endsAt: Date | null }>(),
@@ -52,9 +53,28 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { DOWNLOAD_LINKS_ENABLED: 'download-links-enabled' },
   isFlipt: mockIsFlipt,
 }));
-vi.mock('~/server/auth/bearer-token', () => ({
-  getSessionFromBearerToken: async (token: string) => mockSessions.get(token) ?? null,
-}));
+// Keeps the real function's client-credentials gate: a token carrying a client-credentials-only
+// scope (DownloadLink is one) resolves to no session unless the caller opts in.
+vi.mock('~/server/auth/bearer-token', async () => {
+  const { CLIENT_CREDENTIALS_ONLY_SCOPES } = await import(
+    '~/shared/constants/token-scope.constants'
+  );
+  return {
+    getSessionFromBearerToken: async (
+      token: string,
+      options: { allowClientCredentialsOnly?: boolean } = {}
+    ) => {
+      const session = mockSessions.get(token) as { tokenScope?: number } | undefined;
+      if (!session) return null;
+      if (
+        !options.allowClientCredentialsOnly &&
+        ((session.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+      )
+        return null;
+      return session;
+    },
+  };
+});
 vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civitai.com' }));
 vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: mockResolveDownloadUrl }));
 vi.mock('~/server/clickhouse/client', () => ({
@@ -73,6 +93,7 @@ vi.mock('~/server/db/kyselyDb.lazy', () => ({
 }));
 vi.mock('~/server/services/hot-reads-5.reads', () => ({
   readModelVersionForFileViaKysely: async (_db: unknown, id: number) => {
+    world.reads.version++;
     const v = world.versions.get(id);
     if (!v) return null;
     return {
@@ -103,11 +124,13 @@ vi.mock('~/server/services/hot-reads-6.reads', () => ({
   readDownloadFilesViaKysely: async (
     _db: unknown,
     where: { modelVersionId: number; publicOnly?: boolean }
-  ) =>
-    world.files.filter(
+  ) => {
+    world.reads.files++;
+    return world.files.filter(
       (f) =>
         f.versionId === where.modelVersionId && (!where.publicOnly || f.visibility === 'Public')
-    ),
+    );
+  },
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: async (_type: string, ids: number[]) =>
@@ -132,6 +155,7 @@ import mintHandler from '~/pages/api/v1/download-links/index';
 import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';
 
 // ---------------------------------------------------------------------------------------------
 // In-memory sysRedis.
@@ -496,6 +520,8 @@ const userItem = (modelVersionId: number, onBehalfOfUserId = USER, extra = {}) =
 
 beforeEach(() => {
   seedWorld();
+  clearGateReadCache();
+  world.reads = { version: 0, files: 0 };
   vi.clearAllMocks();
   wireDb();
   installFakeSysRedis();
@@ -707,6 +733,12 @@ describe('who may mint', () => {
     expect((await mint([userItem(PUBLIC_VERSION)], 'tok-client-no-bit')).status).toBe(403);
   });
 
+  it('mints with a client token, which resolves only for a caller opting in to client-credentials tokens', async () => {
+    // DownloadLink is a client-credentials-only scope: without the minter's opt-in the bearer
+    // lookup returns no session and every client mint 401s.
+    expect((await mintOne(userItem(PUBLIC_VERSION), 'tok-client')).ok).toBe(true);
+  });
+
   it('401s no credential', async () => {
     expect((await mint([userItem(PUBLIC_VERSION)], 'unknown')).status).toBe(401);
   });
@@ -797,6 +829,57 @@ describe('use', () => {
     for (let i = 0; i < ranges / 10; i++) statuses.push((await fetchLink(url)).status);
     expect(statuses.filter((s) => s !== 302)).toEqual([]);
     expect(statuses.length).toBeGreaterThan(120);
+  });
+
+  it("shares one version and file read across a link's range GETs", async () => {
+    const { url } = await mintOne(userItem(LARGE_FILE));
+    world.reads = { version: 0, files: 0 };
+    const statuses = (await Promise.all(Array.from({ length: 20 }, () => fetchLink(url)))).map(
+      (r) => r.status
+    );
+    for (let i = 0; i < 20; i++) statuses.push((await fetchLink(url)).status);
+    expect(statuses.filter((s) => s !== 302)).toEqual([]);
+    // One version read, and the file list read once per shape (resolve the file, name it).
+    expect(world.reads).toEqual({ version: 1, files: 2 });
+  });
+
+  it('still refuses a revoked minting credential on the next GET while reads are shared', async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    expect((await fetchLink(url)).status).toBe(302);
+    world.apiKeys.delete(555);
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('still refuses a banned named user on the next GET while reads are shared', async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    expect((await fetchLink(url)).status).toBe(302);
+    world.users.get(USER)!.bannedAt = new Date();
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  // Decided: a takedown may take up to 30s to reach a live link, so range GETs do not each re-read
+  // the version. Do not shorten this to "every GET re-reads" without revisiting that cost.
+  it('reaches a live link with a takedown within 30s, not on the very next GET', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const { url } = await mintOne(userItem(PUBLIC_VERSION));
+      expect((await fetchLink(url)).status).toBe(302);
+      world.versions.get(PUBLIC_VERSION)!.mode = 'TakenDown';
+      expect((await fetchLink(url)).status).toBe(302);
+      vi.setSystemTime(Date.now() + 30_001);
+      expect((await fetchLink(url)).status).toBe(404);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never serves an owner's shared file list to another user's link", async () => {
+    const fileId = addFile(PUBLIC_VERSION, { id: 10_003 });
+    const owners = await mintOne(userItem(PUBLIC_VERSION, OWNER, { fileId }));
+    const users = await mintOne(userItem(PUBLIC_VERSION, USER, { fileId }));
+    expect((await fetchLink(owners.url)).status).toBe(302);
+    world.files.find((f) => f.id === fileId)!.visibility = 'Private';
+    expect((await fetchLink(users.url)).status).toBe(404);
   });
 
   it('re-checks access at every use: a takedown after mint 404s', async () => {
