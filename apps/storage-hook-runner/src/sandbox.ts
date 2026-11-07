@@ -265,7 +265,7 @@ function run(
 
   // Compile-only pass, deadline disarmed: a syntax error is reported from here, and its
   // duration sizes the allowance for the second compile inside the armed evaluation below.
-  const compileStart = performance.now();
+  arm(0); // NEGATIVE CONTROL: deadline armed before compilation (reverted next commit)
   const compiled = ctx.evalCode(args.source, 'hook.js', {
     type: 'module',
     strict: true,
@@ -273,7 +273,6 @@ function run(
   });
   if (compiled.error) return classifyVmError(ctx, keep(compiled.error), wasInterrupted(), engine);
   keep(compiled.value);
-  arm(performance.now() - compileStart);
 
   const evaluated = ctx.evalCode(args.source, 'hook.js', { type: 'module', strict: true });
   if (evaluated.error) {
