@@ -276,6 +276,36 @@ describe('preserveGeneratorEvidence', () => {
       const [job] = createCsamReport.mock.calls[0][0].details.generatedImages;
       expect(job.workflowId).toBe(WORKFLOW);
       expect(filedBlob(OUTPUT)).toMatchObject({ status: 'preserved', orchestratorJobId: JOB });
+    });
+
+    it("does not carry another workflow's job id onto a file this workflow used as an input", async () => {
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [
+            {
+              jobId: `${USER}-20261031000000000000`,
+              source: 'workflow',
+              blobs: [
+                {
+                  blobId: INPUT,
+                  role: 'output',
+                  status: 'preserved',
+                  evidenceKey: 'k',
+                  orchestratorJobId: 'earlier-job',
+                },
+              ],
+            },
+          ],
+        },
+      } as never);
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+        { config, store: memoryStore() }
+      );
+
+      expect(filedBlob(INPUT)).toMatchObject({ role: 'input', evidenceKey: 'k' });
       expect(filedBlob(INPUT)).not.toHaveProperty('orchestratorJobId');
     });
 
@@ -732,6 +762,7 @@ describe('preserveGeneratorEvidence', () => {
               status: 'preserved',
               evidenceKey: OLD_KEY,
               sha256: 'b'.repeat(64),
+              orchestratorJobId: 'job-1',
             },
             { blobId: INPUT, role: 'input', status: 'preserved', evidenceKey: 'k', sha256: 'c' },
           ],
@@ -763,6 +794,7 @@ describe('preserveGeneratorEvidence', () => {
       expect(blobOf(details, OUTPUT)).toMatchObject({
         status: 'excluded',
         evidenceKey: OLD_KEY,
+        orchestratorJobId: 'job-1',
         excluded: { reason: 'copy is damaged', byId: 2, status: 'preserved' },
       });
       expect(blobOf(details, INPUT).status).toBe('preserved');
@@ -796,6 +828,7 @@ describe('preserveGeneratorEvidence', () => {
       expect(result.status).toBe('preserved');
       const blob = blobOf(written(), OUTPUT);
       expect(blob.evidenceKey).not.toBe(OLD_KEY);
+      expect(blob.orchestratorJobId).toBe('job-1');
       expect(blob.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
       expect(await store.read(blob.evidenceKey as string, bytes.length)).toEqual(
         new Uint8Array(bytes)

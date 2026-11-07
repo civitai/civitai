@@ -258,11 +258,16 @@ export async function preserveGeneratorEvidence(
       return adoptCopy(deps.store, copy, base, input.moderatorId, deps.now?.() ?? new Date());
     }
 
-    // The copy is the file's; the role and step are this workflow's use of it.
+    // The copy is the file's; the role, step and producing job are this workflow's use of it.
     function keptAs(ref: EvidenceRef & { kind: 'blob' }): StoredEvidenceBlob | undefined {
       const prior = kept.get(ref.blobId);
       if (!prior) return undefined;
-      const { derivedOutputIds: _derived, stepName: _step, ...copy } = prior;
+      const {
+        derivedOutputIds: _derived,
+        stepName: _step,
+        orchestratorJobId: _job,
+        ...copy
+      } = prior;
       return { ...copy, role: ref.role, ...(ref.stepName && { stepName: ref.stepName }) };
     }
 
