@@ -9,6 +9,7 @@ import type * as Trpc from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -135,7 +136,14 @@ const renderDraft = async (
     maxScale,
     scale,
     commit,
-  }: { ownerShare?: number; maxScale?: number; scale?: number; commit?: ReactNode } = {}
+    moment,
+  }: {
+    ownerShare?: number;
+    maxScale?: number;
+    scale?: number;
+    commit?: ReactNode;
+    moment?: StickerDraft['moment'];
+  } = {}
 ) => {
   renderWithProviders(
     // Positioned absolutely inside the media box in the app; a plain relative
@@ -144,7 +152,7 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={scale == null ? draft : { ...draft, scale }}
+        draft={{ ...draft, ...(scale == null ? null : { scale }), moment }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
@@ -219,6 +227,29 @@ beforeEach(() => {
 });
 
 describe('what a draft sends when it is placed', () => {
+  test('a draft pinned to a moment sends its window, at the pose it will be drawn', async () => {
+    await renderDraft({ instant: true }, { moment: { startMs: 12000, durationMs: 1000 } });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    const { track, data } = placed[0] as (typeof placed)[number] & { track: StickerTrack };
+    expect(track.show).toEqual([
+      [0, 0],
+      [120, 1],
+      [130, 0],
+    ]);
+    expect(track.x).toEqual([[0, data.x]]);
+    expect(track.s).toEqual([[0, data.scale]]);
+  });
+
+  test('a draft that is not pinned sends no track', async () => {
+    await renderDraft({ instant: true });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0]).not.toHaveProperty('track');
+  });
+
   test('a free press sends free: true', async () => {
     await renderDraft({ instant: true });
 

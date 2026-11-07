@@ -91,8 +91,11 @@ export function StickerPlacementOverlay({
   paced = true,
   step = null,
   takenCorners,
+  hiddenIds,
 }: {
   placements: PlacedSticker[];
+  /** Stickers outside their moment. Kept mounted, so showing one again does not replay the reveal. */
+  hiddenIds?: ReadonlySet<number>;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
   viewerId?: number;
@@ -506,6 +509,7 @@ export function StickerPlacementOverlay({
                 transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
                 zIndex: layer,
                 ...delayStyle,
+                ...(hiddenIds?.has(placement.id) ? { visibility: 'hidden' } : null),
               }}
             >
               {/* The wrapper's own transform makes it a stacking context, so a

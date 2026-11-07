@@ -60,6 +60,33 @@ const { EVENT_HAT_CORNERS } = await import('~/components/Sticker/peek-toggle-cor
 
 const sticker = new Map([[9, { id: 9, name: 'Test', slug: 'test', url: PNG }]]);
 
+describe('a sticker outside its moment', () => {
+  test('is hidden but stays mounted, and only that one', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 400, height: 400 }}>
+        <StickerPlacementOverlay
+          placements={[
+            placed({ id: 1, isPending: false }),
+            placed({ id: 2, isPending: false, data: { ...placed().data, cosmeticId: 8 } }),
+          ]}
+          viewerId={99}
+          sticker={
+            new Map([...sticker, [8, { id: 8, name: 'Other', slug: 'other', url: PNG }]]) as never
+          }
+          hiddenIds={new Set([1])}
+        />
+      </div>
+    );
+
+    const stickerBox = async (alt: string) =>
+      ((await page.getByAltText(alt).element()) as HTMLElement).closest<HTMLElement>('.absolute')!;
+
+    await expect.element(page.getByAltText(':test:')).toBeInTheDocument();
+    expect(getComputedStyle(await stickerBox(':test:')).visibility).toBe('hidden');
+    expect(getComputedStyle(await stickerBox(':other:')).visibility).toBe('visible');
+  });
+});
+
 const placed = (overrides: Partial<PlacedSticker> = {}): PlacedSticker =>
   ({
     id: 1,

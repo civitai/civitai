@@ -125,6 +125,24 @@ export function encodeStickerTrack(
   };
 }
 
+/** How long a moment sticker shows, in the choices the placer gets. */
+export const STICKER_MOMENT_DURATIONS_MS = [500, 1000, 1500, 2000, 3000] as const;
+export const STICKER_MOMENT_DEFAULT_DURATION_MS = 1000;
+
+/** One pose, shown for `durationMs` from `startMs` and hidden the rest of the video. */
+export function momentStickerTrack(
+  pose: Omit<StickerTrackPose, 'show'>,
+  startMs: number,
+  durationMs: number
+): StickerTrack {
+  const startTick = Math.round(startMs / STICKER_TRACK_DEFAULT_MS);
+  const endTick = startTick + Math.max(1, Math.round(durationMs / STICKER_TRACK_DEFAULT_MS));
+  const samples: StickerTrackSample[] = [];
+  for (let tick = 0; tick <= endTick; tick++)
+    samples.push({ ...pose, show: tick >= startTick && tick < endTick });
+  return encodeStickerTrack(samples);
+}
+
 /** Index of the last pair at or before `tick`; -1 when `tick` is before the first. */
 function pairAtOrBefore(pairs: StickerTrackPair[], tick: number) {
   let low = 0;

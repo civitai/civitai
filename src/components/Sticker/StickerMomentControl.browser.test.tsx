@@ -1,0 +1,105 @@
+import { describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { StickerMomentControl } from '~/components/Sticker/StickerMomentControl';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+
+/** A real element, with the playback state a file with no source cannot have. */
+const fakeVideo = (currentTime: number, duration = 30) => {
+  const video = document.createElement('video');
+  let time = currentTime;
+  Object.defineProperty(video, 'currentTime', {
+    get: () => time,
+    set: (value: number) => {
+      time = value;
+    },
+  });
+  Object.defineProperty(video, 'duration', { get: () => duration });
+  video.pause = vi.fn();
+  return video;
+};
+
+describe('pinning a draft to a moment of the video', () => {
+  test('pinning holds the video on its frame and starts there, for a second', async () => {
+    const video = fakeVideo(12.34);
+    const onChange = vi.fn();
+    renderWithProviders(
+      <StickerMomentControl video={video} moment={undefined} following onChange={onChange} />
+    );
+
+    await page.getByText('Pin to a moment').click();
+
+    expect(video.pause).toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith({ startMs: 12340, durationMs: 1000 });
+  });
+
+  test('scrubbing moves the start of the selected draft', async () => {
+    const video = fakeVideo(12);
+    const onChange = vi.fn();
+    renderWithProviders(
+      <StickerMomentControl
+        video={video}
+        moment={{ startMs: 12000, durationMs: 2000 }}
+        following
+        onChange={onChange}
+      />
+    );
+
+    await expect.element(page.getByText('Static')).toBeInTheDocument();
+    video.currentTime = 20;
+    video.dispatchEvent(new Event('seeked'));
+
+    expect(onChange).toHaveBeenCalledWith({ startMs: 20000, durationMs: 2000 });
+  });
+
+  test('scrubbing leaves a draft that is not selected where it was pinned', async () => {
+    const video = fakeVideo(12);
+    const onChange = vi.fn();
+    renderWithProviders(
+      <StickerMomentControl
+        video={video}
+        moment={{ startMs: 12000, durationMs: 2000 }}
+        following={false}
+        onChange={onChange}
+      />
+    );
+
+    await expect.element(page.getByText('Static')).toBeInTheDocument();
+    video.currentTime = 20;
+    video.dispatchEvent(new Event('seeked'));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test('going back to static clears the moment', async () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <StickerMomentControl
+        video={fakeVideo(12)}
+        moment={{ startMs: 12000, durationMs: 2000 }}
+        following
+        onChange={onChange}
+      />
+    );
+
+    await page.getByText('Static').click();
+
+    expect(onChange).toHaveBeenCalledWith(undefined);
+  });
+
+  test('the duration chip keeps the start', async () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <StickerMomentControl
+        video={fakeVideo(12)}
+        moment={{ startMs: 12000, durationMs: 1000 }}
+        following
+        onChange={onChange}
+      />
+    );
+
+    await page.getByText('3s').click();
+
+    expect(onChange).toHaveBeenCalledWith({ startMs: 12000, durationMs: 3000 });
+  });
+});

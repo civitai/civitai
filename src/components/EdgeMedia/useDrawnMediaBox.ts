@@ -32,6 +32,7 @@ const same = (a: DrawnMediaBox | null, b: DrawnMediaBox) =>
 export function useDrawnMediaBox(active: boolean) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [box, setBox] = useState<DrawnMediaBox | null>(null);
+  const [media, setMedia] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -107,6 +108,7 @@ export function useDrawnMediaBox(active: boolean) {
 
       unbind();
       bound = media;
+      setMedia(media);
       if (!media) return;
 
       observer = new ResizeObserver(measure);
@@ -129,8 +131,9 @@ export function useDrawnMediaBox(active: boolean) {
     return () => {
       swaps.disconnect();
       unbind();
+      setMedia(null);
     };
   }, [active]);
 
-  return { hostRef, box };
+  return { hostRef, box, media };
 }

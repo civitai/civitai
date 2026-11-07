@@ -18,6 +18,7 @@ import {
   getRemixGalleryCardSummariesSchema,
   getStickerPlacementDetailSchema,
   getStickerPlacementsSchema,
+  getStickerTracksSchema,
   placementPriceRangeSchema,
   placementSpaceSchema,
   placerSchema,
@@ -67,6 +68,7 @@ import {
   getStickerPlacementCounts,
   getStickerPlacements,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
   setStickerCommentHidden,
 } from '~/server/services/sticker-placement.service';
 import {
@@ -281,6 +283,12 @@ export const placementRouter = router({
         viewerId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
       })
+    ),
+
+  getStickerTracks: publicProcedure
+    .input(getStickerTracksSchema)
+    .query(({ input, ctx }) =>
+      ctx.features.stickerVideoTracks ? getStickerPlacementTracks(input.imageId) : []
     ),
 
   // Derived from the ledger, never from `Placement.status` — that column says a
