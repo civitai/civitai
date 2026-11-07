@@ -551,13 +551,10 @@ export {
 } from './output';
 
 /**
- * The `$type` values `workflow.service`'s two extractors handle NATIVELY, with
- * their own long-standing inline branches.
- *
- * 🔴 A registered step MUST NOT claim one of these (enforced, clause 9). That
- * invariant is what makes the registry branch safe to place BEFORE the native
- * `$type` filter: it cannot shadow an existing branch, so `textToImage` /
- * `imageGen` / `comfy` / `customComfy` extraction stays byte-identical.
+ * The `$type` values `workflow.service`'s two extractors handle natively, via
+ * `nativeStepOutputMedia`. A registered step MUST NOT claim one of these
+ * (enforced, clause 9); that is what lets the registry branch run before the
+ * native filter without shadowing it.
  */
 const NATIVE_STEP_TYPES = ['customComfy', 'textToImage', 'imageGen', 'comfy'] as const;
 export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = NATIVE_STEP_TYPES;
@@ -565,14 +562,9 @@ export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = NATIVE_STEP_TYPE
 /**
  * Which `output` key each NATIVELY extracted `$type` carries its media on.
  *
- * 🔴 NOT ONE KEY FOR ALL FOUR. `textToImage` / `imageGen` return
- * `{ images }` (`TextToImageOutput` / `ImageGenOutput`), but `comfy` and
- * `customComfy` return `{ blobs }` (`ComfyOutput` / `CustomComfyOutput`). Reading
- * `output.images` off a `comfy` step finds nothing: the workflow succeeds, the
- * viewer is charged, and the block receives no media. Both `workflow.service`
- * extractors read THIS map (via `nativeStepOutputMedia`), so the key is decided
- * in one place. A `$type` added to `NATIVELY_EXTRACTED_STEP_TYPES` without an
- * entry here is a type error.
+ * `textToImage` / `imageGen` carry `output.images`; `comfy` / `customComfy` carry
+ * `output.blobs`. Reading the wrong key silently yields no media. A type added to
+ * `NATIVELY_EXTRACTED_STEP_TYPES` without an entry here is a type error.
  */
 export const NATIVE_STEP_OUTPUT_KEY = {
   customComfy: 'blobs',
