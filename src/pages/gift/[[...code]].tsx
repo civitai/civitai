@@ -4,32 +4,12 @@ import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getLoginLink } from '~/utils/login-helpers';
+import { resolveGiftClaimPage } from '~/server/utils/gift-claim-page';
 import { trpc } from '~/utils/trpc';
 
-const GIFT_CODE_COOKIE = 'civ-gift-code';
-
-// A code arriving in the path moves into a short-lived, server-only cookie and the URL becomes a bare
-// /gift: analytics and RUM scripts record the page URL, and the code is a live credential.
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features, session, ctx }) => {
-    if (!features?.modelGiftLinks) return { notFound: true };
-    const segment = ctx.params?.code;
-    const fromPath = Array.isArray(segment) ? segment[0] : undefined;
-    if (fromPath) {
-      ctx.res.setHeader(
-        'Set-Cookie',
-        `${GIFT_CODE_COOKIE}=${encodeURIComponent(
-          fromPath.slice(0, 64)
-        )}; Path=/gift; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
-      );
-      return { redirect: { destination: '/gift', permanent: false } };
-    }
-    if (!session)
-      return { redirect: { destination: getLoginLink({ returnUrl: '/gift' }), permanent: false } };
-    return { props: { initialCode: ctx.req.cookies[GIFT_CODE_COOKIE] ?? '' } };
-  },
+  resolver: async ({ features, session, ctx }) => resolveGiftClaimPage({ features, session, ctx }),
 });
 
 export default function GiftClaimPage({ initialCode }: { initialCode: string }) {

@@ -1,0 +1,37 @@
+import type { GetServerSidePropsContext } from 'next';
+import { appendSetCookie } from '~/server/utils/set-cookie';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getLoginLink } from '~/utils/login-helpers';
+
+export const GIFT_CODE_COOKIE = 'civ-gift-code';
+
+/**
+ * `/gift/[[...code]]`. A code arriving in the path moves into a short-lived, server-only cookie and
+ * the URL becomes a bare /gift: analytics and RUM scripts record page URLs, and the code is a live
+ * credential.
+ */
+export function resolveGiftClaimPage({
+  features,
+  session,
+  ctx,
+}: {
+  features?: Pick<FeatureAccess, 'modelGiftLinks'>;
+  session?: unknown;
+  ctx: Pick<GetServerSidePropsContext, 'params' | 'req' | 'res'>;
+}) {
+  if (!features?.modelGiftLinks) return { notFound: true as const };
+  const segment = ctx.params?.code;
+  const fromPath = Array.isArray(segment) ? segment[0] : undefined;
+  if (fromPath) {
+    appendSetCookie(
+      ctx.res,
+      `${GIFT_CODE_COOKIE}=${encodeURIComponent(
+        fromPath.slice(0, 64)
+      )}; Path=/gift; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`
+    );
+    return { redirect: { destination: '/gift', permanent: false } };
+  }
+  if (!session)
+    return { redirect: { destination: getLoginLink({ returnUrl: '/gift' }), permanent: false } };
+  return { props: { initialCode: ctx.req.cookies[GIFT_CODE_COOKIE] ?? '' } };
+}

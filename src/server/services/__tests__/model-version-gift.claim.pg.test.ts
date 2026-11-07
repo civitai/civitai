@@ -168,6 +168,11 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       [VERSION, OWNER]
     );
 
+    // E is the newer link, so only the live-first ordering can put F ahead of it.
+    await sql.query(
+      `UPDATE "ModelVersionGiftLink" SET "createdAt" = now() - interval '1 hour' WHERE "codeHint" = 'F'`
+    );
+
     const { links, batches } = await queryGiftList(prisma, VERSION);
 
     expect(batches).toEqual([

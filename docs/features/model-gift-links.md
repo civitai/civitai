@@ -72,7 +72,8 @@ or mint call. Input is normalised before hashing: case-insensitive, hyphens igno
 
 `/gift/<code>` never renders: it moves the code into a short-lived, `HttpOnly` cookie scoped to `/gift`
 and redirects to a bare `/gift`, so the code is not in any URL that page scripts or analytics record. Ads
-are off on the claim page.
+are off on the claim page, and Faro's URL redaction (`src/utils/faro/redact.ts`) blanks a `/gift/<code>`
+path segment, which a client-side navigation still puts in the Next data fetch.
 
 ## Claim
 
