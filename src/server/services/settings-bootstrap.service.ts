@@ -34,20 +34,21 @@ export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
 
 const LOG_WINDOW_MS = 60_000;
 
-// Pinned on globalThis: the bundler emits a server module more than once per build, and a
-// per-copy map would multiply the bound by the number of copies.
+// globalThis-pinned: the bundler emits this module several times per build, and per-copy maps
+// would multiply the bound.
 const LOG_THROTTLE = Symbol.for('civitai.settingsBootstrapLogThrottle');
 type LogThrottle = Map<string, { at: number; suppressed: number }>;
 
 /**
- * One event per key per process per window, so a hung dependency during an incident logs once a
- * minute rather than once per render. The next event that goes out carries the suppressed count.
+ * At most one event per key per process per minute, so a hung dependency logs once a minute rather
+ * than once per render. `suppressed` counts the events dropped since the previous one sent.
  */
 function logBootstrapWarning(key: string, data: MixedObject) {
   const g = globalThis as typeof globalThis & { [LOG_THROTTLE]?: LogThrottle };
   const throttle = (g[LOG_THROTTLE] ??= new Map());
   const now = Date.now();
   const last = throttle.get(key);
+  // A clock that moved backwards opens a new window rather than suppressing until it catches up.
   if (last && now >= last.at && now - last.at < LOG_WINDOW_MS) {
     last.suppressed++;
     return;
@@ -309,8 +310,8 @@ export async function resolveSettingsBootstrapForRender(
   // `_app` interpolates the rejection's message into its `console.warn` marker line. Over HTTP the
   // route's own catch swallowed these, so a raw message never reached that line; database clients
   // put connection details in theirs, so only the name and code travel there. The full message
-  // goes through the structured logger instead — the sink the deadline warning above and the
-  // central error handlers use (it writes its own JSON line too) — so the reason is recoverable.
+  // goes to the structured log instead, at most once a minute per process (the rest are counted
+  // in `suppressed`).
   const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
     const code = (e as { code?: unknown } | null)?.code;
     const name = e instanceof Error ? e.name : 'unknown';

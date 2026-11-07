@@ -115,6 +115,13 @@ const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   return { done, json };
 };
 
+// The warning throttle lives on globalThis and outlives each test; start every test without it.
+beforeEach(() => {
+  delete (globalThis as Record<symbol, unknown>)[
+    Symbol.for('civitai.settingsBootstrapLogThrottle')
+  ];
+});
+
 describe('/api/user/settings read deadlines', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -200,11 +207,8 @@ describe('/api/user/settings read deadlines', () => {
 });
 
 describe('settings bootstrap deadline log', () => {
-  // An hour apart and far from every other test's clock, so no two tests share a log window.
-  let clock = Date.parse('2030-01-01T00:00:00Z');
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime((clock += 3_600_000));
     h.session.mockResolvedValue(null);
     h.contentSettings.mockResolvedValue({ showNsfw: true });
     h.announcements.mockResolvedValue([]);
@@ -246,6 +250,12 @@ describe('settings bootstrap deadline log', () => {
     await vi.runAllTimersAsync();
     expect(liveNowDeadlines()).toHaveLength(2);
     expect(liveNowDeadlines()[1][0]).toMatchObject({ member: 'getLiveNow', suppressed: 4 });
+
+    vi.setSystemTime(Date.now() + 60_000);
+    invoke();
+    await vi.runAllTimersAsync();
+    expect(liveNowDeadlines()).toHaveLength(3);
+    expect(liveNowDeadlines()[2][0]).not.toHaveProperty('suppressed');
   });
 });
 
@@ -431,7 +441,7 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
-    // …while the full reason is kept in the structured log.
+    // …while the full reason goes to the structured log.
     expect(logToAxiom).toHaveBeenCalledWith({
       type: 'warning',
       name: 'settings bootstrap failed',
