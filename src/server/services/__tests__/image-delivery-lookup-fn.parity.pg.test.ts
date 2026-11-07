@@ -224,7 +224,7 @@ describe.skipIf(!adminUrl)(
       // so the FORCE drop in afterAll can kill a backend whose client is still closing. That client
       // receives a FATAL 57P01, and pg-pool re-emits it on the pool; with no listener, Vitest reports
       // an unhandled error and fails the run. Ignore exactly that error during teardown; any other
-      // pool error is rethrown, so it still surfaces as before.
+      // pool error is rethrown.
       pool.on('error', (err) => {
         if (tearingDown && (err as Error & { code?: string }).code === ADMIN_SHUTDOWN) return;
         throw err;

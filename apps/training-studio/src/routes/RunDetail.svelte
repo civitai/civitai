@@ -43,6 +43,7 @@
   import LossGraph from '$lib/components/LossGraph.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
@@ -97,13 +98,16 @@
   // terminal (ready/published/failed) → it will never arrive.
   const samplesPending = $derived(d.state === 'training');
 
-  // Live updates while training: re-read the run every few seconds so new epochs/samples stream in.
-  // Each tick re-arms after the refetch settles — success or failure, so one bad refetch can't end
-  // polling — and stops once the run leaves 'training' (this effect re-runs and the guard fails) or
-  // the component unmounts.
+  // Live updates while a run is training or held for review: re-read it so new epochs/samples stream
+  // in, and so a held run moves on by itself once reviewed. Every few seconds while training; once a
+  // minute while held, since a hold can last hours. Each tick re-arms after the refetch settles —
+  // success or failure, so one bad refetch can't end polling — and polling stops once the run is in
+  // neither state (this effect re-runs and the guard fails) or the component unmounts.
   const POLL_MS = 5000;
+  const REVIEW_POLL_MS = 60_000;
   $effect(() => {
-    if (!browser || d.state !== 'training') return;
+    if (!browser || (d.state !== 'training' && d.state !== 'review')) return;
+    const every = d.state === 'review' ? REVIEW_POLL_MS : POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
@@ -112,9 +116,9 @@
       } catch {
         // transient refetch failure — keep polling
       }
-      if (!stopped) timer = setTimeout(tick, POLL_MS);
+      if (!stopped) timer = setTimeout(tick, every);
     };
-    timer = setTimeout(tick, POLL_MS);
+    timer = setTimeout(tick, every);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -840,7 +844,19 @@
     {/key}
   {/if}
 
-  {#if d.state === 'failed'}
+  {#if d.state === 'review' || d.state === 'rejected' || d.state === 'unreviewed'}
+    <ReviewStatusPanel
+      kind={d.state}
+      workflowId={d.workflowId}
+      heldSince={d.heldSince}
+    >
+      {#if d.state === 'unreviewed' && d.dataset.length}
+        <Button class="mt-4" variant="outline" onclick={reuseDataset}>
+          <IconRepeat size={14} stroke={2} class="mr-1.5 inline" />Try again with this dataset
+        </Button>
+      {/if}
+    </ReviewStatusPanel>
+  {:else if d.state === 'failed'}
     <div class="rounded-xl border border-red-500/20 bg-red-500/5 p-8 text-center">
       <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>

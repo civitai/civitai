@@ -19,7 +19,8 @@ export const POST: RequestHandler = async ({ locals }) => {
   // A deleted moderator isn't produced at all. Either way, cut every session they hold or impersonate.
   if (!moderator || moderator.bannedAt) {
     await sessions.invalidateUserSessions(modId);
-    error(403, 'moderator account is not active');
+    // 410, not 403: every session involved has ended, which the caller treats as signed out.
+    error(410, 'moderator account is not active');
   }
 
   const token = await mintUserSession(moderator, {

@@ -69,6 +69,10 @@ export interface HostContext {
     /** The host's membership-plans page, linked from the explanation above (`hostLink` URL
      *  semantics). Absent => the explanation renders without a link. */
     pricingUrl?: string;
+    /** The host's support ticket portal, offered on a run held for review past the raise threshold.
+     *  Always opens in a new tab: it leaves for the external ticket portal. Absent => the panel
+     *  asks for a ticket without a link. */
+    supportUrl?: string;
   };
   /** The host's URL for a location — for real `<a href>`s (middle-click / open-in-new-tab). */
   hrefFor: (loc: StudioLocation) => string;

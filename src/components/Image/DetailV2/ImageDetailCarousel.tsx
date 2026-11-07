@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -277,6 +278,7 @@ function ImageContent({
   embla: EmblaCarouselType | null;
 } & ConnectProps &
   ImageDetailCarouselProps) {
+  const showEventCosmetics = useShowEventCosmetics();
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -383,7 +385,12 @@ function ImageContent({
             layer={hatLayer}
             embla={embla}
           />
-          {safe && <ImageStickerOverlay imageId={image.id} wearsHat={!!image.eventDecoration} />}
+          {safe && (
+            <ImageStickerOverlay
+              imageId={image.id}
+              wearsHat={showEventCosmetics && !!image.eventDecoration}
+            />
+          )}
           {safe && active && takesHats(image) && <HatTurfDetailLayer imageId={image.id} />}
         </div>
       )}

@@ -3,6 +3,7 @@ import { maybeCreateSessionSigner } from '@civitai/auth';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { oauthServer } from '$lib/server/oauth/server';
+import { oauthModel } from '$lib/server/oauth/model';
 import {
   checkClientTokenRateLimit,
   checkOAuthRateLimit,
@@ -147,6 +148,27 @@ export const POST: RequestHandler = async ({ request }) => {
     body.scope = String(requested.scope);
   }
 
+  // A first-party code is exchanged at /api/auth/oauth/session for a session, never here for a token.
+  if (body.grant_type === 'authorization_code' && typeof body.code === 'string' && body.code) {
+    const authCode = await oauthModel.getAuthorizationCode(body.code).catch(() => null);
+    if (authCode === null) {
+      const headers = new Headers();
+      setWildcardCors(headers);
+      return json(
+        { error: 'temporarily_unavailable', error_description: 'Try again' },
+        { status: 503, headers }
+      );
+    }
+    if ((authCode && (authCode.client as { isFirstParty?: boolean }).isFirstParty) === true) {
+      const headers = new Headers();
+      setWildcardCors(headers);
+      return json(
+        { error: 'unauthorized_client', error_description: 'Not available for this client' },
+        { status: 400, headers }
+      );
+    }
+  }
+
   // The library's token handler hard-requires `request.is('application/x-www-form-urlencoded')`, which in
   // turn needs a body-length signal (Content-Length / Transfer-Encoding). We've already parsed the body,
   // so guarantee both on the carrier headers — otherwise a reverse proxy that re-buffers the request and
@@ -235,7 +257,7 @@ export const POST: RequestHandler = async ({ request }) => {
       hasScope(scopeNum, TokenScope.UserRead)
     ) {
       const code = typeof body.code === 'string' ? body.code : undefined;
-      const ctx = code ? await consumeOidcContext(code) : {};
+      const ctx = (code ? await consumeOidcContext(code) : null) ?? {};
       if (ctx.openid || ctx.nonce) {
         idToken = await idTokenSigner.mintIdToken({
           sub: token.user.id,

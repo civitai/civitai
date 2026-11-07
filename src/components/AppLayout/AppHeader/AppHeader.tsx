@@ -137,7 +137,9 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
               </>
             )}
             {currentUser && features.resourceLoad && <ResourceLoadDrain />}
-            {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
+            {/* Every signed-in viewer: the menu also holds "Apply my filters" and "Show event
+                cosmetics", and it hides its mature-content rows where they cannot apply. */}
+            {currentUser && <BrowsingModeIcon />}
             {currentUser && <NotificationBell />}
             {currentUser && showChat && <ChatButton />}
             {currentUser?.isModerator && <ModerationNav />}
