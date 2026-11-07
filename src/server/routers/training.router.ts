@@ -181,6 +181,18 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(() => getTrainingServiceStatus()),
+  /**
+   * Training on/off for anyone, signed in or not: only `available`. getStatus stays behind the
+   * imageTraining flag because it also carries the operator message and blocked models. Read by
+   * the public status page (status-next.civitai.com).
+   */
+  getPublicStatus: publicProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
+    .query(async () => {
+      const { available } = await getTrainingServiceStatus();
+      return { available };
+    }),
   getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),
   setStatus: moderatorProcedure
     .input(
