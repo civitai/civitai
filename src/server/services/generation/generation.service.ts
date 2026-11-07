@@ -68,10 +68,12 @@ import type { GenerationResource, GenerationResourceValue } from '~/shared/types
 
 import {
   applicableRulesFor,
+  toGateRuleViews,
   canGenerateBlockedTargets,
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
+  type GateRuleView,
 } from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
@@ -929,7 +931,7 @@ export type GenerationConfig = {
    * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
    * the server.
    */
-  gateRules: GateRule[];
+  gateRules: GateRuleView[];
   /**
    * Mod-authored messages for THIS user (audience-filtered server side, so copy
    * aimed at one tier never ships in another's payload). Rendered above the
@@ -989,11 +991,13 @@ export async function getGenerationConfig(
       isMember,
       isModerator: user.isModerator,
     }),
-    gateRules: applicableRulesFor(gateRules, {
-      isModerator: !!user.isModerator,
-      isMember,
-      hasTestingAccess,
-    }),
+    gateRules: toGateRuleViews(
+      applicableRulesFor(gateRules, {
+        isModerator: !!user.isModerator,
+        isMember,
+        hasTestingAccess,
+      })
+    ),
     generatorMessages: applicableMessagesFor(generatorMessages, {
       isMember,
       tier: user.tier ?? 'free',
