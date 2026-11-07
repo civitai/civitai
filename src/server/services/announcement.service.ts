@@ -410,6 +410,7 @@ async function getAnnouncements(domain?: DomainColor) {
     },
     select: {
       createdAt: true,
+      updatedAt: true,
       startsAt: true,
       endsAt: true,
       id: true,
