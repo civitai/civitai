@@ -1271,10 +1271,17 @@ describe('grace mode search index and caches', () => {
 
     await run();
 
+    expect(mockRefreshProfilePictures).toHaveBeenCalledTimes(1);
     expect(mockRefreshProfilePictures).toHaveBeenCalledWith([7]);
-    expect(mockQueueSearchIndex.mock.invocationCallOrder[0]).toBeLessThan(
-      mockRefreshProfilePictures.mock.invocationCallOrder[0]
-    );
+  });
+
+  it("refreshes the account's cached profile picture when a later batch fails", async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 300 });
+    mockQueueSearchIndex.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('down'));
+
+    await run();
+
+    expect(mockRefreshProfilePictures).toHaveBeenCalledWith([7]);
   });
 });
 

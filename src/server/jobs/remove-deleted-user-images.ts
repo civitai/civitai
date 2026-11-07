@@ -311,7 +311,6 @@ async function blockUserImages(
       budgetUsed += batch.length;
       await propagateBlock(touched);
     }
-    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
 
     const [state] = await dbWrite.$queryRaw<{ hasPending: boolean }[]>`
       SELECT EXISTS (
@@ -335,6 +334,9 @@ async function blockUserImages(
     };
   } catch (error) {
     return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false, error };
+  } finally {
+    // Every exit: a later run skips the rows this one already blocked.
+    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
   }
 }
 
