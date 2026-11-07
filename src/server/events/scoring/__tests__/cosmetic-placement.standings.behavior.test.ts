@@ -283,7 +283,7 @@ describe('standings', () => {
       day('2026-11-02', 1, 21, 'claimed', 'Yellow', 20),
       day('2026-11-02', 1, 21, 'txn-1', 'Yellow', 4),
       day('2026-11-02', 2, 22, 'claimed', 'Blue', 15),
-      // Hidden from every standing: banned, deleted, leaderboard-excluded.
+      // Hidden from every standing: banned, deleted, excluded from event points.
       day('2026-11-02', BANNED, 23, 'claimed', 'Pink', 100),
       day('2026-11-02', DELETED, 24, 'claimed', 'Green', 200),
       day('2026-11-02', EXCLUDED, 24, 'claimed', 'Green', 300),
@@ -300,6 +300,20 @@ describe('standings', () => {
       { team: 'Pink', score: 0, rank: 3 },
       { team: 'Green', score: 0, rank: 4 },
     ]);
+  });
+
+  // Leaderboard exclusion alone must not hide someone from event standings; see sync.behavior.test.ts.
+  it('counts someone excluded from leaderboards but not from event points', async () => {
+    await db.pg.exec(`UPDATE "User" SET flags = 0 WHERE id = ${EXCLUDED}`);
+    try {
+      await settle();
+      const { teams } = await getEventStandings(event);
+      expect(teams.find((t) => t.team === 'Green')?.score).toBe(300);
+    } finally {
+      await db.pg.exec(
+        `UPDATE "User" SET flags = ${UserFlag.ExcludeFromEventPoints} WHERE id = ${EXCLUDED}`
+      );
+    }
   });
 
   it('ranks cosmetic instances, so two copies of one design score separately', async () => {
