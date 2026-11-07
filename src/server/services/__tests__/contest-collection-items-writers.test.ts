@@ -13,8 +13,12 @@ import { stripCodeComments } from '~/test-utils/strip-code-comments';
  * many bust calls the file makes. It fails when the set of writes GROWS (a writer nobody has
  * classified), when it SHRINKS (a listed writer moved, so its reason describes nothing), and when
  * a file's bust calls change (a bust removed, or one added without updating the reason). A count
- * cannot see wrong ids, a dropped await or a bust moved ahead of its write: the collection.service
- * busts are pinned behaviourally, writer by writer, in contest-collection-items-redis-cache.test.ts.
+ * cannot see wrong ids, a dropped await or a bust moved ahead of its write, so these
+ * collection.service writers are also pinned behaviourally in
+ * contest-collection-items-redis-cache.test.ts: setItemScore, setCollectionItemsTag, bulkSaveItems
+ * (the insert), saveItemInCollections, removeCollectionItem, updateCollectionItemsStatus and
+ * removeEntityFromAllCollections. upsertCollection and bulkSaveItems' contest-only unpaid-entry
+ * rollback are pinned by the per-file count below only.
  */
 
 const ROOT = path.resolve(__dirname, '../../../..');

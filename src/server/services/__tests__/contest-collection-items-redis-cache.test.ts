@@ -75,6 +75,7 @@ const {
   bulkSaveItems,
   saveItemInCollections,
   removeCollectionItem,
+  removeEntityFromAllCollections,
 } = await import('~/server/services/collection.service');
 
 const COLLECTION_ID = 10;
@@ -611,6 +612,32 @@ describe('contest collection items: every image writer busts after its write', (
       itemId: id,
       userId: COLLECTION_OWNER_ID,
     });
+
+    expect(stateAtWrite).toBe('warm');
+    expect(cacheState(id)).toBe('busted');
+    expect(rows).toEqual([]);
+    expect(await getImageContestCollectionDetails({ id })).toEqual([]);
+  });
+
+  it('removeEntityFromAllCollections: a deleted image drops its entries on the next read', async () => {
+    const id = nextImageId++;
+    rows = entriesFor(id);
+    flag(true);
+    expect(await getImageContestCollectionDetails({ id })).toHaveLength(2);
+
+    let stateAtWrite: string | undefined;
+    dbMock.dbWrite.collectionItem.deleteMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { imageId?: number };
+    }) => {
+      stateAtWrite = cacheState(id);
+      const before = rows.length;
+      rows = rows.filter((r) => r.imageId !== where.imageId);
+      return { count: before - rows.length };
+    }) as never);
+
+    await removeEntityFromAllCollections('image', id);
 
     expect(stateAtWrite).toBe('warm');
     expect(cacheState(id)).toBe('busted');
