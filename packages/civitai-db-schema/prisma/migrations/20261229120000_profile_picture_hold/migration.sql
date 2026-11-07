@@ -1,6 +1,7 @@
 -- The ProfilePictureHold table and the ProfilePictureSync queue type. Applied by hand.
 --
--- Apply AFTER the client that knows `ProfilePictureSync` is deployed (civitai/civitai#8150), and
+-- Apply AFTER the client that knows `ProfilePictureSync` (civitai/civitai#8150) and the `exportable`
+-- column (civitai/civitai#8163) is deployed, and
 -- BEFORE the code that reads or writes the table. Nothing writes either until a later migration adds
 -- the trigger that queues rows, so both statements are additive: no existing row changes.
 --
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS "ProfilePictureHold" (
   "userId" INTEGER NOT NULL,
   "imageId" INTEGER NOT NULL,
   "reason" TEXT NOT NULL,
+  "exportable" BOOLEAN NOT NULL DEFAULT false,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "ProfilePictureHold_imageId_fkey"
     FOREIGN KEY ("imageId") REFERENCES "Image"("id") ON DELETE CASCADE ON UPDATE CASCADE,
