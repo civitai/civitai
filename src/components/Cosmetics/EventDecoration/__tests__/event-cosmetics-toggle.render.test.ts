@@ -95,13 +95,20 @@ function render(shown: boolean, ...children: React.ReactNode[]) {
   );
 }
 
+// createElement with children as arguments: these components type `children` as a required prop,
+// which the typed overloads read as missing.
+const el = React.createElement as unknown as (
+  type: unknown,
+  props: object | null,
+  ...children: React.ReactNode[]
+) => React.ReactElement;
+
 const card = () =>
-  React.createElement(TwCosmeticWrapper, {
-    cosmetic: frame,
-    eventDecoration: hat,
-    key: 'card',
-    children: React.createElement('div', { 'data-testid': 'card' }),
-  });
+  el(
+    TwCosmeticWrapper,
+    { cosmetic: frame, eventDecoration: hat, key: 'card' },
+    el('div', { 'data-testid': 'card' })
+  );
 const cardHat = () => host!.querySelector('button[data-event-decoration="hat"]');
 const avatarHat = () => host!.querySelector('img[data-name="showcase hat"]');
 
@@ -124,19 +131,18 @@ describe('show event cosmetics', () => {
   });
 
   it('off: a preview of the hat being picked or bought still shows it', () => {
-    render(false, React.createElement(EventCosmeticsPreview, { key: 'p', children: card() }));
+    render(false, el(EventCosmeticsPreview, { key: 'p' }, card()));
     expect(cardHat()).not.toBeNull();
   });
 
   it('off: no Hat Turf, as if the viewer were not playing', () => {
     render(
       true,
-      React.createElement(TurfSummaryProvider, {
-        imageIds: [1],
-        gate: { event: 'birthday2026' },
-        key: 't',
-        children: React.createElement(FeedProbe),
-      })
+      el(
+        TurfSummaryProvider,
+        { imageIds: [1], gate: { event: 'birthday2026' }, key: 't' },
+        el(FeedProbe, null)
+      )
     );
     expect(feed).not.toBeNull();
     act(() => setShown!(false));
