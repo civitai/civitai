@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import type { ReactElement } from 'react';
 import { useEffect, useState } from 'react';
 import { Button, Drawer, Switch, Text } from '@mantine/core';
@@ -225,9 +226,9 @@ export function HatTurfPanel({
         />
       </div>
       <hr className={classes.divider} />
-      <div className={classes.pad}>
+      <div className={clsx(classes.pad, classes.showHatsPad)}>
         {/* The switch first and its label right after it; on a phone a bigger switch in a full
-            44px tap row. */}
+            36px tap row. */}
         <Switch
           size={mobile ? 'md' : 'xs'}
           label="Show hats"

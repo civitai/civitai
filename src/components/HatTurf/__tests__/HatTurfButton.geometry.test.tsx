@@ -224,8 +224,9 @@ describe('Hat Turf button geometry on a feed card', () => {
   );
 
   // Seen on a phone: "Show hats" sat at the row's left and its switch at the far right, too small
-  // to hit. The switch comes first and its label right after it, and on a phone the row is a
-  // 44px tap target with a bigger switch.
+  // to hit. The switch comes first and its label right after it, and on a phone the switch is
+  // bigger in a tap row taller than it. A 44px row in the panel's 12px pad then read as too much
+  // padding around one switch, so the space above and below the switch is bounded too.
   test.each([
     ['phone', PHONE_VIEWPORT],
     ['desktop', { width: 1280, height: 800 }],
@@ -253,8 +254,14 @@ describe('Hat Turf button geometry on a feed card', () => {
       expect(words.left - track.right).toBeLessThan(16);
       const body = root.querySelector('.mantine-Switch-body')!.getBoundingClientRect();
       if (name === 'phone') {
-        expect(body.height).toBeGreaterThanOrEqual(44);
+        expect(body.height).toBeGreaterThanOrEqual(32);
         expect(track.height).toBeGreaterThanOrEqual(24);
+        // From the divider above the row to the switch, and from the switch to the sheet's edge.
+        const pad = root.parentElement!.getBoundingClientRect();
+        expect({ above: track.top - pad.top, below: pad.bottom - track.bottom }).toEqual({
+          above: expect.toSatisfy((px: number) => px <= 14),
+          below: expect.toSatisfy((px: number) => px <= 14),
+        });
         // The whole row takes the tap: a press near its bottom edge, under the label, flips it.
         const hit = document.elementFromPoint(words.left + 4, body.bottom - 2) as HTMLElement;
         expect(hit.closest('label')).not.toBeNull();
