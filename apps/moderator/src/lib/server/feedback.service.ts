@@ -12,6 +12,7 @@ import { isFeedbackSortState, type FeedbackSort, type FeedbackSortColumn } from 
 import { MAX_INT4 } from './users.service';
 import {
   platformResolutionContext,
+  stampPlatformChange,
   type PlatformResolutionWrite,
 } from './feedback-platform-resolution';
 import type { PermissionSet } from '$lib/permissions';
@@ -560,6 +561,7 @@ export async function triageFeedback(input: {
 }): Promise<TriageResult> {
   const handled = input.status !== 'new';
   const resolutionOnly = input.resolution !== undefined && input.status === input.expectedStatus;
+  const now = new Date();
   let update = dbWrite
     .updateTable('Feedback')
     .set({
@@ -568,17 +570,16 @@ export async function triageFeedback(input: {
         : {
             status: input.status,
             handledById: handled ? input.moderatorId : null,
-            handledAt: handled ? new Date() : null,
+            handledAt: handled ? now : null,
           }),
       ...(input.note === undefined ? {} : { triageNote: input.note }),
-      ...(input.resolution === undefined
-        ? {}
-        : {
-            context: platformResolutionContext(input.resolution, {
-              moderatorId: input.moderatorId,
-              at: new Date(),
-            }),
-          }),
+      // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
+      context: stampPlatformChange(
+        now,
+        input.resolution === undefined
+          ? undefined
+          : platformResolutionContext(input.resolution, { moderatorId: input.moderatorId, at: now })
+      ),
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
       //
       // Clearing it on the way back to `new` was tried and reverted. It reads as symmetric with
@@ -696,6 +697,7 @@ export async function bulkTriageFeedback(input: {
   moderatorId: number;
 }): Promise<{ changed: number[]; actionable: number }> {
   const handled = input.status !== 'new';
+  const now = new Date();
   const byExpected = new Map<FeedbackStatus, number[]>();
   for (const row of input.rows) {
     const ids = byExpected.get(row.expectedStatus);
@@ -749,7 +751,9 @@ export async function bulkTriageFeedback(input: {
           // something about ONE report, and writing one across a selection would overwrite whatever
           // each row already had. The single-row form is where a note belongs.
           handledById: handled ? input.moderatorId : null,
-          handledAt: handled ? new Date() : null,
+          handledAt: handled ? now : null,
+          // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
+          context: stampPlatformChange(now),
           // 🔴 `bugId` UNTOUCHED, for the reason `triageFeedback` records at length — the link says
           // THIS REPORT IS ABOUT THAT ISSUE, which a status change does not make false.
         })
