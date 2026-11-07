@@ -201,6 +201,7 @@ it.each(ROUTES.filter((r) => r.service === 'mintGiftCodes' || r.service === 'cre
   async (route) => {
     await call(route, {}, { ...USER, isModerator: true } as SessionUser);
     expect(svc[route.service]).toHaveBeenCalledTimes(1);
-    expect(svc[route.service].mock.calls[0][0]).not.toHaveProperty('isModerator');
+    const [args] = svc[route.service].mock.calls[0] as unknown[];
+    expect(args).not.toHaveProperty('isModerator');
   }
 );
