@@ -67,8 +67,12 @@ async function ask(authorization?: string) {
     getHeader: vi.fn(),
   };
   await permissionsHandler(req as never, res as never);
+  lastRes = res;
   return res.json.mock.calls.at(-1)?.[0];
 }
+let lastRes: { setHeader: ReturnType<typeof vi.fn> };
+const cacheHeader = () =>
+  lastRes.setHeader.mock.calls.filter(([name]) => name === 'Cache-Control').at(-1)?.[1];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -92,8 +96,9 @@ describe('GET /api/v1/permissions/check with PERMISSIONS_CHECK_GATE', () => {
     expect(await ask()).toEqual({ [VERSION]: true });
   });
 
-  it('answers without the user for a caller with no credential', async () => {
+  it('answers without the user for a caller with no credential, kept out of shared caches', async () => {
     expect(await ask()).toEqual({ [VERSION]: false });
+    expect(cacheHeader()).toBe('private, no-store');
     expect(mockHasEntityAccess).toHaveBeenCalledWith(
       expect.objectContaining({ userId: undefined })
     );
@@ -107,11 +112,10 @@ describe('GET /api/v1/permissions/check with PERMISSIONS_CHECK_GATE', () => {
   it('answers a user asking about themself', async () => {
     keyFor({ id: ASKED });
     expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
+    expect(cacheHeader()).toBeUndefined();
   });
 
-  // The shape of the generation service's own call. Pin it: if this stops resolving, generation
-  // with bought early access fails for everyone once the switch is on.
-  it('answers a read-only key owned by a listed account with the moderator flag', async () => {
+  it('answers a read-only key owned by a listed moderator', async () => {
     keyFor({ id: SERVICE, isModerator: true });
     expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
   });
@@ -121,13 +125,8 @@ describe('GET /api/v1/permissions/check with PERMISSIONS_CHECK_GATE', () => {
     expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
   });
 
-  it('answers a listed account marked as a system account', async () => {
+  it('answers a read-only key owned by a listed system account', async () => {
     keyFor({ id: SERVICE, isModerator: true, meta: { systemAccount: true } });
-    dbMock.dbWrite.user.findUnique.mockResolvedValue({
-      meta: { systemAccount: true },
-      isModerator: true,
-      roles: [],
-    } as never);
     expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
   });
 

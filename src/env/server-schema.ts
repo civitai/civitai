@@ -442,7 +442,10 @@ export const serverSchema = z
       .optional(),
     // /api/v1/permissions/check answers about a given userId only for that user, a moderator or
     // these accounts, when PERMISSIONS_CHECK_GATE is on. A malformed list reads as unset.
-    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray().default([]).catch([]),
+    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),

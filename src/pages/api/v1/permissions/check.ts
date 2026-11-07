@@ -50,8 +50,11 @@ export default PublicEndpoint(
       return res.status(400).json({ error: 'Invalid permission' });
     }
 
-    if (userId != null && env.PERMISSIONS_CHECK_GATE && !(await mayAskAbout(req, res, userId)))
+    if (userId != null && env.PERMISSIONS_CHECK_GATE && !(await mayAskAbout(req, res, userId))) {
       userId = undefined;
+      // Kept out of shared caches, which key on the URL: it must not be served to an allowed caller.
+      res.setHeader('Cache-Control', 'private, no-store');
+    }
 
     const sessionUser = userId != null ? await sessionClient.getSessionUserById(userId) : null;
 
