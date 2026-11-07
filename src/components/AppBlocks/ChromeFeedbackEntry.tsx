@@ -162,8 +162,8 @@ export function AppFeedbackModal({
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
   // An on-screen keyboard covers the sheet, and the wide dialog too on a tablet or a phone held
-  // sideways. 0 with no keyboard, and also on a
-  // pinch-zoomed page or for a gap under 100px, which the hook does not count as a keyboard.
+  // sideways. 0 with no keyboard, and also on a pinch-zoomed page or for a gap under 100px, which
+  // the hook does not count as a keyboard.
   const keyboardInset = useVisualViewportBottomInset();
   // Set in the same tick as the send, which `create.isPending` is not: it only turns true on the
   // next render, so two keydowns or clicks delivered before that render would both get through.

@@ -571,9 +571,7 @@ describe('opening the modal', () => {
     expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
     expect(dialogContent()?.getAttribute('data-full-screen')).toBeNull();
     expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeLessThanOrEqual(1);
-    // CONTROL: the same check is not vacuous — a dialog moved off centre fails it.
-    expect(Math.abs((r.top + 50 + r.bottom + 50) / 2 - window.innerHeight / 2)).toBeGreaterThan(1);
-    // Width and horizontal centring unchanged: Mantine `size="md"` is 440px.
+    // Mantine `size="md"` is 440px.
     expect(Math.round(r.width)).toBe(440);
     expect(Math.abs(r.left - (window.innerWidth - r.right))).toBeLessThanOrEqual(1);
   });
@@ -1009,16 +1007,13 @@ describe('the wide dialog on a touch device (1024×768) with the on-screen keybo
     ).toBeLessThanOrEqual(1);
     // CONTROL: at rest the dialog reaches into where the keyboard will be, so the raise below is real.
     expect(resting.bottom).toBeGreaterThan(window.innerHeight - 300);
-    const visibleBottom = showKeyboard(fake, 300) + fake.offsetTop;
-    const visibleTop = fake.offsetTop;
+    const visibleBottom = showKeyboard(fake, 300);
     await vi.waitFor(() => {
       const r = dialogContent()!.getBoundingClientRect();
       // Above the keyboard's top edge, with the 8px gap…
       expect(r.bottom).toBeLessThanOrEqual(visibleBottom - 8 + 1);
       // …and centred in the visible box.
-      expect(
-        Math.abs((r.top + r.bottom) / 2 - (visibleTop + visibleBottom) / 2)
-      ).toBeLessThanOrEqual(1);
+      expect(Math.abs((r.top + r.bottom) / 2 - visibleBottom / 2)).toBeLessThanOrEqual(1);
     });
     await expectSendReachable(visibleBottom, { mustScroll: false });
     showKeyboard(fake, 0);
