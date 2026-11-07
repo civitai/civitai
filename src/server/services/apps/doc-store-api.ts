@@ -749,9 +749,7 @@ function isOurFault(err: unknown): boolean {
     // The store's database could not be reached (`translatePgError`), or a gate's read failed.
     err.code === 'service_unavailable' ||
     err.code === 'moderation_unavailable' ||
-    err.code === 'consent_unavailable' ||
-    // The permission hook could not be evaluated (`doc-store-hook.ts`): nothing was decided.
-    err.code === 'hook_unavailable'
+    err.code === 'consent_unavailable'
   );
 }
 
@@ -878,6 +876,15 @@ async function run(
       // The collection's schema first: the store checks it again itself (any caller), but here a
       // refusal also spends no ownership lookup. A put replaces the whole body, so `newData` IS
       // the resulting document.
+      const earlyGrant = await gateHook({
+        access,
+        coll,
+        store,
+        op: route.op,
+        key: route.op === 'put' || route.op === 'delete' ? route.key : undefined,
+        after: newData,
+        ifVersion: putIn?.ifVersion ?? deleteVersion,
+      });
       if (newData) validateDocAgainstCollectionSchema(ctx, coll, newData);
       if (newData) await assertOwnedModelVersions(decl, newData, uid);
       // The PERMISSION HOOK (`doc-store-hook.ts`): after every check above (the schema first), and
@@ -896,7 +903,7 @@ async function run(
           ifVersion: putIn?.ifVersion ?? deleteVersion,
         });
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
-        const grant = await decide();
+        const grant = earlyGrant ?? (await decide());
         if (created) {
           const afterCommit = user
             ? await moderate(access, user, 'append', '', { data: created.data })
