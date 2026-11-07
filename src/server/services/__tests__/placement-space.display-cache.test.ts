@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementService from '~/server/services/placement.service';
@@ -502,9 +503,11 @@ describe('placement space display read: a space write busts it', () => {
 });
 
 /**
- * The cached rows are for SHOWING a space. Every path that decides on one or charges for one reads
- * the primary, so a stale entry — a lost invalidation, bounded only by the TTL — can at worst show a
- * wrong price, never take one.
+ * The cached rows are for SHOWING a space; deciding on one or charging for one must read the
+ * primary. Pinned here behaviourally for the deciding resolver (`resolvePlacementSpaceFor`) and the
+ * paid sticker path (`createStickerPlacement`), against a stale entry the display read still
+ * serves. Every other path is held by the two ledgers under "who calls it": the display read's
+ * callers, and the places inside the service that reach the cached readers.
  */
 describe('placement space display read: deciding and charging never read it', () => {
   const PLACER = 88;
@@ -627,5 +630,52 @@ describe('placement space display read: who calls it', () => {
       /resolvePlacementSpaceForDisplay\s*\(/.test(line)
     );
     expect(routerCalls).toHaveLength(1);
+  });
+
+  // 🔴 A ledger, failing if the set GROWS or SHRINKS. The caller ledger above holds only if the
+  // cached readers are reachable through `resolvePlacementSpaceForDisplay` alone: a second function
+  // in the service handing `displayReads` to `resolveSpaceWith` would serve cached rows to whatever
+  // calls it, with no reference to the display read for the ledger above to see.
+  it('reaches the cached readers only through resolvePlacementSpaceForDisplay', () => {
+    const file = 'server/services/placement-space.service.ts';
+    const source = ts.createSourceFile(
+      file,
+      readFileSync(path.join(SRC, file), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true
+    );
+    /** The name declared by a top-level statement: a function, or the first variable it declares. */
+    const declaredName = (statement: ts.Node) => {
+      if (ts.isFunctionDeclaration(statement)) return statement.name?.text;
+      if (ts.isVariableStatement(statement)) {
+        const name = statement.declarationList.declarations[0]?.name;
+        return name && ts.isIdentifier(name) ? name.text : undefined;
+      }
+      return undefined;
+    };
+    const tracked = ['displayReads', 'readSpaceRows'];
+    const usedIn: Record<string, string[]> = { displayReads: [], readSpaceRows: [] };
+    const visit = (node: ts.Node) => {
+      if (ts.isIdentifier(node) && tracked.includes(node.text)) {
+        const parent = node.parent;
+        const isOwnDefinition =
+          (ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent)) &&
+          parent.name === node;
+        if (!isOwnDefinition) {
+          let statement: ts.Node = node;
+          while (!ts.isSourceFile(statement.parent)) statement = statement.parent;
+          usedIn[node.text].push(
+            declaredName(statement) ??
+              `<line ${source.getLineAndCharacterOfPosition(statement.getStart()).line + 1}>`
+          );
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(usedIn).toEqual({
+      displayReads: ['resolvePlacementSpaceForDisplay'],
+      readSpaceRows: ['displayReads'],
+    });
   });
 });

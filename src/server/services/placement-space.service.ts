@@ -407,8 +407,8 @@ async function resolveSpaceWith(
  * One change from the primary read: the space row at each level is cached in Redis per row, filled
  * from the primary (see `readSpaceRows`). The target is the primary read's own, uncached; the
  * reserved free-slot count reads the replica on both paths (`displayedReservedFreeSlots`). The
- * price range and free-slot count stay live. The client re-reads this route with `staleTime: 0`
- * after a refused free claim and still sees a live count.
+ * price range and the reserved free-slot count stay live. The client re-reads this route with
+ * `staleTime: 0` after a refused free claim and still sees a live count.
  *
  * 🔴 What this shows is what a sticker placement is charged. The sticker flow sends no expected
  * price, so the charge is whatever the primary read resolves at that moment: a display that
