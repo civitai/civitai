@@ -8,6 +8,7 @@ import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -83,8 +84,9 @@ const transformData = async ({
         // `content` is a searchable attribute and is stored as HTML, so tag and
         // attribute names were indexed as prose — a query for `iframe` could
         // match on markup. Regex-strip rather than a full HTML-to-text pass:
-        // this runs over every article on a reindex.
-        content: removeTags(articleRecord.content),
+        // this runs over every article on a reindex. Spoilers are dropped first so
+        // a search hit cannot show them; only bodies naming "spoiler" pay a parse.
+        content: removeTags(removeSpoilers(articleRecord.content)),
         nsfwLevel: parseBitwiseBrowsingLevel(articleRecord.nsfwLevel),
         stats: stats
           ? {

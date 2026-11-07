@@ -24,6 +24,7 @@ import {
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getEventTagSuggestions,
   getShopItemEventTags,
   getShopItemSections,
   getShopSections,
@@ -122,6 +123,7 @@ export const cosmeticShopRouter = router({
   getShopItemEventTags: moderatorProcedure
     .input(shopItemSectionInput.pick({ shopItemId: true }))
     .query(({ input }) => getShopItemEventTags(input)),
+  getEventTagSuggestions: moderatorProcedure.query(() => getEventTagSuggestions()),
   setShopItemEventTags: moderatorProcedure
     .input(setShopItemEventTagsInput)
     .mutation(({ input }) => setShopItemEventTags(input)),

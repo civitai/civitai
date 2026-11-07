@@ -373,6 +373,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'formatting',
                 'list',
                 'link',
+                'mentions',
                 'media',
                 'video',
                 'polls',
@@ -382,6 +383,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'imageSize',
                 'align',
                 'civitaiEmbed',
+                'spoiler',
               ]}
               withAsterisk
               stickyToolbar
