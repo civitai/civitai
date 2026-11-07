@@ -16,30 +16,37 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * (HINCRBY atomic per call, PXAT expiry, scripts run whole).
  */
 
-const { mockIsFlipt, mockSessions, mockResolveDownloadUrl, mockModelVersionEvent, world } =
-  vi.hoisted(() => ({
-    mockIsFlipt: vi.fn(),
-    mockSessions: new Map<string, unknown>(),
-    mockResolveDownloadUrl: vi.fn(),
-    mockModelVersionEvent: vi.fn(),
-    world: {
-      versions: new Map<number, Record<string, any>>(),
-      files: [] as Record<string, any>[],
-      paidAccess: new Map<number, { endsAt: Date | null }>(),
-      grants: [] as { userId: number; versionId: number; permissions: number }[],
-      users: new Map<number, { id: number; bannedAt: Date | null; deletedAt: Date | null }>(),
-      apiKeys: new Map<number, { expiresAt: Date | null }>(),
-      clients: new Map<
-        string,
-        {
-          userId: number;
-          grants: string[];
-          allowedScopes: number;
-          user: { bannedAt: Date | null; deletedAt: Date | null };
-        }
-      >(),
-    },
-  }));
+const {
+  mockIsFlipt,
+  mockSessions,
+  mockResolveDownloadUrl,
+  mockModelVersionEvent,
+  mockTrackerSession,
+  world,
+} = vi.hoisted(() => ({
+  mockIsFlipt: vi.fn(),
+  mockSessions: new Map<string, unknown>(),
+  mockResolveDownloadUrl: vi.fn(),
+  mockModelVersionEvent: vi.fn(),
+  mockTrackerSession: vi.fn(),
+  world: {
+    versions: new Map<number, Record<string, any>>(),
+    files: [] as Record<string, any>[],
+    paidAccess: new Map<number, { endsAt: Date | null }>(),
+    grants: [] as { userId: number; versionId: number; permissions: number }[],
+    users: new Map<number, { id: number; bannedAt: Date | null; deletedAt: Date | null }>(),
+    apiKeys: new Map<number, { expiresAt: Date | null }>(),
+    clients: new Map<
+      string,
+      {
+        userId: number;
+        grants: string[];
+        allowedScopes: number;
+        user: { bannedAt: Date | null; deletedAt: Date | null };
+      }
+    >(),
+  },
+}));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { DOWNLOAD_LINKS_ENABLED: 'download-links-enabled' },
@@ -52,6 +59,9 @@ vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civita
 vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: mockResolveDownloadUrl }));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
+    constructor(_req: unknown, _res: unknown, session: unknown) {
+      mockTrackerSession(session);
+    }
     modelVersionEvent = mockModelVersionEvent;
   },
 }));
@@ -364,6 +374,16 @@ function version(id: number, overrides: Record<string, unknown> = {}) {
   });
 }
 const fileOf = (versionId: number) => versionId * 100;
+/** A further file on a version, copied from its first; returns the new file's id. */
+function addFile(versionId: number, overrides: Record<string, unknown>) {
+  const base = world.files.find((f) => f.versionId === versionId) ?? {
+    ...world.files[0],
+    versionId,
+  };
+  const file = { ...base, ...overrides };
+  world.files.push(file);
+  return file.id as number;
+}
 
 function seedWorld() {
   world.versions.clear();
@@ -537,6 +557,7 @@ describe('positive: generation-only file for an allowed user', () => {
       modelVersionId: GENERATION_ONLY,
       fileId: fileOf(GENERATION_ONLY),
     });
+    expect(mockTrackerSession).toHaveBeenCalledWith({ user: { id: USER } });
   });
 
   it('resolves the primary file when the item names no fileId, and pins it', async () => {
@@ -545,6 +566,38 @@ describe('positive: generation-only file for an allowed user', () => {
     const fetched = await fetchLink(result.url);
     expect(mockResolveDownloadUrl.mock.calls[0][0]).toBe(fileOf(PUBLIC_VERSION));
     expect(fetched.status).toBe(302);
+  });
+
+  it('mints an explicitly named public file of the version', async () => {
+    const second = addFile(PUBLIC_VERSION, { id: 10_001 });
+    const result = await mintOne(userItem(PUBLIC_VERSION, USER, { fileId: second }));
+    expect(result.ok).toBe(true);
+    await fetchLink(result.url);
+    expect(mockResolveDownloadUrl.mock.calls[0][0]).toBe(second);
+  });
+
+  it.each([
+    ['a file of another version', () => fileOf(GENERATION_ONLY)],
+    [
+      'a non-public file of the version',
+      () => addFile(PUBLIC_VERSION, { id: 10_002, visibility: 'Private' }),
+    ],
+  ])('refuses an explicit fileId naming %s', async (_name, fileId) => {
+    expect(await mintOne(userItem(PUBLIC_VERSION, USER, { fileId: fileId() }))).toMatchObject({
+      ok: false,
+      error: 'not-found',
+    });
+  });
+
+  it('404s once the pinned file is replaced, rather than serving the new primary file', async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    world.files.splice(
+      world.files.findIndex((f) => f.id === fileOf(PUBLIC_VERSION)),
+      1
+    );
+    addFile(PUBLIC_VERSION, { id: 10_003 });
+    expect((await fetchLink(url)).status).toBe(404);
+    expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
   });
 
   it('lets the owner fetch their own private version', async () => {
@@ -810,6 +863,21 @@ describe('revoke', () => {
     expect((await fetchLink(url)).status).toBe(404);
   });
 
+  it('taking an ApiKey off the minting allowlist kills the links it already minted', async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    expect((await fetchLink(url)).status).toBe(302);
+    setEnv({ DOWNLOAD_LINK_API_KEY_IDS: [] });
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('taking a client off the public list kills its public links, not its user links', async () => {
+    const pub = await mintOne({ mode: 'public', modelVersionId: PUBLIC_VERSION });
+    const user = await mintOne(userItem(PUBLIC_VERSION));
+    setEnv({ DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: [] });
+    expect((await fetchLink(pub.url)).status).toBe(404);
+    expect((await fetchLink(user.url)).status).toBe(302);
+  });
+
   it('the credential cascade deletes every link it minted', async () => {
     const a = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
     const b = await mintOne(userItem(GENERATION_ONLY), 'tok-apikey');
@@ -897,6 +965,29 @@ describe('mint limits', () => {
       userItem(PUBLIC_VERSION),
     ]);
     expect(res.body.items[2]).toEqual({ ok: false, status: 429, error: 'rate-limited' });
+  });
+
+  it('never grants past the per-user limit across concurrent calls', async () => {
+    setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_USER: 5 });
+    const batch = () =>
+      mint(Array.from({ length: 4 }, (_, i) => userItem(i % 2 ? PUBLIC_VERSION : GENERATION_ONLY)));
+    const calls = await Promise.all([batch(), batch(), batch()]);
+    const items = calls.flatMap((res) => res.body.items);
+    expect(items.filter((item: { ok: boolean }) => item.ok)).toHaveLength(5);
+    expect(items.filter((item: { status?: number }) => item.status === 429)).toHaveLength(7);
+  });
+
+  it('grants the earliest items in request order when a call crosses the limit', async () => {
+    setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_USER: 3 });
+    const res = await mint(Array.from({ length: 6 }, () => userItem(PUBLIC_VERSION)));
+    expect(res.body.items.map((item: { ok: boolean }) => item.ok)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
   });
 
   it('answers the whole call 429 with Retry-After past the per-credential limit', async () => {

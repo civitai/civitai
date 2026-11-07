@@ -6,7 +6,7 @@
 -- `modelVersionEvents.type` is an Enum8. A value the column does not carry is rejected at the
 -- tracker service, silently: the row never exists. Only the new type is lost; the link still works.
 --
--- 5 is the last index in use ('HideDownload', read from prod on 2026-11-07), so this appends at 6.
+-- This appends at 6, after 'HideDownload' (5).
 -- Appending at an unused index is a metadata-only ALTER. Do NOT renumber or rename any existing
 -- value. Re-read `SHOW CREATE TABLE default.modelVersionEvents` first: if prod already carries a
 -- value at 6, renumber this one, not that.

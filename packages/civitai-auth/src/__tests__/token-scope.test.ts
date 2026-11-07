@@ -126,7 +126,13 @@ describe('AppStoreCatalogWrite (opt-in, client_credentials-only — NOT part of 
 
   it('is client_credentials-only, and the client_credentials cap adds only UserRead', () => {
     expect(CLIENT_CREDENTIALS_ONLY_SCOPES & TokenScope.AppStoreCatalogWrite).toBe(268435456);
-    expect(CLIENT_CREDENTIALS_MAX_SCOPE).toBe(CLIENT_CREDENTIALS_ONLY_SCOPES | TokenScope.UserRead);
+    // The whole client_credentials-only set, pinned: a new bit here must be added on purpose.
+    expect(CLIENT_CREDENTIALS_ONLY_SCOPES).toBe(
+      TokenScope.AppStoreCatalogWrite | TokenScope.DownloadLink
+    );
+    expect(CLIENT_CREDENTIALS_MAX_SCOPE).toBe(
+      TokenScope.UserRead | TokenScope.AppStoreCatalogWrite | TokenScope.DownloadLink
+    );
   });
 
   it('is stripped from the consentable part of a client ceiling, and nothing else is', () => {

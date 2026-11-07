@@ -290,14 +290,17 @@ export async function takeMintBudget(
   count: number,
   limit: number,
   now: number
-): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+): Promise<{ allowed: boolean; granted: number; retryAfterSeconds: number }> {
   const windowStart = Math.floor(now / 60_000) * 60_000;
   const key = `${REDIS_SYS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
   const [used] = (await sysRedis.multi().incrBy(key, count).expire(key, 120).exec()) as unknown as [
     number
   ];
+  // One atomic INCRBY per take, so concurrent takes never grant past the limit between them.
+  const before = Number(used) - count;
   return {
     allowed: Number(used) <= limit,
+    granted: Math.min(count, Math.max(0, limit - before)),
     retryAfterSeconds: Math.max(1, Math.ceil((windowStart + 60_000 - now) / 1000)),
   };
 }

@@ -20,6 +20,7 @@ import {
   takeMintBudget,
   credentialKey,
 } from '~/server/services/download-link/download-link.store';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
 import type { Session } from '~/types/session';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -27,6 +28,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 export const DEFAULT_LINK_TTL_SECONDS = 24 * 60 * 60;
+const MINT_CONCURRENCY = 8;
 
 /**
  * A link's fetch cap: `DOWNLOAD_LINK_MAX_FETCHES`, raised for large files. Older worker builds
@@ -114,26 +116,58 @@ function logMint(
   }).catch(() => undefined);
 }
 
+/**
+ * The user a user item mints for, or why it is refused. Each user is loaded once and their budget
+ * taken in one step for all their items; the earliest items in request order get what it grants.
+ */
+type ItemGate = { principal: GenerationFetchPrincipal | null } | { refusal: MintError };
+
+async function gateItems(
+  credential: DownloadLinkCredential,
+  items: MintItem[],
+  now: number
+): Promise<ItemGate[]> {
+  const byUser = new Map<number, number[]>();
+  items.forEach((item, i) => {
+    if (item.mode !== 'user') return;
+    byUser.set(item.onBehalfOfUserId, [...(byUser.get(item.onBehalfOfUserId) ?? []), i]);
+  });
+
+  // A user item starts refused, so one never reaches mintOne without its principal (which would
+  // mint a public link).
+  const gates: ItemGate[] = items.map((item) =>
+    item.mode === 'public' && mayMintPublicLinks(credential)
+      ? { principal: null }
+      : { refusal: 'unauthorized' }
+  );
+  await limitConcurrency(
+    [...byUser].map(([userId, indexes]) => async () => {
+      const principal = await loadPrincipal(userId);
+      if (!principal) {
+        for (const i of indexes) gates[i] = { refusal: 'unauthorized' };
+        return;
+      }
+      const { granted } = await takeMintBudget(
+        `user:${principal.id}`,
+        indexes.length,
+        env.DOWNLOAD_LINK_MINT_LIMIT_PER_USER,
+        now
+      );
+      indexes.forEach((i, n) => {
+        gates[i] = n < granted ? { principal } : { refusal: 'rate-limited' };
+      });
+    }),
+    MINT_CONCURRENCY
+  );
+  return gates;
+}
+
 async function mintOne(
   credential: DownloadLinkCredential,
   item: MintItem,
+  principal: GenerationFetchPrincipal | null,
   now: number
 ): Promise<MintItemResult> {
-  let principal: GenerationFetchPrincipal | null = null;
-  if (item.mode === 'public') {
-    if (!mayMintPublicLinks(credential)) return refused('unauthorized');
-  } else {
-    principal = await loadPrincipal(item.onBehalfOfUserId);
-    if (!principal) return refused('unauthorized');
-    const budget = await takeMintBudget(
-      `user:${principal.id}`,
-      1,
-      env.DOWNLOAD_LINK_MINT_LIMIT_PER_USER,
-      now
-    );
-    if (!budget.allowed) return refused('rate-limited');
-  }
-
   const check = await checkGenerationFetch({
     modelVersionId: item.modelVersionId,
     fileId: item.fileId,
@@ -201,12 +235,19 @@ export async function mintDownloadLinks(
   );
   if (!budget.allowed) return { status: 429, retryAfterSeconds: budget.retryAfterSeconds };
 
-  const results: MintItemResult[] = [];
-  for (const item of items) {
-    const result = await mintOne(credential, item, now);
-    logMint(credential, item, result);
-    results.push(result);
-  }
+  const gates = await gateItems(credential, items, now);
+  const results = new Array<MintItemResult>(items.length);
+  await limitConcurrency(
+    items.map((item, i) => async () => {
+      const gate = gates[i];
+      results[i] =
+        'refusal' in gate
+          ? refused(gate.refusal)
+          : await mintOne(credential, item, gate.principal, now);
+      logMint(credential, item, results[i]);
+    }),
+    MINT_CONCURRENCY
+  );
   return { status: 200, items: results };
 }
 

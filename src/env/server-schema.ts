@@ -445,6 +445,7 @@ export const serverSchema = z
     // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
     // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
+    // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
     DOWNLOAD_LINK_FILE_URL_TTL_SECONDS: z.coerce
