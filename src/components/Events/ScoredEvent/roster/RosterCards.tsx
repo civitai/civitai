@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { Paper, Text, UnstyledButton } from '@mantine/core';
 import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -139,6 +140,9 @@ function WearingAvatar({
   size: number;
   hatUrl?: string;
 }) {
+  // Other players' worn hats: hidden with the viewer's event cosmetics.
+  const showEventCosmetics = useShowEventCosmetics();
+  if (!showEventCosmetics) hatUrl = undefined;
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <UserAvatar user={item.user} avatarSize={size} withDecorations={false} linkToProfile />

@@ -68,6 +68,8 @@ import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import type { CsamSupplementalDetails } from '~/server/services/csam-supplemental-text';
 import { supplementalReportText } from '~/server/services/csam-supplemental-text';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import type { GeneratorEvidenceDetails } from '~/server/services/generator-evidence/evidence-meta';
@@ -197,6 +199,7 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** CyberTips opened for this report and cancelled before it was sent. */
   cancelledReportIds?: number[];
   supplemental?: CsamSupplementalDetails;
+  contextText?: CsamContextText[];
   /** CyberTips opened for this report that could not be cancelled, so may have reached NCMEC. */
   possibleDuplicateReportIds?: number[];
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
@@ -1473,10 +1476,18 @@ async function reportImages(claim: SendClaim) {
     };
   };
 
+  const webPageIncidents = contextWebPageIncidents(report.details?.contextText).map(
+    ({ url, additionalInfo }) => ({
+      url: [xmlText(url)],
+      additionalInfo: xmlText(additionalInfo),
+      thirdPartyHostedContent: false,
+    })
+  );
   const sent = await sendCyberTip(
     claim,
     {
       ...initialReport,
+      ...(webPageIncidents.length && { incidentDetails: { webPageIncidents } }),
       ...(supplemental && {
         personOrUserReported: {
           ...initialReport.personOrUserReported,
@@ -2904,6 +2915,19 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       entries: [
         ['user', { value: user }],
         ['reportId', { value: reportId }],
+        ...(report.details?.contextText?.length
+          ? ([
+              [
+                'reportContext',
+                {
+                  value: {
+                    webPageIncidents: contextWebPageIncidents(report.details.contextText),
+                    contextText: report.details.contextText,
+                  },
+                },
+              ],
+            ] as const)
+          : []),
         ['models', { items: streamModels() }],
         ['modelVersions', { items: streamModelVersions() }],
         ['images', { items: flattenPages(scanUserImages()) }],

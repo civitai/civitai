@@ -19,6 +19,7 @@ const cookiesSchema = z.object({
   // blurNsfw: booleanString().optional(),
   // browsingLevel: z.coerce.number().optional(),
   disableHidden: booleanString().optional(),
+  showEventCosmetics: booleanString().optional(),
   mode: z.enum(['SFW', 'NSFW', 'All']).optional(),
   referrals: z
     .object({
@@ -70,6 +71,7 @@ function parseCookiesObj(cookies: TmpCookiesObj) {
     // blurNsfw: cookies?.['blur'],
     // browsingLevel: cookies?.['level'],
     disableHidden: cookies?.['disableHidden'],
+    showEventCosmetics: cookies?.['showEventCosmetics'],
     mode: cookies?.['mode'],
     referrals: {
       code: cookies?.['ref_code'],
