@@ -373,6 +373,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'formatting',
                 'list',
                 'link',
+                'mentions',
                 'media',
                 'video',
                 'polls',

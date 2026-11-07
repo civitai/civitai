@@ -26,6 +26,30 @@ const paragraph = (text: string) => ({
 const unknownNode = { type: 'doc', content: [{ type: 'sticker', attrs: { id: '1' } }] };
 
 describe('RenderRichText', () => {
+  test('an @mention in an article links to the profile it names', async () => {
+    // The stored HTML, through the same parse the article page does server-side.
+    const doc = generateJSON(
+      '<p>thanks <span data-type="mention" data-id="mention:42" data-label="alice">@alice</span></p>',
+      tiptapExtensions
+    );
+    renderWithProviders(<RenderRichText content={doc} />);
+
+    const link = page.getByRole('link', { name: '@alice' });
+    await expect.element(link).toHaveAttribute('href', '/user-link/42');
+  });
+
+  test('an @mention inside an author link keeps that link, never nesting a second one', async () => {
+    const doc = generateJSON(
+      '<p><a href="https://civitai.com/user/alice"><span data-type="mention" data-id="mention:42" data-label="alice">@alice</span></a></p>',
+      tiptapExtensions
+    );
+    const { container } = await renderWithProviders(<RenderRichText content={doc} />);
+
+    await expect.element(page.getByText('@alice')).toBeInTheDocument();
+    expect(container.querySelectorAll('a a')).toHaveLength(0);
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+  });
+
   test('renders a valid document', async () => {
     renderWithProviders(<RenderRichText content={paragraph('a real article')} />);
 

@@ -15,6 +15,8 @@ import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
 import { SizedImage } from '~/shared/tiptap/sized-image.node';
 import { MentionNode } from '~/components/TipTap/MentionNode';
+import mentionClasses from '~/components/TipTap/MentionNode.module.scss';
+import { mentionHref } from '~/components/RenderHtml/mention-href';
 import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
@@ -96,6 +98,24 @@ export function RenderRichText({
         options: {
           nodeMapping: {
             media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
+            // The same profile link RenderHtml gives a comment mention, so MentionHoverCard still
+            // validates it. Inside an author's link it stays a span: an <a> in an <a> is invalid
+            // HTML, and the browser splits it apart on parse.
+            mention: ({ node }) => {
+              const { id, label } = node.attrs as { id?: string; label?: string };
+              const Tag = node.marks.some((m) => m.type.name === 'link') ? 'span' : 'a';
+              return (
+                <Tag
+                  href={Tag === 'a' ? mentionHref({ id, label }) : undefined}
+                  className={mentionClasses.mention}
+                  data-type="mention"
+                  data-id={id}
+                  data-label={label}
+                >
+                  @{label ?? id}
+                </Tag>
+              );
+            },
             timestamp: ({ node }) => (
               <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
             ),

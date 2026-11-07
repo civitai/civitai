@@ -26,6 +26,63 @@ const liveCommentCreatedOrEditedSince = (lastSent: string) =>
           AND c."tosViolation" = false
           AND c.hidden IS NOT TRUE`;
 
+export const ARTICLE_MENTION_CAP = 10;
+export const ARTICLE_MENTION_EDIT_WINDOW = '30 days';
+// GREATEST skips NULLs, so a never-scanned article still counts its publish and edit times.
+const ARTICLE_TOUCHED_AT = `GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt")`;
+
+/**
+ * People named in a live article, each once, the first `ARTICLE_MENTION_CAP` in document order.
+ *
+ * Re-read when the article goes live or is edited since the last run. Like comment edits, it
+ * re-emits the article's key and relies on UserNotification's unique (notificationId, userId) to
+ * skip people already told; those rows are cleaned up, hence the window after publish.
+ * `contentScannedAt` is a trigger too: an edit sends the article through Processing, and the scan
+ * flips it back to Published without touching `updatedAt`.
+ *
+ * Unlisted and Private articles are skipped: the notification would hand out a link the author kept
+ * off the feed. The recipient's browsingLevel gate matches the article feed's.
+ */
+export const articleMentionsSql = (lastSent: string) => `
+        SELECT
+          am."ownerId",
+          a."userId" "actorId",
+          JSONB_BUILD_OBJECT(
+            'mentionedIn', 'article',
+            'articleId', a.id,
+            'articleTitle', a.title,
+            'username', u.username
+          ) "details"
+        FROM "Article" a
+        JOIN "User" u ON u.id = a."userId"
+        CROSS JOIN LATERAL (
+          SELECT x.id "ownerId"
+          FROM (
+            SELECT CAST(r.m[1] AS INT) id, MIN(r.ord) first_at
+            FROM regexp_matches(a.content, '"mention:(\\d+)"', 'g') WITH ORDINALITY r(m, ord)
+            GROUP BY 1
+          ) x
+          ORDER BY x.first_at
+          LIMIT ${ARTICLE_MENTION_CAP}
+        ) am
+        JOIN "User" ru ON ru.id = am."ownerId"
+        -- Matches "Article_mention_scan_idx" exactly (expression and partial predicate), or this is
+        -- a seq scan of every article each run.
+        WHERE ${ARTICLE_TOUCHED_AT} > '${lastSent}'
+          AND a.status = 'Published'
+          AND a."publishedAt" > now() - interval '${ARTICLE_MENTION_EDIT_WINDOW}'
+          AND a."publishedAt" <= now()
+          AND NOT a."tosViolation"
+          AND NOT a.unlisted
+          AND a.availability <> 'Private'
+          AND a.content LIKE '%"mention:%'
+          AND u."bannedAt" IS NULL
+          AND NOT u.muted
+          AND am."ownerId" <> a."userId"
+          AND ru."bannedAt" IS NULL
+          AND ru."deletedAt" IS NULL
+          AND (a."nsfwLevel" & ru."browsingLevel") <> 0`;
+
 // Moveable (possibly)
 
 export const mentionNotifications = createNotificationProcessor({
@@ -60,6 +117,11 @@ export const mentionNotifications = createNotificationProcessor({
         return {
           message: `${details.username} mentioned you in a ${details.parentType} on ${details.modelName}`,
           url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
+        };
+      } else if (details.mentionedIn === 'article') {
+        return {
+          message: `${details.username} mentioned you in the article "${details.articleTitle}"`,
+          url: `/articles/${details.articleId}`,
         };
       }
       return {
@@ -116,9 +178,12 @@ export const mentionNotifications = createNotificationProcessor({
           AND (m."publishedAt" > '${lastSent}' OR m."updatedAt" > '${lastSent}')
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
+
+        UNION
+${articleMentionsSql(lastSent)}
       )
       SELECT
-        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'mentionedIn' = 'article' then 'article:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId', details->>'articleId')) "key",
         -- Claiming the dedupe key SUPPRESSES every other notification for this comment, so only claim it
         -- when this mention is a worthy replacement — i.e. prepareMessage above yields a message AND a
         -- working URL. Three ways it doesn't:
