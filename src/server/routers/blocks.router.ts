@@ -437,21 +437,6 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
 ]);
 
 /**
- * H-2: every blocks router procedure gates on the Flipt flag. When the
- * substrate is dark:
- *   - listForModel returns an empty array (existing public callers see
- *     "no blocks installed" rather than a confusing error)
- *   - mutations throw UNAUTHORIZED
- *
- * The check runs first thing so a flag flip can shut the substrate down
- * without redeploying.
- *
- * H2: evaluated with the request user's context (`ctx.user`) so the live
- * `moderators`-segmented Flipt flag resolves ON for a moderator and OFF for a
- * non-mod / anon caller — same eval the client gate uses. `ctx.user` is the
- * server-side session user, so `isModerator` can't be spoofed by the client.
- */
-/**
  * `civitai_app_block_submit_failures_total` for `submitWorkflow`. A middleware rather than a call
  * per branch: the procedure has seven `kind` arms and two dozen refusal sites, and failures are
  * both THROWN (limiters, scope, validation, orchestrator) and RETURNED as a failed snapshot (the
@@ -476,6 +461,21 @@ const recordSubmitFailures = middleware(async ({ next }) => {
   return result;
 });
 
+/**
+ * H-2: every blocks router procedure gates on the Flipt flag. When the
+ * substrate is dark:
+ *   - listForModel returns an empty array (existing public callers see
+ *     "no blocks installed" rather than a confusing error)
+ *   - mutations throw UNAUTHORIZED
+ *
+ * The check runs first thing so a flag flip can shut the substrate down
+ * without redeploying.
+ *
+ * H2: evaluated with the request user's context (`ctx.user`) so the live
+ * `moderators`-segmented Flipt flag resolves ON for a moderator and OFF for a
+ * non-mod / anon caller — same eval the client gate uses. `ctx.user` is the
+ * server-side session user, so `isModerator` can't be spoofed by the client.
+ */
 const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
   if (await isAppBlocksEnabled({ user: ctx.user })) return next();
   if (type === 'query') {

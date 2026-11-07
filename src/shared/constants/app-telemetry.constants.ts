@@ -41,11 +41,18 @@ const VALIDATION_CODES: ReadonlySet<string> = new Set([
 ]);
 
 // The spellings the spend paths use: the per-call budget refusal (`insufficient buzz budget: …`),
-// the confirmed-quote copy (`Not enough Buzz for …`) and the orchestrator/ledger funds refusal
+// the confirmed-quote copy (`Not enough Buzz for …`), the orchestrator/ledger funds refusal
 // (`throwInsufficientFundsError`: "… don't have enough funds …", or the orchestrator's own
-// "Insufficient funds" detail).
-const INSUFFICIENT_BUZZ_RE = /insufficient (buzz|funds)|not enough (buzz|funds)|enough funds/i;
+// "Insufficient funds" detail), and the cap refusals the router RETURNS as failed snapshots
+// (`daily | private-run | private run | review run-for-real | dev tunnel session Buzz cap
+// reached`, `app Buzz limit reached`, `app daily spend cap reached`). The router's literal
+// strings are pinned against this classifier by blocks.router.failed-snapshot-reasons.test.ts.
+const INSUFFICIENT_BUZZ_RE =
+  /insufficient (buzz|funds)|not enough (buzz|funds)|enough funds|buzz (cap|limit) reached|spend cap reached/i;
 const RATE_LIMIT_RE = /rate limit/i;
+// `generation temporarily unavailable …`: the spend cap could not be read, or the orchestrator
+// returned no price quote. The server could not answer; the viewer did nothing wrong.
+const SERVER_UNAVAILABLE_RE = /temporarily unavailable/i;
 const VALIDATION_PREFIX_RE = /^validation failed\b/i;
 
 /**
@@ -68,6 +75,7 @@ export function classifyAppSubmitFailure(input: {
   if (message.includes(ECOSYSTEM_UNAVAILABLE_MESSAGE)) return 'ecosystem_unavailable';
   if (code === 'PAYMENT_REQUIRED' || INSUFFICIENT_BUZZ_RE.test(message)) return 'insufficient_buzz';
   if (code && SERVER_ERROR_CODES.has(code)) return 'server_error';
+  if (SERVER_UNAVAILABLE_RE.test(message)) return 'server_error';
   if (RATE_LIMIT_RE.test(message)) return 'rate_limited';
   if (VALIDATION_PREFIX_RE.test(message)) return 'validation';
   if (code && VALIDATION_CODES.has(code)) return 'validation';

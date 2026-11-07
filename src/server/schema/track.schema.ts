@@ -950,11 +950,19 @@ const hatTurfActionSchema = z.object({
   }),
 });
 
-// App Blocks in-app telemetry, from the two block hosts. Client-postable: a forged row can only add
-// telemetry under the poster's own session, and every field is closed or bounded — `appBlockId` is
-// shape-checked, the reason/stage/host are enums, the numbers are integer-capped — so no app or
-// user content can reach the `details` column. The hosts clamp before sending, because one
-// rejected event fails its whole batch.
+// App Blocks in-app telemetry, from the two block hosts. Client-postable through the public
+// `/api/track/batch` beacon, which checks Origin only.
+//
+// 🔴 THESE ROWS ARE UNTRUSTED AND INFLATABLE. Anyone can post any number of them for any
+// `appBlockId`, signed in or not, and inside a legitimate session the APP ITSELF drives
+// `submits` and `messagesToHost` (it chooses how many bridge messages to send). Analyse them as
+// distinct users at most, as an operational signal only; they must NEVER feed ranking, store
+// placement, payouts or anything else an app could gain from inflating.
+//
+// What the schema does guarantee: every field is closed or bounded — `appBlockId` is
+// shape-checked, the reason/stage/host are enums, the numbers are integer-capped — so no free
+// text reaches the `details` column. The hosts clamp before sending, because one rejected event
+// fails its whole batch.
 const appErrorSchema = z.object({
   type: z.literal('App_Error'),
   details: z.object({

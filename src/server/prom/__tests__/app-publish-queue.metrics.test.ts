@@ -10,6 +10,7 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 
 import {
+  APP_PUBLISH_QUEUE_MAX_STALENESS_MS,
   APP_PUBLISH_QUEUE_OLDEST_SECONDS,
   APP_PUBLISH_QUEUE_PENDING_COUNT,
   __setAppPublishQueueSnapshotForTest,
@@ -95,6 +96,21 @@ describe('the scraped gauges', () => {
       (await samples(APP_PUBLISH_QUEUE_OLDEST_SECONDS)).find((s) => s.labels.kind === 'block')
         ?.value
     ).toBe(40);
+  });
+
+  it('stop emitting once the last good read is older than the staleness bound (reads failing)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    __setAppPublishQueueSnapshotForTest([{ kind: 'block', pending: 4, oldest: new Date(NOW) }]);
+    // Just inside the bound: still served (the refresh it kicks fails against the stub).
+    vi.setSystemTime(NOW + APP_PUBLISH_QUEUE_MAX_STALENESS_MS - 1_000);
+    expect(
+      (await samples(APP_PUBLISH_QUEUE_PENDING_COUNT)).find((s) => s.labels.kind === 'block')?.value
+    ).toBe(4);
+    // Past it: absent, not a frozen 4 that hides a growing queue.
+    vi.setSystemTime(NOW + APP_PUBLISH_QUEUE_MAX_STALENESS_MS + 1_000);
+    expect(await samples(APP_PUBLISH_QUEUE_PENDING_COUNT)).toEqual([]);
+    expect(await samples(APP_PUBLISH_QUEUE_OLDEST_SECONDS)).toEqual([]);
   });
 
   it('emit NOTHING before the first successful read — never a zero that reads as "queue empty"', async () => {

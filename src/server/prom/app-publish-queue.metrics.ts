@@ -14,10 +14,18 @@
 // `(status, submitted_at)` queue index. The snapshot stores the oldest SUBMIT TIME, not an age, so
 // the age keeps growing between refreshes rather than freezing at the last read.
 //
+// PER POD: every web pod runs its own read and exports its own copy, so aggregate with `max()`
+// (never `sum()`, which multiplies the count by the pod count).
+//
 // NO DATA UNTIL THE FIRST GOOD READ, ON PURPOSE. Before a read succeeds there is nothing true to
 // report, and a zero would read as "queue empty" — the exact silence this exists to end. After
 // that, both kinds are always emitted (a `GROUP BY` returns no row for an empty queue, so the
 // query is two aggregates that always return a row).
+//
+// NO DATA AFTER A STALE READ, FOR THE SAME REASON. If reads keep failing, the last good snapshot
+// is served for at most `APP_PUBLISH_QUEUE_MAX_STALENESS_MS`, then the series disappear. Serving
+// it forever would freeze the pending count (a queue that kept growing reads as unchanged), and an
+// absent series is what an alert on "no data" can catch.
 //
 // prom-client GOTCHA: Next.js can load this module twice and prom-client throws on a duplicate
 // name, so registration is a get-or-create guard on the default registry, like every module here.
@@ -31,6 +39,8 @@ export const APP_PUBLISH_QUEUE_PENDING_COUNT = 'civitai_app_publish_queue_pendin
 
 const APP_PUBLISH_QUEUE_TTL_MS = 60_000;
 const APP_PUBLISH_QUEUE_STATEMENT_TIMEOUT_MS = 5_000;
+/** How long the last good snapshot may be served while reads are failing. Ten refresh periods. */
+export const APP_PUBLISH_QUEUE_MAX_STALENESS_MS = 10 * 60_000;
 
 /** One row of the queue read. `oldest` is null when nothing is pending. */
 export type AppPublishQueueRow = {
@@ -117,19 +127,27 @@ function maybeRefresh() {
   if (Date.now() - fetchedAt > APP_PUBLISH_QUEUE_TTL_MS) void refresh();
 }
 
+/** The snapshot to serve now: null before the first good read and once it is too old. */
+function servableSnapshot(): readonly AppPublishQueueRow[] | null {
+  if (!snapshot) return null;
+  if (Date.now() - fetchedAt > APP_PUBLISH_QUEUE_MAX_STALENESS_MS) return null;
+  return snapshot;
+}
+
 /** Get-or-create both gauges on `reg`. Idempotent. */
 export function ensureRegisterAppPublishQueueMetrics(reg: Registry = client.register): void {
   if (!reg.getSingleMetric(APP_PUBLISH_QUEUE_OLDEST_SECONDS)) {
     new client.Gauge({
       name: APP_PUBLISH_QUEUE_OLDEST_SECONDS,
-      help: 'Age in seconds of the oldest PENDING app publish request awaiting moderator review, by kind (block = an app version, listing = a store listing); 0 when none is pending. Absent until the first successful read on this pod',
+      help: 'Age in seconds of the oldest PENDING app publish request awaiting moderator review, by kind (block = an app version, listing = a store listing); 0 when none is pending. PER POD: aggregate with max(), never sum(). Absent until the first successful read on this pod, and again after 10 minutes without one',
       labelNames: ['kind'],
       registers: [reg],
       collect() {
         maybeRefresh();
         this.reset();
-        if (!snapshot) return;
-        const values = computeAppPublishQueueGauges(snapshot, Date.now());
+        const current = servableSnapshot();
+        if (!current) return;
+        const values = computeAppPublishQueueGauges(current, Date.now());
         for (const kind of APP_PUBLISH_QUEUE_KINDS) {
           this.set({ kind }, values[kind].oldestPendingSeconds);
         }
@@ -139,14 +157,15 @@ export function ensureRegisterAppPublishQueueMetrics(reg: Registry = client.regi
   if (!reg.getSingleMetric(APP_PUBLISH_QUEUE_PENDING_COUNT)) {
     new client.Gauge({
       name: APP_PUBLISH_QUEUE_PENDING_COUNT,
-      help: 'App publish requests PENDING moderator review, by kind (block = an app version, listing = a store listing). Absent until the first successful read on this pod',
+      help: 'App publish requests PENDING moderator review, by kind (block = an app version, listing = a store listing). PER POD: aggregate with max(), never sum(). Absent until the first successful read on this pod, and again after 10 minutes without one',
       labelNames: ['kind'],
       registers: [reg],
       collect() {
         maybeRefresh();
         this.reset();
-        if (!snapshot) return;
-        const values = computeAppPublishQueueGauges(snapshot, Date.now());
+        const current = servableSnapshot();
+        if (!current) return;
+        const values = computeAppPublishQueueGauges(current, Date.now());
         for (const kind of APP_PUBLISH_QUEUE_KINDS) this.set({ kind }, values[kind].pending);
       },
     });
