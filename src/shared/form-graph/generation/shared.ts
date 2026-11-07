@@ -304,7 +304,10 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
     output:
       hiddenSet.size || disabledRefusals.size
         ? z.string().superRefine((v, ctx) => {
-            const refusal = hiddenSet.has(v) ? ECOSYSTEM_UNAVAILABLE : disabledRefusals.get(v);
+            // MUTANT: the hidden branch appends a message
+            const refusal = hiddenSet.has(v)
+              ? gateRefusalText(ECOSYSTEM_UNAVAILABLE, disabled.find((e) => e.key === v)?.message)
+              : disabledRefusals.get(v);
             if (refusal) ctx.addIssue({ code: 'custom', message: refusal });
           })
         : z.string(),
