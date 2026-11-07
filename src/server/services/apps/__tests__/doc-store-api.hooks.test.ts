@@ -193,7 +193,12 @@ const DECIDE: Record<string, (i: HookIn) => HookOut> = {
   [BOOM_SHA]: () => ({ throws: true }),
 };
 
-const hookOf = (sha256: string) => ({ file: 'hooks/h.js', sha256, timeoutMs: 200 });
+// One file per hook: a manifest that pins one file with two digests does not parse.
+const hookOf = (sha256: string) => ({
+  file: `hooks/${sha256.slice(0, 12)}.js`,
+  sha256,
+  timeoutMs: 200,
+});
 const CARD_SCHEMA = {
   type: 'object',
   required: ['title'],

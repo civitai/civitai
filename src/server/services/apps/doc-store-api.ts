@@ -883,13 +883,15 @@ async function run(
       // The PERMISSION HOOK (`doc-store-hook.ts`): after every check above (the schema first), and
       // for a shared create or put inside the write reservation but before the moderation scan,
       // so a refusal spends no scan. Its pass pins the store write to the version it was shown.
+      const writeOp = route.op;
+      const writeKey = route.op === 'create' ? undefined : route.key;
       const decide = () =>
         gateHook({
           access,
           coll,
           store,
-          op: route.op,
-          key: route.op === 'create' ? undefined : route.key,
+          op: writeOp,
+          key: writeKey,
           after: newData,
           ifVersion: putIn?.ifVersion ?? deleteVersion,
         });

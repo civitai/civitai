@@ -107,7 +107,9 @@ vi.mock('~/env/server', () => ({
 // `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
 // `app-blocks-enabled`. Only the pipeline key reflects the toggle; the user flag
 // is hard-false so a regression that repointed back to it would 503.
-vi.mock('~/server/flipt/client', () => ({
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  // The flag-name table is real: the permission-hook cohort gate reads its key from it.
+  ...(await importOriginal<typeof FliptClientModule>()),
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
   ),
@@ -157,6 +159,7 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 
 import { isFlipt } from '~/server/flipt/client';
 import type * as SessionClientModule from '~/server/auth/session-client';
+import type * as FliptClientModule from '~/server/flipt/client';
 import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
