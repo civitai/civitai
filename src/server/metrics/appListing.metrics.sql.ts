@@ -6,13 +6,18 @@
 // the executable spec live here so they can be unit-tested WITHOUT booting any
 // of that. See appListing.metrics.ts for the full ownership/sourcing rationale.
 //
-// SCOPE: this job populates `install_count` (from Postgres) and `open_count`
-// (from the ClickHouse `App_Open` event stream). `connect_count`, `tipped_count` and
+// SCOPE: this job populates `install_count` (from Postgres), `open_count` (from the
+// ClickHouse `App_Open` event stream) and `visit_count` (from the `App_Visit` stream the
+// off-site `/apps/go/<listingId>` redirect writes). `connect_count`, `tipped_count` and
 // `tipped_amount_count` are left at their schema default 0: each maps to a feature
 // that isn't live yet (OAuth-connect submission is a locked-deferred product decision;
 // tips have no server-side source). Populate each with the PR that ships its consumer,
-// not speculatively. `visit_count` has its own writer outside this job — the off-site
-// visit redirect (`app-listing-visit.service.ts`) — and this job must never name it.
+// not speculatively.
+//
+// `visit_count` follows `open_count` exactly — same trusted server-side source shape, same
+// derived-not-incremented recompute, same one-actor-per-UTC-day de-dupe (the SQL is ONE
+// builder, `buildDailyActorCountSql`, called with each stream's type and key). It is keyed
+// on `details.listingId` because an off-site listing has no AppBlock.
 //
 // 🔴 `open_count` IS A DELIBERATE EXCEPTION TO THAT LAST SENTENCE, AND IT IS NOT A
 // PRECEDENT FOR THE OTHER FOUR. AT THIS REF NOTHING READS IT. The only non-metrics
@@ -45,6 +50,12 @@ import { escapeClickhouseString } from '~/server/clickhouse/escape';
 export const APP_OPEN_ACTION_TYPE = 'App_Open';
 
 /**
+ * The `actions.type` value the off-site visit redirect (`/apps/go/<listingId>`) emits per
+ * followed Visit. Bare string for the same reason as `APP_OPEN_ACTION_TYPE`.
+ */
+export const APP_VISIT_ACTION_TYPE = 'App_Visit';
+
+/**
  * Approved listings whose metrics may have changed since `$1` (= ctx.lastUpdate),
  * UNION approved listings with no metric row yet (seed a real 0-row so the
  * `popular` sort orders them correctly instead of NULL-first).
@@ -54,6 +65,8 @@ export const APP_OPEN_ACTION_TYPE = 'App_Open';
  *                     event since the watermark. Without this arm a listing whose
  *                     ONLY change is new plays would never be recomputed: nothing
  *                     in Postgres moves when a play happens.
+ * $3 :: text[]      — listing ids ClickHouse reports as having had an `App_Visit`
+ *                     event since the watermark — the same arm for off-site visits.
  *
  * Returns `app_block_id` alongside the id so the caller can ask ClickHouse for
  * those blocks' play counts without a second Postgres round trip.
@@ -102,7 +115,7 @@ export const APP_OPEN_ACTION_TYPE = 'App_Open';
  * counters to 0, after which the `<> 0` predicate no longer matches.
  */
 export const AFFECTED_APPROVED_LISTINGS_SQL = `
-  SELECT al.id, al."app_block_id"
+  SELECT al.id, al."app_block_id", al."kind"
   FROM "app_listings" al
   WHERE al."status" = 'approved'
     AND (
@@ -122,6 +135,10 @@ export const AFFECTED_APPROVED_LISTINGS_SQL = `
       OR (
         al."kind" = 'onsite' AND al."app_block_id" = ANY($2::text[])
       )
+      -- New off-site visits since the watermark (discovered in ClickHouse).
+      OR (
+        al."kind" = 'offsite' AND al.id = ANY($3::text[])
+      )
       -- Repair: NULL join key + a non-zero count still published. That predicate
       -- covers the deleted-AppBlock case (SetNull froze a public number, which is
       -- why this arm exists) AND -- vacuously, since their counters are always
@@ -140,12 +157,15 @@ export const AFFECTED_APPROVED_LISTINGS_SQL = `
 `;
 
 /**
- * Recompute install_count + open_count for a batch of listing ids and upsert into
- * app_listing_metrics.
+ * Recompute install_count + open_count + visit_count for a batch of listing ids and upsert
+ * into app_listing_metrics.
  *
  * $1 :: text[] — the listing ids.
  * $2 :: text[] — app_block_ids, parallel to $3.
  * $3 :: int[]  — the ALL-TIME deduped play count for each app_block_id in $2.
+ * $4 :: text[] — off-site listing ids, parallel to $5.
+ * $5 :: int[]  — the ALL-TIME deduped visit count for each listing id in $4. Same
+ *                must-cover-everything rule as $2/$3: a missing listing is written 0.
  *
  * 🔴 $2/$3 MUST COVER EVERY on-site listing in $1, including the ones with zero
  * plays. `open_count` is DERIVED — a full recompute, never a `+1` — so a listing
@@ -159,17 +179,17 @@ export const AFFECTED_APPROVED_LISTINGS_SQL = `
  * writer with install=0) gets its true current count. Scoped to approved listings.
  *
  * 🔴 The INSERT column list AND the ON CONFLICT DO UPDATE set name ONLY
- * install_count / open_count / updated_at. thumbs_up_count / thumbs_down_count are
- * NEVER touched (ownership contract with app-listing-review.service.ts);
- * visit_count is NEVER touched either (owned by app-listing-visit.service.ts, which
- * increments it); connect/tipped stay at their schema default 0 (see the SCOPE note
- * above). Do not add any of them here.
+ * install_count / open_count / visit_count / updated_at. thumbs_up_count /
+ * thumbs_down_count are NEVER touched (ownership contract with
+ * app-listing-review.service.ts); connect/tipped stay at their schema default 0 (see the
+ * SCOPE note above). Do not add any of them here. This job is visit_count's ONLY writer.
  */
 export const APP_LISTING_METRIC_UPSERT_SQL = `
   INSERT INTO "app_listing_metrics" (
     "app_listing_id",
     "install_count",
     "open_count",
+    "visit_count",
     "updated_at"
   )
   SELECT
@@ -188,16 +208,23 @@ export const APP_LISTING_METRIC_UPSERT_SQL = `
         THEN COALESCE(oc."open_count", 0)
       ELSE 0
     END AS open_count,
+    CASE
+      WHEN al."kind" = 'offsite' THEN COALESCE(vc."visit_count", 0)
+      ELSE 0
+    END AS visit_count,
     NOW() AS updated_at
   FROM "app_listings" al
   LEFT JOIN unnest($2::text[], $3::int[]) AS oc("app_block_id", "open_count")
     ON oc."app_block_id" = al."app_block_id"
+  LEFT JOIN unnest($4::text[], $5::int[]) AS vc("app_listing_id", "visit_count")
+    ON vc."app_listing_id" = al.id
   WHERE al.id = ANY($1::text[])
     AND al."status" = 'approved'
   ON CONFLICT ("app_listing_id") DO UPDATE
     SET
       "install_count" = EXCLUDED."install_count",
       "open_count" = EXCLUDED."open_count",
+      "visit_count" = EXCLUDED."visit_count",
       "updated_at" = NOW()
 `;
 
@@ -275,17 +302,33 @@ export const APP_LISTING_METRIC_UPSERT_SQL = `
  * base.metrics has already widened by 2 minutes to let the tracker catch up.
  */
 export function buildAppOpenRecentBlockIdsSql(sinceIso: string): string {
+  return buildRecentKeysSql(APP_OPEN_ACTION_TYPE, 'appBlockId', sinceIso);
+}
+
+/** Listing ids with at least one `App_Visit` since `sinceIso` — the visit twin of the above. */
+export function buildAppVisitRecentListingIdsSql(sinceIso: string): string {
+  return buildRecentKeysSql(APP_VISIT_ACTION_TYPE, 'listingId', sinceIso);
+}
+
+/** ONE discovery query for both streams: distinct `details.<key>` of `type` since `sinceIso`. */
+function buildRecentKeysSql(
+  actionType: string,
+  key: 'appBlockId' | 'listingId',
+  sinceIso: string
+): string {
   return `
-    SELECT DISTINCT JSONExtractString(details, 'appBlockId') AS appBlockId
+    SELECT DISTINCT JSONExtractString(details, '${key}') AS ${key}
     FROM actions
-    PREWHERE toString(type) = '${APP_OPEN_ACTION_TYPE}'
+    PREWHERE toString(type) = '${actionType}'
     WHERE time >= parseDateTimeBestEffort('${escapeClickhouseString(sinceIso)}')
-      AND JSONExtractString(details, 'appBlockId') != ''
+      AND JSONExtractString(details, '${key}') != ''
   `;
 }
 
 /** One row of `buildAppOpenRecentBlockIdsSql`'s result set. */
 export type AppOpenRecentRow = { appBlockId: string };
+/** One row of `buildAppVisitRecentListingIdsSql`'s result set. */
+export type AppVisitRecentRow = { listingId: string };
 
 /**
  * The discovery half, with its failure policy — deduped app_block_ids opened since
@@ -336,6 +379,26 @@ export async function fetchRecentlyOpenedBlockIds(
 }
 
 /**
+ * The visit twin of `fetchRecentlyOpenedBlockIds`: listing ids visited since `sinceIso`, or an
+ * EMPTY LIST if ClickHouse could not answer. Same soft-fail contract and the same narrow `try`.
+ */
+export async function fetchRecentlyVisitedListingIds(
+  sinceIso: string,
+  runQuery: (sql: string) => Promise<AppVisitRecentRow[]>,
+  onDegrade: (error: unknown) => void
+): Promise<string[]> {
+  const sql = buildAppVisitRecentListingIdsSql(sinceIso);
+  let rows: AppVisitRecentRow[];
+  try {
+    rows = await runQuery(sql);
+  } catch (error) {
+    onDegrade(error);
+    return [];
+  }
+  return [...new Set(rows.map((r) => r.listingId).filter(Boolean))];
+}
+
+/**
  * The aggregate expression that appears ONLY in the all-time count query — never
  * in the cheap, time-bounded discovery query beside it.
  *
@@ -378,21 +441,41 @@ export const APP_OPEN_COUNT_QUERY_MARKER = 'sum(dailyActors)';
  * entry as 0 (which is what the upsert's COALESCE does).
  */
 export function buildAppOpenCountSql(appBlockIds: string[]): string {
+  return buildDailyActorCountSql(APP_OPEN_ACTION_TYPE, 'appBlockId', 'openCount', appBlockIds);
+}
+
+/**
+ * ALL-TIME deduped VISIT count per off-site listing id — `App_Visit` rows keyed on
+ * `details.listingId`, under EXACTLY the play semantics above (one distinct actor per listing
+ * per UTC day, summed over all time; same lower-bound caveats). Same builder, so the two
+ * de-dupe rules cannot drift.
+ */
+export function buildAppVisitCountSql(listingIds: string[]): string {
+  return buildDailyActorCountSql(APP_VISIT_ACTION_TYPE, 'listingId', 'visitCount', listingIds);
+}
+
+/** The one daily-distinct-actor count query both streams use. */
+function buildDailyActorCountSql(
+  actionType: string,
+  key: 'appBlockId' | 'listingId',
+  countAlias: 'openCount' | 'visitCount',
+  ids: string[]
+): string {
   // Escape, never reject: a dropped id gets no row, and a missing row is written as 0.
-  const inList = appBlockIds.map((id) => `'${escapeClickhouseString(id)}'`).join(', ');
+  const inList = ids.map((id) => `'${escapeClickhouseString(id)}'`).join(', ');
   return `
-    SELECT appBlockId, ${APP_OPEN_COUNT_QUERY_MARKER} AS openCount
+    SELECT ${key}, ${APP_OPEN_COUNT_QUERY_MARKER} AS ${countAlias}
     FROM (
       SELECT
-        JSONExtractString(details, 'appBlockId') AS appBlockId,
+        JSONExtractString(details, '${key}') AS ${key},
         toDate(time, 'UTC') AS day,
         uniqExact(if(userId != 0, concat('u:', toString(userId)), concat('i:', ip))) AS dailyActors
       FROM actions
-      PREWHERE toString(type) = '${APP_OPEN_ACTION_TYPE}'
-      WHERE JSONExtractString(details, 'appBlockId') IN (${inList})
-      GROUP BY appBlockId, day
+      PREWHERE toString(type) = '${actionType}'
+      WHERE JSONExtractString(details, '${key}') IN (${inList})
+      GROUP BY ${key}, day
     )
-    GROUP BY appBlockId
+    GROUP BY ${key}
   `;
 }
 
@@ -489,6 +572,8 @@ export const APP_OPEN_CH_CHUNK_SIZE = 2_000;
 
 /** One row of `buildAppOpenCountSql`'s result set. */
 export type AppOpenCountRow = { appBlockId: string; openCount: number | string };
+/** One row of `buildAppVisitCountSql`'s result set. */
+export type AppVisitCountRow = { listingId: string; visitCount: number | string };
 
 /**
  * ALL-TIME deduped play counts for an arbitrary number of app block ids, merged
@@ -539,6 +624,25 @@ export async function fetchAppOpenCounts(
   return counts;
 }
 
+/**
+ * ALL-TIME deduped visit counts for off-site listing ids — `fetchAppOpenCounts`' twin, with the
+ * same chunking (listing ids are the same 30-char shape as app block ids, so the same byte
+ * model and ceiling apply) and the same FAIL-HARD contract: a missing id is written as 0.
+ */
+export async function fetchAppVisitCounts(
+  listingIds: string[],
+  runQuery: (sql: string) => Promise<AppVisitCountRow[]>,
+  batchSize: number = APP_OPEN_CH_CHUNK_SIZE
+): Promise<Map<string, number>> {
+  const unique = [...new Set(listingIds.filter(Boolean))];
+  const counts = new Map<string, number>();
+  for (let i = 0; i < unique.length; i += batchSize) {
+    const rows = await runQuery(buildAppVisitCountSql(unique.slice(i, i + batchSize)));
+    for (const row of rows) counts.set(row.listingId, Number(row.visitCount));
+  }
+  return counts;
+}
+
 // ---------------------------------------------------------------------------
 // Executable spec of the aggregate semantics (mirrors the SQL above).
 //
@@ -562,6 +666,12 @@ export type AppOpenEvent = {
   time: Date | string;
 };
 
+/**
+ * One raw `actions` row of type `App_Visit`, as the rollup reads it. Same actor fields and the
+ * same meaning as `AppOpenEvent`; keyed on the LISTING (an off-site listing has no AppBlock).
+ */
+export type AppVisitEvent = Omit<AppOpenEvent, 'appBlockId'> & { listingId: string };
+
 export type AppListingComputeInput = {
   listings: Array<{
     id: string;
@@ -573,12 +683,18 @@ export type AppListingComputeInput = {
   subscriptions: Array<{ appBlockId: string; enabled: boolean }>;
   /** `App_Open` rows. Required, not optional — an omitted stream must not read as "no plays". */
   openEvents: AppOpenEvent[];
+  /**
+   * `App_Visit` rows. Optional only so the many on-site-only fixtures stay as they are; an
+   * omitted stream reads as "no visits", which is what an on-site fixture means.
+   */
+  visitEvents?: AppVisitEvent[];
 };
 
 export type AppListingMetricUpdate = {
   appListingId: string;
   installCount: number;
   openCount: number;
+  visitCount: number;
 };
 
 /** An existing `app_listing_metrics` row, as the affected-set query sees it. */
@@ -600,6 +716,8 @@ export type AffectedListingsInput = {
   }>;
   /** `$2` — app_block_ids ClickHouse reported as opened since the watermark. */
   recentlyOpenedBlockIds: string[];
+  /** `$3` — listing ids ClickHouse reported as visited since the watermark (default none). */
+  recentlyVisitedListingIds?: string[];
   /** `$1` — the incremental watermark. */
   since: Date | string;
 };
@@ -621,6 +739,7 @@ export function selectAffectedApprovedListings(input: AffectedListingsInput): st
       .map((m) => m.appListingId)
   );
   const recentlyOpened = new Set(input.recentlyOpenedBlockIds);
+  const recentlyVisited = new Set(input.recentlyVisitedListingIds ?? []);
 
   return input.listings
     .filter((l) => l.status === 'approved')
@@ -642,6 +761,8 @@ export function selectAffectedApprovedListings(input: AffectedListingsInput): st
       // true — for a listing with no app_block_id.
       if (l.kind === 'onsite' && l.appBlockId !== null && recentlyOpened.has(l.appBlockId))
         return true;
+      // New off-site visits since the watermark. Mirrors `al.id = ANY($3)`.
+      if (l.kind === 'offsite' && recentlyVisited.has(l.id)) return true;
       // Repair: join key lost while a non-zero count is still published.
       if (l.appBlockId === null && nonZeroMetric.has(l.id)) return true;
       return false;
@@ -682,16 +803,31 @@ export function appOpenUtcDay(time: Date | string): string {
  * `buildAppOpenCountSql`. Exported so the dedup rule can be exercised directly.
  */
 export function computeAppOpenCounts(events: AppOpenEvent[]): Map<string, number> {
-  // appBlockId -> utcDay -> set of actor keys
+  return computeDailyActorCounts(events.map((e) => ({ ...e, key: e.appBlockId })));
+}
+
+/**
+ * ALL-TIME deduped visit count per listing id — the in-memory mirror of
+ * `buildAppVisitCountSql`, through the SAME de-dupe function as plays.
+ */
+export function computeAppVisitCounts(events: AppVisitEvent[]): Map<string, number> {
+  return computeDailyActorCounts(events.map((e) => ({ ...e, key: e.listingId })));
+}
+
+/** One distinct actor per key per UTC day, summed over all time — shared by both streams. */
+function computeDailyActorCounts(
+  events: Array<Pick<AppOpenEvent, 'userId' | 'ip' | 'time'> & { key: string }>
+): Map<string, number> {
+  // key -> utcDay -> set of actor keys
   const byBlock = new Map<string, Map<string, Set<string>>>();
   for (const event of events) {
-    // Mirrors the SQL's `JSONExtractString(details, 'appBlockId') != ''` filter:
-    // a row whose details carried no appBlockId joins to nothing.
-    if (!event.appBlockId) continue;
-    let byDay = byBlock.get(event.appBlockId);
+    // Mirrors the SQL's `JSONExtractString(details, '<key>') != ''` filter:
+    // a row whose details carried no key joins to nothing.
+    if (!event.key) continue;
+    let byDay = byBlock.get(event.key);
     if (!byDay) {
       byDay = new Map<string, Set<string>>();
-      byBlock.set(event.appBlockId, byDay);
+      byBlock.set(event.key, byDay);
     }
     const day = appOpenUtcDay(event.time);
     let actors = byDay.get(day);
@@ -715,6 +851,7 @@ export function computeAppListingMetricUpdates(
   input: AppListingComputeInput
 ): AppListingMetricUpdate[] {
   const openCounts = computeAppOpenCounts(input.openEvents);
+  const visitCounts = computeAppVisitCounts(input.visitEvents ?? []);
 
   return input.listings
     .filter((l) => l.status === 'approved')
@@ -742,6 +879,8 @@ export function computeAppListingMetricUpdates(
           ? input.subscriptions.filter((s) => s.appBlockId === l.appBlockId && s.enabled).length
           : 0,
         openCount: measurable ? openCounts.get(l.appBlockId as string) ?? 0 : 0,
+        // Off-site only, mirroring the upsert's `WHEN al."kind" = 'offsite'` gate.
+        visitCount: l.kind === 'offsite' ? visitCounts.get(l.id) ?? 0 : 0,
       };
     });
 }

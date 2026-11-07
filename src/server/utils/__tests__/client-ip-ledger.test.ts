@@ -226,12 +226,6 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
     symbol: 'resolveClientIp',
     why: 'Public-API rate-limit bucket key.',
   },
-  'server/services/blocks/app-listing-visit.service.ts': {
-    symbol: 'resolveClientIp',
-    why:
-      'Per-day de-dupe actor (hashed) for an anonymous off-site visit, so a refresh loop counts ' +
-      'once in visit_count. Attribution, not a control: an unresolvable address shares one label.',
-  },
   // ── Enforcement ──────────────────────────────────────────────────────────
   'pages/api/v1/block-tokens/index.ts': {
     symbol: 'getTrustedClientIp',

@@ -48,7 +48,8 @@ import { referrerHostOf, type AppSurface } from '~/shared/utils/app-store-teleme
  * beacon, which would put a spoofable count beside a trusted one under one label. Off-site
  * traffic is measured by a DIFFERENT type, `App_Visit`, written server-side by the
  * `/apps/go/<listingId>` redirect the store's Visit links go through
- * (`app-listing-visit.service.ts`) and counted in `visit_count`, never in `open_count`.
+ * (`app-listing-visit.service.ts`) and derived into `visit_count` by the listing metrics job
+ * under the same de-dupe as plays — never into `open_count`.
  *
  * ACQUISITION FIELDS. Besides the ids, each row carries where the launch came from:
  * `from` (the run chrome's launch origin, `home` | `store`), `surface` (which store surface

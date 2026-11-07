@@ -2229,11 +2229,6 @@ export const REDIS_SYS_KEYS = {
     EMERGENCY_KILL_LIST: 'system:blocks:emergency-kill-list',
     // Cumulative Buzz-spend cap counter, keyed `system:blocks:buzz-cap:${userId}:${appBlockId}:${day}`.
     BUZZ_CAP: 'system:blocks:buzz-cap',
-    // One-per-day marker for an off-site listing VISIT (the `/apps/go/<listingId>` redirect), keyed
-    // `system:blocks:app-visit:${listingId}:${u<userId>|i<sha256(ip)>}:${UTC-day}`. SET NX with a
-    // day's TTL: only the first visit by an actor that day increments `visit_count`. The IP is
-    // stored hashed, never raw.
-    APP_LISTING_VISIT_DEDUPE: 'system:blocks:app-visit',
     // Cumulative TIP-spend cap counter for the block tip endpoint, keyed
     // `system:blocks:tip-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP: that
     // bounds a user's daily generation SPEND; this bounds a user's daily Buzz
