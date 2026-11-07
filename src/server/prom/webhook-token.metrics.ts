@@ -30,7 +30,7 @@ export const webhookTokenMatchCounter: client.Counter<string> =
     labelNames: ['slot', 'route'],
   }));
 
-// The startup and readiness probes (/api/ready, /api/health) call every few seconds on every pod,
+// Probes call the health routes (/api/live, /api/ready, /api/health) every few seconds on every pod,
 // so while they still send the previous value a line per request would flood the logs. One line
 // per route per minute per process says which callers still send it; the counter carries the
 // exact numbers.

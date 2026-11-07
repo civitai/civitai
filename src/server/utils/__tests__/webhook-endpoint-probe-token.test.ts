@@ -13,7 +13,7 @@ vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
   instrumentApiResponse: () => undefined,
 }));
 
-const { WebhookEndpoint } = await import('~/server/utils/endpoint-helpers');
+const { ProbeEndpoint, WebhookEndpoint } = await import('~/server/utils/endpoint-helpers');
 const { webhookTokenMatchCounter } = await import('~/server/prom/webhook-token.metrics');
 
 const CURRENT = 'c'.repeat(40);
@@ -50,7 +50,7 @@ async function probeMatches(path: string) {
 const ok = vi.fn(async (_req: NextApiRequest, res: NextApiResponse) => {
   res.status(200).json({});
 });
-const healthRoute = WebhookEndpoint(ok, { acceptProbeToken: true }) as unknown as Handler;
+const healthRoute = ProbeEndpoint(ok) as unknown as Handler;
 const otherRoute = WebhookEndpoint(ok) as unknown as Handler;
 
 beforeEach(() => {
@@ -86,21 +86,25 @@ describe('PROBE_TOKEN', () => {
   });
 });
 
-// Probe manifests carry PROBE_TOKEN as a literal, so it must open the health routes and nothing else.
-it('only /api/live, /api/ready and /api/health accept PROBE_TOKEN', () => {
-  const root = path.join(process.cwd(), 'src/pages/api');
-  const accepting = (fs.readdirSync(root, { recursive: true }) as string[])
-    .filter((f) => /\.tsx?$/.test(f))
-    .filter((f) => fs.readFileSync(path.join(root, f), 'utf8').includes('acceptProbeToken'))
+// Probe manifests carry PROBE_TOKEN as a literal, so it must open the health routes and nothing
+// else. Pinned by who names ProbeEndpoint anywhere in src, outside tests.
+it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
+  const src = path.join(process.cwd(), 'src');
+  const users = (fs.readdirSync(src, { recursive: true }) as string[])
     .map((f) => f.split(path.sep).join('/'))
+    .filter((f) => /\.(tsx?|jsx?|mjs|cjs)$/.test(f) && fs.statSync(path.join(src, f)).isFile())
+    .filter((f) => !f.includes('__tests__/') && !/\.test\.[a-z]+$/.test(f))
+    .filter((f) => /\bProbeEndpoint\b/.test(fs.readFileSync(path.join(src, f), 'utf8')))
     .sort();
-  expect(accepting).toEqual(['health.ts', 'live.ts', 'ready.ts']);
-
-  // A wrapper elsewhere that set the option would let a route opt in without the scan above seeing it.
-  const server = path.join(process.cwd(), 'src/server');
-  const definers = (fs.readdirSync(server, { recursive: true }) as string[])
-    .filter((f) => /\.tsx?$/.test(f) && !f.includes('__tests__'))
-    .filter((f) => fs.readFileSync(path.join(server, f), 'utf8').includes('acceptProbeToken'))
-    .map((f) => f.split(path.sep).join('/'));
-  expect(definers).toEqual(['utils/endpoint-helpers.ts']);
+  expect(users).toEqual([
+    'pages/api/health.ts',
+    'pages/api/live.ts',
+    'pages/api/ready.ts',
+    'server/utils/endpoint-helpers.ts',
+  ]);
+  // Naming it is not enough: each health route must export it, or its probes start failing.
+  for (const name of ['live', 'ready', 'health']) {
+    const source = fs.readFileSync(path.join(src, `pages/api/${name}.ts`), 'utf8');
+    expect(source, name).toMatch(/^export default ProbeEndpoint\(/m);
+  }
 });

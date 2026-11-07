@@ -392,12 +392,27 @@ export function JobEndpoint(
 
 /**
  * `TokenSecuredEndpoint` for the webhook token, also accepting `WEBHOOK_TOKEN_PREVIOUS` when that
- * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured. `acceptProbeToken` also
- * accepts `PROBE_TOKEN`; only the health routes pass it.
+ * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured.
  */
 export function WebhookEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return webhookTokenEndpoint(handler, false);
+}
+
+/**
+ * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready and /api/health
+ * only (pinned by webhook-endpoint-probe-token.test.ts).
+ */
+export function ProbeEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return webhookTokenEndpoint(handler, true);
+}
+
+function webhookTokenEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
-  { acceptProbeToken = false }: { acceptProbeToken?: boolean } = {}
+  acceptProbeToken: boolean
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
