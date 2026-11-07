@@ -44,10 +44,12 @@ vi.mock('$lib/server/ip-links.service', async (importOriginal) => ({
 
 const getInflationActors = vi.fn();
 const getSharedIpCoverage = vi.fn();
+const getReactorsPage = vi.fn();
 vi.mock('$lib/server/reactor-lookup.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReactorLookup>()),
   getInflationActors,
   getSharedIpCoverage,
+  getReactorsPage,
 }));
 vi.mock('$lib/server/dossier.service', () => ({
   getDossier: vi.fn(async (userId: number) => ({
@@ -696,6 +698,124 @@ describe('toolCatalog', () => {
       'days',
       'minCount',
     ]);
+  });
+});
+
+describe('reactors_page', () => {
+  const PAGES = ['/retool/reactor-lookup', '/retool/user-lookup'];
+  type Page = {
+    data: {
+      overFloor: number;
+      belowFloor: number;
+      offset: number;
+      nextOffset: number | null;
+      refused?: string;
+      actors: { rank: number; userId: number; email?: string; normalizedEmail?: string }[];
+    };
+    rows: number;
+    truncated: boolean;
+    emailsShown: boolean;
+  };
+  // A list of `overFloor` reactors, user 3000 + rank; the fake serves the slice asked for.
+  const serve = (overFloor: number) =>
+    getReactorsPage.mockImplementation(
+      async (_id: number, { offset, limit }: { offset: number; limit: number }) => ({
+        actors: Array.from(
+          { length: Math.max(0, Math.min(limit, overFloor - offset)) },
+          (_, i) => ({
+            userId: 3001 + offset + i,
+            username: `r${offset + i + 1}`,
+            count: 9,
+            entities: 2,
+            totalGiven: 9,
+            owners: 1,
+            concentration: 1,
+            status: 'active',
+            strikes: 0,
+            createdAt: null,
+            instantVerify: null,
+          })
+        ),
+        overFloor,
+        belowFloor: 4,
+      })
+    );
+  const page = async (args: object, paths = PAGES, grants: string[] = []) =>
+    (await run('reactors_page', { userId: 1, ...args }, paths, grants)) as unknown as Page;
+
+  beforeEach(() => {
+    getReactorsPage.mockReset();
+    getRegistrationEmails.mockClear();
+    serve(250);
+  });
+
+  it('pages past the first 20, ranked in the full list', async () => {
+    const { data, truncated } = await page({ offset: 20, limit: 20 });
+    expect(getReactorsPage).toHaveBeenCalledWith(1, {
+      days: 30,
+      minCount: 5,
+      offset: 20,
+      limit: 20,
+    });
+    expect(data.actors.map((a) => [a.rank, a.userId])).toEqual(
+      Array.from({ length: 20 }, (_, i) => [21 + i, 3021 + i])
+    );
+    expect(data).toMatchObject({ overFloor: 250, belowFloor: 4, nextOffset: 40 });
+    expect(truncated).toBe(true);
+  });
+
+  it('ends the list where the reactors end', async () => {
+    const { data, truncated } = await page({ offset: 200, limit: 100 });
+    expect(data.actors.at(-1)).toMatchObject({ rank: 250, userId: 3250 });
+    expect(data.nextOffset).toBeNull();
+    expect(truncated).toBe(false);
+  });
+
+  it('refuses past the cap, says so, and still gives the true count', async () => {
+    serve(7_000);
+    const { data, truncated, rows } = await page({ offset: 4_950, limit: 100 });
+    expect(data.refused).toBe('Only the first 5000 ranks are paged; offset + limit was 5050.');
+    expect(data).toMatchObject({ overFloor: 7_000, actors: [], nextOffset: null });
+    expect(getReactorsPage).toHaveBeenCalledWith(1, expect.objectContaining({ limit: 0 }));
+    expect([rows, truncated]).toEqual([0, true]);
+  });
+
+  it('pages up to the cap and stops there', async () => {
+    serve(7_000);
+    const { data } = await page({ offset: 4_900, limit: 100 });
+    expect(data.refused).toBeUndefined();
+    expect(data.actors.at(-1)?.rank).toBe(5_000);
+    expect(data.nextOffset).toBeNull();
+  });
+
+  it('caps a page at 100', () => {
+    const input = TOOLS.find((t) => t.name === 'reactors_page')!.input;
+    expect(input.safeParse({ userId: 1, limit: 101 }).success).toBe(false);
+    expect(input.safeParse({ userId: 1, limit: 100 }).success).toBe(true);
+  });
+
+  it('sends no email on any page without User Lookup and assistant.emails, and records that', async () => {
+    for (const [paths, grants] of [
+      [PAGES, []],
+      [['/retool/reactor-lookup'], ['assistant.emails']],
+    ]) {
+      for (const offset of [0, 100, 200]) {
+        const out = await page({ offset }, paths, grants);
+        expect(out.data.actors.length).toBeGreaterThan(0);
+        expect(JSON.stringify(out.data)).not.toContain('@');
+        expect(out.emailsShown).toBe(false);
+      }
+    }
+    expect(getRegistrationEmails).not.toHaveBeenCalled();
+  });
+
+  it('sends each reactor its inbox with both, and records that', async () => {
+    const out = await page({ offset: 100, limit: 2 }, PAGES, ['assistant.emails']);
+    expect(out.data.actors).toEqual([
+      expect.objectContaining({ userId: 3101, normalizedEmail: 'sock3101@gmail.com' }),
+      expect.objectContaining({ userId: 3102, normalizedEmail: 'sock3102@gmail.com' }),
+    ]);
+    expect(out.emailsShown).toBe(true);
   });
 });
 

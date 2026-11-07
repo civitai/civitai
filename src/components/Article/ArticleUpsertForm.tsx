@@ -383,6 +383,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'imageSize',
                 'align',
                 'civitaiEmbed',
+                'spoiler',
               ]}
               withAsterisk
               stickyToolbar

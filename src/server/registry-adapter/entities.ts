@@ -62,6 +62,13 @@ export type CatalogApp = {
   approved: Array<{ id: string } & Omit<ApprovedRelease, 'slug'>>;
 };
 
+/**
+ * The content rating an app entity publishes: the listing's, else its block's. A shared document
+ * has none of its own; its app's is its rating (`doc-streams.ts`).
+ */
+export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): string | null =>
+  app.listing.contentRating ?? app.block?.contentRating ?? null;
+
 export type EntitySets = Map<string, Entity[]>;
 
 function entity(urn: string, schema: string, body: unknown): Entity {
@@ -194,7 +201,7 @@ export function buildEntities(
         slug,
         name: listing.name,
         kind: listing.kind,
-        contentRating: listing.contentRating ?? block?.contentRating ?? null,
+        contentRating: appContentRating(app),
         tagline: listing.tagline,
         category: listing.category,
         iconUrl: listing.iconUrl,

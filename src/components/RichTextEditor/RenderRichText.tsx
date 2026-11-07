@@ -32,7 +32,14 @@ import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
 import { collectCivitaiEmbedIds } from '~/shared/tiptap/civitai-embed.utils';
 import { CivitaiEmbedProvider } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
 import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
-import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
+import { removeSpoilers, sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
+import { SpoilerBlockNode, SpoilerMark } from '~/shared/tiptap/spoiler.node';
+import {
+  SpoilerBlock,
+  SpoilerRunNode,
+  SpoilerText,
+  groupSpoilerRuns,
+} from '~/components/RichTextEditor/RichTextSpoiler';
 
 // The feed cards are heavy and most articles hold none.
 const CivitaiEmbedBlock = dynamic(() =>
@@ -54,6 +61,9 @@ const extensions = [
   EmbedNode,
   TextAlignExtension,
   CivitaiEmbedNode,
+  SpoilerMark,
+  SpoilerBlockNode,
+  SpoilerRunNode,
 ];
 
 type JsonNode = {
@@ -93,7 +103,7 @@ export function RenderRichText({
   const memoized = useMemo(() => {
     try {
       const el = renderToReactElement({
-        content: rewriteLinkMarks(content, toCurrentDomain) as typeof content,
+        content: groupSpoilerRuns(rewriteLinkMarks(content, toCurrentDomain)) as typeof content,
         extensions,
         options: {
           nodeMapping: {
@@ -134,6 +144,8 @@ export function RenderRichText({
                 }}
               />
             ),
+            spoilerRun: ({ children }) => <SpoilerText>{children}</SpoilerText>,
+            spoilerBlock: ({ children }) => <SpoilerBlock>{children}</SpoilerBlock>,
             civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
             embed: ({ node }) => {
               const src = node.attrs.src as string | null;
@@ -170,7 +182,10 @@ export function RenderRichText({
   }, [content, allowed, toCurrentDomain, host]);
 
   if (!memoized.ok)
-    return fallbackHtml ? <RenderHtml html={fallbackHtml} className={className} /> : null;
+    // The fallback cannot mask a spoiler, so it leaves spoilers out rather than show them.
+    return fallbackHtml ? (
+      <RenderHtml html={removeSpoilers(fallbackHtml)} className={className} />
+    ) : null;
 
   const body = (
     <TypographyStylesWrapper className={clsx(classes.htmlRenderer, className)}>

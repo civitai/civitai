@@ -120,6 +120,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON caches "this entity wears no frame" in the per-entity frame caches (`cosmeticEntityCaches`
+  // in ~/server/redis/caches) for an hour, instead of re-querying the primary for every frameless
+  // id on every page. OFF reads them uncached, as before, and ignores any marker
+  // written while it was on. Boolean, evaluated with no entity id, once per frame-cache fetch.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call, on every feed page.
+  FRAME_CACHE_NEGATIVE = 'frame-cache-negative',
   // ON serves `getImageContestCollectionDetails` (an image's contest entries) from a shared Redis
   // cache, busted on entry writes, instead of the per-pod LRU, which nothing busts. The shared
   // value holds no rejection reason; a viewer allowed to read one gets it from a live read. Output
@@ -288,8 +296,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
-  // Serves the public `placement.getSpace` read from a Redis cache of its two row reads (the
-  // target and the per-level space rows), read from the replica on a miss. DEFAULT-OFF:
+  // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
+  // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
+  // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
   // uncached primary read. Global boolean, evaluated with no entity or context. Every other
   // caller of the space (anything that decides or charges) stays on the primary regardless. See

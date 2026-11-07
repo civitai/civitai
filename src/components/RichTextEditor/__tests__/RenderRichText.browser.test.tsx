@@ -1,6 +1,6 @@
 import { generateJSON } from '@tiptap/html';
 import { describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as RenderHtmlModule from '~/components/RenderHtml/RenderHtml';
@@ -241,5 +241,85 @@ describe('RenderRichText', () => {
     const link = document.querySelector<HTMLAnchorElement>('[data-testid="host"] a');
     expect(link?.textContent).toBe('a link');
     expect(link?.getAttribute('href')).toBe('https://example.com');
+  });
+});
+
+// Stored HTML goes through the same parse the article page uses, so these exercise what a saved
+// spoiler actually renders as.
+describe('RenderRichText spoilers', () => {
+  const fromHtml = (html: string) => generateJSON(html, tiptapExtensions);
+
+  test('a spoiler spanning formatted text is one control that reveals all of it', async () => {
+    renderWithProviders(
+      <RenderRichText
+        content={fromHtml(
+          '<p>open <span data-type="spoiler">the <strong>butler</strong> did it</span> end</p>'
+        )}
+      />
+    );
+
+    const spoilers = page.getByRole('button', { name: /Spoiler, hidden text/ });
+    await expect.element(spoilers).toBeInTheDocument();
+    expect(spoilers.all()).toHaveLength(1);
+    await expect.element(page.getByText('butler')).not.toBeVisible();
+    // And out of the accessibility tree, so a screen reader does not read it out.
+    expect(page.getByText('butler').element().closest('[aria-hidden="true"]')).not.toBeNull();
+
+    (spoilers.element() as HTMLElement).focus();
+    await userEvent.keyboard('{Enter}');
+
+    await expect.element(page.getByText('butler')).toBeVisible();
+    await expect
+      .element(page.getByRole('button', { name: /Spoiler, hidden text/ }))
+      .not.toBeInTheDocument();
+  });
+
+  test('the HTML fallback leaves spoilers out, since it cannot mask them', async () => {
+    renderWithProviders(
+      <RenderRichText
+        content={unknownNode}
+        fallbackHtml='<p>open <span data-type="spoiler">the twist</span> end</p>'
+      />
+    );
+
+    await expect.element(page.getByTestId('fallback')).toHaveTextContent('open');
+    await expect.element(page.getByTestId('fallback')).not.toHaveTextContent('the twist');
+  });
+
+  test('two spoilers reveal independently', async () => {
+    renderWithProviders(
+      <RenderRichText
+        content={fromHtml(
+          '<p><span data-type="spoiler">first</span> and <span data-type="spoiler">second</span></p>'
+        )}
+      />
+    );
+
+    const spoilers = page.getByRole('button', { name: /Spoiler, hidden text/ });
+    await expect.element(spoilers.first()).toBeInTheDocument();
+    expect(spoilers.all()).toHaveLength(2);
+    await spoilers.first().click();
+
+    await expect.element(page.getByText('first')).toBeVisible();
+    await expect.element(page.getByText('second')).not.toBeVisible();
+  });
+
+  test('a spoiler block hides its image behind a reveal button', async () => {
+    renderWithProviders(
+      <RenderRichText
+        content={fromHtml(
+          '<div data-type="spoiler"><p><img src="https://example.com/a.png" alt="the ending"></p></div>'
+        )}
+      />
+    );
+
+    await expect
+      .element(page.getByRole('button', { name: 'Spoiler, click to reveal' }))
+      .toBeVisible();
+    await expect.element(page.getByRole('img', { name: 'the ending' })).not.toBeInTheDocument();
+
+    await page.getByRole('button', { name: 'Spoiler, click to reveal' }).click();
+
+    await expect.element(page.getByRole('img', { name: 'the ending' })).toBeInTheDocument();
   });
 });
