@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
+import { webhookTokenValues } from '~/server/utils/webhook-token';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 
 /**
@@ -78,7 +79,7 @@ async function refusal(userId: number) {
 // Unconfigured while it repeats another admin token.
 function keyToken() {
   const token = env.SYSTEM_ACCOUNT_KEY_TOKEN;
-  return token && [env.WEBHOOK_TOKEN, env.JOB_TOKEN].includes(token) ? undefined : token;
+  return token && [...webhookTokenValues(), env.JOB_TOKEN].includes(token) ? undefined : token;
 }
 
 export default HeaderTokenSecuredEndpoint(

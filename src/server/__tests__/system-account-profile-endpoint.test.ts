@@ -115,7 +115,7 @@ describe('POST /api/admin/system-account-profile', () => {
     expect((await call({ userId: SYSTEM_ID, name: 'Agent' })).status).toBe(200);
   });
 
-  it.each(['SYSTEM_ACCOUNT_KEY_TOKEN', 'WEBHOOK_TOKEN', 'JOB_TOKEN'])(
+  it.each(['SYSTEM_ACCOUNT_KEY_TOKEN', 'WEBHOOK_TOKEN', 'WEBHOOK_TOKEN_PREVIOUS', 'JOB_TOKEN'])(
     'is closed while its token repeats %s',
     async (other) => {
       // Distinct per row: env overrides persist across tests in a file.

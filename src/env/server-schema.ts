@@ -401,6 +401,9 @@ export const serverSchema = z
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    // Accepted alongside WEBHOOK_TOKEN while callers move to a new value. Unset or blank: only
+    // WEBHOOK_TOKEN is accepted (~/server/utils/webhook-token).
+    WEBHOOK_TOKEN_PREVIOUS: z.string().optional(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
