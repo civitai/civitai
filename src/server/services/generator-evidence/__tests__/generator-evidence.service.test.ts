@@ -239,6 +239,86 @@ describe('preserveGeneratorEvidence', () => {
     expect(fetched.filter((p) => p.includes('/blocked/'))).toEqual([]);
   });
 
+  describe('the ids a filed report keeps for each file', () => {
+    const JOB = 'a1b2c3d4-0000-4000-8000-000000000001';
+    const serveWorkflowWith = (outputJobId: unknown) => {
+      const served = vi.mocked(globalThis.fetch).getMockImplementation()!;
+      const read = {
+        ...workflow,
+        steps: [
+          {
+            ...workflow.steps[0],
+            output: {
+              images: [{ type: 'image', id: OUTPUT, available: true, jobId: outputJobId }],
+            },
+          },
+        ],
+      };
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+        new URL(String(input)).pathname === `/v1/manager/workflows/${WORKFLOW}`
+          ? new Response(JSON.stringify(read), { status: 200 })
+          : served(input)
+      );
+    };
+    const filedBlob = (blobId: string) =>
+      createCsamReport.mock.calls[0][0].details.generatedImages[0].blobs.find(
+        (b: { blobId: string }) => b.blobId === blobId
+      );
+
+    it('keeps the workflow id on the entry and the producing job id on each output', async () => {
+      serveWorkflowWith(JOB);
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+        { config, store: memoryStore() }
+      );
+
+      const [job] = createCsamReport.mock.calls[0][0].details.generatedImages;
+      expect(job.workflowId).toBe(WORKFLOW);
+      expect(filedBlob(OUTPUT)).toMatchObject({ status: 'preserved', orchestratorJobId: JOB });
+      expect(filedBlob(INPUT)).not.toHaveProperty('orchestratorJobId');
+    });
+
+    it('adds the job id to a file the pending report already holds', async () => {
+      serveWorkflowWith(JOB);
+      dbMock.dbWrite.csamReport.findFirst.mockResolvedValueOnce({
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [
+            {
+              jobId: WORKFLOW,
+              source: 'workflow',
+              blobs: [{ blobId: OUTPUT, role: 'output', status: 'preserved', evidenceKey: 'k' }],
+            },
+          ],
+        },
+      } as never);
+
+      await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+        { config, store: memoryStore() }
+      );
+
+      expect(filedBlob(OUTPUT)).toMatchObject({ evidenceKey: 'k', orchestratorJobId: JOB });
+    });
+
+    it.each([
+      ['has no job id', undefined],
+      ['has a job id that is not an id', 'not an id/../x'],
+      ['has a job id that is not a string', 12],
+    ])('files an output whose read %s, without one', async (_, outputJobId) => {
+      serveWorkflowWith(outputJobId);
+
+      const result = await preserveGeneratorEvidence(
+        { userId: USER, moderatorId: 1, workflowIds: [WORKFLOW], triggers: [] },
+        { config, store: memoryStore() }
+      );
+
+      expect(result).toMatchObject({ reportId: 55, counts: { preserved: 2 } });
+      expect(filedBlob(OUTPUT)).not.toHaveProperty('orchestratorJobId');
+    });
+  });
+
   describe('the file limit of one request', () => {
     beforeEach(() => dbMock.dbWrite.evidenceHold.create.mockClear());
 

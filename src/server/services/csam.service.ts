@@ -100,10 +100,11 @@ function foldImages(stored: unknown, added: { id: number }[]) {
 
 type GeneratedImagesEntry = NonNullable<CsamReportFormOutput['generatedImages']>[number];
 
-type FoldBlob = { url?: string; blobId?: string; status?: string };
+type FoldBlob = { url?: string; blobId?: string; status?: string; orchestratorJobId?: string };
 
 /** A preserved file is one blob however many filings name it; a legacy file is its URL. A copy that
- *  was preserved replaces one that could not be, but never a moderator's exclusion. */
+ *  was preserved replaces one that could not be, but never a moderator's exclusion. A kept blob
+ *  takes the producing job id a later filing knows and it lacks. */
 function foldBlobs(stored: unknown, added: unknown) {
   const byKey = new Map<unknown, FoldBlob>();
   for (const blob of [
@@ -116,7 +117,14 @@ function foldBlobs(stored: unknown, added: unknown) {
       !kept ||
       (kept.status !== 'preserved' && kept.status !== 'excluded' && blob?.status === 'preserved')
     )
-      byKey.set(key, blob);
+      byKey.set(
+        key,
+        kept?.orchestratorJobId && !blob.orchestratorJobId
+          ? { ...blob, orchestratorJobId: kept.orchestratorJobId }
+          : blob
+      );
+    else if (!kept.orchestratorJobId && blob?.orchestratorJobId)
+      byKey.set(key, { ...kept, orchestratorJobId: blob.orchestratorJobId });
   }
   return [...byKey.values()];
 }

@@ -289,6 +289,8 @@ export async function preserveGeneratorEvidence(
             blockedReason: ref.blockedReason,
             moderatorId: input.moderatorId,
           }));
+      if (ref.kind === 'blob' && ref.orchestratorJobId)
+        blob = { ...blob, orchestratorJobId: ref.orchestratorJobId };
       if (ref.role === 'input' && job.source === 'workflow' && outputIds.length)
         blob = { ...blob, derivedOutputIds: outputIds };
       return blob;

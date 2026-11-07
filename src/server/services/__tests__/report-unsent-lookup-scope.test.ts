@@ -417,6 +417,82 @@ describe('a second report folded into an unsent one', () => {
     expect(details.generatorEvidence.approvedAt).toBeNull();
   });
 
+  describe('the producing job id of a generator file', () => {
+    const JOB = 'job-1';
+    const filing = (blobs: Record<string, unknown>[]) => ({
+      userId: 101,
+      reportedById: MOD,
+      type: 'GeneratedImage' as const,
+      details: {
+        generatorEvidence: { version: 1 as const },
+        generatedImages: [{ jobId: 'wf-a', source: 'workflow' as const, blobs }],
+      },
+    });
+    const pending = (blobs: Record<string, unknown>[]) =>
+      seed({
+        userId: 101,
+        type: 'GeneratedImage',
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [{ jobId: 'wf-a', blobs }],
+        },
+      });
+    const blobsOf = (id: number) =>
+      (rows.find((r) => r.id === id)?.details as { generatedImages: { blobs: unknown[] }[] })
+        .generatedImages[0].blobs;
+
+    it('is added to a file an unsent report holds without one', async () => {
+      const first = pending([
+        { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'old' },
+        { blobId: 'b2', role: 'output', status: 'excluded' },
+      ]);
+
+      await createCsamReport(
+        filing([
+          {
+            blobId: 'b1',
+            role: 'output',
+            status: 'preserved',
+            sha256: 'new',
+            orchestratorJobId: JOB,
+          },
+          { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: JOB },
+        ])
+      );
+
+      expect(rows).toHaveLength(1);
+      expect(blobsOf(first.id)).toEqual([
+        {
+          blobId: 'b1',
+          role: 'output',
+          status: 'preserved',
+          sha256: 'old',
+          orchestratorJobId: JOB,
+        },
+        { blobId: 'b2', role: 'output', status: 'excluded', orchestratorJobId: JOB },
+      ]);
+    });
+
+    it('is kept when a later copy replaces the file, and never replaced by another', async () => {
+      const first = pending([
+        { blobId: 'b1', role: 'output', status: 'blocked-unreadable', orchestratorJobId: JOB },
+        { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: JOB },
+      ]);
+
+      await createCsamReport(
+        filing([
+          { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'b1' },
+          { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: 'job-2' },
+        ])
+      );
+
+      expect(blobsOf(first.id)).toEqual([
+        { blobId: 'b1', role: 'output', status: 'preserved', sha256: 'b1', orchestratorJobId: JOB },
+        { blobId: 'b2', role: 'output', status: 'preserved', orchestratorJobId: JOB },
+      ]);
+    });
+  });
+
   it('files a URL-only generated-image report apart from a preserved-evidence report', async () => {
     seed({
       userId: 101,
