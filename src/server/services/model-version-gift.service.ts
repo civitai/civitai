@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { isPaidAccessActive, type ModelVersionTerms } from '@civitai/buzz';
@@ -90,6 +91,7 @@ async function getGiftableVersion(modelVersionId: number) {
   return { version, gateActive, permissions };
 }
 
+/** Owner or moderator: listing and revoking. Minting goes through `assertOwnsVersion`. */
 async function assertCanManageGifts({
   userId,
   isModerator,
@@ -105,66 +107,87 @@ async function assertCanManageGifts({
   return giftable;
 }
 
-async function assertGatedForMint(modelVersionId: number, gateActive: boolean, adding: number) {
+/** Minting hands out free access to a paid version, so it is the owner's alone, never a moderator's. */
+const assertOwnsVersion = (userId: number, modelVersionId: number) =>
+  assertCanManageGifts({ userId, isModerator: false, modelVersionId });
+
+// Namespaces the advisory lock so it never collides with another single-key lock on the same id.
+const GIFT_MINT_LOCK_CLASS = 0x47490001;
+
+/**
+ * Runs `insert` only if it keeps the version within its live-code cap. The per-version lock makes
+ * the count and the insert atomic: without it two mints each count under the cap and together pass it.
+ */
+export async function insertWithinLiveCap<T>(
+  client: Pick<typeof dbWrite, '$transaction'>,
+  modelVersionId: number,
+  adding: number,
+  insert: (tx: Prisma.TransactionClient) => Promise<T>
+) {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${GIFT_MINT_LOCK_CLASS}::int, ${modelVersionId}::int)`;
+    const [{ live }] = await tx.$queryRaw<{ live: number }[]>`
+      SELECT count(*)::int AS live
+        FROM "ModelVersionGiftLink"
+       WHERE "modelVersionId" = ${modelVersionId}
+         AND "revokedAt" IS NULL
+         AND ("expiresAt" IS NULL OR "expiresAt" > now())
+         AND ("maxRedemptions" IS NULL OR "redemptionCount" < "maxRedemptions")
+    `;
+    if (live + adding > GIFT_LIVE_CODES_MAX_PER_VERSION)
+      throw throwBadRequestError(
+        `A model version can have at most ${GIFT_LIVE_CODES_MAX_PER_VERSION} live gift codes.`
+      );
+    return insert(tx);
+  });
+}
+
+function assertGated(gateActive: boolean) {
   if (!gateActive)
     throw throwBadRequestError('Gifts can only be created for a gated model version.');
-  const [{ live }] = await dbWrite.$queryRaw<{ live: number }[]>`
-    SELECT count(*)::int AS live
-      FROM "ModelVersionGiftLink"
-     WHERE "modelVersionId" = ${modelVersionId}
-       AND "revokedAt" IS NULL
-       AND ("expiresAt" IS NULL OR "expiresAt" > now())
-       AND ("maxRedemptions" IS NULL OR "redemptionCount" < "maxRedemptions")
-  `;
-  if (live + adding > GIFT_LIVE_CODES_MAX_PER_VERSION)
-    throw throwBadRequestError(
-      `A model version can have at most ${GIFT_LIVE_CODES_MAX_PER_VERSION} live gift codes.`
-    );
 }
 
 export async function createGiftLink({
   userId,
-  isModerator,
   modelVersionId,
   maxRedemptions,
   expiresAt,
   label,
 }: {
   userId: number;
-  isModerator?: boolean;
   modelVersionId: number;
   maxRedemptions?: number | null;
   expiresAt?: Date | null;
   label?: string | null;
 }) {
   await assertRateLimit('mint', userId, GIFT_MINT_RATE_LIMIT);
-  const { gateActive } = await assertCanManageGifts({ userId, isModerator, modelVersionId });
-  await assertGatedForMint(modelVersionId, gateActive, 1);
+  const { gateActive } = await assertOwnsVersion(userId, modelVersionId);
+  assertGated(gateActive);
   const code = generateGiftCode();
-  const link = await dbWrite.modelVersionGiftLink.create({
-    data: {
-      modelVersionId,
-      createdById: userId,
-      ...newCodeRow(code),
-      maxRedemptions: maxRedemptions ?? null,
-      expiresAt: expiresAt ?? null,
-      label: label ?? null,
-    },
-    select: { id: true },
-  });
+  const link = await insertWithinLiveCap(dbWrite, modelVersionId, 1, (tx) =>
+    tx.modelVersionGiftLink.create({
+      data: {
+        modelVersionId,
+        createdById: userId,
+        ...newCodeRow(code),
+        maxRedemptions: maxRedemptions ?? null,
+        expiresAt: expiresAt ?? null,
+        label: label ?? null,
+      },
+      select: { id: true },
+    })
+  );
   return { id: link.id, code };
 }
 
 export async function mintGiftCodes({
   userId,
-  isModerator,
   modelVersionId,
   count,
   expiresAt,
   label,
 }: {
   userId: number;
-  isModerator?: boolean;
   modelVersionId: number;
   count: number;
   expiresAt?: Date | null;
@@ -173,21 +196,23 @@ export async function mintGiftCodes({
   if (!Number.isInteger(count) || count < 1 || count > GIFT_MINT_MAX_PER_CALL)
     throw throwBadRequestError(`count must be between 1 and ${GIFT_MINT_MAX_PER_CALL}.`);
   await assertRateLimit('mint', userId, GIFT_MINT_RATE_LIMIT);
-  const { gateActive } = await assertCanManageGifts({ userId, isModerator, modelVersionId });
-  await assertGatedForMint(modelVersionId, gateActive, count);
+  const { gateActive } = await assertOwnsVersion(userId, modelVersionId);
+  assertGated(gateActive);
   const batchId = randomUUID();
   const codes = Array.from({ length: count }, generateGiftCode);
-  await dbWrite.modelVersionGiftLink.createMany({
-    data: codes.map((code) => ({
-      modelVersionId,
-      createdById: userId,
-      ...newCodeRow(code),
-      batchId,
-      maxRedemptions: 1,
-      expiresAt: expiresAt ?? null,
-      label: label ?? null,
-    })),
-  });
+  await insertWithinLiveCap(dbWrite, modelVersionId, count, (tx) =>
+    tx.modelVersionGiftLink.createMany({
+      data: codes.map((code) => ({
+        modelVersionId,
+        createdById: userId,
+        ...newCodeRow(code),
+        batchId,
+        maxRedemptions: 1,
+        expiresAt: expiresAt ?? null,
+        label: label ?? null,
+      })),
+    })
+  );
   return { batchId, codes };
 }
 

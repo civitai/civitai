@@ -260,16 +260,20 @@ describe('claimGift', () => {
   });
 });
 
+type MintArgs = Parameters<typeof mintGiftCodes>[0];
+type CreateArgs = Parameters<typeof createGiftLink>[0];
+
 describe('who may manage gifts', () => {
   const manage = {
     list: (userId: number, isModerator = false) =>
       listGiftLinks({ userId, isModerator, modelVersionId: VERSION_ID }),
+    // Mint takes no moderator flag; one forwarded anyway must change nothing.
     mint: (userId: number, isModerator = false) =>
-      mintGiftCodes({ userId, isModerator, modelVersionId: VERSION_ID, count: 1 }),
+      mintGiftCodes({ userId, isModerator, modelVersionId: VERSION_ID, count: 1 } as MintArgs),
     revoke: (userId: number, isModerator = false) =>
       revokeGiftLinks({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
     create: (userId: number, isModerator = false) =>
-      createGiftLink({ userId, isModerator, modelVersionId: VERSION_ID }),
+      createGiftLink({ userId, isModerator, modelVersionId: VERSION_ID } as CreateArgs),
   };
 
   it.each(Object.entries(manage))(
@@ -284,12 +288,62 @@ describe('who may manage gifts', () => {
     }
   );
 
-  it.each(Object.entries(manage))('%s lets a moderator through', async (_n, fn) => {
+  const { list, revoke } = manage;
+  it.each(Object.entries({ list, revoke }))('%s lets a moderator through', async (_n, fn) => {
     seed();
     dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 1 });
     dbMock.dbWrite.modelVersionGiftLink.findMany.mockResolvedValue([]);
     await expect(fn(CLAIMER, true)).resolves.toBeDefined();
   });
+
+  // Decision (lead review of #8146): moderators list and revoke, but never mint free access to a
+  // creator's paid version. Do not route mint through the moderator check.
+  const { mint, create } = manage;
+  it.each(Object.entries({ mint, create }))(
+    '%s refuses a moderator who does not own the version',
+    async (_n, fn) => {
+      seed();
+      await expect(fn(CLAIMER, true)).rejects.toThrow('You do not own this model version.');
+      expect(dbMock.dbWrite.modelVersionGiftLink.createMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modelVersionGiftLink.create).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('the live-code cap', () => {
+  const sqlOf = (c: unknown[]) => (c[0] as string[]).join('?');
+
+  it.each([
+    [
+      'createGiftLink',
+      () => createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID }),
+      'create',
+    ],
+    [
+      'mintGiftCodes',
+      () => mintGiftCodes({ userId: OWNER, modelVersionId: VERSION_ID, count: 2 }),
+      'createMany',
+    ],
+  ] as const)(
+    '%s takes the per-version lock before it counts and inserts',
+    async (_n, run, insert) => {
+      seed();
+      await run();
+      const lock = dbMock.dbWrite.$executeRaw.mock.calls.findIndex((c: unknown[]) =>
+        sqlOf(c).includes('pg_advisory_xact_lock')
+      );
+      expect(lock, 'no advisory lock was taken').toBeGreaterThanOrEqual(0);
+      expect(dbMock.dbWrite.$executeRaw.mock.calls[lock].slice(1)).toEqual([
+        0x47490001,
+        VERSION_ID,
+      ]);
+      const lockOrder = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[lock];
+      expect(lockOrder).toBeLessThan(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]);
+      expect(lockOrder).toBeLessThan(
+        dbMock.dbWrite.modelVersionGiftLink[insert].mock.invocationCallOrder[0]
+      );
+    }
+  );
 });
 
 describe('mintGiftCodes', () => {

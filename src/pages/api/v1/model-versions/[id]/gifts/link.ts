@@ -9,11 +9,7 @@ export default GiftEndpoint(
     if (!modelVersionId) return res.status(400).json({ error: 'Invalid model version id' });
     const parsed = createGiftLinkSchema.safeParse({ ...req.body, modelVersionId });
     if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });
-    return res
-      .status(201)
-      .json(
-        await createGiftLink({ ...parsed.data, userId: user.id, isModerator: user.isModerator })
-      );
+    return res.status(201).json(await createGiftLink({ ...parsed.data, userId: user.id }));
   },
   ['POST']
 );

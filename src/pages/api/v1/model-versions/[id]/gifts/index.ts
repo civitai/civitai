@@ -13,7 +13,9 @@ export default GiftEndpoint(
 
     const parsed = mintGiftCodesSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });
-    return res.status(201).json(await mintGiftCodes({ ...actor, ...parsed.data }));
+    return res
+      .status(201)
+      .json(await mintGiftCodes({ userId: user.id, modelVersionId, ...parsed.data }));
   },
   ['GET', 'POST']
 );

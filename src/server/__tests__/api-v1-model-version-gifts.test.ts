@@ -42,6 +42,8 @@ const load = async (path: string) => (await import(path)).default as Handler;
 
 const USER = { id: 7, username: 'u', onboarding: 15, isModerator: false } as SessionUser;
 const actor = { userId: 7, isModerator: false, modelVersionId: 5 };
+// Minting is owner-only, so the mint routes never hand the service a moderator flag.
+const owner = { userId: 7, modelVersionId: 5 };
 
 // Every gift route, with a request that passes validation, and what it must hand the service.
 const ROUTES: Array<{
@@ -77,7 +79,7 @@ const ROUTES: Array<{
     query: { id: '5' },
     body: { count: 3 },
     service: 'mintGiftCodes',
-    args: { ...actor, count: 3 },
+    args: { ...owner, count: 3 },
   },
   {
     name: 'POST link',
@@ -86,7 +88,7 @@ const ROUTES: Array<{
     query: { id: '5' },
     body: { maxRedemptions: 4 },
     service: 'createGiftLink',
-    args: { ...actor, maxRedemptions: 4 },
+    args: { ...owner, maxRedemptions: 4 },
   },
   {
     name: 'DELETE one',
@@ -193,3 +195,12 @@ it('still lists for a user the write gates would refuse', async () => {
   const list = ROUTES.find((r) => r.method === 'GET')!;
   expect((await call(list, {}, { ...USER, onboarding: 0 } as SessionUser)).status).toBe(200);
 });
+
+it.each(ROUTES.filter((r) => r.service === 'mintGiftCodes' || r.service === 'createGiftLink'))(
+  '$name never hands the service a moderator flag, so a moderator cannot mint',
+  async (route) => {
+    await call(route, {}, { ...USER, isModerator: true } as SessionUser);
+    expect(svc[route.service]).toHaveBeenCalledTimes(1);
+    expect(svc[route.service].mock.calls[0][0]).not.toHaveProperty('isModerator');
+  }
+);

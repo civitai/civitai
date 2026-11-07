@@ -27,9 +27,7 @@ export const modelVersionGiftRouter = router({
   create: giftWrite
     .meta({ requiredScope: TokenScope.ModelsWrite, blockApiKeys: true })
     .input(createGiftLinkSchema)
-    .mutation(({ input, ctx }) =>
-      createGiftLink({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .mutation(({ input, ctx }) => createGiftLink({ ...input, userId: ctx.user.id })),
   revoke: giftWrite
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(revokeGiftLinksSchema)

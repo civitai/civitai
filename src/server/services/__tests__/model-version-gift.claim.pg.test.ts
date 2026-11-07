@@ -17,8 +17,11 @@ const DB_NAME = 'model_gift_claim_test';
 
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
-const { queryGiftList, redeemGiftLink } = await import(
+const { insertWithinLiveCap, queryGiftList, redeemGiftLink } = await import(
   '~/server/services/model-version-gift.service'
+);
+const { GIFT_LIVE_CODES_MAX_PER_VERSION: CAP } = await import(
+  '~/server/services/model-version-gift.constants'
 );
 const { grantModelVersionAccess } = await import('~/server/services/model-version-access.service');
 
@@ -255,5 +258,28 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     await sql.query(`UPDATE "EntityAccess" SET "addedAt" = now() - interval '10 days'`);
     await purchase('download-buzzTransactionId', 'tx-2');
     expect(await ageDays()).toBe(10);
+  });
+
+  it('lets only one of two concurrent mints take the last slot under the live cap', async () => {
+    await sql.query(
+      `INSERT INTO "ModelVersionGiftLink" ("modelVersionId", "createdById", "codeHash", "codeHint", "maxRedemptions")
+       SELECT $1, $2, md5(g::text), 'XXXX', 1 FROM generate_series(1, $3) g`,
+      [VERSION, OWNER, CAP - 1]
+    );
+    // Each insert waits, so without the lock the second mint counts while the first is uncommitted.
+    const mint = () =>
+      insertWithinLiveCap(prisma, VERSION, 1, async (tx) => {
+        await new Promise((r) => setTimeout(r, 300));
+        await tx.$executeRaw`
+          INSERT INTO "ModelVersionGiftLink" ("modelVersionId", "createdById", "codeHash", "codeHint", "maxRedemptions")
+          VALUES (${VERSION}, ${OWNER}, md5(random()::text), 'YYYY', 1)`;
+      });
+
+    const outcomes = await Promise.allSettled([mint(), mint()]);
+
+    expect(outcomes.map((o) => o.status).sort()).toEqual(['fulfilled', 'rejected']);
+    const refused = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult;
+    expect(String(refused.reason)).toContain(`at most ${CAP} live gift codes`);
+    expect(await count(`SELECT count(*) AS n FROM "ModelVersionGiftLink"`)).toBe(CAP);
   });
 });

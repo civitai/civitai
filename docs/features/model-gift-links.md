@@ -17,8 +17,9 @@ surfaces.
 - **Gift link:** one code, with an optional expiry and an optional cap on claims.
 - **Single-use codes:** up to `GIFT_MINT_MAX_PER_CALL` (500) per call, minted from Creator Studio or the
   API. A version can hold at most `GIFT_LIVE_CODES_MAX_PER_VERSION` (5000) live, unclaimed codes
-  (`src/server/services/model-version-gift.constants.ts`). That ceiling is checked before the insert,
-  not atomically, so it is a soft limit.
+  (`src/server/services/model-version-gift.constants.ts`). The count and the insert run under one
+  per-version advisory lock, so concurrent mints cannot pass it.
+- **Who mints:** the creator only. Moderators can list and revoke a version's gifts but not mint them.
 - **Claim:** done on the site (`/gift/<code>`, or a code pasted on `/gift`; an explicit click) or over the API with the recipient's
   token.
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
