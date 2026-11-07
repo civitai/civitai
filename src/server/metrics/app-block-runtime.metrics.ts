@@ -708,6 +708,7 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
+  succeededWithoutMediaTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
@@ -1049,6 +1050,34 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_confirmed_quote_overcharge_total',
     'App Block submits of a viewer-CONFIRMED quote (kind=training: a training run; kind=step: a confirmed pass-through step) that the orchestrator billed ABOVE the price the viewer confirmed in host chrome. Expected zero; any increase is a viewer charged more than they agreed to. Detected after the charge (cannot be prevented at submit). Details (app, step type, workflow, both amounts) are on the block-confirmed-quote-overcharge log line.',
     ['kind']
+  );
+
+  // ── SUCCEEDED generations that DELIVERED NOTHING ─────────────────────────────
+  // One increment per App Blocks workflow whose terminal poll first observed
+  // `succeeded` while the snapshot carried no media, no step output, no 3D output
+  // and no text, although a bridge-submitted step was expected to produce media
+  // (`succeededWithoutMediaStepType`). The viewer was charged and the app got
+  // nothing — the #8132 shape (a `comfy` step's blobs read off the wrong key).
+  //
+  // ONCE PER WORKFLOW, not per poll: the poll runs its terminal branch on EVERY
+  // poll after completion, so it increments only when the transition-only
+  // `updateBlockWorkflowStatus` reported the row actually changed (1). A workflow
+  // with no `block_workflows` row (dev tokens, a lost submit write) is never
+  // counted, and neither is one whose row some other writer already moved to
+  // `succeeded` first — so this is a LOWER bound.
+  //
+  // Expected to be ~zero. Like the overcharge counter, the labelled child is born
+  // at its first increment, so alert on the value (`max_over_time(...) > 0` or
+  // an increase over a long window), not on a short `rate()`.
+  //
+  // 🔴 `step_type` IS BOUNDED: a native or registered orchestrator `$type`
+  // (code-owned), `passthrough` for any app-chosen pass-through `$type`, or
+  // `mixed`. No app/user/workflow id.
+  const succeededWithoutMediaTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_succeeded_without_media_total',
+    "App Blocks workflows that SUCCEEDED (and so were charged) while the block received no output at all: no image urls, no step outputs, no 3D outputs, no text or tool calls, no trained epochs. Counted once per workflow, when the terminal poll first records `succeeded` in block_workflows (a lower bound: workflows without a block_workflows row are not counted). Only workflows with at least one bridge-submitted step expected to produce media are counted: text-posture and training steps are excluded. step_type = that step's orchestrator $type when native or registered, `passthrough` for a pass-through $type, `mixed` when several. Also counts media the orchestrator reported as not available. Expected ~zero; any increase means a charged generation delivered nothing.",
+    ['step_type']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1461,6 +1490,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
+    succeededWithoutMediaTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
@@ -1709,6 +1739,22 @@ export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind)
     confirmedQuoteOverchargeTotal.inc({ kind });
   } catch {
     /* instrument-only — never let a metrics error touch a charged submit */
+  }
+}
+
+/**
+ * Fail-soft emit of one succeeded-without-media workflow (see the counter). Called
+ * from `blocks.pollWorkflow` only when the transition-only status write reported
+ * the `succeeded` transition AND `succeededWithoutMediaStepType` returned a label.
+ *
+ * 🔴 TOTAL, like every emitter here: the poll's contract is to return the snapshot.
+ */
+export function recordSucceededWithoutMedia(stepType: string): void {
+  try {
+    const { succeededWithoutMediaTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    succeededWithoutMediaTotal.inc({ step_type: stepType });
+  } catch {
+    /* instrument-only — never let a metrics error touch the poll */
   }
 }
 

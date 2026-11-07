@@ -1,6 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
+import { describe, expect, it } from 'vitest';
 
 import {
   BLOCK_STEP_NAME,

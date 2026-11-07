@@ -465,6 +465,86 @@ function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepO
   return mediaFromBlobs(output?.[key]);
 }
 
+/** `step_type` label for a pass-through step: its `$type` is app-supplied, an open set. */
+export const SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL = 'passthrough';
+/** `step_type` label when the media-expected steps span more than one label. */
+export const SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL = 'mixed';
+
+/**
+ * The `step_type` label for `civitai_app_block_succeeded_without_media_total`
+ * when a SUCCEEDED workflow delivered nothing to the block although at least one
+ * of its bridge-submitted steps is expected to produce media; `null` otherwise.
+ * This is the #8132 defect shape: a `comfy` step succeeded, the viewer was
+ * charged, and the snapshot carried no media because the extractor read the
+ * wrong output key.
+ *
+ * Reads the FINAL snapshot (after `attachModeratedStepTextOutputs`) for what was
+ * delivered, and the workflow for which steps should have delivered it.
+ *
+ * DELIVERED = any of: `imageUrls`, `stepOutputs`, `model3dOutputs`,
+ * `textOutputs`, `textOutputWithheld`, `toolCalls`, `trainedEpochs`,
+ * `publishedModel`, or a `steps[]` entry with `imageUrls`/`output`. Any one of
+ * them means the block was handed something, so this returns `null`.
+ *
+ * MEDIA-EXPECTED steps, chosen the way `snapshotFromWorkflow` chooses what it
+ * extracts: a `kind:'workflow'` member (minus `suppressOutput` and `repeat`
+ * parents, whose children are members in their own right), a native `$type`, a
+ * registered `$type`, or a pass-through step stamped `BLOCK_STEP_NAME`. Then
+ * dropped: a registered step whose posture publishes TEXT (it delivers through
+ * `textOutputs`, never media) and a training `$type` (it delivers epochs, and
+ * only once moderation approves them). A workflow with no media-expected step —
+ * text-only, training-only, all-suppressed — returns `null`.
+ *
+ * 🔴 BOUNDED LABEL. A native or registered `$type` is code-owned and is used
+ * as-is; every pass-through `$type` (app-chosen, an open set) collapses to
+ * `passthrough`; more than one distinct label is `mixed`.
+ *
+ * ⚠️ IT ALSO COUNTS a media step whose blobs the orchestrator reports as not
+ * `available` (`mediaFromBlobs` drops those): to the viewer that is the same
+ * outcome — charged, nothing shown — so it is in scope, but it is not
+ * necessarily a bridge bug.
+ */
+export function succeededWithoutMediaStepType(
+  workflow: Workflow,
+  snapshot: BlockWorkflowSnapshot
+): string | null {
+  if (snapshot.status !== 'succeeded') return null;
+  if (
+    snapshot.imageUrls?.length ||
+    snapshot.stepOutputs?.length ||
+    snapshot.model3dOutputs?.length ||
+    snapshot.textOutputs?.length ||
+    snapshot.textOutputWithheld ||
+    snapshot.toolCalls?.length ||
+    snapshot.trainedEpochs?.length ||
+    snapshot.publishedModel ||
+    snapshot.steps?.some((s) => s.imageUrls?.length || s.output !== undefined)
+  ) {
+    return null;
+  }
+  const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
+  const labels = new Set<string>();
+  for (const step of workflow.steps ?? []) {
+    const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
+    if (member && (member.suppressOutput || isRepeatStepType(step.$type))) continue;
+    if (isTrainingStepType(step.$type)) continue;
+    const registered = getStepByOrchestratorType(step.$type);
+    if (registered) {
+      if (postureProducesMedia(registered.moderationPosture)) labels.add(step.$type);
+      continue;
+    }
+    if (NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
+      labels.add(step.$type);
+      continue;
+    }
+    if (member || step.name === BLOCK_STEP_NAME) {
+      labels.add(SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL);
+    }
+  }
+  if (labels.size === 0) return null;
+  return labels.size === 1 ? [...labels][0] : SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL;
+}
+
 /** True when the workflow carries a training step THIS bridge submitted. */
 function hasBlockTrainingStep(workflow: Workflow): boolean {
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
