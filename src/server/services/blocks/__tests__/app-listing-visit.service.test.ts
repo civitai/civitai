@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 
 import { ActionType } from '~/server/clickhouse/tracker';
 import { trackActionSchema } from '~/server/schema/track.schema';
@@ -23,27 +24,34 @@ import {
  *   4. recording failures never fail the redirect.
  */
 
+// Which hosts are red-capable is deployment config; pinned here so the host → `redCapable`
+// hand-off is observable with a host the real config may not list.
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
+  isRedCapableHost: (host: string | null | undefined) => host === 'red.example',
+}));
+
 const STORED = 'https://ext.example/app';
 const LISTING_ID = 'apl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A';
 
 function makeDeps(over: Partial<AppVisitDeps> = {}) {
   const claimed = new Set<string>();
-  const deps = {
+  const base = {
     resolveScope: vi.fn(async () => 'full' as const),
     resolveFloor: vi.fn(async () => 'public' as const),
     findDestination: vi.fn(async (id: string) => ({ id, url: STORED })),
-    recordEvent: vi.fn(async () => true),
+    recordEvent: vi.fn(async (_details: unknown, _ctx?: unknown, _session?: unknown) => true),
     claimOnce: vi.fn(async (key: string) => {
       if (claimed.has(key)) return false;
       claimed.add(key);
       return true;
     }),
-    incrementVisitCount: vi.fn(async () => undefined),
+    incrementVisitCount: vi.fn(async (_listingId: string) => undefined),
     dedupePrefix: vi.fn(async () => 'system:blocks:app-visit'),
     now: () => new Date('2026-11-07T12:00:00Z'),
-    ...over,
   };
-  return deps;
+  // Every override a test passes is itself a `vi.fn`, so the mock typing of `base` holds.
+  return { ...base, ...over } as typeof base;
 }
 
 // `any`: tests deliberately feed shapes the route param / session types would not admit.
@@ -148,7 +156,7 @@ describe('resolveAppListingVisit — refusals', () => {
     });
     await resolveAppListingVisit(
       request({
-        ctx: { req: { headers: { host: 'civitai.red' } }, res: {} },
+        ctx: { req: { headers: { host: 'red.example' } }, res: {} },
         features: { canViewNsfw: true },
       }),
       deps

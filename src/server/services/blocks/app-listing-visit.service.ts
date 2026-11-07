@@ -146,14 +146,19 @@ export const defaultAppVisitDeps: AppVisitDeps = {
   },
   incrementVisitCount: async (listingId) => {
     const { dbWrite } = await import('~/server/db/client');
-    // `visit_count` only: the metric processor owns install/open, the review writer owns the
-    // thumbs columns, and neither of their upserts names this column, so a +1 here is never
-    // overwritten by a recompute.
-    return dbWrite.appListingMetric.upsert({
-      where: { appListingId: listingId },
-      create: { appListingId: listingId, visitCount: 1 },
-      update: { visitCount: { increment: 1 } },
-    });
+    // `visit_count` ONLY, and named in SQL so that is structurally all this can write: the
+    // metric processor owns install/open and the review service owns the recommend counters
+    // (each guarded by its own writer ledger), and neither of their upserts names this column,
+    // so a recompute never overwrites a visit. A row created here (first visit before the
+    // processor seeded it) starts every other counter at its default 0, which is already their
+    // true value for an OFF-SITE listing — the only kind that reaches this writer.
+    return dbWrite.$executeRaw`
+      INSERT INTO "app_listing_metrics" ("app_listing_id", "visit_count", "updated_at")
+      VALUES (${listingId}, 1, NOW())
+      ON CONFLICT ("app_listing_id") DO UPDATE
+        SET "visit_count" = "app_listing_metrics"."visit_count" + 1,
+            "updated_at" = NOW()
+    `;
   },
   dedupePrefix: async () => {
     const { REDIS_SYS_KEYS } = await import('~/server/redis/client');

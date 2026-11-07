@@ -665,7 +665,20 @@ function ScreenshotGallery({
 }
 
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
-function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
+function PrimaryAction({
+  detail,
+  canOpenPage,
+  visitRedirectHref,
+}: {
+  detail: ListingDetail;
+  canOpenPage: boolean;
+  /**
+   * For an OFF-SITE listing, the `/apps/go` visit redirect its Visit CTA goes through (records
+   * the visit, then 302s to the listing's STORED URL); null otherwise. Decided by the caller so
+   * this renderer keeps routing on `action` alone (see `appListingDetailView.test.ts`).
+   */
+  visitRedirectHref: string | null;
+}) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
   // The recents store is ACCOUNT-scoped (#4048): every write carries the id of
   // the viewer who made it, so a later account in the same browser profile does
@@ -710,11 +723,9 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
 
   if (action.mode === 'visit' && action.href) {
     const GlyphIcon = glyphFor('visit');
-    // An OFF-SITE listing's Visit goes through the `/apps/go` redirect (records the visit, then
-    // 302s to the listing's STORED URL). The on-site "Open live" escape hatch is a Civitai-hosted
-    // origin, not an off-site visit, and keeps its direct link.
-    const visitHref =
-      detail.kindData.kind === 'offsite' ? appVisitHref(detail.id, 'detail') : action.href;
+    // The on-site "Open live" escape hatch is a Civitai-hosted origin, not an off-site visit, so
+    // it has no redirect and keeps its direct link.
+    const visitHref = visitRedirectHref ?? action.href;
     return (
       <Stack gap={4}>
         <Button
@@ -1330,7 +1341,13 @@ export function AppListingDetailBody({
             {!preview && (
               <Card withBorder data-testid="apps-listing-action-card">
                 <Card.Section inheritPadding py="sm" px="sm">
-                  <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+                  <PrimaryAction
+                    detail={detail}
+                    canOpenPage={canOpenPage}
+                    visitRedirectHref={
+                      detail.kind === 'offsite' ? appVisitHref(detail.id, 'detail') : null
+                    }
+                  />
                   {/* FORKABLE APPS — "Fork", for a viewer with App Assistant and the rollout
                       flag, on a forkable, publicly visible on-site app. Renders nothing else. */}
                   <ListingForkButton listing={detail} />

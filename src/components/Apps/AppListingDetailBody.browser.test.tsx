@@ -1484,7 +1484,8 @@ describe('AppListingDetailBody', () => {
           },
         })}
       />,
-      'https://connect.app'
+      // Through the visit redirect, which 302s to the stored `https://connect.app`.
+      '/apps/go/l1?src=detail'
     );
     expect(visitBtn.textContent?.trim()).toBe('Visit');
     expect(visitBtn.getAttribute('target')).toBe('_blank');
