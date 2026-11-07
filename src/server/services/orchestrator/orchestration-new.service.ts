@@ -3432,6 +3432,7 @@ function getQueriedWorkflowsCacheKey({
   toDate,
   excludeFailed,
   hideMatureContent,
+  excludeTags,
 }: {
   userId: number;
   take: number;
@@ -3442,6 +3443,7 @@ function getQueriedWorkflowsCacheKey({
   toDate?: Date;
   excludeFailed?: boolean;
   hideMatureContent: boolean;
+  excludeTags?: string[];
 }) {
   const variant = JSON.stringify({
     t: take,
@@ -3453,6 +3455,7 @@ function getQueriedWorkflowsCacheKey({
     to: toDate?.toISOString() ?? null,
     ef: excludeFailed ?? null,
     hmc: hideMatureContent,
+    ...(excludeTags?.length ? { xt: [...excludeTags].sort() } : {}),
   });
   return `${REDIS_KEYS.GENERATION.QUERIED_WORKFLOWS}:${userId}:${variant}` as RedisKeyTemplateCache;
 }
@@ -3511,6 +3514,31 @@ export async function bustQueriedWorkflowsCache(userId?: number) {
   }
 }
 
+// Pages read per call while every workflow on a page is excluded. A heavy app user can fill whole
+// pages with app runs; an empty first page renders "queue empty" with no loader to page on.
+const EXCLUDED_REFILL_MAX_PAGES = 5;
+
+/**
+ * `queryWorkflows` minus workflows carrying an `excludeTags` tag. The tags are also sent to the
+ * orchestrator, but it is filtered again here so the result does not depend on the orchestrator
+ * honouring them.
+ */
+async function queryWorkflowsExcluding(props: Parameters<typeof queryWorkflows>[0]) {
+  const excludeTags = props.excludeTags;
+  if (!excludeTags?.length) return queryWorkflows(props);
+  const isExcluded = (workflow: { tags?: string[] | null }) =>
+    workflow.tags?.some((tag) => excludeTags.includes(tag)) ?? false;
+
+  let cursor = props.cursor;
+  for (let page = 1; ; page++) {
+    const result = await queryWorkflows({ ...props, cursor });
+    const items = result.items.filter((workflow) => !isExcluded(workflow));
+    if (items.length || !result.nextCursor || page >= EXCLUDED_REFILL_MAX_PAGES)
+      return { nextCursor: result.nextCursor, items };
+    cursor = result.nextCursor;
+  }
+}
+
 export async function queryGeneratedImageWorkflows2({
   user,
   cache,
@@ -3519,6 +3547,7 @@ export async function queryGeneratedImageWorkflows2({
   token: string;
   user?: SessionUser;
   hideMatureContent: boolean;
+  excludeTags?: string[];
   // Opt-in short-TTL cache. ONLY safe when `token` belongs to `user` — i.e. the
   // self-serve feed. The moderator path (queryUserGeneratedImages) passes the
   // *target* user's token but the *moderator's* `user`, so the data identity is
@@ -3535,7 +3564,7 @@ export async function queryGeneratedImageWorkflows2({
     // pattern as the `gen:createSteps:*` spans above) to localize the tail for a
     // follow-up optimization. Both the cached and uncached paths run through here.
     const { nextCursor, items } = await withSpan('gen:queryGI:queryWorkflows', () =>
-      queryWorkflows(props)
+      queryWorkflowsExcluding(props)
     );
     return {
       items: await withSpan('gen:queryGI:format', () =>
@@ -3567,6 +3596,7 @@ export async function queryGeneratedImageWorkflows2({
     toDate: props.toDate,
     excludeFailed: props.excludeFailed,
     hideMatureContent: props.hideMatureContent,
+    excludeTags: props.excludeTags,
   });
 
   // Index the key from INSIDE the fetcher so it runs only on a real miss (the

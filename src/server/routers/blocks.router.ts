@@ -14956,7 +14956,7 @@ function buildWorkflowTags(
     WORKFLOW_TAGS.IMAGE,
     workflowType,
     baseModel,
-    'app-block',
+    WORKFLOW_TAGS.APP_BLOCK,
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
     // on, so the STAMP and the READ can never desync (see appBlockTag).
     appBlockTag(claims.appId),
