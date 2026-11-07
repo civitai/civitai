@@ -33,9 +33,9 @@ const WAIT_SECONDS = 30;
 type IntentResult = { detected: boolean; reason: string } | 'unavailable';
 
 async function intent(fields: TextScanField[]): Promise<IntentResult> {
-  const verdict = await previewComFaceIntent({ fields, waitSeconds: WAIT_SECONDS }).catch(
-    () => ({ status: 'unavailable' as const })
-  );
+  const verdict = await previewComFaceIntent({ fields, waitSeconds: WAIT_SECONDS }).catch(() => ({
+    status: 'unavailable' as const,
+  }));
   return verdict.status === 'ok' ? verdict.output : 'unavailable';
 }
 
@@ -112,7 +112,9 @@ async function explain(modelId: number) {
           ]
       ),
   ];
-  console.log(`  intent check (description ${description.length} chars, ${triggerWords.length} trigger words):`);
+  console.log(
+    `  intent check (description ${description.length} chars, ${triggerWords.length} trigger words):`
+  );
   for (const [label, result] of parts) show(label, await result);
 
   if (model.sfwName) {
