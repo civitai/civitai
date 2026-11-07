@@ -27,7 +27,7 @@ import {
   APP_STORE_ACTIONS,
   APP_STORE_LISTING_ID_RE,
   APP_STORE_POSITION_MAX,
-  APP_STORE_QUERY_MAX,
+  APP_STORE_QUERY_LENGTH_BUCKETS,
   APP_SURFACES,
 } from '~/shared/utils/app-store-telemetry';
 
@@ -960,10 +960,12 @@ const hatTurfActionSchema = z.object({
 // public counters stay server-written: `App_Open` (on-site plays, from the run route) and `App_Visit`
 // (off-site visits, from the `/apps/go/<listingId>` redirect) are both deliberately absent here.
 //
-// 🔴 EVERY FIELD IS CLOSED OR BOUNDED, with ONE deliberate exception: `query`, the store search box's
-// text, cut to `APP_STORE_QUERY_MAX` characters by the client and rejected above it here. It is what
-// the search-to-click question needs, and it is the same text `trackSearch` already records.
-// `listingId` is a generated id (listing or sub-listing), never a name or a slug.
+// 🔴 EVERY FIELD IS CLOSED OR BOUNDED — NO FREE TEXT. The store search box is represented by
+// `hasQuery` and a closed length bucket only; its text is never accepted here. The store's search is
+// a client-side filter over loaded cards and calls no search endpoint, so no other event records
+// that text either. A `query` key from a stale or tampered client is STRIPPED (zod's default for an
+// unknown key), never stored. `listingId` is a generated id (listing or sub-listing), never a name
+// or a slug.
 const appStoreActionSchema = z.object({
   type: z.literal('AppStore_Action'),
   details: z.object({
@@ -975,7 +977,10 @@ const appStoreActionSchema = z.object({
     /** The store grid's sort and category FILTER at the time (not the card's own category). */
     sort: listingSortSchema.optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).optional(),
-    query: z.string().min(1).max(APP_STORE_QUERY_MAX).optional(),
+    /** Whether the store search box held any (trimmed) text. Never the text itself. */
+    hasQuery: z.boolean().optional(),
+    /** The trimmed search text's length, as a closed bucket. */
+    queryLength: z.enum(APP_STORE_QUERY_LENGTH_BUCKETS).optional(),
   }),
 });
 

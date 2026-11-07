@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  APP_STORE_QUERY_MAX,
+  APP_STORE_QUERY_LENGTH_BUCKETS,
   APP_SURFACES,
   appVisitHref,
   parseAppSurface,
   referrerHostOf,
   resolveAppOpenSurface,
-  truncateStoreQuery,
+  storeQueryLengthBucket,
   withAppSurface,
 } from '~/shared/utils/app-store-telemetry';
 
@@ -83,15 +83,29 @@ describe('referrerHostOf', () => {
   ])('returns null for %s', (_l, raw) => expect(referrerHostOf(raw)).toBeNull());
 });
 
-describe('truncateStoreQuery', () => {
-  it('trims, and cuts to the cap', () => {
-    expect(truncateStoreQuery('  pixel  ')).toBe('pixel');
-    expect(truncateStoreQuery('x'.repeat(APP_STORE_QUERY_MAX + 20))).toHaveLength(
-      APP_STORE_QUERY_MAX
-    );
+describe('storeQueryLengthBucket', () => {
+  // Every boundary, both sides. Lengths are of the TRIMMED text.
+  it.each([
+    ['', '0'],
+    ['   ', '0'],
+    [null, '0'],
+    [undefined, '0'],
+    ['a', '1-3'],
+    ['abc', '1-3'],
+    ['  abc  ', '1-3'],
+    ['abcd', '4-10'],
+    ['x'.repeat(10), '4-10'],
+    ['x'.repeat(11), '11-30'],
+    ['x'.repeat(30), '11-30'],
+    ['x'.repeat(31), '31+'],
+    ['x'.repeat(5000), '31+'],
+  ] as const)('%j -> %s', (query, bucket) => {
+    expect(storeQueryLengthBucket(query)).toBe(bucket);
   });
-  it('drops an empty search', () => {
-    expect(truncateStoreQuery('   ')).toBeUndefined();
-    expect(truncateStoreQuery(null)).toBeUndefined();
+
+  it('only ever returns a declared bucket', () => {
+    for (let n = 0; n < 60; n++) {
+      expect(APP_STORE_QUERY_LENGTH_BUCKETS).toContain(storeQueryLengthBucket('q'.repeat(n)));
+    }
   });
 });

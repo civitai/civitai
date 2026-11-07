@@ -6,7 +6,7 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 import {
   APP_STORE_LISTING_ID_RE,
   APP_STORE_POSITION_MAX,
-  truncateStoreQuery,
+  storeQueryLengthBucket,
   type AppStoreActionKind,
   type AppSurface,
 } from '~/shared/utils/app-store-telemetry';
@@ -29,7 +29,10 @@ export type AppStoreTelemetry = {
   sort?: ListingSort;
   /** The store's category FILTER (null = all), not the card's own category. */
   category?: string | null;
-  /** The store search box's text; truncated before it is sent. */
+  /**
+   * The store search box's text. Reduced to `hasQuery` + a length bucket here; the text itself
+   * never leaves this module.
+   */
   query?: string | null;
 };
 
@@ -56,8 +59,12 @@ export function appStoreActionDetails(
     details.position = t.position;
   if (t.sort) details.sort = t.sort;
   if (isMarketplaceCategory(t.category)) details.category = t.category;
-  const query = truncateStoreQuery(t.query);
-  if (query) details.query = query;
+  // Only grid placements carry search state; a surface with no search box sends neither field.
+  if (t.query !== undefined) {
+    const queryLength = storeQueryLengthBucket(t.query);
+    details.hasQuery = queryLength !== '0';
+    details.queryLength = queryLength;
+  }
   return details;
 }
 

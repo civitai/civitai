@@ -6,7 +6,6 @@ import {
   claimImpression,
 } from '~/components/Apps/appStoreTelemetry';
 import { trackActionSchema } from '~/server/schema/track.schema';
-import { APP_STORE_QUERY_MAX } from '~/shared/utils/app-store-telemetry';
 
 /**
  * The browser half of `AppStore_Action`: the exact payload a card sends, and that the server
@@ -35,9 +34,30 @@ describe('appStoreActionDetails', () => {
       position: 4,
       sort: 'newest',
       category: 'games',
-      query: 'pixel art',
+      hasQuery: true,
+      queryLength: '4-10',
     });
     expect(parse(details).success).toBe(true);
+  });
+
+  it('🔴 never carries the search TEXT — not as a field, not inside any value', () => {
+    const secret = 'jane.doe private handle';
+    const details = appStoreActionDetails('impression', 'apl_01ABC', {
+      surface: 'store_card',
+      query: secret,
+    });
+    expect(details).not.toHaveProperty('query');
+    expect(JSON.stringify(details)).not.toContain('jane');
+    expect(details).toMatchObject({ hasQuery: true, queryLength: '11-30' });
+  });
+
+  it('an empty search box is hasQuery false / bucket 0; a surface without one sends neither', () => {
+    expect(
+      appStoreActionDetails('impression', 'apl_01ABC', { surface: 'store_card', query: '   ' })
+    ).toMatchObject({ hasQuery: false, queryLength: '0' });
+    const related = appStoreActionDetails('impression', 'apl_01ABC', { surface: 'related' });
+    expect(related).not.toHaveProperty('hasQuery');
+    expect(related).not.toHaveProperty('queryLength');
   });
 
   it('drops a value the schema would reject instead of losing the batch', () => {
@@ -45,14 +65,8 @@ describe('appStoreActionDetails', () => {
       surface: 'related',
       position: -1,
       category: 'hats',
-      query: 'x'.repeat(APP_STORE_QUERY_MAX + 50),
     });
-    expect(details).toEqual({
-      action: 'impression',
-      listingId: 'apl_01ABC',
-      surface: 'related',
-      query: 'x'.repeat(APP_STORE_QUERY_MAX),
-    });
+    expect(details).toEqual({ action: 'impression', listingId: 'apl_01ABC', surface: 'related' });
     expect(parse(details).success).toBe(true);
   });
 
@@ -72,13 +86,36 @@ describe('AppStore_Action schema arm', () => {
     ['an unknown action', { ...OK, action: 'purchase' }],
     ['an unknown surface', { ...OK, surface: 'banner' }],
     ['text as a listing id', { ...OK, listingId: 'My <b>App</b>' }],
-    ['an over-long query', { ...OK, query: 'x'.repeat(APP_STORE_QUERY_MAX + 1) }],
-    ['an empty query', { ...OK, query: '' }],
+    ['an unknown query-length bucket', { ...OK, queryLength: '12' }],
+    ['a non-boolean hasQuery', { ...OK, hasQuery: 'yes' }],
     ['an unknown sort', { ...OK, sort: 'random' }],
     ['an unknown category', { ...OK, category: 'hats' }],
     ['a fractional position', { ...OK, position: 1.5 }],
   ])('rejects %s', (_l, details) => {
     expect(parse(details).success).toBe(false);
+  });
+});
+
+describe('AppStore_Action schema never stores search text', () => {
+  it('STRIPS a `query` key a stale or tampered client sends — the parsed event has no text', () => {
+    const result = trackActionSchema.safeParse({
+      type: 'AppStore_Action',
+      details: {
+        action: 'card_click',
+        listingId: 'apl_01ABC',
+        surface: 'store_card',
+        query: 'jane.doe private handle',
+        hasQuery: true,
+        queryLength: '11-30',
+      },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Positive control: the known fields survived, so the absence below is about `query`.
+    const details = (result.data as { details?: unknown }).details;
+    expect(details).toMatchObject({ hasQuery: true, queryLength: '11-30' });
+    expect(details).not.toHaveProperty('query');
+    expect(JSON.stringify(result.data)).not.toContain('jane');
   });
 });
 

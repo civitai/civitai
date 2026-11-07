@@ -1850,7 +1850,9 @@ describe('AppListingCard — acquisition telemetry', () => {
         position: 3,
         sort: 'newest',
         category: 'games',
-        query: 'pixel',
+        // The search TEXT never leaves the browser: only that there was one, and its length.
+        hasQuery: true,
+        queryLength: '4-10',
       },
     ]);
   });

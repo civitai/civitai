@@ -5,8 +5,8 @@
  *
  * Client-safe: no server imports. Every value here is a CLOSED set or a bounded id, because
  * these all end up in the `details` String column of a ClickHouse table with no TTL — a value a
- * browser can choose must never be free text there, except the one deliberately truncated
- * `query` field documented on `APP_STORE_QUERY_MAX`.
+ * browser can choose must never be free text there. The store search box is represented only
+ * by `hasQuery` and a length bucket (`storeQueryLengthBucket`); its text is never sent.
  */
 
 /**
@@ -118,15 +118,22 @@ export const APP_STORE_ACTIONS = ['impression', 'card_click', 'detail_view', 'ct
 export type AppStoreActionKind = (typeof APP_STORE_ACTIONS)[number];
 
 /**
- * The store search box's text is the one free-text field these events carry, so it is cut to
- * this many characters (after trimming) before it is sent, and the server schema rejects
- * anything longer.
+ * Length buckets for the store search box's text. The TEXT is never sent — search terms can
+ * carry names, handles or anything else a person types — only whether there was one and how
+ * long it was, in one of these closed buckets (measured on the trimmed text).
  */
-export const APP_STORE_QUERY_MAX = 64;
+export const APP_STORE_QUERY_LENGTH_BUCKETS = ['0', '1-3', '4-10', '11-30', '31+'] as const;
+export type AppStoreQueryLengthBucket = (typeof APP_STORE_QUERY_LENGTH_BUCKETS)[number];
 
-export function truncateStoreQuery(query: string | null | undefined): string | undefined {
-  const trimmed = (query ?? '').trim();
-  return trimmed ? trimmed.slice(0, APP_STORE_QUERY_MAX) : undefined;
+export function storeQueryLengthBucket(
+  query: string | null | undefined
+): AppStoreQueryLengthBucket {
+  const n = (query ?? '').trim().length;
+  if (n === 0) return '0';
+  if (n <= 3) return '1-3';
+  if (n <= 10) return '4-10';
+  if (n <= 30) return '11-30';
+  return '31+';
 }
 
 /** A grid position bound: no store page renders anywhere near this many cards. */
