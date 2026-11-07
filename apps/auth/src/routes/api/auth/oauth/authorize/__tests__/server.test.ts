@@ -311,7 +311,7 @@ describe('authorize — family', () => {
     expect(res.location).toContain('code=the-code');
   });
 
-  it("marks the code of an impersonation hub session's own user, and no other", async () => {
+  it("marks the code of an impersonation hub session's own user only", async () => {
     const imp = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
     const authenticated = async (locals: Record<string, unknown>) => {
       h.authorize.mockClear();
@@ -328,6 +328,10 @@ describe('authorize — family', () => {
     expect(await authenticated({ user: { id: 7 }, session: { sub: '7', jti: 'j' } })).toEqual({
       id: 7,
     });
+    // A code for another account than the impersonation hub session's own.
+    expect(
+      await authenticated({ user: { id: 7 }, session: { ...imp, sub: '8' }, impersonatedBy: 100 })
+    ).toEqual({ id: 7 });
   });
 });
 

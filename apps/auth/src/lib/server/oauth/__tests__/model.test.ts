@@ -380,6 +380,31 @@ describe('oauthModel.saveAuthorizationCode — fail-closed + hashed atomic store
   });
 });
 
+describe('oauthModel.getAuthorizationCode — impersonation marker', () => {
+  it('returns the marker with the code user, and none for an ordinary code', async () => {
+    const read = async (extra: Record<string, unknown>) => {
+      h.selectResults.push({
+        id: 'pub-1',
+        grants: ['authorization_code'],
+        redirectUris: ['https://a.example/cb'],
+      });
+      h.state.redis.packed.hGet = () =>
+        Promise.resolve({
+          clientId: 'pub-1',
+          userId: 7,
+          scope: '1',
+          redirectUri: 'https://a.example/cb',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          ...extra,
+        });
+      const code = await oauthModel.getAuthorizationCode('c');
+      return code ? code.user : null;
+    };
+    expect(await read({ impersonation: true })).toEqual({ id: 7, impersonation: true });
+    expect(await read({})).toEqual({ id: 7 });
+  });
+});
+
 describe('oauthModel.revokeToken — routine rotation does NOT cascade (resolved 2026-06-19, §D.x)', () => {
   it('deletes ONLY the rotated refresh token, never the (user, client) access tokens', async () => {
     h.deleteResults.push({ numDeletedRows: 1n }); // refresh delete

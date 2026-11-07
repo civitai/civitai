@@ -25,6 +25,7 @@ import { isHubPageRequest } from '$lib/server/auth/same-origin';
 import { getClientIp } from '$lib/server/auth/request';
 import { logAxiomError } from '$lib/server/axiom';
 import { parsePrompt } from '$lib/server/oauth/prompt';
+import { IMPERSONATION_REFUSED } from '$lib/server/auth/impersonation-refusal';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
 // Ported from the main app's src/pages/api/auth/oauth/authorize.ts. The session gate uses the hub's
@@ -240,7 +241,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   const isFirstParty = client.isFirstParty;
   // A grant to a registered app carries no impersonation marker and would outlive the impersonation.
   if (!isFirstParty && locals.impersonatedBy != null) {
-    return failToClient('access_denied', 'Not available while impersonating', 403);
+    return failToClient('access_denied', IMPERSONATION_REFUSED, 403);
   }
   const skipsConsent = isFirstParty
     ? client.skipConsent

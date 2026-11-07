@@ -94,7 +94,7 @@ export const POST: RequestHandler = async ({ request }) => {
   // Read before the code is consumed, so a refusal leaves the code redeemable on a retry. An impersonation
   // code is redeemed only with its context; any other code goes on without one, as before.
   const ctx = await readOidcContext(code);
-  if (!ctx && (authCode.user as { impersonation?: boolean }).impersonation) {
+  if ((authCode.user as { impersonation?: boolean }).impersonation && ctx?.impersonatedBy == null) {
     return bad('temporarily_unavailable', 'Try again', 503);
   }
 

@@ -14,7 +14,7 @@ import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 // Mirrors the authorization-code storage in model.ts: a packed hash with sha256(code) as the field, so
 // raw codes never sit in Redis.
 
-// `deviceId` rides the SAME code-keyed context (single-use, same TTL) for the FIRST-PARTY bridge: /authorize
+// `deviceId` rides the SAME code-keyed context (same TTL, removed once the code is redeemed) for the FIRST-PARTY bridge: /authorize
 // (a browser nav that CAN read the hub's shared `.civitai.com` civ-device) stashes the family device id here,
 // and /session (a server-to-server call that CANNOT see that cookie) reads it back to register the account +
 // hand the SAME id to the spoke — so every domain shares one device set. First-party codes carry only
@@ -46,7 +46,7 @@ export async function storeOidcContext(code: string, ctx: OidcCodeContext): Prom
     const f = field(code);
     // Atomic HSET+HPEXPIRE (one EVAL) — same hardening as the auth-code store (model.ts). A sequential
     // hSet + hExpire could leave a no-TTL nonce field if the process dies between awaits. `redis.packed.hGet`
-    // in consumeOidcContext unpacks the msgpackr bytes written here, exactly as the auth-code path does.
+    // in readOidcContext / consumeOidcContext unpacks the msgpackr bytes written here, exactly as the auth-code path does.
     await hSetWithTTL(
       redis as unknown as EvalCapableClient,
       REDIS_KEYS.OAUTH.OIDC_CONTEXT,

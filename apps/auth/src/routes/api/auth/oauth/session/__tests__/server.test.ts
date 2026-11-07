@@ -169,6 +169,18 @@ describe('oauth/session +server — family', () => {
     expect(h.revokeAuthorizationCode).not.toHaveBeenCalled();
   });
 
+  it('mints nothing for an impersonation code whose context lacks the impersonation', async () => {
+    h.getAuthorizationCode.mockResolvedValue({
+      ...validCode(),
+      user: { id: 7, impersonation: true },
+    });
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a' });
+
+    expect((await POST(makeEvent())).status).toBe(503);
+    expect(h.mintSession).not.toHaveBeenCalled();
+  });
+
   it('signs in an ordinary code whose context cannot be read, as before', async () => {
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
@@ -177,6 +189,7 @@ describe('oauth/session +server — family', () => {
 
     expect((await POST(makeEvent())).status).toBe(200);
     expect(h.mintSession).toHaveBeenCalledWith({ id: 7 }, { parent: null });
+    expect(h.deleteOidcContext).toHaveBeenCalledWith('auth-code');
   });
 
   it("mints the site's session into the family of the hub session that authorized it", async () => {

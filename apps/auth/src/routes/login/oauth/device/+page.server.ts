@@ -1,6 +1,7 @@
 import { redirect, fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { NO_FRAMING } from '$lib/server/auth/same-origin';
+import { IMPERSONATION_REFUSED } from '$lib/server/auth/impersonation-refusal';
 
 // Device-flow verification page (RFC 8628 user-interaction step). The user enters the `user_code`
 // shown on their device, reviews what the app will access, and approves. Both steps reuse the §D
@@ -65,7 +66,7 @@ export const actions: Actions = {
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error_description?: string } | null;
-      const refused = body?.error_description === 'Not available while impersonating';
+      const refused = body?.error_description === IMPERSONATION_REFUSED;
       return fail(400, {
         step: 'enter' as const,
         error: refused
