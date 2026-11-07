@@ -5,18 +5,21 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 
-const { bust, updateCashWithdrawal, validateWebhookEvent } = vi.hoisted(() => ({
-  bust: vi.fn(async () => undefined),
-  updateCashWithdrawal: vi.fn(async () => undefined),
-  validateWebhookEvent: vi.fn(() => ({ isValid: true })),
-}));
+const { bust, getPaymentByRefCode, updateCashWithdrawal, validateWebhookEvent } = vi.hoisted(
+  () => ({
+    getPaymentByRefCode: vi.fn(),
+    bust: vi.fn(async () => undefined),
+    updateCashWithdrawal: vi.fn(async () => undefined),
+    validateWebhookEvent: vi.fn(() => ({ isValid: true })),
+  })
+);
 
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
-  default: async () => ({ validateWebhookEvent }),
+  default: async () => ({ validateWebhookEvent, getPaymentByRefCode }),
 }));
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
@@ -48,7 +51,7 @@ const matches = (row: Row, where: Record<string, any>) => {
 };
 
 const userId = 1234567;
-// On main the refCode is `CW${userId}_${id}`.slice(0, 16): a 7-digit userId keeps 6 id chars.
+// Legacy refCodes were `CW${userId}_${id}`.slice(0, 16): a 7-digit userId keeps 6 id chars.
 const legacyCode = `CW${userId}_cm7o3q`;
 
 const run = async (eventData: Record<string, unknown>, type = 'paymentCompleted') => {
@@ -93,10 +96,6 @@ beforeEach(() => {
   validateWebhookEvent.mockReset().mockReturnValue({ isValid: true });
   setEnv({ TIPALTI_WEBTOKEN_SECRET: 'secret' });
   rows = [];
-  // findFirst is what main used; kept so this file reproduces the wrong-row update against it.
-  dbMock.dbWrite.cashWithdrawal.findFirst.mockImplementation(
-    async ({ where }: { where: Record<string, any> }) => rows.find((r) => matches(r, where)) ?? null
-  );
   dbMock.dbWrite.cashWithdrawal.findMany.mockImplementation(
     async ({ where }: { where: Record<string, any> }) => rows.filter((r) => matches(r, where))
   );
@@ -217,5 +216,24 @@ describe('tipalti webhook: cash withdrawal refCode matching', () => {
     await run({ refCode: colonCode, paymentStatus: 'Paid' });
 
     expect(updatedIds()).toEqual(['cm7o3qaaaa0000']);
+  });
+
+  // The paymentError branch refunds fees from Tipalti's payment record; without it, refund nothing.
+  it('records nothing when the Tipalti payment record cannot be fetched', async () => {
+    rows = [
+      {
+        id: 'cm7o3qaaaa0000',
+        userId,
+        status: 'Scheduled',
+        metadata: { paymentRefCode: legacyCode },
+      },
+    ];
+    getPaymentByRefCode.mockRejectedValueOnce(new Error('Failed to get payment by refCode: 500'));
+
+    const res = await run({ refCode: legacyCode, paymentStatus: 'Failed' }, 'paymentError');
+
+    expect(getPaymentByRefCode).toHaveBeenCalledWith(legacyCode);
+    expect(updatedIds()).toEqual([]);
+    expect(res._status()).toBe(400);
   });
 });

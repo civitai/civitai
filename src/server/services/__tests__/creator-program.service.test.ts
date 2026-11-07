@@ -1325,6 +1325,27 @@ describe('ensureWithdrawalRefCode', () => {
     expect(mockDbWrite.$executeRaw.mock.calls.filter(([s]) => isRefCodeWrite(s))).toHaveLength(1);
   });
 
+  it('stores a code only on a row that has none, so a code already sent is never replaced', async () => {
+    await ensureWithdrawalRefCode('withdrawal-1', 1234567);
+
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls.find(([s]) =>
+      isRefCodeWrite(s)
+    )!;
+    const text = (strings as unknown as string[]).join('?');
+    expect(text).toMatch(/WHERE id = \? AND \(metadata->>'paymentRefCode'\) IS NULL/);
+    expect(values).toContain('withdrawal-1');
+  });
+
+  it('uses the code a concurrent caller stored first when its own write loses', async () => {
+    const winner = 'CW1234567_win00';
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow
+      .mockResolvedValueOnce({ metadata: {} })
+      .mockResolvedValueOnce({ metadata: { paymentRefCode: winner } });
+    mockDbWrite.$executeRaw.mockResolvedValueOnce(0);
+
+    await expect(ensureWithdrawalRefCode('withdrawal-1', 1234567)).resolves.toBe(winner);
+  });
+
   it('reuses a code already stored on the row without generating one', async () => {
     storedCode = 'CW1234567_cm7o3q';
 
