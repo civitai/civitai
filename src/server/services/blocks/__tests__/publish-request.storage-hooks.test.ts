@@ -427,6 +427,15 @@ describe('submitVersion — App Storage permission hooks', () => {
     expect(statements[0]).not.toMatch(/DO UPDATE/i);
   });
 
+  it('records a hook file that starts with a UTF-8 BOM as text that still hashes to its sha256', async () => {
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(HOOK_SRC, 'utf8')]);
+    const sha = sha256(bytes);
+    await submit(hooked({ file: HOOK_FILE, sha256: sha }), { [HOOK_FILE]: bytes });
+    const [[shas, texts]] = sourceInserts() as [[string[], string[]]];
+    expect(shas).toEqual([sha]);
+    expect(sha256(Buffer.from(texts[0], 'utf8'))).toBe(sha);
+  });
+
   it('records one source for one file shared by two collections', async () => {
     await submit({
       collections: {
