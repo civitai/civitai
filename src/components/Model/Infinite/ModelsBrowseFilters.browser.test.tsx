@@ -11,6 +11,7 @@ import type * as UseEngagedModelMembership from '~/hooks/useEngagedModelMembersh
 import type * as UseIsMobile from '~/hooks/useIsMobile';
 import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvider';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
+import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
 import ModelsPage from '~/pages/models/index';
 import { FiltersProvider } from '~/providers/FiltersProvider';
@@ -335,5 +336,49 @@ describe('/models filters and the address bar', () => {
     await mount();
 
     await expect.poll(() => lastRequest().onSale).toBe(true);
+  });
+});
+
+// The same menu on the pages that keep their filters in the URL (user models) or lock Early Access on
+// (Creator Shop storefront), where the /models toolbar above is not what is mounted.
+describe('model filters menu outside the /models toolbar', () => {
+  const mountMenu = (props: { hideEarlyAccess?: boolean } = {}) =>
+    renderWithProviders(
+      <IsClientProvider>
+        <FiltersProvider>
+          <ModelFiltersDropdown filterMode="query" {...props} />
+        </FiltersProvider>
+      </IsClientProvider>
+    );
+
+  test('Clear all filters on a URL-driven page takes On Sale out of the URL', async () => {
+    router.query = { onSale: 'true' };
+    await mountMenu();
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+    await userEvent.click(page.getByRole('button', { name: 'Clear all filters' }));
+
+    await expect.poll(() => router.replace.mock.calls.length).toBeGreaterThan(0);
+    const written = router.replace.mock.calls.at(-1)?.[0] as { query: Record<string, unknown> };
+    expect(written.query.onSale).toBeUndefined();
+  });
+
+  test('the menu offers On Sale where Early Access is not locked on', async () => {
+    await mountMenu();
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+
+    await expect.element(page.getByText('On Sale', { exact: true })).toBeVisible();
+  });
+
+  test('the Creator Shop menu has no On Sale chip, like the other paid chips', async () => {
+    await mountMenu({ hideEarlyAccess: true });
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+
+    // Present chip first, so an absent On Sale is not just a menu that never opened.
+    await expect.element(page.getByText('Featured', { exact: true })).toBeVisible();
+    await expect.element(page.getByText('Early Access', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText('On Sale', { exact: true })).not.toBeInTheDocument();
   });
 });
