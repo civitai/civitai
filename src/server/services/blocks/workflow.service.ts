@@ -467,33 +467,37 @@ function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepO
 
 /** `step_type` label for a pass-through step: its `$type` is app-supplied, an open set. */
 export const SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL = 'passthrough';
-/** `step_type` label when the media-expected steps span more than one label. */
+/** `step_type` label when the empty media steps span more than one label. */
 export const SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL = 'mixed';
 
 /**
  * The `step_type` label for `civitai_app_block_succeeded_without_media_total`
- * when a SUCCEEDED workflow delivered nothing to the block although at least one
- * of its bridge-submitted steps is expected to produce media; `null` otherwise.
- * This is the #8132 defect shape: a `comfy` step succeeded, the viewer was
- * charged, and the snapshot carried no media because the extractor read the
- * wrong output key.
+ * when a SUCCEEDED workflow has at least one bridge-submitted MEDIA step that
+ * itself succeeded and produced no media of its own; `null` otherwise. This is
+ * the #8132 defect shape: a `comfy` step succeeded, the viewer was charged, and
+ * no media reached the block because the extractor read the wrong output key.
  *
- * Reads the FINAL snapshot (after `attachModeratedStepTextOutputs`) for what was
- * delivered, and the workflow for which steps should have delivered it.
+ * 🔴 PER MEDIA STEP, NOT PER WORKFLOW. What sibling steps delivered does not
+ * matter: a `chatCompletion` step that released text next to a `textToImage`
+ * step that produced no images IS counted, because the images the viewer paid
+ * for are still missing. Each step's own media is read with
+ * `extractSnapshotStep`, the extractor `snapshotFromWorkflow` uses, so "no
+ * media" here means exactly "nothing this step put on the snapshot".
  *
- * DELIVERED = any of: `imageUrls`, `stepOutputs`, `model3dOutputs`,
- * `textOutputs`, `textOutputWithheld`, `toolCalls`, `trainedEpochs`,
- * `publishedModel`, or a `steps[]` entry with `imageUrls`/`output`. Any one of
- * them means the block was handed something, so this returns `null`.
- *
- * MEDIA-EXPECTED steps, chosen the way `snapshotFromWorkflow` chooses what it
- * extracts: a `kind:'workflow'` member (minus `suppressOutput` and `repeat`
- * parents, whose children are members in their own right), a native `$type`, a
- * registered `$type`, or a pass-through step stamped `BLOCK_STEP_NAME`. Then
- * dropped: a registered step whose posture publishes TEXT (it delivers through
- * `textOutputs`, never media) and a training `$type` (it delivers epochs, and
- * only once moderation approves them). A workflow with no media-expected step —
- * text-only, training-only, all-suppressed — returns `null`.
+ * MEDIA STEPS. Only a step this bridge submitted and the snapshot extracts:
+ * a `kind:'workflow'` member, a native `$type`, a registered `$type`, or a
+ * pass-through step stamped `BLOCK_STEP_NAME`. Then:
+ *   - a registered step counts only when its moderation posture produces MEDIA
+ *     (`postureProducesMedia`); a text-posture step (`chatCompletion`) never
+ *     does, so a text-only workflow is never counted;
+ *   - a native `$type` (`NATIVELY_EXTRACTED_STEP_TYPES`) is always a media step;
+ *   - a PASS-THROUGH step has no posture, so whether it should produce media is
+ *     unknown. It is counted only when it produced NOTHING: no media and no
+ *     non-blob output (which would reach `stepOutputs`);
+ *   - skipped: training `$type`s (they deliver epochs, and only after
+ *     moderation approves them), `suppressOutput` members, `repeat` parents
+ *     (their children are members in their own right), steps the bridge did not
+ *     submit, and steps whose own status is not `succeeded`.
  *
  * 🔴 BOUNDED LABEL. A native or registered `$type` is code-owned and is used
  * as-is; every pass-through `$type` (app-chosen, an open set) collapses to
@@ -506,40 +510,33 @@ export const SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL = 'mixed';
  */
 export function succeededWithoutMediaStepType(
   workflow: Workflow,
-  snapshot: BlockWorkflowSnapshot
+  snapshot: Pick<BlockWorkflowSnapshot, 'status'>
 ): string | null {
   if (snapshot.status !== 'succeeded') return null;
-  if (
-    snapshot.imageUrls?.length ||
-    snapshot.stepOutputs?.length ||
-    snapshot.model3dOutputs?.length ||
-    snapshot.textOutputs?.length ||
-    snapshot.textOutputWithheld ||
-    snapshot.toolCalls?.length ||
-    snapshot.trainedEpochs?.length ||
-    snapshot.publishedModel ||
-    snapshot.steps?.some((s) => s.imageUrls?.length || s.output !== undefined)
-  ) {
-    return null;
-  }
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   const labels = new Set<string>();
   for (const step of workflow.steps ?? []) {
+    if (step.status !== 'succeeded') continue;
     const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
     if (member && (member.suppressOutput || isRepeatStepType(step.$type))) continue;
     if (isTrainingStepType(step.$type)) continue;
     const registered = getStepByOrchestratorType(step.$type);
+    let label: string;
     if (registered) {
-      if (postureProducesMedia(registered.moderationPosture)) labels.add(step.$type);
+      if (!postureProducesMedia(registered.moderationPosture)) continue;
+      label = step.$type;
+    } else if (NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
+      label = step.$type;
+    } else if (member || step.name === BLOCK_STEP_NAME) {
+      label = SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL;
+    } else {
       continue;
     }
-    if (NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
-      labels.add(step.$type);
-      continue;
-    }
-    if (member || step.name === BLOCK_STEP_NAME) {
-      labels.add(SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL);
-    }
+    const own = extractSnapshotStep(step, true);
+    const delivered =
+      own.media.length > 0 ||
+      (label === SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL && own.rest !== undefined);
+    if (!delivered) labels.add(label);
   }
   if (labels.size === 0) return null;
   return labels.size === 1 ? [...labels][0] : SUCCEEDED_WITHOUT_MEDIA_MIXED_LABEL;

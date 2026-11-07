@@ -1054,10 +1054,10 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
 
   // ── SUCCEEDED generations that DELIVERED NOTHING ─────────────────────────────
   // One increment per App Blocks workflow whose terminal poll first observed
-  // `succeeded` while the snapshot carried no media, no step output, no 3D output
-  // and no text, although a bridge-submitted step was expected to produce media
-  // (`succeededWithoutMediaStepType`). The viewer was charged and the app got
-  // nothing — the #8132 shape (a `comfy` step's blobs read off the wrong key).
+  // `succeeded` while at least one bridge-submitted MEDIA step succeeded with no
+  // media of its own (`succeededWithoutMediaStepType`), whatever its sibling
+  // steps delivered. The viewer paid for media the app never got — the #8132
+  // shape (a `comfy` step's blobs read off the wrong key).
   //
   // ONCE PER WORKFLOW, not per poll: the poll runs its terminal branch on EVERY
   // poll after completion, so it increments only when the transition-only
@@ -1076,7 +1076,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const succeededWithoutMediaTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_succeeded_without_media_total',
-    "App Blocks workflows that SUCCEEDED (and so were charged) while the block received no output at all: no image urls, no step outputs, no 3D outputs, no text or tool calls, no trained epochs. Counted once per workflow, when the terminal poll first records `succeeded` in block_workflows (a lower bound: workflows without a block_workflows row are not counted). Only workflows with at least one bridge-submitted step expected to produce media are counted: text-posture and training steps are excluded. step_type = that step's orchestrator $type when native or registered, `passthrough` for a pass-through $type, `mixed` when several. Also counts media the orchestrator reported as not available. Expected ~zero; any increase means a charged generation delivered nothing.",
+    "App Blocks workflows that SUCCEEDED (and so were charged) with at least one bridge-submitted MEDIA step that succeeded but produced no media of its own, whatever its sibling steps delivered (text from a text step does not cancel it). Media steps: native image/video $types, registered steps whose moderation posture produces media, and pass-through steps that returned nothing at all. Text-posture, training, suppressOutput and non-bridge steps are never media steps, so a text-only workflow is never counted. Counted once per workflow, when the terminal poll first records `succeeded` in block_workflows (a lower bound: workflows without a block_workflows row are not counted). step_type = the empty media step's orchestrator $type when native or registered, `passthrough` for a pass-through $type, `mixed` when several. Also counts media the orchestrator reported as not available. Expected ~zero; any increase means a viewer paid for media that did not arrive.",
     ['step_type']
   );
 

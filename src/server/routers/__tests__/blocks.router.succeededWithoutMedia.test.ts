@@ -16,10 +16,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * which poll saw the transition.
  *
  * Everything else is mocked at the module boundary, as in
- * `blocks.router.pollWorkflowLongPoll.test.ts` (this file's scaffold). The text
- * moderation wrapper is an identity here: the text-only case below is excluded by
- * the step's text POSTURE with no text on the snapshot, the stricter of the two
- * text cases (`workflow.service.succeededWithoutMedia.test.ts` covers both).
+ * `blocks.router.pollWorkflowLongPoll.test.ts` (this file's scaffold); the text
+ * moderation wrapper is an identity. Which workflows count (text-only, failed,
+ * canceled, mixed steps) is `workflow.service.succeededWithoutMedia.test.ts`'s job;
+ * this file covers the once-per-workflow seam.
  */
 
 const {
@@ -248,34 +248,6 @@ describe('blocks.pollWorkflow → civitai_app_block_succeeded_without_media_tota
       ]),
       3
     );
-    expect(await counted()).toBe(before);
-  });
-
-  it('NOT counted for a text-only success', async () => {
-    const before = await counted();
-    const statuses = await pollRepeatedly(
-      finished('wf_text', 'succeeded', [
-        {
-          $type: 'chatCompletion',
-          name: 'block-step',
-          status: 'succeeded',
-          metadata: {},
-          output: {},
-        },
-      ]),
-      3
-    );
-    expect(statuses[0]).toBe('succeeded');
-    expect(await counted()).toBe(before);
-  });
-
-  it.each(['failed', 'canceled'])('NOT counted for a %s workflow with no media', async (status) => {
-    const before = await counted();
-    const statuses = await pollRepeatedly(
-      finished(`wf_${status}`, status, [{ ...comfyStep([]), status }]),
-      3
-    );
-    expect(statuses[0]).toBe(status);
     expect(await counted()).toBe(before);
   });
 

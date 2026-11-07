@@ -13,9 +13,10 @@ import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.sche
 
 /**
  * Which finished workflows `civitai_app_block_succeeded_without_media_total`
- * counts. Every case runs the REAL `snapshotFromWorkflow`, so "delivered nothing"
- * means what the block actually received, not a hand-built snapshot — except the
- * text cases, which add the field `attachModeratedStepTextOutputs` would.
+ * counts: those with a bridge-submitted MEDIA step that succeeded with no media
+ * of its own. The snapshot is the REAL `snapshotFromWorkflow` output; the text
+ * cases add the fields `attachModeratedStepTextOutputs` would, to show a
+ * sibling's text does not cancel a media step's empty result.
  */
 
 function wf(steps: unknown[], over: Record<string, unknown> = {}) {
@@ -90,16 +91,40 @@ describe('succeededWithoutMediaStepType', () => {
       expect(classify(w, { textOutputs: ['hello'] })).toBeNull();
     });
 
-    it('a text step beside a media step that delivered nothing: counted under the media type', () => {
+    it('🔴 PER MEDIA STEP: text delivered beside an image step that delivered nothing IS counted', () => {
       const w = wf([
         step({ $type: 'chatCompletion', name: 'a', output: {} }),
         step({ $type: 'textToImage', name: 'b', output: { images: [] } }),
       ]);
-      expect(classify(w)).toBe('textToImage');
-      // ...but not when the text step delivered.
-      expect(classify(w, { textOutputs: ['x'] })).toBeNull();
-      expect(classify(w, { textOutputWithheld: { reason: 'r' } })).toBeNull();
+      // The sibling's text (or tool calls, or a withheld notice) does not stand in
+      // for the images the viewer paid for. Labelled with the IMAGE step's type.
+      expect(classify(w, { textOutputs: ['x'] })).toBe('textToImage');
+      expect(classify(w, { toolCalls: [{} as never] })).toBe('textToImage');
+      expect(classify(w, { textOutputWithheld: { reason: 'r' } })).toBe('textToImage');
     });
+
+    it('NOT counted when the media step delivered, beside a text step', () => {
+      const w = wf([
+        step({ $type: 'chatCompletion', name: 'a', output: {} }),
+        step({ $type: 'comfy', name: 'b', output: { blobs: [blob('https://cdn/b')] } }),
+      ]);
+      expect(classify(w, { textOutputs: ['x'] })).toBeNull();
+    });
+  });
+
+  it('two media steps, one delivered and one did not: counted under the EMPTY one', () => {
+    const w = wf([
+      step({ $type: 'comfy', name: 'a', output: { blobs: [blob('https://cdn/a')] } }),
+      step({ $type: 'imageGen', name: 'b', output: { images: [] } }),
+    ]);
+    // The snapshot is not empty — the comfy image reached it.
+    expect(snapshotFromWorkflow(w).imageUrls).toEqual(['https://cdn/a']);
+    expect(classify(w)).toBe('imageGen');
+  });
+
+  it('a media step whose OWN status is not succeeded is not counted', () => {
+    const w = wf([step({ $type: 'comfy', name: 's1', status: 'failed', output: { blobs: [] } })]);
+    expect(classify(w)).toBeNull();
   });
 
   it('NOT counted for a training-only success (it delivers epochs, after approval)', () => {
