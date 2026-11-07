@@ -7,14 +7,16 @@
 -- the emitting code is fire-and-forget and other action rows in the same batch are unaffected.
 -- See ./README.md.
 --
--- ORDER: apply AFTER 2026-11-04-experiment-exposure-hat-turf-actions.sql, which takes 30
--- ('Experiment_Exposure') and 31 ('HatTurf_Action'). This file restates every live value and
--- appends 32 and 33; applied first, that file's ALTER would drop these two. MODIFY COLUMN replaces
--- the whole definition, so this file must restate every live value.
+-- ORDER: apply AFTER 2026-11-07-app-store-funnel-actions.sql (civitai/civitai#8130), which takes
+-- 32 ('AppStore_Action') and 33 ('App_Visit'), itself applied after
+-- 2026-11-04-experiment-exposure-hat-turf-actions.sql (30, 31). This file restates every value
+-- 1..33 and appends 34 and 35; applied first, #8130's ALTER would drop these two. MODIFY COLUMN
+-- replaces the whole definition, so this file must restate every live value. The file name sorts
+-- after #8130's on purpose: the enum-drift test reads the last file by name as the live enum.
 --
 -- 🔴 BEFORE APPLYING, re-read prod: `SELECT type FROM system.columns WHERE database = 'default' AND
--- table = 'actions' AND name = 'type'`. It must list exactly 1..31 as below. Any other value (a
--- type another PR applied since) must be added here at its live index first, and 32/33 moved past
+-- table = 'actions' AND name = 'type'`. It must list exactly 1..33 as below. Any other value (a
+-- type another PR applied since) must be added here at its live index first, and 34/35 moved past
 -- it, or this ALTER drops it. Appending at unused indices is a metadata-only ALTER: no data is
 -- rewritten and no mutation is scheduled. Do NOT renumber or rename an existing value; that WOULD
 -- rewrite the whole table.
@@ -32,7 +34,7 @@
 -- Verify, AFTER applying (metadata-only, returns immediately):
 --
 --   SHOW CREATE TABLE default.actions;
---     -- must show 'App_Error' = 32 and 'App_Session' = 33, and every value 1..31 unchanged.
+--     -- must show 'App_Error' = 34 and 'App_Session' = 35, and every value 1..33 unchanged.
 --
 -- Positive control once the tracker is RESTARTED and the app deployed: open any app at
 -- /apps/run/<slug>, leave the page (navigate away or close the tab), then:
@@ -79,6 +81,8 @@ ALTER TABLE default.actions
     'Push_Prompt' = 29,
     'Experiment_Exposure' = 30,
     'HatTurf_Action' = 31,
-    'App_Error' = 32,
-    'App_Session' = 33
+    'AppStore_Action' = 32,
+    'App_Visit' = 33,
+    'App_Error' = 34,
+    'App_Session' = 35
   )
