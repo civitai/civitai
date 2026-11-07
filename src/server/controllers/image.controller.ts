@@ -240,7 +240,11 @@ export const setTosViolationHandler = async ({
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
-    const written = await writeModeratorBlock([id], { blockedBy: user.id, violationType });
+    const written = await writeModeratorBlock([id], {
+      blockedBy: user.id,
+      violationType,
+      reportReason: ReportReason.TOSViolation,
+    });
     const held = written.held.has(id);
 
     if (!held) {

@@ -147,7 +147,6 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   }
 
   if (type === 'Image' && imageIds.length) {
-    // Closed silently: no refund, and the uploader is not told.
     await dbWrite.appeal.updateMany({
       where: {
         entityType: EntityType.Image,

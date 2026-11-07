@@ -1,7 +1,9 @@
 -- A block's owner notice and report actioning, deferred until the review flag's close.
 --
--- ORDER, A REQUIRED STEP: apply this BEFORE deploying the release that writes it. Every moderator
--- block names this table, so a release running without it fails every block, not only flagged ones.
+-- ORDER, A REQUIRED STEP: apply this BEFORE deploying the release that writes it. Without the table,
+-- these fail: a block of an image under the review flag that defers its effects (either app); every
+-- main-app unblock; and each review-queue dismissal, flag clear, flag release and report-hold release
+-- that takes a row. A moderator-app accept logs the failure and carries on.
 --
 -- The foreign key locks "Image" briefly. A lock timeout rolls everything back; re-run the file as
 -- is, at a quieter moment if it times out again.
@@ -27,6 +29,8 @@ CREATE TABLE "ImageDeferredBlockEffect" (
   "imageId" INTEGER NOT NULL,
   "violationType" TEXT,
   "notifyOwner" BOOLEAN NOT NULL DEFAULT true,
+  "reportReason" TEXT,
+  "reportIds" INTEGER[] NOT NULL DEFAULT '{}',
   "blockedBy" INTEGER,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "ImageDeferredBlockEffect_pkey" PRIMARY KEY ("imageId"),

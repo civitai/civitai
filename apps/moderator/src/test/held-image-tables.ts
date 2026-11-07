@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS "ImageDeferredBlockEffect" (
   "imageId" int PRIMARY KEY,
   "violationType" text,
   "notifyOwner" boolean NOT NULL DEFAULT true,
+  "reportReason" text,
+  "reportIds" int[] NOT NULL DEFAULT '{}',
   "blockedBy" int,
   "createdAt" timestamp(3) NOT NULL DEFAULT now()
 );`;

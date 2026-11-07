@@ -1373,7 +1373,10 @@ function closeDismissedReviewAppeals(limit: number) {
 /** ModActivity row for a notice not sent. Ids only. */
 export const DEFERRED_NOTICE_WITHHELD_ACTIVITY = 'deferredNoticeWithheld';
 
-/** Users whose notice is not sent. Read on the primary; a failed read returns all of them. */
+/**
+ * Users whose notice is not sent. Read on the primary; a failed read returns all of them. A different
+ * set from `accountHoldSql`'s, on purpose: do not swap one for the other.
+ */
 async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
   try {
@@ -1606,20 +1609,28 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   }
 
   const closedDismissed = await closeDismissedReviewAppeals(limit);
+  // Every refund before anything that can throw: these are Void already, so nothing retries them.
+  const refundedDismissed = new Map<number, boolean>();
+  for (const appeal of closedDismissed) refundedDismissed.set(appeal.id, await refund(appeal));
   const withheld = await usersWithNoticeWithheld([
     ...new Set(closedDismissed.map((a) => a.userId)),
   ]);
   for (const appeal of closedDismissed) {
-    const wasRefunded = await refund(appeal);
     if (!withheld.has(appeal.userId)) {
-      await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
+      await notifyOrphanedAppeal(appeal, 'closed-unreviewed', refundedDismissed.get(appeal.id));
       continue;
     }
     await dbWrite.$executeRaw`
       INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity)
       VALUES (NULL, 'image', ${appeal.entityId}, ${DEFERRED_NOTICE_WITHHELD_ACTIVITY})
       ON CONFLICT DO NOTHING
-    `;
+    `.catch(() =>
+      logToAxiom({
+        type: 'error',
+        name: 'deferred-effect-failed',
+        imageId: appeal.entityId,
+      }).catch(() => undefined)
+    );
     logToAxiom({
       type: 'warning',
       name: 'deferred-notice-withheld',

@@ -6994,6 +6994,10 @@ model ImageDeferredBlockEffect {
   violationType String?
   /// False for a re-block of an image already removed: only its reports are deferred.
   notifyOwner   Boolean  @default(true)
+  /// Open reports of this reason on the image are actioned at the close.
+  reportReason  String?
+  /// These reports are actioned at the close, if still open.
+  reportIds     Int[]    @default([])
   blockedBy     Int?
   createdAt     DateTime @default(now())
 }

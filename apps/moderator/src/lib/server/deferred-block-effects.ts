@@ -26,6 +26,10 @@ export type DeferredBlockEffect = {
   imageId: number;
   violationType: string | null;
   notifyOwner: boolean;
+  /** Open reports of this reason on the image are actioned. */
+  reportReason: string | null;
+  /** These reports are actioned, if still open. */
+  reportIds: number[];
 };
 
 const log = (data: Record<string, unknown>) => logToAxiom(data).catch(() => undefined);
@@ -42,7 +46,7 @@ export async function claimDeferredBlockEffects(
   return db
     .deleteFrom('ImageDeferredBlockEffect')
     .where('imageId', 'in', [...imageIds])
-    .returning(['imageId', 'violationType', 'notifyOwner'])
+    .returning(['imageId', 'violationType', 'notifyOwner', 'reportReason', 'reportIds'])
     .execute();
 }
 
@@ -58,7 +62,10 @@ export async function dropDeferredBlockEffects(
     .execute();
 }
 
-/** Owners whose notice is not sent. Read on the primary; a failed read returns all of them. */
+/**
+ * Owners whose notice is not sent. Read on the primary; a failed read returns all of them. The main
+ * app's twin is `usersWithNoticeWithheld`; a different set from its `accountHoldSql`, on purpose.
+ */
 async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>> {
   if (!ownerIds.length) return new Set();
   try {
@@ -82,8 +89,8 @@ async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>
 }
 
 /**
- * Runs what a block deferred: the owner notice (subject to `ownersWithNoticeWithheld`) and every
- * report still open on the image, read now, actioned without paying its owner. Never throws: the close
+ * Runs what a block deferred: the owner notice (subject to `ownersWithNoticeWithheld`) and the reports
+ * in the block's scope still open now, actioned without paying the owner. Never throws: the close
  * that claimed these has committed, so a failure is logged with the image id instead.
  */
 export async function fireDeferredBlockEffects(
@@ -141,18 +148,32 @@ export async function fireDeferredBlockEffects(
   }
 
   let reports: { imageId: number; id: number }[] = [];
+  const scoped = claimed.filter(
+    (c) => byId.has(c.imageId) && (c.reportReason != null || c.reportIds.length)
+  );
   try {
-    reports = await dbWrite
-      .selectFrom('ImageReport as ir')
-      .innerJoin('Report as r', 'r.id', 'ir.reportId')
-      .select(['ir.imageId', 'r.id'])
-      .where(
-        'ir.imageId',
-        'in',
-        images.map((i) => i.id)
-      )
-      .where('r.status', 'in', [ReportStatus.Pending, ReportStatus.Processing])
-      .execute();
+    if (scoped.length)
+      reports = await dbWrite
+        .selectFrom('ImageReport as ir')
+        .innerJoin('Report as r', 'r.id', 'ir.reportId')
+        .select(['ir.imageId', 'r.id'])
+        .where('r.status', 'in', [ReportStatus.Pending, ReportStatus.Processing])
+        .where((eb) =>
+          eb.or(
+            scoped.map((c) =>
+              eb.and([
+                eb('ir.imageId', '=', c.imageId),
+                eb.or([
+                  ...(c.reportIds.length ? [eb('r.id', 'in', c.reportIds)] : []),
+                  ...(c.reportReason != null
+                    ? [eb(sql<string>`r.reason::text`, '=', c.reportReason)]
+                    : []),
+                ]),
+              ])
+            )
+          )
+        )
+        .execute();
   } catch {
     for (const imageId of imageIds)
       await log({ type: 'error', name: DEFERRED_NOTICE_LOG.effectFailed, imageId });

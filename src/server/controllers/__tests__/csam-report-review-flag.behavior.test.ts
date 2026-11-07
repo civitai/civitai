@@ -95,6 +95,7 @@ beforeAll(async () => {
       "archivedAt" timestamp(3),
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY);
   `);
 });
 
@@ -132,6 +133,14 @@ beforeEach(async () => {
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     return (await pg.query(flat.text, flat.values as unknown[])).affectedRows ?? 0;
+  }) as never);
+  // The hold release's UPDATE … RETURNING.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    return (await pg.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
 });
 

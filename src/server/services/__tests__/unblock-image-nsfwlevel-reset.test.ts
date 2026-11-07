@@ -278,10 +278,10 @@ describe('handleUnblockImages and a block that put its effects off', () => {
   it('drops them unfired', async () => {
     await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
 
-    const drop = dbWrite.$executeRaw.mock.calls.find(([strings]) =>
+    const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
       (strings as TemplateStringsArray).join('?').includes('DELETE FROM "ImageDeferredBlockEffect"')
     );
-    expect(drop?.slice(1)).toEqual([[128489949]]);
+    expect(drops.map((d) => d.slice(1))).toEqual([[[128489949]]]);
   });
 });
 

@@ -321,9 +321,17 @@ export async function blockImage({
           imageId,
           violationType: violationType ?? null,
           notifyOwner: !!updated,
+          reportIds: reportIds ?? [],
           blockedBy: userId,
         })
-        .onConflict((oc) => oc.column('imageId').doNothing())
+        .onConflict((oc) =>
+          oc.column('imageId').doUpdateSet({
+            notifyOwner: sql<boolean>`"ImageDeferredBlockEffect"."notifyOwner" OR excluded."notifyOwner"`,
+            reportIds: sql<
+              number[]
+            >`ARRAY(SELECT DISTINCT unnest("ImageDeferredBlockEffect"."reportIds" || excluded."reportIds"))`,
+          })
+        )
         .execute();
     return { updated: !!updated, state };
   });

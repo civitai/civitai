@@ -3612,6 +3612,14 @@ export type ImageDeferredBlockEffect = {
    * False for a re-block of an image already removed: only its reports are deferred.
    */
   notifyOwner: Generated<boolean>;
+  /**
+   * Open reports of this reason on the image are actioned at the close.
+   */
+  reportReason: string | null;
+  /**
+   * These reports are actioned at the close, if still open.
+   */
+  reportIds: Generated<number[]>;
   blockedBy: number | null;
   createdAt: Generated<Timestamp>;
 };

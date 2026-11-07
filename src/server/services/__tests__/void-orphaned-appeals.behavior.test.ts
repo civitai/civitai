@@ -545,6 +545,30 @@ describe('voidOrphanedAppeals against Postgres', () => {
       ]);
     });
 
+    it('refunds every one it closed when writing a log row fails', async () => {
+      await holder.db.exec(`ALTER TABLE "ModActivity" RENAME TO "ModActivity_gone"`);
+      try {
+        await voidOrphanedAppeals();
+      } finally {
+        await holder.db.exec(`ALTER TABLE "ModActivity_gone" RENAME TO "ModActivity"`);
+      }
+
+      expect(refundedPrefixes()).toEqual(
+        expect.arrayContaining(['appeal-12-41', 'appeal-21-44', 'appeal-15-45'])
+      );
+    });
+
+    it('refunds every one it closed when a notice fails', async () => {
+      holder.notify.mockImplementation((async (n: { key: string }) => {
+        if (n.key.includes(':41:')) throw new Error('notifications down');
+      }) as never);
+      await voidOrphanedAppeals().catch(() => undefined);
+
+      expect(refundedPrefixes()).toEqual(
+        expect.arrayContaining(['appeal-12-41', 'appeal-21-44', 'appeal-15-45'])
+      );
+    });
+
     it('holds every notice when the check itself fails', async () => {
       await holder.db.exec(`ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_gone"`);
       try {

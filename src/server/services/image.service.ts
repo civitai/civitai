@@ -1385,10 +1385,15 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
  */
 export async function writeModeratorBlock(
   ids: number[],
-  deferFor?: { blockedBy?: number; violationType?: string }
+  deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
 ): Promise<{ held: Set<number>; underReview: Set<number> }> {
   if (!ids.length) return { held: new Set(), underReview: new Set() };
   return dbWrite.$transaction(async (tx) => {
+    // Locks the rows and reads what they were before this block.
+    const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
+      SELECT id, ingestion = 'Blocked' AS removed FROM "Image" WHERE id = ANY(${ids}::int[]) FOR UPDATE
+    `;
+    const alreadyRemoved = prior.filter((r) => r.removed).map((r) => r.id);
     await tx.$executeRaw`
       UPDATE "Image" SET
         ingestion = 'Blocked',
@@ -1407,12 +1412,19 @@ export async function writeModeratorBlock(
       FROM "Image" WHERE id = ANY(${ids}::int[])
     `;
     const deferIds = rows.filter((r) => r.held && !r.removedForCsam).map((r) => r.id);
+    // A re-block of an image already removed defers its reports, not a notice.
     if (deferFor && deferIds.length)
       await tx.$executeRaw`
-        INSERT INTO "ImageDeferredBlockEffect" ("imageId", "violationType", "blockedBy")
-        SELECT id, ${deferFor.violationType ?? null}::text, ${deferFor.blockedBy ?? null}::int
+        INSERT INTO "ImageDeferredBlockEffect"
+          ("imageId", "violationType", "notifyOwner", "reportReason", "blockedBy")
+        SELECT id, ${
+          deferFor.violationType ?? null
+        }::text, NOT (id = ANY(${alreadyRemoved}::int[])),
+          ${deferFor.reportReason ?? null}::text, ${deferFor.blockedBy ?? null}::int
         FROM unnest(${deferIds}::int[]) AS id
-        ON CONFLICT ("imageId") DO NOTHING
+        ON CONFLICT ("imageId") DO UPDATE SET
+          "notifyOwner" = "ImageDeferredBlockEffect"."notifyOwner" OR EXCLUDED."notifyOwner",
+          "reportReason" = COALESCE("ImageDeferredBlockEffect"."reportReason", EXCLUDED."reportReason")
       `;
     const idsWhere = (key: 'held' | 'underReview') =>
       new Set(rows.filter((r) => r[key]).map((r) => r.id));

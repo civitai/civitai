@@ -91,6 +91,9 @@ beforeAll(async () => {
     CREATE TABLE "ImageDeferredBlockEffect" (
       "imageId" int PRIMARY KEY,
       "violationType" text,
+      "notifyOwner" boolean NOT NULL DEFAULT true,
+      "reportReason" text,
+      "reportIds" int[] NOT NULL DEFAULT '{}',
       "blockedBy" int,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
@@ -206,6 +209,13 @@ const deferred = async () =>
     )
   ).rows;
 
+const deferredScope = async () =>
+  (
+    await holder.db.query<{ imageId: number; notifyOwner: boolean; reportReason: string | null }>(
+      `SELECT "imageId", "notifyOwner", "reportReason" FROM "ImageDeferredBlockEffect" ORDER BY "imageId"`
+    )
+  ).rows;
+
 const underReviewNotices = () =>
   loggingMock.logToAxiom.mock.calls
     .map(([e]) => e as { name?: string; imageId?: number; userId?: number })
@@ -248,6 +258,29 @@ describe('setTosViolationHandler on an image under the review flag', () => {
 
     expect(await deferred()).toEqual([
       { imageId: FLAGGED_LIVE, violationType: null, blockedBy: 2 },
+    ]);
+  });
+
+  it('defers its TOS reports, and a notice only when the image was not removed yet', async () => {
+    await tosBlock(FLAGGED_LIVE);
+    await tosBlock(FLAG_REMOVED);
+
+    expect(await deferredScope()).toEqual([
+      { imageId: FLAGGED_LIVE, notifyOwner: true, reportReason: 'TOSViolation' },
+      { imageId: FLAG_REMOVED, notifyOwner: false, reportReason: 'TOSViolation' },
+    ]);
+  });
+
+  it("keeps the first block's notice and takes the report scope of the next", async () => {
+    await handleBlockImages({
+      ids: [FLAGGED_LIVE],
+      include: ['user-notification'],
+      moderatorId: 2,
+    });
+    await tosBlock(FLAGGED_LIVE);
+
+    expect(await deferredScope()).toEqual([
+      { imageId: FLAGGED_LIVE, notifyOwner: true, reportReason: 'TOSViolation' },
     ]);
   });
 
@@ -302,7 +335,10 @@ describe('handleBlockImages over held and other images', () => {
 
     expect(notifiedImages().sort()).toEqual([OTHER_REASON, DISMISSED].map((id) => `/images/${id}`));
     expect(underReviewNotices()).toEqual([[DISMISSED, 7]]);
-    expect((await deferred()).map((d) => d.imageId)).toEqual([FLAGGED_LIVE, FLAG_REMOVED]);
+    expect(await deferredScope()).toEqual([
+      { imageId: FLAGGED_LIVE, notifyOwner: true, reportReason: null },
+      { imageId: FLAG_REMOVED, notifyOwner: false, reportReason: null },
+    ]);
   });
 
   it('defers nothing when it sends no notice', async () => {

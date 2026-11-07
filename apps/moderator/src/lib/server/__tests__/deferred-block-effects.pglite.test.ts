@@ -94,7 +94,7 @@ CREATE TABLE "CsamQueueSetAside" (
   "createdAt" TIMESTAMP(3) NOT NULL
 );
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
-CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL);
+CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL, "reason" TEXT NOT NULL DEFAULT 'TOSViolation');
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
@@ -258,14 +258,58 @@ describe('dismissing it from the review queue', () => {
     expect(notices()).toEqual([{ url: `/images/${FLAGGED}`, reason: undefined }]);
   });
 
-  it('also actions a report filed after the block', async () => {
+  it('actions only the reports the block was given, not one filed after it', async () => {
     await block(FLAGGED);
     await db.exec(`
-      INSERT INTO "Report" ("id", "status") VALUES (5000, 'Pending'), (5001, 'Actioned');
-      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${FLAGGED}, 5000), (${FLAGGED}, 5001);
+      INSERT INTO "Report" ("id", "status") VALUES (5000, 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${FLAGGED}, 5000);
     `);
     await dismiss(FLAGGED);
 
+    expect(actioned().map((a) => a.id)).toEqual([report(FLAGGED)]);
+  });
+
+  it('for a row with a report reason, actions the open reports of that reason, including one filed after the block', async () => {
+    // As the main app's TOS block writes it.
+    await db.exec(`
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${FLAGGED};
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId", "reportReason") VALUES (${FLAGGED}, 'TOSViolation');
+      INSERT INTO "Report" ("id", "status", "reason") VALUES
+        (5000, 'Pending', 'TOSViolation'), (5001, 'Pending', 'NSFW'), (5002, 'Actioned', 'TOSViolation');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
+        (${FLAGGED}, 5000), (${FLAGGED}, 5001), (${FLAGGED}, 5002);
+    `);
+    await dismiss(FLAGGED);
+
+    expect(
+      actioned()
+        .map((a) => a.id)
+        .sort()
+    ).toEqual([report(FLAGGED), 5000]);
+  });
+
+  it('for a row with no report scope, sends the notice and actions nothing', async () => {
+    // As the main app's handleBlockImages writes it.
+    await db.exec(`
+      UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${FLAGGED};
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (${FLAGGED});
+    `);
+    await dismiss(FLAGGED);
+
+    expect(notices()).toEqual([{ url: `/images/${FLAGGED}`, reason: undefined }]);
+    expect(actioned()).toEqual([]);
+  });
+
+  it('merges the report ids of a second block into the first row', async () => {
+    await block(FLAGGED);
+    await db.exec(`
+      INSERT INTO "Report" ("id", "status") VALUES (5000, 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${FLAGGED}, 5000);
+    `);
+    await blockImage({ imageId: FLAGGED, userId: 2, reportIds: [5000] });
+    await dismiss(FLAGGED);
+
+    expect(notices()).toHaveLength(1);
     expect(
       actioned()
         .map((a) => a.id)

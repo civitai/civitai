@@ -372,7 +372,7 @@ describe('clearing a user whose block put effects off', () => {
 
     expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
     expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
-      [{ imageId: A, violationType: 'gore', notifyOwner: true }],
+      [{ imageId: A, violationType: 'gore', notifyOwner: true, reportReason: null, reportIds: [] }],
       { moderatorId: MOD }
     );
     expect((await db.query(`SELECT * FROM "ImageDeferredBlockEffect"`)).rows).toEqual([]);
