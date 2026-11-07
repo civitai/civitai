@@ -353,6 +353,9 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/gen.png']);
   });
 
+  // A comfy step's output is `{ blobs }` (ComfyOutput). This fixture used to carry
+  // `{ images }`, a shape the orchestrator never returns for `comfy`, which is how
+  // the extractor reading `output.images` for comfy stayed green.
   it('surfaces images from a comfy step', () => {
     const wf = fakeWorkflow({
       steps: [
@@ -361,7 +364,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'c1', url: 'https://cdn/comfy.png', available: true }] },
+          output: {
+            blobs: [{ id: 'c1', type: 'image', url: 'https://cdn/comfy.png', available: true }],
+          },
         },
       ],
     });
@@ -392,7 +397,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's3',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/b.png', available: true }] },
+          output: {
+            blobs: [{ id: 'b', type: 'image', url: 'https://cdn/b.png', available: true }],
+          },
         },
       ],
     });
