@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
+import { useDwellImpression } from '~/components/TrackView/useTrackImpression';
 import { enqueueTrackEvent } from '~/components/TrackView/trackEventBuffer';
 import type { ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
 import type { TrackActionInput } from '~/server/schema/track.schema';
@@ -81,13 +82,12 @@ export function trackAppStoreAction(
 
 // ── Impressions ────────────────────────────────────────────────────────────────────────────
 //
-// What counts as one, mirroring the feed impression rule (`useTrackImpression`): at least HALF
-// the card visible for a continuous SECOND. Once per listing per surface per PAGE VIEW — the
-// seen-set is keyed on the pathname, so a sort or filter change on the same page (a shallow
-// query change) does not re-count cards already seen, while navigating away and back does.
-
-const VISIBLE_FRACTION = 0.5;
-const DWELL_MS = 1000;
+// The visibility rule, dwell, hidden-tab re-arm and kill switch are the FEED impression hook's
+// (`useDwellImpression` in TrackView/useTrackImpression.ts): at least HALF the card visible for a
+// continuous SECOND, gated on the `feedImpressions` flag. What this module adds is the de-dupe:
+// once per listing per surface per PAGE VIEW — the seen-set is keyed on the pathname, so a sort or
+// filter change on the same page (a shallow query change) does not re-count cards already seen,
+// while navigating away and back does.
 
 const seen = new Set<string>();
 let seenPath: string | null = null;
@@ -118,87 +118,22 @@ export const __appStoreImpressionTestHooks = {
   },
 };
 
-type Watched = {
-  fire: () => void;
-  timer: ReturnType<typeof setTimeout> | null;
-};
-
-let observer: IntersectionObserver | null = null;
-const watched = new Map<Element, Watched>();
-
-function getObserver(): IntersectionObserver | null {
-  if (observer) return observer;
-  if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') return null;
-  observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        const w = watched.get(entry.target);
-        if (!w) continue;
-        const visible = entry.isIntersecting && entry.intersectionRatio >= VISIBLE_FRACTION;
-        if (visible && w.timer === null) {
-          const element = entry.target;
-          w.timer = setTimeout(() => {
-            w.timer = null;
-            // A hidden tab keeps its entries intersecting; a dwell that matured while nobody
-            // was looking is not an impression. Wait for the next intersection change.
-            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-            w.fire();
-            observer?.unobserve(element);
-            watched.delete(element);
-          }, DWELL_MS);
-        } else if (!visible && w.timer !== null) {
-          clearTimeout(w.timer);
-          w.timer = null;
-        }
-      }
-    },
-    { threshold: [0, VISIBLE_FRACTION, 1] }
-  );
-  return observer;
-}
-
 /**
- * A ref callback that records ONE impression for this card once it has been half-visible for a
- * second. `telemetry` undefined (a moderator preview, an untracked placement) records nothing.
+ * A ref that records ONE `impression` for this card once it has been half-visible for a second.
+ * `telemetry` undefined (a moderator preview, an untracked placement) watches nothing.
  */
-export function useAppStoreImpression(listingId: string, telemetry: AppStoreTelemetry | undefined) {
-  // The latest telemetry, read when the dwell matures (its position / filters at that moment).
+export function useAppStoreImpression<T extends HTMLElement = HTMLDivElement>(
+  listingId: string,
+  telemetry: AppStoreTelemetry | undefined
+) {
+  // Read when the dwell matures, so the event carries the card's position / filters at that moment.
   const latest = useRef(telemetry);
   latest.current = telemetry;
-  const element = useRef<Element | null>(null);
-  const enabled = !!telemetry;
-
-  const detach = useCallback(() => {
-    const el = element.current;
-    if (!el) return;
-    const w = watched.get(el);
-    if (w?.timer) clearTimeout(w.timer);
-    watched.delete(el);
-    observer?.unobserve(el);
-    element.current = null;
-  }, []);
-
-  useEffect(() => detach, [detach]);
-
-  return useCallback(
-    (node: Element | null) => {
-      detach();
-      if (!node || !enabled) return;
-      const obs = getObserver();
-      if (!obs) return;
-      element.current = node;
-      watched.set(node, {
-        timer: null,
-        fire: () => {
-          const t = latest.current;
-          if (!t || !claimImpression(t.surface, listingId)) return;
-          trackAppStoreAction('impression', listingId, t);
-        },
-      });
-      obs.observe(node);
-    },
-    [detach, enabled, listingId]
-  );
+  return useDwellImpression<T>(telemetry ? `${telemetry.surface}:${listingId}` : undefined, () => {
+    const t = latest.current;
+    if (!t || !claimImpression(t.surface, listingId)) return;
+    trackAppStoreAction('impression', listingId, t);
+  });
 }
 
 /**
