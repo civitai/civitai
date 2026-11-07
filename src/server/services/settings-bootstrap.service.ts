@@ -32,6 +32,30 @@ type AuthArgs = Parameters<typeof getServerAuthSession>[0];
 /** What the route answers with, and what a server render is seeded from. */
 export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
 
+const LOG_WINDOW_MS = 60_000;
+
+// Pinned on globalThis: the bundler emits a server module more than once per build, and a
+// per-copy map would multiply the bound by the number of copies.
+const LOG_THROTTLE = Symbol.for('civitai.settingsBootstrapLogThrottle');
+type LogThrottle = Map<string, { at: number; suppressed: number }>;
+
+/**
+ * One event per key per process per window, so a hung dependency during an incident logs once a
+ * minute rather than once per render. The next event that goes out carries the suppressed count.
+ */
+function logBootstrapWarning(key: string, data: MixedObject) {
+  const g = globalThis as typeof globalThis & { [LOG_THROTTLE]?: LogThrottle };
+  const throttle = (g[LOG_THROTTLE] ??= new Map());
+  const now = Date.now();
+  const last = throttle.get(key);
+  if (last && now >= last.at && now - last.at < LOG_WINDOW_MS) {
+    last.suppressed++;
+    return;
+  }
+  throttle.set(key, { at: now, suppressed: 0 });
+  logToAxiom(last?.suppressed ? { ...data, suppressed: last.suppressed } : data).catch();
+}
+
 /**
  * A member that never replies would pin every page on it, and a `.catch` cannot answer a
  * parked read — only a deadline can. Timing out is reported, not swallowed: the incident this
@@ -40,16 +64,13 @@ export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
 function settle<T, F>(promise: Promise<T>, fallback: F, member: string): Promise<T | F> {
   const timeoutMs = env.SETTINGS_READ_DEADLINE_MS;
   return withTimeoutFallback<T | F>(promise, timeoutMs, fallback, () => {
-    logToAxiom(
-      {
-        type: 'warning',
-        name: 'settings bootstrap deadline',
-        message: `${member} exceeded ${timeoutMs}ms`,
-        member,
-        timeoutMs,
-      },
-      'settings'
-    ).catch();
+    logBootstrapWarning(`deadline:${member}`, {
+      type: 'warning',
+      name: 'settings bootstrap deadline',
+      message: `${member} exceeded ${timeoutMs}ms`,
+      member,
+      timeoutMs,
+    });
   }).catch(() => fallback);
 }
 
@@ -293,14 +314,11 @@ export async function resolveSettingsBootstrapForRender(
   const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
     const code = (e as { code?: unknown } | null)?.code;
     const name = e instanceof Error ? e.name : 'unknown';
-    logToAxiom(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: e instanceof Error ? e.message : String(e),
-      },
-      'settings'
-    ).catch();
+    logBootstrapWarning('failed', {
+      type: 'warning',
+      name: 'settings bootstrap failed',
+      message: e instanceof Error ? e.message : String(e),
+    });
     throw new Error(
       `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
         .filter(Boolean)

@@ -199,6 +199,56 @@ describe('/api/user/settings read deadlines', () => {
   });
 });
 
+describe('settings bootstrap deadline log', () => {
+  // An hour apart and far from every other test's clock, so no two tests share a log window.
+  let clock = Date.parse('2030-01-01T00:00:00Z');
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime((clock += 3_600_000));
+    h.session.mockResolvedValue(null);
+    h.contentSettings.mockResolvedValue({ showNsfw: true });
+    h.announcements.mockResolvedValue([]);
+    h.liveNow.mockReturnValue(new Promise(() => undefined));
+    h.follows.mockResolvedValue([]);
+    h.addons.mockResolvedValue([]);
+    h.navBanners.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  const liveNowDeadlines = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.filter(
+        ([data]) => data.name === 'settings bootstrap deadline' && data.member === 'getLiveNow'
+      );
+
+  it('goes to the default datastream', async () => {
+    const { json } = invoke();
+    await vi.runAllTimersAsync();
+    expect(json).toHaveBeenCalled();
+    expect(liveNowDeadlines()).toHaveLength(1);
+    expect(liveNowDeadlines()[0]).toHaveLength(1);
+  });
+
+  it('sends one event per member per minute and counts the rest on the next one', async () => {
+    for (let i = 0; i < 5; i++) {
+      invoke();
+      await vi.runAllTimersAsync();
+    }
+    expect(liveNowDeadlines()).toHaveLength(1);
+    expect(liveNowDeadlines()[0][0]).not.toHaveProperty('suppressed');
+
+    vi.setSystemTime(Date.now() + 60_000);
+    invoke();
+    await vi.runAllTimersAsync();
+    expect(liveNowDeadlines()).toHaveLength(2);
+    expect(liveNowDeadlines()[1][0]).toMatchObject({ member: 'getLiveNow', suppressed: 4 });
+  });
+});
+
 describe('/api/user/settings nav banners', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -382,14 +432,11 @@ describe('settings bootstrap during a server render', () => {
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
     // …while the full reason is kept in the structured log.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: 'connect ECONNREFUSED db.internal.example:5432',
-      },
-      'settings'
-    );
+    expect(logToAxiom).toHaveBeenCalledWith({
+      type: 'warning',
+      name: 'settings bootstrap failed',
+      message: 'connect ECONNREFUSED db.internal.example:5432',
+    });
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();
