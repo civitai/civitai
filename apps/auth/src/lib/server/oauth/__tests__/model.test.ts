@@ -388,7 +388,7 @@ describe('oauthModel.getAuthorizationCode — impersonation marker', () => {
         grants: ['authorization_code'],
         redirectUris: ['https://a.example/cb'],
       });
-      h.state.redis.packed.hGet = () =>
+      (h.state.redis as { packed: { hGet: () => Promise<unknown> } }).packed.hGet = () =>
         Promise.resolve({
           clientId: 'pub-1',
           userId: 7,
