@@ -4498,7 +4498,7 @@ export type PersonalDataExport = {
    */
   status: Generated<string>;
   /**
-   * How internal moderator notes are exported: text-redacted-separate-file | count
+   * Always text-redacted-separate-file: the notes file beside the archive.
    */
   modNotesMode: Generated<string>;
   /**
@@ -4523,6 +4523,14 @@ export type PersonalDataExport = {
   linkExpiresAt: Timestamp | null;
   releasedAt: Timestamp | null;
   releasedById: number | null;
+  /**
+   * The help-desk ticket the request came in on, when it did.
+   */
+  ticketId: number | null;
+  /**
+   * The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+   */
+  requestedAt: Timestamp | null;
 };
 export type Placement = {
   id: Generated<number>;

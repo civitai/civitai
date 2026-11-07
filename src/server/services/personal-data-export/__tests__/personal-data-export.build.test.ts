@@ -21,6 +21,9 @@ const m = vi.hoisted(() => ({
   holds: vi.fn(),
   builtSend: vi.fn(),
   readySend: vi.fn(),
+  heldSend: vi.fn(),
+  refusedSend: vi.fn(),
+  del: vi.fn(),
   put: vi.fn(),
   stream: vi.fn(),
   pg: vi.fn(),
@@ -34,6 +37,8 @@ vi.mock('~/server/services/legal-hold.service', () => ({
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportBuiltEmail: { send: m.builtSend },
   personalDataExportReadyEmail: { send: m.readySend },
+  personalDataExportHeldEmail: { send: m.heldSend },
+  personalDataExportRefusedEmail: { send: m.refusedSend },
 }));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {},
@@ -43,6 +48,7 @@ vi.mock('~/server/db/pgDb', () => ({
 vi.mock('../archive', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   putSmallObject: m.put,
+  deleteObjects: m.del,
   presignDownload: async (_b: unknown, key: string) => ({
     url: `https://bucket/${key}`,
     expiresAt: new Date('2026-11-08T00:00:00Z'),
@@ -83,10 +89,13 @@ const row: ExportRow = {
   userId: OWNER_ID,
   requestedById: STAFF_ID,
   status: 'building',
-  modNotesMode: 'text-redacted-separate-file',
   attempts: 1,
   archiveKey: null,
   builtAt: null,
+  createdAt: new Date('2026-11-06T12:00:00Z'),
+  ticketId: 555,
+  // Weeks before it was queued: the email must carry this, not the queue date.
+  requestedAt: '2026-09-14',
 };
 const deps = {
   bucket: {} as never,
@@ -103,7 +112,9 @@ const sqlOf = (c: unknown[]) => (c[0] as unknown as string[]).join('?');
 const writes = () => vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls;
 
 beforeEach(() => {
-  for (const f of [m.holds, m.builtSend, m.readySend, m.put, m.stream, m.pg]) f.mockReset();
+  for (const f of [m.holds, m.builtSend, m.readySend, m.heldSend, m.refusedSend, m.del, m.put])
+    f.mockReset();
+  for (const f of [m.stream, m.pg]) f.mockReset();
   m.manifest = null;
   m.holds.mockResolvedValue({ legs: [], markerView: true });
   m.pg.mockImplementation(async ({ onNote }: { onNote: (n: unknown) => void }) => {
@@ -139,7 +150,10 @@ describe('buildExport', () => {
     expect(await buildExport(row, deps)).toBe('built');
     expect(m.readySend).not.toHaveBeenCalled();
     expect(m.builtSend).toHaveBeenCalledTimes(1);
-    expect(m.builtSend.mock.calls[0][0]).toMatchObject({ to: 'staff@civitai.com', held: false });
+    expect(m.builtSend.mock.calls[0][0]).toMatchObject({ to: 'staff@civitai.com' });
+    // An account under no hold: nothing to Legal.
+    expect(m.refusedSend).not.toHaveBeenCalled();
+    expect(m.heldSend).not.toHaveBeenCalled();
     const recorded = writes().findIndex((c) => sqlOf(c).includes('"archiveKey" ='));
     const sent = writes().findIndex((c) => sqlOf(c).includes('"sentAt" = now()'));
     expect(recorded).toBeGreaterThanOrEqual(0);
@@ -150,24 +164,72 @@ describe('buildExport', () => {
     expect(sent).toBeGreaterThan(recorded);
   });
 
-  it('marks a held account held, and says so to the staff member', async () => {
+  /**
+   * 🔴 Ruled by Legal and the Moderation Lead: an account under a hold gets NO archive. Nothing is
+   * built or uploaded, no link goes to anyone, Legal's intake gets exactly one notice in the format
+   * its sweep reads, and the moderator who queued it is told only that it was routed to Legal. If
+   * you are about to build a held account's archive "for Legal to review", this test is why not.
+   */
+  it('refuses a held account: nothing built, one notice to Legal, the requester told only that', async () => {
     m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
     expect(await buildExport(row, deps)).toBe('held');
-    expect(m.builtSend.mock.calls[0][0]).toMatchObject({ held: true });
+    expect(m.stream).not.toHaveBeenCalled();
+    expect(m.pg).not.toHaveBeenCalled();
+    expect(m.put).not.toHaveBeenCalled();
+    expect(m.builtSend).not.toHaveBeenCalled();
     expect(m.readySend).not.toHaveBeenCalled();
+    expect(m.refusedSend.mock.calls).toEqual([
+      [
+        {
+          to: 'compliance@civitai.com',
+          subject: 'DATA-EXPORT-REFUSED user=42 ticket=555 requested=2026-09-14',
+          lines: ['user=42', 'ticket=555', 'requested=2026-09-14'],
+        },
+      ],
+    ]);
+    // The notice names the export, never the reason.
+    expect(m.heldSend.mock.calls).toEqual([[{ to: 'staff@civitai.com', exportId: 5 }]]);
+    const held = writes().find((c) => sqlOf(c).includes(`SET status = 'held'`))!;
+    expect(held).toEqual(expect.arrayContaining([['report']]));
   });
 
-  it('marks an account held when a decided case puts it under a hold', async () => {
-    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
-      const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
-      if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
-      return [{ present: false, review: true }];
-    }) as never);
+  it('says ticket=none for a request queued from the dashboard', async () => {
+    m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
+    await buildExport({ ...row, ticketId: null }, deps);
+    expect(m.refusedSend.mock.calls[0][0]).toMatchObject({
+      subject: 'DATA-EXPORT-REFUSED user=42 ticket=none requested=2026-09-14',
+      lines: ['user=42', 'ticket=none', 'requested=2026-09-14'],
+    });
+  });
+
+  it.each([[{ present: true, review: false }], [{ present: false, review: true }]])(
+    'refuses every kind of hold the same way (#%#)',
+    async (found) => {
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
+        const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
+        if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
+        return [found];
+      }) as never);
+      expect(await buildExport(row, deps)).toBe('held');
+      expect(m.stream).not.toHaveBeenCalled();
+      expect(m.refusedSend).toHaveBeenCalledTimes(1);
+      expect(m.builtSend).not.toHaveBeenCalled();
+    }
+  );
+
+  it('deletes the archive when a hold lands while it is being built', async () => {
+    m.holds
+      .mockResolvedValueOnce({ legs: [], markerView: true })
+      .mockResolvedValue({ legs: ['report'], markerView: true });
     expect(await buildExport(row, deps)).toBe('held');
-    expect(m.builtSend.mock.calls[0][0]).toMatchObject({ held: true });
-    expect(
-      writes().some((c) => c.slice(1).some((v) => Array.isArray(v) && v.includes('review')))
-    ).toBe(true);
+    expect(m.stream).toHaveBeenCalledTimes(1);
+    const [, keys] = m.del.mock.calls[0] as [unknown, (string | null)[]];
+    expect(keys[0]).toMatch(/^exports\/5\/.+\.zip$/);
+    expect(keys[1]).toMatch(/^exports\/5\/.+-internal-notes\.csv$/);
+    expect(m.builtSend).not.toHaveBeenCalled();
+    expect(m.refusedSend).toHaveBeenCalledTimes(1);
+    const held = writes().find((c) => sqlOf(c).includes(`SET status = 'held'`))!;
+    expect(sqlOf(held)).toContain('"archiveKey" = NULL');
   });
 
   it('writes the notes file with staff redacted, and never puts a note count in the archive', async () => {
@@ -180,52 +242,11 @@ describe('buildExport', () => {
     expect(JSON.stringify(m.manifest)).not.toMatch(/internalNotes|Legal review|"count"/);
   });
 
-  /**
-   * 🔴 Required by Legal: a held account must look exactly like any other export in progress from
-   * the user's side. The account owner is never sent anything by a build, held or not, and the
-   * archive's manifest is the same document whether or not the account is held. Whatever differs
-   * (status, the staff email's wording) is staff-only. If you are about to make a build tell the
-   * owner anything, this test is why not.
-   */
-  it('builds a held account exactly like a clean one, as far as the owner can see', async () => {
-    const manifests: unknown[] = [];
-    for (const legs of [[], ['report'], ['safety-content']]) {
-      m.holds.mockResolvedValue({
-        legs: legs.filter((l) => l !== 'safety-content'),
-        markerView: true,
-      });
-      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: unknown) => {
-        const text = Array.isArray(q) ? q.join('?') : String((q as { sql?: string }).sql ?? '');
-        if (text.includes('"isModerator"')) return [{ id: STAFF_ID, username: 'ModBob' }];
-        return [{ present: legs.includes('safety-content'), review: false }];
-      }) as never);
-      await buildExport(row, deps);
-      expect(m.manifest).toMatchObject({ files: expect.arrayContaining([expect.anything()]) });
-      manifests.push({ ...(m.manifest as Record<string, unknown>), generatedAt: 'T' });
-      m.manifest = null;
-    }
-    expect(m.readySend).not.toHaveBeenCalled();
-    // Every build email went to the staff member, none to the owner.
-    expect(m.builtSend.mock.calls.map((c) => c[0].to)).toEqual([
-      'staff@civitai.com',
-      'staff@civitai.com',
-      'staff@civitai.com',
-    ]);
-    expect(m.builtSend.mock.calls.map((c) => c[0].held)).toEqual([false, true, true]);
-    expect(manifests[1]).toEqual(manifests[0]);
-    expect(manifests[2]).toEqual(manifests[0]);
-  });
-
   it('retries, rather than holds, when the hold check itself could not be read', async () => {
     m.holds.mockRejectedValue(new Error('primary down'));
     expect(await buildExport(row, deps)).toBe('queued');
     expect(m.builtSend).not.toHaveBeenCalled();
     expect(writes().some((c) => sqlOf(c).includes('"archiveKey" ='))).toBe(false);
-  });
-
-  it('writes no notes file in count mode', async () => {
-    await buildExport({ ...row, modNotesMode: 'count' }, deps);
-    expect(m.put).not.toHaveBeenCalled();
   });
 
   it('does not email anyone when the row stopped building while it ran', async () => {
@@ -248,7 +269,15 @@ describe('buildExport record, run', () => {
   let db: PGlite;
   beforeAll(async () => {
     db = new PGlite();
-    await db.exec(readFileSync(MIGRATION, 'utf8'));
+    // Both migrations, in the order they are applied.
+    for (const f of [
+      MIGRATION,
+      MIGRATION.replace(
+        '20261225120000_personal_data_export',
+        '20261228120000_personal_data_export_request'
+      ),
+    ])
+      await db.exec(readFileSync(f, 'utf8'));
   });
   afterAll(() => db?.close());
 
@@ -294,11 +323,12 @@ describe('buildExport record, run', () => {
     expect(r.builtAt).toBeInstanceOf(Date);
   });
 
-  it('records a held archive with its hold reasons', async () => {
+  it('records a refused held export with its hold reasons and no archive', async () => {
     m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
     expect(await buildExport(row, deps)).toBe('held');
     const r = await stored();
     expect(r.status).toBe('held');
     expect(r.holdReasons).toEqual(['report']);
+    expect(r.archiveKey).toBeNull();
   });
 });

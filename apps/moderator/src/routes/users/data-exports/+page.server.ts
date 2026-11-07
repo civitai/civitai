@@ -9,6 +9,7 @@ import {
   queuePersonalDataExport,
   releasePersonalDataExport,
 } from '$lib/server/personal-data-export.service';
+import { dashboardQueueSchema } from '$lib/server/personal-data-export-form';
 import { ALREADY_QUEUED } from '$lib/server/tickets/export-write';
 
 const querySchema = z.object({
@@ -29,11 +30,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 export const actions: Actions = {
   queue: requiresGrant('user.personalDataExport.queue', async ({ request, locals }) => {
-    const input = parseForm(z.object({ userId: int4Id }), await request.formData());
+    const input = parseForm(dashboardQueueSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
     const result = await queuePersonalDataExport({
       userId: input.userId,
       requestedById: locals.user.id,
+      ticketId: null,
+      requestedAt: input.requestedAt,
     });
     if (result.status === 'already-queued') return fail(409, { error: ALREADY_QUEUED });
     if (result.status === 'no-user') return fail(404, { error: `No user ${input.userId}.` });

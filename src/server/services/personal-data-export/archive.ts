@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import stream, { Readable } from 'stream';
 import archiver from 'archiver';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { env } from '~/env/server';
 import { getGetUrlByKey } from '~/utils/s3-utils';
@@ -78,6 +78,18 @@ export async function putSmallObject(
   await bucket.client.send(
     new PutObjectCommand({ Bucket: bucket.Bucket, Key: key, Body: body, ContentType: contentType })
   );
+}
+
+/** Deletes objects, best effort: one that stays is removed by the bucket's own expiry. */
+export async function deleteObjects(bucket: ExportBucket, keys: (string | null)[]) {
+  for (const key of keys) {
+    if (!key) continue;
+    try {
+      await bucket.client.send(new DeleteObjectCommand({ Bucket: bucket.Bucket, Key: key }));
+    } catch {
+      // The bucket expires it anyway.
+    }
+  }
 }
 
 /**

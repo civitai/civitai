@@ -177,10 +177,11 @@ export function reduceChRow(table: ChTable, row: Record<string, unknown>) {
 
 /** The WHERE of each query a table is read with: a row matched by an earlier one is not read again. */
 export function chWheres(table: ChTable, userWhere: string): string[] {
-  if (table.where == null) return [userWhere];
-  if (typeof table.where === 'string') return [table.where];
-  return table.where.map((w, i) =>
-    [`(${w})`, ...table.where!.slice(0, i).map((prev) => `NOT (${prev})`)].join(' AND ')
+  const list = table.where;
+  if (list == null) return [userWhere];
+  if (typeof list === 'string') return [list];
+  return list.map((w, i) =>
+    [`(${w})`, ...list.slice(0, i).map((prev) => `NOT (${prev})`)].join(' AND ')
   );
 }
 

@@ -42,7 +42,6 @@ type BuiltData = {
   exportId: number;
   userId: number;
   username: string | null;
-  held: boolean;
   archiveLink: string;
   notesLink: string | null;
   expiresAt: Date;
@@ -54,7 +53,7 @@ export const personalDataExportBuiltEmail = createEmail({
     subject: `Personal data export #${exportId} is ready`,
     to,
   }),
-  html({ exportId, userId, username, held, archiveLink, notesLink, expiresAt }: BuiltData) {
+  html({ exportId, userId, username, archiveLink, notesLink, expiresAt }: BuiltData) {
     const who = `${escapeHtml(username ?? 'No username')} (#${userId})`;
     const parts = [
       `<p>The personal data export #${exportId} for ${who} is built.</p>`,
@@ -68,9 +67,7 @@ export const personalDataExportBuiltEmail = createEmail({
             notesLink
           )}">Internal notes file</a>: Legal review before release. It is not part of the archive and is never sent to the account owner by the release step.</p>`
         : '',
-      held
-        ? '<p><strong>This export is held.</strong> It cannot be released to the account owner from the dashboard; contact Legal.</p>'
-        : '<p>Nothing has been sent to the account owner. Release it from the Data Exports page once it has been reviewed.</p>',
+      '<p>Nothing has been sent to the account owner. Release it from the Data Exports page once it has been reviewed.</p>',
     ];
     return simpleEmailWithTemplate({
       header: `Personal data export #${exportId}`,
@@ -82,9 +79,39 @@ export const personalDataExportBuiltEmail = createEmail({
     exportId: 1,
     userId: 1,
     username: 'Tester',
-    held: false,
     archiveLink: 'https://example.com/archive.zip',
     notesLink: 'https://example.com/notes.csv',
     expiresAt: new Date('2026-11-08T15:15:00Z'),
+  }),
+});
+
+type HeldData = { to: string; exportId: number };
+
+/** To the staff member who queued it, for a held account: never says why. */
+export const personalDataExportHeldEmail = createEmail({
+  header: ({ to, exportId }: HeldData) => ({
+    subject: `Personal data export #${exportId}: held, routed to Legal`,
+    to,
+  }),
+  html: ({ exportId }: HeldData) =>
+    simpleEmailWithTemplate({
+      header: `Personal data export #${exportId}`,
+      body: '<p>Held, routed to Legal.</p>',
+    }),
+  text: () => 'Held, routed to Legal.',
+  testData: async () => ({ to: 'test@tester.com', exportId: 1 }),
+});
+
+type RefusedData = { to: string; subject: string; lines: string[] };
+
+/** To Legal's intake, for a held account: the key=value lines its sweep reads, and nothing else. */
+export const personalDataExportRefusedEmail = createEmail({
+  header: ({ to, subject }: RefusedData) => ({ subject, to }),
+  html: ({ lines }: RefusedData) => `<pre>${lines.map((l) => escapeHtml(l)).join('\n')}</pre>`,
+  text: ({ lines }: RefusedData) => lines.join('\n'),
+  testData: async () => ({
+    to: 'test@tester.com',
+    subject: 'DATA-EXPORT-REFUSED user=0 ticket=TEST requested=2026-11-07',
+    lines: ['user=0', 'ticket=TEST', 'requested=2026-11-07'],
   }),
 });

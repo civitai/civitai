@@ -679,6 +679,8 @@ export const serverSchema = z
     PERSONAL_DATA_EXPORT_SECRET: z.string().default(''),
     // Read-only connection to the stored generation workflow documents; reads from a secondary only.
     PERSONAL_DATA_EXPORT_MONGO_URL: z.string().default(''),
+    // Where a refused export for a held account is reported; Legal's intake reads this inbox.
+    PERSONAL_DATA_EXPORT_LEGAL_EMAIL: z.string().default('compliance@civitai.com'),
     NCMEC_URL: z.string().optional(),
     NCMEC_USERNAME: z.string().default(''),
     NCMEC_PASSWORD: z.string().default(''),

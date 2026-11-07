@@ -15,7 +15,15 @@ const MIGRATION = path.resolve(
 describe('PersonalDataExport migration', () => {
   it('refuses a second in-flight export for a user, and allows one once the first is done', async () => {
     const db = new PGlite();
-    await db.exec(readFileSync(MIGRATION, 'utf8'));
+    // Both migrations, in the order they are applied.
+    for (const f of [
+      MIGRATION,
+      MIGRATION.replace(
+        '20261225120000_personal_data_export',
+        '20261228120000_personal_data_export_request'
+      ),
+    ])
+      await db.exec(readFileSync(f, 'utf8'));
     const queue = (userId: number) =>
       db.query(
         `INSERT INTO "PersonalDataExport" ("userId", "requestedById") VALUES ($1, 9) RETURNING id`,

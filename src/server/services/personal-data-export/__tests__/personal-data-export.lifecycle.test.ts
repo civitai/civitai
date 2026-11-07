@@ -8,6 +8,7 @@ import {
   MAX_ATTEMPTS,
   STALE_BUILD_HOURS,
   claimNextExport,
+  legalRefusalLines,
   recordFailure,
   recoverStaleExports,
   runPersonalDataExports,
@@ -26,7 +27,15 @@ let db: PGlite;
 
 beforeAll(async () => {
   db = new PGlite();
-  await db.exec(readFileSync(MIGRATION, 'utf8'));
+  // Both migrations, in the order they are applied.
+  for (const f of [
+    MIGRATION,
+    MIGRATION.replace(
+      '20261225120000_personal_data_export',
+      '20261228120000_personal_data_export_request'
+    ),
+  ])
+    await db.exec(readFileSync(f, 'utf8'));
 });
 afterAll(() => db?.close());
 
@@ -77,6 +86,25 @@ describe('export queue lifecycle, run', () => {
     expect(first).toMatchObject({ id: 1, status: 'building', attempts: 1 });
     expect(await claimNextExport()).toMatchObject({ id: 2 });
     expect(await claimNextExport()).toBeNull();
+  });
+
+  it("carries the stored request date and ticket into Legal's notice, not the queue date", async () => {
+    await db.query(
+      `INSERT INTO "PersonalDataExport" (id, "userId", "requestedById", status, "ticketId", "requestedAt")
+       VALUES (1, 10, 9, 'queued', 555, '2026-09-14'), (2, 20, 9, 'queued', NULL, NULL)`
+    );
+    const ticketed = (await claimNextExport())!;
+    expect(ticketed).toMatchObject({ ticketId: 555, requestedAt: '2026-09-14' });
+    expect(legalRefusalLines(ticketed).lines).toEqual([
+      'user=10',
+      'ticket=555',
+      'requested=2026-09-14',
+    ]);
+    expect(legalRefusalLines((await claimNextExport())!).lines).toEqual([
+      'user=20',
+      'ticket=none',
+      'requested=unknown',
+    ]);
   });
 
   it('requeues a stale build below the attempt limit, and fails it at the limit', async () => {

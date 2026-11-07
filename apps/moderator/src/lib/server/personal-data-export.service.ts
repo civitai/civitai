@@ -37,10 +37,16 @@ export type QueueResult =
  * Queues an export. A second queue while one is queued or building is refused by the database's
  * partial unique index, not by this check: two presses at once still produce one row.
  */
-export async function queuePersonalDataExport(input: {
+export type QueueInput = {
   userId: number;
   requestedById: number;
-}): Promise<QueueResult> {
+  /** The help-desk ticket the request came in on; null when queued from the dashboard. */
+  ticketId: number | null;
+  /** The date the user asked: the ticket's own date, or the date the moderator entered. */
+  requestedAt: Date;
+};
+
+export async function queuePersonalDataExport(input: QueueInput): Promise<QueueResult> {
   const user = await dbWrite
     .selectFrom('User')
     .select('id')
@@ -53,7 +59,13 @@ export async function queuePersonalDataExport(input: {
     return await dbWrite.transaction().execute(async (tx) => {
       const row = await tx
         .insertInto('PersonalDataExport')
-        .values({ userId: input.userId, requestedById: input.requestedById })
+        .values({
+          userId: input.userId,
+          requestedById: input.requestedById,
+          ticketId: input.ticketId,
+          // A DATE column: the UTC calendar day.
+          requestedAt: input.requestedAt.toISOString().slice(0, 10),
+        })
         .onConflict((oc) =>
           oc
             .column('userId')

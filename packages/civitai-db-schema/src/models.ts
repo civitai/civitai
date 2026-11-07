@@ -4304,6 +4304,8 @@ export interface PersonalDataExport {
   linkExpiresAt: Date | null;
   releasedAt: Date | null;
   releasedById: number | null;
+  ticketId: number | null;
+  requestedAt: Date | null;
 }
 
 export interface EvidenceHold {

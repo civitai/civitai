@@ -7050,7 +7050,7 @@ model PersonalDataExport {
   requestedById Int
   /// queued | building | built | held | failed | released
   status        String    @default("queued")
-  /// How internal moderator notes are exported: text-redacted-separate-file | count
+  /// Always text-redacted-separate-file: the notes file beside the archive.
   modNotesMode  String    @default("text-redacted-separate-file")
   /// Neutral codes for the holds found when the archive was built; re-checked at release.
   holdReasons   String[]  @default([])
@@ -7068,6 +7068,10 @@ model PersonalDataExport {
   linkExpiresAt DateTime?
   releasedAt    DateTime?
   releasedById  Int?
+  /// The help-desk ticket the request came in on, when it did.
+  ticketId      Int?
+  /// The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+  requestedAt   DateTime? @db.Date
 
   @@index([userId])
   @@index([status])

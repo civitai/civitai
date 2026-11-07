@@ -76,10 +76,17 @@ beforeEach(() => {
   sent.failAudit = false;
 });
 
+const input = {
+  userId: 7,
+  requestedById: 4,
+  ticketId: 555,
+  requestedAt: new Date('2026-10-02T15:30:00Z'),
+};
+
 describe('queuePersonalDataExport', () => {
   it('inserts against the in-flight partial index and audits the queue', async () => {
     sent.insertRows = [{ id: 31 }];
-    expect(await queuePersonalDataExport({ userId: 7, requestedById: 4 })).toEqual({
+    expect(await queuePersonalDataExport(input)).toEqual({
       status: 'queued',
       id: 31,
     });
@@ -87,6 +94,8 @@ describe('queuePersonalDataExport', () => {
     expect(insert.sql.replace(/\s+/g, ' ')).toContain(
       `on conflict ("userId") where status IN ('queued', 'building') do nothing`
     );
+    // The request is recorded with its ticket and the UTC day the user asked.
+    expect(insert.parameters).toEqual(expect.arrayContaining([555, '2026-10-02']));
     const auditRow = sent.queries.find((q) => /^insert into "ModActivity"/i.test(q.sql))!;
     expect(auditRow.parameters).toEqual(
       expect.arrayContaining([4, 'user', 7, 'queuePersonalDataExport'])
@@ -102,7 +111,7 @@ describe('queuePersonalDataExport', () => {
     sent.insertRows = [{ id: 33 }];
     sent.failAudit = true;
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await queuePersonalDataExport({ userId: 7, requestedById: 4 })).toEqual({
+    expect(await queuePersonalDataExport(input)).toEqual({
       status: 'error',
     });
     expect(sent.tx).toEqual(['begin', 'rollback']);
@@ -111,7 +120,7 @@ describe('queuePersonalDataExport', () => {
 
   it('answers already-queued when the insert hit the index, and audits nothing', async () => {
     sent.insertRows = [];
-    expect(await queuePersonalDataExport({ userId: 7, requestedById: 4 })).toEqual({
+    expect(await queuePersonalDataExport(input)).toEqual({
       status: 'already-queued',
     });
     expect(sent.queries.some((q) => /^insert into "ModActivity"/i.test(q.sql))).toBe(false);

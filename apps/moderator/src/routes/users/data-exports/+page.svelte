@@ -54,6 +54,17 @@
       User id
       <Input name="userId" inputmode="numeric" required class="w-40" disabled={!data.canQueue} />
     </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      Date the user asked
+      <Input
+        name="requestedAt"
+        type="date"
+        required
+        max={new Date().toISOString().slice(0, 10)}
+        class="w-44"
+        disabled={!data.canQueue}
+      />
+    </label>
     <Button
       type="submit"
       size="sm"

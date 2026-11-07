@@ -1,12 +1,12 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
 import { requiresGrant } from '../access';
-import type { QueueResult } from '../personal-data-export.service';
+import type { QueueInput, QueueResult } from '../personal-data-export.service';
 import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
 
 export const ALREADY_QUEUED = 'An export for this account is already queued or building.';
 
 export type ExportActionDeps = TicketActionDeps & {
-  queue: (input: { userId: number; requestedById: number }) => Promise<QueueResult>;
+  queue: (input: QueueInput) => Promise<QueueResult>;
 };
 
 /**
@@ -21,9 +21,17 @@ export function createTicketExportActions(deps: ExportActionDeps) {
       async (event: RequestEvent) => {
         const ok = await checkTicketTarget(deps.linkedUser, event);
         if (ok.refused) return ok.refused;
+        // The user asked when they opened the ticket: that date, from the help desk, starts the clock.
+        const requestedAt = ok.ticketCreatedAt ? new Date(ok.ticketCreatedAt) : null;
+        if (!requestedAt || Number.isNaN(requestedAt.getTime()))
+          return fail(503, {
+            error: "Could not read the ticket's date — nothing was queued. Try again.",
+          });
         const result = await deps.queue({
           userId: ok.userId,
           requestedById: event.locals.user.id,
+          ticketId: Number(ok.ticketId),
+          requestedAt,
         });
         if (result.status === 'already-queued') return fail(409, { error: ALREADY_QUEUED });
         if (result.status === 'no-user') return fail(404, { error: 'No such account.' });

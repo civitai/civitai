@@ -5,13 +5,16 @@ import { dbWrite } from '~/server/db/client';
 import { pgDbReadLong } from '~/server/db/pgDb';
 import {
   personalDataExportBuiltEmail,
+  personalDataExportHeldEmail,
   personalDataExportReadyEmail,
+  personalDataExportRefusedEmail,
 } from '~/server/email/templates/personalDataExport.email';
 import { logToAxiom } from '~/server/logging/client';
 import { accountHoldSql, getAccountLegalHold } from '~/server/services/legal-hold.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import {
   RELEASE_WINDOW_SECONDS,
+  deleteObjects,
   exportObjectKey,
   getExportBucket,
   presignDownload,
@@ -36,8 +39,6 @@ export const EXPORT_STATUSES = [
   'released',
 ] as const;
 export type ExportStatus = (typeof EXPORT_STATUSES)[number];
-export const MOD_NOTES_MODES = ['text-redacted-separate-file', 'count'] as const;
-export type ModNotesMode = (typeof MOD_NOTES_MODES)[number];
 
 /** Attempts before an export is marked failed. Each attempt writes a new object key. */
 export const MAX_ATTEMPTS = 3;
@@ -51,10 +52,15 @@ export type ExportRow = {
   userId: number;
   requestedById: number;
   status: ExportStatus;
-  modNotesMode: ModNotesMode;
   attempts: number;
   archiveKey: string | null;
   builtAt: Date | null;
+  /** When the export was queued. */
+  createdAt: Date;
+  /** The help-desk ticket the request came in on, if any. */
+  ticketId: number | null;
+  /** The date the user asked, YYYY-MM-DD (a DATE read as text, so no time zone can move it). */
+  requestedAt: string | null;
 };
 
 function errorMessage(e: unknown): string {
@@ -113,7 +119,8 @@ export async function claimNextExport(): Promise<ExportRow | null> {
       SELECT id FROM "PersonalDataExport" WHERE status = 'queued'
       ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
     )
-    RETURNING id, "userId", "requestedById", status, "modNotesMode", attempts, "archiveKey", "builtAt"
+    RETURNING id, "userId", "requestedById", status, attempts, "archiveKey", "builtAt", "createdAt",
+      "ticketId", "requestedAt"::text AS "requestedAt"
   `;
   return row ?? null;
 }
@@ -233,7 +240,8 @@ async function staffForRedaction() {
 
 /**
  * Builds one claimed export: the archive streamed into the bucket, the notes file beside it, the row
- * marked built (or held) only after the upload has completed, then the requester emailed a link.
+ * marked built only after the upload has completed, then the requester emailed a link. A held
+ * account is refused instead (`refuseHeld`).
  */
 export async function buildExport(row: ExportRow, deps: ExportDeps) {
   const user = await dbWrite.user.findUnique({
@@ -247,6 +255,12 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
     `;
     return 'failed' as const;
   }
+
+  // A held account's archive is never built: Legal is told instead.
+  const before = await exportHoldReasons(user.id);
+  // A hold that could not be READ is not a hold: retry rather than build or refuse.
+  if (before.legs.includes('unconfirmed')) return recordFailure(row, 'hold check failed');
+  if (before.legs.length) return refuseHeld(row, before.legs, []);
 
   const takenAt = new Date();
   const archiveKey = exportObjectKey(row.id, 'archive');
@@ -304,7 +318,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       await writer.addFile('manifest.json', JSON.stringify(manifest, null, 2));
     });
 
-    if (row.modNotesMode === 'text-redacted-separate-file' && notes.length) {
+    if (notes.length) {
       const staff = await staffForRedaction();
       modNotesKey = exportObjectKey(row.id, 'notes');
       await putSmallObject(
@@ -325,10 +339,12 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
     return status;
   }
 
+  // Checked again: a hold can land while the archive is built. Then the archive is deleted.
   const { legs: holdReasons } = await exportHoldReasons(user.id);
-  // A hold that could not be READ is not a hold: retry the build rather than park it as held.
   if (holdReasons.includes('unconfirmed')) return recordFailure(row, 'hold check failed');
-  const status: ExportStatus = holdReasons.length ? 'held' : 'built';
+  if (holdReasons.length)
+    return refuseHeld(row, holdReasons, [archiveKey, modNotesKey], deps.bucket);
+  const status: ExportStatus = 'built';
   // Staff-only: the row's copy. The archive's manifest carries no note count.
   const summary = manifest && {
     files: manifest.files.map(({ file, rows, status }) => ({ file, rows, status })),
@@ -362,19 +378,89 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       details: { exportId: row.id, errors },
     }).catch(() => undefined);
 
-  await emailRequester(
-    row,
-    user,
-    { archiveKey, modNotesKey, held: status === 'held' },
-    deps.bucket
-  );
+  await emailRequester(row, user, { archiveKey, modNotesKey }, deps.bucket);
   return status;
+}
+
+/** The subject and body lines of the refusal notice Legal's intake reads. */
+export function legalRefusalLines(input: {
+  userId: number;
+  ticketId: number | null;
+  requestedAt: string | null;
+}) {
+  const lines = [
+    `user=${input.userId}`,
+    `ticket=${input.ticketId ?? 'none'}`,
+    `requested=${input.requestedAt ?? 'unknown'}`,
+  ];
+  return { subject: `DATA-EXPORT-REFUSED ${lines.join(' ')}`, lines };
+}
+
+/**
+ * A held account: no archive (any already uploaded is deleted), one notice to Legal, and the
+ * requesting moderator told only that it was routed to Legal.
+ */
+async function refuseHeld(
+  row: ExportRow,
+  holdReasons: string[],
+  uploaded: (string | null)[],
+  bucket?: ExportBucket
+) {
+  if (bucket) await deleteObjects(bucket, uploaded);
+  const recorded = await dbWrite.$executeRaw`
+    UPDATE "PersonalDataExport"
+    SET status = 'held', "holdReasons" = ${holdReasons}::text[], "archiveKey" = NULL,
+        "modNotesKey" = NULL, error = NULL
+    WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
+  `;
+  if (recorded !== 1) return 'failed' as const;
+  logToAxiom({
+    type: 'info',
+    name: LOG,
+    message: 'export refused: account under a hold',
+    details: {
+      exportId: row.id,
+      userId: row.userId,
+      requestedById: row.requestedById,
+      queuedAt: row.createdAt,
+    },
+  }).catch(() => undefined);
+
+  const { subject, lines } = legalRefusalLines(row);
+  try {
+    await personalDataExportRefusedEmail.send({
+      to: env.PERSONAL_DATA_EXPORT_LEGAL_EMAIL,
+      subject,
+      lines,
+    });
+  } catch (e) {
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport" SET error = ${`legal notice failed: ${errorMessage(e)}`}
+      WHERE id = ${row.id}
+    `;
+  }
+  try {
+    const requester = await dbWrite.user.findUnique({
+      where: { id: row.requestedById },
+      select: { email: true },
+    });
+    if (requester?.email)
+      await personalDataExportHeldEmail.send({ to: requester.email, exportId: row.id });
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `held notice to the requester failed: ${errorMessage(e)}`,
+      details: { exportId: row.id },
+    }).catch(() => undefined);
+  }
+  return 'held' as const;
 }
 
 async function emailRequester(
   row: ExportRow,
   user: { id: number; username: string | null },
-  built: { archiveKey: string; modNotesKey: string | null; held: boolean },
+  built: { archiveKey: string; modNotesKey: string | null },
   bucket: ExportBucket
 ) {
   try {
@@ -396,7 +482,6 @@ async function emailRequester(
       exportId: row.id,
       userId: user.id,
       username: user.username,
-      held: built.held,
       archiveLink: archive.url,
       notesLink: notes?.url ?? null,
       expiresAt: archive.expiresAt,

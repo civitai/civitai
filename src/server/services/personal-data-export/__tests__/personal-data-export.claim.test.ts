@@ -48,7 +48,15 @@ let db: PGlite;
 
 beforeAll(async () => {
   db = new PGlite();
-  await db.exec(readFileSync(MIGRATION, 'utf8'));
+  // Both migrations, in the order they are applied.
+  for (const f of [
+    MIGRATION,
+    MIGRATION.replace(
+      '20261225120000_personal_data_export',
+      '20261228120000_personal_data_export_request'
+    ),
+  ])
+    await db.exec(readFileSync(f, 'utf8'));
   await db.exec(`
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "blockedFor" text, "needsReview" text,
       minor boolean DEFAULT false, ingestion text DEFAULT 'Scanned');
