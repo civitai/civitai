@@ -363,6 +363,20 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
     return ids.length;
   }
 
+  if (sql.includes('"blockedFor" = CASE')) {
+    const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
+    let n = 0;
+    for (const row of store.images) {
+      if (!ids.includes(row.id)) continue;
+      row.ingestion = 'Blocked';
+      row.nsfwLevel = nsfwLevel;
+      row.blockedFor = row.blockedFor === kept ? kept : reason;
+      fireQueueTrigger(row);
+      n++;
+    }
+    return n;
+  }
+
   // The account-deletion marker strip the moderation block sites now issue.
   if (sql.includes('UPDATE "Image"') && sql.includes('- ?::text')) {
     // Bindings, in order: the two key names, then the scope (an id array or a userId), then the

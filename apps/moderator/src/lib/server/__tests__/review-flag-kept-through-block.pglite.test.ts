@@ -234,6 +234,33 @@ describe('blockImage', () => {
   });
 });
 
+describe('blockImage and the block reason', () => {
+  const blockedFor = async (id: number) =>
+    (
+      await db.query<{ blockedFor: string | null }>(
+        `SELECT "blockedFor" FROM "Image" WHERE "id" = $1`,
+        [id]
+      )
+    ).rows[0].blockedFor;
+
+  it('keeps the original reason when blocking again after the review flag came off', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES (55, 10, NULL, 'CSAM', 'Blocked', 32)`
+    );
+
+    await blockImage({ imageId: 55, userId: 2 });
+
+    expect(await blockedFor(55)).toBe('CSAM');
+  });
+
+  it('records any other block as moderated', async () => {
+    await blockImage({ imageId: FLAGGED, userId: 2 });
+
+    expect(await blockedFor(FLAGGED)).toBe('moderated');
+  });
+});
+
 // Removed with only the flag left: the flag's own queue lists it, and must not undo the removal.
 describe('an image removed with only the review flag left', () => {
   it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
