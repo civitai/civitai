@@ -738,9 +738,11 @@ export async function getAppFeedbackForRefund(id: number): Promise<AppFeedbackFo
 }
 
 /**
- * Close a report a moderator just refunded: moderator status `actioned` — the triage vocabulary's
- * "a moderator acted on it" — stamped with who and when, and the refund appended to the triage note
- * so the queue shows what was done without a second lookup. The developer's own `ownerStatus` is
+ * Record a moderator App refund on its report. With `resolve`, the report is closed: moderator status
+ * `actioned` — the triage vocabulary's "a moderator acted on it" — stamped with who and when. Without
+ * it the status is left as it was (some of what it reported was not refunded) and only the note is
+ * written. Either way the refund is appended to the triage note so the queue shows what was done
+ * without a second lookup. The developer's own `ownerStatus` is
  * left alone: it is theirs to set, and setting it would notify the reporter in the developer's name.
  *
  * Appended, never overwritten: the note may already hold another moderator's text, and nothing
@@ -752,18 +754,21 @@ export async function modResolveAppFeedbackWithRefund({
   feedbackId,
   reporterUserId,
   note,
+  resolve,
 }: {
   moderatorId: number;
   feedbackId: number;
   reporterUserId: number;
   note: string;
+  resolve: boolean;
 }): Promise<boolean> {
   return dbWrite.$transaction(async (tx) => {
+    const close = resolve
+      ? Prisma.sql`"status" = 'actioned', "handledById" = ${moderatorId}, "handledAt" = now(),`
+      : Prisma.empty;
     const count = await tx.$executeRaw`
       UPDATE "Feedback"
-      SET "status" = 'actioned',
-          "handledById" = ${moderatorId},
-          "handledAt" = now(),
+      SET ${close}
           "triageNote" = CASE
             WHEN COALESCE("triageNote", '') = '' THEN ${note}
             ELSE "triageNote" || E'\n' || ${note}

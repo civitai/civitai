@@ -427,6 +427,21 @@ describe('refundBlocker is the refund planner’s skip reason', () => {
         h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('processing', [debit(10, 41)])),
     ],
     [
+      'not-succeeded',
+      () => h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('failed', [debit(14, 53)])),
+    ],
+    [
+      'charges-unreadable',
+      () => {
+        h.getAppWorkflowRecords.mockResolvedValue({
+          workflows: [recorded()],
+          spends: [{ ...recorded(), buzzAmount: 59, attributedAt: TODAY }],
+          fees: [],
+        });
+        h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', []));
+      },
+    ],
+    [
       'unsupported-charge',
       () =>
         h.getOrchestratorWorkflowCharges.mockResolvedValue(
@@ -466,7 +481,9 @@ describe('refundBlocker is the refund planner’s skip reason', () => {
       'workflow-not-found',
       'mixed-users',
       'not-terminal',
+      'not-succeeded',
       'unsupported-charge',
+      'charges-unreadable',
       'orchestrator-partial-refund',
       'no-charges',
       'lookup-failed',

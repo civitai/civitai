@@ -20,12 +20,14 @@ export default defineModeratorEndpoint('apps.refundWorkflows', {
     `More than ${APP_REFUND_CAP_BUZZ.toLocaleString(
       'en-US'
     )} Buzz in one call (all colours together, generation legs plus fees) also requires \`apps.buzz.refund.large\`. The total is computed before any money moves.`,
+    'The cap is PER CALL, not per day or per user: several calls can each stay under it. What bounds throughput is the rate limit below (10 calls a minute per moderator), and every call is audited.',
     'Dry run unless `execute=true`. The dry run reports exactly what execute would do, skips included.',
     'Idempotent: each leg is refunded at most once (Buzz records `refund-<transactionId>`), and the fee at most once (`block-author-fee-reversal-<workflowId>`). A repeat call refunds nothing and reports `already-refunded`.',
     'Author fee: still reversible → reversed (the author is never paid it). Already settleable → the user is refunded it and the platform absorbs it (`platform-absorbed`); the author is not clawed back.',
-    'Skipped, never refunded: not an App Blocks workflow, not found on the orchestrator, more than one user on its records, still running, a charge not on the Buzz ledger, or a colour the orchestrator has already partly credited (a leg can only be refunded whole).',
+    'Only a SUCCEEDED workflow is refunded — the orchestrator refunds a failed, expired or canceled one itself. Skipped, never refunded: not an App Blocks workflow, not found on the orchestrator (404 only; any other read failure is `lookup-failed`), more than one user on its records, still running, not succeeded, a charge not on the Buzz ledger, no debit on the orchestrator record although a paid spend or fee was recorded (`charges-unreadable` — the fee is never refunded alone), or any colour the orchestrator credited other than exactly in full (a leg can only be refunded whole).',
     'Each refunded user is notified once per call, with a fixed sentence — the `reason` stays in the audit row (and the feedback triage note).',
-    'With `feedbackId`: the report must be App feedback filed by the refunded user about the same app. On a fully successful execute it is marked `actioned` with the refund appended to its triage note.',
+    'With `feedbackId`: the report must be App feedback filed by the refunded user about the same app. On execute the refund is appended to its triage note; it is marked `actioned` only when every requested workflow ended refunded or already-refunded, otherwise its status is unchanged and the note lists what was not and why.',
+    'Audit row `affected`: every workflow with its outcome, Buzz returned by colour and refund transaction ids; each refund transaction carries the acting moderator id in its details.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },
   input: z.object({
@@ -62,14 +64,17 @@ export default defineModeratorEndpoint('apps.refundWorkflows', {
         code: 'FORBIDDEN',
         message: `This call would refund ${plan.totalBuzz} Buzz; over ${APP_REFUND_CAP_BUZZ} needs the "apps.buzz.refund.large" moderator permission.`,
       });
-    if (input.feedbackId !== undefined) await assertFeedbackMatchesPlan(input.feedbackId, plan);
+    const feedback =
+      input.feedbackId !== undefined
+        ? await assertFeedbackMatchesPlan(input.feedbackId, plan)
+        : undefined;
 
     const result = await refundAppWorkflows({
       plan,
       execute: input.execute,
       moderatorId: ctx.actor.id,
       reason: input.reason,
-      feedbackId: input.feedbackId,
+      ...(feedback ? { feedback: { id: feedback.id, userId: feedback.userId } } : {}),
     });
     const userIds = [
       ...new Set(result.workflows.map((w) => w.userId).filter((id): id is number => id !== null)),
@@ -86,6 +91,23 @@ export default defineModeratorEndpoint('apps.refundWorkflows', {
         workflowIds: input.workflowIds,
         userIds,
         ...(input.feedbackId !== undefined ? { feedbackIds: [input.feedbackId] } : {}),
+        // Built from the result, so it records what happened (or, on a dry run, what would).
+        execute: input.execute,
+        workflows: result.workflows.map((w) => ({
+          workflowId: w.workflowId,
+          userId: w.userId,
+          outcome: w.outcome,
+          ...(w.reason ? { reason: w.reason } : {}),
+          refundBuzz: w.refundBuzz,
+          byColour: w.byColour,
+          refundTransactionIds: [
+            ...w.legs.filter((l) => l.status === 'refunded').map((l) => l.refundTransactionId),
+            ...(w.authorFee?.status === 'done' && w.authorFee.treatment !== 'already-refunded'
+              ? [`block-author-fee-reversal-${w.workflowId}`]
+              : []),
+          ],
+          ...(w.errors.length ? { errors: w.errors } : {}),
+        })),
       },
     };
   },

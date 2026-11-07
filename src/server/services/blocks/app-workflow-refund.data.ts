@@ -25,6 +25,8 @@ export type BlockSpendRecord = {
   workflowId: string;
   userId: number;
   appBlockId: string;
+  /** The PAID portion the submit recorded; 0 for a blue-only or free generation. */
+  buzzAmount: number;
   status: string;
   attributedAt: Date;
 };
@@ -62,7 +64,7 @@ export async function getAppWorkflowRecords(workflowIds: string[]): Promise<AppW
     `,
     dbWrite.$queryRaw<BlockSpendRecord[]>`
       SELECT "workflow_id" AS "workflowId", "user_id" AS "userId", "app_block_id" AS "appBlockId",
-             "status", "attributed_at" AS "attributedAt"
+             "buzz_amount" AS "buzzAmount", "status", "attributed_at" AS "attributedAt"
       FROM "block_spend_attribution"
       WHERE "workflow_id" = ANY(${workflowIds}::text[])
     `,
@@ -185,12 +187,10 @@ export async function getOrchestratorWorkflowCharges(
       })),
     };
   } catch (error) {
-    // `getWorkflow` maps a 404 to NOT_FOUND and a 400 (a malformed id) to BAD_REQUEST; both mean
-    // there is no such workflow to refund. A 401/403 is the system token being refused, and a 5xx or
-    // network failure is SERVICE_UNAVAILABLE — those propagate, because they say nothing about
-    // whether the workflow exists.
-    if (error instanceof TRPCError && (error.code === 'NOT_FOUND' || error.code === 'BAD_REQUEST'))
-      return { found: false };
+    // ONLY a 404 means there is no such workflow. Anything else — a 400, a 401/403 refusing the
+    // system token, a 5xx, a network failure — says nothing about whether the workflow exists, so it
+    // propagates and the workflow is reported `lookup-failed` (and never refunded).
+    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return { found: false };
     throw error;
   }
 }

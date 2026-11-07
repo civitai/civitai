@@ -185,6 +185,7 @@ describe('getAppWorkflowRecords', () => {
         workflowId: 'wf-a',
         userId: VIEWER,
         appBlockId: APP,
+        buzzAmount: 100,
         status: 'tracked',
         attributedAt: new Date('2026-11-05T10:00:01Z'),
       },
@@ -291,22 +292,22 @@ describe('getOrchestratorWorkflowCharges', () => {
     });
   });
 
-  // NOT_FOUND is a 404; BAD_REQUEST a malformed id.
-  it.each<'NOT_FOUND' | 'BAD_REQUEST'>(['NOT_FOUND', 'BAD_REQUEST'])(
-    '%s is "no such workflow"',
-    async (code) => {
-      getWorkflow.mockRejectedValue(new TRPCError({ code, message: 'x' }));
-      expect(await getOrchestratorWorkflowCharges('wf-a')).toEqual({ found: false });
-    }
-  );
+  it('only a 404 (NOT_FOUND) is "no such workflow"', async () => {
+    getWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'x' }));
+    expect(await getOrchestratorWorkflowCharges('wf-a')).toEqual({ found: false });
+  });
 
-  it.each<'SERVICE_UNAVAILABLE' | 'UNAUTHORIZED'>(['SERVICE_UNAVAILABLE', 'UNAUTHORIZED'])(
-    '%s propagates — it says nothing about whether the workflow exists',
-    async (code) => {
-      getWorkflow.mockRejectedValue(new TRPCError({ code, message: 'x' }));
-      await expect(getOrchestratorWorkflowCharges('wf-a')).rejects.toThrow('x');
-    }
-  );
+  // Every other refusal says nothing about whether the workflow exists — a 401/403 is the system
+  // token being refused — so it must surface (the caller reports `lookup-failed`), never `found: false`.
+  it.each<'BAD_REQUEST' | 'UNAUTHORIZED' | 'FORBIDDEN' | 'SERVICE_UNAVAILABLE'>([
+    'BAD_REQUEST',
+    'UNAUTHORIZED',
+    'FORBIDDEN',
+    'SERVICE_UNAVAILABLE',
+  ])('%s propagates — it says nothing about whether the workflow exists', async (code) => {
+    getWorkflow.mockRejectedValue(new TRPCError({ code, message: 'x' }));
+    await expect(getOrchestratorWorkflowCharges('wf-a')).rejects.toThrow('x');
+  });
 
   it('refuses to run without a system token', async () => {
     setEnv({ ORCHESTRATOR_ACCESS_TOKEN: '' });

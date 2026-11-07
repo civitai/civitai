@@ -870,6 +870,8 @@ export async function reverseBlockAuthorFee(args: {
   terminalStatus: string;
   /** Injectable clock, so the mint-eligibility boundary is testable. */
   now?: Date;
+  /** Recorded on the refund transaction (the moderator refund marks itself). */
+  refundDetails?: Record<string, unknown>;
 }): Promise<ReverseBlockAuthorFeeResult> {
   const { workflowId, terminalStatus } = args;
   // 🔴 READ ONCE, USED BY BOTH THE CHECK AND THE CLAIM. Recomputing it at the
@@ -970,6 +972,7 @@ export async function reverseBlockAuthorFee(args: {
       viewerUserId: row.viewerUserId,
       buzzType: row.buzzType as BuzzAccountType,
       feeBuzz: row.feeBuzz,
+      ...(args.refundDetails ? { details: args.refundDetails } : {}),
     });
     if (!refunded) return { reversed: false, reason: 'refund-failed' };
 
@@ -1024,7 +1027,9 @@ export async function refundBlockAuthorFee(args: {
   viewerUserId: number;
   buzzType: BuzzAccountType;
   feeBuzz: number;
-}): Promise<boolean> {
+  /** Recorded on the refund transaction. Omitted → the row is exactly as before. */
+  details?: Record<string, unknown>;
+}): Promise<false | 'created' | 'existed'> {
   const { workflowId, viewerUserId, buzzType, feeBuzz } = args;
   try {
     const result = await createBuzzTransactionMany([
@@ -1037,10 +1042,13 @@ export async function refundBlockAuthorFee(args: {
         description: `${APP_AUTHOR_FEE_DESCRIPTION} refund`,
         type: TransactionType.Refund,
         externalTransactionId: blockAuthorFeeReversalKey(workflowId),
+        ...(args.details ? { details: args.details } : {}),
       },
     ]);
-    const landed = (result?.transactions?.length ?? 0) + (result?.conflicts?.length ?? 0) > 0;
-    if (landed) return true;
+    // A conflict is the key already on the ledger: landed, but by an earlier call — which a caller
+    // counting what IT returned needs to tell apart from a refund it just made.
+    if ((result?.transactions?.length ?? 0) > 0) return 'created';
+    if ((result?.conflicts?.length ?? 0) > 0) return 'existed';
   } catch (error) {
     logToAxiom(
       {

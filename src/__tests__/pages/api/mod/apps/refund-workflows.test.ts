@@ -154,6 +154,8 @@ let world: {
   ledger: Map<string, LedgerRow>;
   legPayer: Map<string, { userId: number; colour: string; amount: number }>;
   failRefund: Set<string>;
+  /** Buzz answers a repeat refund 200 (today's behaviour) instead of 409. */
+  repeat200: boolean;
   feedback: Map<number, { id: number; area: string; userId: number; appBlockId: string | null }>;
 };
 
@@ -182,6 +184,7 @@ function addWorkflow(opts: {
     workflowId: opts.id,
     userId,
     appBlockId,
+    buzzAmount: legs.reduce((sum, l) => sum + l.amount, 0),
     status: 'tracked',
     attributedAt: TODAY,
   });
@@ -280,7 +283,10 @@ function installWorld() {
   h.refundTransaction.mockImplementation(async (id) => {
     const transactionId = id as string;
     if (world.failRefund.has(transactionId)) throw new Error('Buzz service unavailable');
-    if (world.ledger.has(`refund-${transactionId}`)) throw conflict();
+    if (world.ledger.has(`refund-${transactionId}`)) {
+      if (world.repeat200) return { transactionId };
+      throw conflict();
+    }
     const payer = world.legPayer.get(transactionId)!;
     world.ledger.set(`refund-${transactionId}`, {
       fromAccountId: 0,
@@ -400,6 +406,7 @@ beforeEach(() => {
     ledger: new Map(),
     legPayer: new Map(),
     failRefund: new Set(),
+    repeat200: false,
     feedback: new Map(),
   };
   installWorld();
@@ -604,7 +611,7 @@ describe('execute', () => {
     expect(h.refundTransaction).toHaveBeenCalledWith(
       txId(21),
       'Refund: App generation not delivered',
-      { workflowId: 'wf-one', moderatorRefund: true }
+      { workflowId: 'wf-one', moderatorRefund: true, moderatorId: MODERATOR }
     );
     expect(world.ledger.get(`refund-${txId(21)}`)).toMatchObject({
       toAccountId: VIEWER,
@@ -702,7 +709,6 @@ describe('execute', () => {
   it('a workflow the orchestrator credited back in full is already refunded', async () => {
     addWorkflow({
       id: 'wf-orch-full',
-      status: 'failed',
       legs: [{ n: 71, amount: 83, colour: 'yellow' }],
       credits: [{ amount: 83, colour: 'yellow' }],
     });
@@ -713,6 +719,53 @@ describe('execute', () => {
 
   describe('skips, and never refunds', () => {
     it.each([
+      ...(['failed', 'expired', 'canceled'] as string[]).map(
+        (status) =>
+          [
+            `a workflow that ${status} — the orchestrator refunds those itself`,
+            () =>
+              addWorkflow({
+                id: 'wf-x',
+                status,
+                legs: [{ n: 80, amount: 97, colour: 'yellow' }],
+              }),
+            'not-succeeded',
+          ] as [string, () => void, string]
+      ),
+      [
+        'a credit in a colour nothing was debited in',
+        () =>
+          addWorkflow({
+            id: 'wf-x',
+            legs: [{ n: 89, amount: 97, colour: 'yellow' }],
+            credits: [{ amount: 11, colour: 'blue' }],
+          }),
+        'orchestrator-partial-refund',
+      ],
+      [
+        'credits exceeding the debit in a colour',
+        () =>
+          addWorkflow({
+            id: 'wf-x',
+            legs: [{ n: 90, amount: 97, colour: 'yellow' }],
+            credits: [{ amount: 98, colour: 'yellow' }],
+          }),
+        'orchestrator-partial-refund',
+      ],
+      [
+        'a recorded paid spend the orchestrator read shows no debit for',
+        () => {
+          addWorkflow({ id: 'wf-x', legs: [{ n: 91, amount: 97, colour: 'yellow' }] });
+          world.orchestrator.set('wf-x', { found: true, status: 'succeeded', transactions: [] });
+        },
+        'charges-unreadable',
+      ],
+      [
+        'a charged fee with no generation debit — never the fee alone',
+        () =>
+          addWorkflow({ id: 'wf-x', fee: { state: 'unsettled', amount: 17, colour: 'yellow' } }),
+        'charges-unreadable',
+      ],
       [
         'a colour the orchestrator partly credited',
         () =>
@@ -1042,15 +1095,73 @@ describe('partial failure', () => {
     });
   });
 
-  it('control: a leg answering 409 with its refund already on the ledger is not a failure', async () => {
+  it('a leg answering 409 with its refund on the ledger is neither a failure nor counted', async () => {
     addWorkflow({ id: 'wf-race', legs: [{ n: 125, amount: 79, colour: 'yellow' }] });
-    // Another call refunded the leg between this call's plan and its refund.
+    // Another call refunded the leg between this call's ledger re-read and its refund.
     h.refundTransaction.mockImplementationOnce(async () => {
       alreadyRefunded(125);
       throw conflict();
     });
     const { body } = await refund(['wf-race']);
-    expect(body.workflows[0]).toMatchObject({ outcome: 'refunded', errors: [] });
+    expect(body.workflows[0]).toMatchObject({
+      outcome: 'already-refunded',
+      refundBuzz: 0,
+      legs: [{ status: 'already-refunded' }],
+      errors: [],
+    });
+    expect(h.createNotification).not.toHaveBeenCalled();
+  });
+
+  describe('only what THIS call created is counted (Buzz answers a repeat refund 200)', () => {
+    beforeEach(() => {
+      world.repeat200 = true;
+    });
+    /** Runs `between` after the plan is made and before any money moves. */
+    const betweenPlanAndExecute = (between: () => void) =>
+      h.getAppNames.mockImplementationOnce(async (ids) => {
+        between();
+        return new Map(ids.map((id): [string, string] => [id, APP_NAME]));
+      });
+
+    it('a leg refunded by another call since the plan is reported, not counted or notified', async () => {
+      addWorkflow({ id: 'wf-200', legs: [{ n: 161, amount: 167, colour: 'yellow' }] });
+      betweenPlanAndExecute(() => alreadyRefunded(161));
+      const { body } = await refund(['wf-200']);
+      expect(body.workflows[0]).toMatchObject({
+        outcome: 'already-refunded',
+        refundBuzz: 0,
+        legs: [{ status: 'already-refunded', refundTransactionId: `refund-${txId(161)}` }],
+      });
+      expect(body.totals.refundBuzz).toBe(0);
+      expect(h.refundTransaction).not.toHaveBeenCalled();
+      expect(h.createNotification).not.toHaveBeenCalled();
+    });
+
+    it('a fee returned by another call since the plan is reported, not counted', async () => {
+      addWorkflow({
+        id: 'wf-200-fee',
+        legs: [{ n: 162, amount: 173, colour: 'yellow' }],
+        fee: { state: 'settled', amount: 13, colour: 'yellow' },
+      });
+      betweenPlanAndExecute(() =>
+        world.ledger.set(feeReversalKey('wf-200-fee'), {
+          fromAccountId: 0,
+          toAccountId: VIEWER,
+          fromAccountType: 'yellow',
+          toAccountType: 'yellow',
+          amount: 13,
+        })
+      );
+      const { body } = await refund(['wf-200-fee']);
+      expect(body.workflows[0]).toMatchObject({
+        outcome: 'refunded',
+        refundBuzz: 173,
+        byColour: { yellow: 173 },
+        authorFee: { treatment: 'already-refunded', status: 'done' },
+      });
+      expect(h.createBuzzTransactionMany).not.toHaveBeenCalled();
+      expect(h.createNotification.mock.calls[0][0].details).toMatchObject({ amount: 173 });
+    });
   });
 
   it('a re-run after a partly failed call refunds only what is still missing', async () => {
@@ -1200,6 +1311,7 @@ describe('linking feedback', () => {
       moderatorId: MODERATOR,
       feedbackId: FEEDBACK,
       reporterUserId: VIEWER,
+      resolve: true,
     });
     expect(args.note).toContain('151 Buzz');
     expect(args.note).toContain(`refund-${txId(141)}`);
@@ -1239,7 +1351,48 @@ describe('linking feedback', () => {
     world.failRefund.add(txId(141));
     const { body } = await refund(['wf-fb'], { feedbackId: FEEDBACK });
     expect(body.feedback).toMatchObject({ feedbackId: FEEDBACK, resolved: false });
-    expect(h.modResolveAppFeedbackWithRefund).not.toHaveBeenCalled();
+    expect(h.modResolveAppFeedbackWithRefund).toHaveBeenCalledWith(
+      expect.objectContaining({ resolve: false, note: expect.stringContaining('wf-fb') })
+    );
+    expect(h.modResolveAppFeedbackWithRefund.mock.calls[0][0].note).toContain(
+      'Buzz service unavailable'
+    );
+  });
+
+  it('a call where any requested workflow was skipped leaves its status, and notes why', async () => {
+    world.feedback.set(FEEDBACK, {
+      id: FEEDBACK,
+      area: 'app-block',
+      userId: VIEWER,
+      appBlockId: APP,
+    });
+    addWorkflow({
+      id: 'wf-fb-failed',
+      status: 'failed',
+      legs: [{ n: 142, amount: 163, colour: 'yellow' }],
+    });
+    const { body } = await refund(['wf-fb', 'wf-fb-failed'], { feedbackId: FEEDBACK });
+    expect(body.workflows.map((w: { outcome: string }) => w.outcome)).toEqual([
+      'refunded',
+      'skipped',
+    ]);
+    expect(body.feedback).toMatchObject({ feedbackId: FEEDBACK, resolved: false });
+    const args = h.modResolveAppFeedbackWithRefund.mock.calls[0][0];
+    expect(args.resolve).toBe(false);
+    expect(args.note).toContain('wf-fb-failed (not-succeeded)');
+  });
+
+  it('control: every requested workflow already refunded still resolves it', async () => {
+    world.feedback.set(FEEDBACK, {
+      id: FEEDBACK,
+      area: 'app-block',
+      userId: VIEWER,
+      appBlockId: APP,
+    });
+    alreadyRefunded(141);
+    const { body } = await refund(['wf-fb'], { feedbackId: FEEDBACK });
+    expect(body.feedback).toEqual({ feedbackId: FEEDBACK, resolved: true });
+    expect(h.modResolveAppFeedbackWithRefund.mock.calls[0][0].resolve).toBe(true);
   });
 
   it('a feedback write that throws after the money moved is reported, not turned into an error', async () => {
@@ -1279,8 +1432,90 @@ describe('the audit row', () => {
         action: 'apps.refundWorkflows',
         outcome: 'ok',
         payload: expect.objectContaining({ reason: REASON, workflowIds: ['wf-audit'] }),
-        affected: { workflowIds: ['wf-audit'], userIds: [VIEWER], feedbackIds: [FEEDBACK] },
+        affected: {
+          workflowIds: ['wf-audit'],
+          userIds: [VIEWER],
+          feedbackIds: [FEEDBACK],
+          execute: true,
+          workflows: [
+            {
+              workflowId: 'wf-audit',
+              userId: VIEWER,
+              outcome: 'refunded',
+              refundBuzz: 157,
+              byColour: { yellow: 157 },
+              refundTransactionIds: [`refund-${txId(151)}`],
+            },
+          ],
+        },
       })
     );
+  });
+
+  it('records each workflow’s outcome, colours and refund ids — the fee included — and why one was skipped', async () => {
+    addWorkflow({
+      id: 'wf-audit-fee',
+      legs: [
+        { n: 152, amount: 179, colour: 'yellow' },
+        { n: 153, amount: 181, colour: 'blue' },
+      ],
+      fee: { state: 'settled', amount: 19, colour: 'yellow' },
+    });
+    addWorkflow({
+      id: 'wf-audit-skip',
+      status: 'canceled',
+      legs: [{ n: 154, amount: 191, colour: 'yellow' }],
+    });
+    await refund(['wf-audit-fee', 'wf-audit-skip']);
+    const affected = h.audit.mock.calls[0][0].affected;
+    expect(affected.workflows).toEqual([
+      {
+        workflowId: 'wf-audit-fee',
+        userId: VIEWER,
+        outcome: 'refunded',
+        refundBuzz: 379,
+        byColour: { yellow: 198, blue: 181 },
+        refundTransactionIds: [
+          `refund-${txId(152)}`,
+          `refund-${txId(153)}`,
+          feeReversalKey('wf-audit-fee'),
+        ],
+      },
+      {
+        workflowId: 'wf-audit-skip',
+        userId: VIEWER,
+        outcome: 'skipped',
+        reason: 'not-succeeded',
+        refundBuzz: 0,
+        byColour: {},
+        refundTransactionIds: [],
+      },
+    ]);
+  });
+
+  it('every refund carries the acting moderator — legs and the fee, through both fee paths', async () => {
+    addWorkflow({
+      id: 'wf-actor-a',
+      legs: [{ n: 155, amount: 193, colour: 'yellow' }],
+      fee: { state: 'unsettled', amount: 23, colour: 'yellow' },
+    });
+    addWorkflow({
+      id: 'wf-actor-b',
+      legs: [{ n: 156, amount: 197, colour: 'yellow' }],
+      fee: { state: 'settled', amount: 29, colour: 'yellow' },
+    });
+    await refund(['wf-actor-a', 'wf-actor-b']);
+    for (const c of h.refundTransaction.mock.calls)
+      expect(c[2]).toMatchObject({ moderatorRefund: true, moderatorId: MODERATOR });
+    const feeRows = h.createBuzzTransactionMany.mock.calls.flatMap(
+      (c) => c[0] as Record<string, unknown>[]
+    );
+    expect(feeRows).toHaveLength(2);
+    for (const row of feeRows)
+      expect(row.details).toEqual({
+        workflowId: expect.any(String),
+        moderatorRefund: true,
+        moderatorId: MODERATOR,
+      });
   });
 });
