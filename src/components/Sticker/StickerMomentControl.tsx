@@ -17,11 +17,11 @@ const clock = (ms: number) => {
 
 const playheadMs = (video: HTMLVideoElement) => Math.round(video.currentTime * 1000);
 
-/** Late enough to fit the whole window, because a window past the end never plays out. */
+/** Early enough to fit the whole window, because a window past the end never plays out. */
 export const clampMomentStart = (startMs: number, windowMs: number, videoMs: number) =>
   videoMs > 0 ? Math.min(startMs, Math.max(0, videoMs - windowMs)) : startMs;
 
-/** Static, or pinned to where the video is: the playhead sets when the sticker shows. */
+/** Static, or pinned to a moment set from the playhead. */
 export function StickerMomentControl({
   video,
   moment,
@@ -75,7 +75,6 @@ export function StickerMomentControl({
         value={moment ? 'moment' : 'static'}
         onChange={(value) => {
           if (value === 'static') return onChange(undefined);
-          // Held on the frame it was pinned to, so the sticker can be lined up with it.
           video.pause();
           onChange({
             startMs: clampMomentStart(

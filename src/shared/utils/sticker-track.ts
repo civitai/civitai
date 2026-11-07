@@ -1,5 +1,6 @@
 /**
- * A sticker that moves over a video: its pose over time.
+ * A sticker's pose over time on a video. It either moves (a recorded path) or holds one pose
+ * and shows only for a window (a moment sticker, built by `momentStickerTrack`).
  *
  * `Placement.data` keeps the position, scale and rotation at time zero, so every
  * reader that ignores the track still draws the sticker where it starts. `data`
@@ -50,7 +51,7 @@ export type StickerTrackPose = {
   show: boolean;
 };
 
-/** One capture, as the recorder takes it. `show` defaults to visible. */
+/** One capture of a pose. `show` defaults to visible. */
 export type StickerTrackSample = Omit<StickerTrackPose, 'show'> & { show?: boolean };
 
 export const STICKER_TRACK_VERSION = 1;
@@ -197,7 +198,7 @@ const BOUNDS: Record<ContinuousChannel, [number, number]> = {
 
 /**
  * Why a track is unusable, or null. Refused rather than repaired: a track
- * arrives from the recorder, so a malformed one is a bug or a crafted request,
+ * arrives from the client's encoder, so a malformed one is a bug or a crafted request,
  * and silently fixing it would store a motion the placer never made.
  *
  * Assumes the shape (numbers in pairs) is already checked, as the zod schema does.

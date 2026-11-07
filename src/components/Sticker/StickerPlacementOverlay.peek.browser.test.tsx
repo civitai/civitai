@@ -82,8 +82,7 @@ describe('a sticker outside its moment', () => {
       (page.getByAltText(alt).element() as HTMLElement).closest<HTMLElement>('.absolute')!;
 
     await expect.element(page.getByAltText(':test:')).toBeInTheDocument();
-    // The class, because the harness has no stylesheet. `!invisible` and not an inline style: the
-    // reveal's animation fills `visibility: visible`, and only an important rule beats that.
+    // The class, because the harness has no stylesheet.
     expect(stickerBox(':test:').classList).toContain('!invisible');
     expect(stickerBox(':other:').classList).not.toContain('!invisible');
   });

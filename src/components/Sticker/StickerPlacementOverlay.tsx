@@ -94,7 +94,7 @@ export function StickerPlacementOverlay({
   hiddenIds,
 }: {
   placements: PlacedSticker[];
-  /** Stickers outside their moment. Kept mounted, so showing one again does not replay the reveal. */
+  /** Hidden but kept mounted, so showing one again does not replay the reveal. */
   hiddenIds?: ReadonlySet<number>;
   /** Corners another decoration draws in, which the peek toggle keeps out of. */
   takenCorners?: PeekToggleCorner[];
@@ -505,8 +505,8 @@ export function StickerPlacementOverlay({
                 'absolute',
                 interactive && 'pointer-events-auto',
                 revealClassName,
-                // Important: the reveal's animation fills `visibility: visible`, which beats an
-                // inline style and anything else that is not important.
+                // Important: the reveal animation fills `visibility: visible`, which only an
+                // important rule beats.
                 hiddenIds?.has(placement.id) && '!invisible'
               )}
               style={{

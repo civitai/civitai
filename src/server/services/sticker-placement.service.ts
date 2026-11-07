@@ -914,7 +914,7 @@ export async function getStickerPlacementTracks({
     targetType: TARGET_TYPE,
     targetId: imageId,
   })) as { id: number; targetId: number; data: Prisma.JsonValue; track: unknown }[];
-  // Withholds what the listing withholds, so a moderator's view stays the only one that lists it.
+  // Same withholding as the listing: only a moderator gets kept-off placements.
   const keptOff = isModerator
     ? new Set<number>()
     : await keptOffPlacementIds(keptOffInputs(parseRows(rows)));

@@ -275,8 +275,7 @@ export async function listStickerPlacementRows(
     .execute();
 }
 
-/** Approved placements on these targets, for the per-image counts. Unordered, as the source was. */
-/** Tracks of the approved placements on one image. Never joined to the listing: a track can be 100 times its row. */
+/** Tracks of the approved placements on one image. Never joined to the listing: a track dwarfs its row. */
 export async function listPlacementTrackRows(
   db: Kysely<DB>,
   input: { surface: string; targetType: string; targetId: number }
@@ -292,6 +291,7 @@ export async function listPlacementTrackRows(
     .execute();
 }
 
+/** Approved placements on these targets, for the per-image counts. Unordered, as the source was. */
 export async function listApprovedPlacementRows(
   db: Kysely<DB>,
   input: { surface: string; targetType: string; targetIds: number[] }

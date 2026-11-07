@@ -53,7 +53,7 @@ describe('pinning a draft to a moment of the video', () => {
     expect(onChange).toHaveBeenCalledWith({ startMs: 20000, durationMs: 2000 });
   });
 
-  test('a playing video moves no pin, because looping and resuming are seeks too', async () => {
+  test('a seek on a playing video moves no pin, because looping and resuming are seeks too', async () => {
     const video = fakeVideo(12);
     Object.defineProperty(video, 'paused', { get: () => false });
     const onChange = vi.fn();

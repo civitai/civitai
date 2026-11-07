@@ -280,7 +280,6 @@ describe('what a draft sends when it is placed', () => {
     expect(sampleStickerTrack(track, 12500).show).toBe(true);
     expect(sampleStickerTrack(track, 11500).show).toBe(false);
 
-    // Scrubbing the selected draft moves what the next press sends.
     time = 2;
     video.dispatchEvent(new Event('seeked'));
     await page.getByRole('button', { name: 'Place free' }).click();

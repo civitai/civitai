@@ -19,9 +19,8 @@ const sameIds = (a: ReadonlySet<number>, b: ReadonlySet<number>) =>
 /**
  * The stickers on this video that its current time hides.
  *
- * Only approved placements have a track here, so a pending one stays on screen for
- * the owner who has to answer it. State changes only when a sticker crosses its
- * window, so playback renders nothing per frame.
+ * Pending placements are not in the read, which keeps them on screen for the owner who
+ * has to answer them.
  */
 export function useTrackHiddenIds(imageId: number, video: HTMLVideoElement | null) {
   const { data: tracks } = trpc.placement.getStickerTracks.useQuery(
@@ -52,8 +51,7 @@ export function useTrackHiddenIds(imageId: number, video: HTMLVideoElement | nul
     };
     onFrame();
 
-    // A paused video presents no frame to a seek until it lands, and a background tab presents
-    // none at all.
+    // The frame loop stalls in a background tab, and a paused seek presents no frame until it lands.
     video.addEventListener('seeked', update);
     video.addEventListener('timeupdate', update);
     return () => {

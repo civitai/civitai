@@ -46,7 +46,6 @@ vi.mock('~/components/Sticker/treatments/useStickerTreatment', () => ({
   useStickerTreatment: () => 'none',
 }));
 vi.mock('~/components/Sticker/DraftStickerLayer', () => ({ DraftStickerLayer: () => null }));
-// What is asserted is which stickers the layer is told to hide.
 vi.mock('~/components/Sticker/StickerPlacementOverlay', () => ({
   StickerPlacementOverlay: ({ hiddenIds }: { hiddenIds?: ReadonlySet<number> }) => (
     <div data-testid="hidden">{[...(hiddenIds ?? [])].join(',') || 'none'}</div>
@@ -138,7 +137,10 @@ describe('a moment sticker follows the video', () => {
 
   test('only the sticker outside its window is hidden', async () => {
     tracksQuery.mockReturnValue({
-      data: [{ id: 2, track: momentStickerTrack(pose, 12000, 1000) }],
+      data: [
+        { id: 1, track: momentStickerTrack(pose, 0, 1000) },
+        { id: 2, track: momentStickerTrack(pose, 12000, 1000) },
+      ],
     });
     await renderOnVideo(0);
 
