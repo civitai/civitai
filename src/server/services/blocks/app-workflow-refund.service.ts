@@ -765,13 +765,25 @@ export async function refundAppWorkflows(input: {
       status,
     });
     if (p.outcome === 'already-refunded') {
+      // Nothing to return, but an earlier call may have refunded everything and then failed to
+      // void the spend rows; this is where a re-run finishes that. A no-op once they are voided.
+      const errors: string[] = [];
+      let spendAttributionsVoided: number | undefined;
+      if (execute) {
+        try {
+          spendAttributionsVoided = await voidSpendAttributionsForRefund(p.workflowId);
+        } catch (error) {
+          errors.push(`spend attribution: ${errorMessage(error)}`);
+        }
+      }
       results.push({
         ...common,
         outcome: 'already-refunded',
         legs: legResults(p),
         authorFee: feeView('not-applicable'),
         refundBuzz: 0,
-        errors: [],
+        ...(spendAttributionsVoided !== undefined ? { spendAttributionsVoided } : {}),
+        errors,
       });
       continue;
     }
@@ -841,13 +853,23 @@ export async function refundAppWorkflows(input: {
         ]
           .join(' ')
           .slice(0, 4000);
-        const resolved = await modResolveAppFeedbackWithRefund({
-          moderatorId: input.moderatorId,
-          feedbackId: input.feedbackId,
-          reporterUserId: userId,
-          note,
-        });
-        feedback = { feedbackId: input.feedbackId, resolved };
+        // The money has moved by now, so a failure here must not turn the response into an error
+        // that reads as "nothing happened": it is reported, and the report can be closed by hand.
+        try {
+          const resolved = await modResolveAppFeedbackWithRefund({
+            moderatorId: input.moderatorId,
+            feedbackId: input.feedbackId,
+            reporterUserId: userId,
+            note,
+          });
+          feedback = {
+            feedbackId: input.feedbackId,
+            resolved,
+            ...(resolved ? {} : { reason: 'the feedback row no longer matches' }),
+          };
+        } catch (error) {
+          feedback = { feedbackId: input.feedbackId, resolved: false, reason: errorMessage(error) };
+        }
       }
     }
   }

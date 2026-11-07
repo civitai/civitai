@@ -1065,6 +1065,23 @@ describe('partial failure', () => {
     const { body } = await refund(['wf-race']);
     expect(body.workflows[0]).toMatchObject({ outcome: 'refunded', errors: [] });
   });
+
+  it('spend rows a call could not void are voided by the re-run that finds the money back', async () => {
+    addWorkflow({ id: 'wf-void', legs: [{ n: 126, amount: 83, colour: 'yellow' }] });
+    h.voidSpendAttributionsForRefund.mockRejectedValueOnce(new Error('primary unavailable'));
+    const first = await refund(['wf-void']);
+    expect(first.body.workflows[0]).toMatchObject({ outcome: 'failed', refundBuzz: 83 });
+    expect(first.body.workflows[0].errors.join(' ')).toContain('primary unavailable');
+
+    const second = await refund(['wf-void']);
+    expect(second.body.workflows[0]).toMatchObject({
+      outcome: 'already-refunded',
+      spendAttributionsVoided: 1,
+      errors: [],
+    });
+    expect(h.voidSpendAttributionsForRefund).toHaveBeenCalledTimes(2);
+    expect(h.refundTransaction).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ─── Notifications ──────────────────────────────────────────────────────────
@@ -1210,6 +1227,24 @@ describe('linking feedback', () => {
     const { body } = await refund(['wf-fb'], { feedbackId: FEEDBACK });
     expect(body.feedback).toMatchObject({ feedbackId: FEEDBACK, resolved: false });
     expect(h.modResolveAppFeedbackWithRefund).not.toHaveBeenCalled();
+  });
+
+  it('a feedback write that throws after the money moved is reported, not turned into an error', async () => {
+    world.feedback.set(FEEDBACK, {
+      id: FEEDBACK,
+      area: 'app-block',
+      userId: VIEWER,
+      appBlockId: APP,
+    });
+    h.modResolveAppFeedbackWithRefund.mockRejectedValue(new Error('feedback table locked'));
+    const { status, body } = await refund(['wf-fb'], { feedbackId: FEEDBACK });
+    expect(status).toBe(200);
+    expect(body.workflows[0]).toMatchObject({ outcome: 'refunded', refundBuzz: 151 });
+    expect(body.feedback).toEqual({
+      feedbackId: FEEDBACK,
+      resolved: false,
+      reason: 'feedback table locked',
+    });
   });
 });
 
