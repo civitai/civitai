@@ -44,6 +44,7 @@ const rememberedKeys: Record<CollectionFeedType, readonly string[]> = {
     'earlyAccess',
     'paidAccess',
     'hidePaid',
+    'onSale',
     'fromPlatform',
     'isFeatured',
   ],

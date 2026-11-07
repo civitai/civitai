@@ -68,6 +68,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockToggleReaction.mockResolvedValue('created');
   dbMock.dbWrite.commentV2.findUnique.mockResolvedValue(null as never);
+  // The article the comment is on; an unpublished one would gate the section.
+  dbMock.dbRead.article.findUnique.mockResolvedValue({ userId: 1, status: 'Published' } as never);
 });
 
 describe('reaction.toggle on a comment that exists only in CommentV3', () => {

@@ -317,7 +317,10 @@ import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  isGenerationDisabled,
+  toPublicApiVersionFlags,
+} from '~/shared/constants/model-version-flags.constants';
 import {
   isModelNameTooLong,
   MODEL_NAME_TOO_LONG_MESSAGE,
@@ -1421,11 +1424,16 @@ export const getModelsRaw = async ({
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
+          // Every public model read (browse feed, associated resources, /api/v1/models) starts here.
+          const publicVersions = data.versions.map((version) => ({
+            ...version,
+            flags: toPublicApiVersionFlags(version.flags),
+          }));
           // A .com face has no per-version description; the .red one is not shown in its place.
           let modelVersions =
             showSfwFace && rawModel.sfwName != null
-              ? data.versions.map((version) => ({ ...version, description: '' }))
-              : data.versions;
+              ? publicVersions.map((version) => ({ ...version, description: '' }))
+              : publicVersions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).

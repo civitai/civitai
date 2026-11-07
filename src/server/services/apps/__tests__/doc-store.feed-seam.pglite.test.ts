@@ -82,7 +82,9 @@ describe.each([{ rls: true }, { rls: false }])(
       const feed = createDocFeed({
         source: docStoreDocSource(createDocStoreFeed({ db: h.db })),
         resolve: async (schema) =>
-          schema === V1 ? { appId: app, slug: SLUG, collection: 'board', family: FAMILY } : null,
+          schema === V1
+            ? { appId: app, slug: SLUG, collection: 'board', contentRating: 'pg', family: FAMILY }
+            : null,
         store: snapshots,
         pollMs: 1,
         // Every position-only move is saved and reported here: this file pins what the real

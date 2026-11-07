@@ -20,6 +20,8 @@ const {
   mockDeregister,
   mockFileListBust,
   mockBustFileAirs,
+  mockVersionAirs,
+  mockBustAirs,
 } = vi.hoisted(() => ({
   mockResourceDataBust: vi.fn(() => Promise.resolve()),
   mockBustOrchestrator: vi.fn(() => Promise.resolve()),
@@ -27,6 +29,8 @@ const {
   mockDeregister: vi.fn(() => Promise.resolve()),
   mockFileListBust: vi.fn(() => Promise.resolve()),
   mockBustFileAirs: vi.fn(() => Promise.resolve()),
+  mockVersionAirs: vi.fn(() => Promise.resolve(['urn:air:old-kind'])),
+  mockBustAirs: vi.fn((_airs: string[]) => Promise.resolve()),
 }));
 // A new upload deletes the old object in the background; keep that off any real bucket.
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteObject }));
@@ -39,6 +43,8 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
+  getOrchestratorVersionAirs: mockVersionAirs,
+  bustOrchestratorAirs: mockBustAirs,
 }));
 vi.mock('~/server/services/orchestrator/scanned-file-airs', () => ({
   bustVersionScannedFileAirs: mockBustFileAirs,
@@ -180,9 +186,18 @@ describe('updateFile', () => {
   });
 
   it('edits the same record in place when the url is unchanged', async () => {
-    const result = await updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7 });
+    const result = await updateFile({
+      id: 1,
+      url: OLD_URL,
+      overrideName: 'renamed.safetensors',
+      userId: 7,
+    });
 
-    expect(writtenData()).toEqual({ url: OLD_URL, overrideName: 'renamed.safetensors', metadata: undefined });
+    expect(writtenData()).toEqual({
+      url: OLD_URL,
+      overrideName: 'renamed.safetensors',
+      metadata: undefined,
+    });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: 1, replacedFileId: undefined });
   });
@@ -190,7 +205,9 @@ describe('updateFile', () => {
   it('reports a file replaced since the lookup as not found, rather than a silent success', async () => {
     dbMock.dbWrite.modelFile.updateMany.mockResolvedValue({ count: 0 });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })).rejects.toMatchObject({
+    await expect(
+      updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
@@ -332,6 +349,22 @@ describe('a new upload creates a new file record', () => {
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
   });
 
+  it("busts the file-pinned AIRs on a new upload, the replaced file's included", async () => {
+    await updateFile({ id: 1, url: NEW_URL, userId: 7 });
+    expect(mockBustFileAirs).toHaveBeenCalledWith(10, expect.objectContaining({ modelId: 5 }), [1]);
+  });
+
+  // The upload can change the file's type, and with it the version's AIR kind; the bust after the
+  // write derives only the new AIR.
+  it("busts the version's AIRs as read before a new upload is written, once it has committed", async () => {
+    await updateFile({ id: 1, url: NEW_URL, type: 'Config', userId: 7 });
+    const [write] = dbMock.dbWrite.$transaction.mock.invocationCallOrder;
+    expect(mockVersionAirs).toHaveBeenCalledWith([10]);
+    expect(mockVersionAirs.mock.invocationCallOrder[0]).toBeLessThan(write);
+    expect(mockBustAirs).toHaveBeenCalledWith(['urn:air:old-kind']);
+    expect(mockBustAirs.mock.invocationCallOrder[0]).toBeGreaterThan(write);
+  });
+
   it("busts the version's coverage caches, file-pinned AIRs included, when an edit changes the type", async () => {
     await updateFile({ id: 1, type: 'Config', userId: 7 });
     expect(mockResourceDataBust).toHaveBeenCalledWith([10]);
@@ -349,6 +382,21 @@ describe('a new upload creates a new file record', () => {
     expect(mockResourceDataBust).not.toHaveBeenCalled();
     expect(mockBustOrchestrator).not.toHaveBeenCalled();
     expect(mockBustFileAirs).not.toHaveBeenCalled();
+  });
+
+  // Two tabs open on the same file: one changes the type, the other then saves the type it loaded.
+  // Judged against its stale read the second write is no change and busts nothing, so it may only
+  // land over the type it read.
+  it('writes a sent type only over the type it was compared against', async () => {
+    await updateFile({ id: 1, type: 'Pruned Model', userId: 7 });
+    expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: 1, type: 'Pruned Model' } })
+    );
+
+    await updateFile({ id: 1, overrideName: 'renamed', userId: 7 });
+    expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: 1 } })
+    );
   });
 
   it('still succeeds when a cache bust fails after a type change', async () => {
@@ -416,7 +464,9 @@ describe('a published version keeps its files', () => {
   it('still allows metadata edits on a published version', async () => {
     withFile({ status: 'Published' });
 
-    await expect(updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })).resolves.toMatchObject({
+    await expect(
+      updateFile({ id: 1, overrideName: 'renamed.safetensors', userId: 7 })
+    ).resolves.toMatchObject({
       id: 1,
     });
   });
@@ -627,7 +677,13 @@ describe('a new url from a client', () => {
 
   it('is not checked when the url is the one the file already has', async () => {
     await expect(
-      updateFile({ id: 1, url: OLD_URL, overrideName: 'renamed.safetensors', userId: 7, urlFromClient: true })
+      updateFile({
+        id: 1,
+        url: OLD_URL,
+        overrideName: 'renamed.safetensors',
+        userId: 7,
+        urlFromClient: true,
+      })
     ).resolves.toMatchObject({ id: 1 });
     expect(dbMock.dbWrite.modelFile.findFirst).not.toHaveBeenCalled();
   });
