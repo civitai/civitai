@@ -120,6 +120,19 @@ describe('createGiftLink / mintGiftCodes', () => {
     );
   });
 
+  it('rate-limits minting per creator', async () => {
+    seed();
+    redisMock.redis.incrBy.mockResolvedValue(20);
+    await expect(
+      createGiftLink({ userId: OWNER, modelVersionId: VERSION_ID })
+    ).resolves.toBeDefined();
+    redisMock.redis.incrBy.mockResolvedValue(21);
+    await expect(
+      mintGiftCodes({ userId: OWNER, modelVersionId: VERSION_ID, count: 1 })
+    ).rejects.toThrow('Too many attempts');
+    expect(dbMock.dbWrite.modelVersionGiftLink.createMany).not.toHaveBeenCalled();
+  });
+
   it(`refuses more than ${GIFT_MINT_MAX_PER_CALL} codes in one call`, async () => {
     seed();
     await expect(

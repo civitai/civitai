@@ -141,6 +141,18 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     ).toBe(1);
   });
 
+  it('does not re-grant from a link that has expired since the first claim', async () => {
+    const id = await newLink(null);
+    expect(await claim(id, 2)).toBe('granted');
+    await sql.query(`DELETE FROM "EntityAccess"`);
+    await sql.query(
+      `UPDATE "ModelVersionGiftLink" SET "expiresAt" = now() - interval '1 minute' WHERE id = ${id}`
+    );
+
+    expect(await claim(id, 2)).toBe('unavailable');
+    expect(await count(`SELECT count(*) AS n FROM "EntityAccess"`)).toBe(0);
+  });
+
   it('does not re-grant from a link revoked since the first claim', async () => {
     const id = await newLink(null);
     expect(await claim(id, 2)).toBe('granted');

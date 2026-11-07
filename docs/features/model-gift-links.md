@@ -7,6 +7,11 @@ signed-in recipient claims one and gets the same access a buyer gets. No Buzz mo
 Behind the `modelGiftLinks` feature flag (Flipt key `model-gift-links`). It is dark by default and
 fails closed, in the main app and in Creator Studio alike.
 
+The key is evaluated for whoever is viewing, and it gates the recipient's claim page and claim
+endpoints too. **It must be on for every viewer for gifts to be redeemable.** A rollout limited to some
+creators leaves their recipients with a 404. A creator-only pilot needs a separate gate on the creator
+surfaces.
+
 ## What it does
 
 - **Gift link:** one code, with an optional expiry and an optional cap on claims.
