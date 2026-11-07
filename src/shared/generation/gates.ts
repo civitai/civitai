@@ -10,8 +10,8 @@
  * Two halves, split by where they run:
  *   - `applicableRulesFor(rules, user)` — SERVER side. Filters the stored rules
  *     down to the ones whose audience includes this user (the only per-user
- *     evaluation). The result rides to the client + into `GenerationCtx`, so the
- *     audience logic never leaves the server.
+ *     evaluation). The client receives them reduced by `toGateRuleViews`; the
+ *     server's `GenerationCtx` keeps them whole.
  *   - `rulesToStates(rules)` — runs in the GRAPH (client + server), on the
  *     already-applicable rules. No user needed: it just folds each rule's
  *     presentation/audience into one effective `GateState` per target.
@@ -86,16 +86,13 @@ export function applicableRulesFor(rules: GateRule[], user: GateUserCtx): GateRu
   return rules.filter((r) => r.presentation === 'experimental' || isGatedFor[r.availableTo](user));
 }
 
-/** The part of a rule the generator renders. `name` and `id` are mod-facing only. */
+/** The fields of a rule the generator client reads. */
 export type GateRuleView = Pick<
   GateRule,
   'availableTo' | 'presentation' | 'message' | 'ecosystems' | 'workflows' | 'modelVersionIds'
 >;
 
-/**
- * SERVER: what an applicable rule sends to the client. A hidden item is never
- * shown, so its rule's message has nowhere to render and is not sent.
- */
+/** SERVER: the client-rendered form of applicable rules. Hidden items render no message, so none is sent. */
 export function toGateRuleViews(rules: GateRule[]): GateRuleView[] {
   return rules.map((r) => ({
     availableTo: r.availableTo,
@@ -199,9 +196,11 @@ export function rulesToStates(rules: GateRuleView[]): ResolvedGates {
 
   for (const rule of rules) {
     if (rule.presentation === 'experimental') continue;
+    const state = ruleState(rule);
+    // A hidden item is never shown, not even in a refusal, so it carries no copy.
     const resolution: GateResolution = {
-      state: ruleState(rule),
-      message: rule.message ?? undefined,
+      state,
+      message: state === 'hidden' ? undefined : rule.message ?? undefined,
     };
     for (const e of rule.ecosystems)
       ecosystems.set(e, pickStrongerGate(ecosystems.get(e), resolution));

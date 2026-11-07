@@ -108,7 +108,7 @@ beforeEach(async () => {
 });
 
 describe('getGenerationConfig gate rules', () => {
-  it('an anonymous caller gets no rule name or id in any field', async () => {
+  it('the config carries no rule name or id in any field', async () => {
     const config = await getGenerationConfig({});
     const strings = allStrings(config);
 
@@ -120,7 +120,7 @@ describe('getGenerationConfig gate rules', () => {
     expect(config.gateRules.some((r) => 'name' in r || 'id' in r)).toBe(false);
   });
 
-  it('an anonymous caller gets no message for a hidden rule, but the target is still hidden', async () => {
+  it("a hidden rule's target is hidden and carries no message", async () => {
     const config = await getGenerationConfig({});
 
     expect(allStrings(config)).not.toContain('MESSAGE-MOD-HIDDEN');
