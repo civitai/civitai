@@ -23,7 +23,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb
+      type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
   `);
@@ -63,6 +63,15 @@ describe('profile picture lookup', () => {
 
     expect(result).not.toHaveProperty(String(OWNER));
     expect(result).not.toHaveProperty(String(NO_PICTURE));
+    expect(result[OTHER]).toMatchObject({ id: 20 });
+  });
+
+  it('returns no picture for a user whose avatar is held for csam review', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 10`);
+
+    const result = await lookupProfilePictures([OWNER, OTHER]);
+
+    expect(result).not.toHaveProperty(String(OWNER));
     expect(result[OTHER]).toMatchObject({ id: 20 });
   });
 
