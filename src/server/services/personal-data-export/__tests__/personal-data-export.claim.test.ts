@@ -288,6 +288,48 @@ describe('release claim, run', () => {
     });
   });
 
+  describe('when the release email fails', () => {
+    const row = async () =>
+      (
+        await db.query<{
+          status: string;
+          releasedAt: Date | null;
+          releasedById: number | null;
+          error: string | null;
+        }>(
+          `SELECT status, "releasedAt", "releasedById", error FROM "PersonalDataExport" WHERE id = 5`
+        )
+      ).rows[0];
+
+    it('puts the export back to built, so it can be released again', async () => {
+      m.readySend.mockRejectedValue(new Error('smtp'));
+      await expect(releaseExport({ exportId: 5, actorId: 9, bucket, now })).rejects.toThrow('smtp');
+      expect(await row()).toEqual({
+        status: 'built',
+        releasedAt: null,
+        releasedById: null,
+        error: 'release email failed: smtp',
+      });
+    });
+
+    it('leaves the row alone when something else moved it while the email was sending', async () => {
+      m.readySend.mockImplementation(async () => {
+        await db.exec(
+          `UPDATE "PersonalDataExport" SET status = 'held', "releasedAt" = NULL, "releasedById" = NULL
+           WHERE id = 5`
+        );
+        throw new Error('smtp');
+      });
+      await expect(releaseExport({ exportId: 5, actorId: 9, bucket, now })).rejects.toThrow('smtp');
+      expect(await row()).toEqual({
+        status: 'held',
+        releasedAt: null,
+        releasedById: null,
+        error: null,
+      });
+    });
+  });
+
   it('clears the error a failed earlier release left on the row', async () => {
     await db.exec(
       `UPDATE "PersonalDataExport" SET error = 'release email failed: smtp' WHERE id = 5`
