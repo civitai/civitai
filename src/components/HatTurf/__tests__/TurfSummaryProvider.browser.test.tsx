@@ -8,8 +8,10 @@ const h = vi.hoisted(() => ({
   } | null,
   asked: [] as { proc: string; input: any }[],
   mark: vi.fn(),
-  fetch: vi.fn(async () => ({} as Record<number, unknown[]>)),
-  fetchSummaries: vi.fn(async () => ({ images: {} as Record<number, unknown> })),
+  fetch: vi.fn(async (_input?: unknown, _opts?: unknown) => ({} as Record<number, unknown[]>)),
+  fetchSummaries: vi.fn(async (_input?: unknown, _opts?: unknown) => ({
+    images: {} as Record<number, unknown>,
+  })),
   // When the page's chunk queries answered; a card's catch-up read waits until this is 30s old.
   stamp: 0,
   // The page's chunk queries have not answered yet.
