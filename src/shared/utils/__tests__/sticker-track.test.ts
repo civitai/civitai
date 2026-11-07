@@ -215,6 +215,11 @@ describe('momentStickerTrack', () => {
     expect(sampleStickerTrack(track, 12500)).toMatchObject(at);
   });
 
+  it('rounds the start to the nearest capture', () => {
+    expect(momentStickerTrack(at, 12340, 1000).show?.[1]).toEqual([123, 1]);
+    expect(momentStickerTrack(at, 12360, 1000).show?.[1]).toEqual([124, 1]);
+  });
+
   it('starts visible when pinned to the first frame', () => {
     expect(momentStickerTrack(at, 0, 500).show).toEqual([
       [0, 1],

@@ -124,7 +124,9 @@ export function ImageStickerOverlay({
 
   const { hostRef, box, media } = useDrawnMediaBox(active);
   // Without the flag a track sticker draws at its start pose and placing offers no moment.
-  const video = features.stickerVideoTracks && media instanceof HTMLVideoElement ? media : null;
+  // `tagName`, not `instanceof`: this also renders on the server, which has no HTMLVideoElement.
+  const video =
+    features.stickerVideoTracks && media?.tagName === 'VIDEO' ? (media as HTMLVideoElement) : null;
   const hiddenIds = useTrackHiddenIds(imageId, video);
 
   if (!active) return null;

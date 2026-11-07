@@ -69,6 +69,8 @@ describe('placement router — moving stickers sit behind their own flag', () =>
     }).getStickerTracks({ imageId: 99 });
 
     expect(tracks).toHaveLength(1);
-    expect(getStickerPlacementTracks).toHaveBeenCalledWith(99);
+    expect(getStickerPlacementTracks).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: 99 })
+    );
   });
 });

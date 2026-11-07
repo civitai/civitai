@@ -501,7 +501,14 @@ export function StickerPlacementOverlay({
             <div
               key={placement.id}
               ref={placement.isPending ? measureSticker(placement) : undefined}
-              className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
+              className={clsx(
+                'absolute',
+                interactive && 'pointer-events-auto',
+                revealClassName,
+                // Important: the reveal's animation fills `visibility: visible`, which beats an
+                // inline style and anything else that is not important.
+                hiddenIds?.has(placement.id) && '!invisible'
+              )}
               style={{
                 left: `${placement.data.x * 100}%`,
                 top: `${placement.data.y * 100}%`,
@@ -509,7 +516,6 @@ export function StickerPlacementOverlay({
                 transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
                 zIndex: layer,
                 ...delayStyle,
-                ...(hiddenIds?.has(placement.id) ? { visibility: 'hidden' } : null),
               }}
             >
               {/* The wrapper's own transform makes it a stacking context, so a

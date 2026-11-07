@@ -283,7 +283,7 @@ export async function listPlacementTrackRows(
 ) {
   return db
     .selectFrom('Placement')
-    .select(['id', 'track'])
+    .select(['id', 'targetId', 'data', 'track'])
     .where('surface', '=', input.surface)
     .where('targetType', '=', input.targetType)
     .where('targetId', '=', input.targetId)

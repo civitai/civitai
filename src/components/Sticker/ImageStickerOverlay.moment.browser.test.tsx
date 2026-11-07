@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as RevealStore from '~/store/sticker-reveal.store';
@@ -9,9 +9,15 @@ import { renderWithProviders } from '../../../test/component-setup';
 const IMAGE_ID = 74;
 const pose = { x: 0.5, y: 0.5, scale: 0.25, rotation: 0 };
 
-const { flags, tracksQuery } = vi.hoisted(() => ({
+const { flags, tracksQuery, historyStep } = vi.hoisted(() => ({
   flags: { stickerVideoTracks: true },
   tracksQuery: vi.fn(),
+  historyStep: { value: null as number | null },
+}));
+
+vi.mock('~/store/sticker-history.store', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useStickerHistoryStep: () => historyStep.value,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
@@ -71,6 +77,16 @@ const renderOnVideo = async (startTime: number) => {
 const hidden = () => page.getByTestId('hidden');
 
 describe('a moment sticker follows the video', () => {
+  beforeEach(() => {
+    flags.stickerVideoTracks = true;
+    historyStep.value = null;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (HTMLMediaElement.prototype as { currentTime?: number }).currentTime;
+  });
+
   test('hidden before its moment, shown during, hidden after, and again on a seek back', async () => {
     tracksQuery.mockReturnValue({
       data: [{ id: 1, track: momentStickerTrack(pose, 12000, 1000) }],
@@ -86,26 +102,70 @@ describe('a moment sticker follows the video', () => {
     await expect.element(hidden()).toHaveTextContent('none');
   });
 
-  test('a sticker with no track is never hidden', async () => {
-    tracksQuery.mockReturnValue({ data: [] });
-    const { seek } = await renderOnVideo(0);
+  test('playback alone moves it across its window, and unmounting stops the frame callback', async () => {
+    tracksQuery.mockReturnValue({
+      data: [{ id: 1, track: momentStickerTrack(pose, 12000, 1000) }],
+    });
+    let onFrame: (() => void) | undefined;
+    const cancel = vi.spyOn(HTMLVideoElement.prototype, 'cancelVideoFrameCallback');
+    vi.spyOn(HTMLVideoElement.prototype, 'requestVideoFrameCallback').mockImplementation(
+      (callback) => {
+        onFrame = callback as unknown as () => void;
+        return 7;
+      }
+    );
+    let time = 0;
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+      configurable: true,
+      get: () => time,
+    });
 
-    seek(5);
+    const { unmount } = await renderWithProviders(
+      <div style={{ position: 'relative', width: 400, height: 400 }}>
+        <video style={{ width: 200, height: 200 }} />
+        <ImageStickerOverlay imageId={IMAGE_ID} />
+      </div>
+    );
+    await expect.element(hidden()).toHaveTextContent('1');
+
+    time = 12.5;
+    onFrame?.();
     await expect.element(hidden()).toHaveTextContent('none');
+
+    await unmount();
+    expect(cancel).toHaveBeenCalledWith(7);
   });
 
-  test('with the flag off it asks for no tracks', async () => {
-    flags.stickerVideoTracks = false;
-    tracksQuery.mockReturnValue({ data: undefined });
+  test('only the sticker outside its window is hidden', async () => {
+    tracksQuery.mockReturnValue({
+      data: [{ id: 2, track: momentStickerTrack(pose, 12000, 1000) }],
+    });
     await renderOnVideo(0);
 
-    await expect.element(hidden()).toBeInTheDocument();
-    await vi.waitFor(() =>
-      expect(tracksQuery).toHaveBeenLastCalledWith(
-        { imageId: IMAGE_ID },
-        expect.objectContaining({ enabled: false })
-      )
-    );
-    flags.stickerVideoTracks = true;
+    await expect.element(hidden()).toHaveTextContent(/^2$/);
+  });
+
+  test('with the flag off it never asks for tracks and hides nothing', async () => {
+    flags.stickerVideoTracks = false;
+    tracksQuery.mockClear();
+    tracksQuery.mockReturnValue({
+      data: [{ id: 1, track: momentStickerTrack(pose, 12000, 1000) }],
+    });
+    await renderOnVideo(0);
+    // The box arriving means the media has been bound, so `video` would be set by now.
+    await expect.element(hidden()).toHaveTextContent('none');
+
+    for (const [, options] of tracksQuery.mock.calls) expect(options.enabled).toBe(false);
+  });
+
+  test('a replay of the history shows every sticker it steps through', async () => {
+    historyStep.value = 0;
+    tracksQuery.mockReturnValue({
+      data: [{ id: 1, track: momentStickerTrack(pose, 12000, 1000) }],
+    });
+    await renderOnVideo(0);
+
+    await expect.element(hidden()).toHaveTextContent('none');
+    expect(tracksQuery.mock.lastCall?.[1].enabled).toBe(true);
   });
 });

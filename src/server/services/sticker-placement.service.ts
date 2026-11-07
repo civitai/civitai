@@ -902,13 +902,25 @@ export async function getStickerPlacements({
 }
 
 /** For the detail view of one video; the listing never carries tracks. */
-export async function getStickerPlacementTracks(imageId: number) {
-  const rows = await listPlacementTrackRows((await loadKyselyDb()).kyselyRead, {
+export async function getStickerPlacementTracks({
+  imageId,
+  isModerator = false,
+}: {
+  imageId: number;
+  isModerator?: boolean;
+}) {
+  const rows = (await listPlacementTrackRows((await loadKyselyDb()).kyselyRead, {
     surface: SURFACE,
     targetType: TARGET_TYPE,
     targetId: imageId,
-  });
-  return rows.map(({ id, track }) => ({ id, track: track as unknown as StickerTrack }));
+  })) as { id: number; targetId: number; data: Prisma.JsonValue; track: unknown }[];
+  // Withholds what the listing withholds, so a moderator's view stays the only one that lists it.
+  const keptOff = isModerator
+    ? new Set<number>()
+    : await keptOffPlacementIds(keptOffInputs(parseRows(rows)));
+  return rows
+    .filter(({ id }) => !keptOff.has(id))
+    .map(({ id, track }) => ({ id, track: track as StickerTrack }));
 }
 
 /** Approved placements per image, for the reaction-bar count. */

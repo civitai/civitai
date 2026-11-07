@@ -267,7 +267,7 @@ describe('placement.db', () => {
     });
     const { sql, parameters } = only();
     expect(sql).toBe(
-      'select "id", "track" from "Placement" where "surface" = $1 and "targetType" = $2 ' +
+      'select "id", "targetId", "data", "track" from "Placement" where "surface" = $1 and "targetType" = $2 ' +
         'and "targetId" = $3 and "status" = $4 and "track" is not null'
     );
     expect(parameters).toEqual(['sticker', 'image', 81, 'approved']);

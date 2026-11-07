@@ -17,6 +17,10 @@ const clock = (ms: number) => {
 
 const playheadMs = (video: HTMLVideoElement) => Math.round(video.currentTime * 1000);
 
+/** Late enough to fit the whole window, because a window past the end never plays out. */
+export const clampMomentStart = (startMs: number, windowMs: number, videoMs: number) =>
+  videoMs > 0 ? Math.min(startMs, Math.max(0, videoMs - windowMs)) : startMs;
+
 /** Static, or pinned to where the video is: the playhead sets when the sticker shows. */
 export function StickerMomentControl({
   video,
@@ -44,16 +48,20 @@ export function StickerMomentControl({
   const windowMs = moment?.durationMs;
   useEffect(() => {
     if (!pinned || !following || windowMs == null) return;
-    const follow = () => onChange({ startMs: playheadMs(video), durationMs: windowMs });
-    video.addEventListener('seeked', follow);
-    video.addEventListener('timeupdate', follow);
-    return () => {
-      video.removeEventListener('seeked', follow);
-      video.removeEventListener('timeupdate', follow);
+    // Paused only: a playing video seeks to the start each time it loops, and the carousel resumes
+    // it on the way back to this slide, neither of which is the placer choosing a moment.
+    const follow = () => {
+      if (!video.paused) return;
+      onChange({
+        startMs: clampMomentStart(playheadMs(video), windowMs, durationMs),
+        durationMs: windowMs,
+      });
     };
+    video.addEventListener('seeked', follow);
+    return () => video.removeEventListener('seeked', follow);
     // `onChange` is a new closure every render and only writes to the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video, pinned, following, windowMs]);
+  }, [video, pinned, following, windowMs, durationMs]);
 
   return (
     <div
@@ -70,7 +78,11 @@ export function StickerMomentControl({
           // Held on the frame it was pinned to, so the sticker can be lined up with it.
           video.pause();
           onChange({
-            startMs: playheadMs(video),
+            startMs: clampMomentStart(
+              playheadMs(video),
+              STICKER_MOMENT_DEFAULT_DURATION_MS,
+              durationMs
+            ),
             durationMs: STICKER_MOMENT_DEFAULT_DURATION_MS,
           });
         }}
@@ -101,9 +113,9 @@ export function StickerMomentControl({
                 label={clock}
                 aria-label="Moment in the video"
                 min={0}
-                max={durationMs}
+                max={Math.max(0, durationMs - moment.durationMs)}
                 step={100}
-                value={Math.min(moment.startMs, durationMs)}
+                value={clampMomentStart(moment.startMs, moment.durationMs, durationMs)}
                 onChange={(ms) => {
                   video.currentTime = ms / 1000;
                   onChange({ ...moment, startMs: ms });
@@ -119,7 +131,13 @@ export function StickerMomentControl({
             radius="xl"
             fullWidth
             value={String(moment.durationMs)}
-            onChange={(value) => onChange({ ...moment, durationMs: Number(value) })}
+            onChange={(value) => {
+              const next = Number(value);
+              onChange({
+                startMs: clampMomentStart(moment.startMs, next, durationMs),
+                durationMs: next,
+              });
+            }}
             data={STICKER_MOMENT_DURATIONS_MS.map((ms) => ({
               label: `${ms / 1000}s`,
               value: String(ms),

@@ -10,6 +10,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import type { StickerTrack } from '~/shared/utils/sticker-track';
+import { sampleStickerTrack } from '~/shared/utils/sticker-track';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -233,13 +234,58 @@ describe('what a draft sends when it is placed', () => {
     await page.getByRole('button', { name: 'Place free' }).click();
 
     const { track, data } = placed[0] as (typeof placed)[number] & { track: StickerTrack };
-    expect(track.show).toEqual([
-      [0, 0],
-      [120, 1],
-      [130, 0],
-    ]);
+    expect(sampleStickerTrack(track, 12500).show).toBe(true);
+    expect(sampleStickerTrack(track, 13500).show).toBe(false);
     expect(track.x).toEqual([[0, data.x]]);
     expect(track.s).toEqual([[0, data.scale]]);
+  });
+
+  test('pinning through the control is what the press sends', async () => {
+    const video = document.createElement('video');
+    let time = 12;
+    Object.defineProperty(video, 'currentTime', { get: () => time });
+    video.pause = vi.fn();
+    useStickerPlacementDraftStore.setState({ drafts: [draft], selectedDraftId: draft.id });
+    const Live = () => {
+      const current = useStickerPlacementDraftStore((state) =>
+        state.drafts.find((d) => d.id === draft.id)
+      );
+      return current ? (
+        <DraftSticker
+          draft={current}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          creatorMaxScale={0.25}
+          freeOffer={{ instant: true }}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          video={video}
+        />
+      ) : null;
+    };
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <Live />
+      </div>
+    );
+
+    await page.getByText('Pin to a moment').click();
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    let { track } = placed[0] as unknown as { track: StickerTrack };
+    expect(video.pause).toHaveBeenCalled();
+    expect(sampleStickerTrack(track, 12500).show).toBe(true);
+    expect(sampleStickerTrack(track, 11500).show).toBe(false);
+
+    // Scrubbing the selected draft moves what the next press sends.
+    time = 2;
+    video.dispatchEvent(new Event('seeked'));
+    await page.getByRole('button', { name: 'Place free' }).click();
+    ({ track } = placed[1] as unknown as { track: StickerTrack });
+    expect(sampleStickerTrack(track, 2500).show).toBe(true);
   });
 
   test('a draft that is not pinned sends no track', async () => {

@@ -54,13 +54,15 @@ const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ s
 // `getStickerPlacements` / `getStickerPlacementsAndCounts`, `listApprovedPlacementRows` for
 // `getStickerPlacementCounts`). Which rows they return for which viewer, against a real database,
 // is pinned in placement-reads.kysely-parity.test.ts; here they hand back the rows a test names.
-const { stickerRows, approvedRows } = vi.hoisted(() => ({
+const { stickerRows, approvedRows, trackRows } = vi.hoisted(() => ({
   stickerRows: vi.fn(),
   approvedRows: vi.fn(),
+  trackRows: vi.fn(),
 }));
 vi.mock('@civitai/db-queries/placement', () => ({
   listStickerPlacementRows: stickerRows,
   listApprovedPlacementRows: approvedRows,
+  listPlacementTrackRows: trackRows,
 }));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
@@ -192,6 +194,7 @@ const {
   getMyStickerPlacements,
   getStickerPlacementCounts,
   getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
 } = await import('~/server/services/sticker-placement.service');
 
 /**
@@ -2459,6 +2462,42 @@ describe('a sticker flagged NSFW placements only', () => {
         })
       ).resolves.toMatchObject({ id: FLAGGED_ROW });
     });
+  });
+});
+
+describe('the tracks for a video', () => {
+  const OTHER_COSMETIC = 225;
+  const row = (id: number, cosmeticId: number) => ({
+    id,
+    targetId: IMAGE,
+    data: { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+    track: { v: 1, id },
+  });
+
+  beforeEach(() => {
+    cosmeticCacheFetch.mockResolvedValue({
+      [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
+      [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+    });
+    imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
+    trackRows.mockResolvedValue([row(1, COSMETIC), row(2, OTHER_COSMETIC)]);
+  });
+
+  it('reads the sticker surface of that image, and withholds what the listing keeps off', async () => {
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE });
+
+    expect(trackRows).toHaveBeenCalledWith(expect.anything(), {
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: IMAGE,
+    });
+    expect(tracks.map(({ id }) => id)).toEqual([2]);
+  });
+
+  it('gives a moderator what the listing would show them', async () => {
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
+
+    expect(tracks.map(({ id }) => id)).toEqual([1, 2]);
   });
 });
 
