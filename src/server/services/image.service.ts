@@ -1367,6 +1367,18 @@ export async function handleUnblockImages({
   return images;
 }
 
+export async function writeModeratorBlock(ids: number[]) {
+  if (!ids.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "Image" SET
+      ingestion = 'Blocked',
+      "nsfwLevel" = ${NsfwLevel.Blocked},
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+      "updatedAt" = NOW()
+    WHERE id = ANY(${ids}::int[])
+  `;
+}
+
 export async function handleBlockImages({
   ids: imageIds,
   userId,
@@ -1392,16 +1404,7 @@ export async function handleBlockImages({
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
-      dbWrite.image
-        .updateMany({
-          where: { id: { in: ids } },
-          data: {
-            ingestion: 'Blocked',
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-            updatedAt: new Date(),
-          },
-        })
+      writeModeratorBlock(ids)
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
 
@@ -8750,9 +8753,7 @@ export function getRemixSourceIds(
   return [...new Set(storedSourceImageIds(meta) ?? [])].filter((sourceId) => sourceId !== imageId);
 }
 
-// The flag-OFF path: a per-pod LRU keyed by imageId that no write busts, so a status change reaches
-// a pod's viewers only once its entry expires. Flag `contest-collection-items-redis-cache` moves the
-// read to the shared, busted cache in contest-collection-items.cache.ts.
+// Flag-OFF path. Nothing busts this per-pod LRU; writers bust only the shared cache.
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
   max: 100_000,

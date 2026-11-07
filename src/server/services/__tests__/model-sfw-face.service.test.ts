@@ -184,6 +184,18 @@ describe('the .com face intent gate', () => {
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
+  it("names the fields it read in a refusal, never the check's reason", async () => {
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: true, reason: 'CHECK-REASON-TEXT' },
+    });
+    const error = await assertSfwFaceSafe({ sfwName: 'Retro', name: 'n', userId: 1 }).catch(
+      (e: Error) => e
+    );
+    expect((error as Error).message).toBe(COM_FACE_REFUSED_MESSAGE);
+    expect((error as Error).message).toMatch(/title, description and trigger words/);
+  });
+
   it('refuses a hand-typed face on a flagged model at save, though its own text is clean', async () => {
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     await expect(

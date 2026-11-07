@@ -32,9 +32,18 @@ import {
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockDeleteModelFileObjects, mockDeregisterFileLocations } = vi.hoisted(() => ({
+const {
+  mockDeleteModelFileObjects,
+  mockDeregisterFileLocations,
+  mockVersionAirs,
+  mockBustAirs,
+  mockBustFileAirs,
+} = vi.hoisted(() => ({
   mockDeleteModelFileObjects: vi.fn(),
   mockDeregisterFileLocations: vi.fn(),
+  mockVersionAirs: vi.fn(),
+  mockBustAirs: vi.fn(),
+  mockBustFileAirs: vi.fn(),
 }));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -64,7 +73,14 @@ vi.mock('~/server/services/image.service', () => ({
   uploadImageFromUrl: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
-vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
+vi.mock('~/server/services/orchestrator/models', () => ({
+  bustOrchestratorModelCache: vi.fn(),
+  getOrchestratorVersionAirs: mockVersionAirs,
+  bustOrchestratorAirs: mockBustAirs,
+}));
+vi.mock('~/server/services/orchestrator/scanned-file-airs', () => ({
+  bustVersionScannedFileAirs: mockBustFileAirs,
+}));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 const { mockBustPostVersionCache } = vi.hoisted(() => ({ mockBustPostVersionCache: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
@@ -245,6 +261,7 @@ function stubModel(owner: number) {
   const ids = [1, 2, 3].map((n) => versionOf(owner, n));
   dbMock.dbRead.model.findUniqueOrThrow.mockResolvedValue({
     userId: owner,
+    type: 'LORA',
     modelVersions: ids.map((id) => ({
       id,
       name: `v${id}`,
@@ -277,6 +294,35 @@ describe('mergeVersions', () => {
     expect(left).toContain(targetVersionId);
     for (const id of sourceVersionIds) expect(left).not.toContain(id);
     expect(mockDeleteModelFileObjects).toHaveBeenCalledWith([STRAGGLER]);
+  });
+
+  // The sources are deleted by the time the version bust after the merge runs, so their AIRs are read
+  // before it; and a file's pinned AIR names its version, so a moved file stays cached under its
+  // source's AIR.
+  it("busts the versions' AIRs as read before the merge, and each moved file's pinned AIR under its source", async () => {
+    const {
+      modelId,
+      targetVersionId,
+      sourceVersionIds: [a, b],
+    } = stubModel(CLEAN);
+    mockVersionAirs.mockResolvedValueOnce(['urn:air:source']);
+    dbMock.dbWrite.modelFile.findMany.mockResolvedValueOnce([
+      { id: 501, modelVersionId: a },
+      { id: 502, modelVersionId: b },
+    ] as never);
+
+    await merge(CLEAN);
+
+    // What the orchestrator cached the AIRs under: a wrong one evicts nothing.
+    const version = { modelId, baseModel: 'SDXL 1.0', model: { type: 'LORA' } };
+    expect(mockBustFileAirs).toHaveBeenCalledWith(a, version, [501]);
+    expect(mockBustFileAirs).toHaveBeenCalledWith(b, version, [502]);
+    expect(mockBustFileAirs).toHaveBeenCalledWith(targetVersionId, version);
+    const [write] = dbMock.dbWrite.$transaction.mock.invocationCallOrder;
+    expect(mockVersionAirs).toHaveBeenCalledWith([targetVersionId, a, b]);
+    expect(mockVersionAirs.mock.invocationCallOrder[0]).toBeLessThan(write);
+    expect(mockBustAirs).toHaveBeenCalledWith(['urn:air:source']);
+    expect(mockBustAirs.mock.invocationCallOrder[0]).toBeGreaterThan(write);
   });
 
   it('forgets which version its re-pointed posts were on', async () => {

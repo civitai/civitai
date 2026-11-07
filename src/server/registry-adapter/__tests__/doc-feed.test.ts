@@ -54,7 +54,13 @@ function setup(store = createMemorySnapshotStore()) {
       tombstones: [],
       lastSeq: { ab_orbit_7: 5 },
     },
-    stream: { appId: 'ab_orbit_7', slug: 'orbit-notes', collection: 'notes', family: TWO_MAJORS },
+    stream: {
+      appId: 'ab_orbit_7',
+      slug: 'orbit-notes',
+      collection: 'notes',
+      contentRating: 'pg',
+      family: TWO_MAJORS,
+    },
   };
   const make = (edits: Array<() => void> = [], over: Partial<DocFeedOptions> = {}) => {
     let polls = 0;
@@ -318,6 +324,7 @@ describe('🔴 an empty published stream reads incrementally', () => {
         appId: 'ab_orbit_7',
         slug: 'orbit-notes',
         collection: 'notes',
+        contentRating: 'pg',
         family: TWO_MAJORS,
       }),
       store: createMemorySnapshotStore(),
@@ -369,6 +376,7 @@ describe('a poll with nothing new', () => {
         appId: 'ab_orbit_7',
         slug: 'orbit-notes',
         collection: 'notes',
+        contentRating: 'pg',
         family: TWO_MAJORS,
       }),
       store,
