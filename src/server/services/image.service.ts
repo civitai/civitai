@@ -1291,7 +1291,7 @@ export async function handleUnblockImages({
 
     const imageTagsForReview = await getImagTagsForReviewByImageIds(ids);
     await Promise.all([
-      // An unblock outranks a block's deferred effects: they go unfired.
+      // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
       ...Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw`
@@ -1374,48 +1374,50 @@ export async function handleUnblockImages({
  * of a held image sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close.
  */
-export const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
+const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
 
 /**
- * Returns the ids the block left held, and those under the moderator-only review flag, read from the
- * UPDATE itself: the row as locked, not as a replica last saw it. With `deferFor`, a held image not
- * removed for CSAM gets its deferred-effect row in the same statement.
+ * Returns the ids the block left held, and those under the moderator-only review flag, read on the
+ * primary under the block's row locks: not as a replica last saw them. With `deferFor`, a held image
+ * not removed for CSAM gets its deferred-effect row in the same transaction.
  */
 export async function writeModeratorBlock(
   ids: number[],
   deferFor?: { blockedBy?: number; violationType?: string }
 ): Promise<{ held: Set<number>; underReview: Set<number> }> {
   if (!ids.length) return { held: new Set(), underReview: new Set() };
-  const defer = !!deferFor;
-  const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; underReview: boolean }[]>`
-    WITH blocked AS (
+  return dbWrite.$transaction(async (tx) => {
+    await tx.$executeRaw`
       UPDATE "Image" SET
         ingestion = 'Blocked',
         "nsfwLevel" = ${NsfwLevel.Blocked},
-        "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${
-    BlockedReason.Moderated
-  } END,
+        "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
         "updatedAt" = NOW()
       WHERE id = ANY(${ids}::int[])
-      RETURNING id, ${heldImageSql} AS held, "blockedFor" = ${
-    BlockedReason.CSAM
-  } AS "removedForCsam",
+    `;
+    // A statement of its own, after the UPDATE took the row locks: one that waited on a dismissal
+    // reads the set-aside row that dismissal committed.
+    const rows = await tx.$queryRaw<
+      { id: number; held: boolean; removedForCsam: boolean; underReview: boolean }[]
+    >`
+      SELECT id, ${heldImageSql} AS held, "blockedFor" = ${BlockedReason.CSAM} AS "removedForCsam",
         "needsReview" = 'csam' AS "underReview"
-    ), deferred AS (
-      INSERT INTO "ImageDeferredBlockEffect" ("imageId", "violationType", "blockedBy")
-      SELECT id, ${deferFor?.violationType ?? null}::text, ${
-    deferFor?.blockedBy ?? null
-  }::int FROM blocked
-      WHERE ${defer} AND held AND NOT "removedForCsam"
-      ON CONFLICT ("imageId") DO NOTHING
-    )
-    SELECT id, held, "underReview" FROM blocked
-  `;
-  const idsWhere = (key: 'held' | 'underReview') =>
-    new Set(rows.filter((r) => r[key]).map((r) => r.id));
-  return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+      FROM "Image" WHERE id = ANY(${ids}::int[])
+    `;
+    const deferIds = rows.filter((r) => r.held && !r.removedForCsam).map((r) => r.id);
+    if (deferFor && deferIds.length)
+      await tx.$executeRaw`
+        INSERT INTO "ImageDeferredBlockEffect" ("imageId", "violationType", "blockedBy")
+        SELECT id, ${deferFor.violationType ?? null}::text, ${deferFor.blockedBy ?? null}::int
+        FROM unnest(${deferIds}::int[]) AS id
+        ON CONFLICT ("imageId") DO NOTHING
+      `;
+    const idsWhere = (key: 'held' | 'underReview') =>
+      new Set(rows.filter((r) => r[key]).map((r) => r.id));
+    return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+  });
 }
 
 /** Logged when an owner notice goes out for an image under the moderator-only review flag. */

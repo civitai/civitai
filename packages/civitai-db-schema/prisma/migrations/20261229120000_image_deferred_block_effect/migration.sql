@@ -1,4 +1,4 @@
--- A block's owner notice and report actioning, put off while the image is in CSAM review.
+-- A block's owner notice and report actioning, deferred until the review flag's close.
 --
 -- ORDER, A REQUIRED STEP: apply this BEFORE deploying the release that writes it. Every moderator
 -- block names this table, so a release running without it fails every block, not only flagged ones.
@@ -10,7 +10,8 @@
 -- environment, run after this file, with the environment's actual role names:
 --   GRANT SELECT, INSERT, DELETE ON "ImageDeferredBlockEffect" TO <moderator_write_role>, <app_write_role>;
 -- and check each with has_table_privilege('<role>', '"ImageDeferredBlockEffect"', '<privilege>').
--- Blocks insert; the close paths delete. No read role needs it.
+-- Blocks insert; the close paths delete. No read role needs it. The close paths also read
+-- "CsamReport" and "EvidenceHold" on the write roles; check SELECT on both for each.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
@@ -25,6 +26,7 @@ END $$;
 CREATE TABLE "ImageDeferredBlockEffect" (
   "imageId" INTEGER NOT NULL,
   "violationType" TEXT,
+  "notifyOwner" BOOLEAN NOT NULL DEFAULT true,
   "blockedBy" INTEGER,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "ImageDeferredBlockEffect_pkey" PRIMARY KEY ("imageId"),

@@ -4250,6 +4250,7 @@ export interface CsamQueueSetAside {
 export interface ImageDeferredBlockEffect {
   imageId: number;
   violationType: string | null;
+  notifyOwner: boolean;
   blockedBy: number | null;
   createdAt: Date;
 }

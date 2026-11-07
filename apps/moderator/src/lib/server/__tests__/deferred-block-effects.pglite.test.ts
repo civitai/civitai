@@ -10,8 +10,8 @@ import { imageVersion } from '../csam-queue-set-aside';
 
 /**
  * A block of an image under the review flag puts off its owner notice and report actioning until the
- * review closes. A close that is not a CSAM finding (a dismissal) runs them once, unless Legal holds
- * the owner's notices; an unblock drops them. Nothing reaches the owner while the review is open.
+ * review closes. A dismissal runs them once, subject to the owner check; an unblock drops them.
+ * Nothing reaches the owner while the review is open.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -109,7 +109,7 @@ CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
-CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER);
+CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}');
 CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "releaseAt" TIMESTAMP(3));
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
@@ -186,6 +186,17 @@ describe('a block of an image under the review flag', () => {
 
     expect(notices()).toEqual([]);
     expect(actioned()).toEqual([]);
+    expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
+  });
+
+  it('writes its deferred row inside the block’s transaction', async () => {
+    const outside = vi.spyOn(kysely(), 'insertInto');
+    try {
+      await block(FLAGGED);
+      expect(outside.mock.calls.map(([t]) => t)).not.toContain('ImageDeferredBlockEffect');
+    } finally {
+      outside.mockRestore();
+    }
     expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
   });
 
@@ -304,13 +315,18 @@ describe('dismissing it from the review queue', () => {
   });
 });
 
-describe('a dismissal for an owner Legal holds notices for', () => {
+describe('a dismissal whose owner check matches', () => {
   it.each([
     ['a CSAM report', `INSERT INTO "CsamReport" ("userId") VALUES (${OWNER})`],
+    [
+      'a CSAM report naming the owner second',
+      `INSERT INTO "CsamReport" ("userId", "details") VALUES (999, '{"secondaryUserId": "${OWNER}"}')`,
+    ],
     [
       'a released evidence hold',
       `INSERT INTO "EvidenceHold" ("userId", "releaseAt") VALUES (${OWNER}, now() - interval '1 day')`,
     ],
+    ['an evidence hold', `INSERT INTO "EvidenceHold" ("userId") VALUES (${OWNER})`],
   ])('%s: sends no notice and writes the withheld row, ids only', async (_, seed) => {
     await block(FLAGGED);
     await db.exec(seed);
@@ -344,6 +360,7 @@ describe('a dismissal for an owner Legal holds notices for', () => {
 
     expect(notices()).toEqual([]);
     expect(await withheldRows()).toHaveLength(1);
+    expect(logged('deferred-notice-check-failed')).toHaveLength(1);
   });
 
   it('is not applied to an owner neither row names', async () => {
@@ -353,6 +370,51 @@ describe('a dismissal for an owner Legal holds notices for', () => {
 
     expect(notices()).toHaveLength(1);
     expect(await withheldRows()).toEqual([]);
+  });
+});
+
+describe('a close that does not commit', () => {
+  it('fires nothing for a dismissal of the image as it was before a later write', async () => {
+    await block(FLAGGED);
+    const stale = await kysely()
+      .selectFrom('Image as i')
+      .select(imageVersion('i').as('v'))
+      .where('i.id', '=', FLAGGED)
+      .executeTakeFirstOrThrow();
+    await db.exec(
+      `UPDATE "Image" SET "updatedAt" = now() + interval '1 minute' WHERE id = ${FLAGGED}`
+    );
+
+    expect(await dismissFromCsamQueue({ imageId: FLAGGED, userId: 3, version: stale.v })).toEqual({
+      ok: false,
+      reason: 'changed',
+    });
+    expect(notices()).toEqual([]);
+    expect(await deferredRows()).toEqual([{ imageId: FLAGGED }]);
+  });
+});
+
+describe('a step of the fire that fails', () => {
+  it('does not fail the dismissal that committed, and is logged by image', async () => {
+    await block(FLAGGED);
+    setReportStatus.mockRejectedValueOnce(new Error('db down'));
+
+    expect(await dismiss(FLAGGED)).toEqual({ ok: true });
+    expect(notices()).toHaveLength(1);
+    expect(logged('deferred-effect-failed')).toEqual([FLAGGED]);
+  });
+});
+
+describe('a re-block of an image already removed under the flag', () => {
+  it('defers its reports but no notice', async () => {
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${FLAGGED}`
+    );
+    await block(FLAGGED);
+    await dismiss(FLAGGED);
+
+    expect(notices()).toEqual([]);
+    expect(actioned()).toEqual([{ id: report(FLAGGED), noRewardFor: [OWNER] }]);
   });
 });
 

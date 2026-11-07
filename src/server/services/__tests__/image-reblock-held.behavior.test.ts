@@ -112,8 +112,10 @@ beforeEach(async () => {
     ...v: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
-    // Only `clearReviewFlagsOnBlock`; the other raw writers touch tables this stand-in lacks.
-    if (!/SET "needsReview" = NULL/.test(flat.text)) return 0;
+    // The block, its deferred row and `clearReviewFlagsOnBlock`; the other raw writers touch tables
+    // this stand-in lacks.
+    if (!/SET "needsReview" = NULL|"blockedFor" = CASE|"ImageDeferredBlockEffect"/.test(flat.text))
+      return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`

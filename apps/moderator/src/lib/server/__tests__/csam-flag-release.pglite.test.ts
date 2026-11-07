@@ -405,7 +405,7 @@ describe('releasing a user whose block put effects off', () => {
     expect(await release(id)).toMatchObject({ ok: true, dryRun: false, count: 2 });
     expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
     expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
-      [{ imageId: id * 10 + 1, violationType: null }],
+      [{ imageId: id * 10 + 1, violationType: null, notifyOwner: true }],
       { moderatorId: ADMIN }
     );
     expect(await deferredRows()).toEqual([]);

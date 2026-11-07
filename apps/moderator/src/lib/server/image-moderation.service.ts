@@ -146,9 +146,6 @@ export async function acceptImage({
     if (restoreRemoved) return;
     throw new RemovedImageNotRestorableError(imageId);
   }
-  // An unblock outranks the block's deferred effects: they go unfired.
-  await dropDeferredBlockEffects(dbWrite, [imageId]);
-
   await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
@@ -181,6 +178,11 @@ export async function acceptImage({
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
 
   await applyAcceptSideEffects(img, imageId);
+
+  // Drops its blocks' deferred effects unfired. Last and best-effort: the image is already restored.
+  await dropDeferredBlockEffects(dbWrite, [imageId]).catch((e: Error) =>
+    console.error('[accept] deferred block effects not dropped', { imageId, error: e.message })
+  );
 
   if (nr === 'appeal') {
     const appeal = await closePendingAppeal(imageId, {
@@ -271,8 +273,8 @@ export async function blockImage({
     if (held.length) return { held: held[0] };
   }
 
-  const blocked = await dbWrite.transaction().execute(async (tx) => {
-    const row = await tx
+  const { updated, state } = await dbWrite.transaction().execute(async (tx) => {
+    const updated = await tx
       .updateTable('Image')
       .set({
         // The moderator-only review flag survives a block: only its own queue, a filed report or an
@@ -298,22 +300,35 @@ export async function blockImage({
       // Already removed with only the review flag left: blocking again would only notify the uploader a
       // second time. Decided here, not off the replica read above.
       .where(NOT_FLAG_ONLY_REMAINING)
-      .returning([
+      .returning('id')
+      .executeTakeFirst();
+    // A statement of its own, after the UPDATE took the row lock: one that waited on a dismissal
+    // reads the set-aside row that dismissal committed.
+    const state = await tx
+      .selectFrom('Image')
+      .select([
         HELD_IMAGE.as('held'),
         sql<boolean>`"blockedFor" = ${BLOCKED_REASON_CSAM}`.as('removedForCsam'),
         sql<boolean>`"needsReview" = ${FLAG_KEPT_THROUGH_BLOCK}`.as('underReview'),
       ])
+      .where('id', '=', imageId)
       .executeTakeFirst();
-    if (row?.held && !row.removedForCsam)
+    // A re-block of an image already removed under the flag defers its reports, not a notice.
+    if (state?.held && !state.removedForCsam)
       await tx
         .insertInto('ImageDeferredBlockEffect')
-        .values({ imageId, violationType: violationType ?? null, blockedBy: userId })
+        .values({
+          imageId,
+          violationType: violationType ?? null,
+          notifyOwner: !!updated,
+          blockedBy: userId,
+        })
         .onConflict((oc) => oc.column('imageId').doNothing())
         .execute();
-    return row;
+    return { updated: !!updated, state };
   });
-  // No row matched, so there is no RETURNING: read HELD_IMAGE from the primary.
-  if (!blocked) return (await isHeldImage(imageId)) ? { skipped: true } : {};
+  if (!updated) return state?.held ? { skipped: true } : {};
+  const blocked = state!;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
   await bustProfilePictures({ imageIds: [imageId] });

@@ -3608,6 +3608,10 @@ export type ImageDeferredBlockEffect = {
    * The violation the moderator chose, if any; the notice states it.
    */
   violationType: string | null;
+  /**
+   * False for a re-block of an image already removed: only its reports are deferred.
+   */
+  notifyOwner: Generated<boolean>;
   blockedBy: number | null;
   createdAt: Generated<Timestamp>;
 };

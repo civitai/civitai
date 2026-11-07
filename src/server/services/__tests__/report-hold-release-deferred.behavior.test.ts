@@ -34,6 +34,13 @@ beforeAll(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    return (await holder.db.query(flat.text, flat.values as unknown[])).affectedRows ?? 0;
+  }) as never);
 });
 
 beforeEach(async () => {

@@ -12,6 +12,7 @@ export const DEFERRED_BLOCK_EFFECT_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS "ImageDeferredBlockEffect" (
   "imageId" int PRIMARY KEY,
   "violationType" text,
+  "notifyOwner" boolean NOT NULL DEFAULT true,
   "blockedBy" int,
   "createdAt" timestamp(3) NOT NULL DEFAULT now()
 );`;

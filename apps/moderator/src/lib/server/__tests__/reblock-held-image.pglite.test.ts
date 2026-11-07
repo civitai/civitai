@@ -206,11 +206,15 @@ const deferredImages = async () =>
   ).rows.map((r) => r.imageId);
 
 describe('blocking an image removed with only the review flag left', () => {
-  it('sends no owner notice and leaves its report open for the review', async () => {
+  it('sends no owner notice, and defers its report, not a notice, to the review', async () => {
     await block(FLAG_ONLY);
 
     expect(notifiedImages()).toEqual([]);
     expect(actionedReports()).toEqual([]);
+    const { rows } = await db.query(
+      `SELECT "imageId", "notifyOwner" FROM "ImageDeferredBlockEffect"`
+    );
+    expect(rows).toEqual([{ imageId: FLAG_ONLY, notifyOwner: false }]);
   });
 
   it('once dismissed from the review queue, actions its report, as before', async () => {
@@ -303,7 +307,7 @@ describe('a bulk block over held and other images', () => {
 
     expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
     expect(actionedReports()).toEqual([report(OTHER_REASON)]);
-    expect(await deferredImages()).toEqual([FLAGGED_LIVE]);
+    expect(await deferredImages()).toEqual([FLAG_ONLY, FLAGGED_LIVE]);
     // The image removed with only its flag left is not blocked again, so it adds no entry.
     expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'CSAM', '104': 'TOS' });
   });

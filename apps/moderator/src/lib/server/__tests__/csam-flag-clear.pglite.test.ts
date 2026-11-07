@@ -358,7 +358,7 @@ describe('clearing a user whose block put effects off', () => {
   const USER = 177;
   const [A, B] = [USER * 10 + 1, USER * 10 + 2];
 
-  it('claims and fires them once, after the clear, and puts a Pending appeal back in its queue', async () => {
+  it('claims and fires them once, and puts a Pending appeal back in its queue', async () => {
     await db.exec(`
       INSERT INTO "User" ("id") VALUES (${USER});
       INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
@@ -371,9 +371,10 @@ describe('clearing a user whose block put effects off', () => {
     expect(await clear(USER)).toMatchObject({ ok: true, cleared: 2 });
 
     expect(fireDeferredBlockEffects).toHaveBeenCalledTimes(1);
-    expect(fireDeferredBlockEffects).toHaveBeenCalledWith([{ imageId: A, violationType: 'gore' }], {
-      moderatorId: MOD,
-    });
+    expect(fireDeferredBlockEffects).toHaveBeenCalledWith(
+      [{ imageId: A, violationType: 'gore', notifyOwner: true }],
+      { moderatorId: MOD }
+    );
     expect((await db.query(`SELECT * FROM "ImageDeferredBlockEffect"`)).rows).toEqual([]);
     expect(
       (await db.query(`SELECT id, "needsReview" FROM "Image" WHERE id IN (${A}, ${B}) ORDER BY id`))
@@ -382,5 +383,25 @@ describe('clearing a user whose block put effects off', () => {
       { id: A, needsReview: null },
       { id: B, needsReview: 'appeal' },
     ]);
+  });
+
+  it('fires nothing, and keeps them, when the clear rolls back', async () => {
+    const C = 1781;
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (178);
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (${C}, 178, 'csam', 'Blocked');
+      INSERT INTO "ImageDeferredBlockEffect" ("imageId") VALUES (${C});
+    `);
+    fireDeferredBlockEffects.mockClear();
+
+    expect(await clearUserCsamFlags({ userId: 178, expectedCount: 5, moderatorId: MOD })).toEqual({
+      ok: false,
+      reason: 'changed',
+    });
+    expect(fireDeferredBlockEffects).not.toHaveBeenCalled();
+    expect(
+      (await db.query(`SELECT "imageId" FROM "ImageDeferredBlockEffect" WHERE "imageId" = ${C}`))
+        .rows
+    ).toHaveLength(1);
   });
 });

@@ -110,7 +110,9 @@ beforeAll(async () => {
     -- Stand in for the hold-marker view and its kept-image record, which the appeal checks read.
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY, "heldUntil" timestamp(3));
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
-    CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "CsamReport" (
+      id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "Appeal" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -435,7 +437,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
 
   describe('an appeal on an image dismissed from the CSAM review queue', () => {
     // 41 is past the deadline from its filing, 42 a day short; 43's image is flagged but not
-    // dismissed; 44's appellant is named by a CSAM report, 45's by a released evidence hold.
+    // dismissed; 44 and 45 match the owner check.
     beforeEach(async () => {
       await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
@@ -525,7 +527,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
       expect(holder.notify).not.toHaveBeenCalled();
     });
 
-    it('closes and refunds, but tells no one, for an appellant Legal holds notices for', async () => {
+    it('closes and refunds without a notice when the owner check matches', async () => {
       await voidOrphanedAppeals();
 
       for (const [id, fee] of [

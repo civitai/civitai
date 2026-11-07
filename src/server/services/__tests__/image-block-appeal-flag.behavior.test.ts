@@ -170,7 +170,11 @@ beforeEach(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
-    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE/.test(flat.text))
+    if (
+      !/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE|"ImageDeferredBlockEffect"/.test(
+        flat.text
+      )
+    )
       return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
@@ -181,7 +185,7 @@ beforeEach(async () => {
     ...v: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
-    if (!/"blockedFor" = CASE|"CsamQueueSetAside"|RETURNING "postId", "pHash"/.test(flat.text))
+    if (!/"CsamQueueSetAside"|SELECT id FROM "Image"|RETURNING "postId", "pHash"/.test(flat.text))
       return [];
     return (await run(flat)).rows;
   }) as never);
@@ -488,10 +492,27 @@ describe('approving an image appeal', () => {
     expect(await imageRow(APPEALED)).toMatchObject({ ingestion: 'Scanned' });
   });
 
-  it('does not restore an image held after its check, nor run the restore around it', async () => {
+  it('reopens, rather than approves, an appeal whose image turned held after its check', async () => {
     // The held check reads an image not yet held; the CSAM block lands before the ruling's write.
     dbMock.dbWrite.$executeRaw.mockClear();
     loggingMock.logToAxiom.mockClear();
+    // The shared claim fake returns every row now in the target status; here it must return only
+    // the rows this claim moved out of Pending, as Prisma does.
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockImplementationOnce(
+      (async ({ where, data }: any) =>
+        (
+          await holder.db.query(
+            `UPDATE "Appeal" SET status = $3 WHERE "entityId" = ANY($1) AND "entityType" = $2
+           AND status = 'Pending'
+           RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId", "createdAt"`,
+            [where.entityId.in, where.entityType, data.status]
+          )
+        ).rows) as never
+    );
+    await holder.db.query(
+      `UPDATE "Appeal" SET "buzzTransactionId" = 'appeal-7-1' WHERE "entityId" = $1`,
+      [APPEALED]
+    );
     const fake = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
     dbMock.dbWrite.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
@@ -518,6 +539,10 @@ describe('approving an image appeal', () => {
     expect(loggingMock.logToAxiom.mock.calls.map(([e]) => (e as { name?: string }).name)).toContain(
       'appeal-approval-not-restored'
     );
+    expect(await pendingAppeals()).toBe(1);
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 });
 

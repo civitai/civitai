@@ -6986,12 +6986,14 @@ model CsamQueueSetAside {
   @@index([userId])
 }
 
-/// A block's owner notice and report actioning, put off while the image is in CSAM review. Written
-/// with the block; claimed (deleted) once by whichever close ends the review.
+/// A block's owner notice and report actioning, deferred until the review flag's close. Written with
+/// the block; claimed (deleted) once by whichever close ends the review.
 model ImageDeferredBlockEffect {
   imageId       Int      @id
   /// The violation the moderator chose, if any; the notice states it.
   violationType String?
+  /// False for a re-block of an image already removed: only its reports are deferred.
+  notifyOwner   Boolean  @default(true)
   blockedBy     Int?
   createdAt     DateTime @default(now())
 }

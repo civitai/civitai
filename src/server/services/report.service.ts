@@ -32,7 +32,6 @@ import {
   bulkRemoveBlockedImages,
   queueImageSearchIndexUpdate,
   dropBlockedImageDeleteQueue,
-  heldImageSql,
   resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
 import {
@@ -1371,18 +1370,18 @@ function closeDismissedReviewAppeals(limit: number) {
   `;
 }
 
-/** The ModActivity row Legal Intake reads for a withheld notice. Ids only. */
+/** ModActivity row for a notice not sent. Ids only. */
 export const DEFERRED_NOTICE_WITHHELD_ACTIVITY = 'deferredNoticeWithheld';
 
-/**
- * Users Legal holds notices for: named by any CSAM report or any evidence hold, released or not.
- * Read on the primary. A failed read holds them all.
- */
+/** Users whose notice is not sent. Read on the primary; a failed read returns all of them. */
 async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
   try {
     const rows = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT "userId" FROM "CsamReport" WHERE "userId" = ANY(${userIds}::int[])
+      UNION
+      SELECT u.id FROM "CsamReport" c, unnest(${userIds}::int[]) AS u(id)
+      WHERE c.details ->> 'secondaryUserId' = u.id::text
       UNION
       SELECT "userId" FROM "EvidenceHold" WHERE "userId" = ANY(${userIds}::int[])
     `;
@@ -1654,11 +1653,12 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
-  // An approval of a held image is refused whole, and every appeal stays Pending. One that turns
-  // held after this read is caught by `settleResolvedAppeals`, which then does not restore it.
+  // An approval of an image removed for CSAM or under the review flag is refused whole, and every
+  // appeal stays Pending. One that turns so after this read is reopened by `settleResolvedAppeals`.
   if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
     const held = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND ${heldImageSql}
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[])
+        AND ("blockedFor" = ${BlockedReason.CSAM} OR "needsReview" = 'csam')
     `;
     if (held.length)
       throw throwBadRequestError(
@@ -1738,7 +1738,9 @@ export async function settleResolvedAppeals(
   });
   const recipientMap = new Map(recipients.map((u) => [u.id, u]));
 
+  const reopenedIds = new Set<number>();
   for (const appeal of appeals) {
+    let reopened = false;
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
@@ -1761,13 +1763,20 @@ export async function settleResolvedAppeals(
                 RETURNING "postId", "pHash"
               `;
           if (!updated) {
-            if (approved)
+            if (approved) {
+              // Back to Pending, with no refund and no notice: nothing was approved.
+              await dbWrite.appeal.updateMany({
+                where: { id: appeal.id, status: AppealStatus.Approved },
+                data: { status: AppealStatus.Pending, resolvedBy: null, resolvedAt: null },
+              });
               logToAxiom({
                 type: 'error',
                 name: 'appeal-approval-not-restored',
                 appealId: appeal.id,
                 imageId: appeal.entityId,
               }).catch(() => undefined);
+              reopened = true;
+            }
             break;
           }
 
@@ -1802,6 +1811,10 @@ export async function settleResolvedAppeals(
       default:
         // Do nothing
         break;
+    }
+    if (reopened) {
+      reopenedIds.add(appeal.id);
+      continue;
     }
 
     if ((approved || refundBuzz) && appeal.buzzTransactionId) {
@@ -1845,6 +1858,7 @@ export async function settleResolvedAppeals(
   // user who appealed several items at once gets a single email.
   const appealsByUser = new Map<number, typeof appeals>();
   for (const appeal of appeals) {
+    if (reopenedIds.has(appeal.id)) continue;
     const list = appealsByUser.get(appeal.userId) ?? [];
     list.push(appeal);
     appealsByUser.set(appeal.userId, list);

@@ -18,7 +18,12 @@ import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-f
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { bulkSetReportStatus, csamReportRewardExclusions } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
-import { BlockImageReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import {
+  AppealStatus,
+  BlockImageReason,
+  EntityType,
+  ReportStatus,
+} from '~/shared/utils/prisma/enums';
 
 export async function createCsamReportHandler({
   input,
@@ -141,8 +146,24 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     }
   }
 
-  // Last, so the images are already blocked and the report row committed when the flag comes off.
-  if (type === 'Image' && imageIds.length) await releaseReviewFlagsToReportHold(imageIds);
+  if (type === 'Image' && imageIds.length) {
+    // Closed silently: no refund, and the uploader is not told.
+    await dbWrite.appeal.updateMany({
+      where: {
+        entityType: EntityType.Image,
+        entityId: { in: imageIds },
+        status: AppealStatus.Pending,
+      },
+      data: {
+        status: AppealStatus.Rejected,
+        resolvedBy: reportedById,
+        resolvedAt: new Date(),
+        internalNotes: 'Closed by CSAM report',
+      },
+    });
+    // Last, so the images are already blocked and the report row committed when the flag comes off.
+    await releaseReviewFlagsToReportHold(imageIds);
+  }
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };
