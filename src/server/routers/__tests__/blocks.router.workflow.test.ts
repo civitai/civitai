@@ -10881,16 +10881,26 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     it.each(['comfy', 'Comfy'])(
       'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
       async (t) => {
-        for (const run of ['submitWorkflow', 'estimateWorkflow'] as const) {
+        // Two explicit calls, not `caller()[run]`: a call through a union of two
+        // procedure signatures does not type-check.
+        const calls: Array<[string, () => Promise<unknown>]> = [
+          [
+            'submitWorkflow',
+            () => caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) }),
+          ],
+          [
+            'estimateWorkflow',
+            () => caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) }),
+          ],
+        ];
+        for (const [run, call] of calls) {
           mockVerifyBlockToken.mockResolvedValue(ptClaims());
           happyUser();
           ptQuoting(5, 5);
-          const err = await caller()
-            [run]({ blockToken: 'tok', body: ptBody({ $type: t }) })
-            .then(
-              () => null,
-              (e: unknown) => e
-            );
+          const err = await call().then(
+            () => null,
+            (e: unknown) => e
+          );
           expect(err, run).toBeInstanceOf(TRPCError);
           expect((err as TRPCError).code, run).toBe('FORBIDDEN');
           expect((err as TRPCError).cause, run).toBeInstanceOf(PlatformInternalStepTypeError);
