@@ -28,7 +28,8 @@ import permissionsHandler from '~/pages/api/v1/permissions/check';
 const SERVICE_ID = 900;
 const ASKED_ABOUT = 7;
 const VERSION = 100;
-const LOG_NAME = 'permissions-check-untrusted-caller';
+const LOG_NAME = 'permissions-check-caller';
+let minute = 0;
 
 function keyOwnedBy(id: number, apiKeyType = 'User') {
   return { user: { id }, apiKeyId: 55, apiKeyType, subject: { type: 'apiKey', id: 55 } };
@@ -54,14 +55,18 @@ const logged = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setEnv({ PERMISSIONS_CHECK_SERVICE_USER_IDS: [SERVICE_ID] });
+  mockBearer.mockReset();
+  // A fresh minute per test, so the per-minute lookup budget starts full.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(++minute * 60_000);
+  setEnv({ PERMISSIONS_CHECK_SERVICE_USER_IDS: [SERVICE_ID], WEBHOOK_TOKEN_PREVIOUS: 'old-hook' });
   mockGetSessionUserById.mockResolvedValue({ id: ASKED_ABOUT });
   mockHasEntityAccess.mockResolvedValue([{ entityId: VERSION, hasAccess: true }]);
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([] as never);
 });
 
 describe('GET /api/v1/permissions/check, caller logging', () => {
-  it('logs an anonymous caller without ids and still answers', async () => {
+  it('logs an anonymous caller without ids', async () => {
     expect(await check()).toEqual({ [VERSION]: true });
     expect(logged()).toEqual([expect.objectContaining({ caller: 'anonymous' })]);
     expect(logged()[0]).not.toHaveProperty('callerUserId');
@@ -74,12 +79,12 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(logged()[0]).not.toHaveProperty('apiKeyId');
   });
 
-  it('logs the caller and key ids when another user asks', async () => {
+  it('logs the caller and key ids for another user', async () => {
     mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
     expect(await check('Bearer k')).toEqual({ [VERSION]: true });
     expect(logged()).toEqual([
       {
-        type: 'warning',
+        type: 'info',
         name: LOG_NAME,
         caller: 'other-user',
         credentialSource: 'header',
@@ -91,8 +96,7 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     ]);
   });
 
-  // Every user who generates holds a System key, so the key type must not make a caller trusted.
-  it('treats a System key owned by an unlisted user as untrusted', async () => {
+  it('logs a System key owned by an unlisted user', async () => {
     mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1, 'System'));
     await check('Bearer k');
     expect(logged()).toEqual([
@@ -112,7 +116,7 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(logged()).toEqual([]);
   });
 
-  it('still answers, and logs, when the bearer lookup throws', async () => {
+  it('answers and logs when the bearer lookup throws', async () => {
     mockBearer.mockRejectedValue(new Error('db down'));
     expect(await check('Bearer k')).toEqual({ [VERSION]: true });
     expect(logged()).toEqual([expect.objectContaining({ caller: 'unresolved-bearer' })]);
@@ -121,7 +125,55 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
   it('reads a query-string token the way session auth does', async () => {
     mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
     await check(undefined, { token: 'k' });
-    expect(mockBearer).toHaveBeenCalledWith('k', expect.anything());
+    expect(mockBearer).toHaveBeenCalledWith('k', { allowClientCredentialsOnly: true });
     expect(logged()).toEqual([]);
+  });
+
+  it('logs the source of a query-string token from an unlisted user', async () => {
+    mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
+    await check(undefined, { token: 'k' });
+    expect(logged()).toEqual([
+      expect.objectContaining({ caller: 'other-user', credentialSource: 'query' }),
+    ]);
+  });
+
+  it('reads the first of repeated query tokens, as session auth does', async () => {
+    mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
+    await check(undefined, { token: ['k', 'x'] as never });
+    expect(mockBearer).toHaveBeenCalledWith('k', { allowClientCredentialsOnly: true });
+  });
+
+  it('never looks up the previous webhook token', async () => {
+    await check(undefined, { token: 'old-hook' });
+    expect(mockBearer).not.toHaveBeenCalled();
+    expect(logged()).toEqual([
+      expect.objectContaining({ caller: 'anonymous', credentialSource: 'none' }),
+    ]);
+  });
+
+  it('answers without waiting for the caller lookup', async () => {
+    mockBearer.mockReturnValue(new Promise(() => undefined));
+    const late = new Promise((resolve) =>
+      setTimeout(() => resolve('still waiting after 1s'), 1000)
+    );
+    expect(await Promise.race([check('Bearer k'), late])).toEqual({ [VERSION]: true });
+  });
+
+  it('answers when writing the log fails', async () => {
+    loggingMock.logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+    expect(await check()).toEqual({ [VERSION]: true });
+  });
+
+  it('stops looking up callers past the per-minute budget, and keeps answering', async () => {
+    mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
+    for (let i = 0; i < 60; i++) await check('Bearer k');
+    expect(mockBearer).toHaveBeenCalledTimes(60);
+    expect(await check('Bearer k')).toEqual({ [VERSION]: true });
+    expect(mockBearer).toHaveBeenCalledTimes(60);
+    expect(logged()).toHaveLength(60);
+
+    vi.setSystemTime(++minute * 60_000);
+    await check('Bearer k');
+    expect(mockBearer).toHaveBeenCalledTimes(61);
   });
 });

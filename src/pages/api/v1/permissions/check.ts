@@ -9,6 +9,7 @@ import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -18,14 +19,25 @@ const schema = z.object({
   permission: z.enum(['Generate']).default('Generate'),
 });
 
-// shortcut: observe-only. Callers are classified and logged but every class is still answered; the
-// enforcing version follows once the logs show which account the trusted service uses.
-async function logUntrustedCaller(req: NextApiRequest, userId: number | undefined, count: number) {
+// shortcut: per-pod cap on caller lookups, reset each minute. Move it to Redis if one pod's share
+// of the log proves too thin.
+const CALLER_LOG_BUDGET_PER_MINUTE = 60;
+const callerLogBudget = { minute: 0, used: 0 };
+
+function takeCallerLogBudget() {
+  const minute = Math.floor(Date.now() / 60_000);
+  if (minute !== callerLogBudget.minute) Object.assign(callerLogBudget, { minute, used: 0 });
+  return callerLogBudget.used++ < CALLER_LOG_BUDGET_PER_MINUTE;
+}
+
+async function logCaller(req: NextApiRequest, userId: number | undefined, count: number) {
+  if (!takeCallerLogBudget()) return;
   const header = req.headers.authorization;
-  const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
-  // Same sources as getServerAuthSession, which also skips the webhook token.
+  const rawQueryToken = req.query.token;
+  const queryToken = Array.isArray(rawQueryToken) ? rawQueryToken[0] : rawQueryToken;
+  // Read the way getServerAuthSession reads it: header first, then `?token=` unless it is a webhook token.
   const bearer =
-    (header ? header.split(' ')[1] : queryToken !== env.WEBHOOK_TOKEN ? queryToken : undefined) ||
+    (header ? header.split(' ')[1] : matchWebhookToken(queryToken) ? undefined : queryToken) ||
     undefined;
   const session = bearer
     ? await getSessionFromBearerToken(bearer, { allowClientCredentialsOnly: true }).catch(
@@ -37,8 +49,8 @@ async function logUntrustedCaller(req: NextApiRequest, userId: number | undefine
   if (callerUserId != null && callerUserId === userId) return;
 
   logToAxiom({
-    type: 'warning',
-    name: 'permissions-check-untrusted-caller',
+    type: 'info',
+    name: 'permissions-check-caller',
     caller: session ? 'other-user' : bearer ? 'unresolved-bearer' : 'anonymous',
     credentialSource: header ? 'header' : bearer ? 'query' : 'none',
     entityCount: count,
@@ -69,8 +81,8 @@ export default PublicEndpoint(
       return res.status(400).json({ error: 'Invalid permission' });
     }
 
-    // Not awaited: classifying the caller may read the database and must not delay the answer.
-    void logUntrustedCaller(req, userId, entityIds.length).catch(() => undefined);
+    // Not awaited: identifying the caller may read the database and must not delay the answer.
+    void logCaller(req, userId, entityIds.length).catch(() => undefined);
 
     const sessionUser = userId != null ? await sessionClient.getSessionUserById(userId) : null;
 

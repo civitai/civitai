@@ -440,8 +440,9 @@ export const serverSchema = z
     CIVITAI_MODERATION_USER_ID: z
       .union([z.coerce.number().int().positive(), z.literal('')])
       .optional(),
-    // Owners of the service API keys trusted to ask /api/v1/permissions/check about any user.
-    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray().default([]),
+    // Service accounts whose calls to /api/v1/permissions/check are not logged. Only feeds a log, so a
+    // malformed value reads as unset rather than failing boot.
+    PERMISSIONS_CHECK_SERVICE_USER_IDS: commaDelimitedNumberArray().default([]).catch([]),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
