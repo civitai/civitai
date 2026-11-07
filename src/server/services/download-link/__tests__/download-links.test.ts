@@ -332,6 +332,7 @@ const POI_VERSION = 105;
 const DELETED = 106;
 const FAILED_SCAN = 107;
 const INTERNAL_ONLY = 108;
+const LARGE_FILE = 109;
 
 function version(id: number, overrides: Record<string, unknown> = {}) {
   world.versions.set(id, {
@@ -388,6 +389,8 @@ function seedWorld() {
   version(FAILED_SCAN);
   world.files.find((f) => f.versionId === FAILED_SCAN)!.virusScanResult = 'Danger';
   version(INTERNAL_ONLY, { usageControl: 'InternalGeneration' });
+  version(LARGE_FILE);
+  world.files.find((f) => f.versionId === LARGE_FILE)!.sizeKB = 7 * 1024 * 1024; // 7 GB
 
   world.clients.set('orch-client', {
     userId: 900,
@@ -727,6 +730,20 @@ describe('use', () => {
     const statuses = results.map((r) => r.status);
     expect(statuses.filter((s) => s === 302)).toHaveLength(50);
     expect(statuses.filter((s) => s === 404)).toHaveLength(20);
+  });
+
+  it('lets the worker fetch a 7 GB file as 64 MB ranges, retries included', async () => {
+    // Older worker builds GET the link once per 64 MB range, two at a time: 112 ranges here, more
+    // than double the flat cap of 50. (Current builds probe once and fetch parts from storage.)
+    const { url } = await mintOne(userItem(LARGE_FILE));
+    const ranges = Math.ceil((7 * 1024) / 64);
+    const statuses: number[] = [];
+    for (let i = 0; i < ranges; i += 2)
+      statuses.push(...(await Promise.all([fetchLink(url), fetchLink(url)])).map((r) => r.status));
+    // Every range, and a retry of each tenth one.
+    for (let i = 0; i < ranges / 10; i++) statuses.push((await fetchLink(url)).status);
+    expect(statuses.filter((s) => s !== 302)).toEqual([]);
+    expect(statuses.length).toBeGreaterThan(120);
   });
 
   it('re-checks access at every use: a takedown after mint 404s', async () => {

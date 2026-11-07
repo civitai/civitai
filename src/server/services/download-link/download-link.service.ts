@@ -28,6 +28,20 @@ import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 export const DEFAULT_LINK_TTL_SECONDS = 24 * 60 * 60;
 
+/**
+ * A link's fetch cap: `DOWNLOAD_LINK_MAX_FETCHES`, raised for large files. Older worker builds
+ * fetch a large file as concurrent 64 MB ranges, each a separate GET of the link, so a flat cap
+ * cuts them off partway through. One fetch per 32 MB, plus room for retries, is twice what one
+ * complete multipart download spends.
+ */
+const FETCH_CAP_CHUNK_KB = 32 * 1024;
+const FETCH_CAP_RETRY_ALLOWANCE = 20;
+export const linkFetchCap = (sizeKB: number) =>
+  Math.max(
+    env.DOWNLOAD_LINK_MAX_FETCHES,
+    Math.ceil(Math.max(0, sizeKB) / FETCH_CAP_CHUNK_KB) + FETCH_CAP_RETRY_ALLOWANCE
+  );
+
 export type MintItem = {
   modelVersionId: number;
   fileId?: number;
@@ -134,7 +148,6 @@ async function mintOne(
     onBehalfOfUserId,
     now,
     minRemainingMs: env.DOWNLOAD_LINK_MIN_REUSE_SECONDS * 1000,
-    maxFetches: env.DOWNLOAD_LINK_MAX_FETCHES,
     maxExpiresAt: now + item.ttlSeconds * 1000,
   });
   if (reusable) {
@@ -149,6 +162,7 @@ async function mintOne(
 
   const expiresAt = now + item.ttlSeconds * 1000;
   const { id, linkId } = await createLink({
+    maxFetches: linkFetchCap(check.sizeKB),
     credential,
     onBehalfOfUserId,
     // The link pins the version and file the check resolved, not the ones asked for.
@@ -264,7 +278,7 @@ export async function fetchDownloadLink({
   if (!counted) return null;
   const { link, fetch } = counted;
   if (now >= link.expiresAt) return refuseUse(link.linkId, 'expired', fetch);
-  if (fetch > env.DOWNLOAD_LINK_MAX_FETCHES) return refuseUse(link.linkId, 'over-cap', fetch);
+  if (!(fetch <= link.maxFetches)) return refuseUse(link.linkId, 'over-cap', fetch);
   const credential = { kind: link.credentialKind, id: link.credentialId };
   if (!(await isCredentialLive(credential, now)))
     return refuseUse(link.linkId, 'credential-dead', fetch);

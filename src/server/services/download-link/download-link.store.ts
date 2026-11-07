@@ -34,6 +34,8 @@ export type StoredDownloadLink = {
   mintedAt: number;
   expiresAt: number;
   fetches: number;
+  /** This link's fetch cap, fixed at mint from the file's size. */
+  maxFetches: number;
 };
 
 function toBase62(bytes: Buffer) {
@@ -90,6 +92,7 @@ function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
     mintedAt: Number(raw.mintedAt),
     expiresAt: Number(raw.expiresAt),
     fetches: Number(raw.fetches ?? 0),
+    maxFetches: Number(raw.maxFetches),
   };
 }
 
@@ -117,6 +120,7 @@ export async function createLink(
     mintedAt: String(link.mintedAt),
     expiresAt: String(link.expiresAt),
     fetches: '0',
+    maxFetches: String(link.maxFetches),
   };
   const multi = sysRedis
     .multi()
@@ -144,7 +148,6 @@ export async function findReusableLink({
   onBehalfOfUserId,
   now,
   minRemainingMs,
-  maxFetches,
   maxExpiresAt,
 }: {
   credential: DownloadLinkCredential;
@@ -152,7 +155,6 @@ export async function findReusableLink({
   onBehalfOfUserId: number | null;
   now: number;
   minRemainingMs: number;
-  maxFetches: number;
   /** A repeat mint never returns a link that outlives the lifetime it asked for. */
   maxExpiresAt: number;
 }): Promise<{ id: string; link: StoredDownloadLink } | null> {
@@ -169,7 +171,7 @@ export async function findReusableLink({
     link.onBehalfOfUserId !== onBehalfOfUserId ||
     link.expiresAt - now < minRemainingMs ||
     link.expiresAt > maxExpiresAt ||
-    link.fetches >= maxFetches
+    !(link.fetches < link.maxFetches)
   )
     return null;
   // A rotated secret rebuilds a different id: mint fresh rather than hand back a dead URL.
