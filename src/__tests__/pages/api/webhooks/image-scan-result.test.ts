@@ -205,6 +205,14 @@ vi.mock('~/server/services/system-cache', () => ({
   getTagRules: vi.fn().mockResolvedValue([]),
 }));
 
+const { mockRefreshPicturesForImages } = vi.hoisted(() => ({
+  mockRefreshPicturesForImages: vi.fn(async (_imageIds: number[]) => undefined),
+}));
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForImagesLazy: mockRefreshPicturesForImages,
+  refreshProfilePicturesForUsersLazy: vi.fn(async () => undefined),
+}));
+
 // Auto-stubbing `~/server/redis/caches` mock.
 //
 // The success path busts/refreshes several redis caches (`userImageVideoCountCaches.bust`,
@@ -215,14 +223,6 @@ vi.mock('~/server/services/system-cache', () => ({
 // method is a `vi.fn()` resolving `undefined`, so a newly-referenced cache export can no longer
 // break the suite. Specific behaviours the tests rely on (`tagCacheByName.fetch`) are preserved
 // as explicit overrides.
-const { mockRefreshPicturesForImages } = vi.hoisted(() => ({
-  mockRefreshPicturesForImages: vi.fn(async (_imageIds: number[]) => undefined),
-}));
-vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
-  refreshProfilePicturesForImagesLazy: mockRefreshPicturesForImages,
-  refreshProfilePicturesForUsersLazy: vi.fn(async () => undefined),
-}));
-
 vi.mock('~/server/redis/caches', () => {
   const makeCacheStub = (overrides: Record<string, unknown> = {}) => {
     const methods = new Map<string, unknown>(Object.entries(overrides));

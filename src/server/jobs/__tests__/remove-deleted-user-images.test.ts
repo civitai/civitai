@@ -1283,6 +1283,15 @@ describe('grace mode search index and caches', () => {
 
     expect(mockRefreshProfilePictures).toHaveBeenCalledWith([7]);
   });
+
+  it('refreshes nothing when the pass blocked no images', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, restoredAfterCheck: true });
+
+    const result = await run();
+
+    expect(result.blockedImages).toBe(0);
+    expect(mockRefreshProfilePictures).not.toHaveBeenCalled();
+  });
 });
 
 describe('grace mode delete queue', () => {
