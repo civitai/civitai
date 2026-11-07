@@ -37,6 +37,7 @@ import type {
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
 import {
+  markBlockRequestReadMiss,
   recordDocStoreError,
   type DocStoreEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -262,6 +263,11 @@ function sendEnvelope(
   res.status(status).json(body);
 }
 
+/** True for a document-store READ of a key that does not exist (see `sendError`). */
+export function isDocumentReadMiss(req: NextApiRequest, code: StorageApiCode): boolean {
+  return code === 'not_found' && storageEndpointLabel(req) === 'storage_read';
+}
+
 function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
@@ -277,6 +283,12 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
+  // A document GET for a key that does not exist yet is a READ MISS: an app's first read of a key
+  // it has never written lands here by contract. Marked so the per-app REST counter reports it as
+  // `result="not_found"` instead of `client_error`. On `storage_read` this code comes only from the
+  // `get` op; the other `not_found` (an unmatched route) is labelled `storage_info` and stays an
+  // error. The envelope itself, and `doc_store_errors_total{code="not_found"}`, are unchanged.
+  if (isDocumentReadMiss(req, err.code)) markBlockRequestReadMiss(res);
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
   if (typeof retryAfter === 'number') {

@@ -140,18 +140,29 @@ const {
 // divergence, so a flat "no divergence" line can be told apart from a detector
 // that never ran. Mocked so the outcome label is assertable; the real emitter is
 // fail-soft and would swallow everything silently.
-const { mockRecordStepPriceCheck } = vi.hoisted(() => ({
+const { mockRecordStepPriceCheck, mockRecordSubmitFailure } = vi.hoisted(() => ({
   mockRecordStepPriceCheck: vi.fn(() => undefined),
+  mockRecordSubmitFailure: vi.fn((_label: string, _reason: string) => undefined),
 }));
 // A bare factory, so every symbol the router imports from this module must be listed
 // here or it resolves to `undefined` and the router throws the moment it is called.
 // `recordBlockPostSubjectRefusal` is only reached on the post preamble's unreadable-
 // subject branch, which this suite does not drive — it is listed so that stays true by
 // construction rather than by luck.
-vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
-  recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
-  recordBlockPostSubjectRefusal: () => undefined,
-}));
+// `submitFailureAppBlockLabel` is the REAL one (it decides the label under test); the emitter is
+// mocked so the (label, reason) pair is assertable.
+vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/server/metrics/app-block-runtime.metrics')
+  >();
+  return {
+    recordStepPriceCheck: (...a: unknown[]) => mockRecordStepPriceCheck(...(a as [])),
+    recordBlockPostSubjectRefusal: () => undefined,
+    recordAppBlockSubmitFailure: (label: string, reason: string) =>
+      mockRecordSubmitFailure(label, reason),
+    submitFailureAppBlockLabel: actual.submitFailureAppBlockLabel,
+  };
+});
 
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => mockGetActiveDevTunnel(...(a as [])),
@@ -4080,6 +4091,92 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
         caller.estimateWorkflow({ blockToken: 'tok', body: validBody() })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── civitai_app_block_submit_failures_total ──────────────────────────────
+  // The procedure's own middleware records every failed submit, thrown OR returned as a failed
+  // snapshot. Red on origin/main: nothing recorded a submit failure at all.
+  describe('submitWorkflow — failure telemetry', () => {
+    beforeEach(() => {
+      mockRecordSubmitFailure.mockClear();
+    });
+
+    it('records nothing for a successful submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 100, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(25);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+        });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(mockRecordSubmitFailure).not.toHaveBeenCalled();
+    });
+
+    it('a THROWN ecosystem refusal is recorded as ecosystem_unavailable for the verified app', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        pageClaims({ buzzBudget: 1000, appBlockId: 'apb_tele' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockResolveCanGenerateForVersions.mockResolvedValue(new Map([[99, { canGenerate: true }]]));
+      // The exact message the generation graph produces for a hidden/disabled ecosystem.
+      mockCreateStepsFromGraph.mockRejectedValueOnce(
+        new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        })
+      );
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'ecosystem_unavailable']]);
+    });
+
+    it('a RETURNED insufficient-budget snapshot is recorded as insufficient_buzz', async () => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims({ buzzBudget: 5, appBlockId: 'apb_tele' }));
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      // Resolved, not thrown: a counter that only watched throws would miss this one.
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/insufficient buzz budget/);
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['apb_tele', 'insufficient_buzz']]);
+    });
+
+    it('a failure before the token is verified is labelled unknown', async () => {
+      mockVerifyBlockToken.mockResolvedValue(null);
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'other']]);
+    });
+
+    it('a body the input schema refuses is recorded as validation', async () => {
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.submitWorkflow({ blockToken: 'tok', body: { kind: 'not-a-kind' } as never })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockRecordSubmitFailure.mock.calls).toEqual([['unknown', 'validation']]);
     });
   });
 

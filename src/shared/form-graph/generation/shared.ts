@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { cachedFactory, defFamily, defineGraph, rootScope, type Scope } from 'form-graph';
 import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
+import { ECOSYSTEM_UNAVAILABLE_MESSAGE } from '~/shared/constants/app-telemetry.constants';
 import { resolveCompatibleEcosystem } from './ecosystem-gates';
 
 import type { GenerationCtx } from '~/shared/generation/context';
@@ -301,7 +302,7 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
     output:
       hiddenSet.size || disabledSet.size
         ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
-            message: 'Ecosystem is currently unavailable',
+            message: ECOSYSTEM_UNAVAILABLE_MESSAGE,
           })
         : z.string(),
     // This used to be an effect keyed on `workflow`, so a one-shot parse that

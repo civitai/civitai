@@ -9,6 +9,14 @@ import { trackedReasons } from '~/utils/login-helpers';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
 import {
+  APP_ERROR_STAGES,
+  APP_SESSION_HOSTS,
+  APP_SESSION_MAX_COUNT,
+  APP_SESSION_MAX_DURATION_MS,
+  APP_SUBMIT_FAILURE_REASONS,
+  APP_TELEMETRY_APP_BLOCK_ID_RE,
+} from '~/shared/constants/app-telemetry.constants';
+import {
   EXPERIMENT_ASSIGNMENT_SOURCES,
   EXPERIMENT_SURFACES,
   experimentKeys,
@@ -942,6 +950,34 @@ const hatTurfActionSchema = z.object({
   }),
 });
 
+// App Blocks in-app telemetry, from the two block hosts. Client-postable: a forged row can only add
+// telemetry under the poster's own session, and every field is closed or bounded — `appBlockId` is
+// shape-checked, the reason/stage/host are enums, the numbers are integer-capped — so no app or
+// user content can reach the `details` column. The hosts clamp before sending, because one
+// rejected event fails its whole batch.
+const appErrorSchema = z.object({
+  type: z.literal('App_Error'),
+  details: z.object({
+    appBlockId: z.string().regex(APP_TELEMETRY_APP_BLOCK_ID_RE),
+    reason: z.enum(APP_SUBMIT_FAILURE_REASONS),
+    stage: z.enum(APP_ERROR_STAGES),
+  }),
+});
+
+const appSessionSchema = z.object({
+  type: z.literal('App_Session'),
+  details: z.object({
+    appBlockId: z.string().regex(APP_TELEMETRY_APP_BLOCK_ID_RE),
+    host: z.enum(APP_SESSION_HOSTS),
+    /** Time the host was mounted AND the document visible, in ms. */
+    durationMs: z.number().int().min(0).max(APP_SESSION_MAX_DURATION_MS),
+    /** SUBMIT_WORKFLOW requests the host received. */
+    submits: z.number().int().min(0).max(APP_SESSION_MAX_COUNT),
+    /** Bridge messages the block sent the host (each accepted inbound message, once). */
+    messagesToHost: z.number().int().min(0).max(APP_SESSION_MAX_COUNT),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -972,6 +1008,8 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   pushPromptSchema,
   experimentExposureSchema,
   hatTurfActionSchema,
+  appErrorSchema,
+  appSessionSchema,
 ]);
 // What `track.addAction` parses: the action, with its whole JSON length capped at
 // `TRACK_DETAILS_MAX_CHARS`. Kept off `trackActionSchema` itself, whose arms are read through

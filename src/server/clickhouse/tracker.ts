@@ -336,6 +336,12 @@ export const ActionType = [
   // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
   'Experiment_Exposure',
   'HatTurf_Action',
+  // App Blocks in-app telemetry, emitted by the two block hosts: an error the viewer saw after the
+  // app loaded, and one row per host session on unmount/pagehide. Same Enum16 hazard as above
+  // (migrations/2026-11-07-app-error-session-actions.sql, plus the tracker restart): until both
+  // are applied the tracker drops these rows silently and nothing else changes.
+  'App_Error',
+  'App_Session',
 ] as const;
 
 // Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user
@@ -343,6 +349,9 @@ export const ActionType = [
 const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
   'Experiment_Exposure',
   'HatTurf_Action',
+  // Operational app telemetry: per-app error and engagement rates need the user id at most.
+  'App_Error',
+  'App_Session',
 ]);
 export type ActionType = (typeof ActionType)[number];
 
