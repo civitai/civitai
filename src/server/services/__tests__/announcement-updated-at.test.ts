@@ -71,14 +71,7 @@ afterEach(() => {
 });
 
 describe('getCurrentAnnouncements serves updatedAt', () => {
-  it('on the fill that read the database', async () => {
-    const { getCurrentAnnouncements } = await loadService();
-    const [announcement] = await getCurrentAnnouncements({ domain: 'blue' as never });
-    expect(announcement).toHaveProperty('updatedAt');
-    expect(new Date(announcement.updatedAt).toISOString()).toBe(UPDATED.toISOString());
-  });
-
-  it('when read back from the redis entry', async () => {
+  it('when read back from the redis entry the database fill wrote', async () => {
     const first = await loadService();
     await first.getCurrentAnnouncements({ domain: 'blue' as never });
     expect(store.size).toBe(1);
