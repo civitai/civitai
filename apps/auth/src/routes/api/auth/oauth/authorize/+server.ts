@@ -347,7 +347,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   if (locals.session && locals.sessionSlot === 'shared') {
     await preUpgradeHubSession(cookies, locals.session, locals.user).catch(() => undefined);
   }
-  await storeOidcContext(code.authorizationCode, {
+  const stored = await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     openid: scopeRequest.openid || undefined,
     authTime: Math.floor(Date.now() / 1000),
@@ -358,6 +358,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     impExp: hubSession?.impExp,
     proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
   });
+  // Without its context the code would mint an ordinary session for the impersonated user.
+  if (!stored && hubSession?.impersonatedBy != null) {
+    return failToClient('temporarily_unavailable', 'Try again', 503);
+  }
 
   logOAuthEvent({
     type: 'authorization.granted',

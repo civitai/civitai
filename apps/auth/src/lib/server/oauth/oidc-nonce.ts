@@ -37,10 +37,11 @@ type OidcCodeContext = {
 
 const field = (code: string) => createHash('sha256').update(code).digest('hex');
 
-export async function storeOidcContext(code: string, ctx: OidcCodeContext): Promise<void> {
-  if (!ctx.nonce && !ctx.authTime && !ctx.deviceId) return;
+/** Whether the context was stored; nothing to store counts as stored. */
+export async function storeOidcContext(code: string, ctx: OidcCodeContext): Promise<boolean> {
+  if (!ctx.nonce && !ctx.authTime && !ctx.deviceId) return true;
   const redis = getRedis();
-  if (!redis) return;
+  if (!redis) return false;
   try {
     const f = field(code);
     // Atomic HSET+HPEXPIRE (one EVAL) — same hardening as the auth-code store (model.ts). A sequential
@@ -53,16 +54,18 @@ export async function storeOidcContext(code: string, ctx: OidcCodeContext): Prom
       pack(ctx),
       AUTH_CODE_TTL * 1000
     );
+    return true;
   } catch {
     // Best-effort: a miss means the id_token omits nonce, or for an openid-only request isn't issued —
-    // acceptable degradation over failing the whole token exchange.
+    // acceptable degradation over failing the whole token exchange. The caller decides for impersonation.
+    return false;
   }
 }
 
-/** Single-use: reads and deletes the context for a code. */
-export async function consumeOidcContext(code: string): Promise<OidcCodeContext> {
+/** Single-use: reads and deletes the context for a code. `null` when it could not be read. */
+export async function consumeOidcContext(code: string): Promise<OidcCodeContext | null> {
   const redis = getRedis();
-  if (!redis) return {};
+  if (!redis) return null;
   try {
     const f = field(code);
     const data = await redis.packed.hGet<OidcCodeContext>(REDIS_KEYS.OAUTH.OIDC_CONTEXT, f);
@@ -70,6 +73,6 @@ export async function consumeOidcContext(code: string): Promise<OidcCodeContext>
     await redis.hDel(REDIS_KEYS.OAUTH.OIDC_CONTEXT, f);
     return data;
   } catch {
-    return {};
+    return null;
   }
 }

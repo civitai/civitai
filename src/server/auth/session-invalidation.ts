@@ -1,3 +1,4 @@
+import { impersonatorCutKey } from '@civitai/auth';
 import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { hSetMultiWithTTL, hSetMultiWithTTLUnlessValue } from '~/server/redis/atomic';
@@ -284,6 +285,15 @@ export async function invalidateSession(
   await sendSessionSignal(userId, 'invalid');
 
   log(`Invalidated session for user ${userId} and ${userTokens.length} token(s)`);
+}
+
+/** End every impersonation this moderator holds; their own sessions stay signed in. */
+export async function invalidateImpersonationsBy(moderatorId: number) {
+  await sysRedis.set(
+    impersonatorCutKey(REDIS_SYS_KEYS.SESSION.USER_CUT, moderatorId) as any,
+    String(Date.now()),
+    { EX: MARKER_EXPIRATION }
+  );
 }
 
 export async function invalidateAllSessions() {

@@ -151,6 +151,16 @@ describe('oauth/session +server — client-IP resolution never 500s the exchange
 });
 
 describe('oauth/session +server — family', () => {
+  it('mints nothing when the code context cannot be read', async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+    h.consumeOidcContext.mockResolvedValue(null);
+
+    expect((await POST(makeEvent())).status).toBe(503);
+    expect(h.mintSession).not.toHaveBeenCalled();
+  });
+
   it("mints the site's session into the family of the hub session that authorized it", async () => {
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });

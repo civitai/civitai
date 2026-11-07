@@ -36,6 +36,21 @@ describe('decodeLegacySessionCookie', () => {
     expect(await decodeLegacySessionCookie('not.a.jwe', SECRET)).toBeNull();
   });
 
+  it('returns null for a token without an expiry', async () => {
+    const token = await new EncryptJWT({ sub: '7' })
+      .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
+      .encrypt(key());
+    expect(await decodeLegacySessionCookie(token, SECRET)).toBeNull();
+  });
+
+  it.each([
+    ['impersonatedBy', 100],
+    ['impExp', Date.now() + 60_000],
+  ])('returns null for a token carrying %s, which no legacy session had', async (claim, value) => {
+    const token = await mintLegacy({ sub: '7', [claim]: value });
+    expect(await decodeLegacySessionCookie(token, SECRET)).toBeNull();
+  });
+
   it('returns null on an expired token', async () => {
     const token = await mintLegacy({ sub: '7' }, -3600);
     expect(await decodeLegacySessionCookie(token, SECRET)).toBeNull();

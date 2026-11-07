@@ -40,6 +40,9 @@ export const authProxy = {
   },
   async exitImpersonation(): Promise<void> {
     const res = await fetch('/api/auth/impersonate', { method: 'DELETE' });
+    // A 403 means the hub has already ended the impersonation and every session of the moderator, so the
+    // caller's reload lands signed out instead of on a stale impersonation banner.
+    if (res.status === 403) return;
     if (!res.ok) throw new Error(await errorMessage(res, 'Could not exit impersonation'));
   },
 };

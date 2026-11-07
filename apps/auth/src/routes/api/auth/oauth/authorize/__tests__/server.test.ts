@@ -41,7 +41,7 @@ vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authori
 vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
-vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => true) }));
 vi.mock('$lib/server/auth/device', () => ({
   getOrCreateDeviceId: () => 'dev',
   touchAccount: vi.fn(async () => undefined),
@@ -294,6 +294,21 @@ describe('authorize — family', () => {
       'the-code',
       expect.objectContaining({ family: 'family-a', impersonatedBy: 100, impExp: 999 })
     );
+  });
+
+  it('sends no code back when an impersonation hub session cannot store its context', async () => {
+    vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
+    const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    const res = await start({}, { user: { id: 7 }, session, impersonatedBy: 100 });
+    // A first-party client gets the error as JSON, with no redirect carrying the code.
+    expect(res).toEqual({ status: 503 });
+  });
+
+  it('still signs in an ordinary hub session whose context could not be stored', async () => {
+    vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
+    const session = { sub: '7', jti: 'j', sid: 'family-a', iat0: 5 };
+    const res = await start({}, { user: { id: 7 }, session });
+    expect(res.location).toContain('code=the-code');
   });
 });
 

@@ -64,9 +64,12 @@ export const actions: Actions = {
       body: JSON.stringify({ user_code: userCode }),
     });
     if (!res.ok) {
+      const refused = res.status === 403;
       return fail(400, {
         step: 'enter' as const,
-        error: 'Could not approve that code — it may have expired. Try again.',
+        error: refused
+          ? 'Devices cannot be approved while impersonating. Exit impersonation first.'
+          : 'Could not approve that code — it may have expired. Try again.',
         userCode,
       });
     }
