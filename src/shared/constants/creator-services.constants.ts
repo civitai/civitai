@@ -77,6 +77,8 @@ export const SERVICE_PREVIEW_MAX_FILES = {
 } as const;
 
 export const SERVICE_FINAL_MAX_FILES = 10;
+/** Files a buyer may attach to one deal, across all its rounds. */
+export const SERVICE_ATTACHMENT_MAX_FILES = SERVICE_FINAL_MAX_FILES;
 /** Single-request upload and a 32-bit `size` column; a larger file needs multipart and a wider column. */
 export const SERVICE_FINAL_MAX_BYTES = 2 * 1024 * 1024 * 1024 - 1;
 /** A presigned download is only valid long enough to start it. */
