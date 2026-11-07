@@ -106,6 +106,19 @@ describe('cover note', () => {
     expect(text).toContain('November 6th, 2026 at 3:15 PM UTC');
   });
 
+  /** Signed off by Legal, verbatim: change only with the same sign-off. */
+  it('tells the owner, in "What\'s in it", that the manifest says what could not be included', () => {
+    const text = fillCoverNote({
+      username: 'u',
+      link: 'l',
+      takenAt: new Date('2026-11-06T15:15:00Z'),
+    });
+    const whatsInIt = text.split('\n').find((l) => l.startsWith("**What's in it.**"))!;
+    expect(whatsInIt).toContain(
+      'If any part could not be included in this archive, the manifest says so and why. If you would like us to look into it further, reply to this message.'
+    );
+  });
+
   it('escapes the username and link in the email', () => {
     const html = personalDataExportReadyHtml({
       username: '<script>x</script>',

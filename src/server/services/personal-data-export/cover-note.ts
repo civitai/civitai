@@ -4,6 +4,9 @@ import { asOrdinal } from '~/utils/number-helpers';
  * The note sent with a personal-data export, and the archive's README. The wording is the approved
  * template: change it only with the same sign-off. `{username}`, `{link}` and `{taken_at}` are filled
  * by `fillCoverNote`.
+ *
+ * Signed off by Legal: the template as first approved, and on November 7th, 2026 the sentence on
+ * parts that could not be included ("If any part could not be included...").
  */
 export const COVER_NOTE_SUBJECT = 'Your Civitai data (access request)';
 
@@ -11,7 +14,7 @@ export const COVER_NOTE_TEMPLATE = `Hi {username},
 
 Here is a copy of the personal data Civitai holds about your account, as you requested. The download link works for 48 hours: {link}
 
-**What's in it.** Your account and profile, sign-in records (dates, IP addresses, devices), subscriptions, purchases and Buzz transactions, the content you created (images, videos, models, articles, posts, comments, reactions, collections), your generation history (prompts, settings, resources, job dates), reports you filed, and moderation decisions about your account. Media is listed with links rather than attached. Activity data is summarized as counts; ask us if you'd like the raw events. A manifest lists every file and how many records it contains. Data is as of {taken_at}.
+**What's in it.** Your account and profile, sign-in records (dates, IP addresses, devices), subscriptions, purchases and Buzz transactions, the content you created (images, videos, models, articles, posts, comments, reactions, collections), your generation history (prompts, settings, resources, job dates), reports you filed, and moderation decisions about your account. Media is listed with links rather than attached. Activity data is summarized as counts; ask us if you'd like the raw events. A manifest lists every file and how many records it contains. Data is as of {taken_at}. If any part could not be included in this archive, the manifest says so and why. If you would like us to look into it further, reply to this message.
 
 **What's left out, and why.** Passwords, security tokens and keys. Other people's personal data, such as the identity of anyone who reported content. Details of our safety systems that would help someone get around them, such as scores and thresholds.
 
