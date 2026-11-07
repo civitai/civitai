@@ -95,7 +95,8 @@ export function CivitaiSessionProvider({
         allowAds: settingsAllowAds ?? !isMember ? true : false,
         autoplayGifs: settingsAutoplayGifs ?? user.autoplayGifs ?? true,
         blurNsfw: settingsBlurNsfw ?? user.blurNsfw,
-        showEventCosmetics: settingsShowEventCosmetics ?? showEventCosmetics ?? true,
+        // The account's own choice: never another person's, from a shared device's cookie.
+        showEventCosmetics: settingsShowEventCosmetics ?? true,
       },
     };
     if (!allowMatureContent)
@@ -182,4 +183,5 @@ const publicContentSettings: BrowsingSettings = {
   disableHidden: true,
   allowAds: true,
   autoplayGifs: true,
+  showEventCosmetics: true,
 };
