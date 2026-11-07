@@ -26,13 +26,20 @@ type Team = { team: string; score: number; rank: number };
 const PINK_THIRD: Team[] = [{ team: 'Pink', score: 4200, rank: 3 }];
 let teams: Team[] | undefined = PINK_THIRD;
 let snapshotAt = new Date();
+let turfLive = true;
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'event.getCosmetic': { useQuery: () => ({ data: cosmetic }) },
     'event.getStandings': {
       useQuery: () => ({
-        data: teams && { teams, teamHats: [], topCosmetics: [], updatedAt: snapshotAt },
+        data: teams && {
+          teams,
+          teamHats: [],
+          topCosmetics: [],
+          updatedAt: snapshotAt,
+          turfLive,
+        },
       }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
@@ -96,6 +103,7 @@ afterEach(() => {
   host?.remove();
   teams = PINK_THIRD;
   snapshotAt = new Date();
+  turfLive = true;
 });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -173,6 +181,12 @@ describe('ScoredEventSections order', () => {
       'topHats',
       'hats',
     ]);
+  });
+
+  it('leaves out Top turf players until turf is live', () => {
+    turfLive = false;
+    expect(sections({ joined: true, ended: false })).not.toContain('turfPlayers');
+    expect(sections({ joined: false, ended: false })).not.toContain('turfPlayers');
   });
 
   it("hands the hero the player's team, its rank and its points", () => {

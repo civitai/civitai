@@ -1,3 +1,4 @@
+import { getTurfEvent } from '~/server/events/turf/turf.service';
 import { Prisma } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { pack } from 'msgpackr';
@@ -381,10 +382,12 @@ export async function getEventStandings({
 }: EventInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const [settled, live, engineOn] = await Promise.all([
+    const [settled, live, engineOn, turfEvent] = await Promise.all([
       getScoredEventStandings(scored, { onDegraded }),
       liveTeamPoints(scored, onDegraded),
       isEventPointsEnabled().catch(() => false),
+      // The live override applied: the turf board waits for the mode to go live.
+      getTurfEvent(scored.name).catch(() => undefined),
     ]);
     const standings = withLiveTeamPoints(settled, live);
     const userIds = [
@@ -438,7 +441,17 @@ export async function getEventStandings({
     // Whether the team totals came from the live engine and it is running, so the page does not call
     // them hourly. With the kill switch off they are still read live but no longer move.
     const liveTotals = live !== null && engineOn;
-    return { ...standings, topCosmetics, teamsTopicId, liveTotals, users, cosmetics, teamHats };
+    const turfLive = turfEvent?.turf.mode === 'live';
+    return {
+      ...standings,
+      topCosmetics,
+      teamsTopicId,
+      liveTotals,
+      turfLive,
+      users,
+      cosmetics,
+      teamHats,
+    };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

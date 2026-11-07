@@ -154,7 +154,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         <TopHats standings={standings} />
       </div>
     ),
-    turfPlayers: standings && <TopTurfPlayers standings={standings} />,
+    turfPlayers: standings?.turfLive && <TopTurfPlayers standings={standings} />,
     rules: <EventRules data={data} />,
   };
 
