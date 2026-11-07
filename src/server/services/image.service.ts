@@ -8750,9 +8750,7 @@ export function getRemixSourceIds(
   return [...new Set(storedSourceImageIds(meta) ?? [])].filter((sourceId) => sourceId !== imageId);
 }
 
-// The flag-OFF path: a per-pod LRU keyed by imageId that no write busts, so a status change reaches
-// a pod's viewers only once its entry expires. Flag `contest-collection-items-redis-cache` moves the
-// read to the shared, busted cache in contest-collection-items.cache.ts.
+// Flag-OFF path. Nothing busts this per-pod LRU; writers bust only the shared cache.
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
   max: 100_000,
