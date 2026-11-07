@@ -32,16 +32,20 @@ export const ARTICLE_MENTION_EDIT_WINDOW = '30 days';
 const ARTICLE_TOUCHED_AT = `GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt")`;
 
 /**
- * People named in a live article, each once, the first `ARTICLE_MENTION_CAP` in document order.
+ * People named in a live article, each once: the first `ARTICLE_MENTION_CAP` who would be notified,
+ * in document order. Recipient filters run before the cap, so names that can't be told don't use it
+ * up. The cap is per run, not per article lifetime: nothing outside the notification rows records who
+ * was told.
  *
  * Re-read when the article goes live or is edited since the last run. Like comment edits, it
  * re-emits the article's key and relies on UserNotification's unique (notificationId, userId) to
- * skip people already told; those rows are cleaned up, hence the window after publish.
- * `contentScannedAt` is a trigger too: an edit sends the article through Processing, and the scan
- * flips it back to Published without touching `updatedAt`.
+ * skip people already told. Those rows are deleted by the admin cleanup with a caller-chosen cutoff,
+ * so the window after publish only holds while that cutoff is older than the window.
+ * `contentScannedAt` is a trigger too: the scan that clears an edit marks the article Scanned with
+ * raw SQL that leaves `updatedAt` alone, and until then `ingestion` keeps it from notifying.
  *
  * Unlisted and Private articles are skipped: the notification would hand out a link the author kept
- * off the feed. The recipient's browsingLevel gate matches the article feed's.
+ * off the feed. The ingestion and browsingLevel gates match the article feed's.
  */
 export const articleMentionsSql = (lastSent: string) => `
         SELECT
@@ -62,14 +66,21 @@ export const articleMentionsSql = (lastSent: string) => `
             FROM regexp_matches(a.content, '"mention:(\\d+)"', 'g') WITH ORDINALITY r(m, ord)
             GROUP BY 1
           ) x
+          JOIN "User" ru ON ru.id = x.id
+          WHERE x.id <> a."userId"
+            AND ru."bannedAt" IS NULL
+            AND ru."deletedAt" IS NULL
+            AND (a."nsfwLevel" & ru."browsingLevel") <> 0
+            AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = ru.id AND type = 'new-mention')
+            AND ${notBlockedBetween('ru.id', 'a."userId"')}
           ORDER BY x.first_at
           LIMIT ${ARTICLE_MENTION_CAP}
         ) am
-        JOIN "User" ru ON ru.id = am."ownerId"
         -- Matches "Article_mention_scan_idx" exactly (expression and partial predicate), or this is
         -- a seq scan of every article each run.
         WHERE ${ARTICLE_TOUCHED_AT} > '${lastSent}'
           AND a.status = 'Published'
+          AND a.ingestion = 'Scanned'
           AND a."publishedAt" > now() - interval '${ARTICLE_MENTION_EDIT_WINDOW}'
           AND a."publishedAt" <= now()
           AND NOT a."tosViolation"
@@ -77,11 +88,7 @@ export const articleMentionsSql = (lastSent: string) => `
           AND a.availability <> 'Private'
           AND a.content LIKE '%"mention:%'
           AND u."bannedAt" IS NULL
-          AND NOT u.muted
-          AND am."ownerId" <> a."userId"
-          AND ru."bannedAt" IS NULL
-          AND ru."deletedAt" IS NULL
-          AND (a."nsfwLevel" & ru."browsingLevel") <> 0`;
+          AND NOT u.muted`;
 
 // Moveable (possibly)
 

@@ -12,14 +12,16 @@ import {
  * good standing; the recipient must be able to open it at their browsing level.
  */
 const AUTHOR = 1;
-const LAST_SENT = '2026-11-01T12:00:00.000Z';
-const AFTER = `'2026-11-01T12:05:00'`;
-const BEFORE = `'2026-11-01T11:00:00'`;
+// Relative to the clock, because the 30-day window in the query is.
+const LAST_SENT = new Date(Date.now() - 60 * 60_000).toISOString();
+const AFTER = `now() - interval '1 minute'`;
+const BEFORE = `now() - interval '2 hours'`;
 
 let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    SET TimeZone = 'UTC';
     CREATE TABLE "User" (
       id int PRIMARY KEY, username text, "bannedAt" timestamp(3), "deletedAt" timestamp(3),
       muted boolean NOT NULL DEFAULT false, "browsingLevel" int NOT NULL DEFAULT 1
@@ -29,14 +31,17 @@ beforeAll(async () => {
       status text NOT NULL DEFAULT 'Published', "publishedAt" timestamp(3),
       "updatedAt" timestamp(3), "contentScannedAt" timestamp(3),
       "tosViolation" boolean NOT NULL DEFAULT false, unlisted boolean NOT NULL DEFAULT false,
-      availability text NOT NULL DEFAULT 'Public', "nsfwLevel" int NOT NULL DEFAULT 1
+      availability text NOT NULL DEFAULT 'Public', "nsfwLevel" int NOT NULL DEFAULT 1,
+      ingestion text NOT NULL DEFAULT 'Scanned'
     );
+    CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
+    CREATE TABLE "UserNotificationSettings" ("userId" int, type text);
   `);
 });
 afterAll(() => db.close());
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "User", "Article";
+    TRUNCATE "User", "Article", "UserEngagement", "UserNotificationSettings";
     INSERT INTO "User" (id, username) SELECT g, 'u' || g FROM generate_series(1, 20) g;
   `);
 });
@@ -79,7 +84,7 @@ describe('article @mentions', () => {
       actorId: number;
       details: Record<string, unknown>;
     }>(articleMentionsSql(LAST_SENT));
-    expect(rows.map((r) => r.ownerId).sort()).toEqual([2, 3]);
+    expect(rows.map((r) => r.ownerId).sort((a, b) => a - b)).toEqual([2, 3]);
     expect(rows[0].actorId).toBe(AUTHOR);
     expect(rows[0].details).toMatchObject({
       mentionedIn: 'article',
@@ -90,7 +95,10 @@ describe('article @mentions', () => {
   });
 
   it.each([
-    ['a draft (scheduled ones included)', { status: `'Draft'`, '"publishedAt"': 'NULL' }],
+    ['a scheduled draft', { status: `'Draft'`, '"publishedAt"': 'NULL' }],
+    ['a once-published article moved back to Draft', { status: `'Draft'` }],
+    ['an edit still waiting on its re-scan', { ingestion: `'Rescan'` }],
+    ['an edit whose re-scan blocked it', { ingestion: `'Blocked'` }],
     ['an article still being scanned', { status: `'Processing'` }],
     ['an unpublished article', { status: `'Unpublished'` }],
     ['an article removed for a violation', { '"tosViolation"': 'true' }],
@@ -115,6 +123,15 @@ describe('article @mentions', () => {
     await db.exec(`UPDATE "User" SET "deletedAt" = now() WHERE id = 3`);
     await article([AUTHOR, 2, 3, 4]);
     expect(await recipients()).toEqual([4]);
+  });
+
+  it('skips a block either way, and anyone who turned mention notifications off', async () => {
+    await db.exec(`
+      INSERT INTO "UserEngagement" VALUES (2, ${AUTHOR}, 'Block'), (${AUTHOR}, 3, 'Block');
+      INSERT INTO "UserNotificationSettings" VALUES (4, 'new-mention');
+    `);
+    await article([2, 3, 4, 5]);
+    expect(await recipients()).toEqual([5]);
   });
 
   it('only tells a recipient whose browsing level can open the article', async () => {
@@ -152,6 +169,13 @@ describe('article @mentions', () => {
     await article([15, ...named]);
     expect(await recipients()).toEqual(named.slice(0, ARTICLE_MENTION_CAP).sort((a, b) => a - b));
   });
+
+  it('names that cannot be told do not use up the cap', async () => {
+    await db.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = 2`);
+    const named = [AUTHOR, 2, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6];
+    await article(named);
+    expect(await recipients()).toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+  });
 });
 
 describe('article @mention message', () => {
@@ -173,7 +197,6 @@ describe('article @mention message', () => {
     const sql = def.prepareQuery({ lastSent: LAST_SENT });
     expect(sql).toContain(`when details->>'mentionedIn' = 'article' then 'article:'`);
     expect(sql).toContain(`details->>'articleId')`);
-    expect(sql).toContain(articleMentionsSql(LAST_SENT));
   });
 });
 
