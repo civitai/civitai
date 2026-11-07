@@ -16,6 +16,7 @@ vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
 
 const { WebhookEndpoint } = await import('~/server/utils/endpoint-helpers');
 const { webhookTokenMatchCounter } = await import('~/server/prom/webhook-token.metrics');
+const { webhookTokenValues } = await import('~/server/utils/webhook-token');
 
 const CURRENT = 'c'.repeat(40);
 const PREVIOUS = 'p'.repeat(40);
@@ -113,5 +114,15 @@ describe('WebhookEndpoint with WEBHOOK_TOKEN_PREVIOUS', () => {
     const [line] = logToAxiom.mock.calls[0] as unknown as [Record<string, unknown>];
     expect(line).toMatchObject({ slot: 'previous', route: `POST ${path}` });
     expect(JSON.stringify(line)).not.toContain(PREVIOUS);
+  });
+});
+
+describe('webhookTokenValues', () => {
+  it('lists the previous value alongside the current one, and drops a blank or unset one', () => {
+    expect(webhookTokenValues()).toEqual([CURRENT, PREVIOUS]);
+    for (const blank of ['', '   ', undefined]) {
+      setEnv({ WEBHOOK_TOKEN_PREVIOUS: blank });
+      expect(webhookTokenValues()).toEqual([CURRENT]);
+    }
   });
 });
