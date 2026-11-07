@@ -79,7 +79,9 @@ async function refusal(userId: number) {
 // Unconfigured while it repeats another admin token.
 function keyToken() {
   const token = env.SYSTEM_ACCOUNT_KEY_TOKEN;
-  return token && [...webhookTokenValues(), env.JOB_TOKEN].includes(token) ? undefined : token;
+  return token && [...webhookTokenValues(), env.PROBE_TOKEN, env.JOB_TOKEN].includes(token)
+    ? undefined
+    : token;
 }
 
 export default HeaderTokenSecuredEndpoint(

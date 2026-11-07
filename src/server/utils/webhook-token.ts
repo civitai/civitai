@@ -7,7 +7,10 @@ import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
  * accepted alongside `WEBHOOK_TOKEN` so the value can change without every caller switching at the
  * same moment. Unset or blank, it matches nothing.
  */
-export type WebhookTokenSlot = 'current' | 'previous' | 'probe';
+export type WebhookTokenSlot = 'current' | 'previous';
+
+/** A matched slot as counted: a webhook token, or `PROBE_TOKEN` on the health routes. */
+export type TokenMatchSlot = WebhookTokenSlot | 'probe';
 
 export function matchWebhookToken(presented: unknown): WebhookTokenSlot | undefined {
   if (typeof presented !== 'string') return undefined;

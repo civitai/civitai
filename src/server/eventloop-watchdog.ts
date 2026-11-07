@@ -919,8 +919,7 @@ export function registerEventLoopWatchdog(): void {
         sab: heartbeatBuffer,
         thresholdMs,
         port,
-        // Same ?token= posture as /api/metrics. Absent token => unauthenticated,
-        // which is only acceptable because the port is never added to a Service.
+        // Bearer or ?token=, as /api/metrics. The worker refuses to serve without a token.
         token: process.env.WEBHOOK_TOKEN ?? '',
         previousToken: process.env.WEBHOOK_TOKEN_PREVIOUS ?? '',
         heartbeatIntervalMs,

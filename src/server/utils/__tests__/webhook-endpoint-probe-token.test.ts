@@ -91,8 +91,16 @@ it('only /api/live, /api/ready and /api/health accept PROBE_TOKEN', () => {
   const root = path.join(process.cwd(), 'src/pages/api');
   const accepting = (fs.readdirSync(root, { recursive: true }) as string[])
     .filter((f) => /\.tsx?$/.test(f))
-    .filter((f) => fs.readFileSync(path.join(root, f), 'utf8').includes('acceptProbeToken: true'))
+    .filter((f) => fs.readFileSync(path.join(root, f), 'utf8').includes('acceptProbeToken'))
     .map((f) => f.split(path.sep).join('/'))
     .sort();
   expect(accepting).toEqual(['health.ts', 'live.ts', 'ready.ts']);
+
+  // A wrapper elsewhere that set the option would let a route opt in without the scan above seeing it.
+  const server = path.join(process.cwd(), 'src/server');
+  const definers = (fs.readdirSync(server, { recursive: true }) as string[])
+    .filter((f) => /\.tsx?$/.test(f) && !f.includes('__tests__'))
+    .filter((f) => fs.readFileSync(path.join(server, f), 'utf8').includes('acceptProbeToken'))
+    .map((f) => f.split(path.sep).join('/'));
+  expect(definers).toEqual(['utils/endpoint-helpers.ts']);
 });

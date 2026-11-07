@@ -239,7 +239,7 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
   });
 
-  it.each(['WEBHOOK_TOKEN', 'WEBHOOK_TOKEN_PREVIOUS', 'JOB_TOKEN'])(
+  it.each(['WEBHOOK_TOKEN', 'WEBHOOK_TOKEN_PREVIOUS', 'PROBE_TOKEN', 'JOB_TOKEN'])(
     'is closed while its token repeats %s',
     async (other) => {
       // Distinct per row: env overrides persist across tests in a file.
