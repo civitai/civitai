@@ -18,7 +18,7 @@
  *   - Auth (`auth.ts`): the token is the `Authorization: Bearer` header; without one the request
  *     is anonymous. `invalid_token` before the stream is 401 with its JSON body and a
  *     `WWW-Authenticate: Bearer error=…` header; after, an `error` event, at the token's expiry or
- *     when a re-check finds it revoked. `/.well-known/oauth-protected-resource` is served when a
+ *     when a re-check finds it revoked (or `cursor_expired` when the user's ratings changed). `/.well-known/oauth-protected-resource` is served when a
  *     resource is configured.
  *
  * Served as HTTP/1.1, which the spec allows ("HTTP/1.1 works"); see `grpc.ts` for why the gRPC

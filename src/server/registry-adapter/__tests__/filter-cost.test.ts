@@ -18,7 +18,10 @@ const one: Entity = {
   body: { slug: 'orbit-notes' },
 };
 
-async function* nothing(): AsyncGenerator<Change> {}
+async function* nothing(): AsyncGenerator<Change> {
+  // A change feed with no changes: the stream ends right after `live`.
+  return;
+}
 
 const adapter: Adapter = {
   namespace: 'apps.civitai.com',

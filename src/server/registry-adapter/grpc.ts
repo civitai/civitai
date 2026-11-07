@@ -11,7 +11,8 @@
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
  *   - Auth (`auth.ts`): the token is the `authorization` metadata (`Bearer {token}`); without one
  *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
- *     `invalid_token`, before the stream or at the token's expiry / revocation after it.
+ *     `invalid_token`, before the stream or at the token's expiry / revocation after it; a user
+ *     whose ratings changed mid-stream gets OUT_OF_RANGE / `cursor_expired`.
  *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
  *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
  *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).

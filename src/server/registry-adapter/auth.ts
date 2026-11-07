@@ -11,14 +11,16 @@
  *     tied to the token's subject (`subscription.ts`) and, for a document stream, to its audience
  *     (`doc-feed.ts`).
  *   - A stream never outlives its token: {@link watchPrincipal} ends it with `invalid_token` at
- *     the token's expiry, or when a re-check finds it no longer active.
+ *     the token's expiry, or when a re-check finds it no longer active; and a re-check that
+ *     finds the user may now read different ratings ends it with `cursor_expired`, so the
+ *     consumer re-snapshots under them.
  *
  * This source requires no scope, so it never sends `insufficient_scope`.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { ANONYMOUS_AUDIENCE, audienceForUser } from '~/server/registry-adapter/audience';
 import type { ErrorCode } from '~/server/registry-adapter/protocol';
-import { ProtocolError } from '~/server/registry-adapter/protocol';
+import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 
 /** A token the site accepted. */
 export type VerifiedToken = {
@@ -37,9 +39,15 @@ export type Principal = {
   subject: string | null;
   audience: Audience;
   expiresAt: Date | null;
-  /** Whether the token is still active; null for anonymous. */
-  recheck: (() => Promise<boolean>) | null;
+  /** Re-verifies the token now; null for anonymous. */
+  recheck: (() => Promise<Recheck>) | null;
 };
+
+/**
+ * What a re-check found: the token still active with the same readable ratings, no longer
+ * active, or active with a different {@link Audience} (the user changed their browsing settings).
+ */
+export type Recheck = 'active' | 'inactive' | 'audience-changed';
 
 export const ANONYMOUS_PRINCIPAL: Principal = {
   subject: null,
@@ -72,60 +80,87 @@ export async function authenticate(
   const verified = await verify(token);
   if (!verified) throw invalidToken('the token is not active');
   if (expired(verified, now())) throw invalidToken('the token has expired');
+  const audience = audienceForUser(verified.user);
   return {
     subject: verified.subject,
-    audience: audienceForUser(verified.user),
+    audience,
     expiresAt: verified.expiresAt,
     recheck: async () => {
       const again = await verify(token);
-      return again !== null && again.subject === verified.subject && !expired(again, now());
+      if (again === null || again.subject !== verified.subject || expired(again, now())) {
+        return 'inactive';
+      }
+      return audienceForUser(again.user).key === audience.key ? 'active' : 'audience-changed';
     },
   };
 }
 
-/** How often an open stream's token is re-verified. */
+/**
+ * How often an open stream's token is re-verified, on average: each wait is drawn from ±20% of
+ * it, so streams opened in a burst do not re-check the database in a burst.
+ */
 export const TOKEN_RECHECK_MS = 5 * 60 * 1000;
+const RECHECK_JITTER = 0.2;
 /** The longest delay `setTimeout` takes; a later expiry is re-armed. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 /**
- * Calls `onInvalid` once, with `invalid_token`, when `principal`'s token expires or a re-check
- * finds it no longer active. A re-check that fails (the database unreachable) is not a finding
- * and ends nothing. Returns the function that stops watching; anonymous is never ended.
+ * Calls `onEnd` once, to end `principal`'s stream:
+ *   - `invalid_token` when the token expires or a re-check finds it no longer active;
+ *   - `cursor_expired` when a re-check finds the user may now read different ratings (they
+ *     changed their browsing settings), so the consumer starts over without a cursor and is sent
+ *     a snapshot under the new ratings. The stream's audience is fixed for its life (its cursors
+ *     name it), so ending it is the only way to apply the change, lowered or raised.
+ * A re-check that fails (the database unreachable) is not a finding and ends nothing. Returns the
+ * function that stops watching; anonymous is never ended.
  */
 export function watchPrincipal(
   principal: Principal,
-  onInvalid: (err: ProtocolError) => void,
-  opts: { recheckMs?: number; now?: () => number } = {}
+  onEnd: (err: ProtocolError) => void,
+  opts: { recheckMs?: number; now?: () => number; random?: () => number } = {}
 ): () => void {
   if (principal.subject === null) return () => undefined;
   const now = opts.now ?? Date.now;
+  const random = opts.random ?? Math.random;
+  const every = opts.recheckMs ?? TOKEN_RECHECK_MS;
   let done = false;
   let expiry: ReturnType<typeof setTimeout> | undefined;
+  let recheck: ReturnType<typeof setTimeout> | undefined;
   const stop = () => {
     done = true;
     clearTimeout(expiry);
-    clearInterval(recheck);
+    clearTimeout(recheck);
   };
-  const fire = (why: string) => {
+  const end = (err: ProtocolError) => {
     if (done) return;
     stop();
-    onInvalid(invalidToken(why));
+    onEnd(err);
   };
+  const fire = (why: string) => end(invalidToken(why));
   const armExpiry = () => {
     if (principal.expiresAt === null) return;
     const left = principal.expiresAt.getTime() - now();
     if (left <= 0) return fire('the token has expired');
     expiry = setTimeout(armExpiry, Math.min(left, MAX_TIMER_MS));
   };
-  const recheck = setInterval(() => {
-    principal.recheck?.().then(
-      (active) => {
-        if (!active) fire('the token is no longer active');
-      },
-      () => undefined
-    );
-  }, opts.recheckMs ?? TOKEN_RECHECK_MS);
+  const armRecheck = () => {
+    const wait = every * (1 - RECHECK_JITTER + 2 * RECHECK_JITTER * random());
+    recheck = setTimeout(() => {
+      if (done || !principal.recheck) return;
+      principal.recheck().then(
+        (found) => {
+          if (found === 'inactive') fire('the token is no longer active');
+          else if (found === 'audience-changed') {
+            end(cursorExpired('the ratings this token may read changed; start over'));
+          } else if (!done) armRecheck();
+        },
+        () => {
+          if (!done) armRecheck();
+        }
+      );
+    }, wait);
+  };
+  armRecheck();
   armExpiry();
   return stop;
 }

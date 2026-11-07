@@ -1,8 +1,11 @@
 import * as grpc from '@grpc/grpc-js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import type { Principal, Recheck } from '~/server/registry-adapter/auth';
+import { ANONYMOUS_AUDIENCE } from '~/server/registry-adapter/audience';
+import { watchPrincipal } from '~/server/registry-adapter/auth';
 import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
@@ -176,6 +179,16 @@ const verifyToken = async (token: string) => {
     return {
       subject: 'user:7/client:a',
       user: { showNsfw: true, browsingLevel: ALL_LEVELS },
+      expiresAt: null,
+    };
+  }
+  // X readable at connect; then the user switches mature content off (the site serves them PG).
+  if (token.startsWith('lowered-after-first:')) {
+    const first = !verified.has(token);
+    verified.add(token);
+    return {
+      subject: 'user:8/client:a',
+      user: { showNsfw: first, browsingLevel: ALL_LEVELS },
       expiresAt: null,
     };
   }
@@ -452,6 +465,30 @@ describe('🔴 tokens: invalid_token for a bad or expired one, over HTTP', () =>
     expect(events(res.text)).toEqual(['upsert', 'live', 'error']);
     expect(errorOf(res.text)).toBe('invalid_token');
   });
+
+  it('🔴 a user who lowers their ratings mid-stream has the stream ended with cursor_expired, and re-snapshots under the new ones', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const token = `lowered-after-first:${Math.random()}`;
+    const res = await get(port, q(NOTES), bearer(token), (t) => t.includes('event: error'));
+    expect(events(res.text)).toEqual(['upsert', 'live', 'error']);
+    expect(errorOf(res.text)).toBe('cursor_expired');
+    // Starting over, as cursor_expired tells the consumer to: the x app's document is gone.
+    const again = await get(port, q(NOTES), bearer(token));
+    expect(events(again.text)).toEqual(['live']);
+  });
+
+  it('positive control: a re-check that finds the same ratings leaves the stream open', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const started = Date.now();
+    // Many re-checks (every ~50ms) pass in this window.
+    const res = await get(
+      port,
+      q(NOTES),
+      bearer('x-token'),
+      (t) => t.includes('event: error') || Date.now() - started > 600
+    );
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
 });
 
 const Client = grpc.makeGenericClientConstructor(SOURCE_SERVICE, 'Source');
@@ -553,4 +590,40 @@ describe('🔴 the gRPC binding enforces the same', () => {
     expect(shapes(res.events)).toEqual([`upsert ${DOC}`, 'live']);
     expect(res.error).toEqual({ code: grpc.status.UNAUTHENTICATED, reason: 'invalid_token' });
   });
+});
+
+describe('the re-check is jittered, so streams opened together do not re-check together', () => {
+  it.each([
+    [0, 800],
+    [0.5, 1000],
+    [1, 1200],
+  ])(
+    'random() = %s: the first re-check runs at %sms of a 1000ms period, not before',
+    async (r, at) => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        const principal: Principal = {
+          subject: 'user:9/client:a',
+          audience: ANONYMOUS_AUDIENCE,
+          expiresAt: null,
+          recheck: async (): Promise<Recheck> => {
+            calls++;
+            return 'active';
+          },
+        };
+        const stop = watchPrincipal(principal, () => undefined, {
+          recheckMs: 1000,
+          random: () => r,
+        });
+        await vi.advanceTimersByTimeAsync(at - 1);
+        expect(calls).toBe(0);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(calls).toBe(1);
+        stop();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
 });
