@@ -1607,9 +1607,8 @@ class AuthHub {
     return null;
   }
 
-  // Loopback only, and both spellings: Windows resolves `localhost` to ::1 first while other callers
-  // hardcode 127.0.0.1, and vite takes a single --host. So vite binds 127.0.0.1 and the daemon serves
-  // [::1] with a forward that lives and dies with the process (openV6Forward in #start).
+  // Loopback only, both spellings: Windows resolves localhost to ::1 first, other callers hardcode
+  // 127.0.0.1, and vite takes one --host. So vite binds 127.0.0.1 and openV6Forward serves [::1].
   //
   // `--strictPort` is what makes the port the daemon reserved the port the app actually binds.
   // Without it Vite drifts to the next free one on its own and the reservation stops meaning

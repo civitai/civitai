@@ -555,9 +555,10 @@ page you are looking at needs it.
 
 The daemon starts every vite sidecar with `--host 127.0.0.1` and serves `[::1]` on the same port with
 a forward that opens and closes with the app. Both are needed: Windows resolves `localhost` to `::1`
-first, while other callers hardcode `127.0.0.1`, and vite accepts a single `--host`. A v4-only bind
-gave the browser connection-refused while curl, which falls back to v4, reported the server healthy.
-`localhost`, `127.0.0.1` and `[::1]` all answer. Apps see `[::1]` clients as `127.0.0.1` in
+first, while other callers hardcode `127.0.0.1`, and vite accepts a single `--host`. Without the
+`[::1]` side, the browser got connection-refused while curl, which falls back to v4, reported the
+server healthy. `localhost`, `127.0.0.1` and `[::1]` all answer where the machine has IPv6 loopback;
+otherwise the daemon logs that `[::1]` is not served. Apps see `[::1]` clients as `127.0.0.1` in
 `getClientAddress()`.
 
 ### First request is slow

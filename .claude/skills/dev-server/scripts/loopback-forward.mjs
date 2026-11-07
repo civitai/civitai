@@ -2,8 +2,8 @@ import net from 'net';
 
 const NO_IPV6 = new Set(['EADDRNOTAVAIL', 'EAFNOSUPPORT']);
 
-// Serves [::1]:port by piping to 127.0.0.1:port. Returns an async close().
-// allowHalfOpen on both legs so an end from one side is passed on, not turned into a cut response.
+// Returns an async close().
+// allowHalfOpen on both legs: pass an end on instead of cutting the response.
 export function openV6Forward(port, log) {
   const sockets = new Set();
   const server = net.createServer({ allowHalfOpen: true }, (client) => {
@@ -16,7 +16,10 @@ export function openV6Forward(port, log) {
       sockets.delete(client);
       sockets.delete(upstream);
     };
-    for (const socket of [client, upstream]) socket.on('error', drop).on('close', drop);
+    for (const socket of [client, upstream]) {
+      socket.setNoDelay(true);
+      socket.on('error', drop).on('close', drop);
+    }
     client.pipe(upstream);
     upstream.pipe(client);
   });

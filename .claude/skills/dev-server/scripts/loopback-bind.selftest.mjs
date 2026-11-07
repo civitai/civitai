@@ -93,6 +93,16 @@ const lanAddresses = Object.values(networkInterfaces())
   .filter((a) => !a.internal && !a.address.startsWith('fe80'))
   .map((a) => a.address);
 
+const hasV6Loopback = await new Promise((done) => {
+  const server = net.createServer();
+  server.once('error', () => done(false));
+  server.listen({ host: '::1', port: 0, ipv6Only: true }, () => server.close(() => done(true)));
+});
+if (!hasV6Loopback) {
+  console.log('SKIP  no IPv6 loopback on this machine; nothing to check');
+  process.exit(1);
+}
+
 const port = await freePort();
 const app = new StubApp('moderator', primaryCheckout, port, [envFile], []);
 
@@ -105,7 +115,7 @@ try {
 
   if (!lanAddresses.length) {
     skipped++;
-    console.log('SKIP  no non-loopback address on this machine; the exposure check cannot run');
+    console.log('SKIP  no non-loopback address on this machine; the non-loopback check cannot run');
   }
   for (const address of lanAddresses) {
     check(`connect ${address} refused`, await connects(address, port), false);
