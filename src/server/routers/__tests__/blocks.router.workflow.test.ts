@@ -10881,16 +10881,18 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
     it.each(['comfy', 'Comfy'])(
       'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
       async (t) => {
-        // Two explicit calls, not `caller()[run]`: a call through a union of two
-        // procedure signatures does not type-check.
+        // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
+        // call sites from adding test-file type errors (typecheck-tests ratchet).
         const calls: Array<[string, () => Promise<unknown>]> = [
           [
             'submitWorkflow',
-            () => caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) }),
+            () =>
+              caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
           ],
           [
             'estimateWorkflow',
-            () => caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) }),
+            () =>
+              caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
           ],
         ];
         for (const [run, call] of calls) {
