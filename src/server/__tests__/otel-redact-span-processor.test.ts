@@ -44,4 +44,23 @@ describe('CredentialRedactingSpanProcessor', () => {
       'http.status_code': 200,
     });
   });
+
+  it('exports a download-link request span without the link id', async () => {
+    const exporter = new InMemorySpanExporter();
+    const provider = new BasicTracerProvider({
+      spanProcessors: [new CredentialRedactingSpanProcessor(new SimpleSpanProcessor(exporter))],
+    });
+    const id = '4fJ9kQ2xVb8NcR1tZp0LmA';
+    const span = provider.getTracer('test').startSpan('GET');
+    span.setAttributes({
+      'http.target': `/api/download/l/${id}`,
+      'url.full': `https://civitai.com/api/download/l/${id}`,
+    });
+    span.end();
+    await provider.forceFlush();
+
+    const [exported] = exporter.getFinishedSpans();
+    expect(JSON.stringify(exported.attributes)).not.toContain(id);
+    expect(exported.attributes['http.target']).toBe('/api/download/l/[redacted]');
+  });
 });

@@ -95,6 +95,13 @@ export default MixedAuthEndpoint(async function handler(
     ) {
       publicArticle.coverImage = undefined;
     }
+    // The banner is the same kind of image, and stands in for a missing cover on cards.
+    if (
+      publicArticle.bannerImage?.nsfwLevel &&
+      !Flags.intersects(publicArticle.bannerImage.nsfwLevel, browsingLevel)
+    ) {
+      publicArticle.bannerImage = undefined;
+    }
 
     return res.status(200).json(publicArticle);
   } catch (e) {

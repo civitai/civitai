@@ -172,7 +172,13 @@ export type UserActivityType =
   | 'RemoveContent'
   | 'ExcludedFromLeaderboard'
   | 'UnexcludedFromLeaderboard';
-export type ModelVersionActivty = 'Create' | 'Publish' | 'Download' | 'Unpublish' | 'HideDownload';
+export type ModelVersionActivty =
+  | 'Create'
+  | 'Publish'
+  | 'Download'
+  | 'Unpublish'
+  | 'HideDownload'
+  | 'GenerationFetch';
 export type ModelActivty =
   | 'Create'
   | 'Publish'

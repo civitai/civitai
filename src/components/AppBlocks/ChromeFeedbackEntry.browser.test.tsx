@@ -564,26 +564,23 @@ describe('opening the modal', () => {
     expect(menuTrigger().element().getAttribute('aria-expanded')).toBe('false');
   });
 
-  test('desktop (1280×900): bottom-anchored 10dvh above the viewport bottom, centred horizontally, not full-screen', async () => {
+  test('desktop (1280×900): centred vertically and horizontally, not full-screen', async () => {
     await page.viewport(1280, 900);
     await openFeedbackModal();
     const r = await settledDialogRect();
     expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
     expect(dialogContent()?.getAttribute('data-full-screen')).toBeNull();
-    // 10dvh of 900 = 90: the dialog's bottom edge sits 90px above the viewport's.
-    expect(Math.abs(window.innerHeight - r.bottom - 90)).toBeLessThanOrEqual(1);
-    // …which is NOT where a centred dialog would be (control for the assertion above).
-    expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeGreaterThan(50);
-    // Width and horizontal centring unchanged: Mantine `size="md"` is 440px.
+    expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeLessThanOrEqual(1);
+    // Mantine `size="md"` is 440px.
     expect(Math.round(r.width)).toBe(440);
     expect(Math.abs(r.left - (window.innerWidth - r.right))).toBeLessThanOrEqual(1);
   });
 
-  test('desktop at a second height (1280×700): still 10dvh (70px) from the bottom', async () => {
+  test('desktop at a second height (1280×700): still centred', async () => {
     await page.viewport(1280, 700);
     await openFeedbackModal();
     const r = await settledDialogRect();
-    expect(Math.abs(window.innerHeight - r.bottom - 70)).toBeLessThanOrEqual(1);
+    expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeLessThanOrEqual(1);
   });
 
   test('the textarea has focus on open (not the close button)', async () => {
@@ -993,34 +990,37 @@ describe('the phone bottom sheet (375×720)', () => {
 });
 
 describe('the wide dialog on a touch device (1024×768) with the on-screen keyboard up', () => {
-  // A tablet, or a phone held sideways, is wider than the `sm` rule, so it gets the Modal — which
-  // is bottom-anchored and would sit under the keyboard.
+  // A tablet, or a phone held sideways, is wider than the `sm` rule, so it gets the Modal, which
+  // is centred in the window and would sit over the keyboard.
   beforeEach(async () => {
     await page.viewport(1024, 768);
   });
 
-  test('the dialog rides above a 300px keyboard and returns to its 10dvh offset after', async () => {
+  test('the dialog is centred above a 300px keyboard and returns to the window centre after', async () => {
     const fake = installFakeViewport();
     await openFeedbackModal();
     forceTextareaHeight(TEXTAREA_4_ROWS_PX);
     expect(dialogContent()?.classList.contains('mantine-Modal-content')).toBe(true);
-    // CONTROL: keyboard down, 10dvh (76.8px) above the bottom — i.e. under where a keyboard goes.
     const resting = await settledDialogRect();
-    expect(Math.abs(window.innerHeight - resting.bottom - 76.8)).toBeLessThanOrEqual(1);
-    expect(resting.bottom).toBeGreaterThan(468);
-    const visible = showKeyboard(fake, 300);
-    expect(visible).toBe(468);
-    // An 8px gap above the keyboard.
-    await vi.waitFor(() =>
-      expect(Math.abs(dialogContent()!.getBoundingClientRect().bottom - 460)).toBeLessThanOrEqual(1)
-    );
-    await expectSendReachable(468, { mustScroll: false });
+    expect(
+      Math.abs((resting.top + resting.bottom) / 2 - window.innerHeight / 2)
+    ).toBeLessThanOrEqual(1);
+    // CONTROL: at rest the dialog reaches into where the keyboard will be, so the raise below is real.
+    expect(resting.bottom).toBeGreaterThan(window.innerHeight - 300);
+    const visibleBottom = showKeyboard(fake, 300);
+    await vi.waitFor(() => {
+      const r = dialogContent()!.getBoundingClientRect();
+      // Above the keyboard's top edge, with the 8px gap…
+      expect(r.bottom).toBeLessThanOrEqual(visibleBottom - 8 + 1);
+      // …and centred in the visible box.
+      expect(Math.abs((r.top + r.bottom) / 2 - visibleBottom / 2)).toBeLessThanOrEqual(1);
+    });
+    await expectSendReachable(visibleBottom, { mustScroll: false });
     showKeyboard(fake, 0);
-    await vi.waitFor(() =>
-      expect(
-        Math.abs(window.innerHeight - dialogContent()!.getBoundingClientRect().bottom - 76.8)
-      ).toBeLessThanOrEqual(1)
-    );
+    await vi.waitFor(() => {
+      const r = dialogContent()!.getBoundingClientRect();
+      expect(Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2)).toBeLessThanOrEqual(1);
+    });
   });
 
   test('a 10-row message over a 468px keyboard (300px visible): the dialog scrolls and Send can be reached', async () => {

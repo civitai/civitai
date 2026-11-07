@@ -5,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
+import { logToAxiom } from '~/server/logging/client';
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { findCatalogParentIdsForClient } from '~/server/services/blocks/app-sub-listing.service';
@@ -25,6 +26,11 @@ import {
   isAppBlockOauthClientId,
 } from '~/shared/constants/block-scope.constants';
 import type { Prisma } from '@prisma/client';
+import {
+  isAllowlistedMinter,
+  revokeLinksOfRevokedCredentials,
+} from '~/server/services/download-link/download-link.store';
+import { expireClientTokens } from '~/server/services/api-key.service';
 
 /**
  * SECURITY (audit A1/A2): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
@@ -283,12 +289,31 @@ export const oauthClientRouter = router({
       const newSecret = generateKey(48);
       const hashedSecret = generateSecretHash(newSecret);
 
+      // A download-link minter's tokens die with its old secret, so they cannot mint new links;
+      // other clients keep theirs. Expired before the secret changes: the minter re-checks its
+      // token after reading the secret, so a link carrying the new secret's epoch was minted by a
+      // token still live after this. The second pass catches a token issued while rotating.
+      const credential = { kind: 'client' as const, id: input.id };
+      const minter = isAllowlistedMinter(credential);
+      if (minter) await expireClientTokens(input.id);
+
       await dbWrite.oauthClient.update({
         where: { id: input.id },
         data: { secret: hashedSecret },
       });
 
       logOAuthEvent({ type: 'client.secret_rotated', userId: ctx.user.id, clientId: input.id });
+      if (minter)
+        await expireClientTokens(input.id).catch((error: Error) =>
+          logToAxiom({
+            name: 'download-link',
+            type: 'error',
+            message: 'rotate-token-expiry-failed',
+            clientId: input.id,
+            error: error.message,
+          }).catch(() => undefined)
+        );
+      await revokeLinksOfRevokedCredentials([credential]);
 
       return { clientSecret: newSecret };
     }),
@@ -320,6 +345,7 @@ export const oauthClientRouter = router({
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
+      await revokeLinksOfRevokedCredentials([{ kind: 'client', id: input.id }]);
 
       // The DB cascade revokes the tokens, but the orchestrator caches them for auth.
       // Best-effort: revokeCivitaiUserTokens swallows its own errors.

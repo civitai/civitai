@@ -68,10 +68,12 @@ import type { GenerationResource, GenerationResourceValue } from '~/shared/types
 
 import {
   applicableRulesFor,
+  toGateRuleViews,
   canGenerateBlockedTargets,
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
+  type GateRuleView,
 } from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
@@ -923,13 +925,8 @@ export type GenerationConfig = {
    * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
    */
   selfHostedMode: GenerationStatusMode;
-  /**
-   * The gate rules that apply to THIS user (already audience-filtered server
-   * side). Ride into `GenerationCtx` so the graph nodes resolve them to per-item
-   * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
-   * the server.
-   */
-  gateRules: GateRule[];
+  /** Applicable rules for THIS user, reduced to what the client renders (`toGateRuleViews`). */
+  gateRules: GateRuleView[];
   /**
    * Mod-authored messages for THIS user (audience-filtered server side, so copy
    * aimed at one tier never ships in another's payload). Rendered above the
@@ -989,11 +986,13 @@ export async function getGenerationConfig(
       isMember,
       isModerator: user.isModerator,
     }),
-    gateRules: applicableRulesFor(gateRules, {
-      isModerator: !!user.isModerator,
-      isMember,
-      hasTestingAccess,
-    }),
+    gateRules: toGateRuleViews(
+      applicableRulesFor(gateRules, {
+        isModerator: !!user.isModerator,
+        isMember,
+        hasTestingAccess,
+      })
+    ),
     generatorMessages: applicableMessagesFor(generatorMessages, {
       isMember,
       tier: user.tier ?? 'free',

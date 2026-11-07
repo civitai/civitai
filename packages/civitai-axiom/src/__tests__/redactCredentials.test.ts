@@ -27,6 +27,13 @@ describe('redactCredentialsInString', () => {
     [`/oauth/cb?code=${FAKE_KEY}&state=s`, '/oauth/cb?code=[redacted]&state=s'],
     [`https://cdn.test/f?sig=${FAKE_KEY}&w=450`, 'https://cdn.test/f?sig=[redacted]&w=450'],
     [`Authorization: Bearer ${FAKE_KEY}`, 'Authorization: Bearer [redacted]'],
+    // A download link's credential is its path segment.
+    ['/api/download/l/4fJ9kQ2xVb8NcR1tZp0LmA', '/api/download/l/[redacted]'],
+    [
+      'https://civitai.com/api/download/l/4fJ9kQ2xVb8NcR1tZp0LmA?x=1',
+      'https://civitai.com/api/download/l/[redacted]?x=1',
+    ],
+    ['GET /api/download/l/4fJ9kQ2xVb8NcR1tZp0LmA 404', 'GET /api/download/l/[redacted] 404'],
   ])('blanks the credential in %s', (input, expected) => {
     expect(redactCredentialsInString(input)).toBe(expected);
   });
@@ -38,6 +45,7 @@ describe('redactCredentialsInString', () => {
     '/api/x?keyword=cat',
     'the bearer of bad news',
     'retrying with tokens=5 and promptTokens=120',
+    '/api/download/models/1',
   ])('leaves %s intact', (input) => {
     expect(redactCredentialsInString(input)).toBe(input);
   });
