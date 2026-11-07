@@ -201,7 +201,7 @@ export function rulesToStates(rules: GateRuleView[]): ResolvedGates {
     // A hidden item is never shown, not even in a refusal, so it carries no copy.
     const resolution: GateResolution = {
       state,
-      message: rule.message ?? undefined, // MUTANT: keeps a hidden rule's message
+      message: state === 'hidden' ? undefined : rule.message ?? undefined,
     };
     for (const e of rule.ecosystems)
       ecosystems.set(e, pickStrongerGate(ecosystems.get(e), resolution));
