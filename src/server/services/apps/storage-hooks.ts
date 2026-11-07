@@ -5,15 +5,10 @@
  * A collection's `hook: { file, sha256, timeoutMs? }` names one ES module of the bundle. Before a
  * version that declares one can be queued or approved, this module:
  *
- *   1. GATES the declaration, in two steps. While the `hooks` storage feature is off, every hook is
- *      refused "not available yet" (`not_available`). With it on, a hook that is NEW or CHANGED —
- *      its `(file, sha256)` differs from the same collection's hook in the app's approved manifest,
- *      or that manifest has none, or it cannot be read — needs the ACTOR who introduced this
- *      version (the submitter; on the git-push path the pusher) to be in the
- *      `app-blocks-storage-hooks` Flipt cohort, else it is refused `not_in_cohort`. A hook pinned
- *      exactly as approved skips the cohort (it was gated when it was introduced) but is pinned
- *      below like any other. Fail closed: an absent flag, Flipt down, an actor who does not resolve
- *      and an unreadable approved manifest all refuse a new or changed hook.
+ *   1. GATES the declaration: the `hooks` storage feature must be on AND the author must be in the
+ *      `app-blocks-storage-hooks` Flipt cohort. While either is off, every hook is refused "not
+ *      available yet" (`not_available`). Fail closed: an absent flag, Flipt down or an author who
+ *      no longer resolves all refuse.
  *   2. PINS each file: its bytes, read from the bundle the version will ship (the submitted zip,
  *      the pushed commit, or at approve the stored bundle again), must exist (`missing`), be at
  *      most {@link APP_STORAGE_HOOK_MAX_BYTES} (`too_large`), be UTF-8 text with no NUL
@@ -48,7 +43,6 @@ import type { SessionUser } from '~/types/session';
 
 export const STORAGE_HOOK_PROBLEM_REASONS = [
   'not_available',
-  'not_in_cohort',
   'invalid',
   'under_output_dir',
   'missing',
@@ -80,8 +74,6 @@ function describeProblem(p: StorageHookProblem): string {
   switch (p.reason) {
     case 'not_available':
       return `${at} is not available yet — permission hooks arrive in a later phase of App Storage; remove hook (the collection schema still applies)`;
-    case 'not_in_cohort':
-      return `${at} is new or changed since the approved version, and adding or changing a permission hook is not enabled for this account yet — permission hooks are in a limited rollout; keep the approved hook or remove hook (the collection schema still applies)`;
     case 'invalid':
       return `${at} is not a valid hook declaration`;
     case 'under_output_dir':
@@ -142,14 +134,13 @@ export function declaresStorageHooks(manifest: unknown): boolean {
 }
 
 /**
- * Whether this actor may introduce a new or changed permission hook: they are in the
- * `app-blocks-storage-hooks` cohort (per-user eval, the same entityId and context as the other
- * author gates). Every failure — no actor (`null`: the pusher did not resolve), the actor not
- * resolving, Flipt down or throwing, the flag absent — answers false. The `hooks` feature switch is
- * checked by the caller first.
+ * Whether this author may declare a permission hook now: the `hooks` feature is on AND the author
+ * is in the `app-blocks-storage-hooks` cohort (per-user eval, the same entityId and context as the
+ * other author gates). Every failure — the author not resolving, Flipt down, the flag absent —
+ * answers false.
  */
-export async function isInStorageHookCohort(userId: number | null | undefined): Promise<boolean> {
-  if (typeof userId !== 'number') return false;
+export async function isStorageHookDeclarationEnabled(userId: number): Promise<boolean> {
+  if (!APP_STORAGE_ENABLED_FEATURES.hooks) return false;
   const [{ sessionClient }, { FLIPT_FEATURE_FLAGS, isFlipt }, { buildFliptContext }] =
     await Promise.all([
       import('~/server/auth/session-client'),
@@ -163,39 +154,13 @@ export async function isInStorageHookCohort(userId: number | null | undefined): 
     return false;
   }
   if (!user) return false;
-  try {
-    return (
-      (await isFlipt(
-        FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_HOOKS,
-        String(user.id),
-        buildFliptContext(user)
-      )) === true
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The `(file, sha256)` each collection's hook is pinned to in the app's approved manifest, as
- * strings straight from its raw declaration (the parser does not normalise either). Fails closed:
- * a manifest that cannot be read, or has no hooks, is an empty map, so every hook counts as new.
- */
-async function readApprovedHookPins(
-  readApprovedManifest: () => Promise<unknown>
-): Promise<Map<string, { file: string; sha256: string }>> {
-  const pins = new Map<string, { file: string; sha256: string }>();
-  let approved: unknown;
-  try {
-    approved = await readApprovedManifest();
-  } catch {
-    return pins;
-  }
-  for (const { collection, raw } of declaredStorageHookCollections(approved)) {
-    if (isObj(raw) && typeof raw.file === 'string' && typeof raw.sha256 === 'string')
-      pins.set(collection, { file: raw.file, sha256: raw.sha256 });
-  }
-  return pins;
+  return (
+    (await isFlipt(
+      FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_HOOKS,
+      String(user.id),
+      buildFliptContext(user)
+    )) === true
+  );
 }
 
 type ResolvedHooks =
@@ -359,52 +324,30 @@ export async function recordStorageHookSources(
 
 /**
  * THE check, shared by submit, the git-push path and approve. A no-op for a manifest that declares
- * no hook (neither reader is called). Otherwise gates the declaration (the feature switch, then,
- * for each hook new or changed against `readApprovedManifest`, the cohort of `actorUserId`), reads
- * the hook files through `readFiles`, verifies every one of them (and, at approve, the reviewed
- * file list), and records their sources. Throws {@link StorageHookRefusal} on any problem, before
- * recording.
+ * no hook (`readFiles` is never called). Otherwise gates the declaration for `userId` (the author),
+ * reads the hook files through `readFiles`, verifies them (and, at approve, the reviewed file list),
+ * and records their sources. Throws {@link StorageHookRefusal} on any problem, before recording.
  *
  * A manifest whose `storage` has errors that are NOT about a hook is left to the manifest
  * validator (approve and the push path run it before this; submit defers it to approve).
  */
 export async function pinStorageHooks(args: {
   manifest: unknown;
-  /**
-   * The actor who introduced this version: the submitter at submit and approve, the pusher on the
-   * git-push path. `null` / `undefined` (a pusher that maps to no user) fails a new or changed hook.
-   */
-  actorUserId: number | null | undefined;
-  /** The app's approved manifest (null for an app with none). A throw counts every hook as new. */
-  readApprovedManifest: () => Promise<unknown>;
+  userId: number;
   readFiles: (paths: string[]) => Promise<ReadonlyMap<string, Buffer>>;
   fileSummary?: readonly StorageHookFileMeta[];
 }): Promise<{ pinned: number }> {
   const declared = declaredStorageHookCollections(args.manifest);
   if (declared.length === 0) return { pinned: 0 };
 
-  const refuseAll = (
-    hooks: { collection: string; raw: unknown }[],
-    reason: 'not_available' | 'not_in_cohort'
-  ) =>
-    new StorageHookRefusal(
-      hooks.map(({ collection, raw }) => ({
+  if (!(await isStorageHookDeclarationEnabled(args.userId))) {
+    throw new StorageHookRefusal(
+      declared.map(({ collection, raw }) => ({
         collection,
         file: isObj(raw) && typeof raw.file === 'string' ? raw.file : null,
-        reason,
+        reason: 'not_available',
       }))
     );
-
-  if (!APP_STORAGE_ENABLED_FEATURES.hooks) throw refuseAll(declared, 'not_available');
-
-  // Only a hook the approved version does not already pin identically needs the cohort.
-  const approvedPins = await readApprovedHookPins(args.readApprovedManifest);
-  const introduced = declared.filter(({ collection, raw }) => {
-    const pin = approvedPins.get(collection);
-    return !(pin && isObj(raw) && raw.file === pin.file && raw.sha256 === pin.sha256);
-  });
-  if (introduced.length > 0 && !(await isInStorageHookCohort(args.actorUserId))) {
-    throw refuseAll(introduced, 'not_in_cohort');
   }
 
   const resolved = resolveDeclaredHooks(args.manifest, declared);

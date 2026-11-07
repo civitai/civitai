@@ -1339,17 +1339,15 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   assertStorageMigrationsCover(storageMigrations);
 
   // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
-  // a declared hook needs the hooks feature on, a hook new or changed against the approved manifest
-  // (the baseline above) needs the SUBMITTER in the hooks cohort, and every hook file's bytes in
-  // THIS bundle must hash to the sha256 the manifest pins (the source is then recorded by that
-  // sha). A no-op for a manifest with no hook. Approve and the git-push path run the same pin. See
+  // a declared hook needs the hooks gate open for this author, and its file's bytes in THIS bundle
+  // must hash to the sha256 the manifest pins (the source is then recorded by that sha). A no-op
+  // for a manifest with no hook. Approve and the git-push path run the same pin. See
   // `storage-hooks.ts`.
   {
     const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
     await pinStorageHooks({
       manifest,
-      actorUserId: submittedByUserId,
-      readApprovedManifest: async () => baseline.prev,
+      userId: submittedByUserId,
       readFiles: (paths) => readBundleFiles(bundleBuffer, paths),
     });
   }
@@ -2294,21 +2292,14 @@ export async function recordPendingFromPush(args: {
   }
 
   // APP STORAGE PERMISSION HOOKS — a pushed commit never passes `submitVersion`, so the submit pin
-  // runs here, against the files of the pushed sha. A hook new or changed against the approved
-  // manifest is cohort-gated on the PUSHER, the actor who introduced it (not the owner the row is
-  // attributed to); a pusher that maps to no user fails it closed. Refused before anything is
-  // recorded or superseded; approve pins again. A no-op for a manifest with no hook. See
-  // `storage-hooks.ts`.
+  // runs here, against the files of the pushed sha, for the app OWNER (the author this row is
+  // attributed to). Refused before anything is recorded or superseded; approve pins again. A no-op
+  // for a manifest with no hook. See `storage-hooks.ts`.
   {
-    const [{ pinStorageHooks }, { loadStorageMigrationBaseline }] = await Promise.all([
-      import('~/server/services/apps/storage-hooks'),
-      import('~/server/services/apps/storage-migration-run.service'),
-    ]);
+    const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
     await pinStorageHooks({
       manifest: args.manifest,
-      actorUserId: args.pusherUserId ?? null,
-      readApprovedManifest: () =>
-        loadStorageMigrationBaseline({ slug: args.slug }).then((baseline) => baseline.prev),
+      userId: ownerUserId,
       readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),
     });
   }
@@ -3211,17 +3202,14 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will
   // ship: the stored bundle, or for a push-originated request the repo at the reviewed sha (which
   // never passed `submitVersion`). Also refuses a reviewed file list that disagrees with those
-  // bytes, and re-checks the submitter's cohort for a hook new or changed against the approved
-  // manifest (the baseline above), so a hook already approved identically is not re-gated.
-  // Refused before anything is written; a no-op for a manifest with no hook. See
-  // `storage-hooks.ts`.
+  // bytes, and re-checks the submitter's hooks gate. Refused before anything is written; a no-op
+  // for a manifest with no hook. See `storage-hooks.ts`.
   {
     const { pinStorageHooks } = await import('~/server/services/apps/storage-hooks');
     const reviewed = request.fileSummary as unknown as FileSummary | null;
     await pinStorageHooks({
       manifest,
-      actorUserId: request.submittedByUserId,
-      readApprovedManifest: async () => baseline.prev,
+      userId: request.submittedByUserId,
       readFiles: async (paths) => {
         if (request.bundleKey) {
           return readBundleFiles(await fetchBundleBuffer(request.bundleKey), paths);
