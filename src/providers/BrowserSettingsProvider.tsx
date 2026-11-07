@@ -13,6 +13,28 @@ import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 
+/**
+ * Whether this viewer sees event cosmetics (worn hats) and Hat Turf. Reads true outside the
+ * provider. Viewer-side only: it changes nothing about opt-in, stock or scoring.
+ */
+export function useShowEventCosmetics() {
+  const store = useContext(Context);
+  const preview = useContext(EventCosmeticsPreviewContext);
+  const getSnapshot = () => preview || (store?.getState().showEventCosmetics ?? true);
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, getSnapshot, getSnapshot);
+}
+
+const EventCosmeticsPreviewContext = createContext(false);
+/**
+ * Shows event cosmetics inside whatever the setting: for a preview of the hat someone is picking,
+ * fitting or buying, which is a control they opened, not content.
+ */
+export function EventCosmeticsPreview({ children }: { children: React.ReactNode }) {
+  return (
+    <EventCosmeticsPreviewContext.Provider value>{children}</EventCosmeticsPreviewContext.Provider>
+  );
+}
+
 const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
@@ -45,6 +67,8 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       if (variables.blurNsfw !== undefined) changedSettings.blurNsfw = variables.blurNsfw;
       if (variables.autoplayGifs !== undefined)
         changedSettings.autoplayGifs = variables.autoplayGifs;
+      if (variables.showEventCosmetics !== undefined)
+        changedSettings.showEventCosmetics = variables.showEventCosmetics;
 
       if (Object.keys(changedSettings).length === 0) return;
 
@@ -96,6 +120,17 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       snapshotRef.current = settings;
     }
   }, [settings]);
+
+  // Event cosmetics are hidden on this device by its cookie too: the only place a signed-out
+  // viewer's choice lives, and the first paint's answer before an account is read.
+  useEffect(() => {
+    const store = storeRef.current;
+    if (!store) return;
+    return store.subscribe((curr, prev) => {
+      if (curr.showEventCosmetics !== prev.showEventCosmetics)
+        setCookie('showEventCosmetics', curr.showEventCosmetics);
+    });
+  }, []);
 
   useEffect(() => {
     const store = storeRef.current;
@@ -153,6 +188,7 @@ type StoreState = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
+  showEventCosmetics: boolean;
   domain: ColorDomain;
 };
 

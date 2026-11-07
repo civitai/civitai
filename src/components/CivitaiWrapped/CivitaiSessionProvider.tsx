@@ -20,9 +20,12 @@ import { trpc } from '~/utils/trpc';
 export function CivitaiSessionProvider({
   children,
   disableHidden,
+  showEventCosmetics,
 }: {
   children: React.ReactNode;
   disableHidden?: boolean;
+  /** This device's choice, from its cookie: what a signed-out viewer gets, and a fallback. */
+  showEventCosmetics?: boolean;
 }) {
   const { data, update } = useSession();
   const user = data?.user;
@@ -49,6 +52,7 @@ export function CivitaiSessionProvider({
   const settingsShowNsfw = settings?.showNsfw;
   const settingsBlurNsfw = settings?.blurNsfw;
   const settingsAutoplayGifs = settings?.autoplayGifs;
+  const settingsShowEventCosmetics = settings?.showEventCosmetics;
 
   const sessionUser = useMemo(() => {
     if (!user) {
@@ -65,7 +69,10 @@ export function CivitaiSessionProvider({
               blurNsfw: false,
             }
           : publicContentSettings;
-      return { type: 'unauthed', settings } as UnauthedUser;
+      return {
+        type: 'unauthed',
+        settings: { ...settings, showEventCosmetics: showEventCosmetics ?? true },
+      } as UnauthedUser;
     }
 
     const isMember = user.tier != null;
@@ -88,6 +95,7 @@ export function CivitaiSessionProvider({
         allowAds: settingsAllowAds ?? !isMember ? true : false,
         autoplayGifs: settingsAutoplayGifs ?? user.autoplayGifs ?? true,
         blurNsfw: settingsBlurNsfw ?? user.blurNsfw,
+        showEventCosmetics: settingsShowEventCosmetics ?? showEventCosmetics ?? true,
       },
     };
     if (!allowMatureContent)
@@ -100,12 +108,14 @@ export function CivitaiSessionProvider({
     data?.expires,
     allowMatureContent,
     disableHidden,
+    showEventCosmetics,
     isRestricted,
     settingsAllowAds,
     settingsDisableHidden,
     settingsShowNsfw,
     settingsBlurNsfw,
     settingsAutoplayGifs,
+    settingsShowEventCosmetics,
     verifiedBot,
   ]);
 
@@ -153,6 +163,7 @@ type BrowsingSettings = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
+  showEventCosmetics: boolean;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);
