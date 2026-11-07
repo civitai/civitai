@@ -439,6 +439,26 @@ describe('buildExport record, run', () => {
     expect(m.builtSend).not.toHaveBeenCalled();
   });
 
+  it('deletes the upload and keeps the row when the Legal notice fails, and records it as owed', async () => {
+    m.holds
+      .mockResolvedValueOnce({ legs: [], markerView: true })
+      .mockResolvedValue({ legs: ['report'], markerView: true });
+    m.refusedSend.mockRejectedValue(new Error('smtp down'));
+    expect(await buildExport(row, deps)).toBe('held');
+    expect(uploadsDeleted()).toEqual([
+      expect.stringMatching(ARCHIVE),
+      expect.stringMatching(NOTES),
+    ]);
+    const { rows } = await db.query<{ status: string; archiveKey: string | null; error: string }>(
+      `SELECT status, "archiveKey", error FROM "PersonalDataExport" WHERE id = $1`,
+      [row.id]
+    );
+    expect(rows).toEqual([
+      { status: 'held', archiveKey: null, error: 'legal notice failed (1): smtp down' },
+    ]);
+    expect(m.heldSend).toHaveBeenCalledTimes(1);
+  });
+
   it('records a refused held export with its hold reasons and no archive', async () => {
     m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
     expect(await buildExport(row, deps)).toBe('held');

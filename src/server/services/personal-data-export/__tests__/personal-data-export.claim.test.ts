@@ -40,7 +40,13 @@ vi.mock('../archive', async (importOriginal) => ({
   deleteObjects: m.del,
 }));
 
-import { exportHoldReasons, releaseExport } from '../personal-data-export.service';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  LEGAL_NOTICE_ALERT_AFTER,
+  exportHoldReasons,
+  releaseExport,
+  retryLegalNotices,
+} from '../personal-data-export.service';
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -237,8 +243,14 @@ describe('release claim, run', () => {
          INSERT INTO "Image" (id, "userId") VALUES (1, ${OWNER}), (2, ${OWNER});`
       );
       await caseAbout(OWNER, 1, 'CSAM', 'Actioned');
-      // The hold check and both row reads run against Postgres.
-      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: Prisma.Sql) => {
+      // The hold check, the Legal retry and both row reads run against Postgres.
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+        first: Prisma.Sql | TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const q = Array.isArray(first)
+          ? Prisma.sql(first as TemplateStringsArray, ...values)
+          : (first as Prisma.Sql);
         return (await db.query(q.text, q.values as unknown[])).rows;
       }) as never);
       vi.mocked(dbMock.dbWrite.personalDataExport.findUnique).mockImplementation((async () => {
@@ -275,6 +287,87 @@ describe('release claim, run', () => {
       ]);
       // Only the export's own objects go: every source row is exactly as it was.
       expect(await sources()).toBe(before);
+    });
+
+    /**
+     * 🔴 Ruled by the Moderation Lead: a refusal's Legal notice is never lost. If the send fails, the
+     * copy is still deleted and the row still kept, the requester gets the same notice, and later
+     * ticks resend until one lands, then never again.
+     */
+    it('retries a failed Legal notice on later ticks until it lands, then sends no more', async () => {
+      m.refusedSend.mockRejectedValueOnce(new Error('smtp down'));
+      expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+        ok: false,
+        reason: 'held',
+      });
+      // Nothing waited on the email.
+      expect(m.del).toHaveBeenCalledTimes(1);
+      const held = async () =>
+        (
+          await db.query<{ status: string; archiveKey: string | null; error: string | null }>(
+            `SELECT status, "archiveKey", error FROM "PersonalDataExport" WHERE id = 5`
+          )
+        ).rows[0];
+      expect(await held()).toEqual({
+        status: 'held',
+        archiveKey: null,
+        error: 'legal notice failed (1): smtp down',
+      });
+      // The requester's notice is the same either way, and goes once.
+      expect(m.heldSend.mock.calls).toEqual([[{ to: 'owner@example.com', exportId: 5 }]]);
+
+      expect(await retryLegalNotices()).toEqual({ owed: 1, sent: 1 });
+      expect(m.refusedSend).toHaveBeenCalledTimes(2);
+      expect(m.refusedSend.mock.calls[1][0]).toMatchObject({
+        subject: 'DATA-EXPORT-REFUSED user=42 ticket=555 requested=2026-09-14',
+      });
+      expect((await held()).error).toBeNull();
+
+      expect(await retryLegalNotices()).toEqual({ owed: 0, sent: 0 });
+      expect(m.refusedSend).toHaveBeenCalledTimes(2);
+      expect(m.heldSend).toHaveBeenCalledTimes(1);
+    });
+
+    it(`raises an alert naming the export once ${LEGAL_NOTICE_ALERT_AFTER} sends have failed`, async () => {
+      m.refusedSend.mockRejectedValue(new Error('smtp down'));
+      await releaseExport({ exportId: 5, actorId: 9, bucket, now });
+      const alerts = () =>
+        vi
+          .mocked(logToAxiom)
+          .mock.calls.filter(([e]) => (e.details as { alert?: boolean } | undefined)?.alert);
+      vi.mocked(logToAxiom).mockClear();
+      for (let tick = 2; tick < LEGAL_NOTICE_ALERT_AFTER; tick++) await retryLegalNotices();
+      expect(alerts()).toEqual([]);
+      await retryLegalNotices();
+      expect(alerts()).toHaveLength(1);
+      expect(alerts()[0][0]).toMatchObject({
+        type: 'error',
+        details: { exportId: 5, failures: LEGAL_NOTICE_ALERT_AFTER },
+      });
+      // Still owed: it keeps being retried, not dropped.
+      expect(await retryLegalNotices()).toEqual({ owed: 1, sent: 0 });
+    });
+
+    it('marks the notice owed on the row before sending it, so a crash cannot lose it', async () => {
+      let atSend: string | null | undefined;
+      m.refusedSend.mockImplementation(async () => {
+        atSend = (
+          await db.query<{ error: string | null }>(
+            `SELECT error FROM "PersonalDataExport" WHERE id = 5`
+          )
+        ).rows[0].error;
+      });
+      await releaseExport({ exportId: 5, actorId: 9, bucket, now });
+      expect(atSend).toBe('legal notice pending');
+    });
+
+    it('resends a notice a crash left pending before it was sent', async () => {
+      await db.exec(
+        `UPDATE "PersonalDataExport" SET status = 'held', "archiveKey" = NULL,
+           error = 'legal notice pending' WHERE id = 5`
+      );
+      expect(await retryLegalNotices()).toEqual({ owed: 1, sent: 1 });
+      expect(m.refusedSend).toHaveBeenCalledTimes(1);
     });
 
     it('sends Legal no second notice on another press, or when two presses race', async () => {

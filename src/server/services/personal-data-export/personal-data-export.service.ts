@@ -409,6 +409,76 @@ export function legalRefusalLines(input: {
   return { subject: `DATA-EXPORT-REFUSED ${lines.join(' ')}`, lines };
 }
 
+/**
+ * A held row's Legal notice, tracked in its `error`: pending until the send lands, then cleared.
+ * A failed send is retried on later ticks; a send that landed but reported failure can repeat, but
+ * none is lost.
+ */
+const LEGAL_NOTICE_PENDING = 'legal notice pending';
+const legalNoticeFailed = (failures: number, message: string) =>
+  `legal notice failed (${failures}): ${message}`.slice(0, 2000);
+/** Failed sends of one notice before every further failure also raises an alert naming the row. */
+export const LEGAL_NOTICE_ALERT_AFTER = 3;
+
+type LegalNoticeRow = Pick<ExportRow, 'id' | 'userId' | 'ticketId' | 'requestedAt'>;
+
+async function sendLegalNotice(row: LegalNoticeRow, failuresSoFar: number) {
+  const { subject, lines } = legalRefusalLines(row);
+  try {
+    await personalDataExportRefusedEmail.send({
+      to: env.PERSONAL_DATA_EXPORT_LEGAL_EMAIL,
+      subject,
+      lines,
+    });
+  } catch (e) {
+    const failures = failuresSoFar + 1;
+    await dbWrite.$executeRaw`
+      UPDATE "PersonalDataExport" SET error = ${legalNoticeFailed(failures, errorMessage(e))}
+      WHERE id = ${row.id} AND status = 'held'
+    `.catch(() => undefined);
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message:
+        failures >= LEGAL_NOTICE_ALERT_AFTER
+          ? `ALERT: Legal refusal notice for export ${row.id} still unsent after ${failures} tries`
+          : `Legal refusal notice failed: ${errorMessage(e)}`,
+      details: { exportId: row.id, failures, alert: failures >= LEGAL_NOTICE_ALERT_AFTER },
+    }).catch(() => undefined);
+    return false;
+  }
+  // Sent: mark it, so no later tick sends it again. If this write fails, a later tick resends.
+  await dbWrite.$executeRaw`
+    UPDATE "PersonalDataExport" SET error = NULL
+    WHERE id = ${row.id} AND status = 'held' AND error LIKE 'legal notice%'
+  `.catch((e: unknown) =>
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `Legal notice sent but not marked: ${errorMessage(e)}`,
+      details: { exportId: row.id },
+    }).catch(() => undefined)
+  );
+  return true;
+}
+
+/** Resends every held export's Legal notice that has not landed yet. Runs at the start of each tick. */
+export async function retryLegalNotices() {
+  const owed = await dbWrite.$queryRaw<(LegalNoticeRow & { error: string })[]>`
+    SELECT id, "userId", "ticketId", "requestedAt"::text AS "requestedAt", error
+    FROM "PersonalDataExport"
+    WHERE status = 'held' AND error LIKE 'legal notice%'
+    ORDER BY id
+    LIMIT 20
+  `;
+  let sent = 0;
+  for (const row of owed) {
+    const failures = Number(/^legal notice failed \((\d+)\)/.exec(row.error)?.[1] ?? 0);
+    if (await sendLegalNotice(row, failures)) sent++;
+  }
+  return { owed: owed.length, sent };
+}
+
 /** The state a refusal moves the row out of: this build attempt, or a built archive at release. */
 type HeldFrom = { status: 'building'; attempts: number } | { status: 'built' };
 const building = (row: ExportRow): HeldFrom => ({ status: 'building', attempts: row.attempts });
@@ -431,18 +501,20 @@ async function refuseHeld(
   uploaded: (string | null)[],
   bucket?: ExportBucket
 ) {
+  // The row says the Legal notice is owed from the moment it is held, so a crash before the send
+  // leaves it to be retried rather than lost.
   const recorded =
     from.status === 'building'
       ? await dbWrite.$executeRaw`
           UPDATE "PersonalDataExport"
           SET status = 'held', "holdReasons" = ${holdReasons}::text[], "archiveKey" = NULL,
-              "modNotesKey" = NULL, error = NULL
+              "modNotesKey" = NULL, error = ${LEGAL_NOTICE_PENDING}
           WHERE id = ${row.id} AND status = 'building' AND attempts = ${from.attempts}
         `
       : await dbWrite.$executeRaw`
           UPDATE "PersonalDataExport"
           SET status = 'held', "holdReasons" = ${holdReasons}::text[], "archiveKey" = NULL,
-              "modNotesKey" = NULL, error = NULL
+              "modNotesKey" = NULL, error = ${LEGAL_NOTICE_PENDING}
           WHERE id = ${row.id} AND status = 'built'
         `;
   // A build attempt's uploads have keys of their own, so they go even when the row has moved on. At
@@ -463,19 +535,8 @@ async function refuseHeld(
     },
   }).catch(() => undefined);
 
-  const { subject, lines } = legalRefusalLines(row);
-  try {
-    await personalDataExportRefusedEmail.send({
-      to: env.PERSONAL_DATA_EXPORT_LEGAL_EMAIL,
-      subject,
-      lines,
-    });
-  } catch (e) {
-    await dbWrite.$executeRaw`
-      UPDATE "PersonalDataExport" SET error = ${`legal notice failed: ${errorMessage(e)}`}
-      WHERE id = ${row.id}
-    `;
-  }
+  await sendLegalNotice(row, 0);
+  // The requester is told the same thing whether or not the Legal notice has gone yet.
   try {
     const requester = await dbWrite.user.findUnique({
       where: { id: row.requestedById },
@@ -705,6 +766,14 @@ export async function runPersonalDataExports({
   build?: typeof buildExport;
 } = {}) {
   await recoverStaleExports();
+  // Needs no bucket, so it runs even while the export is unconfigured, and never blocks a build.
+  await retryLegalNotices().catch((e: unknown) =>
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `Legal notice retry failed: ${errorMessage(e)}`,
+    }).catch(() => undefined)
+  );
   const deps = await resolveDeps();
   if ('missing' in deps) {
     const queued = await dbWrite.$queryRaw<{ n: number }[]>(
