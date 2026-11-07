@@ -30,6 +30,8 @@ const ASKED_ABOUT = 7;
 const VERSION = 100;
 const LOG_NAME = 'permissions-check-caller';
 let minute = 0;
+// Ten minutes on: the per-minute caps start full and remembered callers have expired.
+const nextWindow = () => vi.setSystemTime((minute += 10) * 60_000);
 
 function keyOwnedBy(id: number, apiKeyType = 'User') {
   return { user: { id }, apiKeyId: 55, apiKeyType, subject: { type: 'apiKey', id: 55 } };
@@ -56,9 +58,8 @@ const logged = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   mockBearer.mockReset();
-  // A fresh minute per test, so the per-minute lookup budget starts full.
   vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(++minute * 60_000);
+  nextWindow();
   setEnv({ PERMISSIONS_CHECK_SERVICE_USER_IDS: [SERVICE_ID], WEBHOOK_TOKEN_PREVIOUS: 'old-hook' });
   mockGetSessionUserById.mockResolvedValue({ id: ASKED_ABOUT });
   mockHasEntityAccess.mockResolvedValue([{ entityId: VERSION, hasAccess: true }]);
@@ -164,7 +165,7 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(await check()).toEqual({ [VERSION]: true });
     expect(logged()).toHaveLength(60);
 
-    vi.setSystemTime(++minute * 60_000);
+    nextWindow();
     await check();
     expect(logged()).toHaveLength(61);
   });
@@ -176,11 +177,33 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(logged()).toHaveLength(1);
   });
 
-  it('stops looking up callers past 600 a minute, and keeps answering', async () => {
+  it('remembers a resolved key, so a frequent caller does not spend the lookup cap', async () => {
     mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
-    for (let i = 0; i < 600; i++) await check('Bearer k');
+    for (let i = 0; i < 700; i++) await check('Bearer service');
+    expect(mockBearer).toHaveBeenCalledTimes(1);
+
+    mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
+    await check('Bearer other');
+    expect(logged()).toEqual([expect.objectContaining({ caller: 'other-user' })]);
+  });
+
+  it('stops looking up callers past 600 a minute, logging none of them, and keeps answering', async () => {
+    // Listed callers on distinct keys: each costs a lookup but no log, so only the lookup cap is spent.
+    mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
+    for (let i = 0; i < 600; i++) await check(`Bearer service-${i}`);
     expect(mockBearer).toHaveBeenCalledTimes(600);
-    expect(await check('Bearer k')).toEqual({ [VERSION]: true });
+    const loggedBefore = logged().length;
+
+    mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
+    expect(await check('Bearer other')).toEqual({ [VERSION]: true });
     expect(mockBearer).toHaveBeenCalledTimes(600);
+    expect(logged()).toHaveLength(loggedBefore);
+  });
+
+  it('does not spend the lookup cap on callers with no credential', async () => {
+    for (let i = 0; i < 700; i++) await check();
+    mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
+    await check('Bearer service');
+    expect(mockBearer).toHaveBeenCalledTimes(1);
   });
 });
