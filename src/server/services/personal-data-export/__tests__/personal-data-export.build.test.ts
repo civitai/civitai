@@ -331,6 +331,9 @@ describe('buildExport', () => {
       'need a separate read'
     );
     expect(lines.some((l) => l.includes('"unavailable" could not be read'))).toBe(true);
+    expect(
+      lines.some((l) => l.startsWith('leftOut') && l.includes('could not be reliably attributed'))
+    ).toBe(true);
   });
 
   it('writes the notes file with staff redacted, and never puts a note count in the archive', async () => {

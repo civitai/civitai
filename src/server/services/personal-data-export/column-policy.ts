@@ -59,6 +59,32 @@ export const RULE_ONLY_COLUMNS: Record<string, readonly string[]> = {
 export const CLASSIFIER_NAME_RE =
   /(scanJobs|^ai[A-Z]\w*|xguard|clavata|classifier|^pHash$|matchedTerms?|matchedRegex|^scores?$|ByScan$|TextHash$)/;
 
+/**
+ * ClickHouse tables read by an explicit column list instead of `SELECT *`: only these columns are
+ * selected or written, so a column added to the table later does not reach an archive. Approved by
+ * Legal; `orchestration.jobs` leaves out the worker, the issuer and remix ids.
+ */
+export const CH_COLUMN_ALLOWED: Record<string, readonly string[]> = {
+  'orchestration.jobs': [
+    'jobId',
+    'externalId',
+    'workflowStepCost',
+    'userId',
+    'jobType',
+    'createdAt',
+    'completedAt',
+    'provider',
+    'cost',
+    'creatorsTip',
+    'resourcesUsed',
+    'serviceUpgradeFee',
+    'claimDuration',
+    'gpuDuration',
+    'blobsCount',
+    'queuedAt',
+  ],
+};
+
 /** Other people's identities on a row that is otherwise the user's. Never read. */
 export const OTHER_PEOPLE_COLUMNS: Record<string, readonly string[]> = {
   // Who else reported the same content.

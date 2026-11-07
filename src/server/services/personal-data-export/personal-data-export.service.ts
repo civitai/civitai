@@ -349,6 +349,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
           'Files with status "unavailable" could not be read when this archive was made; ask us and we will provide them.',
           'Files with status "partial" hit a size or time limit; ask us for the rest.',
           'A table with no records for you has rows: 0 and no file.',
+          'leftOut, where present, counts records left out because they could not be reliably attributed to you (corrupted in storage).',
         ],
       };
       await writer.addFile('manifest.json', JSON.stringify(manifest, null, 2));

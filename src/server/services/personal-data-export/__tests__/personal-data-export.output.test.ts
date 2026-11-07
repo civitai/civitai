@@ -151,11 +151,15 @@ describe('ClickHouse', () => {
     });
     const jobs = CH_TABLES.find((t) => t.table === 'orchestration.jobs')!;
     expect(
-      reduceChRow(jobs, { id: 'j', cost: 3, nsfwLevel: 2, blockedReason: 'x', reviewedBy: 9 })
-    ).toEqual({
-      id: 'j',
-      cost: 3,
-    });
+      reduceChRow(jobs, {
+        jobId: 'j',
+        cost: 3,
+        provider: 'p',
+        nsfwLevel: 2,
+        blockedReason: 'x',
+        reviewedBy: 9,
+      })
+    ).toEqual({ jobId: 'j', cost: 3, provider: 'p' });
   });
 
   it("leaves another user's id out of a Buzz row, as the app's own Buzz export does", () => {
@@ -213,7 +217,7 @@ describe('ClickHouse', () => {
         return {
           json: async <T>() => [] as T,
           stream: async function* () {
-            yield [{ json: <T>() => ({ id: 'r' } as T) }];
+            yield [{ json: <T>() => ({ id: 'r', createdAt: '2024-01-01 00:00:00' } as T) }];
           },
         };
       },
@@ -267,6 +271,66 @@ describe('ClickHouse', () => {
     expect(errors).toContain('default.buzzTransactions');
   });
 
+  /**
+   * Ruled by Legal and the Moderation Lead: generation jobs go in every archive, read by an approved
+   * column list (no worker, issuer or remix ids), so a column added to the table later does not
+   * flow through; and a row corrupted in storage is left out and counted, never sent.
+   */
+  it('reads generation jobs by their approved columns only, and leaves corrupted rows out', async () => {
+    const garbage = `ab${String.fromCharCode(1)}cd`;
+    const base = {
+      jobId: 'j1',
+      userId: '7',
+      createdAt: '2023-04-05 10:00:00',
+      provider: '',
+      cost: 4,
+      workerId: 'w-9',
+      issuedBy: 'svc',
+      remixOfId: 'r-1',
+      someNewColumn: 'should not appear',
+    };
+    const stored = [
+      base,
+      { ...base, jobId: 'j2', createdAt: '2299-01-01 00:00:00' },
+      { ...base, jobId: 'j3', createdAt: '1900-01-01 00:00:00' },
+      { ...base, jobId: 'j4', provider: garbage },
+    ];
+    const queries: string[] = [];
+    const ch: ClickhouseReader = {
+      async query({ query }) {
+        queries.push(query);
+        const shapes = [{ t: 'orchestration.jobs', sortingKey: 'createdAt', rows: 3e9 }];
+        return {
+          json: async <T>() => (query.includes('system.tables') ? shapes : []) as T,
+          stream: async function* () {
+            if (query.includes('FROM orchestration.jobs'))
+              yield stored.map((r) => ({ json: <T>() => r as T }));
+          },
+        };
+      },
+    };
+    const { files, w } = writer();
+    const result = await exportClickhouse({ userId: 7, writer: w, ch, onError: () => undefined });
+
+    const jobsQuery = queries.find((q) => q.includes('FROM orchestration.jobs'))!;
+    expect(jobsQuery).not.toContain('SELECT *');
+    for (const omitted of ['workerId', 'issuedBy', 'remixOfId'])
+      expect(jobsQuery).not.toContain(omitted);
+    expect(jobsQuery).toContain('`provider`');
+
+    const jobs = result.files.find((f) => f.file.endsWith('generation-jobs.jsonl'))!;
+    expect(jobs).toMatchObject({ status: 'complete', rows: 1, leftOut: 3 });
+    const written = files
+      .get(jobs.file)!
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    // Only the valid 2023 row, with only approved columns; an empty provider reads as unknown.
+    expect(written).toEqual([
+      { jobId: 'j1', userId: '7', createdAt: '2023-04-05 10:00:00', provider: 'unknown', cost: 4 },
+    ]);
+  });
+
   it("reads only the user's own Buzz accounts, never a club keyed by the same id", async () => {
     expect(USER_BUZZ_ACCOUNT_TYPES).toEqual(
       expect.arrayContaining(['yellow', 'blue', 'cashPending'])
@@ -282,6 +346,7 @@ describe('ClickHouse', () => {
         const shapes = [
           { t: 'default.buzzTransactions', sortingKey: 'date, fromAccountId', rows: 2e9 },
           { t: 'orchestration.jobs', sortingKey: 'createdAt', rows: 3e9 },
+          { t: 'default.prohibitedRequests', sortingKey: 'time', rows: 3e9 },
           { t: 'default.views', sortingKey: 'time, entityType, entityId, userId', rows: 8e9 },
           { t: 'default.userModelDownloads', sortingKey: 'userId, modelVersionId', rows: 2e8 },
         ];
@@ -304,10 +369,15 @@ describe('ClickHouse', () => {
       ch,
       onError: () => undefined,
     });
-    expect(result.files.find((f) => f.file.endsWith('generation-jobs.jsonl'))?.status).toBe(
+    expect(result.files.find((f) => f.file.endsWith('blocked-prompts.jsonl'))?.status).toBe(
       'not-included'
     );
-    expect(queries.some((q) => q.query.includes('FROM orchestration.jobs'))).toBe(false);
+    expect(queries.some((q) => q.query.includes('FROM default.prohibitedRequests'))).toBe(false);
+    // Required: read whatever its size.
+    expect(result.files.find((f) => f.file.endsWith('generation-jobs.jsonl'))?.status).toBe(
+      'complete'
+    );
+    expect(queries.some((q) => q.query.includes('FROM orchestration.jobs'))).toBe(true);
     expect(queries.some((q) => q.query.includes('FROM default.views'))).toBe(false);
     expect(result.counts.find((c) => c.name === 'views')?.count).toBeNull();
     expect(result.counts.find((c) => c.name === 'userModelDownloads')?.count).toBe(3);

@@ -17,6 +17,8 @@ export type ManifestFile = {
    * was skipped by design and needs a separate read. `unavailable`: the read was tried and failed.
    */
   status: 'complete' | 'partial' | 'not-included' | 'unavailable';
+  /** Records left out because they could not be reliably attributed (corrupted in storage). */
+  leftOut?: number;
   /** Columns written, in order (CSV files). */
   columns?: string[];
 };

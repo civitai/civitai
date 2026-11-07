@@ -1,7 +1,7 @@
 import { buzzAccountTypes } from '@civitai/buzz';
 import { fromClickhouseTransactionType } from '~/server/clickhouse/transaction-type';
 import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
-import { columnDecision } from '../column-policy';
+import { CH_COLUMN_ALLOWED, columnDecision } from '../column-policy';
 import { jsonLinesFile, type ExportWriter, type ManifestCount, type ManifestFile } from '../output';
 
 /** What the export needs of a ClickHouse client: a parameterised query whose rows stream. */
@@ -21,7 +21,7 @@ export const CH_MAX_EXECUTION_SECONDS = 300;
 
 /**
  * A per-user read of a table whose sort key does not start with `userId` scans the whole table.
- * Below this many rows that is cheap; above it the read is skipped (a file is marked unavailable, a
+ * Below this many rows that is cheap; above it the read is skipped (a file is marked not included, a
  * count is left out) unless the table is `required`. Sizes and keys are read from system.tables
  * when the export runs.
  */
@@ -58,7 +58,31 @@ type ChTable = {
   required?: boolean;
   /** Applied to each kept record last. */
   redact?: (row: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * A record that cannot be reliably attributed (corrupted in storage): left out, not rewritten, and
+   * counted in the manifest.
+   */
+  unreliable?: (row: Record<string, unknown>) => boolean;
 };
+
+/** Control characters or the replacement character: binary garbage stored in a text column. */
+function notText(value: string) {
+  for (const ch of value) {
+    const c = ch.codePointAt(0) ?? 0;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) || c === 0x7f || c === 0xfffd)
+      return true;
+  }
+  return false;
+}
+/** Generation history cannot predate this, nor come from the future. */
+const EARLIEST_RECORD = Date.UTC(2020, 0, 1);
+
+/** Corrupted job rows: a text value that is not text, or a creation time outside any real range. */
+export function unreliableJobRow(row: Record<string, unknown>, now = Date.now()) {
+  if (Object.values(row).some((v) => typeof v === 'string' && notText(v))) return true;
+  const created = Date.parse(`${String(row.createdAt ?? '').replace(' ', 'T')}Z`);
+  return !Number.isFinite(created) || created < EARLIEST_RECORD || created > now + 86_400_000;
+}
 
 /** A Buzz row as the owner sees it in the app: no other user's id from `details` or the ledger id. */
 export function redactBuzzRow(row: Record<string, unknown>) {
@@ -112,6 +136,11 @@ export const CH_TABLES: ChTable[] = [
     table: 'orchestration.jobs',
     where: null,
     description: 'Your generation job history.',
+    // Every request carries it: read whatever the table's size, by its approved column list.
+    required: true,
+    unreliable: (row) => unreliableJobRow(row),
+    // Stored as is; an empty provider reads as unknown.
+    redact: (row) => ({ ...row, provider: row.provider ? row.provider : 'unknown' }),
   },
   {
     file: 'data/clickhouse/blocked-prompts.jsonl',
@@ -177,8 +206,10 @@ function keepsColumn(table: ChTable, k: string) {
 }
 
 export function reduceChRow(table: ChTable, row: Record<string, unknown>) {
+  const allowed = CH_COLUMN_ALLOWED[table.table];
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
+    if (allowed && !allowed.includes(k)) continue;
     if (!keepsColumn(table, k)) continue;
     out[k] = v;
   }
@@ -257,9 +288,11 @@ export async function exportClickhouse({
       entry.status = 'not-included';
       continue;
     }
+    const allowed = CH_COLUMN_ALLOWED[table.table];
+    const select = allowed ? allowed.map((c) => '`' + c + '`').join(', ') : '*';
     const open = (where: string) =>
       ch.query({
-        query: `SELECT * FROM ${table.table} WHERE ${where}`,
+        query: `SELECT ${select} FROM ${table.table} WHERE ${where}`,
         query_params: params,
         format: 'JSONEachRow',
         clickhouse_settings: settings,
@@ -280,7 +313,14 @@ export async function exportClickhouse({
         for (let i = 0; i < wheres.length; i++) {
           const rs = i === 0 ? first : await open(wheres[i]);
           for await (const rows of rs.stream())
-            for (const row of rows) yield reduceChRow(table, row.json<Record<string, unknown>>());
+            for (const row of rows) {
+              const raw = row.json<Record<string, unknown>>();
+              if (table.unreliable?.(raw)) {
+                entry.leftOut = (entry.leftOut ?? 0) + 1;
+                continue;
+              }
+              yield reduceChRow(table, raw);
+            }
         }
       } catch (e) {
         entry.status = 'partial';
