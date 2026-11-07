@@ -13,10 +13,12 @@
 -- Dry run: the transaction below, with COMMIT replaced by ROLLBACK. (ADD VALUE IF NOT EXISTS is
 -- safe to run before it and to re-run.)
 --
+-- Apply as the role that owns "Image", not as an app role: the table's owner keeps every privilege.
+--
 -- GRANTS, A REQUIRED STEP. New tables can be granted to roles automatically in this environment.
--- This one must not be readable by any role beyond the ones below, so after this file, with the
--- environment's actual role names, revoke every privilege from every other role that holds one, then
--- grant:
+-- This one must not be readable by any role beyond the ones below. After this file, with the
+-- environment's actual role names, revoke every privilege on BOTH the table and its sequence
+-- ("ProfilePictureHold_id_seq") from every other role that holds one, then grant:
 --   GRANT SELECT, INSERT, DELETE ON "ProfilePictureHold" TO <app_write_role>;
 --   GRANT USAGE ON SEQUENCE "ProfilePictureHold_id_seq" TO <app_write_role>;
 --   GRANT SELECT ON "ProfilePictureHold" TO <app_read_role>;
@@ -25,8 +27,16 @@
 --   - <app_write_role> is the role the main app's primary (write) client connects as;
 --   - <app_read_role> is the role the main app's read client connects as;
 --   - <moderator_read_role> is the role the moderator app connects as.
--- Then read the table's ACL back (`\dp "ProfilePictureHold"`) and check that it lists exactly
--- those roles with exactly those privileges, plus the owner.
+-- Then check every role, counting inherited membership and built-in roles, not only the ACL:
+--   SELECT rolname,
+--     has_table_privilege(oid, '"ProfilePictureHold"', 'SELECT') AS can_read,
+--     has_table_privilege(oid, '"ProfilePictureHold"', 'INSERT, UPDATE, DELETE, TRUNCATE') AS can_write,
+--     has_sequence_privilege(oid, '"ProfilePictureHold_id_seq"', 'USAGE, SELECT, UPDATE') AS can_use_seq
+--   FROM pg_roles
+--   WHERE has_table_privilege(oid, '"ProfilePictureHold"', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
+--      OR has_sequence_privilege(oid, '"ProfilePictureHold_id_seq"', 'USAGE, SELECT, UPDATE');
+-- Expected: the three roles above, the owner, superusers, and roles that are members of one of
+-- them; any other row is a role to revoke from (or to take out of that membership).
 
 ALTER TYPE "JobQueueType" ADD VALUE IF NOT EXISTS 'ProfilePictureSync';
 
