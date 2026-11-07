@@ -22,6 +22,13 @@ const RemixTrayMount = dynamic(
   () => import('~/components/Image/Remix/RemixTray').then((mod) => mod.RemixTrayMount),
   { ssr: false }
 );
+const MediaOverlapDetectorMount = dynamic(
+  () =>
+    import('~/components/EdgeMedia/MediaOverlapDetectorMount').then(
+      (mod) => mod.MediaOverlapDetectorMount
+    ),
+  { ssr: false }
+);
 
 export function BaseLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -45,6 +52,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
       <OfflineFallbackRegistration />
       <PushOptInPrompt blocked={!!isBanned || shouldOnboard} />
       {showSidebar && !!currentUser && features?.remixApps && <RemixTrayMount />}
+      {currentUser?.isModerator && <MediaOverlapDetectorMount />}
       <div className="flex flex-1 overflow-hidden">
         {showSidebar && <GenerationSidebar />}
         <ContainerProvider
