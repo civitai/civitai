@@ -2306,7 +2306,7 @@ export async function recordPendingFromPush(args: {
     ]);
     await pinStorageHooks({
       manifest: args.manifest,
-      actorUserId: ownerUserId,
+      actorUserId: args.pusherUserId ?? null,
       readApprovedManifest: () =>
         loadStorageMigrationBaseline({ slug: args.slug }).then((baseline) => baseline.prev),
       readFiles: (paths) => readForgejoFilesAtRef(args.slug, args.sha, paths),

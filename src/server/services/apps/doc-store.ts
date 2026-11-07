@@ -357,7 +357,7 @@ function requireHookPass(
   pass: HookPass | undefined,
   markName?: string
 ): number | undefined {
-  if (coll.config) return undefined;
+  if (!coll.config.hook) return undefined;
   if (op === 'mark' && markName === REPORT_MARK) return undefined;
   return spendHookPass(pass, { appId: ctx.appId, ns: ctx.ns, collection: coll.name, key, op });
 }
