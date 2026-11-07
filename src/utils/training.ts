@@ -1164,10 +1164,6 @@ export const formatTrainingValidationError = (
   return lines.length > 0 ? lines : null;
 };
 
-/**
- * Whether a paused run is held for review. A moderator can also pause a run by hand; only a
- * review hold carries `heldForReview` (live from the workflow, or as last stored).
- */
 export function isHeldForTrainingReview(
   status: TrainingStatus | null | undefined,
   trainingResults: unknown

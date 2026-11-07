@@ -112,7 +112,7 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   costInfo: CostInfo | null;
 };
 
-/** How a training status reads to its owner. Only a review hold reads as pending review. */
+/** How a training status reads to its owner. */
 export const trainingStatusLabel = (status: TrainingStatus, heldForReview = false) =>
   status === TrainingStatus.InReview
     ? 'Ready'
@@ -483,8 +483,7 @@ export default function UserTrainingModels() {
                         mv.trainingStatus,
                         isHeldForTrainingReview(
                           mv.trainingStatus,
-                          (pickBestTrainingFile(mv.files)?.metadata as FileMetadata | null)
-                            ?.trainingResults
+                          thisFileMetadata?.trainingResults
                         )
                       )}
                       {isRunning && <Loader size={12} />}

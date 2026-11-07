@@ -25,8 +25,21 @@ vi.mock('~/utils/s3-utils', () => ({
 vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
   getOrchestratorCaller: vi.fn(),
 }));
+// The legacy v1 webhook's imports.
+vi.mock('~/env/server', () => ({ env: {} }));
+vi.mock('~/server/email/templates', () => ({
+  trainingCompleteEmail: { send: vi.fn() },
+  trainingFailEmail: { send: vi.fn() },
+}));
+vi.mock('~/server/services/buzz.service', () => ({ refundTransaction: vi.fn() }));
+vi.mock('~/server/signals/wrapper', () => ({ withSignals: vi.fn() }));
+vi.mock('~/server/utils/endpoint-helpers', () => ({ WebhookEndpoint: (fn: unknown) => fn }));
+vi.mock('~/server/webhooks/training-moderation.webhooks', () => ({
+  queueNewTrainingModerationWebhook: vi.fn(),
+}));
 
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
+import { updateRecords } from '~/pages/api/webhooks/resource-training';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 
@@ -94,6 +107,39 @@ describe('updateTrainingWorkflowRecords review hold marker', () => {
     givenStored({ version: 2, epochs: [], history: [], heldForReview: true });
 
     await updateTrainingWorkflowRecords(workflow('processing', 'approved'), 'processing' as never);
+
+    expect(writtenResults().heldForReview).toBeUndefined();
+  });
+});
+
+describe('legacy v1 webhook updateRecords review hold marker', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.modelFile.update.mockResolvedValue({});
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: 98, modelId: 6, name: 'V1' });
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null);
+  });
+
+  const update = (status: TrainingStatus, needsReview?: boolean) =>
+    updateRecords(
+      { modelFileId: MODEL_FILE_ID, needsReview } as never,
+      status,
+      'Processing',
+      'job-1'
+    );
+
+  it('stores the marker when the run is paused for review', async () => {
+    givenStored({ epochs: [], history: [] });
+
+    await update(TrainingStatus.Paused, true);
+
+    expect(writtenResults().heldForReview).toBe(true);
+  });
+
+  it('clears the marker on a later update that is not a pause', async () => {
+    givenStored({ epochs: [], history: [], heldForReview: true });
+
+    await update(TrainingStatus.Processing);
 
     expect(writtenResults().heldForReview).toBeUndefined();
   });

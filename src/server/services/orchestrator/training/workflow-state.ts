@@ -62,10 +62,6 @@ export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
 export type DerivedTrainingWorkflowState = {
   modelFileId: number;
   trainingStatus: TrainingStatus;
-  /**
-   * The step is held for review. A moderator can also set `Paused` by hand, so this, not the
-   * status, is what says a paused run is waiting on review. Never stored: only the live workflow knows.
-   */
   underReview: boolean;
   epochs: TrainingResultsV2['epochs'];
   sampleImagesPrompts: string[];
