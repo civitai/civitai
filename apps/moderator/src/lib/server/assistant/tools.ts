@@ -626,7 +626,7 @@ export const TOOLS = [
     description:
       `Every reactor on this creator over the floor, a page at a time, ranked exactly as reactors_of ranks them (by concentration), with user id breaking ties. Use it when reactors_of's top 20 is not enough: to read the whole list, or to find an account past the top. \`rank\` is each account's place in the full list; \`overFloor\` is how many there are in all; \`nextOffset\` is where the next page starts, null at the end. Ranks past ${REACTOR_PAGE_CAP.toLocaleString(
         'en-US'
-      )} are not paged: a call reaching past that is refused, and then say so rather than that the list ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
+      )} are not paged: the page reaching that rank comes back short with nextOffset null, and a call starting there is refused. When overFloor is higher, say the list was cut off there rather than that it ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
       EMAILS_NOTE,
     input: z.object({
       userId,
@@ -637,13 +637,13 @@ export const TOOLS = [
     }),
     requires: [REACTOR_LOOKUP, LOOKUP],
     run: async ({ userId: id, days, minCount, offset, limit }, ctx) => {
-      const pastCap = offset + limit > REACTOR_PAGE_CAP;
+      const pastCap = offset >= REACTOR_PAGE_CAP;
       // Past the cap only the counts are read, so the refusal still says how long the list is.
       const page = await getReactorsPage(id, {
         days,
         minCount,
         offset: pastCap ? 0 : offset,
-        limit: pastCap ? 0 : limit,
+        limit: pastCap ? 0 : Math.min(limit, REACTOR_PAGE_CAP - offset),
       });
       const emails = await emailFields(
         ctx,
@@ -673,9 +673,7 @@ export const TOOLS = [
           offset,
           ...(pastCap
             ? {
-                refused: `Only the first ${REACTOR_PAGE_CAP} ranks are paged; offset + limit was ${
-                  offset + limit
-                }.`,
+                refused: `Only the first ${REACTOR_PAGE_CAP} ranks are paged; offset was ${offset}.`,
               }
             : {}),
           nextOffset: !pastCap && end < page.overFloor && end < REACTOR_PAGE_CAP ? end : null,
