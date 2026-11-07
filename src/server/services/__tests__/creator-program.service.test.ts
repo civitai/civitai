@@ -1349,7 +1349,11 @@ describe('updateCashWithdrawal refunds', () => {
       const text = sql(strings);
       if (text.includes("'refundClaimedAt', now()")) {
         // Mirrors the claim's WHERE: no claim yet, or one older than the TTL.
-        expect(text).toContain("(metadata->>'refundClaimedAt') IS NULL");
+        // The fake below decides who wins the claim, so pin the real predicate it stands in for:
+        // no claim yet, OR a claim OLDER than the TTL (a flipped comparison would steal live claims).
+        expect(text.replace(/\s+/g, ' ')).toContain(
+          "WHERE id = ? AND ( (metadata->>'refundClaimedAt') IS NULL OR (metadata->>'refundClaimedAt')::timestamptz < now() - ?::interval );"
+        );
         const [id, ttl] = values as [string, string];
         expect(ttl).toBe('15 minutes');
         const row = table.get(id);
@@ -1412,8 +1416,8 @@ describe('updateCashWithdrawal refunds', () => {
   });
 
   it('does not refund again a withdrawal whose row records an earlier refund', async () => {
-    // Before this change the webhook refunded under the bare transaction id; it always stored
-    // the refund's id on the row.
+    // Rows refunded under the old bare-id key always stored refundTransactionId; that stored
+    // value alone must stop a second refund.
     seed('Paid', { refundTransactionId: 'tx-old-refund' });
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
@@ -1494,6 +1498,35 @@ describe('updateCashWithdrawal refunds', () => {
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Submitted' });
 
     expect(table.get('withdrawal-1')!.metadata).not.toHaveProperty('refundClaimedAt');
+  });
+
+  it('refunds even when the caller passes a refund id or claim in metadata', async () => {
+    seed('Scheduled');
+
+    await updateCashWithdrawal({
+      withdrawalId: 'withdrawal-1',
+      status: 'Rejected',
+      metadata: { refundTransactionId: 'forged', refundClaimedAt: new Date().toISOString() },
+    });
+
+    expect(refunds()).toHaveLength(1);
+    expect(writes[0].metadata.refundTransactionId).toBe('tx-refund');
+  });
+
+  it('refunds the withdrawal less Tipalti fees and records the fees once', async () => {
+    seed('Scheduled');
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected', fees: 100 });
+
+    expect(refunds().map(([input]) => (input as { amount: number }).amount)).toEqual([9400]);
+    expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: 'FailedFee',
+        amount: 100,
+        transactionId: 'tx-refund',
+      }),
+    });
   });
 
   // withdrawCash's failure path refunds the same burn through Buzz's refund endpoint, recorded
