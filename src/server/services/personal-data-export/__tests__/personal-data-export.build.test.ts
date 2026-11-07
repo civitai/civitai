@@ -110,6 +110,11 @@ const users: Record<number, { id: number; username: string; email: string; custo
 };
 const sqlOf = (c: unknown[]) => (c[0] as unknown as string[]).join('?');
 const writes = () => vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls;
+const ARCHIVE = /^exports\/5\/.+\.zip$/;
+const NOTES = /^exports\/5\/.+-internal-notes\.csv$/;
+/** Every object key this build asked the bucket to delete. */
+const uploadsDeleted = () =>
+  m.del.mock.calls.flatMap(([, keys]) => (keys as (string | null)[]).filter(Boolean));
 
 beforeEach(() => {
   for (const f of [m.holds, m.builtSend, m.readySend, m.heldSend, m.refusedSend, m.del, m.put])
@@ -157,10 +162,6 @@ describe('buildExport', () => {
     const recorded = writes().findIndex((c) => sqlOf(c).includes('"archiveKey" ='));
     const sent = writes().findIndex((c) => sqlOf(c).includes('"sentAt" = now()'));
     expect(recorded).toBeGreaterThanOrEqual(0);
-    // Pinned to this attempt, so a run recovered as stale cannot record over a later attempt.
-    const record = writes()[recorded];
-    expect(sqlOf(record)).toMatch(/AND attempts = \?\s*$/);
-    expect(record[record.length - 1]).toBe(row.attempts);
     expect(sent).toBeGreaterThan(recorded);
   });
 
@@ -263,10 +264,44 @@ describe('buildExport', () => {
     expect(writes().some((c) => sqlOf(c).includes('"archiveKey" ='))).toBe(false);
   });
 
-  it('does not email anyone when the row stopped building while it ran', async () => {
+  /**
+   * The hold is checked again after the upload. If that second check cannot be read, the archive is
+   * neither recorded nor refused: the attempt is retried, and what it uploaded is deleted.
+   */
+  it('retries, recording nothing, when the hold check after the upload could not be read', async () => {
+    m.holds
+      .mockResolvedValueOnce({ legs: [], markerView: true })
+      .mockResolvedValue({ legs: ['unconfirmed'], markerView: true });
+    expect(await buildExport(row, deps)).toBe('queued');
+    expect(m.stream).toHaveBeenCalledTimes(1);
+    expect(m.builtSend).not.toHaveBeenCalled();
+    expect(m.refusedSend).not.toHaveBeenCalled();
+    expect(m.heldSend).not.toHaveBeenCalled();
+    expect(writes().some((c) => sqlOf(c).includes('"archiveKey" ='))).toBe(false);
+    expect(uploadsDeleted()).toEqual([
+      expect.stringMatching(ARCHIVE),
+      expect.stringMatching(NOTES),
+    ]);
+  });
+
+  it('does not email anyone when the row stopped building while it ran, and deletes its upload', async () => {
     vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0 as never);
     expect(await buildExport(row, deps)).toBe('failed');
     expect(m.builtSend).not.toHaveBeenCalled();
+    expect(uploadsDeleted()).toEqual([
+      expect.stringMatching(ARCHIVE),
+      expect.stringMatching(NOTES),
+    ]);
+  });
+
+  it('deletes a completed archive when the build fails after uploading it', async () => {
+    m.put.mockRejectedValue(new Error('notes upload failed'));
+    expect(await buildExport(row, deps)).toBe('queued');
+    expect(m.builtSend).not.toHaveBeenCalled();
+    expect(uploadsDeleted()).toEqual([
+      expect.stringMatching(ARCHIVE),
+      expect.stringMatching(NOTES),
+    ]);
   });
 
   it('goes back to queued after a failed attempt, and to failed after the last', async () => {
@@ -275,6 +310,8 @@ describe('buildExport', () => {
     expect(await buildExport({ ...row, attempts: MAX_ATTEMPTS }, deps)).toBe('failed');
     expect(m.builtSend).not.toHaveBeenCalled();
     expect(writes().some((c) => sqlOf(c).includes('"archiveKey" ='))).toBe(false);
+    // The upload itself failed (and tore itself down): nothing of this attempt is in the bucket.
+    expect(uploadsDeleted()).toEqual([]);
   });
 });
 
@@ -335,6 +372,14 @@ describe('buildExport record, run', () => {
     expect(r.manifest).toMatchObject({ internalNotes: 1 });
     expect(r.manifest?.files.length).toBeGreaterThan(0);
     expect(r.builtAt).toBeInstanceOf(Date);
+  });
+
+  it('records nothing over a later attempt: a run recovered as stale leaves the row as it is', async () => {
+    await db.exec(`UPDATE "PersonalDataExport" SET attempts = 2 WHERE id = ${row.id}`);
+    const before = await stored();
+    expect(await buildExport({ ...row, attempts: 1 }, deps)).toBe('failed');
+    expect(await stored()).toEqual(before);
+    expect(m.builtSend).not.toHaveBeenCalled();
   });
 
   it('records a refused held export with its hold reasons and no archive', async () => {

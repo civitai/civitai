@@ -271,6 +271,11 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
   let manifest: Manifest | undefined;
   let modNotesKey: string | null = null;
   let noteCount = 0;
+  let archiveUploaded = false;
+  // An upload this attempt will not record is deleted now, not left for the bucket rule: the keys
+  // are this attempt's own, and nothing else will ever name them.
+  const discard = () =>
+    deleteObjects(deps.bucket, [archiveUploaded ? archiveKey : null, modNotesKey]);
 
   try {
     await streamArchiveToBucket(deps.bucket, archiveKey, async (writer) => {
@@ -317,6 +322,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       };
       await writer.addFile('manifest.json', JSON.stringify(manifest, null, 2));
     });
+    archiveUploaded = true;
 
     if (notes.length) {
       const staff = await staffForRedaction();
@@ -329,6 +335,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       );
     }
   } catch (e) {
+    await discard();
     const status = await recordFailure(row, errorMessage(e));
     logToAxiom({
       type: 'error',
@@ -341,7 +348,10 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
 
   // Checked again: a hold can land while the archive is built. Then the archive is deleted.
   const { legs: holdReasons } = await exportHoldReasons(user.id);
-  if (holdReasons.includes('unconfirmed')) return recordFailure(row, 'hold check failed');
+  if (holdReasons.includes('unconfirmed')) {
+    await discard();
+    return recordFailure(row, 'hold check failed');
+  }
   if (holdReasons.length)
     return refuseHeld(row, holdReasons, building(row), [archiveKey, modNotesKey], deps.bucket);
   const status: ExportStatus = 'built';
@@ -362,6 +372,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
     WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
   `;
   if (recorded !== 1) {
+    await discard();
     logToAxiom({
       type: 'warning',
       name: LOG,

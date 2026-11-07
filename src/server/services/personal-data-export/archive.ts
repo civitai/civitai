@@ -10,12 +10,14 @@ import type { ExportWriter } from './output';
 /** How long a download link works. */
 export const LINK_TTL_SECONDS = 48 * 60 * 60;
 /**
- * How long an archive can be downloaded: the bucket hides it after 6 days (and deletes it a day
- * later), and a hidden object cannot be fetched. A link is only handed out while the archive will
- * outlive it, so release closes this long minus a link's lifetime after the build. Change it with
- * the bucket rule.
+ * How long after it is written an archive can still be fetched: the bucket hides it at 6 days (and
+ * deletes it a day later), and a hidden object cannot be fetched. Change it with the bucket rule.
  */
 export const BUCKET_TTL_SECONDS = 6 * 24 * 60 * 60;
+/**
+ * How long after the build Release stays open (4 days): a link is only handed out while the archive
+ * will outlive it.
+ */
 export const RELEASE_WINDOW_SECONDS = BUCKET_TTL_SECONDS - LINK_TTL_SECONDS;
 
 /** `queueSize * partSize` is the upload's in-flight buffer. */
