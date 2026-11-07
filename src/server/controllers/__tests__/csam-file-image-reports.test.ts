@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as CsamContextTextService from '~/server/services/csam-context-text';
 import type * as CsamService from '~/server/services/csam.service';
 import type * as ImageAppealFlag from '~/server/services/image-appeal-flag';
 import type * as ImageService from '~/server/services/image.service';
@@ -19,13 +20,20 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-const { bulkSetReportStatus, softDeleteUser } = vi.hoisted(() => ({
-  bulkSetReportStatus: vi.fn(),
-  softDeleteUser: vi.fn(async () => undefined),
-}));
+const { bulkSetReportStatus, softDeleteUser, createCsamReport, snapshotCsamContextText } =
+  vi.hoisted(() => ({
+    bulkSetReportStatus: vi.fn(),
+    softDeleteUser: vi.fn(async () => undefined),
+    createCsamReport: vi.fn(async (..._args: unknown[]) => undefined),
+    snapshotCsamContextText: vi.fn(),
+  }));
 vi.mock('~/server/services/csam.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamService>()),
-  createCsamReport: vi.fn(async () => undefined),
+  createCsamReport,
+}));
+vi.mock('~/server/services/csam-context-text', async (importOriginal) => ({
+  ...(await importOriginal<typeof CsamContextTextService>()),
+  snapshotCsamContextText,
 }));
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
@@ -55,6 +63,7 @@ const OTHER_IMAGE = 501;
 beforeEach(() => {
   bulkSetReportStatus.mockReset().mockResolvedValue(undefined);
   softDeleteUser.mockClear();
+  createCsamReport.mockClear();
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.imageReport.findMany.mockImplementation((async ({
     where,
@@ -99,5 +108,46 @@ describe('fileCsamReport', () => {
     await file(OWNER, [IMAGE]);
 
     expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
+  });
+});
+
+describe('fileCsamReport with attached text', () => {
+  const sources = { postIds: [100], commentIds: [11] };
+
+  it('files the text copied for the images, judged against the reported account', async () => {
+    const copied = [{ source: 'comment', id: 11, text: 'copied' }];
+    snapshotCsamContextText.mockResolvedValueOnce(copied);
+
+    await fileCsamReport({
+      userId: OWNER,
+      imageIds: [IMAGE],
+      type: 'Image',
+      reportedById: MOD,
+      details: { minorDepiction: 'real' },
+      contextSources: sources,
+    });
+
+    expect(snapshotCsamContextText).toHaveBeenCalledWith({
+      imageIds: [IMAGE],
+      sources,
+      reportedUserIds: [OWNER],
+      capturedById: MOD,
+    });
+    const [filed] = createCsamReport.mock.calls[0] as [Record<string, unknown>];
+    expect(filed.details).toEqual({ minorDepiction: 'real', contextText: copied });
+    expect(filed).not.toHaveProperty('contextSources');
+  });
+
+  it('refuses text on a report that is not an image report, filing nothing', async () => {
+    await expect(
+      fileCsamReport({
+        userId: OWNER,
+        imageIds: [],
+        type: 'TrainingData',
+        reportedById: MOD,
+        contextSources: sources,
+      })
+    ).rejects.toThrow(/image report only/);
+    expect(createCsamReport).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,285 @@
+import { convert } from 'html-to-text';
+import { kyselyRead, kyselyV3Read } from '~/server/db/kyselyDb';
+import type {
+  CsamContextSources,
+  GetCsamContextCandidatesSchema,
+} from '~/server/schema/csam.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+
+/** Text posted with a report's images, copied when the report is filed. */
+export type CsamContextText = {
+  source: 'postDescription' | 'comment';
+  /** The post's id for a description, the comment's otherwise. */
+  id: number;
+  postId?: number;
+  imageId?: number;
+  /** Moderators and Legal only: never sent. */
+  authorId: number;
+  authorIsReportedUser: boolean;
+  postedAt: string;
+  text: string;
+  capturedAt: string;
+  capturedById: number;
+};
+
+export type CsamContextCandidate = Omit<
+  CsamContextText,
+  'authorIsReportedUser' | 'capturedAt' | 'capturedById'
+> & { deleted?: boolean; hidden?: boolean };
+
+export const CSAM_CONTEXT_TEXT_MAX_CHARS = 50_000;
+const CANDIDATE_COMMENT_LIMIT = 500;
+
+export const htmlToPlainText = (html: string) =>
+  convert(html, {
+    wordwrap: false,
+    selectors: [
+      { selector: 'a', options: { ignoreHref: true } },
+      { selector: 'img', format: 'skip' },
+    ],
+  }).trim();
+
+type Scope = { imageIds: number[]; postIds?: number[]; commentIds?: number[] };
+
+async function readCandidates({ imageIds, postIds: onlyPosts, commentIds }: Scope) {
+  if (!imageIds.length) return [];
+  const images = await kyselyRead
+    .selectFrom('Image')
+    .select(['id', 'postId'])
+    .where('id', 'in', imageIds)
+    .execute();
+  const presentImageIds = images.map((i) => i.id);
+  if (!presentImageIds.length) return [];
+  const postIds = [...new Set(images.map((i) => i.postId).filter((id): id is number => !!id))];
+
+  const candidates: CsamContextCandidate[] = [];
+
+  const describedPostIds = onlyPosts ? postIds.filter((id) => onlyPosts.includes(id)) : postIds;
+  if (describedPostIds.length) {
+    const posts = await kyselyRead
+      .selectFrom('Post')
+      .select(['id', 'detail', 'userId', 'createdAt', 'publishedAt'])
+      .where('id', 'in', describedPostIds)
+      .execute();
+    for (const post of posts) {
+      const text = post.detail ? htmlToPlainText(post.detail) : '';
+      if (!text) continue;
+      candidates.push({
+        source: 'postDescription',
+        id: post.id,
+        postId: post.id,
+        authorId: post.userId,
+        postedAt: new Date(post.publishedAt ?? post.createdAt).toISOString(),
+        text,
+      });
+    }
+  }
+
+  if (commentIds?.length === 0) return candidates;
+  const limit = commentIds ? commentIds.length : CANDIDATE_COMMENT_LIMIT;
+
+  const v3 = await kyselyV3Read
+    .selectFrom('CommentV3')
+    .select([
+      'id',
+      'entityType',
+      'entityId',
+      'userId',
+      'content',
+      'createdAt',
+      'deletedAt',
+      'hidden',
+    ])
+    .where((eb) => {
+      const onPage = eb.or([
+        eb.and([eb('entityType', '=', 'image'), eb('entityId', 'in', presentImageIds)]),
+        ...(postIds.length
+          ? [eb.and([eb('entityType', '=', 'post'), eb('entityId', 'in', postIds)])]
+          : []),
+      ]);
+      return commentIds ? eb.and([onPage, eb('id', 'in', commentIds)]) : onPage;
+    })
+    .orderBy('id', 'desc')
+    .limit(limit)
+    .execute();
+
+  // CommentV3 mirrors CommentV2 under the same ids; V2 rows it never copied are read from V2.
+  let v2Query = kyselyRead
+    .selectFrom('CommentV2 as c')
+    .innerJoin('Thread as t', 't.id', 'c.threadId')
+    .innerJoin('Thread as root', (join) =>
+      join.on((eb) => eb('root.id', '=', eb.fn.coalesce('t.rootThreadId', 't.id')))
+    )
+    .select([
+      'c.id',
+      'c.userId',
+      'c.content',
+      'c.createdAt',
+      'c.hidden',
+      'root.postId',
+      'root.imageId',
+    ])
+    .where((eb) =>
+      eb.or([
+        eb('root.imageId', 'in', presentImageIds),
+        ...(postIds.length ? [eb('root.postId', 'in', postIds)] : []),
+      ])
+    )
+    .orderBy('c.id', 'desc')
+    .limit(limit);
+  if (commentIds) v2Query = v2Query.where('c.id', 'in', commentIds);
+  if (v3.length)
+    v2Query = v2Query.where(
+      'c.id',
+      'not in',
+      v3.map((c) => c.id)
+    );
+  const v2 = await v2Query.execute();
+
+  for (const c of v3)
+    candidates.push({
+      source: 'comment',
+      id: c.id,
+      ...(c.entityType === 'post' ? { postId: c.entityId } : { imageId: c.entityId }),
+      authorId: c.userId,
+      postedAt: new Date(c.createdAt).toISOString(),
+      text: htmlToPlainText(c.content),
+      ...(c.deletedAt && { deleted: true }),
+      ...(c.hidden && { hidden: true }),
+    });
+  for (const c of v2)
+    candidates.push({
+      source: 'comment',
+      id: c.id,
+      ...(c.postId ? { postId: c.postId } : { imageId: c.imageId ?? undefined }),
+      authorId: c.userId,
+      postedAt: new Date(c.createdAt).toISOString(),
+      text: htmlToPlainText(c.content),
+      ...(c.hidden && { hidden: true }),
+    });
+  return candidates;
+}
+
+/** The post descriptions and comments a moderator may attach to a report on these images. */
+export async function getCsamContextCandidates({ imageIds }: GetCsamContextCandidatesSchema) {
+  const candidates = await readCandidates({ imageIds });
+  return candidates.sort(
+    (a, b) =>
+      Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
+      b.postedAt.localeCompare(a.postedAt)
+  );
+}
+
+/** Copies the chosen text, refusing any source outside the report's images. */
+export async function snapshotCsamContextText({
+  imageIds,
+  sources,
+  reportedUserIds,
+  capturedById,
+  capturedAt = new Date(),
+}: {
+  imageIds: number[];
+  sources: CsamContextSources;
+  reportedUserIds: number[];
+  capturedById: number;
+  capturedAt?: Date;
+}): Promise<CsamContextText[]> {
+  const postIds = [...new Set(sources.postIds)];
+  const commentIds = [...new Set(sources.commentIds)];
+  if (!postIds.length && !commentIds.length) return [];
+
+  const found = await readCandidates({ imageIds, postIds, commentIds });
+  const missing = [
+    ...postIds.filter((id) => !found.some((c) => c.source === 'postDescription' && c.id === id)),
+    ...commentIds.filter((id) => !found.some((c) => c.source === 'comment' && c.id === id)),
+  ];
+  if (missing.length)
+    throwBadRequestError('Some selected text is not on the images in this report');
+
+  return found.map(({ deleted, hidden, ...candidate }) => ({
+    ...candidate,
+    authorIsReportedUser: reportedUserIds.includes(candidate.authorId),
+    capturedAt: capturedAt.toISOString(),
+    capturedById,
+  }));
+}
+
+/** The report's user and, when it names one, its secondary user. */
+export function reportedUserIdsOf(userId: number, details: unknown) {
+  const ids = userId > 0 ? [userId] : [];
+  const secondary =
+    details && typeof details === 'object' && 'secondaryUserId' in details
+      ? Number((details as { secondaryUserId: unknown }).secondaryUserId)
+      : NaN;
+  if (Number.isInteger(secondary) && secondary > 0) ids.push(secondary);
+  return ids;
+}
+
+/** Earlier captures are kept: a re-filing never replaces text already captured. */
+export function foldContextText(prior: unknown, added: CsamContextText[] | undefined) {
+  const kept = Array.isArray(prior) ? (prior as CsamContextText[]) : [];
+  const key = (c: CsamContextText) => `${c.source}:${c.id}`;
+  const seen = new Set(kept.map(key));
+  const merged = kept.concat((added ?? []).filter((c) => !seen.has(key(c))));
+  return merged.length ? merged : undefined;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+export const formatUtc = (iso: string) => {
+  const d = new Date(iso);
+  return `${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}/${d.getUTCFullYear()} ${pad(
+    d.getUTCHours()
+  )}:${pad(d.getUTCMinutes())} UTC`;
+};
+
+function capped(text: string) {
+  const chars = Array.from(text);
+  if (chars.length <= CSAM_CONTEXT_TEXT_MAX_CHARS) return text;
+  const rest = chars.length - CSAM_CONTEXT_TEXT_MAX_CHARS;
+  return `${chars
+    .slice(0, CSAM_CONTEXT_TEXT_MAX_CHARS)
+    .join('')}\n[Truncated: ${rest} further characters are preserved by Civitai with this report.]`;
+}
+
+const author = (c: CsamContextText) =>
+  c.authorIsReportedUser ? 'the reported account' : 'another account';
+
+function itemText(c: CsamContextText) {
+  const heading =
+    c.source === 'postDescription'
+      ? `Post description, posted ${formatUtc(c.postedAt)} by ${author(c)}:`
+      : `Comment ${c.id}, posted ${formatUtc(c.postedAt)} by ${author(c)}:`;
+  return `${heading}\n"${capped(c.text)}"`;
+}
+
+/** The page incidents as NCMEC receives them, before XML escaping: one per page and capture time. */
+export function contextWebPageIncidents(contextText: CsamContextText[] | undefined) {
+  if (!contextText?.length) return [];
+  const base = getBaseUrl();
+  const groups = new Map<string, { url: string; capturedAt: string; items: CsamContextText[] }>();
+  for (const c of contextText) {
+    const url = c.postId ? `${base}/posts/${c.postId}` : `${base}/images/${c.imageId}`;
+    const key = `${url} ${c.capturedAt}`;
+    const group = groups.get(key) ?? { url, capturedAt: c.capturedAt, items: [] };
+    group.items.push(c);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(({ url, capturedAt, items }) => {
+    const ordered = [...items].sort(
+      (a, b) =>
+        Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
+        a.postedAt.localeCompare(b.postedAt) ||
+        a.id - b.id
+    );
+    return {
+      url,
+      additionalInfo: [
+        `Text posted with the reported images on this page, captured by Civitai on ${formatUtc(
+          capturedAt
+        )}.`,
+        ...ordered.map(itemText),
+      ].join('\n\n'),
+    };
+  });
+}

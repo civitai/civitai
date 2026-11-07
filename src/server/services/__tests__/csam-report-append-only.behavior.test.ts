@@ -401,6 +401,40 @@ describe('a sent report', () => {
   });
 });
 
+describe("a sent report's attached text", () => {
+  const captured = {
+    contextText: [
+      { source: 'comment', id: 11, authorId: UNRELATED, text: 'as captured' },
+      { source: 'postDescription', id: 100, authorId: SUBJECT, text: 'the caption' },
+    ],
+  };
+
+  it.each([
+    ['its text rewritten', `jsonb_set(details, '{contextText,0,text}', '"[removed]"')`],
+    ['an entry removed', `jsonb_set(details, '{contextText}', (details->'contextText') - 0)`],
+    ['its author scrubbed', `jsonb_set(details, '{contextText,0,authorId}', 'null')`],
+    ['the whole field dropped', `details - 'contextText'`],
+  ])('refuses %s', async (_case, set) => {
+    const id = await insertReport(30, captured);
+    await expect(
+      db.pg.exec(`UPDATE "CsamReport" SET details = ${set} WHERE id = ${id}`)
+    ).rejects.toThrow('may only gain keys');
+    const { rows } = await db.pg.query<{ details: unknown }>(
+      `SELECT details FROM "CsamReport" WHERE id = $1`,
+      [id]
+    );
+    expect(rows[0].details).toEqual(captured);
+  });
+
+  it('keeps the report through an erasure of the commenter that tries to delete it', async () => {
+    const id = await insertReport(30, captured);
+    await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow(
+      'less than a year ago'
+    );
+    expect(await exists(id)).toBe(true);
+  });
+});
+
 describe('the fingerprint key', () => {
   it.each([
     [

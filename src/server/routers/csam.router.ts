@@ -6,6 +6,7 @@ import { paginationSchema } from '~/server/schema/base.schema';
 import {
   createCsamReportSchema,
   createExternalCsamReportSchema,
+  getCsamContextCandidatesSchema,
   getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
   approveGeneratorEvidenceSchema,
@@ -26,6 +27,7 @@ import {
   recopyGeneratorEvidenceFile,
 } from '~/server/services/generator-evidence/generator-evidence.service';
 import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
+import { getCsamContextCandidates } from '~/server/services/csam-context-text';
 import { clearUnconfirmedOpens } from '~/server/services/csam-unconfirmed-open';
 import {
   getCsamReportStats,
@@ -41,6 +43,9 @@ export const csamRouter = router({
   getImageResources: moderatorProcedure
     .input(getImageResourcesSchema)
     .query(({ input }) => getImageResources(input)),
+  getContextCandidates: moderatorProcedure
+    .input(getCsamContextCandidatesSchema)
+    .query(({ input }) => getCsamContextCandidates(input)),
   createReport: moderatorProcedure.input(createCsamReportSchema).mutation(createCsamReportHandler),
   getSupplementalPreview: moderatorProcedure
     .input(getCsamSupplementalPreviewSchema)

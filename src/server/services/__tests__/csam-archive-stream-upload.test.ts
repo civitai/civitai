@@ -264,6 +264,8 @@ import {
   archiveCsamDataForReport,
   CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
 } from '~/server/services/csam.service-new';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
@@ -899,6 +901,32 @@ describe('a supplemental report archive', () => {
     });
     expect(byId.get(1)).not.toHaveProperty('preservedNotSent');
     expect(byId.get(4)).not.toHaveProperty('preservedNotSent');
+  });
+});
+
+describe("a report's attached text", () => {
+  it('is archived in data.json as the page incidents it was sent as, with the snapshot', async () => {
+    seedDb(1);
+    const contextText = [
+      {
+        source: 'comment',
+        id: 11,
+        postId: 100,
+        authorId: 31,
+        authorIsReportedUser: false,
+        postedAt: '2026-10-03T14:05:00.000Z',
+        text: 'a & b <c>',
+        capturedAt: '2026-10-08T14:05:00.000Z',
+        capturedById: 5,
+      },
+    ] as CsamContextText[];
+    await archiveCsamDataForReport({ ...report, details: { contextText } } as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data.reportContext).toEqual({
+      webPageIncidents: contextWebPageIncidents(contextText),
+      contextText,
+    });
   });
 });
 
