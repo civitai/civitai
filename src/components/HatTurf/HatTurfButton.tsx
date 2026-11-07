@@ -196,7 +196,7 @@ export function HatButtonFace({
       ? color
       : `linear-gradient(to top, ${color} ${
           fill * 100
-        }%, color-mix(in srgb, ${color} 32%, #1a1b1e) ${fill * 100}%)`;
+        }%, color-mix(in srgb, ${color} 32%, light-dark(#dee2e6, #1a1b1e)) ${fill * 100}%)`;
   return (
     <button
       type="button"

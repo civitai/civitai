@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { userEvent } from 'vitest/browser';
 import type * as Trpc from '~/utils/trpc';
@@ -143,7 +143,7 @@ import { STICKER_PLACEMENT_MAX_SCALE } from '~/shared/utils/sticker-placement';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
-import { useHatStock } from '~/components/HatTurf/useHatTurf';
+import { stockRefreshTiming, useHatStock } from '~/components/HatTurf/useHatTurf';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const PHONE_CARD = 171;
@@ -422,7 +422,8 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const bar = track.firstElementChild!.getBoundingClientRect();
     const t = track.getBoundingClientRect();
     const b = faceOf().getBoundingClientRect();
-    expect(bar.width / t.width).toBeCloseTo(0.75, 1);
+    // The fill slides in from the left, clipped by its track: what shows is its right edge's reach.
+    expect((bar.right - t.left) / t.width).toBeCloseTo(0.75, 1);
     expect(t.bottom).toBeLessThanOrEqual(b.bottom);
     expect(t.left).toBeGreaterThanOrEqual(b.left);
     expect(t.right).toBeLessThanOrEqual(b.right);
@@ -497,6 +498,67 @@ describe('Hat Turf button on a feed ImageCard', () => {
     h.invalidate.mockClear();
     await new Promise((r) => setTimeout(r, 1200));
     expect(h.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  // The due-time reread must survive what a feed does to it: cards mounting after it fired, and a
+  // reread that brings back the same due time (a client clock ahead of the server) or fails.
+  test('a card mounting after the reread adds none; a reread that changes nothing is retried', async () => {
+    h.stock = {
+      available: 9,
+      cap: 27,
+      optedIn: true,
+      nextAt: new Date(Date.now() + 100),
+      perHour: PER_HOUR,
+    };
+    const retryMs = stockRefreshTiming.retryMs;
+    stockRefreshTiming.retryMs = 1500;
+    try {
+      let addReader: (() => void) | undefined;
+      function Reader() {
+        useHatStock();
+        return null;
+      }
+      function Readers() {
+        const [count, setCount] = useState(2);
+        addReader = () => setCount((n) => n + 1);
+        return (
+          <>
+            {Array.from({ length: count }, (_, i) => (
+              <Reader key={i} />
+            ))}
+          </>
+        );
+      }
+      renderWithProviders(
+        <TurfSummaryContext.Provider
+          value={{
+            event: 'birthday2026',
+            arm: 'control',
+            team: 'blue',
+            images: {},
+            open: {},
+            stickers: {},
+            joined: true,
+            watch: () => () => undefined,
+          }}
+        >
+          <Readers />
+        </TurfSummaryContext.Provider>
+      );
+      h.invalidate.mockClear();
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      await wait(800);
+      expect(h.invalidate).toHaveBeenCalledTimes(1);
+      // The stock read still says the same due time: a card mounting now schedules nothing.
+      addReader!();
+      await wait(800);
+      expect(h.invalidate).toHaveBeenCalledTimes(1);
+      // Nothing moved the due time on: the reread is tried again, rather than the bar freezing full.
+      await wait(1000);
+      expect(h.invalidate).toHaveBeenCalledTimes(2);
+    } finally {
+      stockRefreshTiming.retryMs = retryMs;
+    }
   });
 
   test('the gear opens the panel; a hat picked in its tray is the one placed', async () => {
