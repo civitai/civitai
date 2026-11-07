@@ -15,14 +15,14 @@ export default defineModeratorEndpoint('apps.workflowCharges', {
   summary:
     "List one account's App Blocks generations and what each charged: the Buzz legs, the app author's fee, and what has been refunded.",
   returns:
-    '{ userId, from, to, workflows: [{ workflowId, app: { id, name } | null, submittedAt, recordedStatus, orchestratorStatus, charges: [{ transactionId, amount, buzzType, refundedBy, refundTransactionId }], authorFee: { state, feeBuzz, buzzType, accruedAt, refundTransactionId }, refundState, refundTransactionIds, refundBlockers } | { workflowId, app, submittedAt, recordedStatus, orchestratorStatus: null, lookupError }] }',
+    '{ userId, from, to, workflows: [{ workflowId, app: { id, name } | null, submittedAt, recordedStatus, orchestratorStatus, charges: [{ transactionId, amount, buzzType, refundedBy, refundTransactionId }], authorFee: { state, feeBuzz, buzzType, accruedAt, refundTransactionId }, refundState, refundTransactionIds, refundBlocker } | { workflowId, app, submittedAt, recordedStatus, orchestratorStatus: null, refundBlocker, lookupError? }] }',
   notes: [
     'Requires the moderator app permission `apps.buzz.refund`. Read-only.',
     `Window \`[from, to)\`: defaults to the last ${WORKFLOW_CHARGES_DEFAULT_DAYS} days, at most ${WORKFLOW_CHARGES_MAX_DAYS}.`,
     'Filter by `appBlockId` or by `listing` (a listing id or slug), not both.',
     '`recordedStatus` is our own record of the workflow; `orchestratorStatus` is read from the orchestrator, which is also where the charge legs come from.',
     '`authorFee.state`: `unsettled` can still be reversed; `settled` may already be paid to the author (a refund then comes from the platform); `unaccrued` was charged with no accrual; `reversed` is back with the user.',
-    '`refundBlockers` lists what would make `/api/mod/apps/refund-workflows` skip the workflow.',
+    '`refundBlocker` is the reason `/api/mod/apps/refund-workflows` would skip the workflow (its own planner decides it), or null.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({

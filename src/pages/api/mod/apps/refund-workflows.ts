@@ -14,7 +14,7 @@ export default defineModeratorEndpoint('apps.refundWorkflows', {
   summary:
     'Refund the Buzz App Blocks generations charged a user — every generation leg in its original colour, and the app author’s fee — when a generation was charged but not delivered.',
   returns:
-    "{ execute, cap: { limitBuzz, plannedBuzz, exceeded, largeGrantHeld }, totals: { plannedBuzz, plannedByColour, refundBuzz, workflows, refunded, alreadyRefunded, skipped, failed }, workflows: [{ workflowId, userId, app, outcome: 'would-refund' | 'refunded' | 'already-refunded' | 'failed' | 'skipped', reason?, legs: [{ transactionId, amount, buzzType, status, refundTransactionId, error? }], authorFee?: { state, treatment: 'none' | 'reversed' | 'platform-absorbed' | 'refunded' | 'already-refunded', feeBuzz, buzzType, status, error? }, refundBuzz, spendAttributionsVoided?, errors }], notifiedUserIds, feedback?: { feedbackId, resolved, reason? } }",
+    "{ execute, cap: { limitBuzz, plannedBuzz, exceeded, largeGrantHeld }, totals: { plannedBuzz, plannedByColour, refundBuzz, workflows, refunded, alreadyRefunded, skipped, failed }, workflows: [{ workflowId, userId, app, outcome: 'would-refund' | 'refunded' | 'already-refunded' | 'failed' | 'skipped', reason?, legs: [{ transactionId, amount, buzzType, status, refundTransactionId, error? }], authorFee?: { state, treatment: 'none' | 'reversed' | 'platform-absorbed' | 'refunded' | 'already-refunded', feeBuzz, buzzType, status, error? }, refundBuzz, errors }], notifiedUserIds, feedback?: { feedbackId, resolved, reason? } }",
   notes: [
     'Requires the moderator app permission `apps.buzz.refund`.',
     `More than ${APP_REFUND_CAP_BUZZ.toLocaleString(

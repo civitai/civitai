@@ -62,7 +62,6 @@ vi.mock('~/server/services/blocks/app-workflow-refund.data', () => ({
   getAppWorkflowRecords: (ids: string[]) => h.getAppWorkflowRecords(ids),
   getOrchestratorWorkflowCharges: (id: string) => h.getOrchestratorWorkflowCharges(id),
   getAppNames: (ids: string[]) => h.getAppNames(ids),
-  voidSpendAttributionsForRefund: vi.fn(),
 }));
 vi.mock('~/server/services/blocks/app-feedback.service', () => ({
   getAppFeedbackForRefund: vi.fn(),
@@ -80,6 +79,10 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 }));
 
 import handler from '~/pages/api/mod/apps/workflow-charges';
+import {
+  planAppWorkflowRefunds,
+  type SkipReason,
+} from '~/server/services/blocks/app-workflow-refund.service';
 
 const NOW = new Date('2026-11-07T12:00:00.000Z');
 const TODAY = new Date('2026-11-07T08:15:00.000Z');
@@ -336,7 +339,7 @@ describe('what each workflow reports', () => {
       authorFee: { state: 'unsettled', feeBuzz: 17, accruedAt: TODAY.toISOString() },
       refundState: 'partial',
       refundTransactionIds: [`refund-${txId(2)}`],
-      refundBlockers: [],
+      refundBlocker: null,
     });
 
     expect(full).toMatchObject({
@@ -351,7 +354,7 @@ describe('what each workflow reports', () => {
       orchestratorStatus: 'processing',
       authorFee: { state: 'none' },
       refundState: 'none',
-      refundBlockers: ['not-terminal'],
+      refundBlocker: 'not-terminal',
     });
   });
 
@@ -369,22 +372,121 @@ describe('what each workflow reports', () => {
     expect(body.workflows[0]).toMatchObject({
       workflowId: 'wf-partial',
       orchestratorStatus: null,
+      refundBlocker: 'lookup-failed',
       lookupError: 'orchestrator unavailable',
     });
     expect(body.workflows[0].charges).toBeUndefined();
   });
+});
 
-  it('a colour the orchestrator partly credited is flagged as a refund blocker', async () => {
-    h.listAppWorkflowIdsForUser.mockResolvedValue(['wf-partial']);
-    h.getOrchestratorWorkflowCharges.mockResolvedValue({
-      found: true,
-      status: 'succeeded',
-      transactions: [
-        { type: 'debit', amount: 97, id: txId(5), accountType: 'yellow' },
-        { type: 'credit', amount: 31, id: 'credit-1', accountType: 'yellow' },
-      ],
-    });
+// The lookup's `refundBlocker` is the refund planner's own skip reason — one list, not a copy. So
+// each case is checked twice: against the literal reason, and against what the refund endpoint's
+// planner (`planAppWorkflowRefunds`) decides for the very same fixture.
+describe('refundBlocker is the refund planner’s skip reason', () => {
+  const WF = 'wf-skip';
+  const debit = (n: number, amount: number, accountType = 'yellow', id = txId(n)) => ({
+    type: 'debit',
+    amount,
+    id,
+    accountType,
+  });
+  const recorded = (userId = VIEWER) => ({
+    workflowId: WF,
+    userId,
+    appBlockId: APP,
+    status: 'succeeded',
+    submittedAt: TODAY,
+  });
+  const charges = (status: string, transactions: unknown[]) => ({
+    found: true,
+    status,
+    transactions,
+  });
+
+  const cases: [string, () => void][] = [
+    [
+      'not-app-blocks',
+      () => h.getAppWorkflowRecords.mockResolvedValue({ workflows: [], spends: [], fees: [] }),
+    ],
+    [
+      'workflow-not-found',
+      () => h.getOrchestratorWorkflowCharges.mockResolvedValue({ found: false }),
+    ],
+    [
+      'mixed-users',
+      () =>
+        h.getAppWorkflowRecords.mockResolvedValue({
+          workflows: [recorded()],
+          spends: [{ ...recorded(OWNER), attributedAt: TODAY }],
+          fees: [],
+        }),
+    ],
+    [
+      'not-terminal',
+      () =>
+        h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('processing', [debit(10, 41)])),
+    ],
+    [
+      'unsupported-charge',
+      () =>
+        h.getOrchestratorWorkflowCharges.mockResolvedValue(
+          charges('succeeded', [debit(11, 43, 'yellow', 'fund-17')])
+        ),
+    ],
+    [
+      'orchestrator-partial-refund',
+      () =>
+        h.getOrchestratorWorkflowCharges.mockResolvedValue(
+          charges('succeeded', [
+            debit(12, 97),
+            { type: 'credit', amount: 31, id: 'credit-1', accountType: 'yellow' },
+          ])
+        ),
+    ],
+    [
+      'no-charges',
+      () => h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', [])),
+    ],
+    [
+      'lookup-failed',
+      () =>
+        h.getOrchestratorWorkflowCharges.mockRejectedValue(new Error('orchestrator unavailable')),
+    ],
+  ];
+
+  beforeEach(() => {
+    h.listAppWorkflowIdsForUser.mockResolvedValue([WF]);
+    h.getAppWorkflowRecords.mockResolvedValue({ workflows: [recorded()], spends: [], fees: [] });
+    h.getOrchestratorWorkflowCharges.mockResolvedValue(charges('succeeded', [debit(13, 47)]));
+  });
+
+  it('covers every skip reason the planner has', () => {
+    const reasons: SkipReason[] = [
+      'not-app-blocks',
+      'workflow-not-found',
+      'mixed-users',
+      'not-terminal',
+      'unsupported-charge',
+      'orchestrator-partial-refund',
+      'no-charges',
+      'lookup-failed',
+    ];
+    expect(cases.map(([reason]) => reason).sort()).toEqual([...reasons].sort());
+  });
+
+  it.each(cases)('%s', async (reason, setup) => {
+    setup();
+    const { status, body } = await call({ userId: VIEWER });
+    expect(status).toBe(200);
+    expect(body.workflows[0].refundBlocker).toBe(reason);
+    const planned = await planAppWorkflowRefunds([WF]);
+    expect(planned.plans[0]).toMatchObject({ outcome: 'skip', reason });
+  });
+
+  it('control: a refundable workflow has no blocker, and the planner would refund it', async () => {
     const { body } = await call({ userId: VIEWER });
-    expect(body.workflows[0].refundBlockers).toEqual(['orchestrator-partial-refund']);
+    expect(body.workflows[0].refundBlocker).toBeNull();
+    const planned = await planAppWorkflowRefunds([WF]);
+    expect(planned.plans[0].outcome).toBe('refund');
   });
 });

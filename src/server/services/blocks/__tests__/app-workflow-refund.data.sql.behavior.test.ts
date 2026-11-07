@@ -11,8 +11,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
  * The SQL of `app-workflow-refund.data.ts`, run as written against an in-process Postgres built from
- * the SHIPPED migrations for the three App spend tables — so the void below is checked against the
- * real `block_spend_attribution_status_check` / `voided_reason_check`, not a hand-copied list. The
+ * the SHIPPED migrations for the three App spend tables (real columns, real constraints). The
  * tables they reference (`User`, `OauthClient`, `app_blocks`, `app_listings`) are stubbed to the
  * columns these statements read.
  *
@@ -30,7 +29,6 @@ const {
   getOrchestratorWorkflowCharges,
   listAppWorkflowIdsForUser,
   resolveListingAppBlockId,
-  voidSpendAttributionsForRefund,
 } = await import('~/server/services/blocks/app-workflow-refund.data');
 
 const migration = (name: string) =>
@@ -145,7 +143,7 @@ async function seed() {
   // Another user, and one outside the window.
   await workflow('wf-other', OTHER, APP, '2026-11-05T11:00:00Z');
   await workflow('wf-old', VIEWER, APP, '2026-09-01T00:00:00Z');
-  // A paid-out and an already-voided row on one workflow, beside a tracked one.
+  // Two spend rows on one workflow (two app blocks), one already paid out: listed once.
   await spend(
     'bsa_00000000000000000000000004',
     'wf-paid',
@@ -265,27 +263,6 @@ describe('listings and names', () => {
   it('names an app by its listing, else by its block id', async () => {
     const names = await getAppNames([APP, BARE_APP]);
     expect(Object.fromEntries(names)).toEqual({ [APP]: 'Sample Alpha', [BARE_APP]: 'sql-bare' });
-  });
-});
-
-describe('voidSpendAttributionsForRefund', () => {
-  it('voids with the existing vocabulary, which the real CHECK constraints accept', async () => {
-    expect(await voidSpendAttributionsForRefund('wf-a')).toBe(1);
-    const { rows } = await db.pg.query<{ status: string; voided_reason: string; voided_at: Date }>(
-      `SELECT "status", "voided_reason", "voided_at" FROM "block_spend_attribution" WHERE "workflow_id" = 'wf-a'`
-    );
-    expect(rows).toEqual([
-      { status: 'voided', voided_reason: 'manual_review', voided_at: expect.any(Date) },
-    ]);
-  });
-
-  it('leaves a paid-out row alone, and is a no-op the second time', async () => {
-    expect(await voidSpendAttributionsForRefund('wf-paid')).toBe(1);
-    expect(await voidSpendAttributionsForRefund('wf-paid')).toBe(0);
-    const { rows } = await db.pg.query<{ status: string }>(
-      `SELECT "status" FROM "block_spend_attribution" WHERE "workflow_id" = 'wf-paid' ORDER BY "id"`
-    );
-    expect(rows.map((r) => r.status)).toEqual(['paid_out', 'voided']);
   });
 });
 

@@ -145,20 +145,6 @@ export async function getAppNames(appBlockIds: string[]): Promise<Map<string, st
   return new Map(rows.map((row) => [row.appBlockId, row.name]));
 }
 
-/**
- * Marks a refunded workflow's spend-attribution rows `voided`, in the vocabulary the table already
- * has. `manual_review` is the existing reason for a row a person took out by hand, so this needs no
- * migration. A `paid_out` row is left alone: what it paid has left the platform, and rewriting its
- * status would make the row disagree with the payout that cites it.
- */
-export async function voidSpendAttributionsForRefund(workflowId: string): Promise<number> {
-  return dbWrite.$executeRaw`
-    UPDATE "block_spend_attribution"
-    SET "status" = 'voided', "voided_reason" = 'manual_review', "voided_at" = now()
-    WHERE "workflow_id" = ${workflowId} AND "status" NOT IN ('voided', 'paid_out')
-  `;
-}
-
 export type OrchestratorTransaction = {
   type: string;
   amount: number;

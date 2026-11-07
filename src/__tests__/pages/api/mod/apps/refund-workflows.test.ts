@@ -42,7 +42,6 @@ const h = vi.hoisted(() => ({
   getAppWorkflowRecords: vi.fn<(ids: string[]) => Promise<unknown>>(),
   getOrchestratorWorkflowCharges: vi.fn<(id: string) => Promise<unknown>>(),
   getAppNames: vi.fn<(ids: string[]) => Promise<Map<string, string>>>(),
-  voidSpendAttributionsForRefund: vi.fn<(id: string) => Promise<number>>(),
   getAppFeedbackForRefund: vi.fn<(id: number) => Promise<unknown>>(),
   modResolveAppFeedbackWithRefund: vi.fn<(a: Record<string, unknown>) => Promise<boolean>>(),
   createNotification: vi.fn<(a: Record<string, unknown>) => Promise<void>>(),
@@ -85,7 +84,6 @@ vi.mock('~/server/services/blocks/app-workflow-refund.data', () => ({
   getAppWorkflowRecords: (ids: string[]) => h.getAppWorkflowRecords(ids),
   getOrchestratorWorkflowCharges: (id: string) => h.getOrchestratorWorkflowCharges(id),
   getAppNames: (ids: string[]) => h.getAppNames(ids),
-  voidSpendAttributionsForRefund: (id: string) => h.voidSpendAttributionsForRefund(id),
   listAppWorkflowIdsForUser: vi.fn(),
   resolveListingAppBlockId: vi.fn(),
 }));
@@ -277,9 +275,6 @@ function installWorld() {
   h.getAppNames.mockImplementation(
     async (ids) =>
       new Map(ids.map((id): [string, string] => [id, id === APP ? APP_NAME : `name of ${id}`]))
-  );
-  h.voidSpendAttributionsForRefund.mockImplementation(
-    async (id) => world.spends.filter((s) => s.workflowId === id).length
   );
   h.getTransactionByExternalId.mockImplementation(async (id) => world.ledger.get(id) ?? null);
   h.refundTransaction.mockImplementation(async (id) => {
@@ -587,7 +582,6 @@ describe('dry run', () => {
       plannedByColour: { yellow: 230, blue: 43 },
     });
     expectNoMoneyMoved();
-    expect(h.voidSpendAttributionsForRefund).not.toHaveBeenCalled();
     expect(h.createNotification).not.toHaveBeenCalled();
     // The accrual row is untouched, so the fee is still the author's to be paid if nobody executes.
     expect(world.fees).toHaveLength(1);
@@ -603,7 +597,7 @@ describe('dry run', () => {
 // ─── Execute ────────────────────────────────────────────────────────────────
 
 describe('execute', () => {
-  it('refunds a single leg to its payer, in its colour, and voids the spend row', async () => {
+  it('refunds a single leg to its payer, in its colour', async () => {
     addWorkflow({ id: 'wf-one', legs: [{ n: 21, amount: 137, colour: 'green' }] });
     const { status, body } = await refund(['wf-one']);
     expect(status).toBe(200);
@@ -621,10 +615,8 @@ describe('execute', () => {
       outcome: 'refunded',
       refundBuzz: 137,
       legs: [{ status: 'refunded', refundTransactionId: `refund-${txId(21)}` }],
-      spendAttributionsVoided: 1,
       errors: [],
     });
-    expect(h.voidSpendAttributionsForRefund).toHaveBeenCalledWith('wf-one');
     expect(body.totals).toMatchObject({ refundBuzz: 137, refunded: 1, failed: 0 });
   });
 
@@ -789,7 +781,6 @@ describe('execute', () => {
       expect(status).toBe(200);
       expect(body.workflows[0]).toMatchObject({ outcome: 'skipped', reason, refundBuzz: 0 });
       expectNoMoneyMoved();
-      expect(h.voidSpendAttributionsForRefund).not.toHaveBeenCalled();
     });
 
     it('a workflow id App Blocks never recorded — without asking the orchestrator', async () => {
@@ -1029,10 +1020,7 @@ describe('partial failure', () => {
       ],
     });
     expect(bad.errors.join(' ')).toContain('Buzz service unavailable');
-    expect(bad.spendAttributionsVoided).toBeUndefined();
     expect(good).toMatchObject({ outcome: 'refunded', refundBuzz: 61 });
-    expect(h.voidSpendAttributionsForRefund).toHaveBeenCalledTimes(1);
-    expect(h.voidSpendAttributionsForRefund).toHaveBeenCalledWith('wf-good');
     expect(body.totals).toMatchObject({ refundBuzz: 114, refunded: 1, failed: 1 });
     // The user is told about the money that DID come back, once.
     expect(h.createNotification).toHaveBeenCalledTimes(1);
@@ -1052,7 +1040,6 @@ describe('partial failure', () => {
       refundBuzz: 73,
       authorFee: { status: 'failed', treatment: 'platform-absorbed' },
     });
-    expect(h.voidSpendAttributionsForRefund).not.toHaveBeenCalled();
   });
 
   it('control: a leg answering 409 with its refund already on the ledger is not a failure', async () => {
@@ -1066,21 +1053,47 @@ describe('partial failure', () => {
     expect(body.workflows[0]).toMatchObject({ outcome: 'refunded', errors: [] });
   });
 
-  it('spend rows a call could not void are voided by the re-run that finds the money back', async () => {
-    addWorkflow({ id: 'wf-void', legs: [{ n: 126, amount: 83, colour: 'yellow' }] });
-    h.voidSpendAttributionsForRefund.mockRejectedValueOnce(new Error('primary unavailable'));
-    const first = await refund(['wf-void']);
-    expect(first.body.workflows[0]).toMatchObject({ outcome: 'failed', refundBuzz: 83 });
-    expect(first.body.workflows[0].errors.join(' ')).toContain('primary unavailable');
-
-    const second = await refund(['wf-void']);
-    expect(second.body.workflows[0]).toMatchObject({
-      outcome: 'already-refunded',
-      spendAttributionsVoided: 1,
-      errors: [],
+  it('a re-run after a partly failed call refunds only what is still missing', async () => {
+    addWorkflow({
+      id: 'wf-retry',
+      legs: [
+        { n: 126, amount: 83, colour: 'yellow' },
+        { n: 127, amount: 29, colour: 'blue' },
+      ],
     });
-    expect(h.voidSpendAttributionsForRefund).toHaveBeenCalledTimes(2);
-    expect(h.refundTransaction).toHaveBeenCalledTimes(1);
+    world.failRefund.add(txId(127));
+    const first = await refund(['wf-retry']);
+    expect(first.body.workflows[0]).toMatchObject({ outcome: 'failed', refundBuzz: 83 });
+
+    world.failRefund.clear();
+    const second = await refund(['wf-retry']);
+    expect(second.body.workflows[0]).toMatchObject({
+      outcome: 'refunded',
+      refundBuzz: 29,
+      legs: [
+        { transactionId: txId(126), status: 'already-refunded' },
+        { transactionId: txId(127), status: 'refunded' },
+      ],
+    });
+    const third = await refund(['wf-retry']);
+    expect(third.body.workflows[0]).toMatchObject({ outcome: 'already-refunded', refundBuzz: 0 });
+    expect(h.refundTransaction.mock.calls.map((c) => c[0])).toEqual([
+      txId(126),
+      txId(127),
+      txId(127),
+    ]);
+  });
+
+  it('a refund touches only money: no raw SQL write, no accrual claim for a settled fee', async () => {
+    addWorkflow({
+      id: 'wf-money-only',
+      legs: [{ n: 128, amount: 31, colour: 'yellow' }],
+      fee: { state: 'settled', amount: 5, colour: 'yellow' },
+    });
+    const { body } = await refund(['wf-money-only']);
+    expect(body.workflows[0].outcome).toBe('refunded');
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.blockAuthorFeeAccrual.deleteMany).not.toHaveBeenCalled();
   });
 });
 

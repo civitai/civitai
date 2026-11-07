@@ -24,7 +24,6 @@ import {
   getAppWorkflowRecords,
   getOrchestratorWorkflowCharges,
   listAppWorkflowIdsForUser,
-  voidSpendAttributionsForRefund,
   type AppWorkflowRecords,
 } from '~/server/services/blocks/app-workflow-refund.data';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
@@ -364,8 +363,17 @@ export async function lookupAppWorkflowCharges(input: {
         submittedAt: i.submittedAt?.toISOString() ?? null,
         recordedStatus: i.recordedStatus,
       };
+      // What would stop `/api/mod/apps/refund-workflows` refunding it: the refund PLANNER's own skip
+      // reason, so the preview and the refund cannot disagree about which workflows get skipped.
+      const plan = planWorkflow(i);
+      const refundBlocker = plan.outcome === 'skip' ? plan.reason : null;
       if (i.kind === 'skip')
-        return { ...common, lookupError: i.detail ?? i.reason, orchestratorStatus: null };
+        return {
+          ...common,
+          orchestratorStatus: null,
+          refundBlocker,
+          ...(i.detail ? { lookupError: i.detail } : {}),
+        };
       return {
         ...common,
         orchestratorStatus: i.orchestratorStatus,
@@ -379,13 +387,7 @@ export async function lookupAppWorkflowCharges(input: {
           ...i.legs.map((l) => l.refundTransactionId),
           i.authorFee.refundTransactionId,
         ].filter((id): id is string => !!id),
-        // Anything that would stop a refund, so the moderator sees it before calling one.
-        refundBlockers: [
-          ...(i.userIds.length > 1 ? ['mixed-users'] : []),
-          ...(TERMINAL_STATUSES.has(i.orchestratorStatus) ? [] : ['not-terminal']),
-          ...(i.unsupportedLegs > 0 ? ['unsupported-charge'] : []),
-          ...(i.partiallyCreditedColours.length > 0 ? ['orchestrator-partial-refund'] : []),
-        ],
+        refundBlocker,
       };
     }),
   };
@@ -564,7 +566,6 @@ export type WorkflowRefundResult = {
   };
   /** Buzz this call returned (execute) or would return (dry run). */
   refundBuzz: number;
-  spendAttributionsVoided?: number;
   errors: string[];
 };
 
@@ -657,21 +658,10 @@ async function executeWorkflow(plan: RefundablePlan, reasonDetails: Record<strin
     if (feeError) errors.push(`author fee: ${feeError}`);
   }
 
-  // Only a workflow whose money all came back stops counting as spend.
-  let spendAttributionsVoided: number | undefined;
-  if (errors.length === 0) {
-    try {
-      spendAttributionsVoided = await voidSpendAttributionsForRefund(plan.workflowId);
-    } catch (error) {
-      errors.push(`spend attribution: ${errorMessage(error)}`);
-    }
-  }
-
   return {
     legs,
     errors,
     refundBuzz,
-    spendAttributionsVoided,
     authorFee: {
       state: plan.authorFee.state,
       treatment: feeTreatment,
@@ -765,25 +755,13 @@ export async function refundAppWorkflows(input: {
       status,
     });
     if (p.outcome === 'already-refunded') {
-      // Nothing to return, but an earlier call may have refunded everything and then failed to
-      // void the spend rows; this is where a re-run finishes that. A no-op once they are voided.
-      const errors: string[] = [];
-      let spendAttributionsVoided: number | undefined;
-      if (execute) {
-        try {
-          spendAttributionsVoided = await voidSpendAttributionsForRefund(p.workflowId);
-        } catch (error) {
-          errors.push(`spend attribution: ${errorMessage(error)}`);
-        }
-      }
       results.push({
         ...common,
         outcome: 'already-refunded',
         legs: legResults(p),
         authorFee: feeView('not-applicable'),
         refundBuzz: 0,
-        ...(spendAttributionsVoided !== undefined ? { spendAttributionsVoided } : {}),
-        errors,
+        errors: [],
       });
       continue;
     }
@@ -805,9 +783,6 @@ export async function refundAppWorkflows(input: {
       legs: done.legs,
       authorFee: done.authorFee,
       refundBuzz: done.refundBuzz,
-      ...(done.spendAttributionsVoided !== undefined
-        ? { spendAttributionsVoided: done.spendAttributionsVoided }
-        : {}),
       errors: done.errors,
     });
   }
