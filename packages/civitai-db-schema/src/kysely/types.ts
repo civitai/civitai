@@ -3602,6 +3602,15 @@ export type ImageConnection = {
   entityId: number;
   entityType: string;
 };
+export type ImageDeferredBlockEffect = {
+  imageId: number;
+  /**
+   * The violation the moderator chose, if any; the notice states it.
+   */
+  violationType: string | null;
+  blockedBy: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ImageEngagement = {
   userId: number;
   imageId: number;
@@ -6730,6 +6739,7 @@ export type DB = {
   ImageCdnModeratorDelete: ImageCdnModeratorDelete;
   ImageCdnShopTakedown: ImageCdnShopTakedown;
   ImageConnection: ImageConnection;
+  ImageDeferredBlockEffect: ImageDeferredBlockEffect;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
   ImageMetaFlags: ImageMetaFlags;

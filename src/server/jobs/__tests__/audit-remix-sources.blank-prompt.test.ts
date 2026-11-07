@@ -35,7 +35,7 @@ import '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const findUnique = dbMock.dbRead.image.findUnique;
-const update = dbMock.dbWrite.image.update;
+const update = dbMock.dbWrite.image.updateManyAndReturn;
 
 const imageWith = (meta: Record<string, unknown>) => ({
   id: 101,
@@ -52,7 +52,10 @@ const runJob = async () => {
 
 const flaggedForReview = () =>
   expect(update).toHaveBeenCalledWith(
-    expect.objectContaining({ where: { id: 101 }, data: { needsReview: 'remixSource' } })
+    expect.objectContaining({
+      where: { id: 101, needsReview: null },
+      data: { needsReview: 'remixSource' },
+    })
   );
 
 beforeEach(() => {
@@ -60,7 +63,7 @@ beforeEach(() => {
   moderatePrompt.mockImplementation(async () => ({ flagged: false, categories: [] }));
   // Not yet checked in the dedup window, so the sweep reaches the image.
   redisMock.sysRedis.get.mockResolvedValue(null);
-  update.mockResolvedValue({ postId: null });
+  update.mockResolvedValue([{ postId: null }] as never);
 });
 
 describe('audit-remix-sources — empty prompt with a non-empty negative prompt', () => {

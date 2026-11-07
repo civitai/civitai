@@ -54,7 +54,7 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
 //   dbWrite.$executeRawUnsafe   image.service.ts:878   (updateNsfwLevel, the recompute)
 //   dbWrite.appeal.updateManyAndReturn  report.service.ts  (resolveEntityAppeal claims the appeals)
 //   dbRead.user.findMany        report.service.ts:743
-//   dbWrite.image.update        report.service.ts:753
+//   dbWrite.$queryRaw           report.service.ts      (settleResolvedAppeals' image write)
 const dbWrite = dbMock.dbWrite;
 const dbRead = dbMock.dbRead;
 const mockFindMany = dbRead.image.findMany;
@@ -63,7 +63,12 @@ const mockFindMany = dbRead.image.findMany;
 // they are the file's instrument rather than per-case behaviour; `vi.clearAllMocks()` in the
 // beforeEach blocks clears call history without dropping an implementation.
 dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
-  capturedQueryRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
+  capturedQueryRaw.push(sql);
+  // The appeal ruling's image write (`settleResolvedAppeals`) reads postId+pHash back; seed a pHash
+  // so the approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
+  if (/RETURNING "postId", "pHash"/.test(sql))
+    return Promise.resolve([{ postId: null, pHash: 999n }]);
   return Promise.resolve([]);
 });
 dbWrite.$executeRawUnsafe.mockImplementation((sql: string) => {
@@ -74,11 +79,6 @@ dbWrite.$executeRaw.mockImplementation((strings: TemplateStringsArray, ..._value
   capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
   return Promise.resolve(0);
 });
-// resolveEntityAppeal reads postId+pHash off the appeal image; seed a pHash so the
-// approved-path phash unblock (bulkRemoveBlockedImages) has something to remove. Restated
-// rather than inherited: the canonical mock has no default for `update`, so it would return
-// undefined and the destructure would throw.
-dbWrite.image.update.mockResolvedValue({ postId: null, pHash: 999n });
 // Canonical `findUnique` already answers null and `findMany` already answers []; pinned anyway so
 // what this file hands the service is readable here rather than in the shared defaults table.
 dbRead.image.findUnique.mockResolvedValue(null);
@@ -258,6 +258,33 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
 // resetBlockedNsfwLevel helper (the single source of truth for the level restore) — so a
 // rating-locked image is no longer left stuck at Blocked. No recursion (it does not call
 // handleUnblockImages).
+describe('handleUnblockImages and a block that put its effects off', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedExecRaw.length = 0;
+    mockFindMany.mockResolvedValue([
+      {
+        id: 128489949,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: 'csam',
+      },
+    ] as never);
+  });
+
+  it('drops them unfired', async () => {
+    await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
+
+    const drop = dbWrite.$executeRaw.mock.calls.find(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('DELETE FROM "ImageDeferredBlockEffect"')
+    );
+    expect(drop?.slice(1)).toEqual([[128489949]]);
+  });
+});
+
 describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kfwdzq, 2nd door)', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -57,7 +57,9 @@ export const REPORT_HOLD_RELEASE_MARGIN_DAYS = 7;
  */
 export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promise<number> {
   if (!imageIds.length) return 0;
-  return dbWrite.$executeRaw`
+  // A report outranks the block's deferred effects: they go with the flag, unfired.
+  const [{ cleared }] = await dbWrite.$queryRaw<{ cleared: number }[]>`
+    WITH cleared AS (
     UPDATE "Image" i
     SET "needsReview" = NULL
     WHERE i.id IN (${Prisma.join(imageIds)})
@@ -76,7 +78,13 @@ export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promis
             CSAM_HOLD_MAX_DAYS - REPORT_HOLD_RELEASE_MARGIN_DAYS
           } * interval '1 day'
       )
+    RETURNING i.id
+    ), dropped AS (
+      DELETE FROM "ImageDeferredBlockEffect" d USING cleared c WHERE d."imageId" = c.id
+    )
+    SELECT count(*)::int AS cleared FROM cleared
   `;
+  return cleared;
 }
 
 /** Puts the flag back on any of these images whose appeal is still Pending. */

@@ -32,6 +32,7 @@ import {
   bulkRemoveBlockedImages,
   queueImageSearchIndexUpdate,
   dropBlockedImageDeleteQueue,
+  heldImageSql,
   resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
 import {
@@ -58,7 +59,6 @@ import {
   BuzzAccountType,
   EntityType,
   ImageEngagementType,
-  ImageIngestionStatus,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
@@ -1342,6 +1342,61 @@ function closeUnreviewedAppeals(limit: number) {
   `;
 }
 
+/**
+ * A Pending appeal on an image dismissed from the CSAM review queue: the review flag stays on, so no
+ * appeals queue lists it. Closed `ROUTED_APPEAL_REVIEW_DAYS` after it was filed, as an unreviewed one.
+ */
+function closeDismissedReviewAppeals(limit: number) {
+  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
+      OrphanedAppealReason.RemovedBeforeReview
+    },
+      "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id IN (
+      SELECT a.id FROM "Appeal" a
+      JOIN "Image" i ON i.id = a."entityId"
+      WHERE a.status = 'Pending'::"AppealStatus"
+        AND a."entityType" = 'Image'::"EntityType"
+        AND a."createdAt" <= now() - make_interval(days => ${Prisma.raw(
+          String(ROUTED_APPEAL_REVIEW_DAYS)
+        )})
+        AND i."needsReview" = 'csam'
+        AND EXISTS (
+          SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = i.id AND s.outcome = 'Dismissed'
+        )
+      LIMIT ${limit}
+    ) AND status = 'Pending'::"AppealStatus"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+  `;
+}
+
+/** The ModActivity row Legal Intake reads for a withheld notice. Ids only. */
+export const DEFERRED_NOTICE_WITHHELD_ACTIVITY = 'deferredNoticeWithheld';
+
+/**
+ * Users Legal holds notices for: named by any CSAM report or any evidence hold, released or not.
+ * Read on the primary. A failed read holds them all.
+ */
+async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> {
+  if (!userIds.length) return new Set();
+  try {
+    const rows = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT "userId" FROM "CsamReport" WHERE "userId" = ANY(${userIds}::int[])
+      UNION
+      SELECT "userId" FROM "EvidenceHold" WHERE "userId" = ANY(${userIds}::int[])
+    `;
+    return new Set(rows.map((r) => r.userId));
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'deferred-notice-withheld-check',
+      message: (e as Error).message,
+    }).catch(() => undefined);
+    return new Set(userIds);
+  }
+}
+
 function routeOrphansForReview(ids: number[]) {
   if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
   return dbWrite.$queryRaw<ClaimedOrphan[]>`
@@ -1477,7 +1532,8 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
  * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
  * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
  * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. Two cases close quietly, with no
- * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete.
+ * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete. An
+ * image dismissed from the CSAM review queue is closed the same way, counted from the filing.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1550,11 +1606,34 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
   }
 
+  const closedDismissed = await closeDismissedReviewAppeals(limit);
+  const withheld = await usersWithNoticeWithheld([
+    ...new Set(closedDismissed.map((a) => a.userId)),
+  ]);
+  for (const appeal of closedDismissed) {
+    const wasRefunded = await refund(appeal);
+    if (!withheld.has(appeal.userId)) {
+      await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
+      continue;
+    }
+    await dbWrite.$executeRaw`
+      INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity)
+      VALUES (NULL, 'image', ${appeal.entityId}, ${DEFERRED_NOTICE_WITHHELD_ACTIVITY})
+      ON CONFLICT DO NOTHING
+    `;
+    logToAxiom({
+      type: 'warning',
+      name: 'deferred-notice-withheld',
+      imageId: appeal.entityId,
+    }).catch(() => undefined);
+  }
+
   return {
     closedQuietly: closedQuietly.length,
     closedOwnerDeleted: closedOwnerDeleted.length,
     routedForReview: routed.length,
     closedUnreviewed: closedUnreviewed.length,
+    closedDismissedReview: closedDismissed.length,
     refunded,
     refundFailed,
   };
@@ -1575,13 +1654,11 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
-  // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
-  // Pending. Read on the primary just before the claim, so a CSAM block landing between this read
-  // and the claim is not seen. The only live Image-approval caller is `handleUnblockImages`, after
-  // an explicit unblock.
+  // An approval of a held image is refused whole, and every appeal stays Pending. One that turns
+  // held after this read is caught by `settleResolvedAppeals`, which then does not restore it.
   if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
     const held = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND ${heldImageSql}
     `;
     if (held.length)
       throw throwBadRequestError(
@@ -1665,16 +1742,34 @@ export async function settleResolvedAppeals(
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
-          // No moderator-only review-flag guard, unlike the moderator app's twin: a Pending image
-          // appeal cannot sit beside that flag (`createEntityAppeal` refuses, `reportCsamImages`
-          // closes it), so there is nothing here for one to protect.
-          const updated = await dbWrite.image.update({
-            where: { id: appeal.entityId },
-            data: approved
-              ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Scanned }
-              : { needsReview: null },
-            select: { postId: true, pHash: true },
-          });
+          // An approval never restores a row removed for CSAM or under the review flag, and a
+          // rejection leaves that flag on.
+          type Written = { postId: number | null; pHash: bigint | null };
+          const [updated] = approved
+            ? await dbWrite.$queryRaw<Written[]>`
+                UPDATE "Image"
+                SET "needsReview" = NULL, "blockedFor" = NULL, ingestion = 'Scanned'
+                WHERE id = ${appeal.entityId}
+                  AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+                  AND "needsReview" IS DISTINCT FROM 'csam'
+                RETURNING "postId", "pHash"
+              `
+            : await dbWrite.$queryRaw<Written[]>`
+                UPDATE "Image"
+                SET "needsReview" = CASE WHEN "needsReview" = 'csam' THEN "needsReview" END
+                WHERE id = ${appeal.entityId}
+                RETURNING "postId", "pHash"
+              `;
+          if (!updated) {
+            if (approved)
+              logToAxiom({
+                type: 'error',
+                name: 'appeal-approval-not-restored',
+                appealId: appeal.id,
+                imageId: appeal.entityId,
+              }).catch(() => undefined);
+            break;
+          }
 
           if (approved) {
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a

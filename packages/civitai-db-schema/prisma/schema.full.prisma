@@ -6986,6 +6986,16 @@ model CsamQueueSetAside {
   @@index([userId])
 }
 
+/// A block's owner notice and report actioning, put off while the image is in CSAM review. Written
+/// with the block; claimed (deleted) once by whichever close ends the review.
+model ImageDeferredBlockEffect {
+  imageId       Int      @id
+  /// The violation the moderator chose, if any; the notice states it.
+  violationType String?
+  blockedBy     Int?
+  createdAt     DateTime @default(now())
+}
+
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
 model CsamReportAudit {
   id              Int       @id @default(autoincrement())

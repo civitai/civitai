@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -69,7 +70,7 @@ const {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   AppealRestoreRefusedError,
-  FlagOnlyRemovedError,
+  RemovedImageNotRestorableError,
   resolveImageAppeal,
 } = await import('../image-moderation.service');
 
@@ -90,6 +91,7 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "Appeal" (
@@ -273,7 +275,7 @@ describe('blockImage and the block reason', () => {
 describe('an image removed with only the review flag left', () => {
   it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
     await expect(acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toBeInstanceOf(
-      FlagOnlyRemovedError
+      RemovedImageNotRestorableError
     );
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
@@ -557,8 +559,29 @@ describe('dismissUserFromCsamQueue', () => {
 });
 
 describe('resolveImageAppeal', () => {
-  it('approving does not restore an image under the review flag', async () => {
+  it('approving is refused for an image under the review flag, and the appeal stays Pending', async () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
+
+    await expect(
+      resolveImageAppeal({
+        imageId: FLAGGED_REMOVED,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+        userId: 2,
+      })
+    ).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    const { rows } = await db.query<{ status: string }>(
+      `SELECT status FROM "Appeal" WHERE "entityId" = $1`,
+      [FLAGGED_REMOVED]
+    );
+    expect(rows).toEqual([{ status: 'Pending' }]);
+  });
+
+  it('approving does not restore an image dismissed from the review queue either', async () => {
+    await seedPendingAppeal(FLAGGED_REMOVED);
+    expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: true });
 
     await resolveImageAppeal({
       imageId: FLAGGED_REMOVED,
