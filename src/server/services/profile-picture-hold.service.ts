@@ -11,6 +11,7 @@ import { collectionsSearchIndex } from '~/server/search-index/collections.search
 import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
 import { usersSearchIndex } from '~/server/search-index/users.search-index';
 import { keysIn } from '~/server/services/image-url-ownership';
+import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import { refreshProfilePicturesForUsers } from '~/server/services/user.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
@@ -102,7 +103,11 @@ export async function syncProfilePictureForImage(
     WHERE id = ${hold.userId} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL
   `;
   if (!restored) return { action: 'none' };
-  await tx.$executeRaw`DELETE FROM "ProfilePictureHold" WHERE id = ${hold.id}`;
+  // A held owner keeps the record, avatar restored or not.
+  await tx.$executeRaw`
+    DELETE FROM "ProfilePictureHold"
+    WHERE id = ${hold.id} AND NOT ${ownerHeldSql(Prisma.sql`${hold.userId}::int`)}
+  `;
   return { action: 'restored', userId: hold.userId };
 }
 
@@ -198,14 +203,17 @@ export async function getHeldProfilePictureUserIds(imageIds: number[]): Promise<
   return rows.map((r) => r.userId);
 }
 
-/** Whether `url` is, or carries the key of, one of this user's Blocked or csam-flagged images. */
+/**
+ * Whether `url` is, or carries the key of, one of this user's images that is Blocked or under any
+ * review. Any review, not only csam: refusing on csam alone would tell the owner which kind it is.
+ */
 export async function isUnservableOwnImageUrl(userId: number, url: string): Promise<boolean> {
   const urls = [...new Set([url, ...keysIn(url)])];
   const rows = await dbWrite.$queryRaw<{ found: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM "Image"
       WHERE "userId" = ${userId} AND url = ANY(${urls}::text[])
-        AND (ingestion = 'Blocked' OR "needsReview" = 'csam')
+        AND (ingestion = 'Blocked' OR "needsReview" IS NOT NULL)
     ) AS found
   `;
   return rows?.[0]?.found === true;

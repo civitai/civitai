@@ -24,8 +24,8 @@ const SHARED: Record<string, number> = {
   'src/server/services/user.service.ts': 6,
   // isExemptFromAiVerification.
   'src/server/services/image-scan-result.service.ts': 1,
-  // unusedAuthorImage; every caller passes dbWrite or a dbWrite transaction.
-  'src/server/services/article.service.ts': 1,
+  // unusedAuthorImage (every caller passes dbWrite or a dbWrite transaction), and the cover check.
+  'src/server/services/article.service.ts': 2,
   // The EXCLUDED reason, a string.
   'src/server/services/personal-data-export/registry.ts': 1,
 };
@@ -64,6 +64,21 @@ describe('ProfilePictureHold access', () => {
     for (const file of Object.keys(DEDICATED)) {
       const text = readFileSync(path.join(ROOT, file), 'utf8');
       expect(text, file).not.toMatch(/\b(dbRead|pgDbRead|pgDbReadLong|kyselyRead)\b/);
+    }
+  });
+
+  // A line naming the table in a shared file must not sit in a statement on a read client: the
+  // statement opening within the few lines above it must not name one.
+  it('the shared files read it on no read-replica client', () => {
+    for (const file of Object.keys(SHARED)) {
+      const lines = readFileSync(path.join(ROOT, file), 'utf8').split('\n');
+      lines.forEach((line, i) => {
+        if (!PATTERN.test(line)) return;
+        const before = lines.slice(Math.max(0, i - 6), i + 1).join('\n');
+        expect(before, `${file}:${i + 1}`).not.toMatch(
+          /\b(dbRead|pgDbRead|pgDbReadLong|kyselyRead)\b/
+        );
+      });
     }
   });
 

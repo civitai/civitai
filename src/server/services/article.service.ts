@@ -1452,7 +1452,14 @@ export const upsertArticle = async ({
               OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
             },
           })) > 0;
-        if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
+        // A removed avatar: deleting it would cascade its record away.
+        const heldAvatar =
+          isImgOwner &&
+          !!(await dbWrite.profilePictureHold.findFirst({
+            where: { imageId: article.coverId },
+            select: { id: true },
+          }));
+        if (isImgOwner && !shownElsewhere && !heldAvatar) replacedImageIds.push(article.coverId);
       }
       if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
         const unused = await dbWrite.image.findFirst({

@@ -43,6 +43,8 @@ const { getBlockedProfilePictureNotices } = await import(
 const { readRemovedProfilePictures } = await import(
   '~/server/services/personal-data-export/sources/profile-pictures'
 );
+const { getProfilePictureUserIds } = await import('~/server/services/user.service');
+const { isExemptFromAiVerification } = await import('~/server/services/image-scan-result.service');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -128,6 +130,10 @@ beforeAll(async () => {
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int);
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "ComicProject" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "UserProfile" ("userId" int, "coverImageId" int);
+    CREATE TABLE "Article" (id int, "coverId" int, "bannerId" int);
+    CREATE TABLE "Challenge" (id int, "coverImageId" int);
+    CREATE TABLE "ImageConnection" ("imageId" int, "entityType" text);
   `);
   await db.exec(jobQueueFromMigrations());
   await db.exec(migration('20261229120000_profile_picture_hold'));
@@ -338,6 +344,15 @@ describe('syncProfilePictureForImage', () => {
     expect(await holds(OWNER)).toHaveLength(1);
   });
 
+  it("restores a held owner's avatar but keeps the record", async () => {
+    await block(avatar(HELD_OWNER));
+    await runProfilePictureSync();
+    await unblock(avatar(HELD_OWNER));
+    await runProfilePictureSync();
+    expect(await pointer(HELD_OWNER)).toBe(avatar(HELD_OWNER));
+    expect(await holds(HELD_OWNER)).toEqual([{ imageId: avatar(HELD_OWNER), reason: 'blocked' }]);
+  });
+
   it('does not restore a soft-deleted owner', async () => {
     await block(avatar(DELETED_OWNER));
     await runProfilePictureSync();
@@ -518,12 +533,23 @@ describe('the personal-data export of removed profile pictures', () => {
     expect(row).toEqual({ imageId: avatar(OWNER), removedAt: expect.any(Date) });
   });
 
+  // A csam flag also holds the owner, so this record leaves only by its reason.
+  it("leaves out a 'flagged' record whose image has gone to appeal", async () => {
+    await review(avatar(OWNER), 'csam');
+    await runProfilePictureSync();
+    await review(avatar(OWNER), 'appeal');
+    await runProfilePictureSync();
+    expect(await holds(OWNER)).toEqual([{ imageId: avatar(OWNER), reason: 'flagged' }]);
+    expect(await exported(OWNER)).toEqual([]);
+  });
+
   it("leaves out a 'flagged' record", async () => {
     await review(avatar(OWNER), 'csam');
     await runProfilePictureSync();
     expect(await exported(OWNER)).toEqual([]);
   });
 
+  // The owner is also held by the CSAM block itself; the image clause is defence in depth.
   it("leaves out a 'blocked' record whose image is CSAM-blocked", async () => {
     await block(avatar(OWNER), 'CSAM');
     await runProfilePictureSync();
@@ -542,6 +568,14 @@ describe('the personal-data export of removed profile pictures', () => {
     await runProfilePictureSync();
     expect(await holds(HELD_OWNER)).toHaveLength(2);
     expect(await exported(HELD_OWNER)).toEqual([]);
+  });
+
+  // OTHER's only report was sent and archived over a year ago: no longer a hold, still a report.
+  it('leaves out an owner who is the subject of an old, closed CsamReport', async () => {
+    await block(avatar(OTHER));
+    await runProfilePictureSync();
+    expect(await holds(OTHER)).toHaveLength(1);
+    expect(await exported(OTHER)).toEqual([]);
   });
 
   it('leaves out an owner named on any CsamReport, as subject or secondary', async () => {
@@ -569,14 +603,40 @@ describe('isUnservableOwnImageUrl (verifyAvatar)', () => {
     );
   });
 
-  it("is true for the user's own csam-flagged image", async () => {
-    await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = $1`, [OWNER * 100 + 2]);
-    expect(await isUnservableOwnImageUrl(OWNER, KEY)).toBe(true);
-  });
+  // Every review kind alike: refusing only a csam flag would tell the owner which kind it is.
+  it.each(['csam', 'minor', 'poi', 'appeal'])(
+    "is true for the user's own image under %s review",
+    async (needsReview) => {
+      await db.query(`UPDATE "Image" SET "needsReview" = $1 WHERE id = $2`, [
+        needsReview,
+        OWNER * 100 + 2,
+      ]);
+      expect(await isUnservableOwnImageUrl(OWNER, KEY)).toBe(true);
+    }
+  );
 
   it('is false for a servable image, and for another user', async () => {
     expect(await isUnservableOwnImageUrl(OWNER, KEY)).toBe(false);
     await db.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = $1`, [OWNER * 100 + 2]);
     expect(await isUnservableOwnImageUrl(OTHER, KEY)).toBe(false);
+  });
+});
+
+describe('other readers of the record', () => {
+  it('getProfilePictureUserIds finds the user a removed avatar was taken from', async () => {
+    await block(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await pointer(OWNER)).toBeNull();
+    expect((await getProfilePictureUserIds([avatar(OWNER), avatar(OTHER)])).sort()).toEqual([
+      OWNER,
+      OTHER,
+    ]);
+  });
+
+  it('a removed avatar stays exempt from AI verification', async () => {
+    await block(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await isExemptFromAiVerification(avatar(OWNER))).toBe(true);
+    expect(await isExemptFromAiVerification(OWNER * 100 + 2)).toBe(false);
   });
 });
