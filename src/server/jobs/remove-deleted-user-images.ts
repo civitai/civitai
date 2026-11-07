@@ -11,6 +11,7 @@ import {
 } from '~/server/services/image.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
@@ -310,6 +311,7 @@ async function blockUserImages(
       budgetUsed += batch.length;
       await propagateBlock(touched);
     }
+    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
 
     const [state] = await dbWrite.$queryRaw<{ hasPending: boolean }[]>`
       SELECT EXISTS (

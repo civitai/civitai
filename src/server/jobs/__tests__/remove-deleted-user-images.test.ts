@@ -8,6 +8,7 @@ const {
   mockLogToAxiom,
   mockSafeError,
   mockGetJobDate,
+  mockRefreshProfilePictures,
   markerView,
 } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
@@ -20,6 +21,7 @@ const {
     stack: (e as Error).stack,
   })),
   mockGetJobDate: vi.fn(),
+  mockRefreshProfilePictures: vi.fn(async (_userIds: number[]) => undefined),
   // Whether the database has the hold marker's view; prod does.
   markerView: { present: true },
 }));
@@ -31,6 +33,9 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/post.service', () => ({
   bustCachesForPosts: mockBustCachesForPosts,
+}));
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForUsersLazy: mockRefreshProfilePictures,
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: mockLogToAxiom,
@@ -1259,6 +1264,17 @@ describe('grace mode search index and caches', () => {
     await run();
 
     expect(mockBustCachesForPosts).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the account's cached profile picture after blocking its images", async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
+
+    await run();
+
+    expect(mockRefreshProfilePictures).toHaveBeenCalledWith([7]);
+    expect(mockQueueSearchIndex.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRefreshProfilePictures.mock.invocationCallOrder[0]
+    );
   });
 });
 
