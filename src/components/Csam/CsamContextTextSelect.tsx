@@ -17,7 +17,7 @@ export function CsamContextTextSelect({
   onChange: (value: CsamContextSources) => void;
 }) {
   const { data, isLoading, error } = trpc.csam.getContextCandidates.useQuery(
-    { imageIds },
+    { userId, imageIds },
     { enabled: imageIds.length > 0 }
   );
 
@@ -60,7 +60,7 @@ export function CsamContextTextSelect({
                         : `Comment ${candidate.id}`}
                     </Text>
                     <Badge size="xs" variant="light">
-                      {candidate.authorId === userId ? 'reported account' : 'another account'}
+                      {candidate.authorIsReportedUser ? 'reported account' : 'another account'}
                     </Badge>
                     {candidate.deleted && (
                       <Badge size="xs" color="gray">
@@ -79,6 +79,12 @@ export function CsamContextTextSelect({
                   <Text size="sm" className="whitespace-pre-wrap" lineClamp={8}>
                     {candidate.text}
                   </Text>
+                  {candidate.fullLength && (
+                    <Text size="xs" c="dimmed">
+                      Preview of {candidate.fullLength.toLocaleString()} characters. The full text
+                      is copied.
+                    </Text>
+                  )}
                 </Stack>
               }
             />

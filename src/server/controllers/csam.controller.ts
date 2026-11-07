@@ -54,9 +54,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     : [];
   const withContext: CsamReportFormOutput & { contextText?: CsamContextText[] } = {
     ...details,
-    ...(contextText.length && { contextText }),
+    contextText,
   };
-  const filed = { ...filing, details: withContext };
+  const filed = contextText.length ? { ...filing, details: withContext } : filing;
   if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
   else await createCsamReport(filed);
 

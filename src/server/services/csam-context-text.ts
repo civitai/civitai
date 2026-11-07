@@ -4,6 +4,7 @@ import type {
   CsamContextSources,
   GetCsamContextCandidatesSchema,
 } from '~/server/schema/csam.schema';
+import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -28,27 +29,40 @@ export type CsamContextCandidate = Omit<
   'authorIsReportedUser' | 'capturedAt' | 'capturedById'
 > & { deleted?: boolean; hidden?: boolean };
 
+export type CsamContextPreview = CsamContextCandidate & {
+  authorIsReportedUser: boolean;
+  /** Characters in the full text, when `text` holds only its start. */
+  fullLength?: number;
+};
+
 export const CSAM_CONTEXT_TEXT_MAX_CHARS = 50_000;
 const CANDIDATE_COMMENT_LIMIT = 500;
+const CANDIDATE_PREVIEW_CHARS = 2_000;
 
 export const htmlToPlainText = (html: string) =>
   convert(html, {
     wordwrap: false,
     selectors: [
-      { selector: 'a', options: { ignoreHref: true } },
+      { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
       { selector: 'img', format: 'skip' },
     ],
   }).trim();
 
-type Scope = { imageIds: number[]; postIds?: number[]; commentIds?: number[] };
+type Scope = {
+  imageIds: number[];
+  ownerId?: number;
+  postIds?: number[];
+  commentIds?: number[];
+};
 
-async function readCandidates({ imageIds, postIds: onlyPosts, commentIds }: Scope) {
+async function readCandidates({ imageIds, ownerId, postIds: onlyPosts, commentIds }: Scope) {
   if (!imageIds.length) return [];
-  const images = await kyselyRead
+  let imageQuery = kyselyRead
     .selectFrom('Image')
     .select(['id', 'postId'])
-    .where('id', 'in', imageIds)
-    .execute();
+    .where('id', 'in', imageIds);
+  if (ownerId !== undefined) imageQuery = imageQuery.where('userId', '=', ownerId);
+  const images = await imageQuery.execute();
   const presentImageIds = images.map((i) => i.id);
   if (!presentImageIds.length) return [];
   const postIds = [...new Set(images.map((i) => i.postId).filter((id): id is number => !!id))];
@@ -162,13 +176,30 @@ async function readCandidates({ imageIds, postIds: onlyPosts, commentIds }: Scop
 }
 
 /** The post descriptions and comments a moderator may attach to a report on these images. */
-export async function getCsamContextCandidates({ imageIds }: GetCsamContextCandidatesSchema) {
-  const candidates = await readCandidates({ imageIds });
-  return candidates.sort(
-    (a, b) =>
-      Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
-      b.postedAt.localeCompare(a.postedAt)
-  );
+export async function getCsamContextCandidates({
+  userId,
+  imageIds,
+}: GetCsamContextCandidatesSchema): Promise<CsamContextPreview[]> {
+  const reportedUserIds = reportedUserIdsOf(userId, undefined);
+  const candidates = await readCandidates({
+    imageIds,
+    ...(userId > 0 && { ownerId: userId }),
+  });
+  return candidates
+    .sort(
+      (a, b) =>
+        Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
+        b.postedAt.localeCompare(a.postedAt)
+    )
+    .map((candidate) => {
+      const chars = Array.from(candidate.text);
+      return {
+        ...candidate,
+        text: chars.slice(0, CANDIDATE_PREVIEW_CHARS).join(''),
+        ...(chars.length > CANDIDATE_PREVIEW_CHARS && { fullLength: chars.length }),
+        authorIsReportedUser: reportedUserIds.includes(candidate.authorId),
+      };
+    });
 }
 
 /** Copies the chosen text, refusing any source outside the report's images. */
@@ -253,7 +284,7 @@ function itemText(c: CsamContextText) {
   return `${heading}\n"${capped(c.text)}"`;
 }
 
-/** The page incidents as NCMEC receives them, before XML escaping: one per page and capture time. */
+/** The page incidents as NCMEC reads them once parsed: one per page and capture time. */
 export function contextWebPageIncidents(contextText: CsamContextText[] | undefined) {
   if (!contextText?.length) return [];
   const base = getBaseUrl();
@@ -274,12 +305,14 @@ export function contextWebPageIncidents(contextText: CsamContextText[] | undefin
     );
     return {
       url,
-      additionalInfo: [
-        `Text posted with the reported images on this page, captured by Civitai on ${formatUtc(
-          capturedAt
-        )}.`,
-        ...ordered.map(itemText),
-      ].join('\n\n'),
+      additionalInfo: xmlSafe(
+        [
+          `Text posted with the reported images on this page, captured by Civitai on ${formatUtc(
+            capturedAt
+          )}.`,
+          ...ordered.map(itemText),
+        ].join('\n\n')
+      ),
     };
   });
 }

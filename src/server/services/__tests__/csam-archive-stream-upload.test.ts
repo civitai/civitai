@@ -915,7 +915,7 @@ describe("a report's attached text", () => {
         authorId: 31,
         authorIsReportedUser: false,
         postedAt: '2026-10-03T14:05:00.000Z',
-        text: 'a & b <c>',
+        text: 'a & b <c> nul\u0000',
         capturedAt: '2026-10-08T14:05:00.000Z',
         capturedById: 5,
       },
@@ -927,6 +927,16 @@ describe("a report's attached text", () => {
       webPageIncidents: contextWebPageIncidents(contextText),
       contextText,
     });
+    expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');
+  });
+
+  it('is left out of data.json for a report with none', async () => {
+    seedDb(1);
+    await archiveCsamDataForReport(report as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data).not.toHaveProperty('reportContext');
+    expect(data).toHaveProperty('images');
   });
 });
 

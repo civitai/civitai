@@ -47,12 +47,12 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   },
 }));
 
-// The positive control: with escaping off, the same text must stop the send.
+// The positive control: with escaping off (illegal characters still scrubbed), the send must stop.
 vi.mock('~/server/services/ncmec-xml', async (importOriginal) => {
   const original = await importOriginal<typeof NcmecXml>();
   return {
     ...original,
-    xmlText: (text: string) => (escape.off ? text : original.xmlText(text)),
+    xmlText: (text: string) => (escape.off ? original.xmlSafe(text) : original.xmlText(text)),
   };
 });
 
@@ -214,24 +214,26 @@ describe('attached text on an image report', () => {
       $: { thirdPartyHostedContent: string };
     }[];
 
-    const expected = contextWebPageIncidents(contextText).map(({ url, additionalInfo }) => ({
-      url,
-      // XML cannot carry the NUL, bell or lone surrogate: they arrive as U+FFFD.
-      additionalInfo: additionalInfo.replace(/[\u0000\u0007\uD800]/g, '�'),
-    }));
-    expect(incidents.map((i) => ({ url: i.url[0], additionalInfo: i.additionalInfo[0] }))).toEqual(
-      expected
-    );
+    const received = incidents.map((i) => ({ url: i.url[0], additionalInfo: i.additionalInfo[0] }));
+    expect(received).toEqual(contextWebPageIncidents(contextText));
+    expect(received[0].additionalInfo).toContain('R&D <b>bold</b> > less');
+    // XML cannot carry the NUL, bell or lone surrogate: they arrive as U+FFFD.
+    expect(received[0].additionalInfo).toContain('nul\uFFFD bell\uFFFD lone\uFFFD surrogate');
     expect(incidents.every((i) => i.$.thirdPartyHostedContent === 'false')).toBe(true);
-    expect(expected[0].additionalInfo).toContain('R&D <b>bold</b> > less');
   });
 
   it('is not sent with escaping off: the XML check stops the CyberTip before it opens', async () => {
     escape.off = true;
+    const escapeOnly = contextText.map((c) => ({ ...c, text: 'R&D <b>bold</b> > less' }));
 
-    await send({ contextText });
+    await send({ contextText: escapeOnly });
 
     expect(submitReport).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.some(([line]) => (line as { subType?: string }).subType === 'send-xml')
+    ).toBe(true);
   });
 
   it('adds no page incident to a report with no attached text', async () => {

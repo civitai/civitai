@@ -62,6 +62,7 @@ export const createCsamReportSchema = z.object({
 
 export type GetCsamContextCandidatesSchema = z.infer<typeof getCsamContextCandidatesSchema>;
 export const getCsamContextCandidatesSchema = z.object({
+  userId: z.number().int(),
   imageIds: z.number().int().positive().array().max(1000),
 });
 

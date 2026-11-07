@@ -401,6 +401,7 @@ describe('a sent report', () => {
   });
 });
 
+// The generic details freeze, applied to the attached text a send relied on.
 describe("a sent report's attached text", () => {
   const captured = {
     contextText: [
@@ -426,12 +427,14 @@ describe("a sent report's attached text", () => {
     expect(rows[0].details).toEqual(captured);
   });
 
-  it('keeps the report through an erasure of the commenter that tries to delete it', async () => {
+  it('accepts a further captured entry, as any gained key', async () => {
     const id = await insertReport(30, captured);
-    await expect(db.pg.query(`DELETE FROM "CsamReport" WHERE id = $1`, [id])).rejects.toThrow(
-      'less than a year ago'
+    const added = { source: 'comment', id: 12, authorId: SUBJECT, text: 'added' };
+    await db.pg.query(
+      `UPDATE "CsamReport" SET details = jsonb_set(details, '{contextText}', (details->'contextText') || $2::jsonb) WHERE id = $1`,
+      [id, JSON.stringify([added])]
     );
-    expect(await exists(id)).toBe(true);
+    expect(await audit(id)).toHaveLength(1);
   });
 });
 

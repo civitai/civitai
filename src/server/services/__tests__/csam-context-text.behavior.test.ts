@@ -76,7 +76,7 @@ CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "detail" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL, "publishedAt" TIMESTAMP(3)
 );
-CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER);
+CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "userId" INTEGER NOT NULL);
 CREATE TABLE "Thread" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER, "imageId" INTEGER, "rootThreadId" INTEGER
 );
@@ -106,18 +106,21 @@ beforeEach(async () => {
     `TRUNCATE "Post", "Image", "Thread", "CommentV2", "CommentV3";
      INSERT INTO "Post" VALUES (100, ${OWNER}, '<p>caption &amp; <b>more</b></p>', '2026-10-01', '2026-10-02 08:30');
      INSERT INTO "Post" VALUES (200, ${OTHER}, '<p>unrelated post</p>', '2026-10-01', NULL);
-     INSERT INTO "Image" VALUES (501, 100), (502, NULL), (601, 200);
-     INSERT INTO "Thread" VALUES (1, 100, NULL, NULL), (2, NULL, 502, NULL), (3, NULL, NULL, 1), (4, 200, NULL, NULL);
+     INSERT INTO "Post" VALUES (501, ${OTHER}, 'a post sharing an image id', '2026-10-01', NULL);
+     INSERT INTO "Image" VALUES (501, 100, ${OWNER}), (502, NULL, ${OWNER}), (601, 200, ${OTHER});
+     INSERT INTO "Thread" VALUES (1, 100, NULL, NULL), (2, NULL, 502, NULL), (3, NULL, NULL, 1), (4, 200, NULL, NULL), (5, 501, NULL, NULL);
      INSERT INTO "CommentV3" VALUES
        (11, 'post', 100, ${OTHER}, '<p>v3 on the post</p>', '2026-10-03', NULL, false),
        (12, 'image', 501, ${OWNER}, 'v3 on the image', '2026-10-04', '2026-10-05', false),
        (13, 'post', 200, ${OWNER}, 'v3 on an unrelated post', '2026-10-04', NULL, false),
-       (21, 'post', 100, ${OTHER}, 'mirrored copy of 21', '2026-10-03', NULL, false);
+       (21, 'post', 100, ${OTHER}, 'mirrored copy of 21', '2026-10-03', NULL, false),
+       (14, 'post', 501, ${OTHER}, 'v3 on post 501, not image 501', '2026-10-04', NULL, false);
      INSERT INTO "CommentV2" VALUES
        (21, 1, ${OTHER}, 'v2 original of 21', '2026-10-03', false),
        (22, 3, ${OWNER}, 'v2 reply in the post thread', '2026-10-06', false),
        (23, 2, ${OTHER}, 'v2 on the loose image', '2026-10-07', true),
-       (24, 4, ${OTHER}, 'v2 on an unrelated post', '2026-10-07', false);`
+       (24, 4, ${OTHER}, 'v2 on an unrelated post', '2026-10-07', false),
+       (25, 5, ${OTHER}, 'v2 on post 501, not image 501', '2026-10-07', false);`
   );
 });
 
@@ -126,7 +129,7 @@ const ids = (rows: { source: string; id: number }[]) =>
 
 describe('candidates', () => {
   it("lists the images' post descriptions and comments from both tables, each once", async () => {
-    const rows = await getCsamContextCandidates({ imageIds: [501, 502] });
+    const rows = await getCsamContextCandidates({ userId: OWNER, imageIds: [501, 502] });
 
     expect(ids(rows)).toEqual(
       [
@@ -143,6 +146,31 @@ describe('candidates', () => {
     expect(rows.find((r) => r.id === 22)).toMatchObject({ postId: 100 });
     expect(rows.find((r) => r.id === 23)).toMatchObject({ imageId: 502, hidden: true });
     expect(rows.find((r) => r.id === 12)).toMatchObject({ imageId: 501, deleted: true });
+    expect(rows.find((r) => r.id === 11)).toMatchObject({ authorIsReportedUser: false });
+    expect(rows.find((r) => r.id === 22)).toMatchObject({ authorIsReportedUser: true });
+  });
+
+  it("lists nothing from another account's images", async () => {
+    const rows = await getCsamContextCandidates({ userId: OWNER, imageIds: [601] });
+
+    expect(rows).toEqual([]);
+  });
+
+  it('previews a long text and says how long it is', async () => {
+    await db.pg.query(`UPDATE "Post" SET detail = $1 WHERE id = 100`, ['y'.repeat(5000)]);
+    const [post] = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+
+    expect(post).toMatchObject({ source: 'postDescription', fullLength: 5000 });
+    expect(post.text).toHaveLength(2000);
+  });
+
+  it('keeps a link target beside its text', async () => {
+    await db.pg.query(`UPDATE "Post" SET detail = $1 WHERE id = 100`, [
+      '<p>more <a href="https://example.invalid/x">here</a></p>',
+    ]);
+    const [post] = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+
+    expect(post.text).toBe('more here [https://example.invalid/x]');
   });
 });
 
@@ -182,8 +210,16 @@ describe('snapshot', () => {
     ['a V2 comment on a post outside the report', { postIds: [], commentIds: [24] }],
     ['a post outside the report', { postIds: [200], commentIds: [] }],
     ['an id that does not exist', { postIds: [], commentIds: [999] }],
+    ['a comment on a post whose id is a report image id', { postIds: [], commentIds: [14] }],
+    ['a V2 comment on a post whose id is a report image id', { postIds: [], commentIds: [25] }],
   ])('refuses %s', async (_, sources) => {
     await expect(snapshot(sources)).rejects.toThrow(/not on the images in this report/);
+  });
+
+  it('copies no comment when only a post description is ticked', async () => {
+    const rows = await snapshot({ postIds: [100], commentIds: [] });
+
+    expect(ids(rows)).toEqual(['postDescription:100']);
   });
 
   it("counts the report's secondary user as the reported account", async () => {
@@ -248,6 +284,37 @@ describe('what NCMEC is sent', () => {
     });
     expect(post.additionalInfo).not.toContain(String(OTHER));
     expect(image.url).toBe(`${getBaseUrl()}/images/502`);
+  });
+
+  it('splits a page captured at two times into one block per capture', () => {
+    const blocks = contextWebPageIncidents([
+      item({ source: 'comment', id: 11, postId: 100, text: 'first' }),
+      item({
+        source: 'comment',
+        id: 12,
+        postId: 100,
+        text: 'later',
+        capturedAt: at(9).toISOString(),
+      }),
+    ]);
+
+    expect(blocks.map((b) => b.url)).toEqual([
+      `${getBaseUrl()}/posts/100`,
+      `${getBaseUrl()}/posts/100`,
+    ]);
+    expect(blocks[0].additionalInfo).toContain('captured by Civitai on 10/08/2026');
+    expect(blocks[0].additionalInfo).not.toContain('later');
+    expect(blocks[1].additionalInfo).toContain('captured by Civitai on 10/09/2026');
+  });
+
+  it('sends an item of exactly the cap whole', () => {
+    const exact = 'x'.repeat(CSAM_CONTEXT_TEXT_MAX_CHARS);
+    const [incident] = contextWebPageIncidents([
+      item({ source: 'comment', id: 11, postId: 100, text: exact }),
+    ]);
+
+    expect(incident.additionalInfo).toContain(`"${exact}"`);
+    expect(incident.additionalInfo).not.toContain('[Truncated');
   });
 
   it('truncates an item over the cap with the agreed line, counting characters not code units', () => {
