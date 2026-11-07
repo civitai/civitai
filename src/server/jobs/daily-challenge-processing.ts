@@ -112,6 +112,7 @@ import {
 import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
+import { cosmeticEntityCaches } from '~/server/redis/caches';
 import { writeJudgeReview } from '~/server/services/challenge-judge-review.service';
 import {
   refundUserChallengeFunds,
@@ -2134,12 +2135,10 @@ export async function startScheduledChallenge(
       FROM "Model"
       WHERE id = ${challenge.modelId};
     `;
-    // The grant puts a frame on the model, so its frame-cache entry (which may cache "no frame",
-    // see FRAME_CACHE_NEGATIVE) must be refreshed like any equip. Best-effort: refresh() already
-    // falls back to a bust on failure, and a cache problem must not fail the challenge start.
-    await import('~/server/redis/caches')
-      .then(({ cosmeticEntityCaches }) => cosmeticEntityCaches.Model.refresh(challenge.modelId))
-      .catch((e) => log('Frame cache refresh failed:', e instanceof Error ? e.message : e));
+    // The grant puts a frame on the model; refresh the frame cache, which may hold a "no frame" marker (FRAME_CACHE_NEGATIVE).
+    await cosmeticEntityCaches.Model.refresh(challenge.modelId).catch((e) =>
+      log('Frame cache refresh failed:', e instanceof Error ? e.message : e)
+    );
     log('Cosmetic given');
   }
 
