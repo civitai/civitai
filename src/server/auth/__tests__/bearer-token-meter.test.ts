@@ -22,6 +22,7 @@ vi.mock('~/server/auth/api-key-principal-cache', async (importOriginal) => ({
 }));
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+const { getServerAuthSession } = await import('~/server/auth/get-server-auth-session');
 
 const KEY = 'presented-key-value-0123456789';
 const row = (id: number) => ({
@@ -75,5 +76,49 @@ describe('API-key meter', () => {
     dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(row(78));
     await getSessionFromBearerToken(KEY);
     expect(meterCalls()).toEqual([]);
+  });
+
+  describe('through getServerAuthSession', () => {
+    const request = (url: string, headers: Record<string, string>) =>
+      ({
+        url,
+        method: 'GET',
+        headers,
+        cookies: {},
+        socket: { remoteAddress: '10.0.0.5' },
+      } as never);
+    const res = { setHeader: vi.fn(), getHeader: vi.fn() } as never;
+
+    it('logs the edge-attested client IP, country and how the key was presented', async () => {
+      dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(row(77));
+      await getServerAuthSession({
+        req: request(`/api/download/models/1?token=${KEY}`, {
+          'cf-ray': 'abc123-IAD',
+          'cf-connecting-ip': '203.0.113.9',
+          'cf-ipcountry': 'NL',
+        }),
+        res,
+      });
+      expect(meterCalls()).toEqual([
+        expect.objectContaining({ apiKeyId: 77, ip: '203.0.113.9', country: 'NL', via: 'query' }),
+      ]);
+      expect(JSON.stringify(meterCalls())).not.toContain(KEY);
+    });
+
+    it('logs the transport peer, not a forwarded-for header the caller wrote', async () => {
+      dbMock.dbWrite.apiKey.findFirst.mockResolvedValue(row(77));
+      await getServerAuthSession({
+        req: request('/api/v1/me', {
+          authorization: `Bearer ${KEY}`,
+          'x-forwarded-for': '198.51.100.1',
+          // No cf-ray: a cf-connecting-ip the caller sent is not edge-attested.
+          'cf-connecting-ip': '198.51.100.2',
+        }),
+        res,
+      });
+      expect(meterCalls()).toEqual([
+        expect.objectContaining({ apiKeyId: 77, ip: '10.0.0.5', via: 'bearer' }),
+      ]);
+    });
   });
 });

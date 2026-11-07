@@ -25,8 +25,18 @@ import {
 export type BearerTokenOptions = {
   /** Accept a client-credentials token; only the catalog endpoints pass this. */
   allowClientCredentialsOnly?: boolean;
-  /** The request's method and path (no query string), for the API-key meter below. */
-  request?: { method?: string; path?: string };
+  /** Where the request came from, for the API-key meter below. Never the credential itself. */
+  request?: {
+    method?: string;
+    /** Logged without its query string. */
+    path?: string;
+    /** From `getTrustedClientIp`: the edge-attested address, else the transport peer. */
+    ip?: string | null;
+    /** Cloudflare's `cf-ipcountry`, when present. */
+    country?: string;
+    /** How the credential was presented. */
+    via?: 'bearer' | 'query';
+  };
 };
 
 /**
@@ -46,6 +56,9 @@ function meterApiKeyUse(
     source,
     method: request?.method,
     path: request?.path?.split('?')[0],
+    ip: request?.ip ?? null,
+    country: request?.country ?? null,
+    via: request?.via ?? null,
   }).catch(() => undefined);
 }
 

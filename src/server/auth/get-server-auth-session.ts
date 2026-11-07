@@ -12,6 +12,7 @@ import {
 import { env } from '~/env/server';
 import { isPreview } from '~/env/other';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { getSessionFromBearerToken } from './bearer-token';
 import { refuseModerationAccountSession } from './moderation-account';
 import { observeLegacyDecode } from './session-metrics';
@@ -80,8 +81,15 @@ export const getServerAuthSession = async ({
   if (!req.context) req.context = {};
   if (token) {
     if (!req.context?.session) {
+      const country = req.headers['cf-ipcountry'];
       const result = await getSessionFromBearerToken(token, {
-        request: { method: req.method, path: req.url },
+        request: {
+          method: req.method,
+          path: req.url,
+          ip: getTrustedClientIp(req),
+          country: typeof country === 'string' ? country : undefined,
+          via: req.headers.authorization ? 'bearer' : 'query',
+        },
       });
       req.context.session = result;
       if (result && 'tokenScope' in result) {
