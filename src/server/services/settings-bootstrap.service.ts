@@ -35,7 +35,7 @@ export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
 const BURST_WINDOW_MS = 60_000;
 // globalThis-pinned: the bundler emits this module several times into one server build, and the
 // bound is per process, not per copy.
-const BURSTS_KEY = Symbol.for('civitai.settingsBootstrapLogBursts');
+export const SETTINGS_LOG_BURSTS_KEY = Symbol.for('civitai.settingsBootstrapLogBursts');
 
 /**
  * Every SSR render runs the bootstrap, so one hung dependency breaches on every page view. At most
@@ -44,12 +44,13 @@ const BURSTS_KEY = Symbol.for('civitai.settingsBootstrapLogBursts');
  */
 function logBounded(key: string, data: MixedObject) {
   const g = globalThis as typeof globalThis & {
-    [BURSTS_KEY]?: Map<string, { sentAt: number; suppressed: number }>;
+    [SETTINGS_LOG_BURSTS_KEY]?: Map<string, { sentAt: number; suppressed: number }>;
   };
-  const bursts = (g[BURSTS_KEY] ??= new Map());
+  const bursts = (g[SETTINGS_LOG_BURSTS_KEY] ??= new Map());
   const now = Date.now();
   const burst = bursts.get(key);
-  if (burst && now - burst.sentAt < BURST_WINDOW_MS) {
+  // A clock stepped backwards counts as outside the window, so it cannot stretch the silence.
+  if (burst && now >= burst.sentAt && now - burst.sentAt < BURST_WINDOW_MS) {
     burst.suppressed++;
     return;
   }
@@ -315,7 +316,8 @@ export async function resolveSettingsBootstrapForRender(
   const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
     const code = (e as { code?: unknown } | null)?.code;
     const name = e instanceof Error ? e.name : 'unknown';
-    logBounded('failed', {
+    // Keyed by cause, so a steady failure does not hide a different one.
+    logBounded(`failed:${name}:${typeof code === 'string' ? code : ''}`, {
       type: 'warning',
       name: 'settings bootstrap failed',
       message: e instanceof Error ? e.message : String(e),

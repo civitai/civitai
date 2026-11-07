@@ -99,14 +99,17 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/user/settings';
-import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
+import {
+  resolveSettingsBootstrapForRender,
+  SETTINGS_LOG_BURSTS_KEY,
+} from '~/server/services/settings-bootstrap.service';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
 // The unit setup replaces this export with a spy (src/__tests__/setup.ts).
 import { logToAxiom } from '~/server/logging/client';
 
 // The bootstrap's log burst bound is per process; each test starts with none spent.
 beforeEach(() => {
-  delete (globalThis as Record<symbol, unknown>)[Symbol.for('civitai.settingsBootstrapLogBursts')];
+  delete (globalThis as Record<symbol, unknown>)[SETTINGS_LOG_BURSTS_KEY];
 });
 
 const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
@@ -415,6 +418,7 @@ describe('settings bootstrap during a server render', () => {
 
   it('logs one deadline per member per minute; the next one out says how many it held back', async () => {
     h.contentSettings.mockReturnValue(new Promise(() => undefined));
+    h.liveNow.mockReturnValue(new Promise(() => undefined));
     const render = async () => {
       const outcome = resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest);
       await vi.runAllTimersAsync();
@@ -424,21 +428,46 @@ describe('settings bootstrap during a server render', () => {
       vi
         .mocked(logToAxiom)
         .mock.calls.filter(([data]) => data.name === 'settings bootstrap deadline');
-    const event = {
+    const event = (member: string) => ({
       type: 'warning',
       name: 'settings bootstrap deadline',
-      message: 'getUserContentSettings exceeded 20ms',
-      member: 'getUserContentSettings',
+      message: `${member} exceeded 20ms`,
+      member,
       timeoutMs: 20,
-    };
+    });
+    const first = [[event('getUserContentSettings')], [event('getLiveNow')]];
 
-    for (let i = 0; i < 5; i++) await render();
-    // No datastream argument: the event goes to the default, provisioned one.
-    expect(deadlines()).toEqual([[event]]);
-
-    vi.setSystemTime(Date.now() + 60_000);
+    // Five breaches of each member inside one minute; each member gets its own one event, with no
+    // datastream argument, so it goes to the default, provisioned datastream.
+    for (let i = 0; i < 4; i++) await render();
+    vi.setSystemTime(Date.now() + 59_000);
     await render();
-    expect(deadlines()).toEqual([[event], [{ ...event, suppressed: 4 }]]);
+    expect(deadlines()).toEqual(first);
+
+    vi.setSystemTime(Date.now() + 1_000);
+    await render();
+    expect(deadlines()).toEqual([
+      ...first,
+      [{ ...event('getUserContentSettings'), suppressed: 4 }],
+      [{ ...event('getLiveNow'), suppressed: 4 }],
+    ]);
+  });
+
+  it('bounds failures per cause, so a steady one does not hide another', async () => {
+    const fail = (rejection: unknown) => {
+      h.session.mockRejectedValueOnce(rejection);
+      return resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest).catch(
+        () => undefined
+      );
+    };
+    await fail(Object.assign(new Error('db down'), { code: 'P1001' }));
+    await fail(Object.assign(new Error('db down'), { code: 'P1001' }));
+    await fail(new TypeError('bad deploy'));
+    const failures = vi
+      .mocked(logToAxiom)
+      .mock.calls.filter(([data]) => data.name === 'settings bootstrap failed')
+      .map(([data]) => data.message);
+    expect(failures).toEqual(['db down', 'bad deploy']);
   });
 
   it('keeps the per-read deadlines, so one parked read degrades only its own member', async () => {
