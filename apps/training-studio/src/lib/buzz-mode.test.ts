@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // buzzMode is module-scope state and `lock` is one-shot, so each test gets a fresh module.
 async function fresh() {
@@ -9,6 +9,10 @@ async function fresh() {
   const { render } = await import('svelte/server');
   return { buzzMode, BlueFirstNote, render };
 }
+
+// The first import compiles the svelte modules (~3 s cold, ~0.1 s warm); doing it here keeps that cost
+// out of whichever test runs first, where it sat against the 5 s limit and could spill into the next test.
+beforeAll(() => fresh(), 30_000);
 
 // The embed runs in a browser, where the stored choice decides the default; stub just enough of one.
 function stubBrowser(stored: Record<string, string>) {
