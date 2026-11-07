@@ -449,9 +449,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const ttlExpiry = new Date(Date.now() - ttl * 1000);
       const locks = new Set<RedisKeyTemplateCache>();
       let cacheHits = 0;
-      // Resolved once per fetch. `markersLive` is false only while a switchable cacheNotFound
-      // answers false: its markers are then ignored, so the fetch matches the uncached behaviour.
-      // Rollback insurance: turning the flag off takes effect at once, not when markers expire.
+      // markersLive: false only while a switchable cacheNotFound answers false; markers are then treated as misses.
       let negative: boolean;
       if (typeof cacheNotFound === 'function') {
         try {
@@ -470,9 +468,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cached = cache[id];
         if (cached) {
           if (cached.notFound) {
-            // Switch answering false: the marker is ignored and the id looked up again. It is never
-            // a notFound hit; it is counted as `cacheNotFound: false` counts it, a miss only if the
-            // lookup then finds a row.
+            // Counted as cacheNotFound: false counts it: a miss only if the lookup then finds a row, never a notFound hit.
             if (!markersLive) cacheMisses.add(id);
             else notFoundHits++;
             continue;
