@@ -8,7 +8,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
+import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { unpublishArticleById } from '~/server/services/article.service';
+import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
@@ -162,12 +164,18 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       // cannot interleave with its publish. A Published article is never flipped by a recompute.
       const published = await dbWrite.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${entityId})`;
+        // Share links end with the hold, under the lock a link being created takes.
+        await lockAccessTokens(tx, entityId);
         const article = await tx.article.findUnique({
           where: { id: entityId },
-          select: { status: true, metadata: true },
+          select: { status: true, scheduledAt: true, metadata: true },
         });
         if (!article || article.status === ArticleStatus.UnpublishedViolation) return null;
-        const metadata = (article.metadata as ArticleMetadata | null) || {};
+        await revokeActiveAccessTokens('Article', entityId, tx);
+        const metadata = violationMetadata(
+          article,
+          (article.metadata as ArticleMetadata | null) || {}
+        );
         if (article.status === ArticleStatus.Published) return { metadata };
         // unpublishArticleById refuses anything not Published. The violation status is what stops
         // ingestion, the scheduler or the owner from publishing it later; it is not in search now.

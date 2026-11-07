@@ -145,12 +145,6 @@ function ChromeFeedbackButtonBody({
 }
 
 /**
- * Desktop: how far the dialog sits above the bottom of the viewport. It is anchored there rather
- * than centred so it does not cover the middle of the app the feedback is about. Mantine applies
- * the same offset at the top, which only caps the dialog's height.
- */
-export const APP_FEEDBACK_DESKTOP_BOTTOM_OFFSET = '10dvh';
-/**
  * Mobile: the bottom sheet's scrim. Lighter than Mantine's default 0.6 so the app stays readable
  * behind the sheet while the user describes it; the sheet itself stays opaque.
  */
@@ -167,9 +161,9 @@ export function AppFeedbackModal({
 }) {
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
-  // Both renderings sit at the bottom of the viewport, so both are under an on-screen keyboard:
-  // the wide one too, on a tablet or a phone held sideways. 0 with no keyboard, and also on a
-  // pinch-zoomed page or for a gap under 100px, which the hook does not count as a keyboard.
+  // An on-screen keyboard covers the sheet, and the wide dialog too on a tablet or a phone held
+  // sideways. 0 with no keyboard, and also on a pinch-zoomed page or for a gap under 100px, which
+  // the hook does not count as a keyboard.
   const keyboardInset = useVisualViewportBottomInset();
   // Set in the same tick as the send, which `create.isPending` is not: it only turns true on the
   // next render, so two keydowns or clicks delivered before that render would both get through.
@@ -272,17 +266,14 @@ export function AppFeedbackModal({
       onClose={close}
       title={title}
       size="md"
-      yOffset={APP_FEEDBACK_DESKTOP_BOTTOM_OFFSET}
-      // Bottom-anchored: Mantine's inner box is a flex row whose cross-axis alignment is the
-      // dialog's vertical position (`centered` sets it to `center`, the default is the top).
-      // With a keyboard up, that box ends at the keyboard's top edge instead of the viewport's,
-      // and the 10dvh offsets shrink to a small gap so the dialog keeps what height is left;
-      // its `maxHeight` is then the box's, and the dialog scrolls inside it.
+      centered
+      // With a keyboard up, Mantine's inner box ends at the keyboard's top edge instead of the
+      // viewport's, so the dialog centres in what is left; the offsets shrink to a small gap so it
+      // keeps the height, and its `maxHeight` is then the box's: it scrolls inside it.
       // Written as a literal `styles={{ inner: { … } }}` on purpose: the safe-area sweep in
       // `viewport-fit-cover.test.ts` reads that shape, and this padding must stay in its sight.
       styles={{
         inner: {
-          alignItems: 'flex-end',
           ...(keyboardInset > 0 && {
             bottom: keyboardInset,
             paddingTop: `max(${APP_FEEDBACK_KEYBOARD_GAP_PX}px, var(--safe-area-inset-top, 0px))`,

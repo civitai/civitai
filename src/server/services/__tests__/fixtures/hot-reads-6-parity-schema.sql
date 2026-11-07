@@ -166,7 +166,9 @@ CREATE TABLE "hot_reads_6_parity"."ModelFile" (
   "modelVersionId" INTEGER                                     NOT NULL,
   "metadata"       JSONB,
   "visibility"     "hot_reads_6_parity"."ModelFileVisibility" NOT NULL DEFAULT 'Public',
-  "replacedAt"     TIMESTAMP(3)
+  "replacedAt"     TIMESTAMP(3),
+  "pickleScanResult" TEXT                                      NOT NULL DEFAULT 'Pending',
+  "virusScanResult"  TEXT                                      NOT NULL DEFAULT 'Pending'
 );
 
 CREATE TABLE "hot_reads_6_parity"."ModelFileHash" (

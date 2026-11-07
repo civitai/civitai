@@ -1,16 +1,30 @@
+import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { createContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { appRouter } from '~/server/routers';
 import { createCallerFactory } from '~/server/trpc';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
+import {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+  isComSafeLevel,
+} from '~/shared/utils/model-sfw-face';
+import { ModelModifier } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
 const createCaller = createCallerFactory(appRouter);
+
+const cardMessages: Record<string, string> = {
+  [COM_FACE_REFUSED_MESSAGE]:
+    "Its civitai.red title, description or trigger words can't be shown on civitai.com. Edit them in the model editor.",
+  [COM_FACE_CHECK_UNAVAILABLE_MESSAGE]:
+    "Couldn't check its civitai.red listing just now. Try again later.",
+};
 
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('draft'), modelId: z.number().int().positive() }),
@@ -49,24 +63,29 @@ export default AuthedEndpoint(
         poi: true,
         minor: true,
         sfwOnly: true,
-        lockedProperties: true,
+        mode: true,
         deletedAt: true,
         sfwName: true,
         sfwDescription: true,
         sfwCoverImageId: true,
+        meta: true,
       },
     });
     if (!model || model.deletedAt) return res.status(404).json({ error: 'Model not found' });
     if (model.userId !== user.id)
       return res.status(403).json({ error: 'You do not own this model' });
-    if (model.nsfw && model.lockedProperties.includes('nsfw'))
-      return res.status(409).json({
-        error:
-          'A moderator has locked this model as mature, so it cannot get a civitai.com version. You can dispute the lock from the model page.',
-        code: 'locked',
-      });
+    if (model.minor || model.poi || model.sfwOnly || model.mode === ModelModifier.TakenDown)
+      return res
+        .status(409)
+        .json({ error: "This model can't get a civitai.com version.", code: 'skipped' });
     // Bulk only fills a missing face: an existing one may be hand-written, and the editor owns it.
-    if (model.sfwName != null || model.sfwDescription != null || model.sfwCoverImageId != null)
+    // A face the listing re-check removed is the exception: bulk may draft it again.
+    const faceRemoved =
+      model.sfwCoverImageId == null && !!(model.meta as ModelMeta | null)?.comFaceRemoved;
+    if (
+      !faceRemoved &&
+      (model.sfwName != null || model.sfwDescription != null || model.sfwCoverImageId != null)
+    )
       return res.status(409).json({
         error: 'Already has a civitai.com version. Edit it in the model editor.',
         code: 'skipped',
@@ -129,7 +148,12 @@ export default AuthedEndpoint(
         .status(200)
         .json({ listedOnCom: ((after?.nsfwLevel ?? 0) & sfwBrowsingLevelsFlag) !== 0 });
     } catch (error) {
-      return handleEndpointError(res, error);
+      // Creator Studio shows the message on the model's card, away from the editor's tabs.
+      const message = error instanceof Error ? cardMessages[error.message] : undefined;
+      return handleEndpointError(
+        res,
+        message ? new TRPCError({ code: 'BAD_REQUEST', message }) : error
+      );
     }
   },
   ['POST']

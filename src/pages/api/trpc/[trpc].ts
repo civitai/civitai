@@ -22,6 +22,7 @@ import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { buildTrpcCacheHeaders } from '~/server/trpc/edge-cache-headers';
 import { isWebClient } from '~/server/utils/client-version-saturation';
 import {
+  callsRemovedProcedure,
   clientNeedsUpdate,
   peekFreshClientConfig,
   peekSiteAlertsVersion,
@@ -111,11 +112,16 @@ const trpcHandler = createNextApiHandler({
     }
 
     // Set here rather than in a middleware: on a streamed batch the head is written before any
-    // procedure finishes. Both read the CLIENT hash value needsUpdate already fetched; no Redis call.
+    // procedure finishes. Nothing here may await Redis; the CLIENT hash is read from this pod's cache.
     if (isWebClient(ctx?.req?.headers)) {
       // Never on a response the edge keeps: it would reach current bundles too.
       const client = peekFreshClientConfig();
-      if (!edgeCached && client && clientNeedsUpdate(ctx?.req?.headers, client))
+      const reqHeaders = ctx?.req?.headers;
+      if (
+        !edgeCached &&
+        ((client && clientNeedsUpdate(reqHeaders, client)) ||
+          callsRemovedProcedure(reqHeaders, info?.calls))
+      )
         headers['x-update-required'] = 'true';
       const alertsVersion = peekSiteAlertsVersion();
       if (alertsVersion) headers[SITE_ALERTS_VERSION_HEADER] = String(alertsVersion);
@@ -223,13 +229,14 @@ const trpcHandler = createNextApiHandler({
           if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
             axInput = LOGGED_INPUT_OVER_LIMIT;
           } else {
-            // `blockToken` (a bearer credential) is replaced, key kept — see redactBlockTokens.
+            // Bearer fields (`blockToken`, `shareToken`) are replaced, key kept — see redactBlockTokens.
             // Stringify first and redact only when the key appears, so only an input that carries
             // one is serialized twice.
             const raw = JSON.stringify(input);
-            axInput = raw?.includes('"blockToken"')
-              ? JSON.stringify(redactBlockTokens(input))
-              : raw;
+            axInput =
+              raw?.includes('"blockToken"') || raw?.includes('"shareToken"')
+                ? JSON.stringify(redactBlockTokens(input))
+                : raw;
           }
         } catch {
           axInput = undefined;

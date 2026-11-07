@@ -484,6 +484,36 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
+  it('🔴 refuses a pushed permission hook (400 + storageHookErrors), parks nothing and pings no one', async () => {
+    // The manifest validator is stubbed valid here, so the refusal is the push-path hook pin's:
+    // the hooks storage feature ships off, so the declaration is not available yet.
+    state.manifest = {
+      ...validManifest(NEW_SHA),
+      storage: {
+        collections: {
+          cards: {
+            visibility: 'private',
+            hook: { file: 'hooks/cards.js', sha256: 'a'.repeat(64) },
+          },
+        },
+      },
+    };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({
+      error: 'Storage hook refused',
+      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_available' }],
+    });
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failure', context: 'civitai/manifest-validation' })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('ignores non-main branch pushes (200 skipped)', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA, ref: 'refs/heads/dev' })), res);

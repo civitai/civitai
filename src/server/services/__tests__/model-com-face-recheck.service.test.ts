@@ -122,7 +122,12 @@ describe('the .com face listing re-check', () => {
     expect(coverCleared()).toBe(true);
     const sql = removalWrite()?.sql;
     expect(sql).not.toMatch(/"sfwName"\s*=|"sfwDescription"\s*=/);
-    expect(marker()).toMatchObject({ sfwCoverImageId: COVER_ID, reason: 'detected' });
+    // The check's reason is kept for moderators (`intent` stubs it as 'stub').
+    expect(marker()).toMatchObject({
+      sfwCoverImageId: COVER_ID,
+      reason: 'detected',
+      detail: 'stub',
+    });
     expect(db.modActivity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ activity: 'removeComFace', entityId: MODEL_ID }),
     });

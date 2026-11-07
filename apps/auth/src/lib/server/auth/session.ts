@@ -9,6 +9,7 @@ import {
   isSecureCookie,
   maybeCreateSessionSigner,
   readSessionToken,
+  IMPERSONATION_MAX_AGE_MS,
   SESSION_LINEAGE_MAX_AGE_MS,
   SESSION_COOKIE_BASE,
   sessionCookieMode,
@@ -134,7 +135,10 @@ export async function mintSession(
     clearImpersonation: opts.clearImpersonation || opts.impersonatedBy != null,
     now,
   });
-  if (opts.impersonatedBy) lineage.impersonatedBy = opts.impersonatedBy;
+  if (opts.impersonatedBy) {
+    lineage.impersonatedBy = opts.impersonatedBy;
+    lineage.impExp = now + IMPERSONATION_MAX_AGE_MS;
+  }
   const token = await getSigner().mintSessionToken(
     { signedAt: now, sub: String(user.id), ...lineage },
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }

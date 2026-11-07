@@ -68,6 +68,7 @@ const {
   blockImage,
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
+  AppealRestoreRefusedError,
   FlagOnlyRemovedError,
   resolveImageAppeal,
 } = await import('../image-moderation.service');
@@ -231,6 +232,40 @@ describe('blockImage', () => {
     await blockImage({ imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+  });
+});
+
+describe('blockImage and the block reason', () => {
+  const blockedFor = async (id: number) =>
+    (
+      await db.query<{ blockedFor: string | null }>(
+        `SELECT "blockedFor" FROM "Image" WHERE "id" = $1`,
+        [id]
+      )
+    ).rows[0].blockedFor;
+
+  it('keeps the original reason when blocking again after the review flag came off', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES (55, 10, NULL, 'CSAM', 'Blocked', 32)`
+    );
+
+    await blockImage({ imageId: 55, userId: 2 });
+
+    expect(await blockedFor(55)).toBe('CSAM');
+  });
+
+  it('records any other block as moderated', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES (56, 10, NULL, 'AiNotVerified', 'Blocked', 32)`
+    );
+
+    await blockImage({ imageId: FLAGGED, userId: 2 });
+    await blockImage({ imageId: 56, userId: 2 });
+
+    expect(await blockedFor(FLAGGED)).toBe('moderated');
+    expect(await blockedFor(56)).toBe('moderated');
   });
 });
 
@@ -546,5 +581,54 @@ describe('resolveImageAppeal', () => {
     });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+  });
+});
+
+describe('approving the appeal of an image blocked for CSAM', () => {
+  const CSAM_BLOCKED = 57;
+  const OTHER_BLOCKED = 58;
+  const approve = (imageId: number) =>
+    resolveImageAppeal({ imageId, status: 'Approved', resolvedReason: 'mistake', userId: 2 });
+  const appealStatus = async (imageId: number) =>
+    (
+      await db.query<{ status: string }>(`SELECT status FROM "Appeal" WHERE "entityId" = $1`, [
+        imageId,
+      ])
+    ).rows[0].status;
+
+  beforeEach(async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES ($1, 10, 'appeal', 'CSAM', 'Blocked', 32), ($2, 10, 'appeal', 'moderated', 'Blocked', 32)`,
+      [CSAM_BLOCKED, OTHER_BLOCKED]
+    );
+    await seedPendingAppeal(CSAM_BLOCKED);
+    await seedPendingAppeal(OTHER_BLOCKED);
+  });
+
+  it('is refused, and leaves the image removed and the appeal pending', async () => {
+    await expect(approve(CSAM_BLOCKED)).rejects.toBeInstanceOf(AppealRestoreRefusedError);
+
+    expect(await imageRow(CSAM_BLOCKED)).toEqual({ needsReview: 'appeal', ingestion: 'Blocked' });
+    expect(await appealStatus(CSAM_BLOCKED)).toBe('Pending');
+  });
+
+  it('still restores an image blocked for another reason', async () => {
+    await approve(OTHER_BLOCKED);
+
+    expect(await imageRow(OTHER_BLOCKED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    expect(await appealStatus(OTHER_BLOCKED)).toBe('Approved');
+  });
+
+  it('can still be rejected', async () => {
+    await resolveImageAppeal({
+      imageId: CSAM_BLOCKED,
+      status: 'Rejected',
+      resolvedReason: 'violation-confirmed',
+      userId: 2,
+    });
+
+    expect(await appealStatus(CSAM_BLOCKED)).toBe('Rejected');
+    expect((await imageRow(CSAM_BLOCKED)).ingestion).toBe('Blocked');
   });
 });

@@ -40,6 +40,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 import {
   type ImageTagComposite,
   type ModelTagComposite,
@@ -276,33 +277,37 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
   ttl: CacheTTL.day,
 });
 
+/** A user whose profile picture may not be served gets no entry, the same as a user with none. */
+export async function lookupProfilePictures(ids: (number | undefined)[], fromWrite?: boolean) {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const profilePictures = await db.$queryRaw<ProfileImage[]>`
+    SELECT
+      i.id,
+      i.name,
+      i.url,
+      i."nsfwLevel",
+      i.hash,
+      i."userId",
+      i.ingestion,
+      i.type,
+      i.width,
+      i.height,
+      i.metadata
+    FROM "User" u
+    JOIN "Image" i ON i.id = u."profilePictureId"
+    WHERE u.id IN (${Prisma.join(goodIds)})
+      AND ${servableProfilePictureSql}
+  `;
+  return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
+}
+
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = (ids as (number | undefined)[]).filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const profilePictures = await db.$queryRaw<ProfileImage[]>`
-      SELECT
-        i.id,
-        i.name,
-        i.url,
-        i."nsfwLevel",
-        i.hash,
-        i."userId",
-        i.ingestion,
-        i.type,
-        i.width,
-        i.height,
-        i.metadata
-      FROM "User" u
-      JOIN "Image" i ON i.id = u."profilePictureId"
-      WHERE u.id IN (${Prisma.join(goodIds)})
-    `;
-    return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupProfilePictures(ids as (number | undefined)[], fromWrite),
   ttl: CacheTTL.day,
 });
 
@@ -318,7 +323,9 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      cacheNotFound: false,
+      // Caches "no frame" for an hour while FRAME_CACHE_NEGATIVE is on. Every writer that puts a frame on content must call refresh(), which overwrites or removes the marker; one that does not stays hidden up to an hour.
+      cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
+      notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
       // Lookup reads the primary, so the bust window guards no replica read; keep it minimal.
       debounceTime: 1,

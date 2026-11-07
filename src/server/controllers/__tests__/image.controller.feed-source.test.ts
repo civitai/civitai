@@ -177,6 +177,19 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(result.source).toBe('meili');
   });
 
+  // ids alone must reach the DB for a non-owner; the index feed ignores ids and returns the creator's newest.
+  it('serves an ids query from the database for a viewer who is not the owner', async () => {
+    const result = await getInfiniteImagesHandler({
+      input: { ...(pickerInput as object), userId: 999, ids: [1, 2] } as never,
+      ctx,
+    });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(getAllImagesMock.mock.calls[0][0].ids).toEqual([1, 2]);
+    expect(result.source).toBe('db');
+  });
+
   it('leaves a broad feed on the index when only publishedOnly is set', async () => {
     // The control for the case above: it is the PAIR that routes. Without a
     // userId this is a site-wide feed, and routing it to the DB would be a

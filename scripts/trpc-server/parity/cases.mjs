@@ -738,3 +738,160 @@ export function buildBeaconCases(ctx) {
     },
   ];
 }
+
+// The `api` profile (`--cases api`): `/api/v1/**` served by the standalone server
+// booted with `STANDALONE_SERVER_PROFILE=api`.
+//
+// `/api/v1/` sits behind the proxy under Next, so these cases are also where the standalone
+// server's own application of the proxy's API policy is compared with the real proxy: the 451 for
+// a blocked region, the default Cache-Control and X-Handled-By headers, and the verified-crawler
+// request header, and its non-GET request-body cap. `/api/auth/` is not in the profile.
+//
+// The job's database is empty, so DB-backed routes answer "not found" or an empty list, on both
+// sides; that is still compared byte for byte.
+
+const PROXY_STREAMED_451 =
+  "Next's proxy answers the blocked region with a middleware response, which router-server streams (Transfer-Encoding: chunked). The standalone server answers it from applyApiRequestPolicy, the function the tRPC route also uses, which ends the response with the whole body (Content-Length). Status, every other header and the body are the same; only the framing differs.";
+
+const API_AUTH_NOT_SERVED =
+  'The api profile does not serve /api/auth/ (it stays on Next): routing must never send it there, and this pins that the standalone server answers it as an unserved path.';
+
+const API_UNKNOWN_PATH =
+  'Next answers a path no route matches by rendering its 404 page (and, under /api/v1/, after running the proxy). The api profile renders no pages; it answers the plain 404, as for the tRPC paths above. Routing sends it only paths of served shapes.';
+
+/**
+ * @param {{ sessionCookie: string }} ctx
+ */
+export function buildApiCases(ctx) {
+  const signedIn = { ...edge, cookie: ctx.sessionCookie };
+  const apiClient = { 'user-agent': 'python-requests/2.32.3', 'cf-connecting-ip': NORMAL_IP };
+  return [
+    // --- /api/v1/: the proxy's policy -----------------------------------------------------------
+    { id: 'v1-static-json', path: '/api/v1/enums', headers: apiClient },
+    { id: 'v1-head', method: 'HEAD', path: '/api/v1/enums', headers: apiClient },
+    {
+      id: 'v1-blocked-region',
+      path: '/api/v1/enums',
+      headers: { ...apiClient, 'cf-ipcountry': 'GB' },
+      divergence: {
+        reason: PROXY_STREAMED_451,
+        candidate: {
+          status: 451,
+          statusMessage: 'Unavailable For Legal Reasons',
+          headers: [
+            'content-length: 117',
+            'content-type: application/json',
+            'x-frame-options: DENY',
+          ],
+          body: JSON.stringify({
+            error:
+              'Access to this service is not available in your region due to legal restrictions.',
+            code: 'REGION_BLOCKED',
+          }),
+        },
+      },
+    },
+    {
+      id: 'v1-spoofed-verified-bot-header',
+      path: '/api/v1/enums',
+      headers: { ...apiClient, 'x-civitai-verified-bot': 'googlebot' },
+    },
+    {
+      id: 'v1-crawler-ua-from-normal-ip',
+      path: '/api/v1/enums',
+      headers: { ...apiClient, 'user-agent': GOOGLEBOT_UA },
+    },
+    {
+      id: 'v1-no-client-ip-headers',
+      path: '/api/v1/enums',
+      headers: { 'user-agent': GOOGLEBOT_UA },
+    },
+    {
+      id: 'v1-client-sent-internal-headers',
+      path: '/api/v1/enums',
+      headers: {
+        ...apiClient,
+        'x-middleware-override-headers': 'x-civitai-verified-bot',
+        'x-middleware-request-x-civitai-verified-bot': 'googlebot',
+        'x-matched-path': '/api/v1/enums',
+        'x-nextjs-data': '1',
+      },
+    },
+    // --- /api/v1/: routing across dynamic pages ---------------------------------------------------
+    { id: 'v1-dynamic-id', path: '/api/v1/models/999999991', headers: apiClient },
+    { id: 'v1-static-beats-dynamic', path: '/api/v1/models/com-face', headers: apiClient },
+    { id: 'v1-invalid-id', path: '/api/v1/models/not-a-number', headers: apiClient },
+    {
+      id: 'v1-nested-dynamic',
+      path: '/api/v1/model-versions/by-hash/0123456789ABCDEF',
+      headers: apiClient,
+    },
+    { id: 'v1-mini-dynamic', path: '/api/v1/model-versions/mini/999999991', headers: apiClient },
+    { id: 'v1-optional-catch-all-base', path: '/api/v1/content', headers: apiClient },
+    { id: 'v1-optional-catch-all-deep', path: '/api/v1/content/a/b', headers: apiClient },
+    {
+      id: 'v1-internal-query-param-override',
+      path: '/api/v1/models/999999991?nxtPid=1',
+      headers: apiClient,
+    },
+    { id: 'v1-unauthenticated', path: '/api/v1/me', headers: apiClient },
+    { id: 'v1-signed-in-cookie', path: '/api/v1/me', headers: signedIn },
+    {
+      id: 'v1-post-json',
+      method: 'POST',
+      path: '/api/v1/model-versions/by-hash',
+      headers: { ...apiClient, 'content-type': 'application/json' },
+      body: JSON.stringify(['0123456789ABCDEF']),
+    },
+    { id: 'v1-tags-list', path: '/api/v1/tags?limit=1', headers: apiClient },
+    {
+      id: 'v1-unknown-path',
+      path: '/api/v1/does-not-exist',
+      headers: apiClient,
+      divergence: { reason: API_UNKNOWN_PATH, candidate: NOT_FOUND },
+    },
+    {
+      id: 'v1-trailing-slash',
+      path: '/api/v1/enums/',
+      headers: apiClient,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
+    },
+    {
+      id: 'v1-bad-percent-escape',
+      path: '/api/v1/models/%E0%A4%A',
+      headers: apiClient,
+      divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
+    },
+
+    // --- /api/v1/: the proxy's request-body cap -----------------------------------------------
+    // Next's proxy reads a non-GET body through a clone capped at proxyClientMaxBodySize (10 MiB
+    // by default) and the route then sees only what was copied. This route's own bodyParser limit
+    // is also 10 MiB, so the two servers differ visibly if the cap is not reproduced: Next's route
+    // gets a truncated (invalid) JSON body and answers 400, an uncapped server sees the whole body
+    // and answers 413.
+    {
+      id: 'v1-body-over-proxy-cap',
+      method: 'POST',
+      path: '/api/v1/partners/supported-models',
+      headers: { ...apiClient, 'content-type': 'application/json' },
+      body: () => Buffer.from(`[${' '.repeat(10 * 1024 * 1024 + 1024)}]`),
+    },
+
+    // --- /api/auth/ is NOT in this profile -----------------------------------------------------
+    // Low CPU and the widest blast radius (cookies, redirects, POST flows), so it stays on Next.
+    {
+      id: 'auth-not-served',
+      path: '/api/auth/session',
+      headers: edge,
+      divergence: { reason: API_AUTH_NOT_SERVED, candidate: NOT_FOUND },
+    },
+
+    // --- the tRPC list is still served, unchanged, under this profile -----------------------------
+    {
+      id: 'trpc-still-served',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: edge,
+    },
+    { id: 'probe-live-still-served', path: '/api/live?token={WEBHOOK_TOKEN}', headers: {} },
+  ];
+}

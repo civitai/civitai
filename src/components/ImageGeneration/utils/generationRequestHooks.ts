@@ -23,6 +23,7 @@ type ClientStepMetadata = Omit<GeneratedImageStepMetadata, 'images'> & {
   output?: GeneratedImageStepMetadata['images'];
 };
 import type {
+  GeneratedImagesQuerySchema,
   PatchWorkflowParams,
   PatchWorkflowStepParams,
   TagsPatchSchema,
@@ -68,8 +69,13 @@ export function useInvalidateWhatIf() {
   };
 }
 
+/** The generator Queue's own input: Queue, Feed, their lightbox and the queue counter share it. */
+export const GENERATOR_QUEUE_INPUT = {
+  excludeAppWorkflows: true,
+} satisfies GeneratedImagesQuerySchema;
+
 export function useGetTextToImageRequests(
-  input?: z.input<typeof workflowQuerySchema>,
+  input?: GeneratedImagesQuerySchema,
   options?: { enabled?: boolean; includeTags?: boolean; ignoreFilters?: boolean }
 ) {
   registerSignalGroup('generation');
@@ -157,7 +163,7 @@ export function useGetTextToImageRequests(
   return { data: flatData, markerTags, ...rest };
 }
 
-export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
+export function useGetTextToImageRequestsImages(input?: GeneratedImagesQuerySchema) {
   const { data, markerTags, ...rest } = useGetTextToImageRequests(input);
 
   return { requests: data, markerTags, ...rest };

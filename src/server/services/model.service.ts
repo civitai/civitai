@@ -63,7 +63,6 @@ import {
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
-import { createProfanityFilter } from '~/libs/profanity-simple';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
@@ -190,6 +189,7 @@ import {
   reassertModelPoiRestrictions,
 } from '~/server/services/text-scan/actions/model-poi-minor';
 import type { holdModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
+import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
@@ -237,6 +237,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
   buildPermissionSnapshots,
@@ -248,7 +249,7 @@ import {
   pickServerOwnedMeta,
   RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
-  stripMinorHashMeta,
+  filterModelMetaForClient,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
   systemNsfwLockMarker,
@@ -315,8 +316,14 @@ import {
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
-import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  queueComFaceRecheck,
+  queueComFaceRestore,
+} from '~/server/services/model-com-face-recheck.service';
+import {
+  isGenerationDisabled,
+  toPublicApiVersionFlags,
+} from '~/shared/constants/model-version-flags.constants';
 import {
   isModelNameTooLong,
   MODEL_NAME_TOO_LONG_MESSAGE,
@@ -1420,11 +1427,16 @@ export const getModelsRaw = async ({
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
+          // Every public model read (browse feed, associated resources, /api/v1/models) starts here.
+          const publicVersions = data.versions.map((version) => ({
+            ...version,
+            flags: toPublicApiVersionFlags(version.flags),
+          }));
           // A .com face has no per-version description; the .red one is not shown in its place.
           let modelVersions =
             showSfwFace && rawModel.sfwName != null
-              ? data.versions.map((version) => ({ ...version, description: '' }))
-              : data.versions;
+              ? publicVersions.map((version) => ({ ...version, description: '' }))
+              : publicVersions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).
@@ -2081,12 +2093,11 @@ export const getModelVersionsMicro = async ({
   });
 };
 
-// Mutations hand their updated row straight back to the caller, so the moderation-only
-// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
-// these rows feed many callers, and the keys are only ever read back through the
-// minor-hash service's own raw SQL.
-function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
-  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+// Mutation rows go straight back to callers and feed many of them, so strip moderator-only meta
+// here rather than narrowing the Prisma select.
+function withoutModeratorOnlyMeta<T extends { meta: unknown }>(model: T): T {
+  const meta = model.meta as ModelMeta | null;
+  return { ...model, meta: meta && filterModelMetaForClient(meta, false) } as T;
 }
 
 export const updateModelById = async ({
@@ -2144,7 +2155,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return withoutMinorHashMeta(model);
+  return withoutModeratorOnlyMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -3767,6 +3778,8 @@ function rulesOnNsfw(
  * A moderator's untick of a text-scan POI flag drops the nsfw/sfwOnly locks that flag added, as the
  * appeal grant does: the form sends back the locks it loaded, which would otherwise outlive the flag.
  * A lock on a value the save leaves restrictive (SFW-only, or nsfw on) is the moderator's and stays.
+ * Once the scan's flag is ruled on (an appeal grant, or a moderator's lift), a later POI flag is not
+ * the scan's, so its `prev` snapshot no longer says which locks the flag added.
  */
 function withoutPoiFlagLocks(
   stored: ContentFlags & { lockedProperties: string[]; meta: ModelMeta | null },
@@ -3775,6 +3788,7 @@ function withoutPoiFlagLocks(
 ) {
   const prevLocks = stored.meta?.textScanFlags?.poi?.prev?.lockedProperties;
   if (!stored.poi || after.poi || after.minor || !prevLocks) return locks;
+  if (!hasOpenTextScanFlag(stored.meta, 'poi')) return locks;
   const reasserted = (prop: string) => (prop === 'sfwOnly' ? after.sfwOnly : after.nsfw);
   return locks.filter(
     (prop) =>
@@ -4003,20 +4017,15 @@ export const upsertModel = async (
   // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
   let nsfwBeforeProfanity: boolean | undefined;
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
-    // Check model name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
-    const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
-    const evaluation = profanityFilter.evaluateContent(textToCheck);
+    const evaluation = evaluateAutoNsfw({
+      name: data.name,
+      description: data.description,
+      alreadyNsfw: !!data.nsfw,
+      lockedProperties: storedLockedProperties,
+    });
 
-    if (evaluation.shouldMarkNSFW && !data.nsfw) {
-      meta = {
-        ...(meta ?? {}),
-        profanityMatches: evaluation.matchedWords,
-        profanityEvaluation: {
-          reason: evaluation.reason,
-          metrics: evaluation.metrics,
-        },
-      };
+    if (evaluation) {
+      meta = { ...(meta ?? {}), ...evaluation.metaPatch };
       profanityDetected = true;
       // A stored nsfw lock is a moderator's call (minor-flagging sets it false), and a minor, POI,
       // SFW-only or Private model stays SFW: keep the detection for review, but never mark nsfw over them.
@@ -4024,7 +4033,13 @@ export const upsertModel = async (
         nsfwBeforeProfanity = data.nsfw;
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
-        meta = { ...meta, systemNsfwLock: systemNsfwLockMarker('profanity-filter') };
+        meta = {
+          ...meta,
+          systemNsfwLock: {
+            ...systemNsfwLockMarker('profanity-filter'),
+            ...evaluation.attribution,
+          },
+        };
         profanityAutoNsfw = true;
       }
     }
@@ -4159,7 +4174,7 @@ export const upsertModel = async (
       isModerator,
     }).catch(() => null);
 
-    return { ...result, meta: stripMinorHashMeta(modelMeta) };
+    return { ...result, meta: modelMeta && filterModelMetaForClient(modelMeta, false) };
   } else {
     if (!beforeUpdate) return null;
 
@@ -4262,8 +4277,9 @@ export const upsertModel = async (
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
           );
-        // A .com cover this save changed (through the gate, for an owner) ends the re-check's removal.
-        if (coverChanged && data.sfwCoverImageId) {
+        // A .com cover this save changed (through the gate, for an owner) ends the re-check's
+        // removal, and so does turning the face off: there is no face left to have removed.
+        if ((coverChanged && data.sfwCoverImageId) || data.sfwName === null) {
           const { comFaceRemoved: _removed, ...rest } = mergedMeta;
           mergedMeta = rest;
         }
@@ -4488,6 +4504,7 @@ export const upsertModel = async (
     const keepsFace = data.sfwName !== undefined ? !!data.sfwName : !!beforeUpdate.sfwName;
     if (!isModerator && keepsFace && (listingChanged || sfwFaceChanged || coverChanged))
       await queueComFaceRecheck(id);
+    if (!isModerator && listingChanged) await queueComFaceRestore(id);
     if (heldVerdictApplied) {
       const { finishHeldVerdictApply } = await import(
         '~/server/services/text-scan/actions/model-nsfw'
@@ -4689,7 +4706,7 @@ export const upsertModel = async (
       });
     }
 
-    return withoutMinorHashMeta(result);
+    return withoutModeratorOnlyMeta(result);
   }
 };
 
@@ -4751,7 +4768,10 @@ export async function applyModelContentChange({
     if (expectedDescription !== undefined && !affected) return false;
     await preventReplicationLag('model', id);
     // A changed description is part of the listing the .com face re-check reads.
-    if (affected) await queueComFaceRecheck(id);
+    if (affected) {
+      await queueComFaceRecheck(id);
+      await queueComFaceRestore(id);
+    }
 
     // A caller passing `context` has already written the body AND already run this gate on it.
     // This branch is the fan-out, which has neither — and the text it just wrote is text the
@@ -4878,6 +4898,11 @@ export const publishModelById = async ({
     assertBaseModelAttestations({ versions: ownVersions });
     await assertNonCommercialVersionsUnmonetized(ownVersions);
   }
+  await assertNoFailedScanFiles(
+    versionIds?.length
+      ? { id: { in: versionIds }, modelId: id }
+      : { modelId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } }
+  );
   if (enforceModelRules) {
     const hold = await checkModelRulesLiteralHold({
       modelId: id,
@@ -7088,6 +7113,10 @@ export const privateModelFromTraining = async ({
   // its own moderator action.
   if (constants.modPublishOnlyStatuses.includes(model.status))
     throw throwAuthorizationError('You are not authorized to publish this model');
+  await assertNoFailedScanFiles({
+    modelId: id,
+    status: { notIn: constants.modPublishOnlyStatuses },
+  });
 
   enforceLockedProperties({
     data,
@@ -7277,7 +7306,7 @@ export const privateModelFromTraining = async ({
     await bustModelGallerySettings([id]);
     await applyHeldVerdictAfterOwnerSave(model, result, { isModerator: user.isModerator });
 
-    return withoutMinorHashMeta(result);
+    return withoutModeratorOnlyMeta(result);
   } catch (error) {
     if (takenDown) throw error;
     // Never a Draft over a take-down that landed during the flow.
@@ -7357,6 +7386,7 @@ export const publishPrivateModel = async (
   if (!versions.length) {
     throw throwBadRequestError('Model has no published versions');
   }
+  await assertNoFailedScanFiles({ id: { in: versions.map((v) => v.id) } });
 
   if (publishVersions) {
     assertBaseModelAttestations({

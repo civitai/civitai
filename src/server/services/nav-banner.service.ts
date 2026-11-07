@@ -3,6 +3,8 @@ import type { EventBannerCopy, EventPageCopy, EventPromoCopy } from '~/server/ev
 import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
 import { logToAxiom } from '~/server/logging/client';
+import { getEventCosmetic } from '~/server/services/event.service';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import type { EventPromo, NavBanner } from '~/shared/constants/nav-banner.constants';
 
 type BannerEvent = GatedEvent & {
@@ -29,19 +31,24 @@ export async function getNavBanners({
   now = new Date(),
   eventDefs = events,
   getAccess = getEventAccess,
+  hasJoined = viewerHasJoined,
 }: {
   viewer: EventViewer;
   now?: Date;
   eventDefs?: readonly BannerEvent[];
   getAccess?: typeof getEventAccess;
+  hasJoined?: typeof viewerHasJoined;
 }): Promise<NavBanner[]> {
   const entries = await Promise.all(
     eventDefs.map(async (event): Promise<NavBanner | null> => {
       if (!event.banner) return null;
       try {
-        return canPlayEvent(await getAccess(event, viewer, now))
-          ? eventBanner(event, event.banner)
-          : null;
+        if (!canPlayEvent(await getAccess(event, viewer, now))) return null;
+        const joined =
+          !!event.banner.joinedCta &&
+          !!viewer?.id &&
+          (await joinedOrNot(hasJoined, event, { id: viewer.id, isModerator: viewer.isModerator }));
+        return eventBanner(event, event.banner, joined);
       } catch (e) {
         // One event's broken gate must not take the other strips, or the page, with it.
         logToAxiom({
@@ -57,14 +64,42 @@ export async function getNavBanners({
   return entries.filter((x): x is NavBanner => !!x).sort((a, b) => b.priority - a.priority);
 }
 
-function eventBanner(event: BannerEvent, banner: EventBannerCopy): NavBanner {
+// The home block's own test of joining: the event's team cosmetic is obtained. Cached per user for
+// an hour and cleared on join (event.service.ts); a miss reads the database.
+async function viewerHasJoined(event: string, user: { id: number; isModerator?: boolean }) {
+  return !!(await getEventCosmetic({ event, user })).obtained;
+}
+
+// A failed or slow read keeps the default cta rather than dropping the strip: this runs in the
+// settings bootstrap, whose deadline would drop the whole strip from the first paint.
+export const JOINED_READ_DEADLINE_MS = 300;
+
+async function joinedOrNot(
+  hasJoined: typeof viewerHasJoined,
+  event: BannerEvent,
+  user: { id: number; isModerator?: boolean }
+) {
+  try {
+    return await withTimeoutFallback(hasJoined(event.name, user), JOINED_READ_DEADLINE_MS, false);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'nav-banner-joined',
+      message: (e as Error).message,
+      event: event.name,
+    }).catch(() => undefined);
+    return false;
+  }
+}
+
+function eventBanner(event: BannerEvent, banner: EventBannerCopy, joined = false): NavBanner {
   return {
     id: `event:${event.name}`,
     title: banner.title ?? event.page?.headline ?? event.title,
     accent: banner.accent,
     text: banner.text,
     href: `/events/${event.name}`,
-    cta: banner.cta,
+    cta: joined ? banner.joinedCta : banner.cta,
     image: banner.image ?? event.page?.heroImage,
     background: banner.background,
     dismissible: banner.dismissible ?? true,

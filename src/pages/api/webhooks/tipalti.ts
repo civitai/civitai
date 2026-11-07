@@ -316,7 +316,17 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       // Alert only: Tipalti has already approved, so a failed hold read must not stop recording it.
       if (
         event.type === 'paymentGroupApproved' &&
-        (await hasPayoutHold(cashWithdrawal.userId).catch(() => false))
+        (await hasPayoutHold(cashWithdrawal.userId).catch(async (e: unknown) => {
+          await logToAxiom({
+            name: 'creator-program-payout-hold-unchecked',
+            type: 'error',
+            userId: cashWithdrawal.userId,
+            withdrawalId: cashWithdrawal.id,
+            refCode: payment.refCode,
+            message: e instanceof Error ? e.message : String(e),
+          }).catch(() => undefined);
+          return false;
+        }))
       )
         await logToAxiom({
           name: 'creator-program-payout-approved-while-held',

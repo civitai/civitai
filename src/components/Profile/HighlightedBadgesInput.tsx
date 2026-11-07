@@ -3,9 +3,22 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 import type { KeyboardEvent } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { keepOwnedBadgeIds } from '~/shared/utils/badge-visibility';
+import { getBadgeImageUrl, keepOwnedBadgeIds } from '~/shared/utils/badge-visibility';
 
 type BadgeItem = { id: number; name?: string | null; data?: { url?: string | null } | null };
+
+function groupBadgesByImage(badges: BadgeItem[]) {
+  const groups = new Map<string, { badge: BadgeItem; ids: number[] }>();
+  for (const badge of badges) {
+    // Badges without an image have no tile to show.
+    const key = getBadgeImageUrl({ data: badge.data });
+    if (!key) continue;
+    const group = groups.get(key);
+    if (group) group.ids.push(badge.id);
+    else groups.set(key, { badge, ids: [badge.id] });
+  }
+  return [...groups.values()];
+}
 
 // Owned badges as clickable tiles; clicking toggles a badge into the list.
 // - highlight: click order is the display order; selected tiles show a ring +
@@ -24,10 +37,15 @@ export function HighlightedBadgesInput({
   onChange: (ids: number[]) => void;
   variant?: 'highlight' | 'hide';
 }) {
-  const toggle = (id: number) =>
-    onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  const tiles = groupBadgesByImage(badges);
+  const toggle = (groupIds: number[]) =>
+    onChange(
+      groupIds.some((id) => value.includes(id))
+        ? value.filter((x) => !groupIds.includes(x))
+        : [...value, groupIds[0]]
+    );
 
-  if (!badges.length)
+  if (!tiles.length)
     return (
       <Text size="xs" c="dimmed">
         You don&apos;t have any badges yet.
@@ -43,21 +61,23 @@ export function HighlightedBadgesInput({
 
   return (
     <Group gap="xs">
-      {badges.map((badge) => {
-        const order = shownValue.indexOf(badge.id);
-        const selected = order >= 0;
+      {tiles.map(({ badge, ids }) => {
+        const order = Math.min(
+          ...ids.map((id) => shownValue.indexOf(id)).filter((index) => index >= 0)
+        );
+        const selected = Number.isFinite(order);
         const url = badge.data?.url;
         return (
-          <Tooltip key={badge.id} label={badge.name ?? 'Badge'} withArrow>
+          <Tooltip key={ids[0]} label={badge.name ?? 'Badge'} withArrow>
             <Box
               role="button"
               aria-label={badge.name ?? 'Badge'}
               tabIndex={0}
-              onClick={() => toggle(badge.id)}
+              onClick={() => toggle(ids)}
               onKeyDown={(e: KeyboardEvent) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  toggle(badge.id);
+                  toggle(ids);
                 }
               }}
               style={{

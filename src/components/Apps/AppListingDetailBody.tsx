@@ -22,16 +22,21 @@ import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
+  IconCategory,
   IconClock,
+  IconCode,
   IconDownload,
   IconEyeOff,
   IconFlask,
   IconInfoCircle,
+  IconPlayerPlay,
   IconPlugConnected,
+  IconShield,
   IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
+import { useDisclosure } from '@mantine/hooks';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { useCallback, useState } from 'react';
@@ -45,7 +50,10 @@ import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appList
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
 import { ListingPermissionsDisclosure } from '~/components/Apps/ListingPermissionsDisclosure';
 import { blockScopePermissions } from '~/components/Apps/listingPermissions';
-import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
+import {
+  buildListingDetailRows,
+  type ListingDetailRow,
+} from '~/components/Apps/appListingDetailRows';
 import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
@@ -65,8 +73,11 @@ import {
   withBrokenIndex,
   type BrokenScreenshotIndexes,
 } from '~/components/Apps/appListingScreenshotNav';
-import { RelatedListings } from '~/components/Apps/RelatedListings';
-import { relatedRailHeading } from '~/components/Apps/related-listings';
+import { RelatedListings, useRelatedRail } from '~/components/Apps/RelatedListings';
+import {
+  RELATED_RAIL_NEUTRAL_HEADING,
+  relatedRailFirstHeading,
+} from '~/components/Apps/related-listings';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { ListingCollaboratorByline } from '~/components/Apps/ListingCollaboratorByline';
 import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
@@ -75,6 +86,11 @@ import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { ConnectScopesDisclosure } from '~/components/Apps/ConnectScopesDisclosure';
 import { AppListingReviews } from '~/components/Apps/AppListingReviews';
+import {
+  ReviewListingModal,
+  ReviewListingTrigger,
+  useCanReviewListing,
+} from '~/components/Apps/ReviewListingButton';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -304,7 +320,7 @@ function HeroCover({
 
 /**
  * Header STAT CHIPS — the model page's `IconBadge` + `StatHoverCard` row, over the two
- * public aggregates a listing has: recommendations and installs.
+ * public aggregates a listing shows: recommendations and plays.
  *
  * 🔴 Each chip carries `data-listing-stat="<key>"` AND an `aria-label`. The attribute
  * is what the a11y test asserts on: a chip's visible text is a bare number, which any
@@ -336,6 +352,7 @@ function StatChips({ detail, preview }: { detail: ListingDetail; preview: boolea
 
   const glyph: Record<ListingStatChip['key'], ReactNode> = {
     recommend: <IconThumbUp size={18} />,
+    plays: <IconPlayerPlay size={18} />,
     installs: <IconDownload size={18} />,
   };
 
@@ -754,7 +771,6 @@ function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpen
   );
 }
 
-/** Jump target for the Details panel's link to the related-apps rail at the foot of the page. */
 const RELATED_RAIL_ANCHOR_ID = 'app-listing-related';
 
 /**
@@ -767,6 +783,33 @@ const RELATED_RAIL_ANCHOR_ID = 'app-listing-related';
  * `ModelVersionDetails.module.scss`, not copied: two copies of a border colour is
  * exactly how two surfaces stop matching.
  */
+/**
+ * One leading glyph per Details row, dimmed like the model page's details icons. A
+ * `Record` over the row-key union, so a new row key fails to typecheck until it has one.
+ */
+const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
+  kind: IconApps,
+  category: IconCategory,
+  rating: IconShield,
+  source: IconCode,
+  reviews: IconThumbUp,
+  plays: IconPlayerPlay,
+  installs: IconDownload,
+  updated: IconClock,
+};
+
+function DetailRowIcon({ rowKey }: { rowKey: ListingDetailRow['key'] }) {
+  const RowIcon = DETAIL_ROW_ICONS[rowKey];
+  return (
+    <RowIcon
+      size={16}
+      style={{ opacity: 0.5, flexShrink: 0 }}
+      aria-hidden
+      data-listing-detail-icon={rowKey}
+    />
+  );
+}
+
 function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boolean }) {
   const rows = buildListingDetailRows(detail, { preview, formatDate: (iso) => formatDate(iso) });
   return (
@@ -795,7 +838,10 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
                 className={detailClasses.detailRow}
                 data-listing-detail-row={row.key}
               >
-                <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                <Group gap={6} wrap="nowrap">
+                  <DetailRowIcon rowKey={row.key} />
+                  <Text className={detailClasses.detailLabel}>{row.label}</Text>
+                </Group>
                 {row.href ? (
                   // 🔴 `rel="noopener noreferrer"` is NOT optional on a `target="_blank"`
                   // link to a third-party page. Without `noopener` the opened tab holds a
@@ -880,22 +926,40 @@ function DetailsPanel({ detail, preview }: { detail: ListingDetail; preview: boo
               </div>
             ))}
             {/* Not a `data-listing-detail-row`: it is navigation, not a listing fact. */}
-            {!preview && (
-              <div className={detailClasses.detailRow}>
-                <Anchor
-                  size="sm"
-                  href={`#${RELATED_RAIL_ANCHOR_ID}`}
-                  underline="always"
-                  data-testid="apps-listing-details-related-link"
-                >
-                  {`${relatedRailHeading(detail.category)} →`}
-                </Anchor>
-              </div>
-            )}
+            {!preview && <RelatedRailLink detail={detail} />}
           </Stack>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>
+  );
+}
+
+/**
+ * The Details panel's jump to the related rail. 🔴 Its text is the rail's FIRST rendered
+ * heading, read from the rail's own data (`useRelatedRail` — the same queries, deduped), so
+ * it never says "More in <category>" over a rail that leads with "Popular apps". Until the
+ * rail has loaded it reads the neutral {@link RELATED_RAIL_NEUTRAL_HEADING}, which cannot be
+ * wrong about what it lands on.
+ */
+function RelatedRailLink({ detail }: { detail: ListingDetail }) {
+  const { sections, loading } = useRelatedRail({
+    listingId: detail.id,
+    category: detail.category,
+  });
+  const heading =
+    relatedRailFirstHeading({ category: detail.category, sections, loading }) ??
+    RELATED_RAIL_NEUTRAL_HEADING;
+  return (
+    <div className={detailClasses.detailRow}>
+      <Anchor
+        size="sm"
+        href={`#${RELATED_RAIL_ANCHOR_ID}`}
+        underline="always"
+        data-testid="apps-listing-details-related-link"
+      >
+        {`${heading} →`}
+      </Anchor>
+    </div>
   );
 }
 
@@ -920,7 +984,7 @@ export interface AppListingDetailBodyProps {
    *     wrong; see the section's own comment for the four writers,
    *   - the comments thread + the recommend reviews list (a shadow listing has no
    *     Thread and no review rows; querying them would 404 / N+1),
-   *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
+   *   - the header STAT CHIPS (recommendations + plays are usage aggregates a
    *     shadow listing structurally does not have — zeros there would read as facts
    *     about the app rather than about the posture),
    *   - the `⋮` overflow MENU and everything in it (owner edit, review, report, and
@@ -981,7 +1045,8 @@ export function AppListingDetailBody({
   // the old block explained — why the modals are siblings of the `Menu` rather
   // than of a `Menu.Item`, why the report affordance's two prop bags must both be
   // spread, why the mod set is an intersection rather than a hand-rolled list —
-  // moved with the code and is documented there.
+  // moved with the code and is documented there. The ONE exception is the review
+  // modal: this body owns it (see `canReview` below) and the menu hands its item to it.
   //
   // What stays here is only what is TRUE OF THIS SURFACE: the trigger's geometry
   // (Mantine's default size + a 20px glyph, `variant="light"`), and `preview`.
@@ -1010,6 +1075,16 @@ export function AppListingDetailBody({
       : null;
   const visibilityBadge = visibilityBadgeFor(detail.restrictedAudience);
   const categoryHref = appsStoreCategoryHref(detail.category);
+
+  // REVIEW ENTRY POINTS: the `⋮` item, the Reviews-heading button and the empty-state
+  // CTA all open THIS one modal, so the page never holds two review forms. Same gate as
+  // the menu's item (`useCanReviewListing`; the detail surface admits viewer actions).
+  const canReview = useCanReviewListing({
+    ownerUserId: detail.creator?.id ?? null,
+    listingKind: detail.kind,
+  });
+  const [reviewOpened, reviewModal] = useDisclosure(false);
+  const showReviewCta = !preview && canReview;
 
   return (
     <Stack gap="lg">
@@ -1053,6 +1128,7 @@ export function AppListingDetailBody({
             }}
             surface="detail"
             preview={preview}
+            onOpenReview={reviewModal.open}
           />
         </Box>
       </Box>
@@ -1103,7 +1179,6 @@ export function AppListingDetailBody({
                 <Title order={2} className="line-clamp-2">
                   {detail.name}
                 </Title>
-                {/* MODERATOR-SET provenance marker, in the identity block like Beta. */}
                 {detail.isOfficial && <AppListingOfficialBadge />}
                 {detail.isBeta && (
                   <Badge
@@ -1497,9 +1572,24 @@ export function AppListingDetailBody({
         // with middle-click, and before hydration, and it survives being copied.
         <Stack gap="md" id={LISTING_REVIEWS_ANCHOR_ID}>
           <Divider />
-          <Title order={2}>Reviews</Title>
-          <AppListingReviews appListingId={detail.id} />
+          <Group justify="space-between" align="center" gap="sm">
+            <Title order={2}>Reviews</Title>
+            {showReviewCta && (
+              <ReviewListingTrigger appListingId={detail.id} onOpen={reviewModal.open} />
+            )}
+          </Group>
+          <AppListingReviews
+            appListingId={detail.id}
+            onLeaveReview={showReviewCta ? reviewModal.open : undefined}
+          />
         </Stack>
+      )}
+      {showReviewCta && (
+        <ReviewListingModal
+          appListingId={detail.id}
+          opened={reviewOpened}
+          onClose={reviewModal.close}
+        />
       )}
 
       {/* Not in preview: a shadow listing has no comments to load. */}
@@ -1507,11 +1597,7 @@ export function AppListingDetailBody({
         <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
       )}
 
-      {/* DISCOVERY — "More in <category>" + a persistent "Browse all apps" link, LAST on
-          the page, after this app's own reviews and comments. The comment thread above it
-          is unbounded, so the Details panel links here (`RELATED_RAIL_ANCHOR_ID`) to keep
-          the rail reachable without scrolling past it. Omitted in read-only preview — it
-          is a live, tRPC-backed surface. */}
+      {/* `id` is the target of the Details panel's related-rail link (RELATED_RAIL_ANCHOR_ID). Omitted in preview: live, tRPC-backed surface. */}
       {!preview && (
         <Stack gap="lg" id={RELATED_RAIL_ANCHOR_ID}>
           <Divider />

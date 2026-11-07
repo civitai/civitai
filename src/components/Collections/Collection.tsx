@@ -151,6 +151,7 @@ const ModelCollection = ({
         status: undefined,
         earlyAccess: undefined,
         hidePaid: undefined,
+        onSale: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,

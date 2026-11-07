@@ -38,6 +38,7 @@ import {
 } from '~/server/utils/model-metric-privacy';
 import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
+import type { MatureLockAttribution } from '~/shared/constants/mature-lock-reason.constants';
 import { MODEL_NAME_MAX_LENGTH } from '~/shared/constants/model-name.constants';
 import {
   SFW_DESCRIPTION_MAX_LENGTH,
@@ -495,12 +496,19 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
-  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
-  systemNsfwLock: { source: string; at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. The save-time text
+   *  filter also records which field set it off, for the owner's explanation. */
+  systemNsfwLock: { source: string; at: string } & Partial<MatureLockAttribution>;
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
-   *  verdict. A save that sets a .com cover clears it. Server-owned. */
-  comFaceRemoved: { at: string; sfwCoverImageId: number; reason: ComFaceRemovedReason };
+   *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com
+   *  cover clears it. Server-owned. */
+  comFaceRemoved: {
+    at: string;
+    sfwCoverImageId: number;
+    reason: ComFaceRemovedReason;
+    detail?: string;
+  };
   /** The text scan rated a minor, POI or SFW-only model NSFW and left nsfw alone: a moderator's lead
    *  in Needs review. Server-owned, moderator-only. */
   restrictedNsfwVerdict: RestrictedNsfwVerdict;

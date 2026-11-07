@@ -10,8 +10,12 @@ import {
 import type {
   CreateCsamReportSchema,
   CreateExternalCsamReportSchema,
+  CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createCsamReport } from '~/server/services/csam.service';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
 import { createSupplementalCsamReport } from '~/server/services/csam-supplemental.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
 import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
@@ -33,12 +37,29 @@ export async function createCsamReportHandler({
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
-  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = input;
+  const { contextSources, ...filing } = input;
+  const { userId, imageIds = [], details, type, reportedById, supplementalOf } = filing;
   let denyFailed = false;
   let denyBookkeepingFailed = false;
   let strikesReviewFailed = false;
-  if (supplementalOf) await createSupplementalCsamReport({ ...input, supplementalOf });
-  else await createCsamReport(input);
+  if (contextSources && type !== 'Image')
+    throwBadRequestError('Text can be attached to an image report only');
+  const contextText = contextSources
+    ? await snapshotCsamContextText({
+        imageIds,
+        ...(userId > 0 && { ownerId: userId }),
+        sources: contextSources,
+        reportedUserIds: reportedUserIdsOf(userId, details),
+        capturedById: reportedById,
+      })
+    : [];
+  const withContext: CsamReportFormOutput & { contextText?: CsamContextText[] } = {
+    ...details,
+    contextText,
+  };
+  const filed = contextText.length ? { ...filing, details: withContext } : filing;
+  if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
+  else await createCsamReport(filed);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {

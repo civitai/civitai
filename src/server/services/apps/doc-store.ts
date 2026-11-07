@@ -48,7 +48,9 @@
 //   - resolve `author.uid` to a username (and never forward the uid).
 //
 // A collection's declared `schema` it DOES check, on every document write (put and create;
-// counters and marks are not document bodies): `doc-store-schema.ts`.
+// counters and marks are not document bodies): `doc-store-schema.ts`. Every write of a body also
+// stamps the schema major the caller passes (`DocCollection.schemaMajor`) into
+// `doc.schema_major`, once that manual-apply column exists (`stampWrittenDoc`); nothing reads it.
 //
 // Deliberately not supported yet, refused with `invalid_request` so a
 // declaration that uses them fails loudly: `write: 'anyone'`, `ttlSeconds`,
@@ -583,6 +585,17 @@ const SQL_CHARGE_USER = `INSERT INTO appdata.usage_user AS u (app_id, ns, user_i
 const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   RETURNING ${docColumns('$7::int')}`;
+// The same, also stamping the schema major the body was written under (NULL = not known). Only
+// once the manual migration `20261106130000_appdata_doc_schema_major.sql` added the column (see
+// `hasSchemaMajorColumn`). $8 the major.
+const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING ${docColumns('$7::int')}`;
+// Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
+// migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
+// transaction usable. $1 app, $2 ns
+const SQL_SCHEMA_MAJOR_PROBE = `SELECT d.schema_major FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 LIMIT 0`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 seq
 const SQL_TOMBSTONE = `INSERT INTO appdata.doc_tomb AS tb (app_id, ns, coll, scope_uid, key, seq)
@@ -611,6 +624,38 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     AND d.key = $4
   ORDER BY d.coll
   LIMIT 2`;
+
+// REGISTRY FEED (`createDocStoreFeed`): the SHARED documents (`scope_uid = 0`) of one collection
+// of one app namespace, read by seq range, read only. Private documents are never selected: the
+// key space is a literal here, never a parameter. Hidden rows come back flagged from the seq read
+// (a hide writes a tombstone and leaves the row), and are left out of the full read.
+// $1 app, $2 ns
+const SQL_FEED_HEAD = `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2`;
+// $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
+const SQL_FEED_DOCS_SINCE = `SELECT d.key, d.data, d.version, d.seq, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
+const SQL_FEED_TOMBS_SINCE = `SELECT tb.key, tb.seq FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0
+    AND tb.seq > $4::bigint AND tb.seq <= $5::bigint
+  ORDER BY tb.seq
+  LIMIT $6::int`;
+// Every visible shared document, keyset by key. $1 app, $2 ns, $3 coll, $4 after key, $5 up to
+// seq (inclusive), $6 limit
+const SQL_FEED_DOCS_ALL = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
+const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
+  WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
 
 // The kind is a literal: this statement can only ever write a counter row.
 // $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 by
@@ -1155,6 +1200,33 @@ export function createDocStoreLookup(deps: DocStoreDeps) {
 export type DocStoreLookup = ReturnType<typeof createDocStoreLookup>;
 
 /**
+ * REGISTRY FEED — the shared documents of one app's production namespace, by seq, read only, for
+ * the registry adapter. Private documents and every other namespace are out of its reach: each
+ * statement fixes `scope_uid = 0`, and the context fixes the production namespace.
+ */
+export function createDocStoreFeed(deps: DocStoreDeps) {
+  return buildDocStore(deps).feed;
+}
+export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
+
+/** Most rows one feed page may ask for. */
+export const FEED_MAX_PAGE = 1000;
+
+/** A shared document as the feed reads it. */
+export type FeedDocument = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  seq: number;
+};
+
+/** One page of `feedChanges`. */
+export type FeedChangesPage = {
+  docs: Array<FeedDocument & { hidden: boolean }>;
+  tombs: Array<{ key: string; seq: number }>;
+};
+
+/**
  * VIEWER DATA — a signed-in user's own production data across apps, for their account settings:
  * the apps they hold documents in (`listViewerUsage`), what an empty would do with each app's
  * figure (`viewerHoldings`) and emptying one of them (`emptyViewerData`). A separate object because the listing reads one user's usage rows in
@@ -1214,6 +1286,11 @@ export type MigrateDocumentsResult = {
 /** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
 export const PUBLISHED_NS = 'prod';
 
+/** Postgres `undefined_column`: what a statement naming `schema_major` gets before the migration. */
+const PG_UNDEFINED_COLUMN = '42703';
+/** How long a store trusts "no `schema_major` column" before probing again. */
+const SCHEMA_MAJOR_RECHECK_MS = 60_000;
+
 /** One shared document matched by `findSharedByKey`. */
 export type SharedKeyMatch = {
   collection: string;
@@ -1226,6 +1303,66 @@ function buildDocStore(deps: DocStoreDeps) {
   const limits = deps.limits ?? DEFAULT_DOC_STORE_LIMITS;
   // Settled only by a successful role read; a failed read is retried next call.
   let privileges: 'safe' | 'refused' | undefined;
+  // Whether `appdata.doc.schema_major` exists (a manual migration). Found once and kept; while
+  // absent, probed again at most every SCHEMA_MAJOR_RECHECK_MS, so applying the migration starts
+  // the stamping without a restart.
+  let schemaMajorColumn: { present: boolean; at: number } | undefined;
+
+  /**
+   * Whether this write can stamp `schema_major`. Probed inside the write's own transaction under
+   * a savepoint: a missing column (42703) rolls back to the savepoint and the write goes on
+   * without the stamp. Any other failure is the transaction's own and is thrown as it is.
+   */
+  async function hasSchemaMajorColumn(c: DocStoreClient, ctx: DocStoreContext): Promise<boolean> {
+    if (
+      schemaMajorColumn &&
+      (schemaMajorColumn.present || Date.now() - schemaMajorColumn.at < SCHEMA_MAJOR_RECHECK_MS)
+    ) {
+      return schemaMajorColumn.present;
+    }
+    await c.query('SAVEPOINT schema_major_probe');
+    try {
+      await c.query(SQL_SCHEMA_MAJOR_PROBE, [ctx.appId, ctx.ns]);
+      await c.query('RELEASE SAVEPOINT schema_major_probe');
+      schemaMajorColumn = { present: true, at: Date.now() };
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code !== PG_UNDEFINED_COLUMN) throw err;
+      await c.query('ROLLBACK TO SAVEPOINT schema_major_probe');
+      schemaMajorColumn = { present: false, at: Date.now() };
+    }
+    return schemaMajorColumn.present;
+  }
+
+  /**
+   * Stamp the seq of a document whose body this transaction just wrote, and return it. With
+   * `coll.schemaMajor` given and the column present, also stamp the major the body was written
+   * under. Every write of a document body ends here (`finishWrite`, the counter document a first
+   * increment creates, `migrateDocuments`), and nothing else does.
+   */
+  async function stampWrittenDoc(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    scope: number,
+    key: string,
+    seq: number,
+    viewer: number | null
+  ): Promise<DocStoreQueryResult> {
+    const base = [ctx.appId, ctx.ns, coll.name, scope, key, seq, viewer];
+    if (coll.schemaMajor === undefined || !(await hasSchemaMajorColumn(c, ctx))) {
+      return c.query(SQL_STAMP_SEQ, base);
+    }
+    try {
+      return await c.query(SQL_STAMP_SEQ_MAJOR, [...base, coll.schemaMajor]);
+    } catch (err) {
+      // The column was dropped after it was found (a rollback of the migration): look again on
+      // the next write. This write fails; the next one writes without the stamp.
+      if ((err as { code?: string } | null)?.code === PG_UNDEFINED_COLUMN) {
+        schemaMajorColumn = undefined;
+      }
+      throw err;
+    }
+  }
 
   /**
    * Refuse to run on a role row-level security does not bind. Checked on the
@@ -1534,15 +1671,7 @@ function buildDocStore(deps: DocStoreDeps) {
       indexRows.map((r) => r.type),
     ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
-    const res = await c.query(SQL_STAMP_SEQ, [
-      ctx.appId,
-      ctx.ns,
-      coll.name,
-      scope,
-      key,
-      seq,
-      ctx.viewerUid,
-    ]);
+    const res = await stampWrittenDoc(c, ctx, coll, scope, key, seq, ctx.viewerUid);
     return toDocRecord(res.rows[0], ctx, coll);
   }
 
@@ -1708,7 +1837,7 @@ function buildDocStore(deps: DocStoreDeps) {
           { bytes: size, docs: 1 },
           { uid: viewer, bytes: size, docs: 1, ceiling: 'viewer' }
         );
-        await c.query(SQL_STAMP_SEQ, [ctx.appId, ctx.ns, coll.name, 0, key, seq, ctx.viewerUid]);
+        await stampWrittenDoc(c, ctx, coll, 0, key, seq, ctx.viewerUid);
         return { value };
       }
       throw new DocStoreError('version_conflict', 'concurrent write; retry', {
@@ -2202,7 +2331,7 @@ function buildDocStore(deps: DocStoreDeps) {
    * between the page read and the lock is what gets transformed: the transform must leave a
    * document already in the new shape unchanged (the migration ops do — `applyMigrationOps`), and
    * then a write racing the run, or a re-run of the same page, is safe. A changed document gets a new version
-   * and seq, its index rows are re-derived, and its size delta is charged exactly as a write
+   * and seq (and `coll.schemaMajor` as its schema major, as any write stamps it), its index rows are re-derived, and its size delta is charged exactly as a write
    * would charge it (the app's ceiling for a shared document, and the user the document is
    * charged to: its viewer for a private one, its author or counter creator for a shared one).
    * A document the write would refuse — over the size cap, an index value of the wrong type, a
@@ -2300,7 +2429,7 @@ function buildDocStore(deps: DocStoreDeps) {
                     ceiling: scope !== 0 ? 'viewer' : 'author',
                   }
             );
-            await c.query(SQL_STAMP_SEQ, [...base, seq, null]);
+            await stampWrittenDoc(c, ctx, coll, scope, key, seq, null);
             return { changed: true, invalid: stillInvalid(next) };
           });
         // A lock wait that timed out (a burst of writes to this app) is retried once; the
@@ -2475,9 +2604,120 @@ function buildDocStore(deps: DocStoreDeps) {
     }));
   }
 
+  /**
+   * The registry feed's context: the production namespace of one app, no viewer. Collection
+   * names, keys and seq bounds are checked here, before any of them reaches SQL.
+   */
+  function feedCtx(appId: string, coll: string): DocStoreContext {
+    if (!B.collectionName.test(coll)) throw invalid('feed: malformed collection name');
+    return { appId, ns: PUBLISHED_NS, viewerUid: null };
+  }
+  const feedSeq = (n: number) => {
+    if (!Number.isSafeInteger(n) || n < 0) throw invalid('feed: malformed seq');
+    return n;
+  };
+  const feedLimit = (n: number) => {
+    if (!Number.isSafeInteger(n) || n < 1 || n > FEED_MAX_PAGE)
+      throw invalid('feed: bad page size');
+    return n;
+  };
+  const seqOf = (v: unknown) => Number(v);
+
+  /** The namespace's newest seq, or 0 when it has no usage row (nothing was ever written). */
+  async function feedHead(appId: string): Promise<number> {
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const row = await withTx(
+      ctx,
+      async (c) => (await c.query(SQL_FEED_HEAD, [ctx.appId, ctx.ns])).rows[0]
+    );
+    return row ? seqOf(row.last_seq) : 0;
+  }
+
+  /**
+   * One page of what changed in a shared collection in the seq range (`after`, `upTo`]:
+   * documents written (hidden ones flagged) and tombstones, each in seq order. One transaction,
+   * one app namespace.
+   */
+  async function feedChanges(
+    appId: string,
+    coll: string,
+    after: number,
+    upTo: number,
+    limit: number
+  ): Promise<FeedChangesPage> {
+    const ctx = feedCtx(appId, coll);
+    const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
+    return withTx(ctx, async (c) => {
+      const docs = (await c.query(SQL_FEED_DOCS_SINCE, params)).rows;
+      const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
+      return {
+        docs: docs.map((r) => ({
+          key: r.key as string,
+          data: r.data as Record<string, unknown>,
+          version: Number(r.version),
+          seq: seqOf(r.seq),
+          hidden: r.hidden === true,
+        })),
+        tombs: tombs.map((r) => ({ key: r.key as string, seq: seqOf(r.seq) })),
+      };
+    });
+  }
+
+  /** One page of a shared collection's visible documents at or below `upTo`, by key. */
+  async function feedDocuments(
+    appId: string,
+    coll: string,
+    afterKey: string,
+    upTo: number,
+    limit: number
+  ): Promise<FeedDocument[]> {
+    const ctx = feedCtx(appId, coll);
+    if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    const rows = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(SQL_FEED_DOCS_ALL, [
+            ctx.appId,
+            ctx.ns,
+            coll,
+            afterKey,
+            feedSeq(upTo),
+            feedLimit(limit),
+          ])
+        ).rows
+    );
+    return rows.map((r) => ({
+      key: r.key as string,
+      data: r.data as Record<string, unknown>,
+      version: Number(r.version),
+      seq: seqOf(r.seq),
+    }));
+  }
+
+  /** Where one shared key stands now: its document's seq and its tombstone's, each or null. */
+  async function feedWitness(
+    appId: string,
+    coll: string,
+    key: string
+  ): Promise<{ docSeq: number | null; tombSeq: number | null }> {
+    const ctx = feedCtx(appId, coll);
+    if (!B.key.test(key)) throw invalid('feed: malformed key');
+    return withTx(ctx, async (c) => {
+      const params = [ctx.appId, ctx.ns, coll, key];
+      const doc = (await c.query(SQL_FEED_WITNESS_DOC, params)).rows[0];
+      const tomb = (await c.query(SQL_FEED_WITNESS_TOMB, params)).rows[0];
+      return {
+        docSeq: doc ? seqOf(doc.seq) : null,
+        tombSeq: tomb ? seqOf(tomb.seq) : null,
+      };
+    });
+  }
+
   return {
     store,
     lookup: { findSharedByKey },
+    feed: { feedHead, feedChanges, feedDocuments, feedWitness },
     moderation: createModeration({ withTx, charge }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
     viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },

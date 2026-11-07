@@ -19,12 +19,16 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  bustContestCollectionItemsCache,
+  bustContestCollectionItemsCacheForItems,
+} from '~/server/services/contest-collection-items.cache';
 import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
@@ -52,11 +56,12 @@ import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
-  collectionSelect,
-  collectionWithoutImageSelect,
-} from '~/server/selectors/collection.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+  readCollectionByIdViaKysely,
+  readCollectionByIdViaPrisma,
+} from '~/server/services/hot-reads-10.reads';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getModeratedTags } from '~/server/services/system-cache';
@@ -701,13 +706,11 @@ export const getCollectionById = async ({
 }) => {
   const { id } = input;
   const db = await getDbWithoutLag('collection', id);
-  const collection = await db.collection.findUnique({
-    where: { id },
-    select: {
-      ...collectionSelect,
-      user: { select: userWithCosmeticsSelect },
-    },
-  });
+  // `kysely-hot-reads-10` picks the path once per call: the Prisma read, or its one-statement Kysely
+  // twin on the matching pool (the primary when the lag check chose the primary, else the replica).
+  const collection = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_10))
+    ? await readCollectionByIdViaKysely(kyselyMatching(db), id)
+    : await readCollectionByIdViaPrisma(db, id);
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
 
   const coverServable =
@@ -1261,6 +1264,7 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+  if (itemKey === 'imageId') await bustContestCollectionItemsCache([input.imageId]);
 
   if (followCollectionIds.length > 0) {
     await Promise.all(
@@ -1804,6 +1808,7 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+  await bustContestCollectionItemsCache([imageId]);
 
   if (shouldScanCollection(null, collection))
     scanEntityInBackground({ entityType: 'Collection', entityId: collection.id });
@@ -2816,6 +2821,7 @@ export const updateCollectionItemsStatus = async ({
       "rejectionDetail" = ${persistedDetail}
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
+    await bustContestCollectionItemsCacheForItems(collectionItemIds);
   }
 
   if (priorItems.length > 0) {
@@ -3633,6 +3639,7 @@ export const bulkSaveItems = async ({
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
   const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
+  await bustContestCollectionItemsCache(savedImageIds);
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
@@ -3659,6 +3666,7 @@ export const bulkSaveItems = async ({
             imageIds,
           });
         });
+      await bustContestCollectionItemsCache(imageIds);
     };
 
     let chargeResult;
@@ -3934,6 +3942,7 @@ export const removeCollectionItem = async ({
     if (deletableIds.length) {
       await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
     }
+    if (tableKey === 'Image') await bustContestCollectionItemsCache([itemId]);
   }
 
   return {
@@ -3990,6 +3999,7 @@ export const setItemScore = async ({
     where: { id: collectionItemId },
     select: {
       id: true,
+      imageId: true,
       collection: {
         select: { id: true, mode: true },
       },
@@ -4005,6 +4015,7 @@ export const setItemScore = async ({
     create: { userId, collectionItemId: collectionItem.id, score },
     update: { score },
   });
+  await bustContestCollectionItemsCache([collectionItem.imageId]);
 
   return itemScore;
 };
@@ -4147,6 +4158,7 @@ export async function removeEntityFromAllCollections(
   await dbWrite.collectionItem.deleteMany({
     where: whereClause,
   });
+  if (entityType === 'image') await bustContestCollectionItemsCache([entityId]);
 }
 
 const collectionItemEntityColumn = {
@@ -4211,6 +4223,7 @@ export async function setCollectionItemsTag({
     where: { collectionId, id: { in: collectionItemIds }, ...changeable },
     data: { tagId },
   });
+  await bustContestCollectionItemsCache(found.map((item) => item.imageId));
 
   // The write has committed; a failed bust must not make the audit row record it as an error.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId).catch((error) =>

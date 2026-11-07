@@ -32,6 +32,10 @@ vi.mock('~/server/trpc', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/v1/models/com-face';
+import {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 
 const stored = {
   id: 11,
@@ -41,17 +45,19 @@ const stored = {
   type: 'LORA',
   uploadType: 'Created',
   status: 'Published',
-  checkpointType: null,
+  checkpointType: null as string | null,
   availability: 'Public',
   nsfw: true,
   poi: false,
   minor: false,
   sfwOnly: false,
   lockedProperties: [] as string[],
+  mode: null as string | null,
   deletedAt: null,
   sfwName: null as string | null,
   sfwDescription: null as string | null,
   sfwCoverImageId: null as number | null,
+  meta: null as Record<string, unknown> | null,
 };
 
 let row: typeof stored = stored;
@@ -90,9 +96,17 @@ describe('POST /api/v1/models/com-face', () => {
     callerContexts.length = 0;
     row = stored;
     levelAfterSave = 2 | 8;
+    // Only the selected columns come back, as from Prisma: a field the endpoint forgets to select reads undefined.
     dbMock.dbWrite.model.findUnique.mockImplementation((async (args: {
       select: Record<string, unknown>;
-    }) => (args.select.userId ? row : { nsfwLevel: levelAfterSave })) as never);
+    }) => {
+      const source: Record<string, unknown> | null = args.select.userId
+        ? row
+        : { nsfwLevel: levelAfterSave };
+      return (
+        source && Object.fromEntries(Object.entries(source).filter(([key]) => args.select[key]))
+      );
+    }) as never);
   });
 
   it("refuses another creator's model", async () => {
@@ -101,13 +115,32 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  it('refuses a model locked as mature, for draft and save', async () => {
+  it('accepts a model locked as mature, for draft and save', async () => {
     row = { ...stored, lockedProperties: ['nsfw'] };
+    caller.model.getCoverCandidates.mockResolvedValue([{ id: 2, url: 'b', nsfwLevel: 2 }]);
+    caller.model.draftSfwFace.mockResolvedValue({ sfwName: 'Safe', sfwDescription: '<p>ok</p>' });
     const draft = await call({ action: 'draft', modelId: 11 });
-    expect(draft.statusCode).toBe(409);
-    expect(draft.body.code).toBe('locked');
+    const save = await call({ action: 'save', modelId: 11, sfwName: 'Safe', sfwCoverImageId: 2 });
+    expect([draft.statusCode, save.statusCode]).toEqual([200, 200]);
+    expect(caller.model.draftSfwFace).toHaveBeenCalledTimes(1);
+    expect(caller.model.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['minor', { minor: true }],
+    ['POI', { poi: true }],
+    ['SFW-only', { sfwOnly: true }],
+    ['taken-down', { mode: 'TakenDown' }],
+  ])('refuses a %s model, for draft and save, writing nothing', async (_, flags) => {
+    row = { ...stored, ...flags };
+    const draft = await call({ action: 'draft', modelId: 11 });
     const save = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
-    expect(save.statusCode).toBe(409);
+    for (const res of [draft, save])
+      expect([res.statusCode, res.body]).toEqual([
+        409,
+        { error: "This model can't get a civitai.com version.", code: 'skipped' },
+      ]);
+    expect(caller.model.getCoverCandidates).not.toHaveBeenCalled();
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
     expect(caller.model.upsert).not.toHaveBeenCalled();
   });
@@ -132,6 +165,21 @@ describe('POST /api/v1/models/com-face', () => {
     ]);
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
     expect(caller.model.upsert).not.toHaveBeenCalled();
+  });
+
+  it('drafts again for a face the listing re-check removed', async () => {
+    row = {
+      ...stored,
+      sfwName: 'Owner Title',
+      meta: { comFaceRemoved: { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5 } },
+    };
+    caller.model.getCoverCandidates.mockResolvedValue([
+      { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
+    ]);
+    caller.model.draftSfwFace.mockResolvedValue({ sfwName: 'Safe', sfwDescription: '<p>ok</p>' });
+    const res = await call({ action: 'draft', modelId: 11 });
+    expect(res.statusCode).toBe(200);
+    expect(caller.model.draftSfwFace).toHaveBeenCalledTimes(1);
   });
 
   it('skips a model that has a .com cover but no .com title, writing nothing', async () => {
@@ -163,6 +211,25 @@ describe('POST /api/v1/models/com-face', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it.each([
+    [COM_FACE_REFUSED_MESSAGE, /in the model editor/],
+    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/],
+  ])(
+    'tells the card which fields a refused draft read, apart from a check that failed',
+    async (thrown, shown) => {
+      caller.model.getCoverCandidates.mockResolvedValue([
+        { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
+      ]);
+      caller.model.draftSfwFace.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: thrown })
+      );
+      const res = await call({ action: 'draft', modelId: 11 });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toMatch(shown);
+      expect(res.body.message).toMatch(/civitai\.red/);
+    }
+  );
+
   it('picks the first PG/PG-13 image as the cover and drafts through the editor procedure', async () => {
     caller.model.getCoverCandidates.mockResolvedValue([
       { id: 1, url: 'a', type: 'image', nsfwLevel: 8 },
@@ -187,9 +254,14 @@ describe('POST /api/v1/models/com-face', () => {
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
   });
 
-  // An omitted `minor` or `sfwOnly` parses as false in the upsert schema and would clear it.
   it('saves through the editor procedure with the stored flags, and reports the .com listing', async () => {
-    row = { ...stored, minor: true };
+    row = {
+      ...stored,
+      uploadType: 'Trained',
+      checkpointType: 'Merge',
+      availability: 'Unsearchable',
+      lockedProperties: ['nsfw'],
+    };
     const res = await call({
       action: 'save',
       modelId: 11,
@@ -204,10 +276,14 @@ describe('POST /api/v1/models/com-face', () => {
         id: 11,
         name: 'Red Title',
         nsfw: true,
-        minor: true,
+        minor: false,
         sfwOnly: false,
         poi: false,
-        availability: 'Public',
+        type: 'LORA',
+        uploadType: 'Trained',
+        status: 'Published',
+        checkpointType: 'Merge',
+        availability: 'Unsearchable',
         sfwName: 'Safe',
         sfwCoverImageId: 2,
       })

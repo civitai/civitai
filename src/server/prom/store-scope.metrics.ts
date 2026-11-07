@@ -164,6 +164,9 @@ export type StoreScopeEntrypoint =
   | 'trpc-my-apps'
   | 'rest-list'
   | 'rest-detail'
+  // The registry adapter's catalog read (`src/server/registry-adapter`), a separate process that
+  // publishes the public catalog to registries. Anonymous by construction, like `rest-list`.
+  | 'registry-adapter'
   // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail
   // "Published with <app>" chip branches on this same scope to decide whether an
   // on-site app may be named on a public post page, so it belongs in the pair —

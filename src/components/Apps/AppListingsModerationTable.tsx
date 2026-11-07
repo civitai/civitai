@@ -629,15 +629,8 @@ export function AppListingsModerationTable({
 }
 
 /**
- * The moderator's "Official" toggle for one listing ("made by the Civitai team" — the badge on
- * its store card and page). Calls `appListings.setListingOfficial`, which is
- * `moderatorProcedure` and records a `set-official` moderation event.
- *
- * No reason modal: it is a label, not a takedown. It shows the row's value until this moderator
- * writes, then the confirmed result (see `written`), instead of invalidating the table, because
- * `invalidate` resets paging and
- * would throw away every page the moderator loaded for a one-boolean change — the same
- * trade-off the Message owner composer documents.
+ * Moderator toggle for the Official flag. Shows the mutation result instead of invalidating the
+ * table, because `invalidate` resets paging.
  */
 function ModListingOfficialSwitch({
   appListingId,

@@ -1863,6 +1863,29 @@ describe('blocks.submitWorkflow', () => {
       expect(result.snapshot.workflowId).toBe('wf_real');
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
+
+    it('a dev-tunnel submit carries the tag the generator Queue leaves out', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, dev: true, appId: 'ephemeral-demo' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 8 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_dev',
+          status: 'unassigned',
+          cost: { total: 8 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow.mock.calls[1][0].body.tags).toEqual(
+        // The literal, not WORKFLOW_TAGS.APP_BLOCK: the Queue excludes runs by this exact wire value.
+        expect.arrayContaining(['app-block', 'app-block:ephemeral-demo'])
+      );
+    });
   });
 
   // ---- G6: persistent block output queue (fire-and-forget write) ----------
@@ -2933,6 +2956,43 @@ describe('blocks.submitWorkflow', () => {
     expect(stamped).not.toBe('textToImage:txt2img');
     expect(stamped).not.toBe('textToImage');
     expect(String(stamped).split(':')[0]).toBe('textToImage');
+  });
+
+  // 🔴 THE PLATFORM-BUILT comfy PATH STAYS OPEN. `comfy` is on the pass-through
+  // denylist (a block may not submit a RAW comfy graph), but img2img/hires on an
+  // SD-family checkpoint is BUILT as a `comfy` step by the generation graph
+  // (`createComfyInput`). That step reaches `submitWorkflow` without passing the
+  // denylist, so this native submit must still go through with `$type: 'comfy'`.
+  it("native kind:'textToImage' that the graph builds as a comfy step is still submitted", async () => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 1000,
+        blockInstanceId: 'page_apb_page',
+        ctx: { slotId: 'app.page', entityType: 'none' },
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    happySubmitWithWorkflow(25, 'wf_comfy_native');
+    mockCreateStepsFromGraph.mockResolvedValue({
+      steps: [{ $type: 'comfy', name: 's1', input: { comfyWorkflow: {} } }],
+      workflowMetadata: undefined,
+    });
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({
+      blockToken: 'tok',
+      body: validBody({
+        sourceImage: { url: 'https://image.civitai.com/abc/def.jpeg', width: 768, height: 1024 },
+      }),
+    });
+
+    expect(result.snapshot.workflowId).toBe('wf_comfy_native');
+    const submittedTypes = mockSubmitWorkflow.mock.calls.map(
+      (c) => (c[0] as { body: { steps: Array<{ $type: string }> } }).body.steps[0].$type
+    );
+    expect(submittedTypes.length).toBeGreaterThan(0);
+    expect(submittedTypes.every((t) => t === 'comfy')).toBe(true);
   });
 
   it('G5: threads the body sharedContentKey (opaque) through to the spend attribution', async () => {
@@ -10812,6 +10872,53 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         );
       }
     });
+
+    // 🔴 A RAW comfy GRAPH IS REFUSED. `workflow.service` delivers a comfy step's
+    // `output.blobs` as media, and this arm runs no prompt audit, so a block
+    // naming `$type: 'comfy'` here would otherwise get an unaudited ComfyUI graph
+    // rendered and handed back. The platform's own comfy steps (built from
+    // `kind: 'textToImage'`) do not pass this guard; see the native submit test.
+    it.each(['comfy', 'Comfy'])(
+      'refuses a raw `%s` step on submit AND estimate, before the orchestrator or any reservation',
+      async (t) => {
+        // `as never`: `ptBody` is a loosely typed fixture; the cast keeps these two
+        // call sites from adding test-file type errors (typecheck-tests ratchet).
+        const calls: Array<[string, () => Promise<unknown>]> = [
+          [
+            'submitWorkflow',
+            () =>
+              caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+          [
+            'estimateWorkflow',
+            () =>
+              caller().estimateWorkflow({ blockToken: 'tok', body: ptBody({ $type: t }) as never }),
+          ],
+        ];
+        for (const [run, call] of calls) {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(5, 5);
+          const err = await call().then(
+            () => null,
+            (e: unknown) => e
+          );
+          expect(err, run).toBeInstanceOf(TRPCError);
+          expect((err as TRPCError).code, run).toBe('FORBIDDEN');
+          expect((err as TRPCError).cause, run).toBeInstanceOf(PlatformInternalStepTypeError);
+          expect(((err as TRPCError).cause as PlatformInternalStepTypeError).stepType, run).toBe(t);
+          expect(mockSubmitWorkflow, `${run}: not even the whatif quote`).not.toHaveBeenCalled();
+          expect(mockGetOrchestratorToken, run).not.toHaveBeenCalled();
+          expect(mockReserveAppSpend, run).not.toHaveBeenCalled();
+          expect(
+            mockSysRedis.incrBy.mock.calls.filter((c) =>
+              String(c[0]).startsWith('system:blocks:buzz-cap:')
+            ),
+            run
+          ).toHaveLength(0);
+        }
+      }
+    );
   });
 
   describe('🔴 criterion 3 — `input` reaches the orchestrator UNMODIFIED', () => {

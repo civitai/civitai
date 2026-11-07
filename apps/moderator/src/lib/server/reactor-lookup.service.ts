@@ -142,6 +142,105 @@ async function getReactors(
   };
 }
 
+/** Ranks past this are not paged; the tool refuses rather than reading further. */
+export const REACTOR_PAGE_CAP = 5_000;
+const PAGE_READ_TIMEOUT_S = 30;
+
+export type ReactorPage = {
+  actors: Actor[];
+  /** Everyone over the floor, however far the page reaches. */
+  overFloor: number;
+  belowFloor: number;
+};
+
+/**
+ * One page of the reactors `getReactors` ranks, in its order with `userId` breaking ties, so a page
+ * boundary never lands between two reactors of equal rank and drops or repeats one. Row 1 always comes
+ * back, so a page past the end still carries the true counts.
+ */
+export async function getReactorsPage(
+  ownerId: number,
+  {
+    days,
+    minCount,
+    offset,
+    limit,
+  }: { days: number; minCount: number; offset: number; limit: number }
+): Promise<ReactorPage> {
+  if (!isInt4Id(ownerId)) return { actors: [], overFloor: 0, belowFloor: 0 };
+  const floor = Math.max(1, Math.trunc(minCount));
+  const result = await getClickhouse().query({
+    query: `
+      SELECT userId, count, entities, total, owners, matched, reactors, rn
+      FROM (
+        SELECT *,
+               sum(count >= {floor:UInt32}) OVER () AS matched,
+               count() OVER () AS reactors,
+               row_number() OVER (${REACTOR_PAGE_ORDER}) AS rn
+        FROM (
+          SELECT userId,
+                 countIf(ownerId = {ownerId:Int32}) AS count,
+                 uniqIf(entityId, ownerId = {ownerId:Int32}) AS entities,
+                 count() AS total,
+                 uniq(ownerId) AS owners
+          FROM default.reactions
+          WHERE time >= now() - toIntervalDay({days:UInt32})
+            AND ${CREATES_ONLY}
+            AND userId != 0
+          GROUP BY userId
+          HAVING count >= 1
+        )
+      )
+      WHERE rn = 1 OR (rn > {offset:UInt32} AND rn <= {offset:UInt32} + {limit:UInt32})
+      ORDER BY rn
+    `,
+    query_params: { ownerId, floor, days: Math.max(1, Math.trunc(days)), offset, limit },
+    format: 'JSONEachRow',
+    clickhouse_settings: { max_execution_time: PAGE_READ_TIMEOUT_S },
+  });
+  const rows = await result.json<{
+    userId: string;
+    count: string;
+    entities: string;
+    total: string;
+    owners: string;
+    matched: string;
+    reactors: string;
+    rn: string;
+  }>();
+  const overFloor = Number(rows[0]?.matched ?? 0);
+  const actors = rows
+    .filter((r) => {
+      const rn = Number(r.rn);
+      return rn > offset && rn <= offset + limit && Number(r.count) >= floor;
+    })
+    .map((r) => {
+      const total = Number(r.total);
+      const count = Number(r.count);
+      return {
+        userId: Number(r.userId),
+        username: null,
+        count,
+        entities: Number(r.entities),
+        totalGiven: total || null,
+        owners: Number(r.owners) || null,
+        concentration: total > 0 ? count / total : null,
+        status: 'gone' as const,
+        strikes: 0,
+        createdAt: null,
+        instantVerify: null,
+      };
+    });
+  return {
+    actors: await hydrate(actors),
+    overFloor,
+    belowFloor: Number(rows[0]?.reactors ?? 0) - overFloor,
+  };
+}
+/** `getReactors`' ORDER BY with `userId` as the tiebreaker. */
+const REACTOR_PAGE_ORDER =
+  'ORDER BY count >= {floor:UInt32} DESC, count / total DESC, count DESC, userId ASC';
+
 /**
  * Postgres, not ClickHouse: `default.stickerUsageEvents` carries no owner and 621 rows total.
  *

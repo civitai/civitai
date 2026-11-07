@@ -376,15 +376,19 @@ describe('AppListingCard', () => {
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
   });
 
-  test('kind + category badges are NOT rendered on the card (round-2 truncation fix)', async () => {
-    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
-    // base()'s category. Neither should render now that the badge column is gone
-    // — the kind signal instead lives in the CTA (Open/View details vs Visit ↗)
-    // and, for off-site, the detail-page disclosure Alert.
+  test('no kind badge on the card; the category is a meta-line link, not a badge', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text. It should not render
+    // now that the badge column is gone — the kind signal instead lives in the CTA
+    // (Open/View details vs Visit ↗) and, for off-site, the detail-page disclosure Alert.
+    // The category came back deliberately, as plain text in the one-line meta line (see
+    // the meta-line suite below), not as the truncating badge this test used to exclude.
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
     await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
-    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
+    const category = page.getByText('Utility', { exact: true });
+    await expect.element(category).toBeInTheDocument();
+    expect(category.element().closest('[data-testid="apps-listing-card-meta"]')).not.toBeNull();
+    expect(category.element().closest('.mantine-Badge-root')).toBeNull();
   });
 
   test('no reviews → "No reviews yet"', async () => {
@@ -1710,5 +1714,63 @@ describe('AppListingCard — the restricted-visibility badge', () => {
       expect(avatar.getAttribute('data-user-id')).toBe('5');
       expect(avatar.getAttribute('data-link-to-profile')).toBe('true');
     });
+  });
+});
+
+/**
+ * The META LINE — the category (display label, linked to the store filtered by it) and a
+ * relative "Updated …" date. Absences are read off `querySelector` / `textContent` after a
+ * positive control (the `.not.toBeInTheDocument()` matcher is inert here — #4197).
+ */
+describe('🔴 AppListingCard — the category and last-updated meta line', () => {
+  const THREE_DAYS_AGO = () => new Date(Date.now() - 3 * 86_400_000).toISOString();
+
+  test('🔴 shows the category label linked to the store filtered by it', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    const link = page.getByTestId('apps-listing-card-category');
+    await expect.element(link).toHaveTextContent('Games');
+    const el = link.element();
+    expect(el.tagName).toBe('A');
+    expect(el.getAttribute('href')).toBe('/apps/store?category=games');
+    // Never the raw stored key, and never the card's own detail link.
+    expect(el.textContent).not.toBe('games');
+  });
+
+  test('🔴 shows "Updated <relative date>" from the listing\'s update time', async () => {
+    renderWithProviders(
+      <AppListingCard card={base({ category: 'games', updatedAt: THREE_DAYS_AGO() })} canOpenPage />
+    );
+    await expect
+      .element(page.getByTestId('apps-listing-card-updated'))
+      .toHaveTextContent('Updated 3 days ago');
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).toBe(
+      'Games · Updated 3 days ago'
+    );
+  });
+
+  test('a category the store cannot filter by is plain text, not a link', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'hats' })} canOpenPage />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('hats');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('in preview the category is not a link (the moderator stays on the review)', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage preview />);
+    const label = page.getByTestId('apps-listing-card-category');
+    await expect.element(label).toHaveTextContent('Games');
+    expect(label.element().tagName).toBe('SPAN');
+  });
+
+  test('no update time → no date, and the line still renders', async () => {
+    renderWithProviders(<AppListingCard card={base({ category: 'games' })} canOpenPage />);
+    // Positive control: the meta line rendered.
+    await expect.element(page.getByTestId('apps-listing-card-category')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-updated"]')).toBeNull();
+    expect(page.getByTestId('apps-listing-card-meta').element().textContent).not.toContain(
+      'Updated'
+    );
   });
 });
