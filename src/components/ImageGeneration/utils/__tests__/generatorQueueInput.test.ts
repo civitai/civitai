@@ -63,14 +63,14 @@ describe('which generated-image queries leave App Block runs out', () => {
   beforeEach(() => mocks.useInfiniteQuery.mockReset());
 
   it('the Queue and Feed query does', () => {
-    expect(
-      queriedInput(createElement(GeneratedRequestsProvider, { children: null }))
-    ).toMatchObject({ excludeAppWorkflows: true });
+    expect(queriedInput(createElement(GeneratedRequestsProvider, null, null))).toMatchObject({
+      excludeAppWorkflows: true,
+    });
   });
 
   it('the queue counter does', () => {
     useGenerationPanelStore.setState({ opened: true });
-    expect(queriedInput(createElement(GenerationProvider, { children: null }))).toMatchObject({
+    expect(queriedInput(createElement(GenerationProvider, null, null))).toMatchObject({
       excludeAppWorkflows: true,
     });
   });
