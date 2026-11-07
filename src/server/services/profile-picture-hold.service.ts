@@ -44,9 +44,15 @@ export async function syncProfilePictureForImage(
   imageId: number
 ): Promise<ProfilePictureSyncOutcome> {
   const [image] = await tx.$queryRaw<
-    { url: string; ingestion: string; needsReview: string | null; blockedFor: string | null }[]
+    {
+      userId: number;
+      url: string;
+      ingestion: string;
+      needsReview: string | null;
+      blockedFor: string | null;
+    }[]
   >`
-    SELECT url, ingestion::text AS ingestion, "needsReview", "blockedFor"
+    SELECT "userId", url, ingestion::text AS ingestion, "needsReview", "blockedFor"
     FROM "Image" WHERE id = ${imageId}
     FOR SHARE
   `;
@@ -112,7 +118,8 @@ export async function syncProfilePictureForImage(
     ) AS newest
     FROM "ProfilePictureHold" h WHERE h."imageId" = ${imageId}
   `;
-  if (!hold?.newest) return { action: 'none' };
+  // Their own image only: an image that changed owner since is not their avatar to put back.
+  if (!hold?.newest || hold.userId !== image.userId) return { action: 'none' };
   const restored = await tx.$executeRaw`
     UPDATE "User" SET "profilePictureId" = ${imageId}
     WHERE id = ${hold.userId} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL

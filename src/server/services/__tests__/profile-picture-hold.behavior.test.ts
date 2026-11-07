@@ -353,6 +353,16 @@ describe('syncProfilePictureForImage', () => {
     expect(await holds(HELD_OWNER)).toEqual([{ imageId: avatar(HELD_OWNER), reason: 'blocked' }]);
   });
 
+  it('does not restore an image that is no longer the user’s own', async () => {
+    await block(avatar(OWNER));
+    await runProfilePictureSync();
+    await db.query(`UPDATE "Image" SET "userId" = $1 WHERE id = $2`, [OTHER, avatar(OWNER)]);
+    await unblock(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await pointer(OWNER)).toBeNull();
+    expect(await holds(OWNER)).toHaveLength(1);
+  });
+
   it('does not restore a soft-deleted owner', async () => {
     await block(avatar(DELETED_OWNER));
     await runProfilePictureSync();
