@@ -656,6 +656,8 @@ export async function applyMajorityBlocks(
         .updateTable('ScanLabelItem')
         .set({ actionStartedAt: null, actionError: message.slice(0, 500) })
         .where('id', '=', item.id)
+        // A held item's claim and error belong to the hold sweep.
+        .where('status', '!=', 'void')
         .execute()
         .catch(() => undefined);
     }

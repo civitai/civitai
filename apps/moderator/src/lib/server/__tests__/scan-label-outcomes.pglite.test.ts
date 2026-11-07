@@ -449,6 +449,22 @@ describe('csam-realistic votes', () => {
     expect(await item(it1)).toMatchObject({ actionResult: 'csam-held' });
   });
 
+  it('a block that fails after the hold vote leaves the hold’s claim and error alone', async () => {
+    const it1 = await seedItem(IMAGE);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    const heldAt = new Date('2026-10-13T12:00:00Z');
+    const voidingFailure = vi.fn(async () => {
+      await pg.query(
+        `UPDATE "ScanLabelItem" SET status = 'void', "voidReason" = 'csam-hold', "actionStartedAt" = $2 WHERE id = $1`,
+        [it1, heldAt]
+      );
+      throw new Error('block failed');
+    });
+    await applyMajorityBlocks({}, deps(voidingFailure));
+    expect(await item(it1)).toMatchObject({ actionStartedAt: heldAt, actionError: null });
+  });
+
   it('counts a hold not yet applied on the metrics page until it lands', async () => {
     const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, CSAM);
