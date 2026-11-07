@@ -125,7 +125,7 @@ async function readTeamHourly(event: StandingsEvent, fromDay: Date) {
 // a lagging replica would freeze stale numbers into the snapshot for an hour.
 async function computeStandings(event: SettledEvent, db: typeof dbWrite | typeof dbRead) {
   const fromDay = scoreFromDay(event);
-  // The few hidden users, found once over the event's distinct users, so the three aggregates below
+  // The few hidden users, found once over the event's distinct users, so the aggregates below
   // need no per-row join to "User".
   const hidden = await db.$queryRaw<{ id: number }[]>`
     SELECT u.id FROM "User" u
