@@ -1,5 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const MIGRATION = path.resolve(
+  __dirname,
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261225120000_personal_data_export/migration.sql'
+);
 
 /**
  * One build, with every source and the bucket faked: who is emailed, what the row records, and what
@@ -229,5 +240,65 @@ describe('buildExport', () => {
     expect(await buildExport({ ...row, attempts: MAX_ATTEMPTS }, deps)).toBe('failed');
     expect(m.builtSend).not.toHaveBeenCalled();
     expect(writes().some((c) => sqlOf(c).includes('"archiveKey" ='))).toBe(false);
+  });
+});
+
+describe('buildExport record, run', () => {
+  // The record UPDATE runs against Postgres with the real migration, so its casts are checked.
+  let db: PGlite;
+  beforeAll(async () => {
+    db = new PGlite();
+    await db.exec(readFileSync(MIGRATION, 'utf8'));
+  });
+  afterAll(() => db?.close());
+
+  beforeEach(async () => {
+    await db.exec(`DELETE FROM "PersonalDataExport"`);
+    await db.query(
+      `INSERT INTO "PersonalDataExport" (id, "userId", "requestedById", status, attempts)
+       VALUES ($1, $2, $3, 'building', $4)`,
+      [row.id, OWNER_ID, STAFF_ID, row.attempts]
+    );
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const q = Prisma.sql(strings, ...values);
+      return (await db.query(q.text, q.values as unknown[])).affectedRows ?? 0;
+    }) as never);
+  });
+
+  const stored = async () =>
+    (
+      await db.query<{
+        status: string;
+        archiveKey: string | null;
+        holdReasons: string[];
+        manifest: { files: unknown[]; internalNotes: number } | null;
+        builtAt: Date | null;
+      }>(
+        `SELECT status, "archiveKey", "holdReasons", manifest, "builtAt"
+           FROM "PersonalDataExport" WHERE id = $1`,
+        [row.id]
+      )
+    ).rows[0];
+
+  it('records a built archive with its manifest and no hold reasons', async () => {
+    expect(await buildExport(row, deps)).toBe('built');
+    const r = await stored();
+    expect(r.status).toBe('built');
+    expect(r.archiveKey).toMatch(/^exports\/5\/.+\.zip$/);
+    expect(r.holdReasons).toEqual([]);
+    expect(r.manifest).toMatchObject({ internalNotes: 1 });
+    expect(r.manifest?.files.length).toBeGreaterThan(0);
+    expect(r.builtAt).toBeInstanceOf(Date);
+  });
+
+  it('records a held archive with its hold reasons', async () => {
+    m.holds.mockResolvedValue({ legs: ['report'], markerView: true });
+    expect(await buildExport(row, deps)).toBe('held');
+    const r = await stored();
+    expect(r.status).toBe('held');
+    expect(r.holdReasons).toEqual(['report']);
   });
 });

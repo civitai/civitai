@@ -10,6 +10,7 @@ export const CREDENTIAL_COLUMNS: Record<string, readonly string[]> = {
   Session: ['sessionToken'],
   AdToken: ['token'],
   ApiKey: ['key'],
+  AccessToken: ['tokenHash'],
   OauthClient: ['secret'],
   PushSubscription: ['p256dh', 'auth', 'endpoint'],
   ScanLabelClaim: ['token'],

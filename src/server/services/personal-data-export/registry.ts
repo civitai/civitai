@@ -66,6 +66,8 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   Feedback: { subject: ['userId'], staff: ['handledById', 'ownerStatusById'] },
   AppAccessRequest: { subject: ['userId'], staff: ['reviewedById'] },
   ApiKey: { subject: ['userId'] },
+  // Share links the user made; the token hash is a credential and never read.
+  AccessToken: { subject: ['createdById'] },
   OauthClient: { subject: ['userId'] },
   UserRole: { subject: ['userId'] },
   UserMembershipOverride: { subject: ['userId'] },
