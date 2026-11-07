@@ -360,7 +360,7 @@ describe('what NCMEC is sent', () => {
     expect(incident.additionalInfo).toContain(
       `"${'😀'.repeat(
         CSAM_CONTEXT_TEXT_MAX_CHARS
-      )}\n[Truncated: 7 further characters are preserved by Civitai with this report.]"`
+      )}"\n[Truncated: 7 further characters are preserved by Civitai with this report.]`
     );
   });
 });

@@ -280,13 +280,16 @@ export const formatUtc = (iso: string) => {
   )}:${pad(d.getUTCMinutes())} UTC`;
 };
 
-function capped(text: string) {
+// The truncation line sits outside the quotes so it cannot be read as part of the posted text.
+function quotedCapped(text: string) {
   const chars = Array.from(text);
-  if (chars.length <= CSAM_CONTEXT_TEXT_MAX_CHARS) return text;
+  if (chars.length <= CSAM_CONTEXT_TEXT_MAX_CHARS) return `"${text}"`;
   const rest = chars.length - CSAM_CONTEXT_TEXT_MAX_CHARS;
-  return `${chars
+  return `"${chars
     .slice(0, CSAM_CONTEXT_TEXT_MAX_CHARS)
-    .join('')}\n[Truncated: ${rest} further characters are preserved by Civitai with this report.]`;
+    .join(
+      ''
+    )}"\n[Truncated: ${rest} further characters are preserved by Civitai with this report.]`;
 }
 
 const author = (c: CsamContextText) =>
@@ -297,7 +300,7 @@ function itemText(c: CsamContextText) {
     c.source === 'postDescription'
       ? `Post description, posted ${formatUtc(c.postedAt)} by ${author(c)}:`
       : `Comment ${c.id}, posted ${formatUtc(c.postedAt)} by ${author(c)}:`;
-  return `${heading}\n"${capped(c.text)}"`;
+  return `${heading}\n${quotedCapped(c.text)}`;
 }
 
 /** The page incidents as NCMEC reads them once parsed: one per page and capture time. */
