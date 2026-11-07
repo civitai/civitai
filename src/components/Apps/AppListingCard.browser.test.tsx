@@ -1,4 +1,4 @@
-import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
@@ -433,7 +433,7 @@ describe('AppListingCard', () => {
     // visit and 302s to the listing's STORED destination. Untracked placement → `direct`.
     await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=direct');
     await expect.element(visit).toHaveAttribute('target', '_blank');
-    await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect.element(visit).toHaveAttribute('rel', 'nofollow noopener noreferrer');
     // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
     // CTA above (an external "Visit" anchor vs. an internal Open/View details
     // link) plus the off-site disclosure Alert on the detail page.
@@ -486,7 +486,7 @@ describe('AppListingCard', () => {
     const visit = page.getByRole('link', { name: 'Visit' });
     await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=direct');
     await expect.element(visit).toHaveAttribute('target', '_blank');
-    await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect.element(visit).toHaveAttribute('rel', 'nofollow noopener noreferrer');
   });
 
   test('on-site page app WITHOUT canOpenPage → View details → unified detail (P2c)', async () => {
@@ -1789,6 +1789,11 @@ describe('🔴 AppListingCard — the category and last-updated meta line', () =
 describe('AppListingCard — acquisition telemetry', () => {
   beforeEach(() => {
     trackMocks.enqueue.mockReset();
+    // The funnel's one gate (the `feedImpressions` dial) — ON unless a case turns it off.
+    mocks.features.feedImpressions = true;
+  });
+  afterEach(() => {
+    delete mocks.features.feedImpressions;
   });
 
   const OFFSITE = {
@@ -1855,6 +1860,18 @@ describe('AppListingCard — acquisition telemetry', () => {
         queryLength: '4-10',
       },
     ]);
+  });
+
+  test('🔴 with the funnel gate OFF a click records nothing (same gate as impressions)', async () => {
+    mocks.features.feedImpressions = false;
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toBeInTheDocument();
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([]);
+    // The link itself is unaffected: the visit is still counted server-side.
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=store_card');
   });
 
   test('an untracked card records no click', async () => {

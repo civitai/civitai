@@ -1451,7 +1451,7 @@ describe('AppListingDetailBody', () => {
       '/apps/go/l1?src=detail'
     );
     expect(visitBtn.getAttribute('target')).toBe('_blank');
-    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(visitBtn.getAttribute('rel')).toBe('nofollow noopener noreferrer');
   });
 
   /**
@@ -1489,7 +1489,7 @@ describe('AppListingDetailBody', () => {
     );
     expect(visitBtn.textContent?.trim()).toBe('Visit');
     expect(visitBtn.getAttribute('target')).toBe('_blank');
-    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(visitBtn.getAttribute('rel')).toBe('nofollow noopener noreferrer');
     expect(glyphOf(visitBtn)).toBe('external-link');
     // The stub copy must be GONE from this state — it is the exact string a user
     // reported as a dead end.

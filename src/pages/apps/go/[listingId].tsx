@@ -4,23 +4,37 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 /**
  * `/apps/go/<listingId>` — the OFF-SITE VISIT redirect behind every store "Visit" link.
  *
- * Never renders: `getServerSideProps` either 302s to the listing's STORED external URL or 404s.
- * The decision, the recording and the open-redirect argument all live in
+ * Normally never renders: `getServerSideProps` either 302s to the listing's STORED external URL
+ * or 404s. The decision, the recording and the open-redirect argument all live in
  * `~/server/services/blocks/app-listing-visit.service` — read its header before changing this.
  *
- * Gating, in order, each failing to the same 404:
- *   1. `resolveAppsPageAccess` — the same store page gate the listing detail page applies;
- *   2. the listing must pass the detail read's own visibility gate for this viewer (store scope,
- *      audience floor, host, browsing level), be OFF-SITE and carry an https destination.
+ * In order, each refusal before the redirect:
+ *   1. `resolveAppsPageAccess` — the same store page gate the listing detail page applies (404);
+ *   2. a per-actor rate limit, 60/min like the store's tRPC reads (429, rendered below);
+ *   3. the listing must pass the detail read's own visibility gate for this viewer (store scope,
+ *      audience floor, host, browsing level), be OFF-SITE and carry an https destination (404).
  *
  * 302 (not 301/308): the destination can change when the listing is edited, and a cached
  * permanent redirect would keep sending visitors to the old address without counting them.
  */
-export const getServerSideProps = createServerSideProps({
+type Props = { rateLimited?: boolean };
+
+export const getServerSideProps = createServerSideProps<Props>({
   useSession: true,
   resolver: async ({ ctx, session, features }) => {
     const access = resolveAppsPageAccess({ features });
     if ('notFound' in access) return { notFound: true };
+
+    const { checkAppVisitRateLimit } = await import('~/server/utils/app-visit-rate-limit');
+    const limit = await checkAppVisitRateLimit({
+      req: ctx.req as never,
+      userId: session?.user?.id ?? null,
+    });
+    if (!limit.allowed) {
+      ctx.res.statusCode = 429;
+      ctx.res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+      return { props: { rateLimited: true } };
+    }
 
     const { resolveAppListingVisit } = await import(
       '~/server/services/blocks/app-listing-visit.service'
@@ -38,7 +52,9 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function AppListingVisitRedirect() {
-  // Unreachable: every request is redirected or 404'd server-side.
-  return null;
+export default function AppListingVisitRedirect({ rateLimited }: Props) {
+  // Reached only when rate-limited; every other request is redirected or 404'd server-side.
+  return rateLimited ? (
+    <p style={{ padding: 16 }}>Too many requests — try again in a minute.</p>
+  ) : null;
 }

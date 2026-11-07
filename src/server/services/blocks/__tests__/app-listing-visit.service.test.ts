@@ -182,6 +182,44 @@ describe('resolveAppListingVisit — recording', () => {
     expect(JSON.stringify(deps.recordEvent.mock.calls[0][0])).not.toContain('secret');
   });
 
+  it.each([
+    'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)',
+    'facebookexternalhit/1.1',
+    'Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)',
+  ])('a crawler / link unfurler (%s) is REDIRECTED but records nothing', async (ua) => {
+    const deps = makeDeps();
+    const visit = await resolveAppListingVisit(
+      request({
+        ctx: { req: { headers: { host: 'civitai.com', 'user-agent': ua } }, res: {} },
+      }),
+      deps
+    );
+    expect(visit?.destination).toBe(STORED);
+    await visit?.recorded;
+    expect(deps.recordEvent).not.toHaveBeenCalled();
+  });
+
+  it('a browser user agent IS recorded (positive control for the bot skip)', async () => {
+    const deps = makeDeps();
+    const visit = await resolveAppListingVisit(
+      request({
+        ctx: {
+          req: {
+            headers: {
+              host: 'civitai.com',
+              'user-agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            },
+          },
+          res: {},
+        },
+      }),
+      deps
+    );
+    await visit?.recorded;
+    expect(deps.recordEvent).toHaveBeenCalledTimes(1);
+  });
+
   it('reads an unknown surface as `direct`', async () => {
     const deps = makeDeps();
     const visit = await resolveAppListingVisit(request({ query: { src: 'banner' } }), deps);

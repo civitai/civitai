@@ -12,8 +12,8 @@ import {
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import {
-  trackAppStoreAction,
   useAppStoreImpression,
+  useTrackAppStoreAction,
   type AppStoreTelemetry,
 } from '~/components/Apps/appStoreTelemetry';
 import { withAppSurface } from '~/shared/utils/app-store-telemetry';
@@ -57,11 +57,12 @@ export function AppSubListingCard({
       ? withAppSurface(rawHref, telemetry.surface)
       : rawHref;
   const impressionRef = useAppStoreImpression(card.id, telemetry);
+  const trackStoreAction = useTrackAppStoreAction();
   const onTitleClick = telemetry
-    ? () => trackAppStoreAction('card_click', card.id, telemetry)
+    ? () => trackStoreAction('card_click', card.id, telemetry)
     : undefined;
   const onCtaClick = telemetry
-    ? () => trackAppStoreAction('cta_click', card.id, telemetry)
+    ? () => trackStoreAction('cta_click', card.id, telemetry)
     : undefined;
   const parentHref = getListingDetailHref(card.parent.slug);
   const opensItem = card.external || canOpenPage;

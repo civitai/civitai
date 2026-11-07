@@ -67,8 +67,12 @@ import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
 import { AppListingOfficialBadge } from '~/components/Apps/AppListingOfficialBadge';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
-import { trackAppStoreAction, useAppStoreDetailView } from '~/components/Apps/appStoreTelemetry';
-import { appVisitHref, withAppSurface } from '~/shared/utils/app-store-telemetry';
+import { useAppStoreDetailView, useTrackAppStoreAction } from '~/components/Apps/appStoreTelemetry';
+import {
+  APP_VISIT_LINK_REL,
+  appVisitHref,
+  withAppSurface,
+} from '~/shared/utils/app-store-telemetry';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
 import {
   NO_BROKEN_SCREENSHOTS,
@@ -704,7 +708,8 @@ function PrimaryAction({
   // Acquisition telemetry: every followed primary CTA is a `cta_click`; the launch / visit it
   // leads to is recorded server-side with surface `detail` (the run route's `App_Open`, the
   // `/apps/go` redirect's `App_Visit`). This component is rendered only outside `preview`.
-  const onCtaClick = () => trackAppStoreAction('cta_click', detail.id, { surface: 'detail' });
+  const trackStoreAction = useTrackAppStoreAction();
+  const onCtaClick = () => trackStoreAction('cta_click', detail.id, { surface: 'detail' });
 
   if (action.mode === 'open' && action.href) {
     const GlyphIcon = glyphFor('open');
@@ -732,7 +737,7 @@ function PrimaryAction({
           component="a"
           href={visitHref}
           target="_blank"
-          rel="noopener noreferrer"
+          rel={visitRedirectHref ? APP_VISIT_LINK_REL : 'noopener noreferrer'}
           leftSection={<GlyphIcon size={16} />}
           data-testid="apps-listing-open-live"
           fullWidth

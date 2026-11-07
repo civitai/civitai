@@ -11,12 +11,14 @@ import {
   appOpenUtcDay,
   buildAppOpenCountSql,
   buildAppOpenRecentBlockIdsSql,
+  buildAppOpenAndVisitCountSql,
   buildAppVisitCountSql,
   buildAppVisitRecentListingIdsSql,
   computeAppListingMetricUpdates,
   computeAppOpenCounts,
   computeAppVisitCounts,
   fetchAppOpenCounts,
+  fetchAppOpenAndVisitCounts,
   fetchAppVisitCounts,
   fetchRecentlyOpenedBlockIds,
   selectAffectedApprovedListings,
@@ -1343,5 +1345,94 @@ describe('visit_count — derived from App_Visit under the play de-dupe', () => 
     expect(seen).toHaveLength(2);
     expect(Object.fromEntries(counts)).toEqual({ apl_a: 97, apl_b: 98, apl_c: 99 });
     expect(await fetchAppVisitCounts([], async () => [])).toEqual(new Map());
+  });
+});
+
+/**
+ * 🔴 ONE SCAN FOR BOTH STREAMS. Visits must not add a second unbounded `actions` scan: block ids
+ * and off-site listing ids share chunks, and a chunk holding both reads both types at once.
+ */
+describe('plays and visits share the count scan', () => {
+  const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  const combined = norm(buildAppOpenAndVisitCountSql(['apb_one'], ['apl_two']));
+
+  it('the combined query reads BOTH types in one PREWHERE, each on its own key', () => {
+    expect(combined).toContain(`PREWHERE toString(type) IN ('App_Open', 'App_Visit')`);
+    expect(combined).toContain(
+      `(toString(type) = 'App_Open' AND JSONExtractString(details, 'appBlockId') IN ('apb_one'))`
+    );
+    expect(combined).toContain(
+      `(toString(type) = 'App_Visit' AND JSONExtractString(details, 'listingId') IN ('apl_two'))`
+    );
+    // Never an Enum comparison (a query error before the widening is applied).
+    expect(combined).not.toMatch(/PREWHERE type\b/);
+  });
+
+  it('the combined query uses the SAME de-dupe and the runbook marker', () => {
+    expect(combined).toContain(
+      `uniqExact(if(userId != 0, concat('u:', toString(userId)), concat('i:', ip))) AS dailyActors`
+    );
+    expect(combined).toContain(`toDate(time, 'UTC') AS day`);
+    expect(combined).toContain(`GROUP BY actionType, actionKey, day`);
+    expect(combined).toContain(APP_OPEN_COUNT_QUERY_MARKER);
+  });
+
+  it('mixed ids are chunked TOGETHER: ceil((n + m) / chunk) scans, not one series per stream', async () => {
+    const queries: string[] = [];
+    await fetchAppOpenAndVisitCounts(
+      ['apb_1', 'apb_2', 'apb_3'],
+      ['apl_1', 'apl_2'],
+      async (sql) => {
+        queries.push(sql);
+        return [];
+      },
+      2
+    );
+    // 5 ids / 2 per chunk = 3 scans; separate series would be ceil(3/2) + ceil(2/2) = 3 too, so
+    // pin the SHAPES: the middle chunk (apb_3 + apl_1) is a combined one.
+    expect(queries).toHaveLength(3);
+    expect(norm(queries[0])).toBe(norm(buildAppOpenCountSql(['apb_1', 'apb_2'])));
+    expect(norm(queries[1])).toBe(norm(buildAppOpenAndVisitCountSql(['apb_3'], ['apl_1'])));
+    expect(norm(queries[2])).toBe(norm(buildAppVisitCountSql(['apl_2'])));
+  });
+
+  it('one block and one listing cost ONE scan (two separate reads would cost two)', async () => {
+    const queries: string[] = [];
+    await fetchAppOpenAndVisitCounts(['apb_1'], ['apl_1'], async (sql) => {
+      queries.push(sql);
+      return [];
+    });
+    expect(queries).toHaveLength(1);
+  });
+
+  it('routes combined rows to the right map by type, and coerces string counts', async () => {
+    const { opens, visits } = await fetchAppOpenAndVisitCounts(['apb_1'], ['apl_1'], async () => [
+      { type: 'App_Open', key: 'apb_1', dailyActorSum: '7' },
+      { type: 'App_Visit', key: 'apl_1', dailyActorSum: 2 },
+    ]);
+    expect(Object.fromEntries(opens)).toEqual({ apb_1: 7 });
+    expect(Object.fromEntries(visits)).toEqual({ apl_1: 2 });
+  });
+
+  it('an open-only input issues EXACTLY the pre-existing play query (byte model unchanged)', async () => {
+    const queries: string[] = [];
+    await fetchAppOpenCounts(['apb_1', 'apb_2'], async (sql) => {
+      queries.push(sql);
+      return [];
+    });
+    expect(queries).toEqual([buildAppOpenCountSql(['apb_1', 'apb_2'])]);
+  });
+
+  it('a full mixed chunk of realistic ids stays under half of max_query_size', () => {
+    // COMPUTED, not measured against a server (the 238,460 figure is for the play-only
+    // query). A full chunk split evenly between the two lists, at production id length.
+    const ids = (prefix: string, n: number) =>
+      Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(26, '0')}`);
+    const half = APP_OPEN_CH_CHUNK_SIZE / 2;
+    const bytes = Buffer.byteLength(
+      buildAppOpenAndVisitCountSql(ids('apb_', half), ids('apl_', half)),
+      'utf8'
+    );
+    expect(bytes).toBeLessThan(262_144 / 2);
   });
 });

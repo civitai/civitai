@@ -57,6 +57,13 @@ import { referrerHostOf, type AppSurface } from '~/shared/utils/app-store-teleme
  * `referrerHost` (the HOST of the `Referer` header only, never its path or query). All
  * three are closed values or a bare hostname, so `details` still never carries author text.
  *
+ * 🔴 TRUST `surface`, NOT `from`, FOR ACQUISITION. `from` is the run chrome's back-button signal
+ * and is COARSE: `home` only for a launch from the My apps home, `store` for EVERYTHING else
+ * (the store, a pasted link, another site, the recents menu). `surface` is the acquisition
+ * field. Its own limit: it is read from the launch URL's `?src=`, which the run route does NOT
+ * re-apply after the embedded app navigates (only `from` is carried through in-app navigation),
+ * so a reload after in-app navigation reads `direct`.
+ *
  * 🔴 FIRE-AND-FORGET, AND IT MUST STAY THAT WAY. This sits on the app-LAUNCH critical
  * path, which the run route's own resolver comment already protects (its two listing
  * reads run concurrently rather than serially for exactly this reason). Awaiting a

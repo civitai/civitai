@@ -454,6 +454,43 @@ export function buildAppVisitCountSql(listingIds: string[]): string {
   return buildDailyActorCountSql(APP_VISIT_ACTION_TYPE, 'listingId', 'visitCount', listingIds);
 }
 
+/**
+ * THE de-dupe: one distinct actor (signed-in user, else ip) per key per UTC day. Every count
+ * query in this file is built around this one expression, so plays and visits cannot drift.
+ */
+const DAILY_ACTOR_EXPR = `uniqExact(if(userId != 0, concat('u:', toString(userId)), concat('i:', ip))) AS dailyActors`;
+
+/**
+ * Plays for `appBlockIds` AND visits for `listingIds` in ONE scan of `actions`: both types in
+ * the PREWHERE, each matched on its own key, grouped by (type, key, day) under the shared
+ * de-dupe, then summed per (type, key). Rows are `{ type, key, dailyActorSum }`.
+ */
+export function buildAppOpenAndVisitCountSql(appBlockIds: string[], listingIds: string[]): string {
+  const list = (ids: string[]) => ids.map((id) => `'${escapeClickhouseString(id)}'`).join(', ');
+  // Inner aliases deliberately do NOT reuse a column name (`type`): an alias that shadows the
+  // column it is computed from is a cyclic alias in ClickHouse.
+  return `
+    SELECT actionType AS type, actionKey AS key, ${APP_OPEN_COUNT_QUERY_MARKER} AS dailyActorSum
+    FROM (
+      SELECT
+        toString(type) AS actionType,
+        if(actionType = '${APP_OPEN_ACTION_TYPE}', JSONExtractString(details, 'appBlockId'), JSONExtractString(details, 'listingId')) AS actionKey,
+        toDate(time, 'UTC') AS day,
+        ${DAILY_ACTOR_EXPR}
+      FROM actions
+      PREWHERE toString(type) IN ('${APP_OPEN_ACTION_TYPE}', '${APP_VISIT_ACTION_TYPE}')
+      WHERE (toString(type) = '${APP_OPEN_ACTION_TYPE}' AND JSONExtractString(details, 'appBlockId') IN (${list(
+    appBlockIds
+  )}))
+         OR (toString(type) = '${APP_VISIT_ACTION_TYPE}' AND JSONExtractString(details, 'listingId') IN (${list(
+    listingIds
+  )}))
+      GROUP BY actionType, actionKey, day
+    )
+    GROUP BY actionType, actionKey
+  `;
+}
+
 /** The one daily-distinct-actor count query both streams use. */
 function buildDailyActorCountSql(
   actionType: string,
@@ -469,7 +506,7 @@ function buildDailyActorCountSql(
       SELECT
         JSONExtractString(details, '${key}') AS ${key},
         toDate(time, 'UTC') AS day,
-        uniqExact(if(userId != 0, concat('u:', toString(userId)), concat('i:', ip))) AS dailyActors
+        ${DAILY_ACTOR_EXPR}
       FROM actions
       PREWHERE toString(type) = '${actionType}'
       WHERE JSONExtractString(details, '${key}') IN (${inList})
@@ -613,34 +650,84 @@ export async function fetchAppOpenCounts(
   runQuery: (sql: string) => Promise<AppOpenCountRow[]>,
   batchSize: number = APP_OPEN_CH_CHUNK_SIZE
 ): Promise<Map<string, number>> {
-  const unique = [...new Set(appBlockIds.filter(Boolean))];
-  const counts = new Map<string, number>();
-  // `IN ()` is a syntax error, and there is nothing to ask about anyway — an empty
-  // input runs ZERO queries rather than one bad one.
-  for (let i = 0; i < unique.length; i += batchSize) {
-    const rows = await runQuery(buildAppOpenCountSql(unique.slice(i, i + batchSize)));
-    for (const row of rows) counts.set(row.appBlockId, Number(row.openCount));
-  }
-  return counts;
+  const { opens } = await fetchAppOpenAndVisitCounts(
+    appBlockIds,
+    [],
+    runQuery as (sql: string) => Promise<AppCountRow[]>,
+    batchSize
+  );
+  return opens;
 }
 
-/**
- * ALL-TIME deduped visit counts for off-site listing ids — `fetchAppOpenCounts`' twin, with the
- * same chunking (listing ids are the same 30-char shape as app block ids, so the same byte
- * model and ceiling apply) and the same FAIL-HARD contract: a missing id is written as 0.
- */
+/** Visit-only form of `fetchAppOpenAndVisitCounts` (no on-site ids). */
 export async function fetchAppVisitCounts(
   listingIds: string[],
   runQuery: (sql: string) => Promise<AppVisitCountRow[]>,
   batchSize: number = APP_OPEN_CH_CHUNK_SIZE
 ): Promise<Map<string, number>> {
-  const unique = [...new Set(listingIds.filter(Boolean))];
-  const counts = new Map<string, number>();
-  for (let i = 0; i < unique.length; i += batchSize) {
-    const rows = await runQuery(buildAppVisitCountSql(unique.slice(i, i + batchSize)));
-    for (const row of rows) counts.set(row.listingId, Number(row.visitCount));
+  const { visits } = await fetchAppOpenAndVisitCounts(
+    [],
+    listingIds,
+    runQuery as (sql: string) => Promise<AppCountRow[]>,
+    batchSize
+  );
+  return visits;
+}
+
+/** One row of the combined (both streams) count query. */
+export type AppCombinedCountRow = { type: string; key: string; dailyActorSum: number | string };
+/** Any row a count query can return — which shape depends on the chunk's ids. */
+export type AppCountRow = AppOpenCountRow | AppVisitCountRow | AppCombinedCountRow;
+
+/**
+ * ALL-TIME deduped PLAY counts (per app_block_id) AND VISIT counts (per off-site listing id) in
+ * ONE pass over `actions` per chunk — not a second all-time scan for visits.
+ *
+ * The ids of both kinds are chunked TOGETHER at `batchSize` (every chunk is a full scan, so the
+ * chunk count is the cost): a chunk holding only block ids uses the play query byte-for-byte as
+ * before, one holding only listing ids uses its visit twin, and a chunk holding both uses
+ * `buildAppOpenAndVisitCountSql`, which reads both types in the same scan. All three come from
+ * the one shared de-dupe (`DAILY_ACTOR_EXPR`). FAILS HARD like `fetchAppOpenCounts` always has:
+ * a missing id is written as 0, so a partial answer must fail the run.
+ */
+export async function fetchAppOpenAndVisitCounts(
+  appBlockIds: string[],
+  listingIds: string[],
+  runQuery: (sql: string) => Promise<AppCountRow[]>,
+  batchSize: number = APP_OPEN_CH_CHUNK_SIZE
+): Promise<{ opens: Map<string, number>; visits: Map<string, number> }> {
+  const blocks = [...new Set(appBlockIds.filter(Boolean))];
+  const listings = [...new Set(listingIds.filter(Boolean))];
+  const tagged = [
+    ...blocks.map((id) => ({ kind: 'open' as const, id })),
+    ...listings.map((id) => ({ kind: 'visit' as const, id })),
+  ];
+  const opens = new Map<string, number>();
+  const visits = new Map<string, number>();
+  // `IN ()` is a syntax error, and there is nothing to ask about anyway — an empty input runs
+  // ZERO queries rather than one bad one.
+  for (let i = 0; i < tagged.length; i += batchSize) {
+    const chunk = tagged.slice(i, i + batchSize);
+    const chunkBlocks = chunk.filter((t) => t.kind === 'open').map((t) => t.id);
+    const chunkListings = chunk.filter((t) => t.kind === 'visit').map((t) => t.id);
+    const sql = !chunkListings.length
+      ? buildAppOpenCountSql(chunkBlocks)
+      : !chunkBlocks.length
+      ? buildAppVisitCountSql(chunkListings)
+      : buildAppOpenAndVisitCountSql(chunkBlocks, chunkListings);
+    const rows = await runQuery(sql);
+    for (const row of rows) {
+      if ('type' in row) {
+        const target = row.type === APP_VISIT_ACTION_TYPE ? visits : opens;
+        target.set(row.key, Number(row.dailyActorSum));
+      } else if ('appBlockId' in row) {
+        opens.set(row.appBlockId, Number(row.openCount));
+      } else {
+        visits.set(row.listingId, Number(row.visitCount));
+      }
+    }
   }
-  return counts;
+  return { opens, visits };
 }
 
 // ---------------------------------------------------------------------------

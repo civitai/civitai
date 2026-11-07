@@ -2,9 +2,8 @@ import { chunk } from 'lodash-es';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import type {
-  AppOpenCountRow,
+  AppCountRow,
   AppOpenRecentRow,
-  AppVisitCountRow,
   AppVisitRecentRow,
 } from '~/server/metrics/appListing.metrics.sql';
 import {
@@ -12,8 +11,7 @@ import {
   APP_LISTING_BATCH_SIZE,
   APP_LISTING_METRIC_UPSERT_SQL,
   APP_OPEN_CH_CHUNK_SIZE,
-  fetchAppOpenCounts,
-  fetchAppVisitCounts,
+  fetchAppOpenAndVisitCounts,
   fetchRecentlyOpenedBlockIds,
   fetchRecentlyVisitedListingIds,
 } from '~/server/metrics/appListing.metrics.sql';
@@ -186,9 +184,9 @@ export const appListingMetrics = createMetricProcessor({
     //    map too; a block missing from it is written as 0. Feeding only the
     //    recently-active blocks here would zero every other listing's play count.
     //    FAILS HARD, deliberately — see the asymmetry note on this function.
-    const openCounts = await getAllTimeOpenCounts(ctx, affected);
-    // Same, for visits over every affected OFF-SITE listing. FAILS HARD for the same reason.
-    const visitCounts = await getAllTimeVisitCounts(ctx, affected);
+    //    Visits for every affected OFF-SITE listing ride the SAME scan(s) — one pass over
+    //    `actions` reads both types, not a second all-time scan.
+    const { opens: openCounts, visits: visitCounts } = await getAllTimeCounts(ctx, affected);
 
     // 4. Batched live-recompute + upsert (install/open/visit; thumbs untouched).
     const tasks: Task[] = chunk(affected, BATCH_SIZE).map((batch, i) => async () => {
@@ -277,7 +275,7 @@ async function chCancellableQuery<T extends object>(
 /**
  * app_block_ids with an `App_Open` event since the watermark.
  *
- * 🔴 FAILS SOFT, AND THE ASYMMETRY WITH getAllTimeOpenCounts IS THE WHOLE POINT.
+ * 🔴 FAILS SOFT, AND THE ASYMMETRY WITH getAllTimeCounts IS THE WHOLE POINT.
  * This half only DISCOVERS candidates; it cannot corrupt a number. Degrading to
  * "no new plays this run" is self-healing — `setLastUpdate()` still runs, but the
  * watermark the NEXT run reads still covers the gap, so the plays this run missed
@@ -291,7 +289,7 @@ async function chCancellableQuery<T extends object>(
  * retry of exactly the same shape. This processor was pure Postgres before the
  * `open_count` work; that regression is not one it gets to introduce.
  *
- * The COUNT read (getAllTimeOpenCounts) deliberately does NOT do this: a partial
+ * The COUNT read (getAllTimeCounts) deliberately does NOT do this: a partial
  * or empty answer there is written over real counts as 0. Discovery degrades,
  * counting fails the run. Do not "make these consistent".
  *
@@ -354,7 +352,9 @@ async function getAffectedListings(
 }
 
 /**
- * ALL-TIME deduped play count per app_block_id, for every affected on-site listing.
+ * ALL-TIME deduped play count per app_block_id (every affected on-site listing) AND visit
+ * count per listing id (every affected off-site listing), from ONE pass over `actions` per
+ * chunk — the two id sets share the chunks, so visits add no scan of their own.
  *
  * 🔴 FAILS HARD, unlike the discovery read above. `open_count` is DERIVED — a block
  * missing from this map is WRITTEN AS 0, not left alone — so a partial or empty
@@ -373,14 +373,16 @@ async function getAffectedListings(
  * against a small Postgres batch (200). See the ceiling note on
  * `fetchAppOpenCounts`.
  */
-async function getAllTimeOpenCounts(
+async function getAllTimeCounts(
   ctx: MetricProcessorRunContext,
   affected: AffectedListing[]
-): Promise<Map<string, number>> {
+): Promise<{ opens: Map<string, number>; visits: Map<string, number> }> {
   const appBlockIds = affected.map((l) => l.appBlockId).filter((id): id is string => !!id);
-  return fetchAppOpenCounts(
+  const offsiteListingIds = affected.filter((l) => l.kind === 'offsite').map((l) => l.id);
+  return fetchAppOpenAndVisitCounts(
     appBlockIds,
-    (sql) => chCancellableQuery<AppOpenCountRow>(ctx, sql),
+    offsiteListingIds,
+    (sql) => chCancellableQuery<AppCountRow>(ctx, sql),
     APP_OPEN_CH_CHUNK_SIZE
   );
 }
@@ -406,21 +408,5 @@ async function getRecentlyVisitedListingIds(ctx: MetricProcessorRunContext): Pro
         details: { error: (error as Error)?.message },
       }).catch();
     }
-  );
-}
-
-/**
- * ALL-TIME deduped visit count per affected OFF-SITE listing. FAILS HARD, exactly like
- * `getAllTimeOpenCounts`: a listing missing from this map is written as 0.
- */
-async function getAllTimeVisitCounts(
-  ctx: MetricProcessorRunContext,
-  affected: AffectedListing[]
-): Promise<Map<string, number>> {
-  const listingIds = affected.filter((l) => l.kind === 'offsite').map((l) => l.id);
-  return fetchAppVisitCounts(
-    listingIds,
-    (sql) => chCancellableQuery<AppVisitCountRow>(ctx, sql),
-    APP_OPEN_CH_CHUNK_SIZE
   );
 }

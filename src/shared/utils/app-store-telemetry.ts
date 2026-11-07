@@ -77,6 +77,12 @@ export function withAppSurface(href: string, surface: AppSurface): string {
   return `${path}?${pairs.join('&')}${hash}`;
 }
 
+/**
+ * `rel` for a link through the visit redirect: `nofollow` so crawlers do not follow it (and
+ * count as visits), plus the usual `noopener noreferrer` for a new-tab third-party destination.
+ */
+export const APP_VISIT_LINK_REL = 'nofollow noopener noreferrer';
+
 /** Route prefix of the off-site visit redirect. */
 export const APP_VISIT_PREFIX = '/apps/go/';
 

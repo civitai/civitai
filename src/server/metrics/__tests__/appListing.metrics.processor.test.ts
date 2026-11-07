@@ -141,11 +141,45 @@ describe('appListingMetrics.update — visit_count is derived from App_Visit', (
     const countSql = String(chQuery.mock.calls[2][0].query);
     expect(countSql).toContain(`'App_Visit'`);
     expect(countSql).toContain(`'apl_off'`);
-    expect(chQuery).toHaveBeenCalledTimes(3); // no play COUNT read: no on-site listing
+    expect(chQuery).toHaveBeenCalledTimes(3); // one count read: a visit-only chunk
     // …and the upsert received it as the parallel ($4, $5) arrays.
     const params = pgCancellableQuery.mock.calls[1][1];
     expect(params[3]).toEqual(['apl_off']);
     expect(params[4]).toEqual([7]);
+  });
+
+  it('🔴 plays AND visits come from ONE count scan, not a second all-time read', async () => {
+    chQuery
+      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_on' }])) // play discovery
+      .mockResolvedValueOnce(chRows([{ listingId: 'apl_off' }])) // visit discovery
+      .mockResolvedValueOnce(
+        chRows([
+          { type: 'App_Open', key: 'apb_on', dailyActorSum: '5' },
+          { type: 'App_Visit', key: 'apl_off', dailyActorSum: 3 },
+        ])
+      ); // the ONE combined count
+    pgCancellableQuery
+      .mockResolvedValueOnce(
+        pgRows([
+          { id: 'apl_off', app_block_id: null, kind: 'offsite' },
+          { id: 'apl_on', app_block_id: 'apb_on', kind: 'onsite' },
+        ])
+      )
+      .mockResolvedValueOnce(pgRows([]));
+
+    await appListingMetrics.update(jobContext);
+
+    // Two discovery reads + exactly ONE count read for both streams.
+    expect(chQuery).toHaveBeenCalledTimes(3);
+    const countSql = String(chQuery.mock.calls[2][0].query);
+    expect(countSql).toContain(`IN ('App_Open', 'App_Visit')`);
+    expect(countSql).toContain(`'apb_on'`);
+    expect(countSql).toContain(`'apl_off'`);
+    const params = pgCancellableQuery.mock.calls[1][1];
+    expect(params[1]).toEqual(['apb_on']);
+    expect(params[2]).toEqual([5]);
+    expect(params[3]).toEqual(['apl_off']);
+    expect(params[4]).toEqual([3]);
   });
 
   it('a visit COUNT failure fails the run hard and writes nothing', async () => {

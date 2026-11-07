@@ -1,5 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { useDwellImpression } from '~/components/TrackView/useTrackImpression';
+import { useCallback, useEffect, useRef } from 'react';
+import {
+  impressionTelemetryOn,
+  useDwellImpression,
+} from '~/components/TrackView/useTrackImpression';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { enqueueTrackEvent } from '~/components/TrackView/trackEventBuffer';
 import type { ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
 import type { TrackActionInput } from '~/server/schema/track.schema';
@@ -69,7 +73,28 @@ export function appStoreActionDetails(
   return details;
 }
 
-/** Fire-and-forget: queue one `AppStore_Action` on the shared beacon. */
+/**
+ * 🔴 ONE GATE FOR THE WHOLE FUNNEL. Impressions ride the feed impression hook, which is behind
+ * the `feedImpressions` dial; clicks, detail views and CTA follows must be behind the SAME dial,
+ * or a partial rollout records clicks for viewers whose impressions were never recorded and
+ * every click-through ratio is silently inflated. Every component records through this hook.
+ */
+export function useAppStoreTelemetryOn(): boolean {
+  return impressionTelemetryOn(useOptionalFeatureFlags());
+}
+
+/** The gated recorder for clicks: a no-op while the funnel's gate is off. */
+export function useTrackAppStoreAction() {
+  const on = useAppStoreTelemetryOn();
+  return useCallback(
+    (action: AppStoreActionKind, listingId: string, t: AppStoreTelemetry) => {
+      if (on) trackAppStoreAction(action, listingId, t);
+    },
+    [on]
+  );
+}
+
+/** Fire-and-forget: queue one `AppStore_Action` on the shared beacon. Ungated — use the hook. */
 export function trackAppStoreAction(
   action: AppStoreActionKind,
   listingId: string,
@@ -141,8 +166,9 @@ export function useAppStoreImpression<T extends HTMLElement = HTMLDivElement>(
  * listing). `enabled` false — a moderator preview — records nothing.
  */
 export function useAppStoreDetailView(listingId: string | null | undefined, enabled: boolean) {
+  const on = useAppStoreTelemetryOn();
   useEffect(() => {
-    if (!enabled || !listingId) return;
+    if (!on || !enabled || !listingId) return;
     trackAppStoreAction('detail_view', listingId, { surface: 'detail' });
-  }, [enabled, listingId]);
+  }, [on, enabled, listingId]);
 }

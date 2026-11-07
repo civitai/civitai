@@ -58,11 +58,15 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useIsClient } from '~/providers/IsClientProvider';
 import {
-  trackAppStoreAction,
   useAppStoreImpression,
+  useTrackAppStoreAction,
   type AppStoreTelemetry,
 } from '~/components/Apps/appStoreTelemetry';
-import { appVisitHref, withAppSurface } from '~/shared/utils/app-store-telemetry';
+import {
+  APP_VISIT_LINK_REL,
+  appVisitHref,
+  withAppSurface,
+} from '~/shared/utils/app-store-telemetry';
 
 /**
  * App Store Listings (W13) — the unified store CARD, over BOTH kinds.
@@ -287,6 +291,7 @@ export function AppListingCard({
   const tracked = preview ? undefined : telemetry;
   const surface = tracked?.surface ?? 'direct';
   const impressionRef = useAppStoreImpression(card.id, tracked);
+  const trackStoreAction = useTrackAppStoreAction();
   // An OFF-SITE Visit goes through `/apps/go/<id>`, which records the visit server-side and
   // 302s to the listing's stored URL; an on-site Open carries its surface into the run route's
   // `App_Open`. `cta.href` stays the source of truth for WHICH action this is.
@@ -302,11 +307,9 @@ export function AppListingCard({
       : tracked
       ? withAppSurface(cta.href, surface)
       : cta.href;
-  const onCardClick = tracked
-    ? () => trackAppStoreAction('card_click', card.id, tracked)
-    : undefined;
+  const onCardClick = tracked ? () => trackStoreAction('card_click', card.id, tracked) : undefined;
   const onCtaClick = () => {
-    if (tracked) trackAppStoreAction('cta_click', card.id, tracked);
+    if (tracked) trackStoreAction('cta_click', card.id, tracked);
   };
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   // 🔴 THE NULL-VS-ZERO DECISION IS **NOT** MADE HERE — `getPlayCountLabel` owns it
@@ -488,7 +491,7 @@ export function AppListingCard({
               component="a"
               href={ctaHref}
               target="_blank"
-              rel="noopener noreferrer"
+              rel={ctaHref === cta.href ? 'noopener noreferrer' : APP_VISIT_LINK_REL}
               size="compact-sm"
               variant="filled"
               className="relative z-10"

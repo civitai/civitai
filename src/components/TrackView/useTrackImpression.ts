@@ -131,6 +131,18 @@ function getRegistry(root: Element | null): Registry {
 }
 
 /**
+ * THE gate for impression telemetry (the `feedImpressions` Flipt dial). Exported so a surface
+ * that also records clicks against its impressions (the app store funnel) can put every event
+ * of the funnel behind the SAME gate — otherwise turning the dial changes the denominator
+ * while the numerator keeps flowing, and every ratio silently breaks.
+ */
+export function impressionTelemetryOn(
+  features: { feedImpressions?: boolean } | null | undefined
+): boolean {
+  return !!features?.feedImpressions;
+}
+
+/**
  * Report that this element's entities were seen, once it has been half visible
  * for a continuous second.
  *
@@ -185,7 +197,7 @@ function useImpressionObserver<T extends HTMLElement>(
   // tracked or not, and must not throw outside a FeatureFlagsProvider. No flags
   // means off.
   const features = useOptionalFeatureFlags();
-  const enabled = !!features?.feedImpressions && wanted;
+  const enabled = impressionTelemetryOn(features) && wanted;
 
   // 🔴 `useContext(ScrollAreaContext)`, NOT `useScrollAreaRef()`. That hook looks
   // like a plain context read but unconditionally registers a `scroll` listener on

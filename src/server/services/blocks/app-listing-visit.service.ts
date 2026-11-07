@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+import { isAutomatedUserAgent } from '~/server/utils/bot-detection/automated-agent';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -40,6 +41,11 @@ import type { Session, SessionUser } from '~/types/session';
  * `appListing.metrics.sql.ts`) under the SAME rule as plays — one distinct actor per listing per
  * UTC day — so a refresh loop costs rows, not visits, and the number can always be recomputed.
  * There is deliberately no `+1` path here.
+ *
+ * 🔴 CRAWLERS AND LINK UNFURLERS ARE REDIRECTED BUT NOT RECORDED. A chat-client preview or a
+ * crawler following a Visit link is not a person using the app; `isAutomatedUserAgent` (a UA
+ * pattern test — attribution only, spoofable, so it gates nothing else) skips the event. The
+ * links also carry `rel="nofollow"`. The read-time de-dupe remains the backstop.
  *
  * 🔴 FIRE-AND-FORGET AFTER THE DECISION. Recording never sits in front of the redirect and
  * never fails it: the event is started without being awaited and swallows its own errors.
@@ -175,6 +181,7 @@ async function recordVisit({
   ctx: VisitRequestContext;
   deps: AppVisitDeps;
 }): Promise<void> {
+  if (isAutomatedUserAgent(ctx.req.headers['user-agent'])) return;
   try {
     await deps.recordEvent(
       appVisitDetails({ listingId, surface, referer: ctx.req.headers.referer }),

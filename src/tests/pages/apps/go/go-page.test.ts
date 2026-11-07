@@ -10,9 +10,10 @@ import '~/pages/apps/go/[listingId]';
  * query string is handed to the service untouched rather than used to build a destination.
  */
 
-const { capturedResolver, mockResolveVisit } = vi.hoisted(() => ({
+const { capturedResolver, mockResolveVisit, mockRateLimit } = vi.hoisted(() => ({
   capturedResolver: { fn: null as null | ((c: any) => Promise<any>) },
   mockResolveVisit: vi.fn<(...a: any[]) => Promise<any>>(),
+  mockRateLimit: vi.fn<(...a: any[]) => Promise<any>>(),
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -23,6 +24,9 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-visit.service', () => ({
   resolveAppListingVisit: mockResolveVisit,
+}));
+vi.mock('~/server/utils/app-visit-rate-limit', () => ({
+  checkAppVisitRateLimit: mockRateLimit,
 }));
 
 const STORE_ON = { appBlocks: true, appListings: true, canViewNsfw: false };
@@ -36,13 +40,17 @@ function args(over: { features?: any; query?: Record<string, unknown> } = {}) {
       params: { listingId: 'apl_1' },
       query: over.query ?? { src: 'store_card' },
       req: { headers: { host: 'civitai.com' } },
-      res: {},
+      res: { statusCode: 200, setHeader: vi.fn() },
     },
   };
 }
 
 describe('/apps/go/<listingId> page', () => {
-  beforeEach(() => mockResolveVisit.mockReset());
+  beforeEach(() => {
+    mockResolveVisit.mockReset();
+    mockRateLimit.mockReset();
+    mockRateLimit.mockResolvedValue({ allowed: true });
+  });
 
   it('302s (not permanent) to exactly the destination the service resolved', async () => {
     mockResolveVisit.mockResolvedValue({
@@ -80,5 +88,23 @@ describe('/apps/go/<listingId> page', () => {
     );
     expect(result).toEqual({ notFound: true });
     expect(mockResolveVisit).not.toHaveBeenCalled();
+  });
+
+  it('429s an actor over the per-minute limit, before any listing lookup', async () => {
+    mockRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 42 });
+    const a = args();
+    const result = await capturedResolver.fn!(a);
+    expect(result).toEqual({ props: { rateLimited: true } });
+    expect(a.ctx.res.statusCode).toBe(429);
+    expect(a.ctx.res.setHeader).toHaveBeenCalledWith('Retry-After', '42');
+    expect(mockResolveVisit).not.toHaveBeenCalled();
+  });
+
+  it('keys the limit on the signed-in user when there is one', async () => {
+    mockResolveVisit.mockResolvedValue(null);
+    await capturedResolver.fn!({ ...args(), session: { user: { id: 9 } } });
+    expect(mockRateLimit.mock.calls[0][0].userId).toBe(9);
+    await capturedResolver.fn!(args());
+    expect(mockRateLimit.mock.calls[1][0].userId).toBeNull();
   });
 });

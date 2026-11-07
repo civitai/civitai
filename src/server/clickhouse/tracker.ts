@@ -350,6 +350,9 @@ export const ActionType = [
 const ACTOR_META_FREE_ACTION_TYPES: ReadonlySet<ActionType> = new Set([
   'Experiment_Exposure',
   'HatTurf_Action',
+  // Store funnel rows (impressions are high-volume) need only the user id. NOT `App_Open` /
+  // `App_Visit`: their counts de-dupe per actor at read time and need the ip fallback.
+  'AppStore_Action',
 ]);
 export type ActionType = (typeof ActionType)[number];
 
