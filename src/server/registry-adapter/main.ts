@@ -1,0 +1,91 @@
+/**
+ * Entrypoint of the registry adapter for Civitai apps: a process of its own, separate from the
+ * web tier, serving the registry source protocol over both of its bindings, HTTP/SSE and gRPC,
+ * from one adapter. Built with `pnpm run build:registry-adapter` and run as
+ * `node dist/registry-adapter.js`.
+ *
+ * Environment: the app's server env (database read client, Redis, and the App Blocks datastore
+ * connection for the shared-document feed), plus
+ *   REGISTRY_ADAPTER_PORT          HTTP/SSE listen port (default 7130)
+ *   REGISTRY_ADAPTER_GRPC_PORT     gRPC listen port (default 7131; see `grpc.ts` for why it is
+ *                                  a port of its own)
+ *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
+ *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
+ */
+import { readCatalog } from '~/server/registry-adapter/catalog-source';
+import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
+import { abortableSleep, createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
+import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
+import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
+import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
+import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
+
+function positiveNumber(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} must be a positive number`);
+  return n;
+}
+
+function main() {
+  const port = positiveNumber('REGISTRY_ADAPTER_PORT', 7130);
+  const grpcPort = positiveNumber('REGISTRY_ADAPTER_GRPC_PORT', 7131);
+  const pollMs = positiveNumber('REGISTRY_ADAPTER_POLL_SECONDS', 60) * 1000;
+  const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || 'https://civitai.com').replace(/\/$/, '');
+  const onError = (err: unknown) => console.error('registry-adapter:', err);
+
+  const deps = liveCatalogReadDeps();
+  // Every subscription polls; they share one catalog read per half poll interval.
+  const readApps = sharedRead(() => readCatalog(deps), pollMs / 2);
+  const store = createRedisSnapshotStore();
+  const entities = createPollingAdapter({
+    namespace: REGISTRY_NAMESPACE,
+    serves: SERVED_SCHEMAS,
+    read: async () =>
+      buildEntities(await readApps(), {
+        baseUrl,
+        onSkip: (reason) => console.warn('registry-adapter:', reason),
+      }),
+    store,
+    pollMs,
+    sleep: abortableSleep,
+    onError,
+  });
+  const docs = createDocFeed({
+    source: liveSharedDocSource(),
+    resolve: resolveFromCatalog(readApps),
+    store,
+    pollMs,
+    sleep: abortableSleep,
+    onError,
+  });
+  const adapter = composeAdapter(entities, docs);
+
+  const server = createRegistryServer(adapter, { onError });
+  server.listen(port, () =>
+    console.log(
+      `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`
+    )
+  );
+  const grpcServer = createGrpcServer(adapter, { onError });
+  listenGrpc(grpcServer, grpcPort).then(
+    (bound) => console.log(`registry-adapter: gRPC on :${bound}`),
+    (err: unknown) => {
+      console.error('registry-adapter: gRPC could not listen:', err);
+      process.exit(1);
+    }
+  );
+  const stop = () => {
+    grpcServer.forceShutdown();
+    server.close(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+}
+
+main();

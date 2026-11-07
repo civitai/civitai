@@ -77,7 +77,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/routers/post.router.ts': { postAddImageInput: 2 },
   // Covers: an `id` is a reference the service checks (resolveCoverImageId's assertOwnership,
   // or a moderator-only route).
-  'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 2 },
+  'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
@@ -98,7 +98,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/generation.schema.ts': { imageSchema: 2 },
   // Client form schemas. Their payloads go to `article.upsert` and to a report flow that keeps
   // only `url`, so the server parses them again with its own input schema.
-  'src/components/Article/ArticleUpsertForm.tsx': { imageSchema: 2 },
+  'src/components/Article/ArticleUpsertForm.tsx': { imageSchema: 3 },
   'src/components/Report/OwnershipForm.tsx': { imageSchema: 2 },
 };
 
@@ -289,7 +289,8 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   string,
   { calls: number; decision: 'assertOwnership' | 'moderator-route' | 'input-has-no-id' }
 > = {
-  'src/server/services/article.service.ts#upsertArticle': { calls: 1, decision: 'assertOwnership' },
+  // The cover and the banner.
+  'src/server/services/article.service.ts#upsertArticle': { calls: 2, decision: 'assertOwnership' },
   'src/server/services/creator-announcement.service.ts#upsertCreatorAnnouncement': {
     calls: 1,
     decision: 'assertOwnership',
@@ -516,7 +517,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'server-derived',
   },
   'src/server/services/article.service.ts#upsertArticle': {
-    writes: ['coverId', 'coverId'],
+    writes: ['coverId', 'bannerId', 'coverId', 'bannerId'],
     decision: 'resolver',
   },
   'src/server/services/auto-feature-images.service.ts#runAutoFeatureImages': {
@@ -845,7 +846,7 @@ function serverColumnsOf(region: string): string[] {
 /** An image foreign-key column, by name: `…ImageId`, `imageId`, `coverId`, `profilePictureId`,
  * `iconId`, `avatarId`. Name-based, so a new column spelled this way is caught before it has a
  * relation in the Prisma schema. */
-const IMAGE_ID_COLUMN = String.raw`\w*ImageId|imageId|coverId|profilePictureId|iconId|avatarId`;
+const IMAGE_ID_COLUMN = String.raw`\w*ImageId|imageId|coverId|bannerId|profilePictureId|iconId|avatarId`;
 
 /** A Prisma write call on any model. */
 const PRISMA_WRITE =

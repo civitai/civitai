@@ -5,7 +5,7 @@ import {
   type SiteAppealCategory,
   type SiteAppealContext,
 } from '@civitai/shared/site-appeal';
-import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
+import { ArticleStatus, restoreStatus, type ArticleMetadata } from '$lib/articles';
 import {
   approvalNeedsBanGrant,
   BAN_PERMISSION_NEEDED,
@@ -72,6 +72,10 @@ export type SiteAppealSubject =
       kind: 'article';
       title: string | null;
       status: string | null;
+      /** The status approving puts it in (`restoreStatus`). */
+      restoresTo: string;
+      /** Restore keeps it, so a restored draft still goes live then. */
+      scheduledAt: Date | null;
       ownerBanned: boolean;
       unpublishedReason: string | null;
       customMessage: string | null;
@@ -177,7 +181,15 @@ function missingSubject(category: SiteAppealCategory): SiteAppealSubject {
         muteReason: null,
       };
     case 'Article':
-      return { kind: 'article', title: null, status: null, ownerBanned: false, ...unpublished };
+      return {
+        kind: 'article',
+        title: null,
+        status: null,
+        restoresTo: ArticleStatus.Published,
+        scheduledAt: null,
+        ownerBanned: false,
+        ...unpublished,
+      };
     case 'Model':
       return {
         kind: 'model',
@@ -270,7 +282,15 @@ async function getSubjects(
     const articles = await dbRead
       .selectFrom('Article as a')
       .leftJoin('User as u', 'u.id', 'a.userId')
-      .select(['a.id', 'a.title', 'a.status', 'a.metadata', 'u.bannedAt as ownerBannedAt'])
+      .select([
+        'a.id',
+        'a.title',
+        'a.status',
+        'a.metadata',
+        'a.publishedAt',
+        'a.scheduledAt',
+        'u.bannedAt as ownerBannedAt',
+      ])
       .where('a.id', 'in', ids)
       .execute();
     for (const a of articles)
@@ -278,6 +298,8 @@ async function getSubjects(
         kind: 'article',
         title: a.title,
         status: a.status,
+        restoresTo: restoreStatus(a.metadata as ArticleMetadata, a.publishedAt),
+        scheduledAt: a.scheduledAt,
         ownerBanned: a.ownerBannedAt !== null,
         ...unpublishStamp(a.metadata),
       });

@@ -678,6 +678,7 @@ export interface User {
   collaboratingOn?: EntityCollaborator[];
   collaborationsCreated?: EntityCollaborator[];
   adTokens?: AdToken[];
+  accessTokens?: AccessToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
@@ -1532,17 +1533,6 @@ export interface HeldResourceReview {
   holdReasons: string[];
 }
 
-export interface HeldAnswer {
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -1757,6 +1747,7 @@ export interface Image {
   clubTierCover?: ClubTier[];
   clubPostCoverImage?: ClubPost[];
   article?: Article | null;
+  articleBanner?: Article | null;
   purchasableRewards?: PurchasableReward[];
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
@@ -2965,6 +2956,26 @@ export interface TrustedSpokeDomain {
   updatedAt: Date;
 }
 
+export interface AccessToken {
+  id: number;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+}
+
+export interface ArticleShareCheck {
+  articleId: number;
+  generation: number;
+  workflowId: string | null;
+  textHash: string | null;
+  updatedAt: Date;
+}
+
 export interface AdToken {
   id: number;
   token: string;
@@ -3817,6 +3828,8 @@ export interface Article {
   cover: string | null;
   coverId: number | null;
   coverImage?: Image | null;
+  bannerId: number | null;
+  bannerImage?: Image | null;
   publishedAt: Date | null;
   scheduledAt: Date | null;
   contentScannedAt: Date | null;
@@ -5957,6 +5970,7 @@ export interface UserProfile {
   privacySettings: JsonValue;
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
+  showcaseSections: JsonValue;
 }
 
 export interface BountyStat {

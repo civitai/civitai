@@ -22,6 +22,8 @@ import {
 } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import { getPlacementFlows } from '../placement-flows.service';
+import { getShopPurchaseSummary, SHOP_PURCHASE_KINDS } from '../shop-purchases.service';
+import { getCrucibleJudging } from '../crucible-judging.service';
 import {
   getReportsOnUser,
   getReportsReceived,
@@ -618,7 +620,7 @@ export const TOOLS = [
   tool({
     name: 'buzz_flows',
     description:
-      "Where a set of accounts' Buzz came from and went (1-100 accounts): blue Buzz each was rewarded, Buzz sent to and received from other accounts by account type (blue = reward Buzz), trainings and how many were paid with blue Buzz, and the account-to-account flows (tips, model purchases with the model version ids) with withinSet marking flows between two listed accounts. For alts pooling Buzz into a main and burners farming free trainings.",
+      "Where a set of accounts' Buzz came from and went (1-100 accounts): blue Buzz each was rewarded, Buzz sent to and received from other accounts by account type (blue = reward Buzz), trainings and how many were paid with blue Buzz, Buzz paid to the platform by type and account type (generation, training, purchases, bids, fees) Buzz the platform refunded, and Buzz the platform paid out as compensation (creator compensation, and generation tips, which the platform pays out so the tipper is not named), and the account-to-account flows (tips, model purchases with the model version ids) with withinSet marking flows between two listed accounts. For alts pooling Buzz into a main and burners farming free trainings. Before calling an account one that accumulates rather than spends, read platformSpend net of platformRefunds (platformEarnings is income, not a refund; a chargeBack row is a clawback, not spend): most blue Buzz is spent on generation, which never shows as a flow to another account.",
     input: z.object({
       userIds: userIdList(100),
       days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(90),
@@ -634,6 +636,65 @@ export const TOOLS = [
         rows: flows.flows.length,
         truncated: flows.truncated,
         sources: [...new Set([...userIds, ...counterparties])].map((id) => userSource(id)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'shop_purchases',
+    description:
+      "What a set of accounts bought from the Creator Shop (1-25 accounts), per account and per item: title, kind (a cosmetic type, 'pack' or 'box'), count, Buzz, refunded count, first and last time, and paidFrom, the Buzz paid by account type from the ledger (blue = reward Buzz). noChargeFound counts paid purchases with no ledger charge; purchases from before about 2026-10-08 used another charge format and always count there. When ledgerCapped is true the ledger read hit its cap for that account: noChargeFound is null, and paidFrom and topUps may be partial. The top 25 items by Buzz are listed and the rest rolled into other. topUps are sticker use top-ups, from the ledger alone: charges and Buzz per sticker; how many uses each bought is not recorded.",
+    input: z.object({
+      userIds: userIdList(25),
+      days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(30),
+      kind: z.enum(SHOP_PURCHASE_KINDS).optional(),
+    }),
+    requires: [LOOKUP],
+    run: async ({ userIds, days, kind }) => {
+      const data = await getShopPurchaseSummary(userIds, days, kind);
+      return {
+        data,
+        rows: data.accounts.reduce((n, a) => n + a.items.length + a.topUps.length, 0),
+        truncated: data.truncated,
+        sources: data.accounts.map((a) => userSource(a.userId, a.username)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'crucible_judging',
+    description:
+      "Who judged a crucible and how. Judges never score entries: each vote picks one of two entries, and the ranking is fitted across all judges, so there is no per-judge score or ranking to give. Returns the crucible; its entries (owner, imageId, the model version ids recorded on the image, submittedAt, the stored score, position and voteCount, counted wins and losses, how many judges voted on it, and the top 3 judges by wins for it); and its judges (votes, countedVotes = one per pair as scoring counts, conflictingPairs = pairs voted both ways, first and last vote). With judgeId, the tallies are that judge's alone and `pairs` lists their counted votes (500 at most; the tallies always cover all of them). Read `notes` before answering: they say what can lag and what is hidden from the public while the crucible runs. For judge bias: a judge whose wins concentrate on one owner's entries, judges that vote in the same window, or an entry whose wins come from few judges.",
+    input: z.object({
+      crucibleId: z.number().int().positive().max(MAX_INT4),
+      judgeId: userId.optional(),
+    }),
+    requires: [LOOKUP],
+    run: async ({ crucibleId, judgeId }) => {
+      const data = await getCrucibleJudging(crucibleId, judgeId ?? null);
+      if (!data)
+        return {
+          data: { found: false, crucibleId },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      const named = new Map<number, string | null>([
+        [data.crucible.ownerId, data.crucible.ownerName],
+      ]);
+      for (const e of data.entries) {
+        named.set(e.ownerId, e.ownerName);
+        for (const j of e.topJudges ?? []) named.set(j.judgeId, j.username);
+      }
+      for (const j of data.judges) named.set(j.judgeId, j.username);
+      return {
+        data,
+        rows: data.entries.length + data.judges.length + (data.pairs?.length ?? 0),
+        truncated: Object.values(data.truncated).some(Boolean),
+        sources: [
+          ...[...named].map(([id, name]) => userSource(id, name)),
+          ...data.entries.flatMap((e) => (e.imageId === null ? [] : [imageSource(e.imageId)])),
+        ],
       };
     },
   }),

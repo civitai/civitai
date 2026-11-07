@@ -1,5 +1,6 @@
 import { Client } from '@axiomhq/axiom-node';
 import { loadAxiomEnv, type AxiomConfig } from './env';
+import { isCredentialField, REDACTED_CREDENTIAL, redactCredentials } from './redact-credentials';
 
 // Package-local alias (not a `declare global`) so a consumer transpiling this package doesn't need the main
 // app's ambient MixedObject global in scope. Same shape, so main-app callers are unaffected.
@@ -41,7 +42,6 @@ export function safeError(e: unknown): MixedObject | undefined {
   return { message: String(e) };
 }
 
-const SECRET_KEY = /authorization|cookie|token|api[-_]?key|password|secret/i;
 const MAX_SERIALIZED_LENGTH = 2_000;
 
 // Plain objects reach here from API error bodies and arbitrary `throw`s, so a stray request
@@ -49,7 +49,7 @@ const MAX_SERIALIZED_LENGTH = 2_000;
 function serializePlainObject(e: object): string {
   try {
     const text = JSON.stringify(e, (key, value) => {
-      if (key && SECRET_KEY.test(key)) return '[redacted]';
+      if (key && isCredentialField(key)) return REDACTED_CREDENTIAL;
       return typeof value === 'bigint' ? value.toString() : value;
     });
     return text.slice(0, MAX_SERIALIZED_LENGTH);
@@ -291,7 +291,7 @@ export function createAxiomLogger(
   }
 
   async function logToAxiom(data: MixedObject, datastream?: string) {
-    const sendData = { pod: config.podName, ...data };
+    const sendData = redactCredentials({ pod: config.podName, ...data });
     if (config.isProd) {
       datastream ??= config.datastream;
 

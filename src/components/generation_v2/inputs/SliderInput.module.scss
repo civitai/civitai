@@ -93,37 +93,3 @@
   border-radius: 2px;
   background: var(--mantine-color-green-6);
 }
-
-.presets {
-  display: flex;
-  gap: 8px;
-}
-
-.preset {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  border-radius: var(--mantine-radius-md);
-  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-4));
-  font-size: 14px;
-  line-height: 1.2;
-
-  &[aria-pressed='true'] {
-    border-color: var(--mantine-color-blue-6);
-    background: var(--mantine-color-blue-light);
-    color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-white));
-  }
-}
-
-.presetLabel {
-  font-weight: 600;
-}
-
-.presetValue {
-  font-size: 12px;
-  opacity: 0.7;
-}

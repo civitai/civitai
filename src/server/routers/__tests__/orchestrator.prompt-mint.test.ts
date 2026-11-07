@@ -84,7 +84,8 @@ beforeAll(async () => {
       availability "Availability" DEFAULT 'Public', "collectionId" int
     );
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
+      "bannerId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]

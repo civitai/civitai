@@ -791,7 +791,7 @@ async function reportProhibitedRequest(options: {
 
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
-    let muted = false;
+    let recordMute = false;
     try {
       const allBlockedPrompts = await getBlockedPrompts(userId);
 
@@ -800,10 +800,13 @@ async function reportProhibitedRequest(options: {
         triggers: allBlockedPrompts,
         updateSource: 'promptAuditing:autoMute',
       });
-      muted = result.muted;
-
-      // Only a mute clears the list; a skipped one leaves it to expire on its own.
-      if (muted) await clearBlockedPromptsAfterMute(userId);
+      if (result.muted) {
+        // A deduped claim joined an open case without storing these prompts, so the list may be
+        // their only copy; only a new case clears it. A skipped one leaves it to expire on its own.
+        if (!result.deduped) await clearBlockedPromptsAfterMute(userId);
+        // A deduped claim on an account that was not muted (an open case left unmuted) mutes it now.
+        recordMute = !result.deduped || !result.wasMuted;
+      }
     } catch (banError) {
       logToAxiom({
         name: 'user-ban-creation-error',
@@ -813,7 +816,7 @@ async function reportProhibitedRequest(options: {
       });
     }
 
-    if (muted && track) {
+    if (recordMute && track) {
       await track.userActivity({
         type: 'Muted',
         targetUserId: userId,

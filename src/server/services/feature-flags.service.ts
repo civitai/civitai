@@ -11,6 +11,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
+import { formatDate } from '~/utils/date-helpers';
 
 export type ServerAvailability = ColorDomain;
 
@@ -372,7 +374,11 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Training Studio',
     badge: 'Beta',
-    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
+      CLASSIC_TRAINER_RETIRES_AT,
+      'MMMM D, YYYY',
+      true
+    )}.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
@@ -550,6 +556,8 @@ const featureFlags = createFeatureFlags({
   // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
   // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
+  // Creator-built showcase sections on the profile page.
+  profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
   // rule (src/server/events/event-access.ts), which adds the preview and launch windows. Do not gate
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
@@ -644,7 +652,8 @@ const featureFlags = createFeatureFlags({
   // picker — and not the node: a blurb span already in a draft must keep parsing, or turning
   // this off would unwrap references the fan-out job still owns.
   textBlurbs: { availability: ['mod'], fliptKey: 'text-blurbs' },
-  // Only the paste-to-card insertion path; stored cards render for every reader.
+  // Inserting cards only (paste and the Embed dialog). Stored cards and
+  // content.getEmbedAvailability serve every reader, flag or not.
   articleCivitaiCards: ['mod'],
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],

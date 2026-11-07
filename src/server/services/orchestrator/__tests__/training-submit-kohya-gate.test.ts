@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /** With the kohyaTraining flag off, a version that still carries the Kohya engine is refused
  *  before the version is claimed or a workflow is submitted (and so before any charge). */
 
+import type * as TrainingConstants from '~/shared/constants/training.constants';
+
+// The classic trainer's submit is date-gated; these cases cover a run it still accepts.
+vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingConstants>()),
+  isClassicTrainerRetired: () => false,
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),

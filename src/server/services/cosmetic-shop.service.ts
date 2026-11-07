@@ -65,6 +65,11 @@ import {
 } from '~/server/services/image.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import {
+  diffSectionItems,
+  logSectionPlacements,
+} from '~/server/services/cosmetic-shop-featured-log.service';
+import type { Tracker } from '~/server/clickhouse/client';
+import {
   excludeDeletedShopListing,
   SHOP_VERDICT_TRANSACTION,
 } from '~/server/services/creator-shop-labels.service';
@@ -172,17 +177,16 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   if (input.archived === false) {
     // Archiving stamps `archivedAt` without reliably moving `status`, so
     // `archivedAt` is the load-bearing signal; the status guard is belt-and-
-    // suspenders. Placed before the resellable branch so its stricter
+    // suspenders. Placed before the publishedCreatorOnly branch so its stricter
     // `status = Published` still wins when both are set.
     where.archivedAt = null;
     where.status = { not: CosmeticShopItemStatus.Archived };
   } else if (input.archived === true) {
     where.archivedAt = { not: null };
   }
-  if (input.resellable) {
+  if (input.publishedCreatorOnly) {
     where.status = CosmeticShopItemStatus.Published;
     cosmeticWhere.createdById = { not: null };
-    where.meta = { path: ['sellableByOthers'], equals: true };
   }
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -192,7 +196,10 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     take,
     skip,
     select: cosmeticShopItemSelect,
-    orderBy: { createdAt: 'desc' },
+    // These are picked for featuring, where newly approved is what's fresh.
+    orderBy: input.publishedCreatorOnly
+      ? [{ reviewedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }]
+      : { createdAt: 'desc' },
   });
 
   const [withSold, count] = await Promise.all([
@@ -584,9 +591,8 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
   };
 };
 
-// Creator-listed items may only be featured when published AND opted into
-// resale — a creator who never marked their item sellable-by-others hasn't
-// consented to official-shop placement.
+// `sellableByOthers` is deliberately not checked: it governs other creators reselling an item.
+// A sale through an official section is not a resale and pays the creator their full pool.
 async function assertSectionPlaceable(items: number[]) {
   // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
   const boxes = await dbWrite.cosmeticShopItem.count({
@@ -598,28 +604,24 @@ async function assertSectionPlaceable(items: number[]) {
     where: {
       id: { in: items },
       cosmetic: { createdById: { not: null } },
-      OR: [
-        { status: { not: CosmeticShopItemStatus.Published } },
-        { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
-      ],
+      status: { not: CosmeticShopItemStatus.Published },
     },
     select: { title: true },
   });
   if (ineligible.length)
     throw new Error(
-      `These creator items are not published resellable cosmetics: ${ineligible
-        .map((i) => i.title)
-        .join(', ')}`
+      `These creator items are not published: ${ineligible.map((i) => i.title).join(', ')}`
     );
 }
 
 export const upsertCosmeticShopSection = async ({
   userId,
+  tracker,
   id,
   items,
   image, // TODO
   ...cosmeticShopSection
-}: UpsertCosmeticShopSectionInput & { userId: number }) => {
+}: UpsertCosmeticShopSectionInput & { userId: number; tracker?: Tracker }) => {
   if (items?.length) await assertSectionPlaceable(items);
 
   const shouldCreateImage = image && !image.id;
@@ -662,6 +664,11 @@ export const upsertCosmeticShopSection = async ({
   }
 
   if (items !== undefined && id) {
+    const before = await dbWrite.cosmeticShopSectionItem.findMany({
+      where: { shopSectionId: id },
+      select: { shopItemId: true },
+    });
+
     // Delete all items:
     await dbWrite.cosmeticShopSectionItem.deleteMany({
       where: {
@@ -694,6 +701,15 @@ export const upsertCosmeticShopSection = async ({
         ON CONFLICT ("shopSectionId", "shopItemId") DO UPDATE SET "index" = EXCLUDED."index"
       `;
     }
+
+    await logSectionPlacements({
+      tracker,
+      sectionId: id,
+      ...diffSectionItems(
+        before.map((r) => r.shopItemId),
+        items
+      ),
+    });
   }
 
   return getSectionById({ id });
@@ -715,7 +731,11 @@ export const getShopItemSections = async ({
  * One item into one section, appended after what the section already holds so the curated order
  * is left alone. The same placement rules as the section editor, which replaces the whole list.
  */
-export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSectionInput) => {
+export const addShopItemToSection = async ({
+  shopItemId,
+  sectionId,
+  tracker,
+}: ShopItemSectionInput & { tracker?: Tracker }) => {
   // The editor's rules only constrain creator cosmetics; a picker on the review queue also reaches
   // creator packs and items still in review, and neither is on sale.
   const item = await dbWrite.cosmeticShopItem.findUnique({
@@ -726,23 +746,26 @@ export const addShopItemToSection = async ({ shopItemId, sectionId }: ShopItemSe
   if (item.status !== CosmeticShopItemStatus.Published || item.archivedAt)
     throw new Error('Only published items can be placed in a shop section');
   await assertSectionPlaceable([shopItemId]);
-  await dbWrite.$executeRaw`
+  const inserted = await dbWrite.$executeRaw`
     INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
     SELECT ${sectionId}, ${shopItemId}, COALESCE(MAX("index") + 1, 0)
     FROM "CosmeticShopSectionItem"
     WHERE "shopSectionId" = ${sectionId}
     ON CONFLICT ("shopSectionId", "shopItemId") DO NOTHING
   `;
+  if (inserted) await logSectionPlacements({ tracker, sectionId, added: [shopItemId] });
   return getShopItemSections({ shopItemId });
 };
 
 export const removeShopItemFromSection = async ({
   shopItemId,
   sectionId,
-}: ShopItemSectionInput) => {
-  await dbWrite.cosmeticShopSectionItem.deleteMany({
+  tracker,
+}: ShopItemSectionInput & { tracker?: Tracker }) => {
+  const { count } = await dbWrite.cosmeticShopSectionItem.deleteMany({
     where: { shopSectionId: sectionId, shopItemId },
   });
+  if (count) await logSectionPlacements({ tracker, sectionId, removed: [shopItemId] });
   return getShopItemSections({ shopItemId });
 };
 
@@ -830,10 +853,23 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
   }, SHOP_VERDICT_TRANSACTION);
 };
 
-export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {
-  return dbWrite.cosmeticShopSection.delete({
+export const deleteCosmeticShopSection = async ({
+  id,
+  tracker,
+}: GetByIdInput & { tracker?: Tracker }) => {
+  const items = await dbWrite.cosmeticShopSectionItem.findMany({
+    where: { shopSectionId: id },
+    select: { shopItemId: true },
+  });
+  const deleted = await dbWrite.cosmeticShopSection.delete({
     where: { id },
   });
+  await logSectionPlacements({
+    tracker,
+    sectionId: id,
+    removed: items.map((i) => i.shopItemId),
+  });
+  return deleted;
 };
 
 export const reorderCosmeticShopSections = async ({
@@ -868,10 +904,8 @@ async function getSectionEventTags(sectionId?: number) {
 
 /**
  * A tagged section's items are its placed items, in their order, then every shop item carrying the
- * tag that is on sale, newest first. The tag is the placement: a moderator approving and tagging
- * an item is the consent the section editor otherwise asks `sellableByOthers` for, and selling it
- * through the official shop pays the creator their full pool. Tagged items still pass every rule a
- * placed item does for this viewer (`shopItemWhere`).
+ * tag that is on sale, newest first. Tagged items still pass every rule a placed item does for this
+ * viewer (`shopItemWhere`).
  */
 async function withEventTaggedItems<
   S extends {

@@ -2902,6 +2902,8 @@ export const REDIS_SYS_KEYS = {
   REMIX_APP: {
     // A choice ask's per-option prices, per run, segment and step, while that ask is open.
     OPTION_PRICES: 'remix-app:option-prices',
+    // Bumped after every mod write; the registry cache key carries it.
+    REGISTRY_GENERATION: 'remix-app:registry-generation',
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
@@ -2919,6 +2921,16 @@ export const REDIS_SYS_KEYS = {
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
     JUDGING_SESSION: 'crucible:judging-session',
+  },
+  REGISTRY_ADAPTER: {
+    // The content-addressed served state a registry cursor names —
+    // `system:registry-adapter:snapshot:${digest}`. TTL refreshed on every resume; evicting one
+    // only expires that cursor (the consumer re-snapshots).
+    SNAPSHOT: 'system:registry-adapter:snapshot',
+    // The newest snapshot digests of one stream, newest first — list
+    // `system:registry-adapter:stream-states:${truncated sha256 of the stream schema}`. Digests
+    // that fall off it are deleted, which bounds what one stream keeps; same TTL as the snapshots.
+    STREAM_STATES: 'system:registry-adapter:stream-states',
   },
 } as const;
 
@@ -3059,6 +3071,9 @@ const REDIS_KEYS_UNPREFIXED = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    // `<prefix>:row:<surface>:<entityType>:<entityId>` and `<prefix>:target:<targetType>:<targetId>` —
+    // the display read of a placement space. See placement-space.service.ts.
+    PLACEMENT_SPACE: 'packed:caches:placement-space',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
@@ -3132,6 +3147,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // Remix app whatIf price per (app, tier, aspect, user tier, mod, currencies): `quoteRemixApps`.
     REMIX_APP_QUOTE: 'packed:caches:remix-app-quote',
+    // The remix app rows (`app_blocks` with a remix status): `getRemixAppRegistry`, busted on every mod edit.
+    REMIX_APP_REGISTRY: 'packed:caches:remix-app-registry',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -3174,6 +3191,11 @@ const REDIS_KEYS_UNPREFIXED = {
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // The contest entries one image has (image detail view), shared across pods. Holds no
+    // rejection reason: that is per-viewer and read live. Busted per image on entry writes;
+    // CacheTTL.md bounds collection-wide and collection-level writers. See
+    // src/server/services/contest-collection-items.cache.ts.
+    CONTEST_COLLECTION_ITEMS: 'packed:caches:contest-collection-items',
     // Async contest-scoring runs: per-run state, the per-collection pointer to the
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.

@@ -10,7 +10,14 @@ import { Badge, Group, Stack, Text, TextInput, UnstyledButton } from '@mantine/c
 import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import { trackRecentEcosystem, useRecentEcosystemsStore } from '~/store/recent-ecosystems.store';
-import { IconCheck, IconChevronDown, IconArrowRight, IconSearch, IconX } from '@tabler/icons-react';
+import {
+  IconArrowRight,
+  IconCheck,
+  IconChevronDown,
+  IconSearch,
+  IconStack2,
+  IconX,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -94,41 +101,37 @@ type TabValue = 'compatible' | 'recent' | 'all';
 // Trigger Button
 // =============================================================================
 
+/** The model card's header strip; `min-h-11` is the phone tap height, kept on every layout. */
 interface TriggerButtonProps {
   label: string;
   disabled?: boolean;
-  opened?: boolean;
   onClick: () => void;
 }
 
 const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
-  ({ label, disabled, opened, onClick }, ref) => {
-    return (
-      <UnstyledButton
-        ref={ref}
-        onClick={onClick}
-        disabled={disabled}
-        title={label}
-        data-tap-target
-        className={clsx(
-          'relative flex h-8 min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-md border px-2 transition-colors sm:max-w-[240px] sm:flex-none',
-          'border-gray-3 bg-white text-gray-7 hover:border-blue-3',
-          'dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
-          disabled && 'cursor-not-allowed opacity-50',
-          opened && 'ring-2 ring-blue-5/20'
-        )}
-      >
-        <span className="shrink-0 border-r border-gray-3 pr-1.5 text-xs font-medium text-gray-6 dark:border-dark-4 dark:text-dark-2">
-          Eco
-        </span>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
-        <IconChevronDown
-          size={14}
-          className={clsx('shrink-0 text-gray-5 transition-transform', opened && 'rotate-180')}
-        />
-      </UnstyledButton>
-    );
-  }
+  ({ label, disabled, onClick }, ref) => (
+    <UnstyledButton
+      ref={ref}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={`Ecosystem: ${label}. Change ecosystem`}
+      data-tap-target
+      className={clsx(
+        'flex min-h-11 w-full min-w-0 items-center gap-2 bg-gray-1 px-2 text-left text-[13px] dark:bg-dark-5',
+        disabled && 'cursor-not-allowed opacity-50'
+      )}
+    >
+      <IconStack2 size={16} className="shrink-0 text-gray-6 dark:text-dark-2" />
+      <span className="min-w-0 flex-1 truncate">
+        <span className="text-gray-6 dark:text-dark-2">Ecosystem</span>{' '}
+        <span className="font-semibold">{label}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1 font-semibold text-blue-6 dark:text-blue-4">
+        Change
+        <IconChevronDown size={14} stroke={2.5} />
+      </span>
+    </UnstyledButton>
+  )
 );
 
 TriggerButton.displayName = 'TriggerButton';
@@ -340,8 +343,8 @@ export function BaseModelListContent({
             : isSelected
             ? 'bg-blue-0 dark:bg-blue-9/20'
             : isActive
-            ? 'bg-gray-1 dark:bg-dark-5'
-            : 'hover:bg-gray-1 dark:hover:bg-dark-5',
+            ? 'bg-gray-1 dark:bg-dark-4'
+            : 'hover:bg-gray-1 dark:hover:bg-dark-4',
           !isDisabled && !item.compatible && 'opacity-60'
         )}
       >
@@ -429,7 +432,7 @@ export function BaseModelListContent({
                 'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                 activeTab === tab.value
                   ? 'bg-blue-1 text-blue-7 dark:bg-blue-9/30 dark:text-blue-4'
-                  : 'text-gray-6 hover:bg-gray-1 dark:text-gray-4 dark:hover:bg-dark-5'
+                  : 'text-gray-6 hover:bg-gray-1 dark:text-gray-4 dark:hover:bg-dark-4'
               )}
             >
               {tab.label}
@@ -780,13 +783,17 @@ export function BaseModelInput({
       title="Select Base Model"
       narrow="fullscreen"
       tall
-      popoverProps={{ position: 'bottom-start' }}
-      dropdownProps={{ p: 'sm', className: 'max-h-[70vh] min-w-[280px] overflow-y-auto' }}
+      // Under the strip's Change, at its right end.
+      popoverProps={{ position: 'bottom-end', shadow: 'xl' }}
+      // A step lighter than the generator's cards, so it stands off the form it opens over.
+      dropdownProps={{
+        p: 'sm',
+        className: 'max-h-[70vh] min-w-[280px] overflow-y-auto bg-white dark:bg-dark-5',
+      }}
       target={
         <TriggerButton
           label={readableName}
           disabled={disabled}
-          opened={popoverOpened}
           onClick={() => {
             if (disabled) return;
             if (popoverOpened) close();

@@ -19,12 +19,16 @@ export async function computeArticleDerivedNsfwLevel(
         a.id,
         GREATEST(
           COALESCE(max(cover."nsfwLevel"), 0),
+          COALESCE(max(banner."nsfwLevel"), 0),
           COALESCE(max(content_imgs."nsfwLevel"), 0)
         ) AS "nsfwLevel"
       FROM "Article" a
       LEFT JOIN "Image" cover
         ON a."coverId" = cover.id
         AND cover."ingestion" = 'Scanned'
+      LEFT JOIN "Image" banner
+        ON a."bannerId" = banner.id
+        AND banner."ingestion" = 'Scanned'
       LEFT JOIN "ImageConnection" ic
         ON ic."entityId" = a.id
         AND ic."entityType" = 'Article'

@@ -22,12 +22,14 @@ import type {
 } from '@civitai/orchestration-client';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import type { Model3DGenerationSchema } from '~/server/orchestrator/polygen/polygen.schema';
 import { createImage } from '~/server/services/image.service';
 import { upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { normalizeModel3DFormat } from '~/shared/orchestrator/model3d-output';
 import { getImageUploadBackend, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import type { Prisma } from '@prisma/client';
 
@@ -110,7 +112,7 @@ export async function handlePolyGenWorkflowResult(
     // An unavailable blob has nothing to copy — e.g. the placeholder GLB older
     // Tripo quad (FBX-only) workflows carry.
     if (!blob || !blob.available) return;
-    blobs.push({ format: normalizeFormat(blob.format), variant, blob });
+    blobs.push({ format: normalizeModel3DFormat(blob.format), variant, blob });
   };
 
   pushBlob('primary', output.model);
@@ -237,16 +239,6 @@ const DEFAULT_MODEL3D_LICENSE_ID = 5;
 // =============================================================================
 // Helpers
 // =============================================================================
-
-/**
- * Lowercase + strip a leading dot from a free-text format string so
- * "GLB", ".glb", and "glb" all hash to the same DB row.
- */
-export function normalizeFormat(format: string): string {
-  return String(format ?? '')
-    .toLowerCase()
-    .replace(/^\./, '');
-}
 
 /** A model3d blob that has been copied to our S3, ready for a Model3DFile row. */
 type CopiedModelFile = {
@@ -388,6 +380,7 @@ async function ingestThumbnailImage(
       })
     );
     registerMediaLocation(s3Key, backend, buffer.length);
+    await recordMintedUploadKey(s3Key, userId);
 
     const image = await createImage({
       url: s3Key,

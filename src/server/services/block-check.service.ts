@@ -5,7 +5,7 @@ import {
   UNRESOLVED_THREAD_CHAIN_MESSAGE,
 } from '~/server/common/thread-chain';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import type { CommentTargetType } from '~/server/schema/commentv3.schema';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { isV3WriteSurface } from '~/server/services/commentv3/write.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -16,7 +16,7 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
  * plus reaction surfaces. Adding a member to either enum breaks the switch in
  * `getBlockCheckOwnerIds` until an owner is resolved for it.
  */
-export type BlockCheckEntityType = CommentConnectorInput['entityType'] | ReactionEntityType;
+export type BlockCheckEntityType = CommentTargetType | ReactionEntityType;
 
 // These lookups guard writes that land on the primary, and the replica can lag behind a row written
 // moments ago, so they read the primary.
@@ -200,7 +200,7 @@ async function v3Comment(commentId: number) {
     {
       userId: number;
       hidden: boolean;
-      entityType: CommentConnectorInput['entityType'];
+      entityType: CommentTargetType;
       entityId: number;
       parentUserId: number | null;
       replyToUserId: number | null;
@@ -239,7 +239,7 @@ export async function getContentOwnerIdForComment(commentId: number) {
  * Block targets for acting on CommentV2 `commentId`: its author and the root content owner.
  *
  * `authorOnly` suits reactions, which no lock walk guards and which legitimately land on comments
- * in orphaned chains. Comment writes `refuse`, matching `throwIfThreadChainLocked`.
+ * in orphaned chains. Comment writes `refuse`.
  */
 async function ownersForCommentV2(
   commentId: number,

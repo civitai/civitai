@@ -12,9 +12,14 @@ import {
 } from '@tabler/icons-react';
 import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { openRemixAppModal } from '~/components/Dialog/triggers/remix-app';
+import { openRemixAppModal, openRemixAppPicker } from '~/components/Dialog/triggers/remix-app';
+import { isPinKey, PinGlyph } from '~/components/AppLayout/AppHeader/UserMenuV2/UserMenuParts';
+import { useRemixAppPins } from '~/components/Image/Remix/useRemixAppPins';
+import { useRemixWorkflows } from '~/components/Image/Remix/useRemixRuns';
+import { orderRemixMenuApps, recentRemixAppSlugs } from '~/shared/remix-apps/menu';
+import { useMemo } from 'react';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { REMIX_MENU_APPS, type RemixMenuApp } from '~/shared/remix-apps/system-apps';
+import { type RemixListedApp, useRemixAppList } from '~/components/Image/Remix/useRemixAppList';
 import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
 import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 import { trpc } from '~/utils/trpc';
@@ -33,14 +38,51 @@ const icons: Record<string, typeof IconSparkles> = {
   palette: IconPalette,
 };
 
+export type RemixMenuApp = RemixListedApp;
+
 /** The remix apps this viewer can run on this image: the same rule the server applies. */
 export function useRemixApps(image: RemixSourceImage): RemixMenuApp[] {
   const features = useOptionalFeatureFlags();
   // The session's showNsfw, which the server reads too; `CurrentUser` leaves it out.
   const session = useOptionalCivitaiSessionContext();
+  const apps = useRemixAppList();
   if (!features?.remixApps || session?.type !== 'authed') return [];
   const viewer = { isGreen: !!features.isGreen, showNsfw: !!session.showNsfw };
-  return REMIX_MENU_APPS.filter((app) => !('refusal' in resolveRemixAppEngine(app, image, viewer)));
+  return apps.filter(
+    (app) =>
+      app.enabled &&
+      app.target === 'image.remix' &&
+      !('refusal' in resolveRemixAppEngine(app, image, viewer))
+  );
+}
+
+/** The section's quote, shared by the menu and the See more picker (same query, one fetch). */
+export function useRemixAppPrices(imageId: number, enabled: boolean) {
+  const quote = trpc.remixApp.quote.useQuery(
+    { imageId },
+    { enabled, staleTime: 3 * 60 * 1000, retry: false }
+  );
+  const prices = new Map(quote.data?.prices.map((p) => [p.slug, p]));
+  return {
+    loading: quote.isLoading,
+    priceOf: (slug: string): RemixAppPrice | undefined =>
+      quote.isError ? { refusal: PRICE_UNAVAILABLE } : prices.get(slug),
+  };
+}
+
+export type RemixAppPrice = { cost: number } | { refusal: string };
+
+export function RemixAppIcon({ icon }: { icon: string }) {
+  const Icon = icons[icon] ?? IconSparkles;
+  return (
+    <ThemeIcon size={36} radius="md" variant="light" color="grape">
+      <Icon size={20} stroke={1.7} />
+    </ThemeIcon>
+  );
+}
+
+export function openRemixApp(app: Pick<RemixMenuApp, 'slug' | 'name'>, imageId: number) {
+  openRemixAppModal({ app: { slug: app.slug, name: app.name, runtime: true }, imageId });
 }
 
 function RemixAppItem({
@@ -48,38 +90,55 @@ function RemixAppItem({
   imageId,
   price,
   loading,
+  onTogglePin,
   onRun,
 }: {
   app: RemixMenuApp;
   imageId: number;
-  price?: { cost: number } | { refusal: string };
+  price?: RemixAppPrice;
   loading: boolean;
+  /** Present on a pinned row: the menu unpins, the picker pins. */
+  onTogglePin?: () => void;
   onRun?: () => void;
 }) {
-  const Icon = icons[app.icon] ?? IconSparkles;
   const refusal = price && 'refusal' in price ? price.refusal : undefined;
   const cost = price && 'cost' in price ? price.cost : undefined;
 
   return (
     <Menu.Item
-      className="rounded-md p-2"
+      className="group rounded-md p-2"
       disabled={cost == null}
-      leftSection={
-        <ThemeIcon size={36} radius="md" variant="light" color="grape">
-          <Icon size={20} stroke={1.7} />
-        </ThemeIcon>
-      }
+      aria-keyshortcuts={onTogglePin ? 'P' : undefined}
+      onKeyDown={(event: React.KeyboardEvent<HTMLElement>) => {
+        if (!onTogglePin || !isPinKey(event)) return;
+        event.preventDefault();
+        onTogglePin();
+      }}
+      leftSection={<RemixAppIcon icon={app.icon} />}
       rightSection={
-        !refusal && (
-          <CurrencyBadge currency="BUZZ" unitAmount={cost ?? 0} loading={loading} size="sm" />
-        )
+        <span className="flex items-center gap-1">
+          {!refusal && (
+            <CurrencyBadge currency="BUZZ" unitAmount={cost ?? 0} loading={loading} size="sm" />
+          )}
+          {onTogglePin && (
+            <span
+              // Not its own tab stop: the row is the menu item, and `P` unpins it from the keyboard.
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onTogglePin();
+              }}
+              className="flex cursor-pointer items-center p-0.5"
+              title="Unpin"
+            >
+              <PinGlyph pinned touch />
+            </span>
+          )}
+        </span>
       }
       onClick={() => {
         onRun?.();
-        openRemixAppModal({
-          app: { slug: app.slug, name: app.name, runtime: app.runtime },
-          imageId,
-        });
+        openRemixApp(app, imageId);
       }}
     >
       <Text size="sm" fw={600} lh={1.2}>
@@ -94,6 +153,7 @@ function RemixAppItem({
   );
 }
 
+/** Pinned apps, topped up with recently used ones, then the rest; See more lists them all. */
 export function RemixAppsSection({
   apps,
   imageId,
@@ -106,26 +166,38 @@ export function RemixAppsSection({
   openCount: number;
   onRun?: () => void;
 }) {
-  const quote = trpc.remixApp.quote.useQuery(
-    { imageId },
-    { enabled: openCount > 0, staleTime: 3 * 60 * 1000, retry: false }
-  );
-  const prices = new Map(quote.data?.prices.map((p) => [p.slug, p]));
+  const { loading, priceOf } = useRemixAppPrices(imageId, openCount > 0);
+  const { pins, toggle, canEdit } = useRemixAppPins();
+  // Mounted only while the menu is open, so a card that is merely rendered fetches nothing.
+  const { data: workflows } = useRemixWorkflows();
+  const recent = useMemo(() => recentRemixAppSlugs(workflows), [workflows]);
+  const shown = orderRemixMenuApps({ apps, pinned: pins, recent });
 
   return (
     <>
       <Menu.Divider />
       <Menu.Label>Remix apps</Menu.Label>
-      {apps.map((app) => (
+      {shown.map((app) => (
         <RemixAppItem
           key={app.slug}
           app={app}
           imageId={imageId}
-          price={quote.isError ? { refusal: PRICE_UNAVAILABLE } : prices.get(app.slug)}
-          loading={quote.isLoading}
+          price={priceOf(app.slug)}
+          loading={loading}
+          // Pinning is the picker's, so no hidden target on a touch screen pins by accident.
+          onTogglePin={canEdit && pins.includes(app.slug) ? () => toggle(app.slug) : undefined}
           onRun={onRun}
         />
       ))}
+      {/* Always: the picker is where apps are pinned, and where a pin on an unpriced row comes off. */}
+      <Menu.Item
+        className="rounded-md px-2 py-1.5"
+        onClick={() => openRemixAppPicker({ apps, imageId, onRun })}
+      >
+        <Text size="sm" c="dimmed">
+          See more
+        </Text>
+      </Menu.Item>
     </>
   );
 }

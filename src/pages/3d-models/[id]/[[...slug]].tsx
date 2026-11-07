@@ -54,6 +54,7 @@ import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Mod
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
 import { isAppealableModel3D } from '~/shared/utils/appeal';
+import { isInlineViewableModel3DFile } from '~/shared/orchestrator/model3d-output';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
@@ -309,14 +310,10 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     ).toFixed(1)} MB${f.isPrimary ? ' · primary' : ''}`,
   }));
 
-  // Viewable variants for the inline three.js viewer — GLB only (GLTFLoader
-  // doesn't speak FBX) and armature-only meshes filtered out (they'd
-  // render as empty space with no visible geometry). Embedded animations
-  // on walking/running play automatically via the viewer's AnimationMixer.
+  // Embedded animations on walking/running play automatically via the
+  // viewer's AnimationMixer.
   const viewableVariants: Model3DViewableVariant[] = files
-    .filter(
-      (f) => f.format.toLowerCase() === 'glb' && !(f.variant ?? 'primary').endsWith('-armature')
-    )
+    .filter(isInlineViewableModel3DFile)
     .map((f) => ({
       key: getFileKey(f),
       label: formatVariantLabel(f.variant),

@@ -152,7 +152,7 @@ describe('Hat Turf catch-up supply', () => {
     await setStock(TRAILING, 10, new Date(now.getTime() - 2 * 3600_000));
     const stock = await getTurfStock('e', TRAILING, now);
     // 10 + 2h at 10/h; the next sticker in 6 minutes.
-    expect(stock).toMatchObject({ available: 30, perHour: 10, cap: 50 });
+    expect(stock).toMatchObject({ available: 30, perHour: 10, cap: 50, multiplier: 1 });
     expect(stock.nextAt).toEqual(new Date(now.getTime() + 6 * 60_000));
     expect(EVENT.getUserTeam).not.toHaveBeenCalled();
     expect(redisMock.sysRedis.hmGet).not.toHaveBeenCalledWith(teamBase, expect.anything());
@@ -164,7 +164,7 @@ describe('Hat Turf catch-up supply', () => {
     await setStock(TRAILING, 10, new Date(now.getTime() - 2 * 3600_000));
     const stock = await getTurfStock('e', TRAILING, now);
     // 10 + 2h at 20/h; the next sticker in 3 minutes.
-    expect(stock).toMatchObject({ available: 50, perHour: 20, cap: 100 });
+    expect(stock).toMatchObject({ available: 50, perHour: 20, cap: 100, multiplier: 2 });
     expect(stock.nextAt).toEqual(new Date(now.getTime() + 3 * 60_000));
   });
 
@@ -173,7 +173,13 @@ describe('Hat Turf catch-up supply', () => {
     const now = later();
     await setStock(LEADING, 45, new Date(now.getTime() - 3600_000));
     const stock = await getTurfStock('e', LEADING, now);
-    expect(stock).toMatchObject({ available: 45, perHour: 5, cap: 25, nextAt: null });
+    expect(stock).toMatchObject({
+      available: 45,
+      perHour: 5,
+      cap: 25,
+      nextAt: null,
+      multiplier: 0.5,
+    });
   });
 
   it("a trailing team's first placement opens a bucket at the raised cap and spends from it", async () => {

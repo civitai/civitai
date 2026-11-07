@@ -446,8 +446,9 @@ describe('article text scan — public content only', () => {
         log.push('submitted');
       });
       dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: string[]) => {
-        // The lock is taken twice per recompute; the first marks when it starts.
-        const locks = strings.join('?').includes('pg_advisory_xact_lock');
+        // The ingestion lock (bare article id, one argument) is taken twice per recompute; the
+        // first marks when it starts. A save's share-link lock is the classed two-argument form.
+        const locks = strings.join('?') === 'SELECT pg_advisory_xact_lock(?)';
         if (locks && !log.includes('recompute')) log.push('recompute');
         return 0;
       });
