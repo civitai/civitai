@@ -78,6 +78,7 @@ const {
   handleUnblockImages,
   updateNsfwLevel,
   resetBlockedNsfwLevel,
+  reportCsamImages,
 } = await import('../image.service');
 
 const AVATAR = 7301;
@@ -234,6 +235,21 @@ describe('a moderator unblock', () => {
     );
     expect(unblock).toBeGreaterThanOrEqual(0);
     expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[unblock]).toBeLessThan(
+      refreshPicture.mock.invocationCallOrder[0]
+    );
+  });
+});
+
+describe('a moderator report flag', () => {
+  it('refreshes the cached profile picture of the user whose avatar was flagged, after the flag', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { userId: AVATAR_OWNER, reports: [] },
+    ] as never);
+
+    await reportCsamImages({ imageIds: [AVATAR], user: { id: MOD, isModerator: true } } as never);
+
+    expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
+    expect(dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]).toBeLessThan(
       refreshPicture.mock.invocationCallOrder[0]
     );
   });

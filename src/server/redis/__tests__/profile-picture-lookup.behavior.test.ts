@@ -66,7 +66,7 @@ describe('profile picture lookup', () => {
     expect(result[OTHER]).toMatchObject({ id: 20 });
   });
 
-  it('returns no picture for a user whose avatar is held for csam review', async () => {
+  it('returns no picture for a user whose avatar is flagged for review', async () => {
     await db.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 10`);
 
     const result = await lookupProfilePictures([OWNER, OTHER]);

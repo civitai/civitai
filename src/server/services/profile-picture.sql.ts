@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 
-/** A profile picture that is Blocked or held for csam review is served as no picture. */
+/** When a profile picture may be served; any other picture is served as none. */
 export const servableProfilePictureSql = Prisma.sql`
   i.ingestion <> 'Blocked'::"ImageIngestionStatus"
   AND i."needsReview" IS DISTINCT FROM 'csam'

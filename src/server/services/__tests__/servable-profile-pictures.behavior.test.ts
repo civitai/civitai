@@ -6,7 +6,7 @@ import type * as RedisCaches from '~/server/redis/caches';
 
 /**
  * Article cards and the bounty, collection and comic search documents carry an author's profile
- * picture only when it may be served: not Blocked, not held for csam review.
+ * picture only when it may be served.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -37,11 +37,10 @@ const { MetricTimeframe } = await import('~/shared/utils/prisma/enums');
 
 const CLEAN = 10;
 const BLOCKED = 20;
-const CSAM_HELD = 30;
-const MINOR_HELD = 40;
+const FLAGGED = 30;
 const CLEAN_AUTHOR = 1;
 const BLOCKED_AUTHOR = 2;
-const CSAM_AUTHOR = 3;
+const FLAGGED_AUTHOR = 3;
 
 let pg: PGlite;
 const runOnPg = (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -62,8 +61,8 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
       (${BLOCKED}, 'blocked', ${BLOCKED_AUTHOR}, 'Blocked', NULL),
-      (${CSAM_HELD}, 'csam-held', ${CSAM_AUTHOR}, 'Scanned', 'csam'),
-      (${MINOR_HELD}, 'minor-held', 4, 'Scanned', 'minor');
+      (${FLAGGED}, 'flagged', ${FLAGGED_AUTHOR}, 'Scanned', 'csam'),
+      (40, 'pending', 4, 'Pending', NULL);
   `);
 });
 afterAll(() => pg.close());
@@ -85,7 +84,7 @@ const picture = (id: number, url: string, userId: number) => ({
 const unfilteredPictures = [
   picture(CLEAN, 'clean', CLEAN_AUTHOR),
   { ...picture(BLOCKED, 'blocked', BLOCKED_AUTHOR), ingestion: 'Blocked' },
-  picture(CSAM_HELD, 'csam-held', CSAM_AUTHOR),
+  picture(FLAGGED, 'flagged', FLAGGED_AUTHOR),
 ];
 
 const author = (id: number, profilePictureId: number) => ({
@@ -98,7 +97,7 @@ const author = (id: number, profilePictureId: number) => ({
 const authors = [
   author(CLEAN_AUTHOR, CLEAN),
   author(BLOCKED_AUTHOR, BLOCKED),
-  author(CSAM_AUTHOR, CSAM_HELD),
+  author(FLAGGED_AUTHOR, FLAGGED),
 ];
 
 /**
@@ -119,18 +118,13 @@ const batch = { type: 'update', ids: [1, 2, 3] } as never;
 const pictureUrls = (pictures: { url: string }[]) => pictures.map((p) => p.url).sort();
 
 describe('servable profile pictures', () => {
-  it('leaves out Blocked and csam-held pictures and keeps the rest', async () => {
-    const pictures = await getServableProfilePictures(pgClient, [
-      CLEAN,
-      BLOCKED,
-      CSAM_HELD,
-      MINOR_HELD,
-    ]);
+  it('leaves out pictures that may not be served and keeps the rest', async () => {
+    const pictures = await getServableProfilePictures(pgClient, [CLEAN, BLOCKED, FLAGGED, 40]);
 
-    expect(pictureUrls(pictures)).toEqual(['clean', 'minor-held']);
+    expect(pictureUrls(pictures)).toEqual(['clean', 'pending']);
   });
 
-  it('bounty search docs carry no Blocked or csam-held author picture', async () => {
+  it('bounty search docs carry no author picture that may not be served', async () => {
     const bounties = authors.map((user, i) => ({
       id: i + 1,
       user,
@@ -148,7 +142,7 @@ describe('servable profile pictures', () => {
     expect(docs.map((d) => d.user.profilePicture?.url ?? null)).toEqual(['clean', null, null]);
   });
 
-  it('collection search docs carry no Blocked or csam-held author picture', async () => {
+  it('collection search docs carry no author picture that may not be served', async () => {
     const collections = authors.map((user, i) => ({
       id: i + 1,
       user,
@@ -164,7 +158,7 @@ describe('servable profile pictures', () => {
     expect(docs.map((d) => d.user.profilePicture?.url ?? null)).toEqual(['clean', null, null]);
   });
 
-  it('comic search data carries no Blocked or csam-held author picture', async () => {
+  it('comic search data carries no author picture that may not be served', async () => {
     const comics = authors.map((user, i) => ({ id: i + 1, user, nsfwLevel: 1 }));
 
     const data = (await comicsSearchIndex.pullData(ctx(comics), batch)) as {
@@ -200,7 +194,7 @@ describe('servable profile pictures', () => {
       dbMock.dbRead.image.findMany.mockResolvedValue(unfilteredPictures as never);
     });
 
-    it('carry no Blocked or csam-held author picture', async () => {
+    it('carry no author picture that may not be served', async () => {
       const { items } = await getArticles({
         limit: 10,
         sort: ArticleSort.Newest,
