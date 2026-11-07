@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { logToAxiom } from '~/server/logging/client';
 import {
   MAX_ATTEMPTS,
   STALE_BUILD_HOURS,
@@ -47,7 +48,16 @@ const run = async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknow
   return db.query(q.text, q.values as unknown[]);
 };
 
+/** The export ids of every alert raised: `alert: true` is what the Axiom monitor matches. */
+const alerted = () =>
+  vi
+    .mocked(logToAxiom)
+    .mock.calls.map(([e]) => e.details as { alert?: boolean; exportId?: number } | undefined)
+    .filter((d) => d?.alert === true)
+    .map((d) => d?.exportId);
+
 beforeEach(async () => {
+  vi.mocked(logToAxiom).mockClear();
   await db.exec(`DELETE FROM "PersonalDataExport"`);
   vi.mocked(dbMock.dbWrite.$queryRaw)
     .mockReset()
@@ -115,6 +125,45 @@ describe('export queue lifecycle, run', () => {
     expect(await rowOf(1)).toMatchObject({ status: 'queued', error: 'build abandoned' });
     expect(await rowOf(2)).toMatchObject({ status: 'failed' });
     expect(await rowOf(3)).toMatchObject({ status: 'building' });
+    // Only the one that reached failed raises the alert.
+    expect(alerted()).toEqual([2]);
+  });
+
+  /**
+   * A request that ends failed is on a response deadline. Every path to `failed` raises an
+   * error-level alert naming the export, the same shape as the Legal notice's, so one monitor sees both.
+   */
+  it('fails an export after its last attempt with the error on the row, and alerts once', async () => {
+    await insert(1, 10, 'queued');
+    const tick = () =>
+      runPersonalDataExports({
+        resolveDeps: async () => ({} as ExportDeps),
+        build: async () => {
+          throw new Error('pg read failed mid-stream');
+        },
+      });
+    for (let attempt = 1; attempt < MAX_ATTEMPTS; attempt++) {
+      await tick();
+      expect(await rowOf(1)).toMatchObject({ status: 'queued', attempts: attempt });
+    }
+    expect(alerted()).toEqual([]);
+    await tick();
+    expect(await rowOf(1)).toEqual({
+      status: 'failed',
+      attempts: MAX_ATTEMPTS,
+      error: 'pg read failed mid-stream',
+    });
+    expect(alerted()).toEqual([1]);
+    // Nothing is left to claim, and no later tick alerts again.
+    await tick();
+    expect(alerted()).toEqual([1]);
+  });
+
+  it('raises no alert when the attempt that reached the limit no longer owns the row', async () => {
+    await insert(1, 10, 'building', MAX_ATTEMPTS + 1);
+    expect(await recordFailure({ id: 1, attempts: MAX_ATTEMPTS }, 'late')).toBe('failed');
+    expect(await rowOf(1)).toMatchObject({ status: 'building' });
+    expect(alerted()).toEqual([]);
   });
 
   it('leaves a row alone once a later attempt owns it', async () => {

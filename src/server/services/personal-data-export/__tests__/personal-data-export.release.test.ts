@@ -189,6 +189,19 @@ describe('releaseExport', () => {
     expect(writes()).toEqual([]);
   });
 
+  it('refuses a failed export: nothing is sent and nothing is written', async () => {
+    vi.mocked(dbMock.dbWrite.personalDataExport.findUnique).mockResolvedValue({
+      ...built,
+      status: 'failed',
+    } as never);
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+      ok: false,
+      reason: 'not-releasable',
+    });
+    expect(mocks.readySend).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
   it('refuses an export that is already held, even once its hold has ended', async () => {
     vi.mocked(dbMock.dbWrite.personalDataExport.findUnique).mockResolvedValue({
       ...built,

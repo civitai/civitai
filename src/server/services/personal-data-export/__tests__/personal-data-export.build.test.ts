@@ -141,6 +141,13 @@ const sqlOf = (c: unknown[]) => (c[0] as unknown as string[]).join('?');
 const writes = () => vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls;
 const ARCHIVE = /^exports\/5\/.+\.zip$/;
 const NOTES = /^exports\/5\/.+-internal-notes\.csv$/;
+/** The export ids of every alert raised (`alert: true`, what the Axiom monitor matches). */
+const alertedIds = () =>
+  vi
+    .mocked(logToAxiom)
+    .mock.calls.map(([e]) => e.details as { alert?: boolean; exportId?: number } | undefined)
+    .filter((d) => d?.alert === true)
+    .map((d) => d?.exportId);
 /** Every object key this build asked the bucket to delete. */
 const uploadsDeleted = () =>
   m.del.mock.calls.flatMap(([, keys]) => (keys as (string | null)[]).filter(Boolean));
@@ -149,6 +156,7 @@ beforeEach(() => {
   for (const f of [m.holds, m.builtSend, m.readySend, m.heldSend, m.refusedSend, m.del, m.put])
     f.mockReset();
   for (const f of [m.stream, m.pg, m.grant]) f.mockReset();
+  vi.mocked(logToAxiom).mockClear();
   m.grant.mockResolvedValue(true);
   m.manifest = null;
   m.holds.mockResolvedValue({ legs: [], markerView: true });
@@ -361,6 +369,45 @@ describe('buildExport', () => {
       expect.stringMatching(ARCHIVE),
       expect.stringMatching(NOTES),
     ]);
+  });
+
+  it('treats a Postgres read failing mid-build as a failed attempt: retried, then failed', async () => {
+    m.pg.mockRejectedValue(new Error('read died mid-stream'));
+    expect(await buildExport(row, deps)).toBe('queued');
+    expect(await buildExport({ ...row, attempts: MAX_ATTEMPTS }, deps)).toBe('failed');
+    expect(m.builtSend).not.toHaveBeenCalled();
+    expect(writes().some((c) => sqlOf(c).includes('"archiveKey" ='))).toBe(false);
+    expect(alertedIds()).toEqual([5]);
+  });
+
+  // Every path in a build that ends the export failed raises the alert; one attempt short does not.
+  it.each([
+    [
+      'the user no longer exists',
+      () => vi.mocked(dbMock.dbWrite.user.findUnique).mockResolvedValue(null),
+    ],
+    [
+      'the first hold check cannot be read',
+      () => m.holds.mockResolvedValue({ legs: ['unconfirmed'], markerView: true }),
+    ],
+    ['the build throws', () => m.stream.mockRejectedValue(new Error('upload failed'))],
+    [
+      'the hold check after the upload cannot be read',
+      () =>
+        m.holds
+          .mockResolvedValueOnce({ legs: [], markerView: true })
+          .mockResolvedValue({ legs: ['unconfirmed'], markerView: true }),
+    ],
+  ])('raises the failed alert when %s on the last attempt', async (_case, arrange) => {
+    arrange();
+    expect(await buildExport({ ...row, attempts: MAX_ATTEMPTS }, deps)).toBe('failed');
+    expect(alertedIds()).toEqual([5]);
+  });
+
+  it('raises no alert for an attempt that will be retried (control)', async () => {
+    m.stream.mockRejectedValue(new Error('upload failed'));
+    expect(await buildExport({ ...row, attempts: 1 }, deps)).toBe('queued');
+    expect(alertedIds()).toEqual([]);
   });
 
   it('deletes a completed archive when the build fails after uploading it', async () => {

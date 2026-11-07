@@ -94,11 +94,25 @@ export function exportRecipient(
 export async function recordFailure(row: Pick<ExportRow, 'id' | 'attempts'>, error: string) {
   const next: ExportStatus = row.attempts >= MAX_ATTEMPTS ? 'failed' : 'queued';
   // `attempts` pins the attempt: a run recovered as stale must not touch a later attempt's row.
-  await dbWrite.$executeRaw`
+  const moved = await dbWrite.$executeRaw`
     UPDATE "PersonalDataExport" SET status = ${next}, error = ${error.slice(0, 2000)}
     WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
   `;
+  if (next === 'failed' && moved === 1) alertFailed(row.id, row.attempts, error);
   return next;
+}
+
+/**
+ * A request that ended failed is on a response deadline, so it must not go quiet: every path to
+ * `failed` raises the same error-level alert the Legal notice uses.
+ */
+function alertFailed(exportId: number, attempts: number, error: string) {
+  logToAxiom({
+    type: 'error',
+    name: LOG,
+    message: `ALERT: personal data export ${exportId} failed after ${attempts} attempt(s)`,
+    details: { exportId, attempts, alert: true, error },
+  }).catch(() => undefined);
 }
 
 /** Builds abandoned mid-run (a crash, an eviction) go back to queued or to failed. */
@@ -251,10 +265,11 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
     select: { id: true, username: true, customerId: true },
   });
   if (!user) {
-    await dbWrite.$executeRaw`
+    const moved = await dbWrite.$executeRaw`
       UPDATE "PersonalDataExport" SET status = 'failed', error = 'no such user'
       WHERE id = ${row.id} AND status = 'building'
     `;
+    if (moved === 1) alertFailed(row.id, row.attempts, 'no such user');
     return 'failed' as const;
   }
 
