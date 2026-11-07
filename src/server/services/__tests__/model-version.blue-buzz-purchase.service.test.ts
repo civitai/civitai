@@ -342,7 +342,13 @@ describe('earlyAccessPurchase — a user who already holds access is not charged
     });
     expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
     expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: BUYER, modelVersionId: VERSION_ID, permissions: 3 })
+      expect.objectContaining({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        permissions: 3,
+        // The early-access refund finds the purchase by this key.
+        meta: { 'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}` },
+      })
     );
   });
 });

@@ -1,30 +1,54 @@
 import { describe, expect, it } from 'vitest';
-import { groupGiftLinks, type GiftLinkRow } from './gift-links';
+import {
+  batchStatus,
+  codesCsv,
+  linkStatus,
+  type GiftBatchRow,
+  type GiftLinkRow,
+} from './gift-links';
 
-const row = (over: Partial<GiftLinkRow>): GiftLinkRow => ({
+const NOW = new Date('2026-11-07T12:00:00Z');
+const link = (over: Partial<GiftLinkRow>): GiftLinkRow => ({
   id: 1,
   codeHint: 'ABCD',
   label: null,
-  batchId: null,
   maxRedemptions: null,
   redemptionCount: 0,
   expiresAt: null,
   revokedAt: null,
-  createdAt: '2026-11-07T00:00:00Z',
+  createdAt: '2026-11-01T00:00:00Z',
+  ...over,
+});
+const batch = (over: Partial<GiftBatchRow>): GiftBatchRow => ({
+  batchId: 'b',
+  label: null,
+  total: 3,
+  claimed: 0,
+  live: 3,
+  createdAt: '2026-11-01T00:00:00Z',
+  expiresAt: null,
   ...over,
 });
 
-describe('groupGiftLinks', () => {
-  it('keeps links as rows and folds a batch into one row with its own counts', () => {
-    const groups = groupGiftLinks([
-      row({ id: 1, redemptionCount: 4, maxRedemptions: 10 }),
-      row({ id: 2, batchId: 'b', maxRedemptions: 1, redemptionCount: 1 }),
-      row({ id: 3, batchId: 'b', maxRedemptions: 1, revokedAt: '2026-11-07T01:00:00Z' }),
-      row({ id: 4, batchId: 'b', maxRedemptions: 1 }),
-    ]);
+describe('gift status', () => {
+  it('calls a link at its cap Claimed, so it is not offered for revoke as if claimable', () => {
+    expect(linkStatus(link({ maxRedemptions: 2, redemptionCount: 2 }), NOW)).toBe('Claimed');
+    expect(linkStatus(link({ maxRedemptions: 2, redemptionCount: 1 }), NOW)).toBe('Active');
+    expect(linkStatus(link({ expiresAt: '2026-11-07T11:00:00Z' }), NOW)).toBe('Expired');
+    expect(linkStatus(link({ revokedAt: '2026-11-02T00:00:00Z' }), NOW)).toBe('Revoked');
+  });
 
-    expect(groups).toHaveLength(2);
-    expect(groups[0]).toMatchObject({ kind: 'link', link: { id: 1 } });
-    expect(groups[1]).toMatchObject({ kind: 'batch', total: 3, redeemed: 1, revoked: 1 });
+  it('keeps a batch Active while any code is claimable', () => {
+    expect(batchStatus(batch({ claimed: 2, live: 1 }), NOW)).toBe('Active');
+    expect(batchStatus(batch({ claimed: 3, live: 0 }), NOW)).toBe('Claimed');
+    expect(batchStatus(batch({ claimed: 1, live: 0 }), NOW)).toBe('Revoked');
+  });
+});
+
+describe('codesCsv', () => {
+  it('gives every code its claim link', () => {
+    expect(codesCsv(['cvg_A', 'cvg_B'], 'https://civitai.red/gift/')).toBe(
+      'code,link\ncvg_A,https://civitai.red/gift/cvg_A\ncvg_B,https://civitai.red/gift/cvg_B\n'
+    );
   });
 });

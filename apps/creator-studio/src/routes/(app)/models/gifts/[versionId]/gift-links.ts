@@ -1,9 +1,10 @@
-/** A row of GET /api/v1/model-versions/[id]/gifts. Dates arrive as ISO strings. */
+/** GET /api/v1/model-versions/[id]/gifts. Dates arrive as ISO strings. */
+export type GiftList = { links: GiftLinkRow[]; batches: GiftBatchRow[] };
+
 export type GiftLinkRow = {
   id: number;
   codeHint: string;
   label: string | null;
-  batchId: string | null;
   maxRedemptions: number | null;
   redemptionCount: number;
   expiresAt: string | null;
@@ -11,50 +12,41 @@ export type GiftLinkRow = {
   createdAt: string;
 };
 
-export type GiftGroup =
-  | { kind: 'link'; link: GiftLinkRow }
-  | {
-      kind: 'batch';
-      batchId: string;
-      label: string | null;
-      total: number;
-      redeemed: number;
-      revoked: number;
-      createdAt: string;
-      expiresAt: string | null;
-    };
+export type GiftBatchRow = {
+  batchId: string;
+  label: string | null;
+  total: number;
+  claimed: number;
+  /** Codes still claimable: not revoked, not claimed, not expired. */
+  live: number;
+  createdAt: string;
+  expiresAt: string | null;
+};
 
-/** Bulk codes collapse to one row per batch; the creator manages a batch, not 500 codes. */
-export function groupGiftLinks(items: GiftLinkRow[]): GiftGroup[] {
-  const groups: GiftGroup[] = [];
-  const batches = new Map<string, Extract<GiftGroup, { kind: 'batch' }>>();
-  for (const item of items) {
-    if (!item.batchId) {
-      groups.push({ kind: 'link', link: item });
-      continue;
-    }
-    let batch = batches.get(item.batchId);
-    if (!batch) {
-      batch = {
-        kind: 'batch',
-        batchId: item.batchId,
-        label: item.label,
-        total: 0,
-        redeemed: 0,
-        revoked: 0,
-        createdAt: item.createdAt,
-        expiresAt: item.expiresAt,
-      };
-      batches.set(item.batchId, batch);
-      groups.push(batch);
-    }
-    batch.total++;
-    if (item.redemptionCount > 0) batch.redeemed++;
-    if (item.revokedAt) batch.revoked++;
-  }
-  return groups;
+export type GiftStatus = 'Active' | 'Claimed' | 'Expired' | 'Revoked';
+
+const isPast = (d: string | null, now: Date) => !!d && new Date(d) <= now;
+
+export function linkStatus(link: GiftLinkRow, now = new Date()): GiftStatus {
+  if (link.revokedAt) return 'Revoked';
+  if (isPast(link.expiresAt, now)) return 'Expired';
+  if (link.maxRedemptions != null && link.redemptionCount >= link.maxRedemptions) return 'Claimed';
+  return 'Active';
 }
 
-export function codesCsv(codes: string[]) {
-  return 'code\n' + codes.join('\n') + '\n';
+export function batchStatus(batch: GiftBatchRow, now = new Date()): GiftStatus {
+  if (batch.live > 0) return 'Active';
+  if (batch.claimed === batch.total) return 'Claimed';
+  if (isPast(batch.expiresAt, now)) return 'Expired';
+  return 'Revoked';
+}
+
+/** One claim link per line, so a recipient never has to build the URL. */
+export function codesCsv(codes: string[], giftBase: string) {
+  return 'code,link\n' + codes.map((code) => `${code},${giftBase}${code}`).join('\n') + '\n';
+}
+
+/** The end of the picked day in the creator's own zone, as ISO; empty stays empty. */
+export function endOfLocalDay(date: string) {
+  return date ? new Date(`${date}T23:59:59.999`).toISOString() : '';
 }

@@ -9,7 +9,7 @@ export default GiftEndpoint(
     if (!modelVersionId) return res.status(400).json({ error: 'Invalid model version id' });
     const actor = { userId: user.id, isModerator: user.isModerator, modelVersionId };
 
-    if (req.method === 'GET') return res.status(200).json({ items: await listGiftLinks(actor) });
+    if (req.method === 'GET') return res.status(200).json(await listGiftLinks(actor));
 
     const parsed = mintGiftCodesSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: z.prettifyError(parsed.error) });

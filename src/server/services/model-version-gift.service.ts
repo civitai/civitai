@@ -18,6 +18,7 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import {
   GIFT_LIVE_CODES_MAX_PER_VERSION,
+  GIFT_LIST_LIMIT,
   GIFT_MINT_MAX_PER_CALL,
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
@@ -202,22 +203,54 @@ export async function listGiftLinks({
   modelVersionId: number;
 }) {
   await assertCanManageGifts({ userId, isModerator, modelVersionId });
-  return dbWrite.modelVersionGiftLink.findMany({
-    where: { modelVersionId },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      codeHint: true,
-      label: true,
-      batchId: true,
-      maxRedemptions: true,
-      redemptionCount: true,
-      expiresAt: true,
-      revokedAt: true,
-      createdAt: true,
-    },
-  });
+  // Bulk codes come back as one row per batch: a version can hold thousands of them. The primary,
+  // because Creator Studio re-reads this right after a create, mint or revoke.
+  const [links, batches] = await Promise.all([
+    dbWrite.modelVersionGiftLink.findMany({
+      where: { modelVersionId, batchId: null },
+      orderBy: { createdAt: 'desc' },
+      take: GIFT_LIST_LIMIT,
+      select: {
+        id: true,
+        codeHint: true,
+        label: true,
+        maxRedemptions: true,
+        redemptionCount: true,
+        expiresAt: true,
+        revokedAt: true,
+        createdAt: true,
+      },
+    }),
+    dbWrite.$queryRaw<GiftBatchSummary[]>`
+      SELECT "batchId",
+             min("label") AS "label",
+             count(*)::int AS "total",
+             count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
+             count(*) FILTER (
+               WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
+                 AND ("expiresAt" IS NULL OR "expiresAt" > now())
+             )::int AS "live",
+             min("createdAt") AS "createdAt",
+             max("expiresAt") AS "expiresAt"
+        FROM "ModelVersionGiftLink"
+       WHERE "modelVersionId" = ${modelVersionId} AND "batchId" IS NOT NULL
+       GROUP BY "batchId"
+       ORDER BY min("createdAt") DESC
+       LIMIT ${GIFT_LIST_LIMIT}
+    `,
+  ]);
+  return { links, batches };
 }
+
+export type GiftBatchSummary = {
+  batchId: string;
+  label: string | null;
+  total: number;
+  claimed: number;
+  live: number;
+  createdAt: Date;
+  expiresAt: Date | null;
+};
 
 /** Revokes one link, or every link of a bulk batch. Already-granted access is kept. */
 export async function revokeGiftLinks({
@@ -350,4 +383,3 @@ export async function claimGift({ userId, code }: { userId: number; code: string
 }
 
 export type ClaimGiftResult = Awaited<ReturnType<typeof claimGift>>;
-export type GiftLinkListItem = Awaited<ReturnType<typeof listGiftLinks>>[number];

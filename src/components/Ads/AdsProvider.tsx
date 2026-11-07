@@ -121,6 +121,8 @@ const blockedUrls: string[] = [
   '/collections/7514194',
   '/collections/7514211',
   '/moderator',
+  // The path carries a gift code, a live credential; ad scripts read the URL directly.
+  '/gift/',
 ];
 
 export function AdsProvider({

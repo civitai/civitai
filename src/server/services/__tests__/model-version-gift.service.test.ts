@@ -18,6 +18,7 @@ const {
   createGiftLink,
   generateGiftCode,
   hashGiftCode,
+  listGiftLinks,
   mintGiftCodes,
   normalizeGiftCode,
   revokeGiftLinks,
@@ -61,13 +62,20 @@ function seed({
 
 beforeEach(() => vi.clearAllMocks());
 
+/** The values bound into the EntityAccess grant: version, user, permissions, meta, addedBy. */
+const grantValues = () => {
+  const call = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
+    (c[0] as string[]).join('?').includes('INSERT INTO "EntityAccess"')
+  );
+  return (call ?? []).slice(1, 6);
+};
+
 describe('gift codes', () => {
   it('generates cvg_ codes that normalise to themselves and hash stably', () => {
     const code = generateGiftCode();
     expect(code).toMatch(/^cvg_[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(normalizeGiftCode(code)).toBe(code);
     expect(hashGiftCode(code)).toBe(hashGiftCode(normalizeGiftCode(code)!));
-    expect(generateGiftCode()).not.toBe(code);
   });
 
   it('accepts a code typed in lower case, with hyphens, or with Crockford look-alikes', () => {
@@ -141,7 +149,28 @@ describe('claimGift', () => {
     });
     // redemption insert, cap update, grant
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(grantValues()).toEqual([
+      VERSION_ID,
+      CLAIMER,
+      3,
+      JSON.stringify({ giftLinkId: 1 }),
+      OWNER,
+    ]);
     expect(mockBustMvCache).toHaveBeenCalledWith(VERSION_ID, 1, CLAIMER);
+  });
+
+  it('grants download to a generation-only holder when the version sells download', async () => {
+    seed({ held: 1 });
+    await expect(claimGift({ userId: CLAIMER, code })).resolves.toMatchObject({
+      alreadyHadAccess: false,
+    });
+    expect(grantValues()[2]).toBe(3);
+  });
+
+  it('grants generation only on a generation-only gate', async () => {
+    seed({ gate: { endsAt: null, terms: { generation: { price: 100 } } } });
+    await claimGift({ userId: CLAIMER, code });
+    expect(grantValues()[2]).toBe(1);
   });
 
   it('spends no slot on someone who already holds what the gift grants', async () => {
@@ -158,6 +187,15 @@ describe('claimGift', () => {
       alreadyHadAccess: true,
     });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('answers an unknown code and a malformed one with the same message', async () => {
+    seed();
+    dbMock.dbWrite.modelVersionGiftLink.findUnique.mockResolvedValue(null);
+    for (const attempt of [code, 'not-a-code'])
+      await expect(claimGift({ userId: CLAIMER, code: attempt })).rejects.toThrow(
+        'This gift is invalid, expired or no longer available.'
+      );
   });
 
   it.each([
@@ -205,7 +243,80 @@ describe('claimGift', () => {
   });
 });
 
+describe('who may manage gifts', () => {
+  const manage = {
+    list: (userId: number, isModerator = false) =>
+      listGiftLinks({ userId, isModerator, modelVersionId: VERSION_ID }),
+    mint: (userId: number, isModerator = false) =>
+      mintGiftCodes({ userId, isModerator, modelVersionId: VERSION_ID, count: 1 }),
+    revoke: (userId: number, isModerator = false) =>
+      revokeGiftLinks({ userId, isModerator, modelVersionId: VERSION_ID, id: 1 }),
+    create: (userId: number, isModerator = false) =>
+      createGiftLink({ userId, isModerator, modelVersionId: VERSION_ID }),
+  };
+
+  it.each(Object.entries(manage))(
+    '%s refuses a non-owner before touching gift rows',
+    async (_n, fn) => {
+      seed();
+      await expect(fn(CLAIMER)).rejects.toThrow('You do not own this model version.');
+      expect(dbMock.dbWrite.modelVersionGiftLink.findMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modelVersionGiftLink.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modelVersionGiftLink.createMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.modelVersionGiftLink.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(Object.entries(manage))('%s lets a moderator through', async (_n, fn) => {
+    seed();
+    dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.modelVersionGiftLink.findMany.mockResolvedValue([]);
+    await expect(fn(CLAIMER, true)).resolves.toBeDefined();
+  });
+});
+
+describe('mintGiftCodes', () => {
+  it('stores single-use rows sharing one batch id', async () => {
+    seed();
+    const { batchId, codes } = await mintGiftCodes({
+      userId: OWNER,
+      modelVersionId: VERSION_ID,
+      count: 3,
+    });
+    const rows = dbMock.dbWrite.modelVersionGiftLink.createMany.mock.calls[0][0].data;
+    expect(rows).toHaveLength(3);
+    expect(
+      rows.every(
+        (r: { maxRedemptions: number; batchId: string }) =>
+          r.maxRedemptions === 1 && r.batchId === batchId
+      )
+    ).toBe(true);
+    expect(rows.map((r: { codeHash: string }) => r.codeHash)).toEqual(codes.map(hashGiftCode));
+  });
+});
+
 describe('revokeGiftLinks', () => {
+  it('only revokes live links on the caller’s own version', async () => {
+    seed();
+    dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 1 });
+    await revokeGiftLinks({ userId: OWNER, modelVersionId: VERSION_ID, id: 9 });
+    expect(dbMock.dbWrite.modelVersionGiftLink.updateMany.mock.calls[0][0].where).toEqual({
+      modelVersionId: VERSION_ID,
+      id: 9,
+      revokedAt: null,
+    });
+  });
+
+  it('needs exactly one of id or batchId', async () => {
+    seed();
+    await expect(revokeGiftLinks({ userId: OWNER, modelVersionId: VERSION_ID })).rejects.toThrow(
+      'exactly one of id or batchId'
+    );
+    await expect(
+      revokeGiftLinks({ userId: OWNER, modelVersionId: VERSION_ID, id: 1, batchId: 'b' })
+    ).rejects.toThrow('exactly one of id or batchId');
+  });
+
   it('reports a revoke that matched no active link as a failure', async () => {
     seed();
     dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 0 });

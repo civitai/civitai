@@ -91,9 +91,11 @@ or mint call. Input is normalised before hashing: case-insensitive, hyphens igno
   session-only (`blockApiKeys`).
 - **REST**, under `/api/v1/model-versions`. Every route goes through `GiftEndpoint`
   (`src/server/utils/model-gift-endpoint.ts`), which requires `ModelsWrite` (a cookie session or a
-  full-access key also passes), answers 404 while the flag is off, and sends `private, no-store`.
+  full-access key also passes), answers 404 while the flag is off, sends `private, no-store`, and gives
+  every write the same onboarded, not-muted and email-verified gates as the tRPC writes.
   - `POST gifts/claim` with `{ code }`.
-  - `GET [id]/gifts` lists links (never codes).
+  - `GET [id]/gifts` returns `{ links, batches }`: the newest 200 links, and one summary row per bulk
+    batch (total, claimed, still live). Never codes.
   - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
   - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
   - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.

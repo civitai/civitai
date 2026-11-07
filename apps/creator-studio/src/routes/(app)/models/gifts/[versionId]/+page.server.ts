@@ -4,15 +4,18 @@ import type { Actions, PageServerLoad } from './$types';
 import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
 import { dbRead } from '$lib/server/db';
 import { callMainApp } from '$lib/server/main-app';
+import { firstError } from '$lib/server/form-errors';
 import { darkFlagEnabled } from '$lib/server/main-app-flags';
 import { sessionCookies } from '$lib/server/session-cookies';
-import type { GiftLinkRow } from './gift-links';
+import type { GiftList } from './gift-links';
 
 const versionIdSchema = z.coerce.number().int().positive();
+// The page converts the picked date to the end of that day in the creator's own zone.
 const optionalDate = z
   .string()
   .optional()
-  .transform((v) => (v ? new Date(`${v}T23:59:59Z`).toISOString() : null));
+  .transform((v) => v || null)
+  .pipe(z.iso.datetime().nullable());
 const optionalLabel = z
   .string()
   .trim()
@@ -39,10 +42,6 @@ const revokeSchema = z.union([
   z.object({ batchId: z.uuid() }),
 ]);
 
-function firstIssue(err: z.ZodError) {
-  return err.issues[0]?.message ?? 'Invalid input.';
-}
-
 async function versionOrThrow(versionId: string, user: App.Locals['user']) {
   const id = versionIdSchema.safeParse(versionId);
   if (!id.success) error(404, 'Not found');
@@ -60,14 +59,14 @@ async function versionOrThrow(versionId: string, user: App.Locals['user']) {
 
 export const load: PageServerLoad = async ({ params, locals, request }) => {
   const version = await versionOrThrow(params.versionId, locals.user);
-  const list = await callMainApp<{ items: GiftLinkRow[] }>(
+  const result = await callMainApp<GiftList>(
     `/api/v1/model-versions/${version.id}/gifts`,
     sessionCookies(request)
   );
   return {
     version,
-    items: list.ok ? list.data.items : [],
-    listError: list.ok ? null : list.error,
+    gifts: result.ok ? result.data : { links: [], batches: [] },
+    listError: result.ok ? null : result.error,
   };
 };
 
@@ -75,7 +74,7 @@ export const actions: Actions = {
   createLink: async ({ params, locals, request }) => {
     const version = await versionOrThrow(params.versionId, locals.user);
     const parsed = createSchema.safeParse(Object.fromEntries(await request.formData()));
-    if (!parsed.success) return fail(400, { error: firstIssue(parsed.error) });
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
     const result = await callMainApp<{ id: number; code: string }>(
       `/api/v1/model-versions/${version.id}/gifts/link`,
       sessionCookies(request),
@@ -87,7 +86,7 @@ export const actions: Actions = {
   mint: async ({ params, locals, request }) => {
     const version = await versionOrThrow(params.versionId, locals.user);
     const parsed = mintSchema.safeParse(Object.fromEntries(await request.formData()));
-    if (!parsed.success) return fail(400, { error: firstIssue(parsed.error) });
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
     const result = await callMainApp<{ batchId: string; codes: string[] }>(
       `/api/v1/model-versions/${version.id}/gifts`,
       sessionCookies(request),
@@ -99,7 +98,7 @@ export const actions: Actions = {
   revoke: async ({ params, locals, request }) => {
     const version = await versionOrThrow(params.versionId, locals.user);
     const parsed = revokeSchema.safeParse(Object.fromEntries(await request.formData()));
-    if (!parsed.success) return fail(400, { error: firstIssue(parsed.error) });
+    if (!parsed.success) return fail(400, { error: firstError(parsed.error) });
     const path =
       'id' in parsed.data
         ? `/api/v1/model-versions/${version.id}/gifts/${parsed.data.id}`

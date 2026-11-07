@@ -4,6 +4,7 @@ import type { PageServerLoad, Actions } from './$types';
 import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
 import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
 import { darkFlagEnabled } from '$lib/server/main-app-flags';
+import { firstError } from '$lib/server/form-errors';
 import { getModelsView } from '$lib/server/models-view';
 import {
   resolveMembership,
@@ -70,7 +71,6 @@ const versionIdsSchema = z
   )
   .refine((ids) => ids.length > 0, 'Select at least one version.');
 
-const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
