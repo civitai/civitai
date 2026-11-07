@@ -40,7 +40,7 @@ vi.mock('../../../../apps/moderator/src/lib/server/db', () => ({
 
 const { createPlatformFeedback, listPlatformFeedbackChanges, PLATFORM_FEEDBACK_CHANGES_SETTLE_MS } =
   await import('../platform-feedback.service');
-const { triageFeedback } = await import(
+const { triageFeedback, bulkTriageFeedback } = await import(
   '../../../../apps/moderator/src/lib/server/feedback.service'
 );
 
@@ -87,14 +87,17 @@ const clientOver = (target: PGlite | Transaction) => ({
   $executeRawUnsafe: async (text: string) => (await target.query(text)).affectedRows ?? 0,
 });
 
-/** Every page from `cursor` on; capped so a cursor that never advances fails instead of hanging. */
+/**
+ * Every page from `cursor` on; capped so a cursor that never advances fails instead of hanging.
+ * The cursor goes back exactly as the feed handed it out, `null` included, as a caller would.
+ */
 async function drain(cursor?: string | null, limit = 50) {
   const items: Awaited<ReturnType<typeof listPlatformFeedbackChanges>>['items'] = [];
-  let next = cursor ?? undefined;
+  let next = cursor;
   for (let page = 0; page < 20; page++) {
     const res = await listPlatformFeedbackChanges({ cursor: next, limit });
     items.push(...res.items);
-    next = res.nextCursor ?? undefined;
+    next = res.nextCursor;
     if (!res.hasMore) return { items, resume: res.nextCursor, pages: page + 1 };
   }
   throw new Error('the feed did not stop paging');
@@ -383,5 +386,154 @@ describe('listPlatformFeedbackChanges', () => {
     for (const key of ['userId', 'reporterIds', 'fingerprint', 'byId'])
       expect(keys).not.toContain(key);
     expect(items[0].samples).toEqual([{ text: 'same refusal here', clientVersion: '2.3.4' }]);
+  });
+
+  it('hands a row out again when a moderator clears its resolution', async () => {
+    const a = await send(alice, 'submit refused', 'submit.server-refused');
+    at(5 * MINUTE);
+    await triageFeedback({
+      id: idOf(a.ref),
+      status: 'actioned',
+      expectedStatus: 'new',
+      resolution: {
+        kind: 'set',
+        expectedAt: null,
+        fixedIn: { component: 'cli', version: '2.4.0' },
+        publicNote: null,
+      },
+      moderatorId: moderator,
+    });
+    at(5 * MINUTE + SETTLED);
+    const { resume } = await drain();
+
+    // Clearing removes `resolution.at` and leaves `handledAt` alone, so neither can carry it.
+    at(9 * MINUTE);
+    expect(
+      await triageFeedback({
+        id: idOf(a.ref),
+        status: 'actioned',
+        expectedStatus: 'actioned',
+        resolution: { kind: 'clear', expectedAt: new Date(t0 + 5 * MINUTE).toISOString() },
+        moderatorId: moderator,
+      })
+    ).toEqual({ ok: true, changed: true });
+    at(9 * MINUTE + SETTLED);
+    expect((await drain(resume)).items).toMatchObject([
+      {
+        id: idOf(a.ref),
+        resolution: null,
+        handledAt: new Date(t0 + 5 * MINUTE).toISOString(),
+        updatedAt: new Date(t0 + 9 * MINUTE).toISOString(),
+      },
+    ]);
+  });
+
+  it('hands a row out again when a moderator moves it back to new', async () => {
+    const a = await send(alice, 'submit refused', 'submit.server-refused');
+    at(5 * MINUTE);
+    await triageFeedback({
+      id: idOf(a.ref),
+      status: 'reviewed',
+      expectedStatus: 'new',
+      moderatorId: moderator,
+    });
+    at(5 * MINUTE + SETTLED);
+    const { resume } = await drain();
+
+    // A move back to `new` nulls `handledAt`.
+    at(9 * MINUTE);
+    await triageFeedback({
+      id: idOf(a.ref),
+      status: 'new',
+      expectedStatus: 'reviewed',
+      moderatorId: moderator,
+    });
+    at(9 * MINUTE + SETTLED);
+    expect((await drain(resume)).items).toMatchObject([
+      {
+        id: idOf(a.ref),
+        status: 'new',
+        handled: false,
+        handledAt: null,
+        updatedAt: new Date(t0 + 9 * MINUTE).toISOString(),
+      },
+    ]);
+  });
+
+  it('hands rows out again when a bulk triage moves them back to new', async () => {
+    const a = await send(alice, 'submit refused', 'submit.server-refused');
+    const b = await send(bob, 'the docs page is wrong');
+    at(5 * MINUTE);
+    await bulkTriageFeedback({
+      rows: [a, b].map((s) => ({ id: idOf(s.ref), expectedStatus: 'new' as const })),
+      status: 'dismissed',
+      moderatorId: moderator,
+    });
+    at(5 * MINUTE + SETTLED);
+    const { resume } = await drain();
+
+    at(9 * MINUTE);
+    expect(
+      await bulkTriageFeedback({
+        rows: [a, b].map((s) => ({ id: idOf(s.ref), expectedStatus: 'dismissed' as const })),
+        status: 'new',
+        moderatorId: moderator,
+      })
+    ).toMatchObject({ actionable: 2 });
+    at(9 * MINUTE + SETTLED);
+    const { items } = await drain(resume);
+    expect(items.map((i) => [i.id, i.status, i.updatedAt])).toEqual(
+      [a, b].map((s) => [idOf(s.ref), 'new', new Date(t0 + 9 * MINUTE).toISOString()])
+    );
+  });
+
+  it('holds a change back for 30 seconds, by the clock', async () => {
+    const a = await send(alice, 'submit refused', 'submit.server-refused');
+    at(29_000);
+    const early = await listPlatformFeedbackChanges({});
+    expect(early).toEqual({ items: [], nextCursor: null, hasMore: false });
+    at(31_000);
+    // The empty page's `null` cursor goes back as it came: it means "from the start".
+    expect(
+      (await listPlatformFeedbackChanges({ cursor: early.nextCursor })).items.map((i) => i.id)
+    ).toEqual([idOf(a.ref)]);
+  });
+
+  it('says there is no more when the page holds exactly the rows left', async () => {
+    await send(alice, 'submit refused', 'submit.server-refused');
+    await send(bob, 'the docs page is wrong');
+    at(SETTLED);
+    expect(await listPlatformFeedbackChanges({ limit: 2 })).toMatchObject({ hasMore: false });
+    expect(await listPlatformFeedbackChanges({ limit: 1 })).toMatchObject({ hasMore: true });
+  });
+
+  it('strips reporter ids and the fingerprint in SQL, before a row reaches the service', async () => {
+    const a = await send(alice, 'submit refused', 'submit.server-refused');
+    await send(bob, 'same refusal here', 'submit.server-refused');
+    at(SETTLED);
+    const stored = (
+      await pg.query<{ context: { server: Record<string, unknown> } }>(
+        'SELECT "context" FROM "Feedback" WHERE "id" = $1',
+        [idOf(a.ref)]
+      )
+    ).rows[0].context.server;
+    // The control: the row holds both keys.
+    expect(stored.reporterIds).toEqual([alice, bob]);
+    expect(typeof stored.fingerprint).toBe('string');
+
+    const query = clientOver(pg).$queryRaw;
+    const selected: Array<Record<string, unknown>> = [];
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (q: Prisma.Sql) => {
+      const rows = (await query(q)) as Array<Record<string, unknown>>;
+      selected.push(...rows);
+      return rows;
+    }) as never);
+    expect((await listPlatformFeedbackChanges({})).items).toHaveLength(1);
+
+    expect(selected).toHaveLength(1);
+    const server = selected[0].server as Record<string, unknown>;
+    expect(server.reports).toBe(2);
+    expect(server).not.toHaveProperty('reporterIds');
+    expect(server).not.toHaveProperty('fingerprint');
   });
 });

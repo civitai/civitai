@@ -457,17 +457,22 @@ const isoMs = (value: Prisma.Sql) => Prisma.sql`(CASE
 END)`;
 
 /**
- * When a row last changed in a way a triager would want to see again: created, reported again
- * (`lastSeenAt`, bumped on every repeat, merged or not), triaged (`handledAt`, stamped on every
- * status change except one back to `new`, which nulls it) or given a resolution (`resolution.at`).
- * A reopen or a regression is a new row, so it surfaces by `createdAt`. A move back to `new` and an
- * edit to the internal triage note alone do not surface.
+ * When a row last changed in a way a triager would want to see again:
+ *   - created;
+ *   - reported again (`lastSeenAt`, bumped on every repeat, merged or not);
+ *   - triaged (`handledAt`), or given a resolution (`resolution.at`);
+ *   - touched by any moderator triage write (`changedAt`, which the moderator app's
+ *     `stampPlatformChange` sets).
+ * `changedAt` is what surfaces the writes that REMOVE the other two times: clearing a resolution,
+ * and a move back to `new`, which nulls `handledAt`. A reopen or a regression is a new row, so it
+ * surfaces by `createdAt`.
  */
 const CHANGED_MS = Prisma.sql`GREATEST(
   (EXTRACT(EPOCH FROM f."createdAt") * 1000)::bigint,
   (EXTRACT(EPOCH FROM f."handledAt") * 1000)::bigint,
   ${isoMs(Prisma.sql`f."context"->'server'->>'lastSeenAt'`)},
-  ${isoMs(Prisma.sql`f."context"->'server'->'resolution'->>'at'`)}
+  ${isoMs(Prisma.sql`f."context"->'server'->'resolution'->>'at'`)},
+  ${isoMs(Prisma.sql`f."context"->'server'->>'changedAt'`)}
 )`;
 
 /**
@@ -489,7 +494,7 @@ type ChangeRow = {
 
 const toCursor = (changedMs: number, id: number) => `${changedMs}:${id}`;
 
-function parseCursor(cursor: string | undefined) {
+function parseCursor(cursor: string | null | undefined) {
   if (!cursor) return { changedMs: -1, id: 0 };
   const [changedMs, id] = cursor.split(':').map(Number);
   return { changedMs, id };

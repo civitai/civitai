@@ -96,13 +96,14 @@ export const PLATFORM_FEEDBACK_CHANGES_LIMIT_MAX = 100;
 
 /**
  * The moderator change feed. `cursor` is the `nextCursor` a previous page returned, opaque to the
- * caller; absent, the feed starts from the oldest row. Only the shape is checked here.
+ * caller; absent or `null`, the feed starts from the oldest row. `null` is what an empty first page
+ * hands back, so it must be accepted back. Only the shape is checked here.
  */
 export const listPlatformFeedbackChangesSchema = z.object({
   cursor: z
     .string()
     .regex(/^\d{1,15}:\d{1,10}$/)
-    .optional(),
+    .nullish(),
   limit: z.number().int().min(1).max(PLATFORM_FEEDBACK_CHANGES_LIMIT_MAX).default(50),
 });
 export type ListPlatformFeedbackChangesInput = z.input<typeof listPlatformFeedbackChangesSchema>;
