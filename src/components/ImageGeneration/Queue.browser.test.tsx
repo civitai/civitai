@@ -23,6 +23,7 @@ vi.mock('~/providers/FiltersProvider', () => ({
     selector({ generation: {} }),
 }));
 
+import { Feed } from '~/components/ImageGeneration/Feed';
 import { Queue } from '~/components/ImageGeneration/Queue';
 
 describe('Queue with an empty page and more behind it', () => {
@@ -45,5 +46,17 @@ describe('Queue with an empty page and more behind it', () => {
 
     await expect.element(page.getByText('The queue is empty')).toBeVisible();
     expect(h.fetchNextPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('Feed with an empty page and more behind it', () => {
+  test('keeps loading pages', async () => {
+    h.hasNextPage = true;
+    h.fetchNextPage.mockClear();
+    renderWithProviders(<Feed />);
+
+    await expect
+      .poll(() => h.fetchNextPage.mock.calls.length, { timeout: 5000 })
+      .toBeGreaterThan(1);
   });
 });
