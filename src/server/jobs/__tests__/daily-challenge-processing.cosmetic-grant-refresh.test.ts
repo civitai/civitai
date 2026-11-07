@@ -42,15 +42,16 @@ const challenge = {
 } as unknown as DailyChallengeDetails;
 const withCosmetic = { resourceCosmeticId: 555 } as unknown as ChallengeConfig;
 
+const isGrant = (strings: unknown) =>
+  (strings as string[]).join('?').includes('INSERT INTO "UserCosmetic"');
 const grantCalls = () =>
-  vi
-    .mocked(dbMock.dbWrite.$executeRaw)
-    .mock.calls.filter(([strings]) =>
-      (strings as unknown as string[]).join('?').includes('INSERT INTO "UserCosmetic"')
-    );
+  vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls.filter(([strings]) => isGrant(strings));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The shared db mock resets per FILE, not per test: restore the default so the deferred
+  // INSERT below cannot leak into a later case.
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0 as never);
   mocks.refresh.mockResolvedValue(undefined);
   mocks.setChallengeActive.mockResolvedValue({ activated: true });
   mocks.createNotification.mockResolvedValue(undefined);
@@ -67,15 +68,27 @@ describe('startScheduledChallenge: resource cosmetic grant', () => {
     expect(grantCalls()).toHaveLength(1);
     expect(mocks.refresh).toHaveBeenCalledTimes(1);
     expect(mocks.refresh).toHaveBeenCalledWith(MODEL_ID);
-    // The refresh must follow the INSERT, or it re-caches the model before the frame exists.
-    const insertOrder = vi
-      .mocked(dbMock.dbWrite.$executeRaw)
-      .mock.invocationCallOrder.filter((_, i) =>
-        (vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls[i][0] as unknown as string[])
-          .join('?')
-          .includes('INSERT INTO "UserCosmetic"')
-      )[0];
-    expect(mocks.refresh.mock.invocationCallOrder[0]).toBeGreaterThan(insertOrder);
+  });
+
+  it('does not refresh until the grant INSERT has resolved', async () => {
+    // Call ORDER alone cannot see a dropped `await`: the refresh would still start after the
+    // INSERT starts, yet race it and re-cache "no frame". So hold the INSERT open.
+    let resolveInsert!: (n: number) => void;
+    const insertPending = new Promise<number>((resolve) => (resolveInsert = resolve));
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(((strings: unknown) =>
+      isGrant(strings) ? insertPending : Promise.resolve(0)) as never);
+
+    const run = startScheduledChallenge(challenge, withCosmetic);
+    await vi.waitFor(() => expect(grantCalls()).toHaveLength(1));
+    // Several macrotask turns: any un-awaited refresh would have been called by now.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.refresh).not.toHaveBeenCalled();
+
+    resolveInsert(1);
+    await run;
+
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('still completes the challenge start when the refresh rejects', async () => {
