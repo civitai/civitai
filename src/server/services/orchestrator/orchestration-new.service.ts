@@ -3521,7 +3521,7 @@ const EXCLUDED_REFILL_MAX_PAGES = 5;
 /**
  * `queryWorkflows` minus workflows carrying an `excludeTags` tag. The tags are also sent to the
  * orchestrator, but it is filtered again here so the result does not depend on the orchestrator
- * honouring them. While a page comes back empty it reads on, up to `EXCLUDED_REFILL_MAX_PAGES`.
+ * honouring them.
  */
 async function queryWorkflowsExcluding(props: Parameters<typeof queryWorkflows>[0]) {
   const excludeTags = props.excludeTags;

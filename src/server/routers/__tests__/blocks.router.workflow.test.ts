@@ -581,7 +581,6 @@ import { failureSnapshot } from '~/components/AppBlocks/failureSnapshot';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 // W13 — the submit path fires recordScopeInvocation (detached) with a structured
 // `detail`. It's mocked above; grab the mock to assert the emitted detail.
 import { recordScopeInvocation } from '~/server/services/blocks/user-app-surface.service';
@@ -1883,7 +1882,8 @@ describe('blocks.submitWorkflow', () => {
       const caller = blocksRouter.createCaller(fakeCtx() as never);
       await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
       expect(mockSubmitWorkflow.mock.calls[1][0].body.tags).toEqual(
-        expect.arrayContaining([WORKFLOW_TAGS.APP_BLOCK, 'app-block:ephemeral-demo'])
+        // The literal, not WORKFLOW_TAGS.APP_BLOCK: the Queue excludes runs by this exact wire value.
+        expect.arrayContaining(['app-block', 'app-block:ephemeral-demo'])
       );
     });
   });

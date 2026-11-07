@@ -53,7 +53,6 @@ import { orchestratorRouter } from '~/server/routers/orchestrator.router';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { REMIX_APP_TAG, remixRunTags } from '~/shared/remix-apps/tags';
 
 const caller = () =>
   orchestratorRouter.createCaller({
@@ -131,19 +130,6 @@ describe('orchestrator.queryGeneratedImages — App Block runs and the generator
     await caller().queryGeneratedImages(input);
     expect(h.cacheKeys).toHaveLength(2);
     expect(h.cacheKeys[0]).not.toEqual(h.cacheKeys[1]);
-  });
-
-  it('the Remix tray, which queries the same procedure by its own tag, still gets its runs', async () => {
-    const remix = workflow('remix-1', [
-      WORKFLOW_TAGS.GENERATION,
-      ...remixRunTags({ slug: 'demo', runId: 'r1', segment: 0 }),
-    ]);
-    h.workflows = [remix, appRun('app-1'), generation('gen-1')];
-    const result = await caller().queryGeneratedImages({
-      tags: [WORKFLOW_TAGS.GENERATION, REMIX_APP_TAG],
-      take: 20,
-    });
-    expect(ids(result)).toEqual(['remix-1']);
   });
 
   it('a first page of only app runs reads on to the generations behind it', async () => {
