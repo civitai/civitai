@@ -16,12 +16,14 @@ import {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   FlagOnlyRemovedError,
+  AppealRestoreRefusedError,
+  APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
-import { dbRead } from '$lib/server/db';
+import { dbRead, dbWrite } from '$lib/server/db';
 import { approvedAppealOf } from '$lib/server/removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
@@ -194,11 +196,12 @@ export async function loadCsamQueueByUser(url: URL) {
 }
 
 // accept/block also resolve a coupled report when a `reportId` is posted: accept → Unactioned, block → Actioned.
-/** Which of the given reports is on which image. */
+/** Which of the given reports is on which image. On the primary: a report mapped to no image is
+ *  actioned whatever its image. */
 async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number[]>> {
   const byImage = new Map<number, number[]>();
   if (!reportIds.length) return byImage;
-  const rows = await dbRead
+  const rows = await dbWrite
     .selectFrom('ImageReport')
     .select(['imageId', 'reportId'])
     .where('reportId', 'in', reportIds)
@@ -332,13 +335,20 @@ export const imageQueueActions = {
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
 
-    const closed = await resolveImageAppeal({
-      imageId,
-      status,
-      resolvedMessage,
-      ...reason,
-      userId: locals.user.id,
-    });
+    let closed;
+    try {
+      closed = await resolveImageAppeal({
+        imageId,
+        status,
+        resolvedMessage,
+        ...reason,
+        userId: locals.user.id,
+      });
+    } catch (e) {
+      if (e instanceof AppealRestoreRefusedError)
+        return fail(409, { error: APPEAL_RESTORE_REFUSED, imageId });
+      throw e;
+    }
     if (!closed)
       return fail(409, {
         error: 'Another moderator already resolved this appeal. Reload.',
@@ -503,6 +513,7 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
+    const refused: number[] = [];
     const closed = await Promise.all(
       imageIds.map((imageId) =>
         resolveImageAppeal({
@@ -511,10 +522,18 @@ export const imageQueueActions = {
           ...reason,
           userId: locals.user.id,
           deferAppealEmail: true,
+        }).catch((e) => {
+          if (!(e instanceof AppealRestoreRefusedError)) throw e;
+          refused.push(imageId);
+          return undefined;
         })
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), status === 'Approved');
+    if (refused.length)
+      return fail(409, {
+        error: `${APPEAL_RESTORE_REFUSED} Not approved: ${refused.join(', ')}.`,
+      });
     return { success: true };
   },
 } satisfies Actions;

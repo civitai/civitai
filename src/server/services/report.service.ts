@@ -1575,6 +1575,20 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
+  // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
+  // Pending. Read on the primary just before the claim.
+  if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
+    const held = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
+    `;
+    if (held.length)
+      throw throwBadRequestError(
+        `Image ${held
+          .map((h) => h.id)
+          .join(', ')} is removed, and approving its appeal cannot put it back`
+      );
+  }
+
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({

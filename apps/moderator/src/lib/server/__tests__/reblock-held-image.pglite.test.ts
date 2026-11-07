@@ -100,8 +100,16 @@ CREATE TABLE "Appeal" (
   "userId" INTEGER NOT NULL,
   "entityType" "EntityType" NOT NULL,
   "entityId" INTEGER NOT NULL,
-  "status" "AppealStatus" NOT NULL DEFAULT 'Pending'
+  "status" "AppealStatus" NOT NULL DEFAULT 'Pending',
+  "resolvedBy" INTEGER,
+  "resolvedAt" TIMESTAMP(3),
+  "resolvedMessage" TEXT,
+  "resolvedReason" TEXT,
+  "internalNotes" TEXT,
+  "buzzTransactionId" TEXT,
+  "entityRemovedAt" TIMESTAMP(3)
 );
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
@@ -123,7 +131,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await db.exec(`TRUNCATE "Image", "ImageReport", "Appeal"`);
+  await db.exec(`TRUNCATE "Image", "ImageReport", "Appeal", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "pHash") VALUES
       ($1, 7, NULL, 'CSAM', 'Blocked', 32, 101),
@@ -290,5 +298,34 @@ describe('accepting from a review queue', () => {
     await acceptImage({ imageId: HELD, userId: 2, restoreRemoved: true });
 
     expect(await row(HELD)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+  });
+});
+
+describe('a bulk appeal approval over an image blocked for CSAM and another', () => {
+  it('restores the other image and leaves the held one removed with its appeal pending', async () => {
+    await db.query(
+      `INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1), (7, 'Image', $2)`,
+      [HELD, OTHER_REASON]
+    );
+    const form = {
+      imageIds: `${HELD},${OTHER_REASON}`,
+      status: 'Approved',
+      resolvedReason: 'misclassified',
+    };
+
+    const result = await imageQueueActions.bulkResolveAppeal(event(form));
+
+    expect(result).toMatchObject({ status: 409 });
+    expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
+    expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned' });
+    const statuses = (
+      await db.query<{ entityId: number; status: string }>(
+        `SELECT "entityId", status FROM "Appeal" ORDER BY "entityId"`
+      )
+    ).rows;
+    expect(statuses).toEqual([
+      { entityId: HELD, status: 'Pending' },
+      { entityId: OTHER_REASON, status: 'Approved' },
+    ]);
   });
 });
