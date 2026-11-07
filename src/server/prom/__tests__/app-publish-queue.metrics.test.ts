@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // to fail, so the "never read" case stays never-read and nothing here touches a database.
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: { connect: () => Promise.reject(new Error('no db in tests')) },
+  pgDbReadLong: {},
+  pgDbWrite: {},
 }));
 
 import {
