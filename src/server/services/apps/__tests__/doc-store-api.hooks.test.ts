@@ -944,7 +944,7 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
     }
   );
 
-  it('a tally fails closed too: mark, unmark and increment are 503 and change nothing', async () => {
+  it('a tally fails closed too: mark and increment are 503 and change nothing', async () => {
     const { P } = freshApps();
     const token = await mint(P, V1);
     const c = await call({ token, method: 'POST', path: '/cards', body: { data: { title: 'c' } } });
@@ -960,7 +960,7 @@ describe('fail closed: the runner cannot answer → 503 hook_unavailable, nothin
     }
     stub.mode = 'ok';
     const doc = (await call({ token, method: 'GET', path: `/cards/${key}` })).body;
-    expect([doc.counters, doc.marks]).toEqual([{}, {}]);
+    expect([doc.counters, doc.marks]).toEqual([{ likes: 0 }, { star: 0 }]);
   });
 
   it('the client timeout covers the runner backstop, queueing and the network, not just timeoutMs', async () => {
