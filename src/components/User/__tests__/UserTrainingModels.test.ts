@@ -5,6 +5,7 @@ import {
   trainingStatusLabel,
 } from '~/components/User/UserTrainingModels';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
+import { isHeldForTrainingReview } from '~/utils/training';
 import type { MyTrainingModelGetAll } from '~/types/router';
 
 describe('sumBuzzByAccount', () => {
@@ -95,9 +96,23 @@ describe('enrichTrainingData cost derivation', () => {
   });
 });
 
-describe('trainingStatusLabel', () => {
-  it('reads a paused run as pending review only when the live workflow holds it for review', () => {
-    expect(trainingStatusLabel(TrainingStatus.Paused, true)).toBe('Pending review');
-    expect(trainingStatusLabel(TrainingStatus.Paused)).toBe('Paused');
+// A moderator can pause a run by hand; only the stored or live review marker means a review hold.
+describe('review hold vs manual pause', () => {
+  const label = (status: TrainingStatus, trainingResults: unknown) =>
+    trainingStatusLabel(status, isHeldForTrainingReview(status, trainingResults));
+
+  it('reads a paused run with the review marker as pending review', () => {
+    expect(label(TrainingStatus.Paused, { version: 2, heldForReview: true })).toBe(
+      'Pending review'
+    );
+  });
+
+  it('reads a paused run without the marker as paused', () => {
+    expect(label(TrainingStatus.Paused, { version: 2 })).toBe('Paused');
+    expect(label(TrainingStatus.Paused, undefined)).toBe('Paused');
+  });
+
+  it('ignores a leftover marker once the run is no longer paused', () => {
+    expect(isHeldForTrainingReview(TrainingStatus.Denied, { heldForReview: true })).toBe(false);
   });
 });

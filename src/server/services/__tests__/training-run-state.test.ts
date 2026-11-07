@@ -188,12 +188,14 @@ describe('getTrainingRunState', () => {
     });
 
     expect(state.trainingStatus).toBe(TrainingStatus.Paused);
-    expect(state.underReview).toBe(true);
+    expect(state.trainingResults?.heldForReview).toBe(true);
   });
 
-  it('does not call a stored pause a review hold', async () => {
-    mockFindFirst.mockResolvedValue(dbVersion({ trainingStatus: TrainingStatus.Paused }));
-    mockGetWorkflow.mockRejectedValue(new Error('not found'));
+  it('drops a stale stored marker when the live workflow is no longer holding the run', async () => {
+    mockFindFirst.mockResolvedValue(
+      dbVersion({ trainingResults: { ...storedResults, heldForReview: true } })
+    );
+    mockGetWorkflow.mockResolvedValue(liveWorkflow([]));
 
     const state = await getTrainingRunState({
       modelVersionId: 1,
@@ -202,8 +204,7 @@ describe('getTrainingRunState', () => {
       ctx,
     });
 
-    expect(state.trainingStatus).toBe(TrainingStatus.Paused);
-    expect(state.underReview).toBe(false);
+    expect(state.trainingResults?.heldForReview).toBeUndefined();
   });
 
   it('recovers a run whose stored results were lost, via the workflow id on the version', async () => {

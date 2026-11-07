@@ -240,19 +240,15 @@ type OverlayableVersion = {
 export function applyTrainingWorkflowOverlay<T extends OverlayableVersion>(
   version: T,
   overlay: TrainingWorkflowOverlay
-): T & { trainingUnderReview?: boolean } {
+): T {
   if (overlay.byModelFileId.size === 0) return version;
   if (version.trainingStatus && CIVITAI_OWNED_STATUSES.has(version.trainingStatus)) return version;
 
   let liveStatus: TrainingStatus | undefined;
-  let liveUnderReview = false;
   const files = version.files.map((file) => {
     const derived = overlay.byModelFileId.get(file.id);
     if (!derived) return file;
-    if (liveStatus === undefined) {
-      liveStatus = derived.trainingStatus;
-      liveUnderReview = derived.underReview;
-    }
+    liveStatus ??= derived.trainingStatus;
 
     const metadata = (file.metadata ?? {}) as FileMetadata;
     const stored = (metadata.trainingResults ?? {}) as Partial<TrainingResultsV2>;
@@ -270,13 +266,14 @@ export function applyTrainingWorkflowOverlay<T extends OverlayableVersion>(
       history: appendLiveStatus(history, derived),
       sampleImagesPrompts: derived.sampleImagesPrompts,
       transactionData: derived.transactionData ?? stored.transactionData ?? [],
+      heldForReview: derived.underReview || undefined,
     };
 
     return { ...file, metadata: { ...metadata, trainingResults } };
   });
 
   if (!liveStatus) return version;
-  return { ...version, trainingStatus: liveStatus, files, trainingUnderReview: liveUnderReview };
+  return { ...version, trainingStatus: liveStatus, files };
 }
 
 /**

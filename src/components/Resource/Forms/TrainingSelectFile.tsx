@@ -60,7 +60,7 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { buildContinuationRunUpdate, trainingStore } from '~/store/training.store';
 import { basePath as trainWizardBasePath } from '~/components/Training/Form/TrainingCommon';
 import type { TrainingBaseModelType } from '~/utils/training';
-import { canGenerateWithEpochs } from '~/utils/training';
+import { canGenerateWithEpochs, isHeldForTrainingReview } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -442,8 +442,7 @@ export default function TrainingSelectFile({
 
   const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;
   const trainingStatus = runState?.trainingStatus ?? modelVersion.trainingStatus;
-  // A moderator can pause a run by hand too; only a live review hold gets the review notice.
-  const heldForReview = trainingStatus === TrainingStatus.Paused && runState?.underReview === true;
+  const heldForReview = isHeldForTrainingReview(trainingStatus, trainingResults);
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl

@@ -127,8 +127,6 @@ export type TrainingRunState = {
   /** Whether the returned state came from the live workflow or the stored copy. */
   source: 'orchestrator' | 'stored';
   trainingStatus: TrainingStatus | null;
-  /** Held for review, per the live workflow. False from the stored copy, which cannot tell. */
-  underReview: boolean;
   trainingResults: TrainingResultsV2 | null;
 };
 
@@ -191,7 +189,6 @@ export async function resolveTrainingRun({
   const storedState: TrainingRunState = {
     source: 'stored',
     trainingStatus: version.trainingStatus,
-    underReview: false,
     trainingResults: stored,
   };
 
@@ -209,7 +206,6 @@ export async function resolveTrainingRun({
     state: {
       source: 'orchestrator',
       trainingStatus: merged.trainingStatus,
-      underReview: merged.trainingUnderReview === true,
       trainingResults:
         ((merged.files[0].metadata as FileMetadata | null)?.trainingResults as TrainingResultsV2) ??
         stored,

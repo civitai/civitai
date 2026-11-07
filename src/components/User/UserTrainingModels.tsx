@@ -65,7 +65,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { isAir, splitUppercase } from '~/utils/string-helpers';
 import { getAirModelLink } from '~/shared/utils/air';
-import { trainingModelInfo } from '~/utils/training';
+import { isHeldForTrainingReview, trainingModelInfo } from '~/utils/training';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -112,11 +112,11 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   costInfo: CostInfo | null;
 };
 
-/** How a training status reads to its owner. Only a live review hold reads as pending review. */
-export const trainingStatusLabel = (status: TrainingStatus, underReview = false) =>
+/** How a training status reads to its owner. Only a review hold reads as pending review. */
+export const trainingStatusLabel = (status: TrainingStatus, heldForReview = false) =>
   status === TrainingStatus.InReview
     ? 'Ready'
-    : status === TrainingStatus.Paused && underReview
+    : status === TrainingStatus.Paused && heldForReview
     ? TRAINING_REVIEW_COPY.pendingLabel
     : splitUppercase(status);
 
@@ -479,7 +479,14 @@ export default function UserTrainingModels() {
                 <HoverCard.Target>
                   <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
                     <Group gap={6} wrap="nowrap">
-                      {trainingStatusLabel(mv.trainingStatus, mv.trainingUnderReview)}
+                      {trainingStatusLabel(
+                        mv.trainingStatus,
+                        isHeldForTrainingReview(
+                          mv.trainingStatus,
+                          (pickBestTrainingFile(mv.files)?.metadata as FileMetadata | null)
+                            ?.trainingResults
+                        )
+                      )}
                       {isRunning && <Loader size={12} />}
                     </Group>
                   </Badge>
