@@ -62,7 +62,8 @@ beforeAll(async () => {
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
       (${BLOCKED}, 'blocked', ${BLOCKED_AUTHOR}, 'Blocked', NULL),
       (${FLAGGED}, 'flagged', ${FLAGGED_AUTHOR}, 'Scanned', 'csam'),
-      (40, 'pending', 4, 'Pending', NULL);
+      (40, 'pending', 4, 'Pending', NULL),
+      (50, 'other-review', 5, 'Scanned', 'other-review');
   `);
 });
 afterAll(() => pg.close());
@@ -119,9 +120,9 @@ const pictureUrls = (pictures: { url: string }[]) => pictures.map((p) => p.url).
 
 describe('servable profile pictures', () => {
   it('leaves out pictures that may not be served and keeps the rest', async () => {
-    const pictures = await getServableProfilePictures(pgClient, [CLEAN, BLOCKED, FLAGGED, 40]);
+    const pictures = await getServableProfilePictures(pgClient, [CLEAN, BLOCKED, FLAGGED, 40, 50]);
 
-    expect(pictureUrls(pictures)).toEqual(['clean', 'pending']);
+    expect(pictureUrls(pictures)).toEqual(['clean', 'other-review', 'pending']);
   });
 
   it('bounty search docs carry no author picture that may not be served', async () => {
