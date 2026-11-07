@@ -35,6 +35,7 @@ import { payoutCopy, stickerPurchaseCopy } from '~/components/Sticker/payout-cop
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { DRAFT_STICKER_Z } from '~/components/Sticker/placement-layers';
 import { useCreateStickerPlacement } from '~/components/Sticker/placement.util';
+import { StickerMomentControl } from '~/components/Sticker/StickerMomentControl';
 import { purchaseCanBeRetriedFresh, useBuyStickerUses } from '~/components/Sticker/sticker.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import type { StickerTreatment } from '~/components/Sticker/treatments/sticker-treatments';
@@ -44,6 +45,7 @@ import {
   STICKER_PLACEMENT_MIN_OPACITY,
   snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
+import { momentStickerTrack } from '~/shared/utils/sticker-track';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -158,6 +160,7 @@ export function DraftSticker({
   ownerUsername,
   onGesture,
   onDuplicate,
+  video,
   purchase,
   commit,
   artwork,
@@ -187,6 +190,8 @@ export function DraftSticker({
    * component cannot.
    */
   onDuplicate?: (id: string) => string | null;
+  /** The video being placed on, which offers pinning to a moment. Absent elsewhere. */
+  video?: HTMLVideoElement | null;
   /**
    * What this draft still has to buy, decided ACROSS the drafts on the image
    * rather than frozen onto this one when it was created.
@@ -578,22 +583,34 @@ export function DraftSticker({
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
-  const placementInput = () => ({
-    imageId: draft.imageId,
-    free: placingFree,
-    data: {
-      cosmeticId: draft.cosmeticId,
-      x: draft.x,
-      y: draft.y,
-      scale: snapScaleOvershoot(draft.scale, creatorMaxScale),
-      rotation: draft.rotation,
-      flip: draft.flip,
-      opacity: draft.opacity,
-      // Sent only when there is something to send, so an opened-then-abandoned
-      // field is the same as never opening it.
-      ...(note.trim() ? { comment: note } : {}),
-    },
-  });
+  const placementInput = () => {
+    const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
+    return {
+      imageId: draft.imageId,
+      free: placingFree,
+      ...(draft.moment
+        ? {
+            track: momentStickerTrack(
+              { x: draft.x, y: draft.y, scale, rotation: draft.rotation },
+              draft.moment.startMs,
+              draft.moment.durationMs
+            ),
+          }
+        : {}),
+      data: {
+        cosmeticId: draft.cosmeticId,
+        x: draft.x,
+        y: draft.y,
+        scale,
+        rotation: draft.rotation,
+        flip: draft.flip,
+        opacity: draft.opacity,
+        // Sent only when there is something to send, so an opened-then-abandoned
+        // field is the same as never opening it.
+        ...(note.trim() ? { comment: note } : {}),
+      },
+    };
+  };
 
   /**
    * A second copy of this sticker, already arranged.
@@ -867,6 +884,15 @@ export function DraftSticker({
           {!opaque && opacityControl}
           {removeControl}
         </div>
+
+        {video && (
+          <StickerMomentControl
+            video={video}
+            moment={draft.moment}
+            following={selected}
+            onChange={(moment) => useStore.getState().move(draft.id, { moment })}
+          />
+        )}
 
         {commit ?? (
           <>

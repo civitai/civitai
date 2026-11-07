@@ -67,6 +67,8 @@ export type StickerDraft = {
   opacity: number;
   /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
   purchase?: DraftPurchase;
+  /** Pinned to a moment of the video: when it shows, and for how long. */
+  moment?: { startMs: number; durationMs: number };
 };
 
 /**
