@@ -262,6 +262,7 @@ export const EXCLUDED: Record<string, string> = {
   PurchasableReward:
     'catalog item; names the user only as its staff author (purchases are exported)',
   ImageCdnModeratorDelete: 'moderation internals',
+  ProfilePictureHold: 'moderation internals',
   ImageCdnShopTakedown: 'moderation internals',
   ScanLabelVote: 'labeling work done as staff, not data about the user',
   ScanLabelClaim: 'labeling work done as staff, not data about the user',
