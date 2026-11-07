@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
@@ -364,6 +365,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      flags: ctx?.user?.isModerator ? version.flags : toPublicApiVersionFlags(version.flags),
       // A .com face has no per-version description; the .red one is not shown in its place.
       description: withSfwFace ? null : version.description,
       model: {

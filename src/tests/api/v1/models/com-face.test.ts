@@ -57,6 +57,7 @@ const stored = {
   sfwName: null as string | null,
   sfwDescription: null as string | null,
   sfwCoverImageId: null as number | null,
+  meta: null as Record<string, unknown> | null,
 };
 
 let row: typeof stored = stored;
@@ -164,6 +165,21 @@ describe('POST /api/v1/models/com-face', () => {
     ]);
     expect(caller.model.draftSfwFace).not.toHaveBeenCalled();
     expect(caller.model.upsert).not.toHaveBeenCalled();
+  });
+
+  it('drafts again for a face the listing re-check removed', async () => {
+    row = {
+      ...stored,
+      sfwName: 'Owner Title',
+      meta: { comFaceRemoved: { at: '2026-11-05T00:00:00.000Z', sfwCoverImageId: 5 } },
+    };
+    caller.model.getCoverCandidates.mockResolvedValue([
+      { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
+    ]);
+    caller.model.draftSfwFace.mockResolvedValue({ sfwName: 'Safe', sfwDescription: '<p>ok</p>' });
+    const res = await call({ action: 'draft', modelId: 11 });
+    expect(res.statusCode).toBe(200);
+    expect(caller.model.draftSfwFace).toHaveBeenCalledTimes(1);
   });
 
   it('skips a model that has a .com cover but no .com title, writing nothing', async () => {

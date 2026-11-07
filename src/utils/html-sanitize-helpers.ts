@@ -371,3 +371,21 @@ export function boundTextStyleMarks<T extends TiptapJSON>(node: T): T {
   node.content?.forEach(boundTextStyleMarks);
   return node;
 }
+
+/**
+ * Drops spoiler text and spoiler blocks, for anything that turns a body into a public excerpt:
+ * meta descriptions, share cards, search documents. Moderation must keep reading the full body,
+ * or a spoiler becomes a way to hide text from it.
+ *
+ * Not a sanitiser: every other tag passes through. Strip tags or sanitise the result.
+ */
+export function removeSpoilers(html: string) {
+  // Most bodies hold none, and this runs over every article on a search reindex.
+  if (!html || !/spoiler/i.test(html)) return html;
+  return sanitize(html, {
+    allowedTags: false,
+    allowedAttributes: false,
+    // Normalised so the strip stays broader than the editor and renderer, which match exactly.
+    exclusiveFilter: (frame) => frame.attribs['data-type']?.trim().toLowerCase() === 'spoiler',
+  });
+}

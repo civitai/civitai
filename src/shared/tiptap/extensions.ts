@@ -12,6 +12,7 @@ import { EmbedNode } from '~/shared/tiptap/embed.node';
 import { SizedImage } from '~/shared/tiptap/sized-image.node';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
+import { SpoilerBlockNode, SpoilerMark } from '~/shared/tiptap/spoiler.node';
 
 export const tiptapExtensions = [
   StarterKit.configure({ heading: false }),
@@ -28,4 +29,6 @@ export const tiptapExtensions = [
   EmbedNode,
   TextAlignExtension,
   CivitaiEmbedNode,
+  SpoilerMark,
+  SpoilerBlockNode,
 ];

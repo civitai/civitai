@@ -34,6 +34,7 @@ import type {
   ResolveImageMetaInput,
   SetEvictableInput,
   SetAdditionalResourceFeeWaivedInput,
+  SetPartnerDisclosureInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -82,6 +83,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  getPartnerDisclosure,
   isAdditionalResourceFeeWaived,
   isEvictable,
   isGenerationDisabled,
@@ -1061,6 +1063,26 @@ export async function setAdditionalResourceFeeWaived({
   return { id, waived: isAdditionalResourceFeeWaived(flags) };
 }
 
+export async function setPartnerDisclosure({
+  id,
+  partnerService,
+  partnerTrains,
+  isModerator,
+}: SetPartnerDisclosureInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  if (partnerTrains && !partnerService)
+    throw throwBadRequestError('Partner trains requires partner service');
+  const mask = ModelVersionFlag.PartnerService | ModelVersionFlag.PartnerTrains;
+  const bits =
+    (partnerService ? ModelVersionFlag.PartnerService : 0) |
+    (partnerTrains ? ModelVersionFlag.PartnerTrains : 0);
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`(flags & ~(${mask}::int)) | ${bits}::int`
+  );
+  return { id, ...getPartnerDisclosure(flags) };
+}
+
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
 
 // The one rule both the orchestrator's charge (mini endpoint) and the generator's cost badge read.
@@ -1530,7 +1552,15 @@ export async function getResourceData(
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
-    return { ...resource, fileSizeKB, additionalResourceCost, epochDetails, air };
+    const { flags, ...rest } = resource;
+    return {
+      ...rest,
+      ...getPartnerDisclosure(flags),
+      fileSizeKB,
+      additionalResourceCost,
+      epochDetails,
+      air,
+    };
   }
 
   function getSubstituteData(
