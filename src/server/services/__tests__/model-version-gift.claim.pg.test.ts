@@ -15,9 +15,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 const URL_BASE = process.env.APPDATA_TEST_DATABASE_URL;
 const DB_NAME = 'model_gift_claim_test';
 
-vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: vi.fn() }));
+vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn() }));
-const { redeemGiftLink } = await import('~/server/services/model-version-gift.service');
+const { queryGiftList, redeemGiftLink } = await import(
+  '~/server/services/model-version-gift.service'
+);
 
 describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
   it('APPDATA_TEST_DATABASE_URL is set', () => {
@@ -149,5 +151,32 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       permissions: 3,
       meta: { 'generation-buzzTransactionId': 'tx-1', giftLinkId: id },
     });
+  });
+
+  it('summarises a batch: claimed, still live, and spent codes', async () => {
+    await sql.query(
+      `INSERT INTO "ModelVersionGiftLink"
+         ("modelVersionId", "createdById", "codeHash", "codeHint", "batchId", "maxRedemptions",
+          "redemptionCount", "revokedAt", "expiresAt")
+       VALUES
+         ($1, $2, 'h1', 'A', 'b1', 1, 1, NULL, NULL),
+         ($1, $2, 'h2', 'B', 'b1', 1, 0, now(), NULL),
+         ($1, $2, 'h3', 'C', 'b1', 1, 0, NULL, now() - interval '1 day'),
+         ($1, $2, 'h4', 'D', 'b1', 1, 0, NULL, NULL),
+         ($1, $2, 'h5', 'E', NULL, 2, 2, NULL, NULL),
+         ($1, $2, 'h6', 'F', NULL, NULL, 5, NULL, NULL)`,
+      [VERSION, OWNER]
+    );
+
+    const { links, batches } = await queryGiftList(prisma, VERSION);
+
+    expect(batches).toEqual([
+      expect.objectContaining({ batchId: 'b1', total: 4, claimed: 1, live: 1 }),
+    ]);
+    // Live first: the uncapped link, then the one at its cap.
+    expect(links.map((l) => [l.codeHint, l.live])).toEqual([
+      ['F', true],
+      ['E', false],
+    ]);
   });
 });

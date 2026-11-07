@@ -36,12 +36,18 @@ describe('gift status', () => {
     expect(linkStatus(link({ maxRedemptions: 2, redemptionCount: 1 }), NOW)).toBe('Active');
     expect(linkStatus(link({ expiresAt: '2026-11-07T11:00:00Z' }), NOW)).toBe('Expired');
     expect(linkStatus(link({ revokedAt: '2026-11-02T00:00:00Z' }), NOW)).toBe('Revoked');
+    expect(
+      linkStatus(link({ revokedAt: '2026-11-02T00:00:00Z', expiresAt: '2026-11-03T00:00:00Z' }), NOW)
+    ).toBe('Revoked');
   });
 
   it('keeps a batch Active while any code is claimable', () => {
     expect(batchStatus(batch({ claimed: 2, live: 1 }), NOW)).toBe('Active');
     expect(batchStatus(batch({ claimed: 3, live: 0 }), NOW)).toBe('Claimed');
     expect(batchStatus(batch({ claimed: 1, live: 0 }), NOW)).toBe('Revoked');
+    expect(batchStatus(batch({ claimed: 1, live: 0, expiresAt: '2026-11-06T00:00:00Z' }), NOW)).toBe(
+      'Expired'
+    );
   });
 });
 

@@ -14,7 +14,7 @@ fails closed, in the main app and in Creator Studio alike.
   API. A version can hold at most `GIFT_LIVE_CODES_MAX_PER_VERSION` (5000) live, unclaimed codes
   (`src/server/services/model-version-gift.constants.ts`). That ceiling is checked before the insert,
   not atomically, so it is a soft limit.
-- **Claim:** done on the site (`/gift/<code>`, an explicit click) or over the API with the recipient's
+- **Claim:** done on the site (`/gift/<code>`, or a code pasted on `/gift`; an explicit click) or over the API with the recipient's
   token.
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
   immediately, including a claim already in flight. **People who already claimed keep their access.**
@@ -68,7 +68,11 @@ apply it before the code deploys:
 A code is `cvg_` followed by 26 Crockford base32 characters from a CSPRNG, which is 130 bits of
 entropy. Only a SHA-256 of the normalised code is stored. The plaintext is returned once, by the create
 or mint call. Input is normalised before hashing: case-insensitive, hyphens ignored, and `I`/`L` read as
-`1`, `O` as `0`. The claim page sets `Referrer-Policy: no-referrer`.
+`1`, `O` as `0`.
+
+`/gift/<code>` never renders: it moves the code into a short-lived, `HttpOnly` cookie scoped to `/gift`
+and redirects to a bare `/gift`, so the code is not in any URL that page scripts or analytics record. Ads
+are off on the claim page.
 
 ## Claim
 
@@ -83,7 +87,8 @@ or mint call. Input is normalised before hashing: case-insensitive, hyphens igno
    conditional `UPDATE … SET "redemptionCount" + 1 WHERE` not revoked, not expired and under the cap,
    then the grant. If the update takes no row, the transaction rolls back. Postgres re-checks the
    `WHERE` on the row it locks, so racing claims for the last slot serialise.
-6. Bust the version caches.
+6. Bust the claimer's generator model cache. Access is read from `EntityAccess` per request, so no
+   version-wide cache needs refreshing.
 
 ## Surfaces
 
@@ -94,8 +99,8 @@ or mint call. Input is normalised before hashing: case-insensitive, hyphens igno
   full-access key also passes), answers 404 while the flag is off, sends `private, no-store`, and gives
   every write the same onboarded, not-muted and email-verified gates as the tRPC writes.
   - `POST gifts/claim` with `{ code }`.
-  - `GET [id]/gifts` returns `{ links, batches }`: the newest 200 links, and one summary row per bulk
-    batch (total, claimed, still live). Never codes.
+  - `GET [id]/gifts` returns `{ links, batches }`: links, and one summary row per bulk batch (total,
+    claimed, still live). Live ones sort first and are all listed; never codes.
   - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
   - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
   - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.

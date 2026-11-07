@@ -121,8 +121,6 @@ const blockedUrls: string[] = [
   '/collections/7514194',
   '/collections/7514211',
   '/moderator',
-  // The path carries a gift code, a live credential; ad scripts read the URL directly.
-  '/gift/',
 ];
 
 export function AdsProvider({
@@ -164,6 +162,8 @@ export function AdsProvider({
       consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
+      // The gift claim page holds a live gift code in its props, readable by any script on the page.
+      !router.pathname.startsWith('/gift/') &&
       !router.asPath.split('?')[0].endsWith('/edit');
 
   function handleLoadedError() {

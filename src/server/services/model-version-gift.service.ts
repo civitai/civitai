@@ -8,17 +8,16 @@ import {
   getModelVersionAccessPermissions,
   grantModelVersionAccess,
 } from '~/server/services/model-version-access.service';
-import { bustMvCache } from '~/server/services/model-version.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getPaidAccess } from '~/server/services/paid-access.service';
 import {
   throwBadRequestError,
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { logToAxiom } from '~/server/logging/client';
 import {
   GIFT_LIVE_CODES_MAX_PER_VERSION,
-  GIFT_LIST_LIMIT,
+  GIFT_LIST_HISTORY,
   GIFT_MINT_MAX_PER_CALL,
 } from '~/server/services/model-version-gift.constants';
 import { checkFixedWindow } from '~/server/utils/public-api-rate-limit';
@@ -203,44 +202,63 @@ export async function listGiftLinks({
   modelVersionId: number;
 }) {
   await assertCanManageGifts({ userId, isModerator, modelVersionId });
-  // Bulk codes come back as one row per batch: a version can hold thousands of them. The primary,
-  // because Creator Studio re-reads this right after a create, mint or revoke.
+  return queryGiftList(dbWrite, modelVersionId);
+}
+
+export async function queryGiftList(
+  client: Pick<typeof dbWrite, '$queryRaw'>,
+  modelVersionId: number
+) {
+  // Bulk codes come back as one row per batch. Live rows sort first and are bounded by
+  // GIFT_LIVE_CODES_MAX_PER_VERSION, so every one is listed (revoking needs its id), with room for at
+  // least GIFT_LIST_HISTORY spent ones. The primary: Creator Studio re-reads right after a write.
   const [links, batches] = await Promise.all([
-    dbWrite.modelVersionGiftLink.findMany({
-      where: { modelVersionId, batchId: null },
-      orderBy: { createdAt: 'desc' },
-      take: GIFT_LIST_LIMIT,
-      select: {
-        id: true,
-        codeHint: true,
-        label: true,
-        maxRedemptions: true,
-        redemptionCount: true,
-        expiresAt: true,
-        revokedAt: true,
-        createdAt: true,
-      },
-    }),
-    dbWrite.$queryRaw<GiftBatchSummary[]>`
-      SELECT "batchId",
-             min("label") AS "label",
-             count(*)::int AS "total",
-             count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
-             count(*) FILTER (
-               WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
-                 AND ("expiresAt" IS NULL OR "expiresAt" > now())
-             )::int AS "live",
-             min("createdAt") AS "createdAt",
-             max("expiresAt") AS "expiresAt"
-        FROM "ModelVersionGiftLink"
-       WHERE "modelVersionId" = ${modelVersionId} AND "batchId" IS NOT NULL
-       GROUP BY "batchId"
-       ORDER BY min("createdAt") DESC
-       LIMIT ${GIFT_LIST_LIMIT}
+    client.$queryRaw<GiftLinkSummary[]>`
+      SELECT * FROM (
+        SELECT "id", "codeHint", "label", "maxRedemptions", "redemptionCount", "expiresAt",
+               "revokedAt", "createdAt",
+               ("revokedAt" IS NULL AND ("expiresAt" IS NULL OR "expiresAt" > now())
+                 AND ("maxRedemptions" IS NULL OR "redemptionCount" < "maxRedemptions")) AS "live"
+          FROM "ModelVersionGiftLink"
+         WHERE "modelVersionId" = ${modelVersionId} AND "batchId" IS NULL
+      ) l
+      ORDER BY "live" DESC, "createdAt" DESC
+      LIMIT ${GIFT_LIVE_CODES_MAX_PER_VERSION + GIFT_LIST_HISTORY}
+    `,
+    client.$queryRaw<GiftBatchSummary[]>`
+      SELECT * FROM (
+        SELECT "batchId",
+               min("label") AS "label",
+               count(*)::int AS "total",
+               count(*) FILTER (WHERE "redemptionCount" > 0)::int AS "claimed",
+               count(*) FILTER (
+                 WHERE "revokedAt" IS NULL AND "redemptionCount" < "maxRedemptions"
+                   AND ("expiresAt" IS NULL OR "expiresAt" > now())
+               )::int AS "live",
+               min("createdAt") AS "createdAt",
+               max("expiresAt") AS "expiresAt"
+          FROM "ModelVersionGiftLink"
+         WHERE "modelVersionId" = ${modelVersionId} AND "batchId" IS NOT NULL
+         GROUP BY "batchId"
+      ) b
+      ORDER BY ("live" > 0) DESC, "createdAt" DESC
+      LIMIT ${GIFT_LIVE_CODES_MAX_PER_VERSION + GIFT_LIST_HISTORY}
     `,
   ]);
   return { links, batches };
 }
+
+export type GiftLinkSummary = {
+  id: number;
+  codeHint: string;
+  label: string | null;
+  maxRedemptions: number | null;
+  redemptionCount: number;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  createdAt: Date;
+  live: boolean;
+};
 
 export type GiftBatchSummary = {
   batchId: string;
@@ -376,9 +394,9 @@ export async function claimGift({ userId, code }: { userId: number; code: string
   if (outcome === 'unavailable') throw throwBadRequestError(INVALID_GIFT_MESSAGE);
   if (outcome === 'already-claimed') return { ...result, alreadyHadAccess: true };
 
-  await bustMvCache(version.id, version.model.id, userId).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-gift-bust-mv-cache', error, giftLinkId: link.id })
-  );
+  // Access is read from EntityAccess per request; only the generator's per-user model cache holds it.
+  // Not bustMvCache: those caches are per version, and an uncapped link would refresh them per claim.
+  await bustOrchestratorModelCache(version.id, userId);
   return { ...result, alreadyHadAccess: false };
 }
 

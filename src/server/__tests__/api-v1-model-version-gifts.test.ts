@@ -184,7 +184,7 @@ describe.each(WRITES)('$name applies the tRPC write gates', (route) => {
 
   it('refuses a muted user', async () => {
     standing.muted = true;
-    expect((await call(route, {})).status).toBeGreaterThanOrEqual(400);
+    expect((await call(route, {})).status).toBe(403);
     expect(serviceCalls()).toBe(0);
   });
 });

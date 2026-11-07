@@ -6,12 +6,14 @@ import {
   GIFT_MINT_MAX_PER_CALL,
 } from '~/server/services/model-version-gift.constants';
 
-const { mockGetPaidAccess, mockBustMvCache } = vi.hoisted(() => ({
+const { mockGetPaidAccess, mockBustOrchestrator } = vi.hoisted(() => ({
   mockGetPaidAccess: vi.fn(),
-  mockBustMvCache: vi.fn(async () => undefined),
+  mockBustOrchestrator: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: mockGetPaidAccess }));
-vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: mockBustMvCache }));
+vi.mock('~/server/services/orchestrator/models', () => ({
+  bustOrchestratorModelCache: mockBustOrchestrator,
+}));
 
 const {
   claimGift,
@@ -156,7 +158,7 @@ describe('claimGift', () => {
       JSON.stringify({ giftLinkId: 1 }),
       OWNER,
     ]);
-    expect(mockBustMvCache).toHaveBeenCalledWith(VERSION_ID, 1, CLAIMER);
+    expect(mockBustOrchestrator).toHaveBeenCalledWith(VERSION_ID, CLAIMER);
   });
 
   it('grants download to a generation-only holder when the version sells download', async () => {
@@ -224,7 +226,7 @@ describe('claimGift', () => {
     await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow(
       'This gift is invalid, expired or no longer available.'
     );
-    expect(mockBustMvCache).not.toHaveBeenCalled();
+    expect(mockBustOrchestrator).not.toHaveBeenCalled();
   });
 
   it('counts the attempt against the rate limit before looking the code up', async () => {
@@ -260,7 +262,7 @@ describe('who may manage gifts', () => {
     async (_n, fn) => {
       seed();
       await expect(fn(CLAIMER)).rejects.toThrow('You do not own this model version.');
-      expect(dbMock.dbWrite.modelVersionGiftLink.findMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.updateMany).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.createMany).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.modelVersionGiftLink.create).not.toHaveBeenCalled();
@@ -286,11 +288,8 @@ describe('mintGiftCodes', () => {
     const rows = dbMock.dbWrite.modelVersionGiftLink.createMany.mock.calls[0][0].data;
     expect(rows).toHaveLength(3);
     expect(
-      rows.every(
-        (r: { maxRedemptions: number; batchId: string }) =>
-          r.maxRedemptions === 1 && r.batchId === batchId
-      )
-    ).toBe(true);
+      rows.map((r: { maxRedemptions: number; batchId: string }) => [r.maxRedemptions, r.batchId])
+    ).toEqual([1, 1, 1].map((n) => [n, batchId]));
     expect(rows.map((r: { codeHash: string }) => r.codeHash)).toEqual(codes.map(hashGiftCode));
   });
 });

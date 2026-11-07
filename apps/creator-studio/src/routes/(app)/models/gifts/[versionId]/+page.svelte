@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import * as Alert from '@civitai/ui/components/ui/alert/index.js';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -9,23 +10,26 @@
   import { civitaiUrl } from '$lib/model-url';
   import CreatedCodes from './CreatedCodes.svelte';
   import { batchStatus, endOfLocalDay, linkStatus } from './gift-links';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
   // Held here, not read from `form`: the next action's result replaces `form`, and these codes can't be
-  // fetched again.
-  let created = $state<string[] | null>(null);
+  // fetched again. Seeded from `form` for a post that ran before hydration (no enhance callback).
+  // svelte-ignore state_referenced_locally
+  let created = $state<string[] | null>(form && 'created' in form ? (form.created?.codes ?? null) : null);
   let pending = $state<string | null>(null);
-  let failure = $state<{ action: string; message: string } | null>(null);
+  // svelte-ignore state_referenced_locally
+  let failure = $state<{ action: string; message: string } | null>(
+    form && 'error' in form ? { action: 'page', message: String(form.error) } : null
+  );
 
   // A mature model's gift link opens on .red, like every other link out of the Studio.
   const giftBase = $derived(civitaiUrl('gift/', data.version));
   const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString() : 'Never');
 
-  function submit(action: string, confirmText = ''): SubmitFunction {
-    return ({ formData, cancel }) => {
-      if (confirmText && !window.confirm(confirmText)) return cancel();
+  function submit(action: string): SubmitFunction {
+    return ({ formData }) => {
       const expiresAt = formData.get('expiresAt');
       if (typeof expiresAt === 'string') formData.set('expiresAt', endOfLocalDay(expiresAt));
       pending = action;
@@ -59,6 +63,7 @@
     </p>
   </div>
 
+  {@render actionError('page')}
   {#if created}
     <CreatedCodes codes={created} {giftBase} ondismiss={() => (created = null)} />
   {/if}
@@ -84,7 +89,9 @@
         <Input id="link-label" name="label" maxlength={100} />
       </div>
       {@render actionError('createLink')}
-      <Button type="submit" disabled={!!pending}>Create link</Button>
+      <Button type="submit" disabled={!!pending}>
+        {pending === 'createLink' ? 'Creating…' : 'Create link'}
+      </Button>
     </form>
 
     <form
@@ -107,7 +114,9 @@
         <Input id="mint-label" name="label" maxlength={100} />
       </div>
       {@render actionError('mint')}
-      <Button type="submit" disabled={!!pending}>Mint links</Button>
+      <Button type="submit" disabled={!!pending}>
+        {pending === 'mint' ? 'Minting…' : 'Mint links'}
+      </Button>
     </form>
   </div>
 
@@ -120,7 +129,7 @@
     <p class="text-sm text-dark-2">No gift links yet.</p>
   {:else}
     <section class="cs-panel p-0">
-      {@render actionError('revoke')}
+      <div class="px-5 pt-3 empty:hidden">{@render actionError('revoke')}</div>
       <ul class="divide-y divide-dark-4">
         {#each data.gifts.links as link (`l${link.id}`)}
           {@const st = linkStatus(link)}
@@ -137,10 +146,15 @@
               <form
                 method="POST"
                 action="?/revoke"
-                use:enhance={submit('revoke', 'Revoke this link? Nobody new can claim it.')}
+                use:enhance={submit('revoke')}
               >
                 <input type="hidden" name="id" value={link.id} />
-                <Button type="submit" size="sm" variant="ghost" disabled={!!pending}>Revoke</Button>
+                <ConfirmButton
+                  label="Revoke"
+                  title="Revoke this link?"
+                  description="Nobody new can claim it. People who already claimed keep access."
+                  disabled={!!pending}
+                />
               </form>
             {/if}
           </li>
@@ -159,13 +173,15 @@
               <form
                 method="POST"
                 action="?/revoke"
-                use:enhance={submit(
-                  'revoke',
-                  `Revoke the ${batch.live} unclaimed links in this batch? This can't be undone.`
-                )}
+                use:enhance={submit('revoke')}
               >
                 <input type="hidden" name="batchId" value={batch.batchId} />
-                <Button type="submit" size="sm" variant="ghost" disabled={!!pending}>Revoke</Button>
+                <ConfirmButton
+                  label="Revoke"
+                  title="Revoke this batch?"
+                  description={`Its ${batch.live} unclaimed links stop working. This can't be undone.`}
+                  disabled={!!pending}
+                />
               </form>
             {/if}
           </li>

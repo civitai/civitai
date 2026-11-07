@@ -10,11 +10,12 @@ import { sessionCookies } from '$lib/server/session-cookies';
 import type { GiftList } from './gift-links';
 
 const versionIdSchema = z.coerce.number().int().positive();
-// The page converts the picked date to the end of that day in the creator's own zone.
+// The page sends the end of the picked day in the creator's zone. A post that ran before hydration sends
+// the bare date, read as the end of that day in UTC.
 const optionalDate = z
   .string()
   .optional()
-  .transform((v) => v || null)
+  .transform((v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T23:59:59.999Z` : v || null))
   .pipe(z.iso.datetime().nullable());
 const optionalLabel = z
   .string()
