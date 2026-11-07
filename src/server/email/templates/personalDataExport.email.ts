@@ -87,18 +87,21 @@ export const personalDataExportBuiltEmail = createEmail({
 
 type HeldData = { to: string; exportId: number };
 
-/** To the staff member who queued it, for a held account: never says why. */
+/**
+ * To the staff member who queued it, for a held account: never says why. Sent once, before the
+ * Legal notice may have landed, so it says "being routed", which is true either way.
+ */
 export const personalDataExportHeldEmail = createEmail({
   header: ({ to, exportId }: HeldData) => ({
-    subject: `Personal data export #${exportId}: held, routed to Legal`,
+    subject: `Personal data export #${exportId}: held, being routed to Legal`,
     to,
   }),
   html: ({ exportId }: HeldData) =>
     simpleEmailWithTemplate({
       header: `Personal data export #${exportId}`,
-      body: '<p>Held, routed to Legal.</p>',
+      body: '<p>Held, being routed to Legal.</p>',
     }),
-  text: () => 'Held, routed to Legal.',
+  text: () => 'Held, being routed to Legal.',
   testData: async () => ({ to: 'test@tester.com', exportId: 1 }),
 });
 

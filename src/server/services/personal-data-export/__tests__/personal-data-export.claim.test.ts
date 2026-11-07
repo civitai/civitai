@@ -311,7 +311,7 @@ describe('release claim, run', () => {
       expect(await held()).toEqual({
         status: 'held',
         archiveKey: null,
-        error: 'legal notice failed (1): smtp down',
+        error: 'legal notice failed (1)',
       });
       // The requester's notice is the same either way, and goes once.
       expect(m.heldSend.mock.calls).toEqual([[{ to: 'owner@example.com', exportId: 5 }]]);
@@ -346,6 +346,25 @@ describe('release claim, run', () => {
       });
       // Still owed: it keeps being retried, not dropped.
       expect(await retryLegalNotices()).toEqual({ owed: 1, sent: 0 });
+    });
+
+    /** Ruled by the Moderation Lead: moderators read the row, and a mail error can carry addresses. */
+    it("keeps a failed send's error off the row, and puts it in the log", async () => {
+      const raw = '550 rejected: intake-owner@corp.example via relay-7.provider.example';
+      m.refusedSend.mockRejectedValue(new Error(raw));
+      await releaseExport({ exportId: 5, actorId: 9, bucket, now });
+      await retryLegalNotices();
+      const { rows } = await db.query<{ error: string }>(
+        `SELECT error FROM "PersonalDataExport" WHERE id = 5`
+      );
+      expect(rows[0].error).toBe('legal notice failed (2)');
+      const logged = vi
+        .mocked(logToAxiom)
+        .mock.calls.filter(
+          ([e]) => (e.details as { exportId?: number } | undefined)?.exportId === 5
+        )
+        .map(([e]) => (e.details as { error?: string }).error);
+      expect(logged).toContain(raw);
     });
 
     it('marks the notice owed on the row before sending it, so a crash cannot lose it', async () => {

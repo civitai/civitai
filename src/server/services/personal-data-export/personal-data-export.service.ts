@@ -415,8 +415,8 @@ export function legalRefusalLines(input: {
  * none is lost.
  */
 const LEGAL_NOTICE_PENDING = 'legal notice pending';
-const legalNoticeFailed = (failures: number, message: string) =>
-  `legal notice failed (${failures}): ${message}`.slice(0, 2000);
+/** Fixed text only: moderators read the row, and a mail error can carry addresses. It goes to the log. */
+const legalNoticeFailed = (failures: number) => `legal notice failed (${failures})`;
 /** Failed sends of one notice before every further failure also raises an alert naming the row. */
 export const LEGAL_NOTICE_ALERT_AFTER = 3;
 
@@ -433,7 +433,7 @@ async function sendLegalNotice(row: LegalNoticeRow, failuresSoFar: number) {
   } catch (e) {
     const failures = failuresSoFar + 1;
     await dbWrite.$executeRaw`
-      UPDATE "PersonalDataExport" SET error = ${legalNoticeFailed(failures, errorMessage(e))}
+      UPDATE "PersonalDataExport" SET error = ${legalNoticeFailed(failures)}
       WHERE id = ${row.id} AND status = 'held'
     `.catch(() => undefined);
     logToAxiom({
@@ -443,7 +443,12 @@ async function sendLegalNotice(row: LegalNoticeRow, failuresSoFar: number) {
         failures >= LEGAL_NOTICE_ALERT_AFTER
           ? `ALERT: Legal refusal notice for export ${row.id} still unsent after ${failures} tries`
           : `Legal refusal notice failed: ${errorMessage(e)}`,
-      details: { exportId: row.id, failures, alert: failures >= LEGAL_NOTICE_ALERT_AFTER },
+      details: {
+        exportId: row.id,
+        failures,
+        alert: failures >= LEGAL_NOTICE_ALERT_AFTER,
+        error: errorMessage(e),
+      },
     }).catch(() => undefined);
     return false;
   }
@@ -485,7 +490,7 @@ const building = (row: ExportRow): HeldFrom => ({ status: 'building', attempts: 
 
 /**
  * A held account: no archive (any already uploaded is deleted), one notice to Legal, and the
- * requesting moderator told only that it was routed to Legal. The same path whether the hold is
+ * requesting moderator told only that it is being routed to Legal. The same path whether the hold is
  * found before the build, during it, or at release. The row is kept, as held, with both keys cleared.
  *
  * The guarded UPDATE runs first and only its winner deletes and emails, so a retry or a second press

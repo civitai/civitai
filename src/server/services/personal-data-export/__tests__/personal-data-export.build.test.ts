@@ -225,7 +225,7 @@ describe('buildExport', () => {
   /**
    * 🔴 Ruled by Legal and the Moderation Lead: an account under a hold gets NO archive. Nothing is
    * built or uploaded, no link goes to anyone, Legal's intake gets exactly one notice in the format
-   * its sweep reads, and the moderator who queued it is told only that it was routed to Legal. If
+   * its sweep reads, and the moderator who queued it is told only that it is being routed to Legal. If
    * you are about to build a held account's archive "for Legal to review", this test is why not.
    */
   it('refuses a held account: nothing built, one notice to Legal, the requester told only that', async () => {
@@ -453,9 +453,7 @@ describe('buildExport record, run', () => {
       `SELECT status, "archiveKey", error FROM "PersonalDataExport" WHERE id = $1`,
       [row.id]
     );
-    expect(rows).toEqual([
-      { status: 'held', archiveKey: null, error: 'legal notice failed (1): smtp down' },
-    ]);
+    expect(rows).toEqual([{ status: 'held', archiveKey: null, error: 'legal notice failed (1)' }]);
     expect(m.heldSend).toHaveBeenCalledTimes(1);
   });
 
