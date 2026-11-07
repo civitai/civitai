@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   fetchSummaries: vi.fn(async () => ({ images: {} as Record<number, unknown> })),
   // When the page's chunk queries answered; a card's catch-up read waits until this is 30s old.
   stamp: 0,
+  // The page's chunk queries have not answered yet.
+  pending: false,
   push: undefined as undefined | ((raw: unknown) => void),
   // Every mounted provider's push handler: one per simulated viewer.
   viewers: new Set<(raw: unknown) => void>(),
@@ -77,33 +79,34 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           const asked = build(t);
           h.asked.push(...asked);
           return asked.map(({ proc, input }, i) => ({
-            dataUpdatedAt: h.stamp + i,
-            data:
-              proc === 'getSummaries'
-                ? {
-                    team: 'blue',
-                    images: Object.fromEntries(
-                      input.imageIds
-                        .filter((id: number) => id % 2 === 1)
-                        .map((id: number) => [id, summary('blue', id === 1)])
-                    ),
-                    open: Object.fromEntries(input.imageIds.map((id: number) => [id, id !== 4])),
-                    hidden: input.imageIds.includes(6) ? { 6: true } : {},
-                  }
-                : Object.fromEntries(
-                    input.imageIds.map((id: number) => [
-                      id,
-                      [
-                        {
-                          id: id * 10,
-                          userId: 9,
-                          team: 'blue',
-                          cosmeticId: 11,
-                          data: { x: 0.5, y: 0.5 },
-                        },
-                      ],
-                    ])
+            dataUpdatedAt: h.pending ? 0 : h.stamp + i,
+            data: h.pending
+              ? undefined
+              : proc === 'getSummaries'
+              ? {
+                  team: 'blue',
+                  images: Object.fromEntries(
+                    input.imageIds
+                      .filter((id: number) => id % 2 === 1)
+                      .map((id: number) => [id, summary('blue', id === 1)])
                   ),
+                  open: Object.fromEntries(input.imageIds.map((id: number) => [id, id !== 4])),
+                  hidden: input.imageIds.includes(6) ? { 6: true } : {},
+                }
+              : Object.fromEntries(
+                  input.imageIds.map((id: number) => [
+                    id,
+                    [
+                      {
+                        id: id * 10,
+                        userId: 9,
+                        team: 'blue',
+                        cosmeticId: 11,
+                        data: { x: 0.5, y: 0.5 },
+                      },
+                    ],
+                  ])
+                ),
           }));
         },
         useUtils: () => h.utils,
@@ -146,6 +149,7 @@ beforeEach(() => {
   h.fetch.mockClear();
   h.fetchSummaries.mockClear();
   h.stamp = Date.now() - 1_000;
+  h.pending = false;
   h.viewers.clear();
   latest = null;
 });
@@ -410,11 +414,12 @@ describe('stickers a push carries', () => {
   });
 });
 
-// Pushes reach only images someone is watching, so a change made while a card was off screen is
-// never pushed to it. Coming back on screen, past the stale window, it reads the image again.
-describe('a card back on screen catches up', () => {
+// Pushes reach only images someone is watching, so a change made while nobody watched a card's image
+// was pushed to nobody. A card that watches again (a virtualized feed scrolled back) rereads it.
+describe('a card that watches again catches up', () => {
   const pink = { ...summary('pink'), shown: { pink: 4 }, counted: { pink: 4 } };
   const hat = [{ id: '7', userId: 3, team: 'pink', cosmeticId: 12, data: {} }];
+  const countReads = () => h.fetchSummaries.mock.calls.map(([arg]: any) => arg.imageIds);
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -423,60 +428,116 @@ describe('a card back on screen catches up', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  const offScreenFor = async (ms: number) => {
-    const stop = latest!.watch(1);
-    await vi.advanceTimersByTimeAsync(300);
-    act(() => stop());
+  const watchFor = async (imageIds: number[], ms = 300) => {
+    const stops = imageIds.map((id) => latest!.watch(id));
     await vi.advanceTimersByTimeAsync(ms);
-    latest!.watch(1);
-    await vi.advanceTimersByTimeAsync(300);
+    return () => act(() => stops.forEach((stop) => stop()));
+  };
+  const awayFor = async (ms: number, imageIds = [1]) => {
+    (await watchFor(imageIds))();
+    await vi.advanceTimersByTimeAsync(ms);
+    return watchFor(imageIds);
   };
 
-  test('draws what changed while it was off screen, with no push', async () => {
+  test('draws the counts that changed while nobody watched, with no push', async () => {
     await mount([1]);
     expect(latest!.images[1].leader).toBe('blue');
-    await offScreenFor(31_000);
+    await awayFor(31_000);
     expect(latest!.images[1].leader).toBe('pink');
     expect(latest!.images[1].counted).toEqual({ pink: 4 });
+  });
+
+  test('asks past the client cache, whose default would hand back an earlier read', async () => {
+    await mount([1]);
+    await awayFor(91_000);
+    expect(h.fetchSummaries.mock.calls[0][1]).toEqual({ staleTime: 0 });
+    expect(h.fetch.mock.calls[0][1]).toEqual({ staleTime: 0 });
+  });
+
+  // The stickers read is edge-cached, so before 90s it could hand back what is already drawn.
+  test('rereads stickers only once they are older than the edge cache can be', async () => {
+    await mount([1]);
+    const stop = await awayFor(31_000);
+    expect(h.fetch).not.toHaveBeenCalled();
+    stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await watchFor([1]);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
     expect(latest!.stickers[1]).toEqual(hat);
   });
 
-  test('reads nothing when it was off screen for less than the stale window', async () => {
+  test('reads nothing back within the stale window', async () => {
     await mount([1]);
-    await offScreenFor(5_000);
+    await awayFor(5_000);
     expect(h.fetchSummaries).not.toHaveBeenCalled();
     expect(h.fetch).not.toHaveBeenCalled();
-    expect(latest!.images[1].leader).toBe('blue');
   });
 
-  test('reads nothing for a card whose image had a push within the window', async () => {
+  test('reads nothing for an image a push brought up to date within the window', async () => {
     await mount([1]);
     await vi.advanceTimersByTimeAsync(40_000);
     act(() => h.push!({ event: 'birthday2026', imageId: 1, counts: pink, stickers: hat }));
-    await offScreenFor(5_000);
+    await awayFor(5_000);
     expect(h.fetchSummaries).not.toHaveBeenCalled();
   });
 
-  test('cards coming back together are read in one request', async () => {
+  test('reads nothing for a card watching for the first time, however late', async () => {
+    await mount([1]);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await watchFor([1]);
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('reads nothing while the page itself has not been read', async () => {
+    h.pending = true;
+    await mount([1]);
+    await awayFor(120_000);
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  test('cards watching again together are read in one request', async () => {
     await mount(ids(5));
+    (await watchFor(ids(5)))();
     await vi.advanceTimersByTimeAsync(31_000);
     for (const id of ids(5)) {
       latest!.watch(id);
       await vi.advanceTimersByTimeAsync(20);
     }
     await vi.advanceTimersByTimeAsync(300);
-    expect(h.fetchSummaries.mock.calls.map(([arg]: any) => arg.imageIds)).toEqual([ids(5)]);
+    expect(countReads()).toEqual([ids(5)]);
+  });
+
+  test('goes out at most once every five seconds', async () => {
+    await mount(ids(2));
+    (await watchFor(ids(2)))();
+    await vi.advanceTimersByTimeAsync(31_000);
+    const stop = await watchFor([1]);
+    stop();
+    await watchFor([2], 1_000);
+    expect(countReads()).toEqual([[1]]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(countReads()).toEqual([[1], [2]]);
   });
 
   test('a push that lands while the read is in flight is not undone by it', async () => {
-    let answer!: (v: { images: Record<number, unknown> }) => void;
-    h.fetchSummaries.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    let counts!: (v: { images: Record<number, unknown> }) => void;
+    let stickers!: (v: Record<number, unknown[]>) => void;
+    h.fetchSummaries.mockImplementationOnce(() => new Promise((r) => (counts = r)));
+    h.fetch.mockImplementationOnce(() => new Promise((r) => (stickers = r)));
     await mount([1]);
-    await offScreenFor(31_000);
+    await awayFor(91_000);
     expect(h.fetchSummaries).toHaveBeenCalledTimes(1);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
     const newer = { ...pink, shown: { pink: 9 }, counted: { pink: 9 } };
-    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts: newer, stickers: hat }));
-    await act(async () => answer({ images: { 1: pink } }));
+    const newerHat = [{ ...hat[0], id: '8' }];
+    act(() => h.push!({ event: 'birthday2026', imageId: 1, counts: newer, stickers: newerHat }));
+    await act(async () => {
+      counts({ images: { 1: pink } });
+      stickers({ 1: hat });
+    });
     expect(latest!.images[1].counted).toEqual({ pink: 9 });
+    expect(latest!.stickers[1]).toEqual(newerHat);
   });
 });

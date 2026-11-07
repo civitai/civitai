@@ -25,9 +25,14 @@ const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
-// A card back on screen rereads its image when what is drawn is older than this: a change made
-// while it was off screen was pushed to nobody watching it.
+// A card that watches again rereads its image's counts when what is drawn is older than this: a
+// change made while nobody watched it was pushed to nobody.
 const CATCH_UP_STALE_MS = 30_000;
+// Catch-ups go out at most this often; the stickers read shares a 60-a-minute rate limit.
+const CATCH_UP_MIN_GAP_MS = 5_000;
+// The stickers read is edge-cached (CacheTTL.xs plus stale-while-revalidate), so its answer can be
+// this old: stickers catch up only when what is drawn is older still.
+const STICKER_EDGE_MAX_AGE_MS = 90_000;
 // Only for a push that carries no stickers (an older server): every viewer of a hot image reads, so
 // each reads at most this often per image, spread so they do not arrive together.
 const STICKER_REREAD_MIN_MS = 10_000;
@@ -57,11 +62,11 @@ export type TurfSummaries = {
 export const TurfSummaryContext = createContext<TurfSummaries | null>(null);
 
 /**
- * Standings and hats for every image on a surface, fetched once for the ids on it: one request per
- * 100 cards for each, never one per card (tRPC request batching is off by default, so a per-card
- * query is a per-card HTTP request). Chunked in arrival order, not sorted, for the reason
- * `StickerPlacementBatchProvider` gives. Pushes reach only watched images, so a card that comes back
- * on screen after 30s rereads its image, batched with its mark.
+ * Standings and hats for every image on a surface, read for the ids on it: one request per 100
+ * cards for each, never one per card (tRPC request batching is off by default, so a per-card query
+ * is a per-card HTTP request). Chunked in arrival order, not sorted, for the reason
+ * `StickerPlacementBatchProvider` gives. Pushes reach only watched images, so a card that mounts and
+ * watches again (a virtualized feed scrolled back) rereads what has gone stale, batched.
  */
 export function TurfSummaryProvider({
   imageIds,
@@ -179,51 +184,80 @@ export function TurfSummaryProvider({
     return () => timers.forEach((timer) => clearTimeout(timer));
   }, []);
 
-  // When each image's drawn counts were last known good: its chunk's read, a push or a catch-up.
-  const freshAt = useRef<(imageId: number) => number>(() => 0);
-  freshAt.current = (imageId) =>
-    Math.max(
-      summaryQueries[chunkOf.get(imageId) ?? -1]?.dataUpdatedAt ?? 0,
-      pushed[imageId]?.at ?? 0,
-      caught[imageId]?.at ?? 0
-    );
+  // When each image's drawn counts and stickers were last known good; 0 while its chunk has not
+  // loaded, so a card mounting before its page's read does not read again.
+  const freshAt = useRef<(imageId: number) => { counts: number; stickers: number }>(() => ({
+    counts: 0,
+    stickers: 0,
+  }));
+  freshAt.current = (imageId) => {
+    const chunk = chunkOf.get(imageId) ?? -1;
+    const counts = summaryQueries[chunk]?.dataUpdatedAt ?? 0;
+    const stickers = stickerQueries[chunk]?.dataUpdatedAt ?? 0;
+    return {
+      counts: counts && Math.max(counts, pushed[imageId]?.at ?? 0, caught[imageId]?.at ?? 0),
+      stickers: stickers && Math.max(stickers, reread[imageId]?.at ?? 0),
+    };
+  };
+  const pendingCatchUp = useRef(new Set<number>());
+  const catchUpTimer = useRef<ReturnType<typeof setTimeout>>();
+  const lastCatchUp = useRef(-Infinity);
+  const runCatchUp = useCallback(() => {
+    const ids = [...pendingCatchUp.current];
+    pendingCatchUp.current.clear();
+    if (!event) return;
+    const now = Date.now();
+    const fresh = new Map(ids.map((id) => [id, freshAt.current(id)]));
+    const counts = ids.filter((id) => {
+      const at = fresh.get(id)!.counts;
+      return at > 0 && now - at > CATCH_UP_STALE_MS;
+    });
+    const stickers = ids.filter((id) => {
+      const at = fresh.get(id)!.stickers;
+      return at > 0 && now - at > STICKER_EDGE_MAX_AGE_MS;
+    });
+    if (!counts.length && !stickers.length) return;
+    lastCatchUp.current = now;
+    // staleTime 0: the client's default (Infinity) would hand back an earlier read of these ids.
+    // Stamped when asked, so a push that lands while a read is in flight is newer and wins.
+    for (const chunk of chunkIds(counts, SUMMARY_CHUNK))
+      utils.hatTurf.getSummaries
+        .fetch({ event, imageIds: chunk }, { staleTime: 0 })
+        .then((read) =>
+          setCaught((current) => {
+            const next = { ...current };
+            for (const id of chunk)
+              if ((current[id]?.at ?? 0) <= now) next[id] = { at: now, summary: read.images[id] };
+            return next;
+          })
+        )
+        .catch(() => undefined);
+    for (const chunk of chunkIds(stickers, SUMMARY_CHUNK))
+      utils.hatTurf.getStickersForImages
+        .fetch({ event, imageIds: chunk, perImage: TURF_FEED_STICKERS }, { staleTime: 0 })
+        .then((read) =>
+          setReread((current) => {
+            const next = { ...current };
+            for (const id of chunk)
+              if ((current[id]?.at ?? 0) <= now - STICKER_EDGE_MAX_AGE_MS)
+                next[id] = { at: now, stickers: read[id] ?? [] };
+            return next;
+          })
+        )
+        .catch(() => undefined);
+  }, [event, utils]);
   const catchUp = useCallback(
     (imageIds: number[]) => {
-      if (!event) return;
-      const now = Date.now();
-      const stale = imageIds.filter((id) => now - freshAt.current(id) > CATCH_UP_STALE_MS);
-      for (const chunk of chunkIds(stale, SUMMARY_CHUNK)) {
-        const started = Date.now();
-        void Promise.all([
-          utils.hatTurf.getSummaries.fetch({ event, imageIds: chunk }),
-          utils.hatTurf.getStickersForImages.fetch({
-            event,
-            imageIds: chunk,
-            perImage: TURF_FEED_STICKERS,
-          }),
-        ])
-          .then(([summaries, stickers]) => {
-            // Stamped when asked: a push that lands while this is in flight is newer and wins.
-            setCaught((current) => {
-              const next = { ...current };
-              for (const id of chunk)
-                if ((current[id]?.at ?? 0) <= started)
-                  next[id] = { at: started, summary: summaries.images[id] };
-              return next;
-            });
-            setReread((current) => {
-              const next = { ...current };
-              for (const id of chunk)
-                if ((current[id]?.at ?? 0) <= started)
-                  next[id] = { at: started, stickers: stickers[id] ?? [] };
-              return next;
-            });
-          })
-          .catch(() => undefined);
-      }
+      imageIds.forEach((id) => pendingCatchUp.current.add(id));
+      if (catchUpTimer.current) return;
+      catchUpTimer.current = setTimeout(() => {
+        catchUpTimer.current = undefined;
+        runCatchUp();
+      }, Math.max(0, lastCatchUp.current + CATCH_UP_MIN_GAP_MS - Date.now()));
     },
-    [event, utils]
+    [runCatchUp]
   );
+  useEffect(() => () => clearTimeout(catchUpTimer.current), []);
 
   const onPush = useCallback(
     (raw: unknown) => {
@@ -333,11 +367,12 @@ function TurfWatcher({
   event: string;
   watching: React.MutableRefObject<Map<number, number>>;
   version: number;
-  /** The cards that came on screen since the last flush, for their catch-up read. */
+  /** Cards watching again since the last flush (watched before, then not), for their catch-up. */
   onAdded: (imageIds: number[]) => void;
 }) {
   const { mutate: mark } = trpc.hatTurf.watch.useMutation();
   const marked = useRef(new Set<number>());
+  const everMarked = useRef(new Set<number>());
   const send = useCallback(
     (ids: number[]) => {
       for (let i = 0; i < ids.length; i += WATCH_BATCH)
@@ -356,7 +391,9 @@ function TurfWatcher({
       marked.current = new Set(current);
       if (added.length) {
         send(added);
-        onAdded(added);
+        const again = added.filter((id) => everMarked.current.has(id));
+        added.forEach((id) => everMarked.current.add(id));
+        if (again.length) onAdded(again);
       }
     }, WATCH_COALESCE_MS);
   }, [version, watching, send, onAdded]);
