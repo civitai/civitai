@@ -82,20 +82,49 @@ export function evidenceFileDetails(
   viewedByEsp: boolean
 ): Omit<SubmitFileDetails, 'reportId' | 'fileId'> {
   const { job, blob } = file;
-  const valuePair: { name: string; value: string }[] = [];
-  const prompt = trimNonAlphanumeric(job.prompt);
-  const negativePrompt = trimNonAlphanumeric(job.negativePrompt);
-  if (prompt) valuePair.push({ name: 'prompt', value: xmlText(prompt) });
-  if (negativePrompt) valuePair.push({ name: 'negativePrompt', value: xmlText(negativePrompt) });
-  if (job.resources?.length)
-    valuePair.push({ name: 'resources', value: xmlText(job.resources.join(',')) });
+  const text = promptFileDetails(job);
   return {
     originalFileName: xmlText(blob.blobId),
     fileViewedByEsp: viewedByEsp,
     publiclyAvailable: false,
     fileAnnotations: { generativeAi: blob.role === 'output' },
+    ...(text.details && { details: text.details }),
+    additionalInfo: [xmlText(describe(file)), ...text.additionalInfo],
+  };
+}
+
+type PromptSource = { prompt?: unknown; negativePrompt?: unknown; resources?: unknown };
+const asText = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined);
+
+/**
+ * A file's prompts as NCMEC is sent them: EXIF pairs, and the same words as plain lines. `storedOnImage`
+ * labels them as read from the image's own metadata, which its uploader can write.
+ */
+export function promptFileDetails(
+  source: PromptSource,
+  { storedOnImage = false }: { storedOnImage?: boolean } = {}
+): Pick<SubmitFileDetails, 'details'> & { additionalInfo: string[] } {
+  const prompt = asText(source.prompt);
+  const negativePrompt = asText(source.negativePrompt);
+  const resources = Array.isArray(source.resources)
+    ? source.resources.filter((r): r is string => typeof r === 'string' && !!r)
+    : [];
+  const valuePair: { name: string; value: string }[] = [];
+  const trimmedPrompt = trimNonAlphanumeric(prompt);
+  const trimmedNegative = trimNonAlphanumeric(negativePrompt);
+  if (trimmedPrompt) valuePair.push({ name: 'prompt', value: xmlText(trimmedPrompt) });
+  if (trimmedNegative) valuePair.push({ name: 'negativePrompt', value: xmlText(trimmedNegative) });
+  if (resources.length) valuePair.push({ name: 'resources', value: xmlText(resources.join(',')) });
+
+  const as = storedOnImage ? ', as stored on the image' : '';
+  const lines = [
+    prompt && line(`Prompt${as}: `, prompt),
+    negativePrompt && line(`Negative prompt${as}: `, negativePrompt),
+    resources.length && line(`Resources${as}: `, resources.join(', ')),
+  ].filter((text): text is string => !!text);
+  return {
     ...(valuePair.length && { details: [{ type: FileDetailType.EXIF, valuePair }] }),
-    additionalInfo: [xmlText(describe(file)), ...generationText(job)],
+    additionalInfo: lines.length ? [lines.join('\n')] : [],
   };
 }
 
@@ -110,16 +139,6 @@ function line(label: string, text: string) {
   const kept =
     chars.length <= room ? chars.join('') : chars.slice(0, room - CUT.length).join('') + CUT;
   return label + escapeXml(kept);
-}
-
-/** The generation's words as plain text, alongside the EXIF pairs, for a reader who never opens those. */
-function generationText(job: StoredEvidenceJob) {
-  const lines = [
-    job.prompt?.trim() && line('Prompt: ', job.prompt),
-    job.negativePrompt?.trim() && line('Negative prompt: ', job.negativePrompt),
-    job.resources?.length && line('Resources: ', job.resources.join(', ')),
-  ].filter((text): text is string => !!text);
-  return lines.length ? [lines.join('\n')] : [];
 }
 
 export const EXCLUDED_FILES_NOTICE =
