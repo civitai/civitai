@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { generationHub, workflowOutput } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { ecosystemFieldSchemas } from '~/shared/form-graph/generation/shared';
@@ -171,5 +171,26 @@ describe('a hidden rule’s message never reaches a refusal', () => {
     expect(outputRefusals(['SDXL'], [{ key: 'SDXL', message: SECRET }], 'SDXL')).toEqual([
       ECOSYSTEM_UNAVAILABLE,
     ]);
+  });
+
+  const workflowRefusals = (
+    hidden: string[],
+    gated: { key: string; message?: string }[],
+    value: string
+  ) => {
+    const result = workflowOutput(hidden, gated).safeParse(value);
+    return result.success ? [] : result.error.issues.map((issue) => issue.message);
+  };
+
+  it('CONTROL: a gated workflow entry’s message does reach the output refusal', () => {
+    expect(workflowRefusals([], [{ key: 'txt2img', message: SECRET }], 'txt2img')).toEqual([
+      `${WORKFLOW_UNAVAILABLE}. ${SECRET}`,
+    ]);
+  });
+
+  it('hidden is checked first: a gated entry for the same workflow key never adds its message', () => {
+    expect(workflowRefusals(['txt2img'], [{ key: 'txt2img', message: SECRET }], 'txt2img')).toEqual(
+      [WORKFLOW_UNAVAILABLE]
+    );
   });
 });

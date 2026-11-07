@@ -109,11 +109,13 @@ const workflowKinds = branch('workflowKind', [
 ] as const);
 
 const WORKFLOW_INPUT = z.string().optional().transform(migrateWorkflowKey);
-const workflowOutput = defFamily(
+export const workflowOutput = defFamily(
   (hidden: readonly string[], states: readonly { key: string; message?: string }[]) => {
-    const refusals = new Map<string, string>(hidden.map((key) => [key, WORKFLOW_UNAVAILABLE]));
-    for (const { key, message } of states)
-      refusals.set(key, gateRefusalText(WORKFLOW_UNAVAILABLE, message));
+    const refusals = new Map<string, string>(
+      states.map(({ key, message }) => [key, gateRefusalText(WORKFLOW_UNAVAILABLE, message)])
+    );
+    // Hidden last, so it overwrites: a hidden key never carries a message.
+    for (const key of hidden) refusals.set(key, WORKFLOW_UNAVAILABLE);
     return refusals.size
       ? z.string().superRefine((v, ctx) => {
           const refusal = refusals.get(v);
