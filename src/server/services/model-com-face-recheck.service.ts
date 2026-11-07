@@ -3,7 +3,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 import type { ComFaceRemovedReason, ModelMeta } from '~/server/schema/model.schema';
-import { checkComFaceIntent, getOwnTriggerWords } from '~/server/services/model-sfw-face.service';
+import {
+  checkComFaceIntentVerdict,
+  getOwnTriggerWords,
+} from '~/server/services/model-sfw-face.service';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 const QUEUE = 'com-face-recheck';
@@ -101,13 +104,15 @@ export async function recheckComFace(modelId: number): Promise<RecheckResult> {
     userId: model.userId,
     db: dbWrite,
   });
-  const result = await checkComFaceIntent({
+  const verdict = await checkComFaceIntentVerdict({
     name: model.name,
     description: model.description,
     triggerWords,
   });
-  if (result !== 'detected') return result;
-  return (await removeComFace(modelId, model.sfwCoverImageId, 'detected')) ? 'removed' : 'skipped';
+  if (verdict.status !== 'detected') return verdict.status;
+  return (await removeComFace(modelId, model.sfwCoverImageId, 'detected', verdict.reason))
+    ? 'removed'
+    : 'skipped';
 }
 
 /** Takes the model off .com without a verdict: the check never answered inside the window. Returns
@@ -140,11 +145,17 @@ export const comFaceRemovalSql = (
   `;
 };
 
-async function removeComFace(modelId: number, coverId: number, reason: ComFaceRemovedReason) {
+async function removeComFace(
+  modelId: number,
+  coverId: number,
+  reason: ComFaceRemovedReason,
+  detail?: string
+) {
   const marker: NonNullable<ModelMeta['comFaceRemoved']> = {
     at: new Date().toISOString(),
     sfwCoverImageId: coverId,
     reason,
+    ...(detail && { detail }),
   };
   const removed = await dbWrite.$transaction(async (tx) => {
     const updated = await tx.$executeRaw(comFaceRemovalSql(modelId, coverId, marker));

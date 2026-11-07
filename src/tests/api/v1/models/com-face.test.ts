@@ -32,6 +32,10 @@ vi.mock('~/server/trpc', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/v1/models/com-face';
+import {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+} from '~/shared/utils/model-sfw-face';
 
 const stored = {
   id: 11,
@@ -190,6 +194,25 @@ describe('POST /api/v1/models/com-face', () => {
     const res = await call({ action: 'save', modelId: 11, sfwName: 'x', sfwCoverImageId: 1 });
     expect(res.statusCode).toBe(400);
   });
+
+  it.each([
+    [COM_FACE_REFUSED_MESSAGE, /in the model editor/],
+    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/],
+  ])(
+    'tells the card which fields a refused draft read, apart from a check that failed',
+    async (thrown, shown) => {
+      caller.model.getCoverCandidates.mockResolvedValue([
+        { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
+      ]);
+      caller.model.draftSfwFace.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: thrown })
+      );
+      const res = await call({ action: 'draft', modelId: 11 });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toMatch(shown);
+      expect(res.body.message).toMatch(/civitai\.red/);
+    }
+  );
 
   it('picks the first PG/PG-13 image as the cover and drafts through the editor procedure', async () => {
     caller.model.getCoverCandidates.mockResolvedValue([

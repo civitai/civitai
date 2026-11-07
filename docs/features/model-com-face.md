@@ -50,6 +50,10 @@ saved, when one of the creator's images or posts on the model is deleted, blocke
 moderated, when a version is unpublished, and when an image's rating changes. When the cover stops
 qualifying, the model leaves .com again.
 
+The editor's .com tab says "Not listed on civitai.com" when a saved cover does not count, with what
+to change (`comCoverState` in `src/shared/utils/model-sfw-face.ts`). Any review or moderation state
+on the image reads the same as a flag.
+
 For a mature model shown through its face, the feed sends .com viewers only its PG/PG-13 images.
 
 `hasSfwFace` on model responses and search documents marks a complete face. The client-side drop
@@ -70,6 +74,10 @@ and trigger words, which .com shows unchanged.
 
 The .com fields are never fed to the automatic checks that set `Model.nsfw`; those keep reading the
 .red title and description.
+
+A .com face is also refused when the model's own listing (.red title, description and trigger
+words) fails the listing check. The refusal names those fields; the check's reason is kept for
+moderators and never sent to the owner. A check that could not run says so, separately.
 
 ## Draft action
 
