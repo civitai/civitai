@@ -314,15 +314,16 @@ describe('getOrchestratorWorkflowCharges', () => {
     });
   });
 
-  it.each([
-    ['NOT_FOUND', 'a 404'],
-    ['BAD_REQUEST', 'a malformed id'],
-  ] as const)('%s (%s) is "no such workflow"', async (code) => {
-    getWorkflow.mockRejectedValue(new TRPCError({ code, message: 'x' }));
-    expect(await getOrchestratorWorkflowCharges('wf-a')).toEqual({ found: false });
-  });
+  // NOT_FOUND is a 404; BAD_REQUEST a malformed id.
+  it.each<'NOT_FOUND' | 'BAD_REQUEST'>(['NOT_FOUND', 'BAD_REQUEST'])(
+    '%s is "no such workflow"',
+    async (code) => {
+      getWorkflow.mockRejectedValue(new TRPCError({ code, message: 'x' }));
+      expect(await getOrchestratorWorkflowCharges('wf-a')).toEqual({ found: false });
+    }
+  );
 
-  it.each([['SERVICE_UNAVAILABLE'], ['UNAUTHORIZED']] as const)(
+  it.each<'SERVICE_UNAVAILABLE' | 'UNAUTHORIZED'>(['SERVICE_UNAVAILABLE', 'UNAUTHORIZED'])(
     '%s propagates — it says nothing about whether the workflow exists',
     async (code) => {
       getWorkflow.mockRejectedValue(new TRPCError({ code, message: 'x' }));
