@@ -47,6 +47,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   const contextText = contextSources
     ? await snapshotCsamContextText({
         imageIds,
+        ...(userId > 0 && { ownerId: userId }),
         sources: contextSources,
         reportedUserIds: reportedUserIdsOf(userId, details),
         capturedById: reportedById,

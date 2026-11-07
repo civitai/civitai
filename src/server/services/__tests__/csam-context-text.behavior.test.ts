@@ -129,7 +129,11 @@ const ids = (rows: { source: string; id: number }[]) =>
 
 describe('candidates', () => {
   it("lists the images' post descriptions and comments from both tables, each once", async () => {
-    const rows = await getCsamContextCandidates({ userId: OWNER, imageIds: [501, 502] });
+    const { candidates: rows, more } = await getCsamContextCandidates({
+      userId: OWNER,
+      imageIds: [501, 502],
+    });
+    expect(more).toBe(false);
 
     expect(ids(rows)).toEqual(
       [
@@ -150,15 +154,31 @@ describe('candidates', () => {
     expect(rows.find((r) => r.id === 22)).toMatchObject({ authorIsReportedUser: true });
   });
 
-  it("lists nothing from another account's images", async () => {
-    const rows = await getCsamContextCandidates({ userId: OWNER, imageIds: [601] });
+  it('says more comments exist past the page size, listing each once', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentV3" SELECT g, 'image', 502, ${OTHER}, 'c' || g, '2026-10-01', NULL, false
+        FROM generate_series(1000, 1600) g;
+      INSERT INTO "CommentV2" SELECT g, 2, ${OTHER}, 'c' || g, '2026-10-01', false
+        FROM generate_series(1000, 1600) g;
+    `);
+    const { candidates, more } = await getCsamContextCandidates({ userId: OWNER, imageIds: [502] });
+    const commentIds = candidates.filter((c) => c.source === 'comment').map((c) => c.id);
 
-    expect(rows).toEqual([]);
+    expect(new Set(commentIds).size).toBe(commentIds.length);
+    expect(more).toBe(true);
+  });
+
+  it("lists nothing from another account's images", async () => {
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [601] });
+
+    expect(candidates).toEqual([]);
   });
 
   it('previews a long text and says how long it is', async () => {
     await db.pg.query(`UPDATE "Post" SET detail = $1 WHERE id = 100`, ['y'.repeat(5000)]);
-    const [post] = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+    const {
+      candidates: [post],
+    } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
 
     expect(post).toMatchObject({ source: 'postDescription', fullLength: 5000 });
     expect(post.text).toHaveLength(2000);
@@ -168,7 +188,9 @@ describe('candidates', () => {
     await db.pg.query(`UPDATE "Post" SET detail = $1 WHERE id = 100`, [
       '<p>more <a href="https://example.invalid/x">here</a></p>',
     ]);
-    const [post] = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+    const {
+      candidates: [post],
+    } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
 
     expect(post.text).toBe('more here [https://example.invalid/x]');
   });
@@ -214,6 +236,18 @@ describe('snapshot', () => {
     ['a V2 comment on a post whose id is a report image id', { postIds: [], commentIds: [25] }],
   ])('refuses %s', async (_, sources) => {
     await expect(snapshot(sources)).rejects.toThrow(/not on the images in this report/);
+  });
+
+  it("refuses text on another account's image named in the filing", async () => {
+    await expect(
+      snapshotCsamContextText({
+        imageIds: [501, 601],
+        ownerId: OWNER,
+        sources: { postIds: [200], commentIds: [] },
+        reportedUserIds: [OWNER],
+        capturedById: MOD,
+      })
+    ).rejects.toThrow(/not on the images in this report/);
   });
 
   it('copies no comment when only a post description is ticked', async () => {

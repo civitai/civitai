@@ -142,6 +142,7 @@ describe('fileCsamReport with attached text', () => {
 
     expect(snapshotCsamContextText).toHaveBeenCalledWith({
       imageIds: [IMAGE],
+      ownerId: OWNER,
       sources,
       reportedUserIds: [OWNER],
       capturedById: MOD,

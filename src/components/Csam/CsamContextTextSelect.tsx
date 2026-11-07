@@ -41,12 +41,12 @@ export function CsamContextTextSelect({
           <Text c="red" size="sm">
             Could not load the text for these images.
           </Text>
-        ) : !data?.length ? (
+        ) : !data?.candidates.length ? (
           <Text size="sm" c="dimmed">
             No post description or comment on these images.
           </Text>
         ) : (
-          data.map((candidate) => (
+          data.candidates.map((candidate) => (
             <Checkbox
               key={`${candidate.source}:${candidate.id}`}
               checked={value[key(candidate.source)].includes(candidate.id)}
@@ -89,6 +89,11 @@ export function CsamContextTextSelect({
               }
             />
           ))
+        )}
+        {data?.more && (
+          <Text size="xs" c="dimmed">
+            Only the newest comments are listed. More comments exist on these images.
+          </Text>
         )}
       </Stack>
     </Input.Wrapper>

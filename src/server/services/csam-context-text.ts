@@ -55,8 +55,13 @@ type Scope = {
   commentIds?: number[];
 };
 
-async function readCandidates({ imageIds, ownerId, postIds: onlyPosts, commentIds }: Scope) {
-  if (!imageIds.length) return [];
+async function readCandidates({
+  imageIds,
+  ownerId,
+  postIds: onlyPosts,
+  commentIds,
+}: Scope): Promise<{ candidates: CsamContextCandidate[]; more: boolean }> {
+  if (!imageIds.length) return { candidates: [], more: false };
   let imageQuery = kyselyRead
     .selectFrom('Image')
     .select(['id', 'postId'])
@@ -64,7 +69,7 @@ async function readCandidates({ imageIds, ownerId, postIds: onlyPosts, commentId
   if (ownerId !== undefined) imageQuery = imageQuery.where('userId', '=', ownerId);
   const images = await imageQuery.execute();
   const presentImageIds = images.map((i) => i.id);
-  if (!presentImageIds.length) return [];
+  if (!presentImageIds.length) return { candidates: [], more: false };
   const postIds = [...new Set(images.map((i) => i.postId).filter((id): id is number => !!id))];
 
   const candidates: CsamContextCandidate[] = [];
@@ -90,7 +95,7 @@ async function readCandidates({ imageIds, ownerId, postIds: onlyPosts, commentId
     }
   }
 
-  if (commentIds?.length === 0) return candidates;
+  if (commentIds?.length === 0) return { candidates, more: false };
   const limit = commentIds ? commentIds.length : CANDIDATE_COMMENT_LIMIT;
 
   const v3 = await kyselyV3Read
@@ -143,13 +148,13 @@ async function readCandidates({ imageIds, ownerId, postIds: onlyPosts, commentId
     .orderBy('c.id', 'desc')
     .limit(limit);
   if (commentIds) v2Query = v2Query.where('c.id', 'in', commentIds);
-  if (v3.length)
-    v2Query = v2Query.where(
-      'c.id',
-      'not in',
-      v3.map((c) => c.id)
-    );
-  const v2 = await v2Query.execute();
+  const v2 = await v2Query
+    .where((eb) =>
+      eb.not(
+        eb.exists(eb.selectFrom('CommentV3 as v3').select('v3.id').whereRef('v3.id', '=', 'c.id'))
+      )
+    )
+    .execute();
 
   for (const c of v3)
     candidates.push({
@@ -172,20 +177,27 @@ async function readCandidates({ imageIds, ownerId, postIds: onlyPosts, commentId
       text: htmlToPlainText(c.content),
       ...(c.hidden && { hidden: true }),
     });
-  return candidates;
+  return {
+    candidates,
+    more: !commentIds && (v3.length === limit || v2.length === limit),
+  };
 }
 
 /** The post descriptions and comments a moderator may attach to a report on these images. */
 export async function getCsamContextCandidates({
   userId,
   imageIds,
-}: GetCsamContextCandidatesSchema): Promise<CsamContextPreview[]> {
+}: GetCsamContextCandidatesSchema): Promise<{
+  candidates: CsamContextPreview[];
+  /** More comments exist than are listed. */
+  more: boolean;
+}> {
   const reportedUserIds = reportedUserIdsOf(userId, undefined);
-  const candidates = await readCandidates({
+  const { candidates, more } = await readCandidates({
     imageIds,
     ...(userId > 0 && { ownerId: userId }),
   });
-  return candidates
+  const previews = candidates
     .sort(
       (a, b) =>
         Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
@@ -200,17 +212,21 @@ export async function getCsamContextCandidates({
         authorIsReportedUser: reportedUserIds.includes(candidate.authorId),
       };
     });
+  return { candidates: previews, more };
 }
 
 /** Copies the chosen text, refusing any source outside the report's images. */
 export async function snapshotCsamContextText({
   imageIds,
+  ownerId,
   sources,
   reportedUserIds,
   capturedById,
   capturedAt = new Date(),
 }: {
   imageIds: number[];
+  /** The report's user: text on anyone else's images is refused. */
+  ownerId?: number;
   sources: CsamContextSources;
   reportedUserIds: number[];
   capturedById: number;
@@ -220,7 +236,7 @@ export async function snapshotCsamContextText({
   const commentIds = [...new Set(sources.commentIds)];
   if (!postIds.length && !commentIds.length) return [];
 
-  const found = await readCandidates({ imageIds, postIds, commentIds });
+  const { candidates: found } = await readCandidates({ imageIds, ownerId, postIds, commentIds });
   const missing = [
     ...postIds.filter((id) => !found.some((c) => c.source === 'postDescription' && c.id === id)),
     ...commentIds.filter((id) => !found.some((c) => c.source === 'comment' && c.id === id)),
