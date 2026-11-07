@@ -159,6 +159,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       select: {
         id: true,
         createdAt: true,
+        updatedAt: true,
         startsAt: true,
         endsAt: true,
         title: true,
