@@ -1,7 +1,8 @@
 import { readFileSync } from 'fs';
 import path from 'path';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { freshPglite } from '../../../test/pglite';
 import {
   Kysely,
   PostgresAdapter,
@@ -82,7 +83,7 @@ vi.mock('../db', () => {
   return { dbRead: db, dbWrite: db };
 });
 
-sent.pg = new PGlite();
+sent.pg = await freshPglite();
 // Both migrations, in the order they are applied.
 for (const dir of [
   '20261225120000_personal_data_export',
