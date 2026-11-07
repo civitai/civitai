@@ -50,6 +50,8 @@ const engineSwitch = vi.hoisted(() => ({ isEventPointsEnabled: vi.fn() }));
 vi.mock('~/server/events/points/enabled', () => engineSwitch);
 
 vi.mock('~/server/events', () => ({ eventEngine: engine }));
+const turf = vi.hoisted(() => ({ getTurfEvent: vi.fn(async (): Promise<unknown> => undefined) }));
+vi.mock('~/server/events/turf/turf.service', () => turf);
 // The real cosmeticScoreKey: the service joins scores to hats with it.
 vi.mock('~/server/events/scoring/cosmetic-placement.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -748,6 +750,28 @@ describe('getPlaceableEventContentPage', () => {
 
 describe('getEventStandings decoration', () => {
   const viewer = { id: 1 };
+
+  // The turf board shows only once turf is live (the live override applied), never in shadow.
+  it.each([
+    ['live', true],
+    ['shadow', false],
+    ['off', false],
+  ])('turfLive with turf mode %s is %s', async (mode, expected) => {
+    turf.getTurfEvent.mockResolvedValueOnce({ turf: { mode } });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(res.turfLive).toBe(expected);
+  });
+
+  it('turfLive is false for an event without turf, or when its config cannot be read', async () => {
+    turf.getTurfEvent.mockResolvedValueOnce(undefined);
+    expect((await service.getEventStandings({ event: 'birthday2026', viewer })).turfLive).toBe(
+      false
+    );
+    turf.getTurfEvent.mockRejectedValueOnce(new Error('sysRedis down'));
+    expect((await service.getEventStandings({ event: 'birthday2026', viewer })).turfLive).toBe(
+      false
+    );
+  });
 
   it("returns each team's join hat art", async () => {
     engine.getJoinHats.mockResolvedValueOnce([{ team: 'Yellow', url: 'cap-y' }]);

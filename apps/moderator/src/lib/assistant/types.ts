@@ -16,6 +16,8 @@ export type TurnToolCall = {
   /** The model round that asked for it, from 1. Absent on turns logged before rounds were kept: unknown,
    *  not round 1. */
   round?: number;
+  /** Whether registration emails went to the model. Absent where the tool does not report it. */
+  emailsShown?: boolean;
 };
 
 /**

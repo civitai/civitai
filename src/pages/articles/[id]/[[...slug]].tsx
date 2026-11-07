@@ -79,6 +79,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery, parseNumericString } from '~/utils/query-string-helpers';
 import { getArticleUrl, removeTags, slugit } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
@@ -321,7 +322,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     </Group>
   );
 
-  const articleBodyText = removeTags(article.content);
+  const articleBodyText = removeTags(removeSpoilers(article.content));
   const articleSchema = {
     '@context': 'https://schema.org',
     '@type': 'Article',

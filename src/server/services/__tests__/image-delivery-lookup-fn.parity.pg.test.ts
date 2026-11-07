@@ -191,6 +191,8 @@ describe.skipIf(!adminUrl)(
   () => {
     const admin = new Pool({ connectionString: adminUrl, max: 1 });
     let pool: Pool;
+    let tearingDown = false;
+    const ADMIN_SHUTDOWN = '57P01'; // terminating connection due to administrator command
 
     const run = async (statement: Prisma.Sql, client?: PoolClient) =>
       (await (client ?? pool).query(statement.text, statement.values as unknown[])).rows;
@@ -218,6 +220,15 @@ describe.skipIf(!adminUrl)(
       for (const role of Object.values(ROLE)) await admin.query(`CREATE ROLE "${role}" NOLOGIN`);
 
       pool = new Pool({ connectionString: databaseUrl(adminUrl as string), max: 2 });
+      // pool.end() resolves once its clients are SENT their terminate, not once their sockets close,
+      // so the FORCE drop in afterAll can kill a backend whose client is still closing. That client
+      // receives a FATAL 57P01, and pg-pool re-emits it on the pool; with no listener, Vitest reports
+      // an unhandled error and fails the run. Ignore exactly that error during teardown; any other
+      // pool error is rethrown, so it still surfaces as before.
+      pool.on('error', (err) => {
+        if (tearingDown && (err as Error & { code?: string }).code === ADMIN_SHUTDOWN) return;
+        throw err;
+      });
       const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
       const setup = await pool.connect();
       try {
@@ -257,6 +268,7 @@ describe.skipIf(!adminUrl)(
     });
 
     afterAll(async () => {
+      tearingDown = true;
       await pool?.end();
       await dropAll();
       await admin.end();

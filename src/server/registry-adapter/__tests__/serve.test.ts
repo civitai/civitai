@@ -4,7 +4,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
-import { FILTER_MAX_BYTES, usesRegex } from '~/server/registry-adapter/json-schema';
+import { FILTER_MAX_BYTES, refusesFilter } from '~/server/registry-adapter/json-schema';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
@@ -401,7 +401,7 @@ describe('🔴 a filter this source will not evaluate is not applied', () => {
   });
 });
 
-describe('usesRegex', () => {
+describe('refusesFilter', () => {
   it.each([
     [{ pattern: 'a' }, true],
     [{ patternProperties: { '^a': {} } }, true],
@@ -419,7 +419,15 @@ describe('usesRegex', () => {
       false,
     ],
     [{ properties: { a: { type: 'string', maxLength: 3 } } }, false],
+    // A reference, a definition or a dynamic reference, whatever it points at: references can
+    // build a DAG whose evaluation doubles at every level.
+    [{ $ref: '#/$defs/a', $defs: { a: { const: 1 } } }, true],
+    [{ not: { $ref: '#' } }, true],
+    [{ definitions: { a: { const: 1 } } }, true],
+    [{ $dynamicRef: '#meta' }, true],
+    [{ $recursiveRef: '#' }, true],
+    [{ anyOf: [{ const: 1 }, { enum: [2, 3] }], properties: { a: { const: '$ref' } } }, false],
   ])('%o → %s', (schema, expected) => {
-    expect(usesRegex(schema)).toBe(expected);
+    expect(refusesFilter(schema)).toBe(expected);
   });
 });

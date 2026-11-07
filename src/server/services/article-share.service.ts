@@ -116,23 +116,33 @@ export async function createArticleShareLink({
 export async function getArticleShareLinks({
   articleId,
   userId,
+  isModerator,
 }: {
   articleId: number;
   userId: number;
+  isModerator?: boolean;
 }) {
-  await getOwnArticle(articleId, userId);
+  if (!isModerator) await getOwnArticle(articleId, userId);
   return getActiveAccessTokens('Article', articleId);
 }
 
-/** Any status: an author can always kill a link. */
-export async function revokeArticleShareLink({ id, userId }: { id: number; userId: number }) {
+/** Any status: an author or a moderator can always kill a link. */
+export async function revokeArticleShareLink({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
   const row = await getAccessTokenById(id);
   if (!row || row.resourceType !== 'Article') throw throwNotFoundError('Share link not found');
   const article = await dbWrite.article.findUnique({
     where: { id: row.resourceId },
     select: { userId: true },
   });
-  if (row.createdById !== userId && article?.userId !== userId)
+  if (!isModerator && row.createdById !== userId && article?.userId !== userId)
     throw throwNotFoundError('Share link not found');
   await revokeAccessToken(id);
 }

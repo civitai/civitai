@@ -153,8 +153,16 @@ import {
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
-import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  queueComFaceRecheck,
+  queueComFaceRestore,
+} from '~/server/services/model-com-face-recheck.service';
+import {
+  bustOrchestratorAirs,
+  bustOrchestratorModelCache,
+  getOrchestratorVersionAirs,
+} from '~/server/services/orchestrator/models';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
@@ -1038,7 +1046,10 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
+    if (!isModerator && trainedWordsChanged) {
+      await queueComFaceRecheck(version.modelId);
+      await queueComFaceRestore(version.modelId);
+    }
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
@@ -1294,7 +1305,10 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
+    if (!isModerator && trainedWordsChanged) {
+      await queueComFaceRecheck(version.modelId);
+      await queueComFaceRestore(version.modelId);
+    }
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     const keptGate = await writeModelVersionGateAndGoal(
@@ -3634,6 +3648,7 @@ export const mergeVersions = async ({
     where: { id: modelId },
     select: {
       userId: true,
+      type: true,
       modelVersions: {
         select: {
           id: true,
@@ -3708,6 +3723,11 @@ export const mergeVersions = async ({
   let sourceFileUrls: string[] = [];
 
   let movedPostIds: number[] = [];
+  let baseModelByVersion = new Map<number, string>();
+  let movedFiles: { id: number; modelVersionId: number }[] = [];
+  // Read before the write, while the versions still derive them: the bust after it finds the sources
+  // deleted and derives only the target's new AIR.
+  const oldAirs = await getOrchestratorVersionAirs([targetVersionId, ...sourceVersionIds]);
   await dbWrite.$transaction(
     async (tx) => {
       // 0. Lock the rows, in id order, so a run can't change status under these checks.
@@ -3727,6 +3747,7 @@ export const mergeVersions = async ({
       `;
       if (runs.length !== new Set([targetVersionId, ...sourceVersionIds]).size)
         throw throwNotFoundError('One or more versions to merge no longer exist.');
+      baseModelByVersion = new Map(runs.map((r) => [r.id, r.baseModel]));
       const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
       const lockedSource = sourceRuns.find(
         (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
@@ -3807,6 +3828,10 @@ export const mergeVersions = async ({
       }
 
       // 2. Move all files from source versions to target
+      movedFiles = await tx.modelFile.findMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        select: { id: true, modelVersionId: true },
+      });
       await tx.modelFile.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -4068,6 +4093,32 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
+  // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
+  // coverage now counts the moved files.
+  const versionAir = (id: number) => ({
+    modelId,
+    baseModel: baseModelByVersion.get(id) ?? '',
+    model: { type: model.type },
+  });
+  await Promise.all([
+    bustOrchestratorAirs(oldAirs),
+    bustVersionScannedFileAirs(targetVersionId, versionAir(targetVersionId)),
+    ...sourceVersionIds.map((id) =>
+      bustVersionScannedFileAirs(
+        id,
+        versionAir(id),
+        movedFiles.filter((f) => f.modelVersionId === id).map((f) => f.id)
+      )
+    ),
+  ]).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-merge',
+      message: `Failed to bust file AIRs for merged versions of model ${modelId}`,
+      error,
+    }).catch(() => undefined)
+  );
   scanModelAndRules(modelId);
 
   // Post-commit S3 cleanup for any stragglers the move missed.
