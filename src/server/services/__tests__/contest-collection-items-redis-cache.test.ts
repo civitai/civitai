@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
@@ -405,7 +405,7 @@ function cacheState(imageId: number) {
  */
 describe('contest collection items: every image writer busts after its write', () => {
   beforeEach(() => {
-    const set = redisMock.redis.packed.set as unknown as ReturnType<typeof vi.fn>;
+    const set = redisMock.redis.packed.set as unknown as Mock<(...args: unknown[]) => unknown>;
     const write = set.getMockImplementation()!;
     set.mockImplementation(async (...args: unknown[]) => {
       if ((args[1] as { debounce?: boolean } | null)?.debounce)
