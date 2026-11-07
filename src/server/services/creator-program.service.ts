@@ -1081,25 +1081,34 @@ const REFUNDED_WITHDRAWAL_STATUSES: CashWithdrawalStatus[] = [
 const getWithdrawalRefundExternalId = (transactionId: string) => `refund-${transactionId}`;
 
 /**
- * Whether the burn behind a withdrawal has already been refunded, from the Buzz ledger: under
- * `refund-<transactionId>` (withdrawCash's failure path, and this path now) or under the bare
- * `<transactionId>` this path used before. The burn itself has no external id, so the bare id
- * only ever names an earlier refund.
+ * Whether the burn behind a withdrawal has already been refunded: a refund this path recorded on
+ * the row (it always stores metadata.refundTransactionId, under either key it has used), or one on
+ * the Buzz ledger under `refund-<transactionId>`, which is how withdrawCash's failure path refunds.
+ * The old bare `<transactionId>` key is deliberately not looked up on the ledger: that route may
+ * also resolve the burn itself by its id, which would read every burn as refunded.
  */
-async function isWithdrawalBurnRefunded(transactionId: string) {
-  const [current, legacy] = await Promise.all([
-    getTransactionByExternalId(getWithdrawalRefundExternalId(transactionId)),
-    getTransactionByExternalId(transactionId),
-  ]);
-  return !!(current || legacy);
+async function isWithdrawalBurnRefunded(
+  transactionId: string,
+  metadata: CashWithdrawalMetadataSchema
+) {
+  if (metadata.refundTransactionId) return true;
+  return !!(await getTransactionByExternalId(getWithdrawalRefundExternalId(transactionId)));
 }
 
-/** Takes the right to refund this withdrawal; only one concurrent caller gets it. */
+// A claim older than this belongs to a caller that died mid-refund. Taking it over is safe because
+// the refund's external id is the same for every caller, and Buzz refuses a duplicate.
+const REFUND_CLAIM_TTL = '15 minutes';
+
+/** Takes the right to refund this withdrawal; only one caller at a time gets it. */
 async function claimWithdrawalRefund(withdrawalId: string) {
   const claimed = await dbWrite.$executeRaw`
     UPDATE "CashWithdrawal"
     SET metadata = metadata || jsonb_build_object('refundClaimedAt', now())
-    WHERE id = ${withdrawalId} AND (metadata->>'refundClaimedAt') IS NULL;
+    WHERE id = ${withdrawalId}
+      AND (
+        (metadata->>'refundClaimedAt') IS NULL
+        OR (metadata->>'refundClaimedAt')::timestamptz < now() - ${REFUND_CLAIM_TTL}::interval
+      );
   `;
   return claimed > 0;
 }
@@ -1134,16 +1143,12 @@ export const updateCashWithdrawal = async ({
   // event, or by withdrawCash when the send failed) still gets its status recorded, never a refund.
   if (REFUNDED_WITHDRAWAL_STATUSES.includes(status) && withdrawal.transactionId) {
     const transactionId = withdrawal.transactionId;
-    if (await isWithdrawalBurnRefunded(transactionId)) {
+    if (await isWithdrawalBurnRefunded(transactionId, metadata)) {
       // Already refunded: record the status below, refund nothing.
     } else if (!(await claimWithdrawalRefund(withdrawalId))) {
-      // Another caller holds the claim. If it never finishes, the burn stays unrefunded.
-      await logToAxiom({
-        name: 'cash-withdrawal-refund-claimed-elsewhere',
-        type: 'error',
-        withdrawalId,
-        userId,
-      }).catch(() => null);
+      // Another caller is refunding it now. Refuse rather than record a terminal status with no
+      // refund behind it: a retry either finds the refund or takes over a claim left by a crash.
+      throw new Error(`Refund for withdrawal ${withdrawalId} is already in progress; retry later`);
     } else {
       try {
         await withRetries(async () => {
@@ -1180,9 +1185,11 @@ export const updateCashWithdrawal = async ({
     }
   }
 
+  // No claw-back: the user keeps both, and this is how someone finds out.
   if (
     status === CashWithdrawalStatus.Paid &&
-    REFUNDED_WITHDRAWAL_STATUSES.includes(withdrawal.status)
+    withdrawal.transactionId &&
+    (await isWithdrawalBurnRefunded(withdrawal.transactionId, metadata).catch(() => false))
   )
     await logToAxiom({
       name: 'cash-withdrawal-paid-after-refund',
@@ -1198,6 +1205,7 @@ export const updateCashWithdrawal = async ({
     await dbWrite.$executeRaw`
       UPDATE "CashWithdrawal"
       SET status = ${status}::"CashWithdrawalStatus", note = COALESCE(${note ?? null}, note),
+        "updatedAt" = now(),
         metadata = metadata || ${JSON.stringify(metadata)}::jsonb
       WHERE id = ${withdrawalId};
     `;
