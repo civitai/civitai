@@ -17,9 +17,10 @@
  *                                  every auth error (`auth.ts`)
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
- * token is verified as every `/api/v1` route verifies it (`auth.live.ts`). Each document stream is
- * narrowed to what its token's user may read (`audience.ts`); the entity streams publish every
- * rating, tagged, to everyone.
+ * token is verified as every `/api/v1` route verifies it (`auth.live.ts`). Each document, app and
+ * app-release stream is narrowed to the apps whose rating its token's user may read
+ * (`audience.ts`), each entity still tagged with its rating; the `service` and schema streams are
+ * the same for everyone.
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';

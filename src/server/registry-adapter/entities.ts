@@ -2,6 +2,8 @@
  * Every entity the adapter serves, built from one read of the catalog. Pure: the reads are in
  * `catalog-source.ts`, so this is the whole mapping from platform rows to registry entities.
  */
+import type { Audience } from '~/server/registry-adapter/audience';
+import { audienceAdmits } from '~/server/registry-adapter/audience';
 import type { Entity } from '~/server/registry-adapter/protocol';
 import {
   HEAD_STEP,
@@ -70,6 +72,47 @@ export const appContentRating = (app: Pick<CatalogApp, 'listing' | 'block'>): st
   app.listing.contentRating ?? app.block?.contentRating ?? null;
 
 export type EntitySets = Map<string, Entity[]>;
+
+/**
+ * The entity schemas that carry an app's content, and so its rating: each of their streams is
+ * narrowed per audience ({@link readableBy}) and its cursors are bound to the audience
+ * (`cursor.ts`). The other schemas are the same for every subscription: `service` is the
+ * runtime record, which belongs to no app, and `registry:schema` holds schema documents.
+ */
+export const RATED_SCHEMAS: ReadonlySet<string> = new Set([APP_SCHEMA, APP_RELEASE_SCHEMA]);
+
+const ratingOfBody = (body: unknown): string | null => {
+  const rating = (body as { contentRating?: unknown } | null)?.contentRating;
+  return typeof rating === 'string' ? rating : null;
+};
+
+/**
+ * The entities of `schema` that `audience` may read, from one read of every entity. An app and
+ * its releases carry the rating the app entity publishes ({@link appContentRating}, the rating
+ * the document streams narrow by) and are admitted by the same predicate ({@link audienceAdmits}),
+ * so a subscription is sent an app's entities exactly when it is sent its documents. A release
+ * names its app (`app`); one whose app entity is not in the read has no rating to admit, so it
+ * is not sent. A schema outside {@link RATED_SCHEMAS} is returned whole.
+ */
+export function readableBy(sets: EntitySets, schema: string, audience: Audience): Entity[] {
+  const all = sets.get(schema) ?? [];
+  if (!RATED_SCHEMAS.has(schema)) return all;
+  // First wins, as a stream serves a duplicate URN (`cursor.ts`).
+  const ratings = new Map<string, string | null>();
+  for (const app of sets.get(APP_SCHEMA) ?? []) {
+    if (!ratings.has(app.urn)) ratings.set(app.urn, ratingOfBody(app.body));
+  }
+  const appUrnOf = (e: Entity): unknown =>
+    schema === APP_SCHEMA ? e.urn : (e.body as { app?: unknown } | null)?.app;
+  return all.filter((e) => {
+    const appUrn = appUrnOf(e);
+    return (
+      typeof appUrn === 'string' &&
+      ratings.has(appUrn) &&
+      audienceAdmits(audience, ratings.get(appUrn))
+    );
+  });
+}
 
 function entity(urn: string, schema: string, body: unknown): Entity {
   const schemas = [schema];

@@ -342,12 +342,145 @@ describe('🔴 a document stream carries an app’s documents only to a token th
       clearTimeout(rerate);
     }
   });
+});
 
-  it('the catalog entities are not narrowed: an anonymous app stream still carries the x-rated app, tagged', async () => {
+const APPS = 'urn:schema:apps.civitai.com:app@v1';
+const RELEASES = 'urn:schema:apps.civitai.com:app-release@v1';
+const SERVICES = 'urn:schema:apps.civitai.com:service@v1';
+const APP_URN = 'urn:apps.civitai.com:app/orbit-notes';
+const RELEASE_URN = 'urn:apps.civitai.com:app/orbit-notes@1.0.0';
+const deleted = (text: string) =>
+  [...text.matchAll(/^event: delete\n(?:id:.*\n)?data: (.*)$/gm)].map(
+    (m) => (JSON.parse(m[1]) as { urn: string }).urn
+  );
+
+describe('🔴 the catalog’s app and release streams carry an app only to a token that may read its rating', () => {
+  it.each([
+    [APPS, 'g', true],
+    [APPS, 'pg', true],
+    [APPS, 'pg13', true],
+    [APPS, 'r', false],
+    [APPS, 'x', false],
+    [RELEASES, 'pg', true],
+    [RELEASES, 'r', false],
+    [RELEASES, 'x', false],
+  ])('anonymous, %s, app rated %s: sent = %s', async (schema, rating, sent) => {
+    const port = await httpServer(source({ rating }).adapter);
+    const res = await get(port, q(schema));
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
+    // Not even named: the release body names its app, and the app its release.
+    expect(res.text.includes('orbit-notes')).toBe(sent);
+  });
+
+  it.each([
+    [APPS, 'r-token', 'r', true],
+    [APPS, 'r-token', 'x', false],
+    [APPS, 'x-token', 'x', true],
+    [APPS, 'x-off-token', 'r', false],
+    [RELEASES, 'r-token', 'r', true],
+    [RELEASES, 'r-token', 'x', false],
+    [RELEASES, 'x-token', 'x', true],
+  ])('%s, %s, app rated %s: sent = %s', async (schema, token, rating, sent) => {
+    const port = await httpServer(source({ rating }).adapter);
+    const res = await get(port, q(schema), bearer(token));
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(sent ? ['upsert', 'live'] : ['live']);
+    expect(res.text.includes(schema === APPS ? `"urn":"${APP_URN}"` : RELEASE_URN)).toBe(sent);
+  });
+
+  it('the R token’s app entity is still tagged with its rating', async () => {
+    const port = await httpServer(source({ rating: 'r' }).adapter);
+    const res = await get(port, q(APPS), bearer('r-token'));
+    expect(res.text).toContain('"contentRating":"r"');
+  });
+
+  it('the service stream holds no app, so it is the same for anonymous as for an X token', async () => {
     const port = await httpServer(source({ rating: 'x' }).adapter);
-    const res = await get(port, q('urn:schema:apps.civitai.com:app@v1'));
-    expect(events(res.text)).toEqual(['upsert', 'live']);
-    expect(res.text).toContain('"contentRating":"x"');
+    const anon = await get(port, q(SERVICES));
+    const x = await get(port, q(SERVICES), bearer('x-token'));
+    expect(events(anon.text)).toEqual(['upsert', 'live']);
+    expect(anon.text).toContain('urn:apps.civitai.com:runtime/iframe@1');
+    expect(events(x.text)).toEqual(events(anon.text));
+  });
+
+  it.each([
+    [APPS, APP_URN],
+    [RELEASES, RELEASE_URN],
+  ])(
+    '🔴 %s: an app re-rated from pg to r reaches the anonymous stream as a delete',
+    async (schema, urn) => {
+      const world = { rating: 'pg' };
+      const port = await httpServer(source(world).adapter);
+      // Re-rated once the stream is live, so the snapshot is pg's and the change is the poll's.
+      const res = await get(port, q(schema), {}, (t) => {
+        if (t.includes('event: live')) world.rating = 'r';
+        return t.includes('event: delete');
+      });
+      expect(events(res.text)).toEqual(['upsert', 'live', 'delete']);
+      expect(deleted(res.text)).toEqual([urn]);
+    }
+  );
+
+  it('positive control: the same re-rating removes nothing from an R token’s app stream, which is sent the new tag', async () => {
+    const world = { rating: 'pg' };
+    const port = await httpServer(source(world).adapter);
+    const res = await get(port, q(APPS), bearer('r-token'), (t) => {
+      if (t.includes('event: live')) world.rating = 'r';
+      return t.includes('"contentRating":"r"');
+    });
+    expect(events(res.text)).toEqual(['upsert', 'live', 'upsert']);
+    expect(deleted(res.text)).toEqual([]);
+  });
+
+  it.each([
+    [APPS, APP_URN],
+    [RELEASES, RELEASE_URN],
+  ])(
+    '%s: an app re-rated from r to pg reaches the anonymous stream as an upsert',
+    async (schema, urn) => {
+      const world = { rating: 'r' };
+      const port = await httpServer(source(world).adapter);
+      const res = await get(port, q(schema), {}, (t) => {
+        if (t.includes('event: live')) world.rating = 'pg';
+        return t.includes('event: upsert');
+      });
+      expect(events(res.text)).toEqual(['live', 'upsert']);
+      expect(res.text).toContain(`"urn":"${urn}"`);
+    }
+  );
+
+  it('🔴 a cursor issued to an R token, re-bound to the anonymous request, is cursor_expired and names no app', async () => {
+    const port = await httpServer(source({ rating: 'r' }).adapter);
+    const issued = await get(port, q(APPS), bearer('r-token'));
+    expect(events(issued.text)).toEqual(['upsert', 'live']);
+    const inner = liveCursor(issued.text).replace(/^b1\.[0-9a-f]{24}\./, '');
+    const rebound = bindCursor(inner, requestBinding({ schema: APPS, urns: [] }));
+    const res = await get(port, q(APPS, `&cursor=${encodeURIComponent(rebound)}`));
+    expect([res.status, JSON.parse(res.text).error]).toEqual([410, 'cursor_expired']);
+    expect(res.text).not.toContain('orbit-notes');
+  });
+
+  it('positive control: the R token resumes its own app cursor', async () => {
+    const port = await httpServer(source({ rating: 'r' }).adapter);
+    const issued = await get(port, q(APPS), bearer('r-token'));
+    const res = await get(
+      port,
+      q(APPS, `&cursor=${encodeURIComponent(liveCursor(issued.text))}`),
+      bearer('r-token')
+    );
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(['live']);
+  });
+
+  it('the same served set names a different cursor per audience', async () => {
+    // A pg app: anonymous and an X token are sent the same entities, under their own cursors.
+    const port = await httpServer(source({ rating: 'pg' }).adapter);
+    const anon = await get(port, q(APPS));
+    const x = await get(port, q(APPS), bearer('x-token'));
+    const inner = (t: string) => liveCursor(t).replace(/^b1\.[0-9a-f]{24}\./, '');
+    expect(events(anon.text)).toEqual(events(x.text));
+    expect(inner(anon.text)).not.toBe(inner(x.text));
   });
 });
 
@@ -589,6 +722,35 @@ describe('🔴 the gRPC binding enforces the same', () => {
     );
     expect(shapes(res.events)).toEqual([`upsert ${DOC}`, 'live']);
     expect(res.error).toEqual({ code: grpc.status.UNAUTHENTICATED, reason: 'invalid_token' });
+  });
+
+  it.each([
+    [APPS, null, []],
+    [APPS, 'r-token', [`upsert ${APP_URN}`]],
+    [RELEASES, null, []],
+    [RELEASES, 'r-token', [`upsert ${RELEASE_URN}`]],
+  ])('catalog %s, app rated r, token %s: sent %j', async (schema, token, sent) => {
+    const res = await viaGrpc(source({ rating: 'r' }).adapter, schema, token);
+    expect(shapes(res.events)).toEqual([...sent, 'live']);
+  });
+
+  it('🔴 catalog: an app re-rated from pg to r reaches the anonymous call as a delete', async () => {
+    const world = { rating: 'pg' };
+    const res = await viaGrpc(source(world).adapter, APPS, null, (es) => {
+      if (es.some((e) => e.type === 'live')) world.rating = 'r';
+      return es.some((e) => e.type === 'delete');
+    });
+    expect(shapes(res.events)).toEqual([`upsert ${APP_URN}`, 'live', 'delete']);
+    expect(res.events.flatMap((e) => (e.type === 'delete' ? [e.urn] : []))).toEqual([APP_URN]);
+  });
+
+  it('catalog: an app re-rated from r to pg reaches the anonymous call as an upsert', async () => {
+    const world = { rating: 'r' };
+    const res = await viaGrpc(source(world).adapter, RELEASES, null, (es) => {
+      if (es.some((e) => e.type === 'live')) world.rating = 'pg';
+      return es.some((e) => e.type === 'upsert');
+    });
+    expect(shapes(res.events)).toEqual(['live', `upsert ${RELEASE_URN}`]);
   });
 });
 

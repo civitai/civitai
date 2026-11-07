@@ -8,11 +8,22 @@
  * public catalog (unpublished, kill switch, a visibility change) has no row or timestamp left
  * to notice, but it is still in the stored set, so its absence is a delete. A cursor whose set
  * is gone answers `cursor_expired`, never a silent gap.
+ *
+ * The app and release streams ({@link RATED_SCHEMAS}) are served per AUDIENCE (`audience.ts`), as
+ * the document streams are (`doc-feed.ts`): each subscription's served set holds only the
+ * entities its token may read ({@link readableBy}), so a re-rating moves an app's entities out of
+ * (deletes) or into (upserts) that audience's stream. Such a set records the audience it was
+ * served to, so the same entities served to two audiences name two cursors, a cursor issued to
+ * one audience is `cursor_expired` for another (checked before anything in the set is used), and
+ * the states and their retention are kept per audience.
  */
+import type { Audience } from '~/server/registry-adapter/audience';
+import { contextAudience } from '~/server/registry-adapter/audience';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex } from '~/server/registry-adapter/release';
 import type { EntitySets } from '~/server/registry-adapter/entities';
+import { RATED_SCHEMAS, readableBy } from '~/server/registry-adapter/entities';
 
 export interface SnapshotStore {
   get(digest: string): Promise<string | null>;
@@ -45,19 +56,44 @@ export function retainLatest(
 export const CURSOR_FORMAT = 'c1';
 const CURSOR_RE = /^c1\.([0-9a-f]{32})$/;
 
-type ServedSet = { schema: string; entries: Array<[urn: string, rev: string]> };
+type ServedSet = {
+  schema: string;
+  /**
+   * The {@link Audience} key the set was served to, for a schema narrowed per audience
+   * ({@link RATED_SCHEMAS}); absent for one that is the same for every subscription.
+   */
+  audience?: string;
+  entries: Array<[urn: string, rev: string]>;
+};
 
-export function servedSet(schema: string, entities: readonly Entity[]): ServedSet {
+export function servedSet(
+  schema: string,
+  entities: readonly Entity[],
+  audience?: string
+): ServedSet {
   const byUrn = new Map<string, string>();
   for (const e of entities) if (!byUrn.has(e.urn)) byUrn.set(e.urn, e.rev);
   const entries = [...byUrn].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return { schema, entries };
+  return audience === undefined ? { schema, entries } : { schema, audience, entries };
 }
 
 export function cursorFor(set: ServedSet): string {
   const lines = set.entries.map(([urn, rev]) => `${urn}\t${rev}`).join('\n');
-  return `${CURSOR_FORMAT}.${sha256Hex(`${CURSOR_FORMAT}\n${set.schema}\n${lines}`).slice(0, 32)}`;
+  // An entry line starts with `urn:`, so the audience line can never be read as one. A set of
+  // no audience digests as it did before audiences.
+  const audience = set.audience === undefined ? '' : `audience ${set.audience}\n`;
+  return `${CURSOR_FORMAT}.${sha256Hex(
+    `${CURSOR_FORMAT}\n${set.schema}\n${audience}${lines}`
+  ).slice(0, 32)}`;
 }
+
+/** The stream a set's states are kept under: per audience for a narrowed schema. */
+const streamOf = (set: Pick<ServedSet, 'schema' | 'audience'>) =>
+  set.audience === undefined ? set.schema : `${set.schema}#${set.audience}`;
+
+/** The audience key a stream of `schema` is bound to, or undefined for an unnarrowed schema. */
+const boundAudience = (schema: string, audience: Audience): string | undefined =>
+  RATED_SCHEMAS.has(schema) ? audience.key : undefined;
 
 /** The changes that take a consumer from `before` to `after`, deletes first, each in URN order. */
 export function diffServed(
@@ -85,23 +121,33 @@ export type PollingAdapterOptions = {
 };
 
 export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
-  const current = async (schema: string): Promise<Entity[]> => {
+  /** What `audience` may read of `schema` now. */
+  const current = async (schema: string, audience: Audience): Promise<Entity[]> => {
+    let sets: EntitySets;
     try {
-      const sets = await opts.read();
-      return sets.get(schema) ?? [];
+      sets = await opts.read();
     } catch (err) {
       opts.onError?.(err);
       throw new ProtocolError('unavailable', 'the catalog could not be read');
     }
+    return readableBy(sets, schema, audience);
   };
 
   const save = async (set: ServedSet): Promise<string> => {
     const cursor = cursorFor(set);
-    await opts.store.put(cursor.slice(CURSOR_FORMAT.length + 1), JSON.stringify(set), set.schema);
+    await opts.store.put(
+      cursor.slice(CURSOR_FORMAT.length + 1),
+      JSON.stringify(set),
+      streamOf(set)
+    );
     return cursor;
   };
 
-  const load = async (schema: string, cursor: string): Promise<Map<string, string>> => {
+  const load = async (
+    schema: string,
+    cursor: string,
+    audience: string | undefined
+  ): Promise<Map<string, string>> => {
     const digest = CURSOR_RE.exec(cursor)?.[1];
     if (!digest) throw cursorExpired('not a cursor this source issued');
     const raw = await opts.store.get(digest);
@@ -115,7 +161,12 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
     if (set.schema !== schema || !Array.isArray(set.entries)) {
       throw cursorExpired('the cursor belongs to another schema');
     }
-    await opts.store.touch(digest, schema);
+    // Checked before anything in the set is used: a resume diffs against its entries, and its
+    // deletes would name entities this audience may not read.
+    if (set.audience !== audience) {
+      throw cursorExpired('the cursor was issued to a token that may read different ratings');
+    }
+    await opts.store.touch(digest, streamOf(set));
     return new Map(set.entries);
   };
 
@@ -124,15 +175,16 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
     schema: string,
     cursor: string,
     loaded: Map<string, string>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    audience: Audience
   ): AsyncGenerator<Change> {
     let served = loaded;
     let position = cursor;
     while (!signal.aborted) {
-      const entities = await current(schema);
+      const entities = await current(schema, audience);
       const diff = diffServed(served, entities);
       if (diff.length > 0) {
-        const set = servedSet(schema, entities);
+        const set = servedSet(schema, entities, boundAudience(schema, audience));
         const next = await save(set);
         // Until the last change of a batch, resuming means re-reading the batch from the
         // cursor it started at: repeats are harmless (latest state wins), a gap would not be.
@@ -153,13 +205,15 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
 
   return {
     namespace: opts.namespace,
-    // The served set is the whole schema's, so its cursor moves only with a change: this adapter
-    // never yields `progress`. A subscription narrowed by `urns` still gets one, from the core.
+    // The served set is the whole schema's (as the audience may read it), so its cursor moves
+    // only with a change: this adapter never yields `progress`. A subscription narrowed by `urns`
+    // still gets one, from the core.
     serves: (schema) => opts.serves.includes(schema),
 
-    async snapshot(schema) {
-      const entities = await current(schema);
-      const set = servedSet(schema, entities);
+    async snapshot(schema, ctx) {
+      const audience = contextAudience(ctx);
+      const entities = await current(schema, audience);
+      const set = servedSet(schema, entities, boundAudience(schema, audience));
       const kept = new Set(set.entries.map(([urn]) => urn));
       return {
         cursor: await save(set),
@@ -167,9 +221,10 @@ export function createPollingAdapter(opts: PollingAdapterOptions): Adapter {
       };
     },
 
-    async changes(schema, cursor, { signal }) {
-      const served = await load(schema, cursor);
-      return follow(schema, cursor, served, signal);
+    async changes(schema, cursor, ctx) {
+      const audience = contextAudience(ctx);
+      const served = await load(schema, cursor, boundAudience(schema, audience));
+      return follow(schema, cursor, served, ctx.signal, audience);
     },
   };
 }

@@ -73,9 +73,9 @@ export function resolveFromCatalog(
 }
 
 /**
- * One source: the entity streams, which publish every rating tagged and are the same for every
- * subscription, and a document stream for every collection-schema URN of this
- * namespace, routed by its shape alone (no entity schema has one, `urn.ts`). Every such URN is
+ * One source: the entity streams (the app and release streams narrowed per audience, as the
+ * document streams are, `cursor.ts`), and a document stream for every collection-schema URN of
+ * this namespace, routed by its shape alone (no entity schema has one, `urn.ts`). Every such URN is
  * served, since its major may be published later; one not published now streams empty. `end` is
  * only for a schema this source can never serve.
  */
