@@ -32,7 +32,9 @@ vi.mock('../db', () => ({
   },
 }));
 
-const { ACTION_CLAIM_MS, applyMajorityBlocks, castVote } = await import('../scan-label.service');
+const { ACTION_CLAIM_MS, applyCsamHolds, applyMajorityBlocks, castVote } = await import(
+  '../scan-label.service'
+);
 const { isModerationBlocked } = await import('../image-moderation.service');
 
 const noop = () => vi.fn(async (_args: BlockImageArgs) => undefined);
@@ -43,6 +45,8 @@ const { getQuotaReport, removeFromRoster, setQuota, SCAN_LABEL_ROLE } = await im
 const busted = () => ({ invalidateSession: vi.fn(async (_userId: number) => undefined) });
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
+const MINOR_SEXUAL = { block: true, reason: 'minor-sexual', reasonComment: null } as const;
+const CSAM = { block: true, reason: 'csam-realistic', reasonComment: null } as const;
 const KEEP = { block: false } as const;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +77,7 @@ beforeEach(async () => {
   await pg.exec(migration('20261022140000_scan_label_outcomes'));
   await pg.exec(migration('20261023130000_scan_label_reasons_copy'));
   await pg.exec(migration('20261128120000_scan_label_claim_token'));
+  await pg.exec(migration('20261229120000_scan_label_csam_hold'));
   await pg.exec(migration('20260626120000_add_user_roles_and_oauth_access'));
   await pg.exec(migration('20260630140000_add_role_table'));
   await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
@@ -287,6 +292,113 @@ describe('applyMajorityBlocks', () => {
       userId: 12,
       violationDetails: 'Scan label majority',
     });
+  });
+});
+
+describe('csam-realistic votes', () => {
+  const holdDeps = () => {
+    const hold = vi.fn(async (_imageId: number) => undefined);
+    return { hold, deps: { hold } };
+  };
+  const castAs = (itemId: number, userId: number, choice: typeof CSAM | typeof MINOR_SEXUAL) =>
+    castVote({ itemId, userId, choice, msOnItem: 1 }, at('2026-10-13T10:00:00Z'));
+
+  it('holds the image on one vote, and the block sweep never touches it', async () => {
+    const it1 = await seedItem(1);
+    expect(await castAs(it1, 11, CSAM)).toMatchObject({ ok: true, decided: false });
+    expect(await item(it1)).toMatchObject({
+      status: 'void',
+      voidReason: 'csam-hold',
+      outcome: null,
+    });
+
+    const block = noop();
+    const { hold, deps: holding } = holdDeps();
+    expect(await applyCsamHolds({}, holding)).toEqual({ held: [it1], skipped: [], failed: [] });
+    expect(hold).toHaveBeenCalledExactlyOnceWith(1);
+    await applyMajorityBlocks({}, deps(block));
+    expect(block).not.toHaveBeenCalled();
+    expect(await item(it1)).toMatchObject({ actionResult: 'csam-held', actionError: null });
+    expect((await item(it1)).actionedAt).not.toBeNull();
+
+    // Held once: the next sweep finds nothing.
+    expect((await applyCsamHolds({}, holding)).held).toEqual([]);
+    expect(hold).toHaveBeenCalledOnce();
+  });
+
+  it('a minor-sexual majority still blocks as before, with no hold', async () => {
+    const it1 = await seedItem(1);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    const { hold, deps: holding } = holdDeps();
+    expect((await applyCsamHolds({}, holding)).held).toEqual([]);
+    const block = noop();
+    expect((await applyMajorityBlocks({}, deps(block))).blocked).toEqual([it1]);
+    expect(hold).not.toHaveBeenCalled();
+    expect(await item(it1)).toMatchObject({ status: 'open', actionResult: 'blocked' });
+  });
+
+  it('one csam-realistic vote among block votes holds instead of blocking', async () => {
+    const it1 = await seedItem(1);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, CSAM);
+    expect((await item(it1)).blockVotes).toBe(2);
+    const block = noop();
+    await applyMajorityBlocks({}, deps(block));
+    expect(block).not.toHaveBeenCalled();
+    const { hold, deps: holding } = holdDeps();
+    expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it('still holds an item a block majority already acted on', async () => {
+    const it1 = await seedItem(1);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    await applyMajorityBlocks({}, deps(noop()));
+    expect(await item(it1)).toMatchObject({ actionResult: 'blocked' });
+
+    await castAs(it1, 13, CSAM);
+    const { hold, deps: holding } = holdDeps();
+    expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(1);
+    expect(await item(it1)).toMatchObject({ status: 'void', actionResult: 'csam-held' });
+  });
+
+  it('takes the item from every other moderator holding it', async () => {
+    const it1 = await seedItem(1);
+    await pg.query(
+      `INSERT INTO "ScanLabelClaim" ("itemId", "userId", "expiresAt") VALUES ($1, 11, $2), ($1, 12, $2)`,
+      [it1, at('2026-10-13T11:00:00Z')]
+    );
+    await castAs(it1, 11, CSAM);
+    expect((await pg.query(`SELECT 1 FROM "ScanLabelClaim"`)).rows).toEqual([]);
+    expect(await castAs(it1, 12, MINOR_SEXUAL)).toEqual({ ok: false, reason: 'not-open' });
+  });
+
+  it('records a failed hold and retries it on the next sweep', async () => {
+    const it1 = await seedItem(1);
+    await castAs(it1, 11, CSAM);
+    const failing = vi.fn(async () => {
+      throw new Error('main app down');
+    });
+    expect(await applyCsamHolds({}, { hold: failing })).toEqual({
+      held: [],
+      skipped: [],
+      failed: [{ itemId: it1, error: 'main app down' }],
+    });
+    expect(await item(it1)).toMatchObject({ actionedAt: null, actionError: 'main app down' });
+    const { hold, deps: holding } = holdDeps();
+    expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
+    expect(hold).toHaveBeenCalledOnce();
+  });
+
+  it('is left out of the decided-item export', async () => {
+    const it1 = await seedItem(1);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    await castAs(it1, 13, CSAM);
+    expect((await pg.query(`SELECT 1 FROM "ScanLabelExport"`)).rows).toEqual([]);
   });
 });
 

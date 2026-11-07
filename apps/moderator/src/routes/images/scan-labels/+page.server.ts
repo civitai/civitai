@@ -4,7 +4,9 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { blockImage, isModerationBlocked } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
+import { callModEndpoint } from '$lib/server/user-actions.service';
 import {
+  applyCsamHolds,
   applyMajorityBlocks,
   castVote,
   claimNext,
@@ -100,6 +102,20 @@ export const actions: Actions = {
       claimToken: input.token,
     });
     if (!result.ok) return fail(409, { error: REFUSAL[result.reason] });
+    // Holds first, and retried here like the blocks below. Must not fail the vote, which has landed.
+    await applyCsamHolds(
+      {},
+      {
+        hold: async (imageId) => {
+          const held = await callModEndpoint(
+            'image/report-csam',
+            { imageIds: [imageId] },
+            'Hold for CSAM review'
+          );
+          if (!held.ok) throw new Error(held.error);
+        },
+      }
+    ).catch((e) => console.error('scan label csam hold sweep failed', e));
     // Retry pending majority blocks so a failed one is not stranded. Must not fail the vote, which
     // has already landed.
     await applyMajorityBlocks(

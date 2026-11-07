@@ -3,6 +3,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import {
   BLOCK_MAJORITY,
+  CSAM_HOLD_REASON,
   dayBounds,
   effectiveQuota,
   LEASE_MS,
@@ -388,12 +389,22 @@ export async function castVote(
 
     const votes = item.votes + 1;
     const blockVotes = item.blockVotes + (block ? 1 : 0);
-    const decided = votes === VOTES_PER_ITEM;
+    const csamHold = choice.block && choice.reason === CSAM_HOLD_REASON;
+    const decided = !csamHold && votes === VOTES_PER_ITEM;
     const updated = await trx
       .updateTable('ScanLabelItem')
       .set({
         votes,
         blockVotes,
+        // Void, never decided: it leaves the queue, the block sweep and the decided-item export at once.
+        // The action fields are cleared so the hold sweep can claim an item a block already acted on.
+        ...(csamHold && {
+          status: 'void',
+          voidReason: CSAM_HOLD_VOID_REASON,
+          actionStartedAt: null,
+          actionedAt: null,
+          actionError: null,
+        }),
         ...(decided && {
           status: 'decided',
           outcome: blockVotes >= BLOCK_MAJORITY ? 'block' : 'clear',
@@ -405,17 +416,16 @@ export async function castVote(
       .executeTakeFirst();
     if (!updated.numUpdatedRows) throw new Error(`scan label item ${itemId} vanished mid-vote`);
 
-    await trx
-      .deleteFrom('ScanLabelClaim')
-      .where('itemId', '=', itemId)
-      .where('userId', '=', userId)
-      .execute();
+    // A held item is shown to nobody else: every lease on it goes, not only the voter's.
+    let releaseClaims = trx.deleteFrom('ScanLabelClaim').where('itemId', '=', itemId);
+    if (!csamHold) releaseClaims = releaseClaims.where('userId', '=', userId);
+    await releaseClaims.execute();
 
     return {
       ok: true,
       votes,
       blockVotes,
-      reachedBlockMajority: block && blockVotes === BLOCK_MAJORITY,
+      reachedBlockMajority: !csamHold && block && blockVotes === BLOCK_MAJORITY,
       decided,
     };
   });
@@ -627,6 +637,88 @@ export async function applyMajorityBlocks(
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error('scan label block failed', { itemId: item.id, error: message });
+      result.failed.push({ itemId: item.id, error: message });
+      await dbWrite
+        .updateTable('ScanLabelItem')
+        .set({ actionStartedAt: null, actionError: message.slice(0, 500) })
+        .where('id', '=', item.id)
+        .execute()
+        .catch(() => undefined);
+    }
+  }
+  return result;
+}
+
+/** `voidReason` of an item a `CSAM_HOLD_REASON` vote took out of labelling. */
+export const CSAM_HOLD_VOID_REASON = 'csam-hold';
+
+export type HoldSweepResult = {
+  held: number[];
+  skipped: { itemId: number; result: 'image-missing' }[];
+  failed: { itemId: number; error: string }[];
+};
+
+/**
+ * Puts each image a `CSAM_HOLD_REASON` vote voided in the CSAM review queue. `hold` is the main app's
+ * report-CSAM action, which flags the image and files nothing; it is safe to repeat, so an item whose
+ * outcome a racing block sweep overwrote is simply held again.
+ */
+export async function applyCsamHolds(
+  { limit = 10 }: { limit?: number },
+  { hold }: { hold: (imageId: number) => Promise<void> },
+  clock: () => Date = () => new Date()
+): Promise<HoldSweepResult> {
+  const pending = await dbWrite
+    .selectFrom('ScanLabelItem')
+    .select(['id', 'imageId'])
+    .where('status', '=', 'void')
+    .where('voidReason', '=', CSAM_HOLD_VOID_REASON)
+    .where((eb) =>
+      eb.or([
+        eb('actionResult', 'is', null),
+        eb('actionResult', 'not in', ['csam-held', 'image-missing']),
+      ])
+    )
+    .where(claimableAt(clock()))
+    .orderBy(sql`"actionError" IS NOT NULL`)
+    .orderBy('id')
+    .limit(limit)
+    .execute();
+
+  const result: HoldSweepResult = { held: [], skipped: [], failed: [] };
+  for (const item of pending) {
+    const claimedAt = clock();
+    const claimed = await dbWrite
+      .updateTable('ScanLabelItem')
+      .set({ actionStartedAt: claimedAt })
+      .where('id', '=', item.id)
+      .where(claimableAt(claimedAt))
+      .executeTakeFirst();
+    if (!claimed.numUpdatedRows) continue;
+
+    try {
+      const exists = await dbWrite
+        .selectFrom('Image')
+        .select('id')
+        .where('id', '=', item.imageId)
+        .executeTakeFirst();
+      const outcome = exists ? 'csam-held' : 'image-missing';
+      if (exists) await hold(item.imageId);
+      await dbWrite
+        .updateTable('ScanLabelItem')
+        .set({
+          actionedAt: clock(),
+          actionStartedAt: null,
+          actionResult: outcome,
+          actionError: null,
+        })
+        .where('id', '=', item.id)
+        .execute();
+      if (exists) result.held.push(item.id);
+      else result.skipped.push({ itemId: item.id, result: 'image-missing' });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error('scan label csam hold failed', { itemId: item.id, error: message });
       result.failed.push({ itemId: item.id, error: message });
       await dbWrite
         .updateTable('ScanLabelItem')
