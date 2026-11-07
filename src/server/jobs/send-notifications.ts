@@ -51,7 +51,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
           // A processor whose selection reads the primary keeps its query out of the browser bundle.
           const prepareQuery: NotificationProcessor['prepareQuery'] =
             primaryPrepareQueries[key] ?? processorQuery;
-          let query = prepareQuery?.({
+          let query: Promise<string | undefined> | string | undefined = prepareQuery?.({
             lastSent: lastSent.toISOString(),
             lastSentDate: lastSent,
             clickhouse,
