@@ -15,7 +15,6 @@ vi.mock('../../db/db', () => ({ db: {} }));
 vi.mock('../../redis', () => ({ getRedis: () => null, getSysRedis: () => null }));
 
 const { mintUserSession, reissueSession } = await import('../session');
-const { IMPERSONATION_MAX_AGE_MS } = await import('@civitai/auth');
 
 const NOW = 1_800_000_000_000;
 const HOUR = 60 * 60 * 1000;
@@ -38,10 +37,6 @@ beforeEach(() => {
 });
 
 describe('impersonation session lifetime', () => {
-  it('is one hour, in one named constant', () => {
-    expect(IMPERSONATION_MAX_AGE_MS).toBe(HOUR);
-  });
-
   it('ends an hour after it starts', async () => {
     await mintUserSession(target, { parent: modSession, impersonatedBy: 100 });
     const { claims, expiresIn } = minted();

@@ -304,10 +304,30 @@ describe('authorize — family', () => {
     expect(res).toEqual({ status: 503 });
   });
 
-  it('sends no code back to any first-party hand-off whose context cannot be stored', async () => {
+  it('still signs in an ordinary hub session whose context could not be stored', async () => {
     vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
     const session = { sub: '7', jti: 'j', sid: 'family-a', iat0: 5 };
-    expect(await start({}, { user: { id: 7 }, session })).toEqual({ status: 503 });
+    const res = await start({}, { user: { id: 7 }, session });
+    expect(res.location).toContain('code=the-code');
+  });
+
+  it("marks the code of an impersonation hub session's own user, and no other", async () => {
+    const imp = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    const authenticated = async (locals: Record<string, unknown>) => {
+      h.authorize.mockClear();
+      await start({}, locals);
+      const opts = h.authorize.mock.calls[0][2] as {
+        authenticateHandler: { handle: () => unknown };
+      };
+      return opts.authenticateHandler.handle();
+    };
+    expect(await authenticated({ user: { id: 7 }, session: imp, impersonatedBy: 100 })).toEqual({
+      id: 7,
+      impersonation: true,
+    });
+    expect(await authenticated({ user: { id: 7 }, session: { sub: '7', jti: 'j' } })).toEqual({
+      id: 7,
+    });
   });
 });
 

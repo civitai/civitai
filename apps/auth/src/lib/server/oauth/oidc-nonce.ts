@@ -56,10 +56,30 @@ export async function storeOidcContext(code: string, ctx: OidcCodeContext): Prom
     );
     return true;
   } catch {
-    // Best-effort: a miss means the id_token omits nonce, or for an openid-only request isn't issued —
-    // acceptable degradation over failing the whole token exchange. The caller decides for impersonation.
+    // Best-effort: a miss means the id_token omits nonce, or for an openid-only request isn't issued.
+    // The caller refuses an impersonation hand-off whose context was not stored.
     return false;
   }
+}
+
+/** The context for a code, left in place. `null` when it is missing or could not be read. */
+export async function readOidcContext(code: string): Promise<OidcCodeContext | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  try {
+    return (
+      (await redis.packed.hGet<OidcCodeContext>(REDIS_KEYS.OAUTH.OIDC_CONTEXT, field(code))) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort removal of a code's context once the code itself is consumed. */
+export async function deleteOidcContext(code: string): Promise<void> {
+  await getRedis()
+    ?.hDel(REDIS_KEYS.OAUTH.OIDC_CONTEXT, field(code))
+    .catch(() => undefined);
 }
 
 /** Single-use: reads and deletes the context for a code. `null` when it is missing or could not be read. */
