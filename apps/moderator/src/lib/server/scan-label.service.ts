@@ -674,7 +674,7 @@ export type HoldSweepResult = { held: number[]; failed: { itemId: number; error:
  */
 export async function applyCsamHolds(
   { limit = 10 }: { limit?: number },
-  { hold }: { hold: (imageId: number, voterId: number) => Promise<void> },
+  { hold }: { hold: (imageId: number, voterId: number | undefined) => Promise<void> },
   clock: () => Date = () => new Date()
 ): Promise<HoldSweepResult> {
   const pending = await dbWrite
@@ -712,8 +712,8 @@ export async function applyCsamHolds(
 
     // No missing-image case: the item is deleted with its image (FK cascade).
     try {
-      if (item.voterId == null) throw new Error('held item has no hold vote');
-      await hold(item.imageId, item.voterId);
+      // The voter is audit detail only: a hold never waits on it.
+      await hold(item.imageId, item.voterId ?? undefined);
       await dbWrite
         .updateTable('ScanLabelItem')
         .set({

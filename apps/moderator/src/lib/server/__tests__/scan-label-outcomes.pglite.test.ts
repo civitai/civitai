@@ -298,7 +298,7 @@ describe('csam-realistic votes', () => {
   // Not the item's id (1): a hold sent the item id instead would hold some other image.
   const IMAGE = 900;
   const holdDeps = () => {
-    const hold = vi.fn(async (_imageId: number, _voterId: number) => undefined);
+    const hold = vi.fn(async (_imageId: number, _voterId: number | undefined) => undefined);
     return { hold, deps: { hold } };
   };
   const castAs = (itemId: number, userId: number, choice: typeof CSAM | typeof MINOR_SEXUAL) =>
@@ -463,6 +463,17 @@ describe('csam-realistic votes', () => {
     });
     await applyMajorityBlocks({}, deps(voidingFailure));
     expect(await item(it1)).toMatchObject({ actionStartedAt: heldAt, actionError: null });
+  });
+
+  it('still holds an item whose hold vote cannot be found, with no voter', async () => {
+    const it1 = await seedItem(IMAGE);
+    await pg.query(
+      `UPDATE "ScanLabelItem" SET status = 'void', "voidReason" = 'csam-hold' WHERE id = $1`,
+      [it1]
+    );
+    const { hold, deps: holding } = holdDeps();
+    expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, undefined);
   });
 
   it('counts a hold not yet applied on the metrics page until it lands', async () => {
