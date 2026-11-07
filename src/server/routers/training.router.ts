@@ -187,6 +187,7 @@ export const trainingRouter = router({
    * the public status page (status-next.civitai.com).
    */
   getPublicStatus: publicProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(async () => {
       const { available } = await getTrainingServiceStatus();
