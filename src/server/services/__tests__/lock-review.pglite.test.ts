@@ -354,11 +354,11 @@ describe('approving a lock review', () => {
     const SEED_MODEL = 90;
     const SEED_OWNER = 99;
 
-    /** Another uploader's moderator-flagged minor model shares a weights file with the model. */
-    async function matchFile() {
+    /** A moderator-flagged minor model, by default another uploader's, shares a weights file with the model. */
+    async function matchFile(seedOwner = SEED_OWNER) {
       await db.query(
         `INSERT INTO "Model" (id, "userId", "lockedProperties", minor) VALUES ($1, $2, '{minor}', true)`,
-        [SEED_MODEL, SEED_OWNER]
+        [SEED_MODEL, seedOwner]
       );
       await db.exec(`
         INSERT INTO "ModelVersion" VALUES (1, ${MODEL}), (2, ${SEED_MODEL});
@@ -382,6 +382,15 @@ describe('approving a lock review', () => {
         meta: { minorHashDismissed: { at: 'then', by: 1 } },
       });
       await matchFile();
+
+      await approve();
+
+      expect((await modelRow()).lockedProperties).toEqual(['minor']);
+    });
+
+    it('approves when the match is to the same uploader, which the sweep flags rather than queues', async () => {
+      await seed({ locked: ['minor', 'nsfw'] });
+      await matchFile(OWNER);
 
       await approve();
 
