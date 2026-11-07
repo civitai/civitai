@@ -80,7 +80,9 @@ export const getServerAuthSession = async ({
   if (!req.context) req.context = {};
   if (token) {
     if (!req.context?.session) {
-      const result = await getSessionFromBearerToken(token);
+      const result = await getSessionFromBearerToken(token, {
+        request: { method: req.method, path: req.url },
+      });
       req.context.session = result;
       if (result && 'tokenScope' in result) {
         req.context.tokenScope = result.tokenScope;

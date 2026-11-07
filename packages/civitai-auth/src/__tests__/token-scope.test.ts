@@ -55,7 +55,8 @@ describe('AppBlocksDevTunnel (opt-in scope — NOT part of Full)', () => {
         TokenScope.AppBlocksDevTunnel |
         TokenScope.LinkConnect |
         TokenScope.AppStoreCatalogWrite |
-        TokenScope.WorkerRegister
+        TokenScope.WorkerRegister |
+        TokenScope.DownloadLink
     );
   });
 
@@ -123,9 +124,9 @@ describe('AppStoreCatalogWrite (opt-in, client_credentials-only — NOT part of 
     expect(ALL_SCOPES & TokenScope.AppStoreCatalogWrite).toBe(TokenScope.AppStoreCatalogWrite);
   });
 
-  it('is the only client_credentials-only bit, and the client_credentials cap adds only UserRead', () => {
-    expect(CLIENT_CREDENTIALS_ONLY_SCOPES).toBe(268435456);
-    expect(CLIENT_CREDENTIALS_MAX_SCOPE).toBe(268435457);
+  it('is client_credentials-only, and the client_credentials cap adds only UserRead', () => {
+    expect(CLIENT_CREDENTIALS_ONLY_SCOPES & TokenScope.AppStoreCatalogWrite).toBe(268435456);
+    expect(CLIENT_CREDENTIALS_MAX_SCOPE).toBe(CLIENT_CREDENTIALS_ONLY_SCOPES | TokenScope.UserRead);
   });
 
   it('is stripped from the consentable part of a client ceiling, and nothing else is', () => {
@@ -154,10 +155,8 @@ describe('WorkerRegister (opt-in, worker token-exchange only — NOT part of Ful
     expect(TokenScope.Full & TokenScope.WorkerRegister).toBe(0);
   });
 
-  it('IS included in ALL_SCOPES, raising it to (1 << 30) - 1, still inside a signed int4', () => {
-    expect(ALL_SCOPES).toBe((1 << 30) - 1);
-    expect(ALL_SCOPES).toBe(1073741823);
-    expect(ALL_SCOPES).toBeLessThan(2 ** 31);
+  it('IS included in ALL_SCOPES', () => {
+    expect(ALL_SCOPES & TokenScope.WorkerRegister).toBe(TokenScope.WorkerRegister);
   });
 
   it('is never consentable, and leaves the client_credentials cap alone', () => {
@@ -171,6 +170,29 @@ describe('WorkerRegister (opt-in, worker token-exchange only — NOT part of Ful
   it('has a label', () => {
     expect(tokenScopeLabels[TokenScope.WorkerRegister]).toBe(
       'Register a worker machine with the orchestrator'
+    );
+  });
+});
+
+describe('DownloadLink (opt-in, client_credentials-only — NOT part of Full)', () => {
+  // Bit 30 is the last one a signed int4 column (ApiKey.tokenScope, OauthClient.allowedScopes) holds.
+  it('raises ALL_SCOPES to (1 << 31) - 1, the int4 maximum', () => {
+    expect(ALL_SCOPES).toBe(2 ** 31 - 1);
+    expect(ALL_SCOPES).toBe(2147483647);
+  });
+
+  it('is excluded from Full and from every preset', () => {
+    expect(TokenScope.Full & TokenScope.DownloadLink).toBe(0);
+    for (const [name, preset] of Object.entries(TokenScopePresets)) {
+      expect((preset & TokenScope.DownloadLink) === 0, `preset ${name}`).toBe(true);
+    }
+  });
+
+  it('is minted only through client_credentials, and never consented to', () => {
+    expect(CLIENT_CREDENTIALS_ONLY_SCOPES & TokenScope.DownloadLink).toBe(TokenScope.DownloadLink);
+    expect(CLIENT_CREDENTIALS_MAX_SCOPE & TokenScope.DownloadLink).toBe(TokenScope.DownloadLink);
+    expect(consentableScopes(TokenScope.UserRead | TokenScope.DownloadLink)).toBe(
+      TokenScope.UserRead
     );
   });
 });

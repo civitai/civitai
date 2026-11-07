@@ -435,6 +435,29 @@ export const serverSchema = z
       .optional(),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
+    // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
+    // mint: OauthClient ids (client_credentials tokens carrying DownloadLink) and ApiKey ids. The
+    // PUBLIC lists name the subset that may also mint links with no named user.
+    DOWNLOAD_LINK_CLIENT_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset: every
+    // mint is a new link.
+    DOWNLOAD_LINK_SECRET: z.string().optional(),
+    DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
+    DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
+    DOWNLOAD_LINK_FILE_URL_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(6 * 60 * 60),
+    // Mints (reused ones included) per minute.
+    DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
+    DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
+    // ApiKey ids whose every authenticated request is logged by id (never the key), to find what
+    // still uses them.
+    AUTH_METER_API_KEY_IDS: commaDelimitedStringArray().default([]),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),

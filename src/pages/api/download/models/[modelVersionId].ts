@@ -25,6 +25,7 @@ import {
 import { getLoginLink } from '~/utils/login-helpers';
 import { countsAsPublicDownload, resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
+import { logUrlExpiry } from '~/server/utils/url-expiry-log';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -57,37 +58,6 @@ function logSplitQueryRepair(req: NextApiRequest) {
     type: 'info',
     message: 'split-query-repaired',
     keys: Object.keys(req.query),
-  }).catch(() => {
-    // swallow logging failure
-  });
-}
-
-/** A file this large can still be downloading when a short-lived link expires. */
-const LARGE_FILE_KB = 1024 * 1024;
-const SMALL_FILE_EXPIRY_SAMPLE_RATE = 0.01;
-
-/** How long the link a download was sent to has left. Never the link itself: it carries a signature. */
-function logUrlExpiry({
-  fileId,
-  sizeKB,
-  urlExpiresAt,
-}: {
-  fileId: number;
-  sizeKB: number;
-  urlExpiresAt: Date;
-}) {
-  const large = sizeKB >= LARGE_FILE_KB;
-  if (!large && Math.random() >= SMALL_FILE_EXPIRY_SAMPLE_RATE) return;
-  const expiresAt = Number.isNaN(urlExpiresAt.getTime()) ? null : urlExpiresAt;
-  logToAxiom({
-    name: 'download-model-endpoint',
-    type: 'info',
-    message: 'url-expiry',
-    fileId,
-    sizeKB,
-    expiresAt: expiresAt?.toISOString() ?? null,
-    remainingSeconds: expiresAt ? Math.round((expiresAt.getTime() - Date.now()) / 1000) : null,
-    sampleRate: large ? 1 : SMALL_FILE_EXPIRY_SAMPLE_RATE,
   }).catch(() => {
     // swallow logging failure
   });

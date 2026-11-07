@@ -25,6 +25,7 @@ import {
   isAppBlockOauthClientId,
 } from '~/shared/constants/block-scope.constants';
 import type { Prisma } from '@prisma/client';
+import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
 
 /**
  * SECURITY (audit A1/A2): App-Blocks-provisioned OauthClients (`appblk-<slug>`)
@@ -289,6 +290,7 @@ export const oauthClientRouter = router({
       });
 
       logOAuthEvent({ type: 'client.secret_rotated', userId: ctx.user.id, clientId: input.id });
+      await revokeLinksOfRevokedCredentials([{ kind: 'client', id: input.id }]);
 
       return { clientSecret: newSecret };
     }),
@@ -320,6 +322,7 @@ export const oauthClientRouter = router({
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
       logOAuthEvent({ type: 'client.deleted', userId: ctx.user.id, clientId: input.id });
+      await revokeLinksOfRevokedCredentials([{ kind: 'client', id: input.id }]);
 
       // The DB cascade revokes the tokens, but the orchestrator caches them for auth.
       // Best-effort: revokeCivitaiUserTokens swallows its own errors.

@@ -18,6 +18,7 @@ import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrato
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
+import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
@@ -203,6 +204,10 @@ export async function getTemporaryUserApiKey(args: MintApiKeyArgs) {
   return key;
 }
 
+/** Download links minted by a revoked key stop working with it. */
+const revokeLinksOfRevokedApiKeys = (ids: number[]) =>
+  revokeLinksOfRevokedCredentials(ids.map((id) => ({ kind: 'apikey' as const, id: String(id) })));
+
 /**
  * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
  * the stored hash — so the hashes are read first. Use this, not `apiKey.deleteMany`, for any delete
@@ -219,6 +224,7 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
     where: { AND: [where, { id: { in: rows.map((row) => row.id) } }] },
   });
   await evictCachedApiKeys(rows.map((row) => row.key));
+  await revokeLinksOfRevokedApiKeys(rows.map((row) => row.id));
   // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
   const userIds = [...new Set(rows.map((row) => row.userId))];
   await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
@@ -245,6 +251,7 @@ export async function expireUserApiKeys(userId: number) {
     });
   }
   await evictCachedApiKeys(rows.map((row) => row.key));
+  await revokeLinksOfRevokedApiKeys(live.map((row) => row.id));
   await forgetGenerationToken(userId);
   // Even with no live rows: an earlier attempt may have expired them and then failed this call.
   const orchestratorConfirmed = await revokeCivitaiUserTokens({ userId });
@@ -304,6 +311,7 @@ export async function expireGenerationCredentials(userId: number) {
   }
   // Every matched key, not only the live ones: a repeat call retries an eviction an earlier one missed.
   if (matched.length) await evictCachedApiKeys(matched.map((row) => row.key));
+  await revokeLinksOfRevokedApiKeys(live.map((row) => row.id));
   await forgetGenerationToken(userId);
   return { expired: live.length };
 }
