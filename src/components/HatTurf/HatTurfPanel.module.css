@@ -24,6 +24,17 @@
   padding: 12px 14px;
 }
 
+.showHats {
+  align-items: center;
+}
+
+@media (max-width: $mantine-breakpoint-sm) {
+  /* A thumb-sized tap row: the label's own box reaches 44px, and the switch sits centred in it. */
+  .showHats {
+    min-height: 44px;
+  }
+}
+
 .divider {
   margin: 0;
   border: 0;
