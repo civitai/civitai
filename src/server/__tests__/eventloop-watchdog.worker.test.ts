@@ -183,8 +183,12 @@ describe('event-loop watchdog worker', () => {
     const h = await startWorker({ previousToken: 'test-watchdog-previous' });
 
     expect((await h.scrape('test-watchdog-previous')).status).toBe(200);
-    expect((await h.scrape(TOKEN)).status).toBe(200);
     expect((await h.scrape('nope')).status).toBe(401);
+    const { status, body } = await h.scrape(TOKEN);
+    expect(status).toBe(200);
+    // Counted by slot, so the previous value's last user on this port is visible.
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="current"} 1');
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="previous"} 1');
   });
 
   it('a blank previous token never lets an empty token through', async () => {

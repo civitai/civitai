@@ -643,6 +643,10 @@ function render() {
     out.push('# TYPE ' + name + ' gauge');
     out.push(name + ' ' + value);
   }
+  out.push('# HELP civitai_app_watchdog_token_match_total Scrapes of this port authenticated by the webhook token, by which configured value matched. Counts the scrape being served.');
+  out.push('# TYPE civitai_app_watchdog_token_match_total counter');
+  out.push('civitai_app_watchdog_token_match_total{slot="current"} ' + tokenMatches.current);
+  out.push('civitai_app_watchdog_token_match_total{slot="previous"} ' + tokenMatches.previous);
   gauge('civitai_app_watchdog_up', 'Event-loop watchdog worker is running and serving. Absence of this series is the signal that the watchdog is not running.', 1);
   gauge('civitai_app_watchdog_heartbeat_age_ms', 'Milliseconds since the main thread last wrote the shared-memory heartbeat. Grows without bound while the loop is wedged.', age);
   gauge('civitai_app_watchdog_wedged', 'Whether the main-thread event loop is currently considered wedged (1) or not (0).', wedged);
@@ -718,16 +722,21 @@ function sameToken(given, expected) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// WEBHOOK_TOKEN_PREVIOUS is accepted too, as the main app's WebhookEndpoint does.
-function tokenAccepted(url) {
+// WEBHOOK_TOKEN_PREVIOUS is accepted too, as the main app's WebhookEndpoint does. Matches are
+// counted by slot here because this port is outside the registry that counts the app's matches.
+const tokenMatches = { current: 0, previous: 0 };
+
+function tokenSlot(url) {
   let given = '';
   try {
     given = new URL(url, 'http://localhost').searchParams.get('token') || '';
   } catch (err) {
-    return false;
+    return undefined;
   }
+  if (sameToken(given, token)) return 'current';
   const previous = typeof previousToken === 'string' ? previousToken : '';
-  return sameToken(given, token) || (previous.trim() !== '' && sameToken(given, previous));
+  if (previous.trim() !== '' && sameToken(given, previous)) return 'previous';
+  return undefined;
 }
 
 const server = http.createServer(function (req, res) {
@@ -738,11 +747,13 @@ const server = http.createServer(function (req, res) {
     res.end();
     return;
   }
-  if (!tokenAccepted(url)) {
+  const slot = tokenSlot(url);
+  if (!slot) {
     res.writeHead(401);
     res.end();
     return;
   }
+  tokenMatches[slot] += 1;
   res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
   res.end(render());
 });
