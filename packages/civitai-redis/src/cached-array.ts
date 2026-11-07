@@ -468,7 +468,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         const cached = cache[id];
         if (cached) {
           if (cached.notFound) {
-            // Counted as cacheNotFound: false counts it: a miss only if the lookup then finds a row, never a notFound hit.
+            // Marker ignored while the switch is off: the id is looked up again and counted like
+            // cacheNotFound: false (a miss only if the lookup finds a row), never as a notFound hit.
             if (!markersLive) cacheMisses.add(id);
             else notFoundHits++;
             continue;
