@@ -293,3 +293,47 @@ describe('getNavBanners', () => {
     });
   });
 });
+
+// The strip used to tell every player to 'Join a team', members included.
+describe('the cta for a viewer already on a team', () => {
+  const copy = { banner: { cta: 'Join a team', joinedCta: 'See the standings' } };
+  const def = {
+    name: 'e1',
+    title: 'e1 title',
+    startDate: new Date(0),
+    endDate: new Date(8.64e15),
+    ...copy,
+  };
+  const open = async () => 'open' as const;
+  const cta = async (viewer: { id: number } | undefined, hasJoined: () => Promise<boolean>) =>
+    (await getNavBanners({ viewer, eventDefs: [def], getAccess: open, hasJoined }))[0]?.cta;
+
+  it('a member sees the joined cta; a viewer on no team is asked to join', async () => {
+    expect(await cta(TESTER, async () => true)).toBe('See the standings');
+    expect(await cta(TESTER, async () => false)).toBe('Join a team');
+  });
+
+  it('signed out never asks, and is asked to join', async () => {
+    const hasJoined = vi.fn(async () => true);
+    expect(await cta(ANON, hasJoined)).toBe('Join a team');
+    expect(hasJoined).not.toHaveBeenCalled();
+  });
+
+  it('a failed read keeps the strip, with the join cta', async () => {
+    expect(
+      await cta(TESTER, async () => {
+        throw new Error('redis down');
+      })
+    ).toBe('Join a team');
+  });
+
+  it('the birthday strip carries a joined cta', async () => {
+    testerFlag.reset({ public: true });
+    const [banner] = await getNavBanners({
+      viewer: TESTER,
+      now: DURING,
+      hasJoined: async () => true,
+    });
+    expect(banner.cta).toBe('See the standings');
+  });
+});
