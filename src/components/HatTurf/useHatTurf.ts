@@ -21,9 +21,13 @@ function useRefreshWhenDue(due: number | undefined, refresh: () => void) {
     let entry = refreshes.get(due);
     if (!entry) {
       const created: DueRefresh = { users: 0, timer: 0 };
+      // Each retry waits twice as long, up to 8x: a stock read that keeps failing is not polled
+      // at the first retry's rate for as long as the tab stays open.
+      let wait = stockRefreshTiming.retryMs;
       const fire = () => {
         refresh();
-        created.timer = window.setTimeout(fire, stockRefreshTiming.retryMs);
+        created.timer = window.setTimeout(fire, wait);
+        wait = Math.min(wait * 2, stockRefreshTiming.retryMs * 8);
       };
       created.timer = window.setTimeout(fire, Math.max(0, due - Date.now()) + 500);
       refreshes.set(due, created);

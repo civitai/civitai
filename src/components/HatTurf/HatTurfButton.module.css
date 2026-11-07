@@ -6,6 +6,9 @@
 }
 
 .button {
+  /* What the unfilled part of the stock gauge mixes the team colour with. Here, not inline:
+     light-dark() is compiled for older browsers only in a stylesheet. */
+  --hat-gauge-base: light-dark(#dee2e6, #1a1b1e);
   position: relative;
   display: grid;
   place-items: center;

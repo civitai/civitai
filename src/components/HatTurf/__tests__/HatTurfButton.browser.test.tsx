@@ -549,6 +549,8 @@ describe('Hat Turf button on a feed ImageCard', () => {
       const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
       await wait(800);
       expect(h.invalidate).toHaveBeenCalledTimes(1);
+      // A reread never cancels one already in flight: cards mounting mid-read would starve it.
+      expect(h.invalidate).toHaveBeenLastCalledWith(undefined, undefined, { cancelRefetch: false });
       // The stock read still says the same due time: a card mounting now schedules nothing.
       addReader!();
       await wait(800);
