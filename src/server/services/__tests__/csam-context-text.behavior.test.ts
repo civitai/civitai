@@ -16,7 +16,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ kysely: null as unknown }));
+const holder = vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_RED = 'red.example.invalid';
+  return { kysely: null as unknown };
+});
 vi.mock('~/server/db/kyselyDb', () => ({
   get kyselyRead() {
     return holder.kysely;
@@ -34,7 +37,7 @@ const {
   contextWebPageIncidents,
   CSAM_CONTEXT_TEXT_MAX_CHARS,
 } = await import('~/server/services/csam-context-text');
-const { getBaseUrl } = await import('~/server/utils/url-helpers');
+const RED = 'https://red.example.invalid';
 
 const MOD = 10;
 const OWNER = 20;
@@ -309,7 +312,7 @@ describe('what NCMEC is sent', () => {
     ]);
 
     expect(post).toEqual({
-      url: `${getBaseUrl()}/posts/100`,
+      url: `${RED}/posts/100`,
       additionalInfo: [
         'Text posted with the reported images on this page, captured by Civitai on 10/08/2026 14:05 UTC.',
         'Post description, posted 10/02/2026 14:05 UTC by the reported account:\n"the caption"',
@@ -317,7 +320,7 @@ describe('what NCMEC is sent', () => {
       ].join('\n\n'),
     });
     expect(post.additionalInfo).not.toContain(String(OTHER));
-    expect(image.url).toBe(`${getBaseUrl()}/images/502`);
+    expect(image.url).toBe(`${RED}/images/502`);
   });
 
   it('splits a page captured at two times into one block per capture', () => {
@@ -332,10 +335,7 @@ describe('what NCMEC is sent', () => {
       }),
     ]);
 
-    expect(blocks.map((b) => b.url)).toEqual([
-      `${getBaseUrl()}/posts/100`,
-      `${getBaseUrl()}/posts/100`,
-    ]);
+    expect(blocks.map((b) => b.url)).toEqual([`${RED}/posts/100`, `${RED}/posts/100`]);
     expect(blocks[0].additionalInfo).toContain('captured by Civitai on 10/08/2026');
     expect(blocks[0].additionalInfo).not.toContain('later');
     expect(blocks[1].additionalInfo).toContain('captured by Civitai on 10/09/2026');

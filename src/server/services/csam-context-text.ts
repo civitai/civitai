@@ -306,7 +306,7 @@ function itemText(c: CsamContextText) {
 /** The page incidents as NCMEC reads them once parsed: one per page and capture time. */
 export function contextWebPageIncidents(contextText: CsamContextText[] | undefined) {
   if (!contextText?.length) return [];
-  const base = getBaseUrl();
+  const base = getBaseUrl('red');
   const groups = new Map<string, { url: string; capturedAt: string; items: CsamContextText[] }>();
   for (const c of contextText) {
     const url = c.postId ? `${base}/posts/${c.postId}` : `${base}/images/${c.imageId}`;
