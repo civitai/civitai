@@ -419,44 +419,47 @@ export async function runHealthChecksReusingCleanRun(
   return run;
 }
 
-export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const podname = process.env.PODNAME ?? getRandomInt(100, 999);
+export default WebhookEndpoint(
+  async (req: NextApiRequest, res: NextApiResponse) => {
+    const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
-  // Create AbortController for all health checks
-  // This will be aborted when the client disconnects
-  const abortController = new AbortController();
-  const { signal } = abortController;
+    // Create AbortController for all health checks
+    // This will be aborted when the client disconnects
+    const abortController = new AbortController();
+    const { signal } = abortController;
 
-  // Abort all checks when client disconnects
-  const onClose = () => {
-    if (!isProd) console.log('Health check request cancelled (client disconnected)');
-    abortController.abort();
-  };
-  res.on('close', onClose);
+    // Abort all checks when client disconnects
+    const onClose = () => {
+      if (!isProd) console.log('Health check request cancelled (client disconnected)');
+      abortController.abort();
+    };
+    res.on('close', onClose);
 
-  // Check if already cancelled before starting the expensive checks.
-  if (signal.aborted) {
+    // Check if already cancelled before starting the expensive checks.
+    if (signal.aborted) {
+      res.off('close', onClose);
+      return;
+    }
+
+    const { healthy, results } = await runHealthChecksReusingCleanRun(signal);
+
+    // Clean up the close listener
     res.off('close', onClose);
-    return;
-  }
 
-  const { healthy, results } = await runHealthChecksReusingCleanRun(signal);
+    // If cancelled, don't send response (connection is already closed)
+    if (signal.aborted) {
+      return;
+    }
 
-  // Clean up the close listener
-  res.off('close', onClose);
-
-  // If cancelled, don't send response (connection is already closed)
-  if (signal.aborted) {
-    return;
-  }
-
-  return res.status(healthy ? 200 : 500).json({
-    podname,
-    version: process.env.version,
-    healthy,
-    ...results,
-  });
-});
+    return res.status(healthy ? 200 : 500).json({
+      podname,
+      version: process.env.version,
+      healthy,
+      ...results,
+    });
+  },
+  { acceptProbeToken: true }
+);
 
 /**
  * Run a cancellable check function with timeout.

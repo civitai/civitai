@@ -7,7 +7,7 @@ import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
  * accepted alongside `WEBHOOK_TOKEN` so the value can change without every caller switching at the
  * same moment. Unset or blank, it matches nothing.
  */
-export type WebhookTokenSlot = 'current' | 'previous';
+export type WebhookTokenSlot = 'current' | 'previous' | 'probe';
 
 export function matchWebhookToken(presented: unknown): WebhookTokenSlot | undefined {
   if (typeof presented !== 'string') return undefined;
@@ -17,6 +17,15 @@ export function matchWebhookToken(presented: unknown): WebhookTokenSlot | undefi
   if (isConfiguredSecret(previous) && timingSafeEqualStrings(previous, presented))
     return 'previous';
   return undefined;
+}
+
+/** `PROBE_TOKEN`, which only the health routes accept. Unset or blank, it matches nothing. */
+export function matchProbeToken(presented: unknown): 'probe' | undefined {
+  if (typeof presented !== 'string') return undefined;
+  const probe = env.PROBE_TOKEN;
+  return isConfiguredSecret(probe) && timingSafeEqualStrings(probe, presented)
+    ? 'probe'
+    : undefined;
 }
 
 /** Every configured webhook token value, for code that must refuse to treat one as something else. */

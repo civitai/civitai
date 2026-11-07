@@ -26,12 +26,12 @@ export const webhookTokenMatchCounter: client.Counter<string> =
   globalThis.__civitaiWebhookTokenMatchCounter ??
   (globalThis.__civitaiWebhookTokenMatchCounter = new client.Counter({
     name: 'civitai_webhook_token_match_total',
-    help: 'Requests authenticated by the webhook token, by which configured value matched (slot=current|previous) and normalized route. UNSAMPLED.',
+    help: 'Requests authenticated by the webhook token, by which configured value matched (slot=current|previous|probe) and normalized route. UNSAMPLED.',
     labelNames: ['slot', 'route'],
   }));
 
-// The liveness probe authenticates this way every few seconds on every pod, so a line per request
-// would flood the logs. One line per route per minute per process says which callers still send the
+// The startup and readiness probes (/api/ready, /api/health) authenticate this way every few
+// seconds on every pod, so a line per request would flood the logs. One line per route per minute per process says which callers still send the
 // previous value; the counter carries the exact numbers.
 const PREVIOUS_LOG_INTERVAL_MS = 60_000;
 const previousLoggedAt = (globalThis.__civitaiWebhookTokenPreviousLoggedAt ??= new Map());

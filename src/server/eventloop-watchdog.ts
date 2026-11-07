@@ -726,17 +726,26 @@ function sameToken(given, expected) {
 // counted by slot here because this port is outside the registry that counts the app's matches.
 const tokenMatches = { current: 0, previous: 0 };
 
-function tokenSlot(url) {
-  let given = '';
-  try {
-    given = new URL(url, 'http://localhost').searchParams.get('token') || '';
-  } catch (err) {
-    return undefined;
-  }
+function slotOf(given) {
   if (sameToken(given, token)) return 'current';
   const previous = typeof previousToken === 'string' ? previousToken : '';
   if (previous.trim() !== '' && sameToken(given, previous)) return 'previous';
   return undefined;
+}
+
+// Authorization: Bearer or ?token=, either one, as /api/metrics accepts.
+function tokenSlot(req) {
+  const auth = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+  const bearer = /^Bearer (.+)$/.exec(auth);
+  const fromBearer = bearer ? slotOf(bearer[1]) : undefined;
+  if (fromBearer) return fromBearer;
+  let given = '';
+  try {
+    given = new URL(req.url || '', 'http://localhost').searchParams.get('token') || '';
+  } catch (err) {
+    return undefined;
+  }
+  return slotOf(given);
 }
 
 const server = http.createServer(function (req, res) {
@@ -747,7 +756,7 @@ const server = http.createServer(function (req, res) {
     res.end();
     return;
   }
-  const slot = tokenSlot(url);
+  const slot = tokenSlot(req);
   if (!slot) {
     res.writeHead(401);
     res.end();

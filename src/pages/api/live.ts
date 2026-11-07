@@ -7,10 +7,13 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 // calls (DB, Redis, ClickHouse, MeiliSearch) so a slow upstream
 // can't trigger kubelet to restart pods. Use /api/health for the
 // deep readiness check.
-export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse) => {
-  return res.status(200).json({
-    podname: process.env.PODNAME ?? getRandomInt(100, 999),
-    version: process.env.version,
-    alive: true,
-  });
-});
+export default WebhookEndpoint(
+  async (_req: NextApiRequest, res: NextApiResponse) => {
+    return res.status(200).json({
+      podname: process.env.PODNAME ?? getRandomInt(100, 999),
+      version: process.env.version,
+      alive: true,
+    });
+  },
+  { acceptProbeToken: true }
+);

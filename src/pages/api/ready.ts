@@ -27,64 +27,67 @@ import { getRandomInt } from '~/utils/number-helpers';
 // manifest probe-path change is a SEPARATE follow-up — this route must exist in
 // the running image BEFORE any probe is repointed at it, or every pod fails
 // startup. Same WebhookEndpoint `?token` gate as /api/health.
-export default WebhookEndpoint(async (_req: NextApiRequest, res: NextApiResponse) => {
-  const podname = process.env.PODNAME ?? getRandomInt(100, 999);
-  const warm = isWarm();
-  // Surface warm observability in the body so an operator can tell a pod that
-  // truly warmed (warmState='warmed-ok') from one that only fail-open-timed-out
-  // (warmState='failopen-timeout', failOpenTimedOut=true) or one where the
-  // warmer is disabled on this pool (warmState='disabled'). Mirrors the
-  // civitai_warmup_state gauge.
-  const warmState = getWarmState();
-  const warmDurationMs = getWarmDurationMs();
-  const failOpenTimedOut = didFailOpenTimeout();
+export default WebhookEndpoint(
+  async (_req: NextApiRequest, res: NextApiResponse) => {
+    const podname = process.env.PODNAME ?? getRandomInt(100, 999);
+    const warm = isWarm();
+    // Surface warm observability in the body so an operator can tell a pod that
+    // truly warmed (warmState='warmed-ok') from one that only fail-open-timed-out
+    // (warmState='failopen-timeout', failOpenTimedOut=true) or one where the
+    // warmer is disabled on this pool (warmState='disabled'). Mirrors the
+    // civitai_warmup_state gauge.
+    const warmState = getWarmState();
+    const warmDurationMs = getWarmDurationMs();
+    const failOpenTimedOut = didFailOpenTimeout();
 
-  // Skip the (relatively expensive) dependency checks until the pod is warm —
-  // a not-yet-warm pod is never Ready regardless of dependency state, and we
-  // don't want startup-probe traffic adding DB/Redis load before the pod is
-  // even serving. Reuse the client-disconnect abort wiring from health.ts.
-  if (!warm) {
-    return res.status(503).json({
+    // Skip the (relatively expensive) dependency checks until the pod is warm —
+    // a not-yet-warm pod is never Ready regardless of dependency state, and we
+    // don't want startup-probe traffic adding DB/Redis load before the pod is
+    // even serving. Reuse the client-disconnect abort wiring from health.ts.
+    if (!warm) {
+      return res.status(503).json({
+        podname,
+        version: process.env.version,
+        ready: false,
+        warm,
+        warmState,
+        warmDurationMs,
+        failOpenTimedOut,
+      });
+    }
+
+    const abortController = new AbortController();
+    const { signal } = abortController;
+    const onClose = () => {
+      if (!isProd) console.log('Ready check request cancelled (client disconnected)');
+      abortController.abort();
+    };
+    res.on('close', onClose);
+
+    if (signal.aborted) {
+      res.off('close', onClose);
+      return;
+    }
+
+    const { healthy, results } = await runHealthChecks(signal);
+
+    res.off('close', onClose);
+
+    if (signal.aborted) {
+      return;
+    }
+
+    const ready = warm && healthy;
+    return res.status(ready ? 200 : 503).json({
       podname,
       version: process.env.version,
-      ready: false,
+      ready,
       warm,
       warmState,
       warmDurationMs,
       failOpenTimedOut,
+      deps: results,
     });
-  }
-
-  const abortController = new AbortController();
-  const { signal } = abortController;
-  const onClose = () => {
-    if (!isProd) console.log('Ready check request cancelled (client disconnected)');
-    abortController.abort();
-  };
-  res.on('close', onClose);
-
-  if (signal.aborted) {
-    res.off('close', onClose);
-    return;
-  }
-
-  const { healthy, results } = await runHealthChecks(signal);
-
-  res.off('close', onClose);
-
-  if (signal.aborted) {
-    return;
-  }
-
-  const ready = warm && healthy;
-  return res.status(ready ? 200 : 503).json({
-    podname,
-    version: process.env.version,
-    ready,
-    warm,
-    warmState,
-    warmDurationMs,
-    failOpenTimedOut,
-    deps: results,
-  });
-});
+  },
+  { acceptProbeToken: true }
+);
