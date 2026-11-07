@@ -141,7 +141,7 @@ export function collectionItemCoversSql({
           a.id,
           ${imageSql}
         FROM "Article" a
-        JOIN "Image" i ON i.id = a."coverId"
+        JOIN "Image" i ON i.id = COALESCE(a."coverId", a."bannerId")
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
           AND ${publishedArticleSql}

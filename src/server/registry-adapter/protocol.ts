@@ -83,7 +83,8 @@ export interface AdapterContext {
   signal: AbortSignal;
   /**
    * What the subscription's token may read (`audience.ts`). Absent is anonymous, the narrowest.
-   * The document streams narrow by it; the entity streams publish every rating, tagged.
+   * The document, app, app-release and schema streams narrow by it (`audience.ts`); the
+   * `service` stream is the same for every audience.
    */
   audience?: Audience;
 }

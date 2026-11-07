@@ -16,6 +16,7 @@ import { displayName } from '~/server/schema/moderator/user';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { forceUpdateUserIdentity, patchUserSettings } from '~/server/services/user.service';
 import { HeaderTokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
+import { webhookTokenValues } from '~/server/utils/webhook-token';
 
 /**
  * Sets a system account's display name and chat DM policy (see create-system-account). Fields that
@@ -93,7 +94,8 @@ const asObject = (value: unknown): Record<string, unknown> =>
 // Unconfigured while it repeats another admin token.
 function profileToken() {
   const token = env.SYSTEM_ACCOUNT_PROFILE_TOKEN;
-  return token && [env.SYSTEM_ACCOUNT_KEY_TOKEN, env.WEBHOOK_TOKEN, env.JOB_TOKEN].includes(token)
+  return token &&
+    [env.SYSTEM_ACCOUNT_KEY_TOKEN, ...webhookTokenValues(), env.JOB_TOKEN].includes(token)
     ? undefined
     : token;
 }

@@ -35,6 +35,7 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
@@ -584,9 +585,10 @@ export const getModelHandler = async ({
         })
       : null;
 
-    const [ownerMetricPrivacyDefaults, ownerCosmetics] = await Promise.all([
+    const [ownerMetricPrivacyDefaults, ownerCosmetics, comCoverState] = await Promise.all([
       getOwnerMetricPrivacyDefaultsForEditor(ctx.user, model.user.id),
       getCosmeticsAndProfilePicturesForUsers([model.user.id]),
+      isOwner ? getComCoverState({ ...model, userId: model.user.id }) : Promise.resolve(null),
     ]);
 
     return {
@@ -594,8 +596,12 @@ export const getModelHandler = async ({
       hasSfwFace: hasCompleteSfwFace(model),
       sfwName: isOwner ? model.sfwName : null,
       sfwDescription: isOwner ? model.sfwDescription : null,
-      // The listing re-check took the model off .com; the editor tells the owner.
-      comFaceRemoved: !!isOwner && !!(model.meta as ModelMeta | null)?.comFaceRemoved,
+      // The listing re-check took the model off .com; the editor tells the owner. Only the kind of
+      // removal: the check's own reason (`detail`) stays with moderators.
+      comFaceRemoved: isOwner
+        ? comFaceRemovedKind((model.meta as ModelMeta | null)?.comFaceRemoved)
+        : null,
+      comCoverState,
       user: { ...model.user, ...ownerCosmetics(model.user.id) },
       metrics: undefined,
       hiddenMetrics: modelHidden,
@@ -2636,3 +2642,8 @@ export const publishPrivateModelHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+/** A marker written before `reason` existed was a detection. */
+function comFaceRemovedKind(marker: ModelMeta['comFaceRemoved'] | undefined) {
+  return marker ? marker.reason ?? 'detected' : null;
+}

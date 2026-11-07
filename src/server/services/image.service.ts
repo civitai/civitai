@@ -1367,6 +1367,18 @@ export async function handleUnblockImages({
   return images;
 }
 
+export async function writeModeratorBlock(ids: number[]) {
+  if (!ids.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "Image" SET
+      ingestion = 'Blocked',
+      "nsfwLevel" = ${NsfwLevel.Blocked},
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
+      "updatedAt" = NOW()
+    WHERE id = ANY(${ids}::int[])
+  `;
+}
+
 export async function handleBlockImages({
   ids: imageIds,
   userId,
@@ -1392,16 +1404,7 @@ export async function handleBlockImages({
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
-      dbWrite.image
-        .updateMany({
-          where: { id: { in: ids } },
-          data: {
-            ingestion: 'Blocked',
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-            updatedAt: new Date(),
-          },
-        })
+      writeModeratorBlock(ids)
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
 
@@ -7643,7 +7646,7 @@ export const getEntityCoverImage = async ({
 	          0 "coverRank"
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
-          JOIN "Image" i ON a."coverId" = i.id
+          JOIN "Image" i ON i.id = COALESCE(a."coverId", a."bannerId")
           WHERE e."entityType" = 'Article'
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')

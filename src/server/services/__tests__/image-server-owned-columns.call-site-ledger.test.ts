@@ -98,7 +98,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/generation.schema.ts': { imageSchema: 2 },
   // Client form schemas. Their payloads go to `article.upsert` and to a report flow that keeps
   // only `url`, so the server parses them again with its own input schema.
-  'src/components/Article/ArticleUpsertForm.tsx': { imageSchema: 3 },
+  'src/components/Article/article-form.schema.ts': { imageSchema: 3 },
   'src/components/Report/OwnershipForm.tsx': { imageSchema: 2 },
 };
 
