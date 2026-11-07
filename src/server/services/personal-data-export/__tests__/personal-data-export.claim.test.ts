@@ -413,15 +413,19 @@ describe('release claim, run', () => {
         )
       ).rows[0];
 
-    it('puts the export back to built, so it can be released again', async () => {
-      m.readySend.mockRejectedValue(new Error('smtp'));
-      await expect(releaseExport({ exportId: 5, actorId: 9, bucket, now })).rejects.toThrow('smtp');
+    it('puts the export back to built, with the mail error in the log and not on the row', async () => {
+      const raw = '550 mailbox owner@example.com unavailable at mx.provider.example';
+      m.readySend.mockRejectedValue(new Error(raw));
+      await expect(releaseExport({ exportId: 5, actorId: 9, bucket, now })).rejects.toThrow(raw);
       expect(await row()).toEqual({
         status: 'built',
         releasedAt: null,
         releasedById: null,
-        error: 'release email failed: smtp',
+        error: 'release email failed',
       });
+      expect(
+        vi.mocked(logToAxiom).mock.calls.map(([e]) => (e.details as { error?: string })?.error)
+      ).toContain(raw);
     });
 
     it('leaves the row alone when something else moved it while the email was sending', async () => {

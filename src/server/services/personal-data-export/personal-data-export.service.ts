@@ -587,12 +587,12 @@ async function emailRequester(
         { roles: requester.roles.map((r) => r.role) },
         'user.personalDataExport.queue'
       ));
-    if (!mayQueue) throw new Error('the requester may no longer queue exports');
+    if (!mayQueue) throw new RequesterNotSent('the requester may no longer queue exports');
     const to = exportRecipient('built', {
       requester: { email: requester?.email ?? null },
       owner: { email: null },
     });
-    if (!to) throw new Error('the requester has no email');
+    if (!to) throw new RequesterNotSent('the requester has no email');
     const archive = await presignDownload(bucket, built.archiveKey, `civitai-data-${row.id}.zip`);
     const notes = built.modNotesKey
       ? await presignDownload(bucket, built.modNotesKey, `internal-notes-${row.id}.csv`)
@@ -611,19 +611,27 @@ async function emailRequester(
       WHERE id = ${row.id}
     `;
   } catch (e) {
-    // The archive is built and recorded; only the notice failed. Say so on the row.
+    // The archive is built and recorded; only the notice failed. The row says so in fixed text (our
+    // own reason, or none): moderators read it, and a mail error can carry addresses. The log has it.
+    const onRow =
+      e instanceof RequesterNotSent
+        ? `built; requester email failed: ${e.message}`
+        : 'built; requester email failed';
     await dbWrite.$executeRaw`
-      UPDATE "PersonalDataExport" SET error = ${`built; requester email failed: ${errorMessage(e)}`}
+      UPDATE "PersonalDataExport" SET error = ${onRow}
       WHERE id = ${row.id}
     `;
     logToAxiom({
       type: 'error',
       name: LOG,
       message: `requester email failed: ${errorMessage(e)}`,
-      details: { exportId: row.id },
+      details: { exportId: row.id, error: errorMessage(e) },
     }).catch(() => undefined);
   }
 }
+
+/** A built link this code chose not to send: its message is fixed text, safe to put on the row. */
+class RequesterNotSent extends Error {}
 
 export type ReleaseResult =
   | { ok: true; userId: number; expiresAt: Date }
@@ -737,13 +745,19 @@ export async function releaseExport({
       takenAt: row.builtAt,
     });
   } catch (e) {
-    // Not sent: put it back so it can be released again.
+    // Not sent: put it back so it can be released again. Fixed text on the row; the error is logged.
     await dbWrite.$executeRaw`
       UPDATE "PersonalDataExport"
       SET status = 'built', "releasedAt" = NULL, "releasedById" = NULL,
-          error = ${`release email failed: ${errorMessage(e)}`}
+          error = 'release email failed'
       WHERE id = ${row.id} AND status = 'released'
     `;
+    logToAxiom({
+      type: 'error',
+      name: LOG,
+      message: `release email failed: ${errorMessage(e)}`,
+      details: { exportId: row.id, error: errorMessage(e) },
+    }).catch(() => undefined);
     throw e;
   }
   // Sent. A failure from here on must not put the row back, or a second press would send again.

@@ -83,6 +83,7 @@ vi.mock('../sources/mongo', () => ({
 }));
 vi.mock('../sources/stripe', () => ({ exportStripe: async () => [] }));
 
+import { logToAxiom } from '~/server/logging/client';
 import { MAX_ATTEMPTS, buildExport, type ExportRow } from '../personal-data-export.service';
 
 const OWNER_ID = 42;
@@ -221,6 +222,17 @@ describe('buildExport', () => {
       }
     }
   );
+
+  it("keeps a failed link email's error off the row, and puts it in the log", async () => {
+    const raw = '550 mailbox staff@civitai.com unavailable at mx.provider.example';
+    m.builtSend.mockRejectedValue(new Error(raw));
+    expect(await buildExport(row, deps)).toBe('built');
+    const noted = writes().find((c) => sqlOf(c).includes('SET error ='));
+    expect(String(noted?.[1])).toBe('built; requester email failed');
+    expect(
+      vi.mocked(logToAxiom).mock.calls.map(([e]) => (e.details as { error?: string })?.error)
+    ).toContain(raw);
+  });
 
   /**
    * 🔴 Ruled by Legal and the Moderation Lead: an account under a hold gets NO archive. Nothing is
