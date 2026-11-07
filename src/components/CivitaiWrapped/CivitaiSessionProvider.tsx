@@ -95,8 +95,11 @@ export function CivitaiSessionProvider({
         allowAds: settingsAllowAds ?? !isMember ? true : false,
         autoplayGifs: settingsAutoplayGifs ?? user.autoplayGifs ?? true,
         blurNsfw: settingsBlurNsfw ?? user.blurNsfw,
-        // The account's own choice: never another person's, from a shared device's cookie.
-        showEventCosmetics: settingsShowEventCosmetics ?? true,
+        // The account's own choice once its settings are read. Before that (a degraded bootstrap)
+        // this device's cookie, so an "off" viewer gets no flash of hats.
+        showEventCosmetics: settings
+          ? settingsShowEventCosmetics ?? true
+          : showEventCosmetics ?? true,
       },
     };
     if (!allowMatureContent)
@@ -117,6 +120,7 @@ export function CivitaiSessionProvider({
     settingsBlurNsfw,
     settingsAutoplayGifs,
     settingsShowEventCosmetics,
+    settings,
     verifiedBot,
   ]);
 
