@@ -8,7 +8,7 @@ import {
   mintDownloadLinks,
 } from '~/server/services/download-link/download-link.service';
 import { MAX_LINK_TTL_SECONDS } from '~/server/services/download-link/download-link.store';
-import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
+import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 export const config = { api: { bodyParser: { sizeLimit: '32kb' } } };
 
@@ -80,6 +80,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       type: 'error',
       message: 'mint-failed',
     }).catch(() => undefined);
-    return res.status(500).json({ error: GENERIC_SERVER_ERROR_MESSAGE });
+    return handleEndpointError(res, error);
   }
 }

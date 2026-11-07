@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadLinkMinter } from '~/server/services/download-link/download-link-minter';
 import { isLinkToken, revokeLink } from '~/server/services/download-link/download-link.store';
-import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
+import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 /** Revokes one download link. Only the credential that minted it may; any other gets a 404. */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -36,6 +36,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       type: 'error',
       message: 'revoke-failed',
     }).catch(() => undefined);
-    return res.status(500).json({ error: GENERIC_SERVER_ERROR_MESSAGE });
+    return handleEndpointError(res, error);
   }
 }

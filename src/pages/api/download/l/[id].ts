@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { fetchDownloadLink } from '~/server/services/download-link/download-link.service';
-import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 /**
  * A download link: no auth, the id is the whole credential. Every refusal is the same plain 404.
@@ -30,6 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       message: 'use-failed',
     }).catch(() => undefined);
     if (res.headersSent) return;
-    return res.status(500).json({ error: GENERIC_SERVER_ERROR_MESSAGE });
+    // A literal, not handleEndpointError: that helper logs the request's route, and this path is the id.
+    return res.status(500).json({ error: 'An unexpected error occurred' });
   }
 }
