@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
-  ghPrSubcommand,
+  ghPrMatch,
   hqSignedIn,
   nudge,
   nudgeEvent,
@@ -140,13 +140,8 @@ describe('prEvent fires nothing for anything else', () => {
   });
 });
 
-describe('ghPrSubcommand scans the command in linear time', () => {
-  const sub = ghPrSubcommand as (command: string) => string | null;
-
-  it('finds pr create after 40 flags, and gives up on 40 flags with no pr', () => {
-    expect(sub(`gh${' --flag'.repeat(40)} pr create --fill`)).toBe('create');
-    expect(sub(`gh${' --flag'.repeat(40)} x`)).toBeNull();
-  });
+describe('ghPrMatch reads the gh segment', () => {
+  const sub = (command: string) => (ghPrMatch(command) as { sub: string } | null)?.sub ?? null;
 
   it('takes a value only after a flag without =', () => {
     expect(sub('gh -R civitai/civitai pr ready 7')).toBe('ready');
@@ -236,7 +231,8 @@ describe('nudgeEvent checks cheapest first', () => {
 });
 
 describe('the nudge text', () => {
-  // Pinned whole: an agent acts on these words, so a reword is a change that should show in review.
+  // Pinned whole: the text is the instruction an agent executes. It carries commands with the PR
+  // reference spliced in and the rules the agent follows, so any change to it is a behaviour change.
   it('names the PR, the skill, the intent command and the watch', () => {
     expect(text({ action: 'create', pr: 7801, draft: false })).toBe(
       'civitai/civitai#7801 was opened. The hosted review (the `pr-review` check) reviews every new ' +
@@ -269,7 +265,8 @@ describe('the nudge text', () => {
 /**
  * The hook spawned as a process, in a sandbox it cannot see past: PATH holds only a fake `gh` and,
  * when the case wants one, a fake `hq`; HOME is a fresh directory. The fake `gh` answers the head
- * repo the case names, so no case reaches the network.
+ * repo the case names, so no case reaches the network, and only when it is asked for the head repo
+ * of the PR the case created.
  *
  * The nudge is for authors who use HQ, on PRs whose head is in this repo: a fork's PR and a session
  * without a signed-in `hq` get nothing.
@@ -281,6 +278,8 @@ describe.skipIf(process.platform === 'win32')(
     const hook = resolve(__dirname, '../../.claude/hooks/pr-review-nudge.mjs');
     const dirs: string[] = [];
     afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+    // The PR every create case's gh output names.
+    const PR = 7801;
 
     type Sandbox = {
       hq?: boolean;
@@ -300,10 +299,23 @@ describe.skipIf(process.platform === 'win32')(
       dirs.push(root);
       const bin = join(root, 'bin');
       const home = join(root, 'home');
+      const ghLog = join(root, 'gh-argv');
       mkdirSync(bin);
       mkdirSync(home);
-      const gh = ghFails ? 'echo "HTTP 404" >&2; exit 1' : `echo '${head}'`;
-      writeFileSync(join(bin, 'gh'), `#!/bin/sh\n${gh}\n`, { mode: 0o755 });
+      // The fake records every argv it is given, one argument per line, and exits 97 on any argv but
+      // the head-repo read for `PR`, so a hook that asks gh the wrong question gets no answer.
+      const answer = ghFails ? 'echo "HTTP 404" >&2; exit 1' : `echo '${head}'`;
+      const gh = [
+        '#!/bin/sh',
+        `printf '%s\\n' "$@" >> '${ghLog}'`,
+        `if [ "$#" -ne 4 ] || [ "$1" != api ] || [ "$2" != repos/civitai/civitai/pulls/${PR} ] || ` +
+          `[ "$3" != --jq ] || [ "$4" != .head.repo.full_name ]; then`,
+        '  echo "fake gh: unexpected argv: $*" >&2',
+        '  exit 97',
+        'fi',
+        answer,
+      ].join('\n');
+      writeFileSync(join(bin, 'gh'), `${gh}\n`, { mode: 0o755 });
       if (hq) writeFileSync(join(bin, 'hq'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       if (config !== undefined) {
         mkdirSync(join(home, '.config', 'hq'), { recursive: true });
@@ -311,39 +323,53 @@ describe.skipIf(process.platform === 'win32')(
       }
       const env: Record<string, string> = { PATH: bin, HOME: home };
       if (hqToken !== undefined) env.HQ_TOKEN = hqToken;
-      return env;
+      // Everything the fake gh was called with, '' when it never ran.
+      const ghArgv = () => (existsSync(ghLog) ? readFileSync(ghLog, 'utf8') : '');
+      return { env, ghArgv };
     };
     const SIGNED_IN = 'url = "https://hq.civitai.com"\ntoken = "hq_test_token"\n';
+    // The one gh call the hook makes: the head-repo read for `PR`, as `prHeadRepo` builds it.
+    const HEAD_READ = ['api', `repos/civitai/civitai/pulls/${PR}`, '--jq', '.head.repo.full_name']
+      .map((arg) => `${arg}\n`)
+      .join('');
 
     const run = (input: string, env: Record<string, string>, timeout = 30_000) =>
       spawnSync(process.execPath, [hook], { input, encoding: 'utf8', timeout, env });
     const createInput = (command = 'gh pr create --fill') =>
-      JSON.stringify({ tool_name: 'Bash', tool_input: { command }, tool_response: created(7801) });
+      JSON.stringify({ tool_name: 'Bash', tool_input: { command }, tool_response: created(PR) });
+    const NUDGE = text({ action: 'create', pr: PR, draft: false });
 
     it('adds the nudge after a create when hq is signed in and the head is in this repo', () => {
-      const r = run(createInput(), sandbox({ config: SIGNED_IN }));
+      const box = sandbox({ config: SIGNED_IN });
+      const r = run(createInput(), box.env);
+      expect(box.ghArgv(), 'the hook asked gh something other than the head repo of PR ' + PR).toBe(
+        HEAD_READ
+      );
       expect(r.status).toBe(0);
       const out = JSON.parse(r.stdout).hookSpecificOutput;
       expect(out.hookEventName).toBe('PostToolUse');
-      expect(out.additionalContext).toBe(text({ action: 'create', pr: 7801, draft: false }));
+      expect(out.additionalContext).toBe(NUDGE);
     });
 
     it('counts an HQ_TOKEN in the environment as signed in', () => {
-      const r = run(createInput(), sandbox({ hqToken: 'hq_test_token' }));
+      const box = sandbox({ hqToken: 'hq_test_token' });
+      const r = run(createInput(), box.env);
+      expect(box.ghArgv()).toBe(HEAD_READ);
       expect(r.status).toBe(0);
-      expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toBe(
-        text({ action: 'create', pr: 7801, draft: false })
-      );
+      expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toBe(NUDGE);
     });
 
-    it.each<[string, Sandbox]>([
-      ['the PR comes from a fork', { config: SIGNED_IN, head: 'someone/civitai' }],
-      ['the head repo cannot be read', { config: SIGNED_IN, ghFails: true }],
-      ['hq is not installed', { hq: false, config: SIGNED_IN }],
-      ['hq is installed but not signed in', { config: 'url = "https://hq.civitai.com"\n' }],
-      ['hq has an empty token', { config: 'token = ""\n', hqToken: '' }],
-    ])('says nothing and exits 0 when %s', (_label, box) => {
-      const r = run(createInput(), sandbox(box));
+    // The first two read the head and get a no; the rest stop before the head read.
+    it.each<[string, Sandbox, string]>([
+      ['the PR comes from a fork', { config: SIGNED_IN, head: 'someone/civitai' }, HEAD_READ],
+      ['the head repo cannot be read', { config: SIGNED_IN, ghFails: true }, HEAD_READ],
+      ['hq is not installed', { hq: false, config: SIGNED_IN }, ''],
+      ['hq is installed but not signed in', { config: 'url = "https://hq.civitai.com"\n' }, ''],
+      ['hq has an empty token', { config: 'token = ""\n', hqToken: '' }, ''],
+    ])('says nothing and exits 0 when %s', (_label, opts, ghArgv) => {
+      const box = sandbox(opts);
+      const r = run(createInput(), box.env);
+      expect(box.ghArgv()).toBe(ghArgv);
       expect(r.status).toBe(0);
       expect(r.stdout).toBe('');
     });
@@ -356,21 +382,31 @@ describe.skipIf(process.platform === 'win32')(
       ['input that is not JSON', '{not json'],
       ['no input', ''],
     ])('says nothing and exits 0 for %s', (_label, input) => {
-      const r = run(input, sandbox({ config: SIGNED_IN }));
+      const box = sandbox({ config: SIGNED_IN });
+      const r = run(input, box.env);
+      expect(box.ghArgv()).toBe('');
       expect(r.status).toBe(0);
       expect(r.stdout).toBe('');
     });
 
-    // The matcher runs on EVERY Bash call, so its cost must grow linearly with the command. A
-    // backtracking pattern took 210 ms at 24 `--flag` tokens and doubled with each one, so 40 would
-    // hold the session for hours. Spawned with a timeout: a hung matcher kills the child, not the suite.
+    // The scanner runs on every Bash call, so a long run of flags must not slow the hook. These are
+    // the file's only long-input cases, and they run the hook in a child with a time limit: a
+    // scanner that is too slow gets the child killed and fails here, rather than blocking the worker.
+    const HOOK_LIMIT_MS = 5_000;
     it.each([
-      ['a long flag run with no pr subcommand', `gh${' --flag'.repeat(40)} x`],
-      ['a long flag run before pr create', `gh${' --flag'.repeat(40)} pr create --fill`],
-    ])('answers at once for %s', (_label, command) => {
-      const r = run(createInput(command), sandbox({ config: SIGNED_IN }), 5_000);
-      expect(r.signal).toBeNull();
+      ['a long flag run with no pr subcommand', `gh${' --flag'.repeat(40)} x`, ''],
+      [
+        'a long flag run before pr create',
+        `gh${' --flag'.repeat(40)} pr create --fill`,
+        `${JSON.stringify({
+          hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: NUDGE },
+        })}\n`,
+      ],
+    ])('answers within the time limit for %s', (_label, command, stdout) => {
+      const r = run(createInput(command), sandbox({ config: SIGNED_IN }).env, HOOK_LIMIT_MS);
+      expect(r.signal, `the hook did not exit within ${HOOK_LIMIT_MS} ms`).toBeNull();
       expect(r.status).toBe(0);
+      expect(r.stdout).toBe(stdout);
     });
   }
 );

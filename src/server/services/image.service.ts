@@ -154,6 +154,13 @@ import {
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
+import {
+  fetchSharedContestCollectionItems,
+  getContestRejections,
+  queryContestCollectionItems,
+  type ContestCollectionItem,
+  type SharedContestCollectionItem,
+} from '~/server/services/contest-collection-items.cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
@@ -281,7 +288,6 @@ import {
   type BlockProvenanceMetadataKey,
 } from '~/shared/utils/block-provenance-metadata';
 import type {
-  CollectionItemRejectionReason,
   DomainColor,
   ModelType,
   ReportReason,
@@ -8744,51 +8750,15 @@ export function getRemixSourceIds(
   return [...new Set(storedSourceImageIds(meta) ?? [])].filter((sourceId) => sourceId !== imageId);
 }
 
-// LRU cache for contest collection items lookup - caches by imageId
-// This avoids repeated database queries for the same image's contest participation
-type ContestCollectionItem = {
-  id: number;
-  imageId: number;
-  addedById: number | null;
-  status: string;
-  tag: { id: number; name: string } | null;
-  collection: { id: number; name: string; metadata: Prisma.JsonValue; mode: 'Contest' };
-  scores: { userId: number; score: number }[];
-  rejectionReason: CollectionItemRejectionReason | null;
-  rejectionDetail: string | null;
-};
+// The flag-OFF path: a per-pod LRU keyed by imageId that no write busts, so a status change reaches
+// a pod's viewers only once its entry expires. Flag `contest-collection-items-redis-cache` moves the
+// read to the shared, busted cache in contest-collection-items.cache.ts.
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
   max: 100_000,
   ttl: 30 * 60 * 1000, // 30 minutes
   keyFn: (imageId: number) => `image:${imageId}`,
-  fetchFn: async (imageId: number) => {
-    return dbRead.$queryRaw<ContestCollectionItem[]>`
-      SELECT
-        ci.id,
-        ci."imageId",
-        ci."addedById",
-        ci.status,
-        ci."rejectionReason"::text as "rejectionReason",
-        ci."rejectionDetail",
-        CASE WHEN t.id IS NOT NULL
-          THEN jsonb_build_object('id', t.id, 'name', t.name)
-          ELSE NULL
-        END as tag,
-        jsonb_build_object('id', c.id, 'name', c.name, 'metadata', c.metadata, 'mode', c.mode) as collection,
-        COALESCE(
-          (SELECT jsonb_agg(jsonb_build_object('userId', cis."userId", 'score', cis.score))
-           FROM "CollectionItemScore" cis
-           WHERE cis."collectionItemId" = ci.id),
-          '[]'::jsonb
-        ) as scores
-      FROM "CollectionItem" ci
-      JOIN "Collection" c ON c.id = ci."collectionId"
-      LEFT JOIN "Tag" t ON t.id = ci."tagId"
-      WHERE ci."imageId" = ${imageId}
-        AND c.mode = 'Contest'
-    `;
-  },
+  fetchFn: (imageId: number) => queryContestCollectionItems([imageId]),
 });
 
 export const getImageContestCollectionDetails = async ({
@@ -8796,7 +8766,10 @@ export const getImageContestCollectionDetails = async ({
   userId,
   isModerator,
 }: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
-  const items = await contestCollectionItemsCache.fetch(id);
+  const useSharedCache = await isFlipt(FLIPT_FEATURE_FLAGS.CONTEST_COLLECTION_ITEMS_REDIS_CACHE);
+  const items: (SharedContestCollectionItem | ContestCollectionItem)[] = useSharedCache
+    ? await fetchSharedContestCollectionItems(id)
+    : await contestCollectionItemsCache.fetch(id);
 
   // Fetch all permissions in one query instead of N queries
   const collectionIds = items.map((i) => i.collection.id);
@@ -8804,21 +8777,35 @@ export const getImageContestCollectionDetails = async ({
     ids: collectionIds,
     userId,
   });
+  const permissionsFor = (item: { collection: { id: number } }) =>
+    allPermissions.find((p) => p.collectionId === item.collection.id);
+
+  // This endpoint is public. The reason — and above all the reviewer's free text about
+  // someone else's entry — is only for the submitter, whoever manages the collection,
+  // and site moderators investigating reports about reviewer behaviour.
+  const canReadRejection = (item: SharedContestCollectionItem) =>
+    (!!userId && userId === item.addedById) || !!permissionsFor(item)?.manage || !!isModerator;
+
+  // The shared value carries no rejection fields (see SharedContestCollectionItem), so with the
+  // flag on they are read live, and only for the entries this viewer passes the gate on.
+  const liveRejections = useSharedCache
+    ? await getContestRejections(items.filter(canReadRejection).map((item) => item.id))
+    : undefined;
 
   // `addedById` is destructured off rather than spread: it is only here to resolve the gate below,
   // and it names who submitted an entry, which this public endpoint has never returned.
-  return items.map(({ addedById, ...i }) => {
-    const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
-    // This endpoint is public. The reason — and above all the reviewer's free text about
-    // someone else's entry — is only for the submitter, whoever manages the collection,
-    // and site moderators investigating reports about reviewer behaviour.
-    const canReadRejection =
-      (!!userId && userId === addedById) || !!permissions?.manage || !!isModerator;
+  return items.map((item) => {
+    const { addedById, ...i } = item;
+    const permissions = permissionsFor(item);
+    const readable = canReadRejection(item);
+    const rejection = liveRejections
+      ? liveRejections.get(item.id)
+      : (item as ContestCollectionItem);
 
     return {
       ...i,
-      rejectionReason: canReadRejection ? i.rejectionReason : null,
-      rejectionDetail: canReadRejection ? i.rejectionDetail : null,
+      rejectionReason: readable ? rejection?.rejectionReason ?? null : null,
+      rejectionDetail: readable ? rejection?.rejectionDetail ?? null : null,
       permissions,
       collection: {
         ...i.collection,

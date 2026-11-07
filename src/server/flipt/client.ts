@@ -120,6 +120,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON serves `getImageContestCollectionDetails` (an image's contest entries) from a shared Redis
+  // cache, busted on entry writes, instead of the per-pod LRU, which nothing busts. The shared
+  // value holds no rejection reason; a viewer allowed to read one gets it from a live read. Output
+  // is identical either way. Boolean, evaluated with no entityId, once per call.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call.
+  CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -280,6 +288,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Serves the public `placement.getSpace` read from a Redis cache of its two row reads (the
+  // target and the per-level space rows), read from the replica on a miss. DEFAULT-OFF:
+  // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
+  // uncached primary read. Global boolean, evaluated with no entity or context. Every other
+  // caller of the space (anything that decides or charges) stays on the primary regardless. See
+  // `resolvePlacementSpaceForDisplay`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it.
+  PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.

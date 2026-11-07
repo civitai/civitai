@@ -1533,17 +1533,6 @@ export interface HeldResourceReview {
   holdReasons: string[];
 }
 
-export interface HeldAnswer {
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -4334,22 +4323,6 @@ export interface EvidenceHoldPost {
   modelVersionId: number | null;
   collectionId: number | null;
   metadata: JsonValue | null;
-  keptAt: Date;
-}
-
-export interface EvidenceHoldComment {
-  commentId: number;
-  userId: number;
-  threadId: number | null;
-  content: string;
-  createdAt: Date | null;
-  updatedAt: Date | null;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  hidden: boolean | null;
-  metadata: JsonValue | null;
-  thread: JsonValue | null;
-  source: string;
   keptAt: Date;
 }
 

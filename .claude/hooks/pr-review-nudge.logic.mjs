@@ -35,9 +35,9 @@ const GH_TIMEOUT_MS = 10_000;
 /**
  * The command split as a shell would split it, as an array of segments, each an array of words:
  * quotes ('…', "…" with backslash escapes) keep a word whole, and an unquoted `; & | ( )` or newline
- * ends a segment. One pass, linear in the command's length: this runs on every Bash call, and the
- * regex it replaced backtracked exponentially on a run of `--flag` tokens. Not a full shell parser:
- * expansions, `$(…)` and heredocs are read as plain words.
+ * ends a segment. One pass over the characters with no backtracking, so its cost is linear in the
+ * command's length; it runs on every Bash call. Not a full shell parser: expansions, `$(…)` and
+ * heredocs are read as plain words.
  */
 export function shellSegments(command) {
   const segments = [];
@@ -114,11 +114,6 @@ export function ghPrMatch(command) {
     }
   }
   return null;
-}
-
-/** `'create'` or `'ready'` (`ghPrMatch`'s subcommand), else null. */
-export function ghPrSubcommand(command) {
-  return ghPrMatch(command)?.sub ?? null;
 }
 
 /**

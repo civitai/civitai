@@ -3263,21 +3263,6 @@ export type EvidenceHold = {
   releasedById: number | null;
   releaseReason: string | null;
 };
-export type EvidenceHoldComment = {
-  commentId: number;
-  userId: number;
-  threadId: number | null;
-  content: string;
-  createdAt: Timestamp | null;
-  updatedAt: Timestamp | null;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  hidden: boolean | null;
-  metadata: unknown | null;
-  thread: unknown | null;
-  source: string;
-  keptAt: Generated<Timestamp>;
-};
 export type EvidenceHoldImage = {
   imageId: number;
   userId: number;
@@ -3420,22 +3405,6 @@ export type GenerationSizePreset = {
   width: number;
   height: number;
   createdAt: Generated<Timestamp>;
-};
-export type HeldAnswer = {
-  /**
-   * The original Answer id.
-   */
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-  heldAt: Generated<Timestamp>;
-  /**
-   * The holds on the author when it was copied.
-   */
-  holdReasons: string[];
 };
 export type HeldResourceReview = {
   /**
@@ -6685,7 +6654,6 @@ export type DB = {
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
-  EvidenceHoldComment: EvidenceHoldComment;
   EvidenceHoldImage: EvidenceHoldImage;
   EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;
@@ -6699,7 +6667,6 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
-  HeldAnswer: HeldAnswer;
   HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
