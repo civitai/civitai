@@ -349,7 +349,7 @@ export async function recordStorageHookSources(
       INSERT INTO "app_storage_hook_sources" ("sha256", "source", "size_bytes")
       SELECT s.sha256, s.source, s.size_bytes
       FROM unnest(${shas}::text[], ${texts}::text[], ${sizes}::int[]) AS s(sha256, source, size_bytes)
-      ON CONFLICT ("sha256") DO UPDATE SET "source" = EXCLUDED."source"
+      ON CONFLICT ("sha256") DO NOTHING
     `;
   } catch (err) {
     if (await isSourcesTableMissing(err)) throw new Error(HOOK_SOURCES_TABLE_MISSING);
