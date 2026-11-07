@@ -749,9 +749,7 @@ function isOurFault(err: unknown): boolean {
     // The store's database could not be reached (`translatePgError`), or a gate's read failed.
     err.code === 'service_unavailable' ||
     err.code === 'moderation_unavailable' ||
-    err.code === 'consent_unavailable' ||
-    // The permission hook could not be evaluated (`doc-store-hook.ts`): nothing was decided.
-    err.code === 'hook_unavailable'
+    err.code === 'consent_unavailable'
   );
 }
 
