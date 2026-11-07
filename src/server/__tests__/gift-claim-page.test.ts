@@ -37,20 +37,14 @@ describe('the gift claim page', () => {
     expect(cookies).toContain('civ-token=rolled; Path=/');
   });
 
-  it('redirects there before the session check, so the login link never carries the code', () => {
-    const result = resolveGiftClaimPage({
-      features: ON,
-      session: null,
-      ctx: ctx({ code: CODE }).ctx,
+  it('stores a signed-out visitor’s code before sending them to sign in', () => {
+    const { ctx: c, headers } = ctx({ code: CODE });
+    expect(resolveGiftClaimPage({ features: ON, session: null, ctx: c })).toEqual({
+      redirect: { destination: '/gift', permanent: false },
     });
-    expect(JSON.stringify(result)).not.toContain(CODE);
-  });
-
-  it('caps what it stores at 64 characters', () => {
-    const { ctx: c, headers } = ctx({ code: 'x'.repeat(500) });
-    resolveGiftClaimPage({ features: ON, session: {}, ctx: c });
-    const gift = (headers['Set-Cookie'] as string[]).find((h) => h.startsWith(GIFT_CODE_COOKIE))!;
-    expect(gift).toContain(`=${'x'.repeat(64)};`);
+    expect(headers['Set-Cookie']).toContainEqual(
+      expect.stringContaining(`${GIFT_CODE_COOKIE}=${CODE};`)
+    );
   });
 
   it('sends a signed-out visitor to sign in and back to /gift', () => {

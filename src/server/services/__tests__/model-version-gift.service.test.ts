@@ -304,6 +304,17 @@ describe('revokeGiftLinks', () => {
     });
   });
 
+  it('revokes a batch only on the caller’s own version', async () => {
+    seed();
+    dbMock.dbWrite.modelVersionGiftLink.updateMany.mockResolvedValue({ count: 3 });
+    await revokeGiftLinks({ userId: OWNER, modelVersionId: VERSION_ID, batchId: 'b-1' });
+    expect(dbMock.dbWrite.modelVersionGiftLink.updateMany.mock.calls[0][0].where).toEqual({
+      modelVersionId: VERSION_ID,
+      batchId: 'b-1',
+      revokedAt: null,
+    });
+  });
+
   it('needs exactly one of id or batchId', async () => {
     seed();
     await expect(revokeGiftLinks({ userId: OWNER, modelVersionId: VERSION_ID })).rejects.toThrow(
