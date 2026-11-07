@@ -4896,6 +4896,13 @@ export type Product = {
   defaultPriceId: string | null;
   provider: Generated<PaymentProvider>;
 };
+export type ProfilePictureHold = {
+  id: Generated<number>;
+  userId: number;
+  imageId: number;
+  reason: string;
+  createdAt: Generated<Timestamp>;
+};
 export type PurchasableReward = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -6823,6 +6830,7 @@ export type DB = {
   PricingSlot: PricingSlot;
   Prize: Prize;
   Product: Product;
+  ProfilePictureHold: ProfilePictureHold;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
   PushSubscription: PushSubscription;
