@@ -97,7 +97,7 @@ describe('Hat Turf on the event page', () => {
       section()!.querySelector(`[data-testid="hat-turf-stat-${key}"]`)!.textContent;
     expect(tile('refill')).toBe('4 minHat refill');
     expect(tile('cap')).toBe('30Hat cap');
-    expect(tile('scoring')).toBe('6Scoring cap');
+    expect(tile('scoring')).toBe('6Scorers per image');
     expect(notice()!.textContent).toBe(
       'Your team is behind: hats come 1.5\u00d7 faster and you can hold more.'
     );

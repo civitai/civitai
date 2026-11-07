@@ -73,6 +73,8 @@ export const useMutateEvent = () => {
       await queryUtils.event.getCosmetic.invalidate({ event: payload.event });
       // Joining grants the team hat (and may settle the team): it is a new sticker to place.
       void queryUtils.hatTurf.getMyStickerHats.invalidate({ event: payload.event });
+      // The nav strip's cta changes once the viewer is on a team.
+      void queryUtils.event.getNavBanners.invalidate();
     },
   });
   const donateMutation = trpc.event.donate.useMutation({
