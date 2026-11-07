@@ -195,6 +195,16 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
 export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
+/**
+ * The image a card shows for an article `a`: its cover, else its banner once servable. The article
+ * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ */
+export const articleCardCoverIdSql = Prisma.sql`COALESCE(
+  a."coverId",
+  (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
+)`;
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -480,12 +490,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
-        -- A banner stands in for a missing cover on cards, once it is servable.
-        COALESCE(
-          a."coverId",
-          (SELECT b.id FROM "Image" b
-            WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
-        ) AS "coverId",
+        ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -668,11 +673,7 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      COALESCE(
-          a."coverId",
-          (SELECT b.id FROM "Image" b
-            WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
-        ) AS "coverId",
+      ${articleCardCoverIdSql} AS "coverId",
       title,
       content,
       "publishedAt",
