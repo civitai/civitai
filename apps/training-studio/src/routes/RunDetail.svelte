@@ -847,8 +847,7 @@
     <ReviewStatusPanel
       kind={d.state}
       workflowId={d.workflowId}
-      createdAt={d.createdAt}
-      startedAt={d.startedAt}
+      heldSince={d.heldSince}
     >
       {#if d.state === 'unreviewed' && d.dataset.length}
         <Button class="mt-4" variant="outline" onclick={reuseDataset}>

@@ -858,7 +858,7 @@ export default function TrainingSelectFile({
       />
       {trainingStatus === TrainingStatus.Paused ? (
         <TrainingReviewNotice
-          heldSince={trainingHeldSince(tResultsV2?.startedAt, tResultsV2?.submittedAt)}
+          heldSince={trainingHeldSince(tResultsV2?.startedAt, trainingResults?.submittedAt)}
           runId={tResultsV2?.workflowId ?? String(modelVersion.id)}
         />
       ) : showBlockingError ? (

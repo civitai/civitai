@@ -21,6 +21,11 @@ describe('canRaiseTrainingReview', () => {
     expect(canRaiseTrainingReview(heldSince, after(threshold))).toBe(true);
   });
 
+  it('is offered after a day held, as the wait copy promises', () => {
+    expect(canRaiseTrainingReview(heldSince, after(23 * HOUR))).toBe(false);
+    expect(canRaiseTrainingReview(heldSince, after(24 * HOUR))).toBe(true);
+  });
+
   it('counts real time, weekends included', () => {
     // Friday evening to Monday morning is well past any threshold under a week.
     expect(canRaiseTrainingReview('2026-11-06T20:00:00Z', new Date('2026-11-09T08:00:00Z'))).toBe(

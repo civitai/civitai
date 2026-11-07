@@ -5,21 +5,18 @@
   import {
     TRAINING_REVIEW_COPY as copy,
     canRaiseTrainingReview,
-    trainingHeldSince,
   } from '@civitai/shared/training-review';
-  import { browser, hostConfig, hostLink } from '$lib/host';
+  import { browser, hostConfig } from '$lib/host';
 
   let {
     kind,
     workflowId,
-    createdAt,
-    startedAt,
+    heldSince,
     children,
   }: {
     kind: 'review' | 'rejected' | 'unreviewed';
     workflowId: string;
-    createdAt?: string;
-    startedAt?: string;
+    heldSince?: string;
     /** Extra actions under the message (e.g. reuse the dataset). */
     children?: Snippet;
   } = $props();
@@ -33,7 +30,7 @@
   });
 
   const canRaise = $derived(
-    kind === 'review' && canRaiseTrainingReview(trainingHeldSince(startedAt, createdAt), now)
+    kind === 'review' && canRaiseTrainingReview(heldSince, now)
   );
   const supportUrl = $derived(hostConfig().supportUrl);
 
@@ -64,7 +61,7 @@
       Workflow ID: <span class="select-all">{workflowId}</span>
     </p>
     {#if supportUrl}
-      <Button class="mt-4" variant="outline" {...hostLink(supportUrl)}>
+      <Button class="mt-4" variant="outline" href={supportUrl} target="_blank" rel="noreferrer">
         {copy.contactSupport}<IconExternalLink size={14} stroke={2} class="ml-1.5 inline" />
       </Button>
     {/if}

@@ -3,7 +3,11 @@ import type {
   Workflow,
   WorkflowStatus,
 } from '@civitai/orchestration-client';
-import { TRAINING_REVIEW_COPY, trainingReviewState } from '@civitai/shared/training-review';
+import {
+  TRAINING_REVIEW_COPY,
+  trainingHeldSince,
+  trainingReviewState,
+} from '@civitai/shared/training-review';
 import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
@@ -533,6 +537,8 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
+  /** While held for review: when the hold began, the clock for offering a support ticket. */
+  heldSince?: string;
   /** When the training step started running — with `completedAt` it gives the run's wall-clock
    *  duration. Absent on runs whose step carries no start date. */
   startedAt?: string;
@@ -666,6 +672,9 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    ...(state === 'review' && {
+      heldSince: trainingHeldSince(startedAt, w.createdAt) ?? undefined,
+    }),
     startedAt,
     completedAt,
     ecosystem: typeof input.ecosystem === 'string' && input.ecosystem ? input.ecosystem : undefined,
