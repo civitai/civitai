@@ -226,6 +226,32 @@ describe('releaseExport', () => {
     });
   });
 
+  /**
+   * 🔴 The bucket hides an archive 6 days after it is written (B2: hide at 6, delete 1 day after),
+   * and a hidden archive cannot be downloaded. So a 48-hour link must end by day 6, and release
+   * closes on day 4. Written in days, not in the constants, so a change to either side shows here.
+   */
+  it('closes release on day 4, so every 48-hour link ends before the archive is hidden on day 6', async () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const hiddenAt = builtAt.getTime() + 6 * DAY;
+    const lastPress = new Date(builtAt.getTime() + 4 * DAY);
+    vi.useFakeTimers({ now: lastPress, toFake: ['Date'] });
+    try {
+      const result = await releaseExport({ exportId: 5, actorId: 9, bucket, now: lastPress });
+      expect(result).toMatchObject({ ok: true });
+      const { expiresAt } = result as { expiresAt: Date };
+      expect(expiresAt.getTime() - lastPress.getTime()).toBe(2 * DAY);
+      expect(expiresAt.getTime()).toBeLessThanOrEqual(hiddenAt);
+    } finally {
+      vi.useRealTimers();
+    }
+    const tooLate = new Date(lastPress.getTime() + 1000);
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now: tooLate })).toEqual({
+      ok: false,
+      reason: 'expired',
+    });
+  });
+
   it('sends nothing when another press claimed the release first', async () => {
     vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0 as never);
     expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
