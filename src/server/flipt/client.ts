@@ -439,6 +439,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
+  // or unreachable: every link answers 404 and no link is minted.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
+  // must exist in flag state (enabled: false) before this code serves traffic.
+  DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
