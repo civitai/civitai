@@ -11,6 +11,15 @@
  *                                  a port of its own)
  *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
+ *   REGISTRY_ADAPTER_RESOURCE_URL  this source's public URL, its OAuth resource identifier; when
+ *                                  set (with AUTH_JWT_ISSUER, the issuer whose tokens it
+ *                                  accepts), protected resource metadata is served and named by
+ *                                  every auth error (`auth.ts`)
+ *
+ * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
+ * token is verified as every `/api/v1` route verifies it (`auth.live.ts`). Each document stream is
+ * narrowed to what its token's user may read (`audience.ts`); the entity streams publish every
+ * rating, tagged, to everyone.
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
@@ -20,6 +29,8 @@ import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
+import type { ResourceConfig } from '~/server/registry-adapter/auth';
+import { verifyCivitaiToken } from '~/server/registry-adapter/auth.live';
 import { createRegistryServer } from '~/server/registry-adapter/serve';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
 import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
@@ -38,6 +49,13 @@ function main() {
   const pollMs = positiveNumber('REGISTRY_ADAPTER_POLL_SECONDS', 60) * 1000;
   const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || 'https://civitai.com').replace(/\/$/, '');
   const onError = (err: unknown) => console.error('registry-adapter:', err);
+  const resourceUrl = process.env.REGISTRY_ADAPTER_RESOURCE_URL;
+  const issuer = process.env.AUTH_JWT_ISSUER;
+  const resource: ResourceConfig | undefined =
+    resourceUrl && issuer
+      ? { resource: resourceUrl, issuers: [issuer.replace(/\/+$/, '')] }
+      : undefined;
+  const auth = { verifyToken: verifyCivitaiToken, resource };
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
@@ -66,13 +84,13 @@ function main() {
   });
   const adapter = composeAdapter(entities, docs);
 
-  const server = createRegistryServer(adapter, { onError });
+  const server = createRegistryServer(adapter, { onError, ...auth });
   server.listen(port, () =>
     console.log(
       `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`
     )
   );
-  const grpcServer = createGrpcServer(adapter, { onError });
+  const grpcServer = createGrpcServer(adapter, { onError, ...auth });
   listenGrpc(grpcServer, grpcPort).then(
     (bound) => console.log(`registry-adapter: gRPC on :${bound}`),
     (err: unknown) => {

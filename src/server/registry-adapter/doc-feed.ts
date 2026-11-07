@@ -31,8 +31,18 @@
  * would fill the stream's `STATES_KEPT_PER_STREAM` with time, expiring disconnected
  * consumers' cursors early, and multiply the writes. The seq is never put in the cursor instead:
  * private writes share it, and a cursor must not tell their volume.
+ *
+ * Every stream is served per AUDIENCE (`audience.ts`, the mature ratings a token may read): a
+ * document's rating is its app's, so an app whose rating the subscription's audience does not
+ * admit streams nothing to it, as an unpublished collection does, and a re-rating moves its
+ * documents in or out of that audience's stream as upserts or deletes. A state records the
+ * audience it was served to, so a cursor issued to one audience is `cursor_expired` for another
+ * (the digest differs, and `load` refuses it before reading anything else), and the states, their
+ * retention and the progress clock are all kept per audience.
  */
 import type { ValidateFunction } from 'ajv';
+import type { Audience } from '~/server/registry-adapter/audience';
+import { ANONYMOUS_AUDIENCE, audienceAdmits } from '~/server/registry-adapter/audience';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
@@ -79,6 +89,8 @@ export type CollectionStream = {
   appId: string;
   slug: string;
   collection: string;
+  /** The app's content rating, which is every document's: an audience it does not admit sees none. */
+  contentRating: string | null;
   /** Every major's schema document, `@v1` first. */
   family: Array<{ urn: string; body: Record<string, unknown> }>;
 };
@@ -102,6 +114,8 @@ type Served = { rev: string; seq: number };
 type FeedState = {
   v: typeof STATE_FORMAT;
   schema: string;
+  /** The {@link Audience} key this state was served to; a resume by any other is refused. */
+  audience: string;
   appId: string | null;
   seq: number;
   family: string | null;
@@ -114,9 +128,10 @@ type FeedState = {
 const docRev = (d: FeedDocument, schemas: readonly string[]) =>
   sha256Hex(sortedKeyJson({ version: d.version, data: d.data, schemas })).slice(0, 16);
 
-const emptyState = (schema: string): FeedState => ({
+const emptyState = (schema: string, audience: Audience): FeedState => ({
   v: STATE_FORMAT,
   schema,
+  audience: audience.key,
   appId: null,
   seq: 0,
   family: null,
@@ -163,28 +178,36 @@ export function createDocFeed(opts: DocFeedOptions) {
   const claimer = createClaimer();
   const progressEveryMs = opts.progressEveryMs ?? PROGRESS_EVERY_MS;
   const now = opts.now ?? Date.now;
-  /** Stream → when its state was last saved, by any subscription of this process. */
+  /**
+   * A stream as one audience sees it: the unit of stored states, their retention and the progress
+   * clock. Every per-stream record is kept per audience, so one audience's saves never evict,
+   * delay or reveal another's.
+   */
+  const streamKey = (state: Pick<FeedState, 'schema' | 'audience'>) =>
+    `${state.schema}#${state.audience}`;
+  /** Stream (per audience) → when its state was last saved, by any subscription of this process. */
   const lastSaved = new Map<string, number>();
   const noteSaved = (state: FeedState) => {
     // Only a stream of an app takes an entry: an unpublished (or invented) URN never writes, so
     // it must not grow this map either. The bound is a backstop.
     if (state.appId === null) return;
     if (lastSaved.size >= PROGRESS_STREAMS_TRACKED) lastSaved.clear();
-    lastSaved.set(state.schema, now());
+    lastSaved.set(streamKey(state), now());
   };
 
   const save = async (state: FeedState): Promise<string> => {
     // A stream of no app serving nothing needs no record: its cursor is a constant. So a
-    // subscription to an unpublished (or invented) collection URN writes nothing.
+    // subscription to an unpublished (or invented) collection URN writes nothing, and neither
+    // does one whose audience may not read the app.
     if (state.appId === null && state.served.length === 0) return EMPTY_CURSOR;
     const raw = sortedKeyJson(state);
     const digest = sha256Hex(raw).slice(0, 32);
-    await opts.store.put(digest, raw, state.schema);
+    await opts.store.put(digest, raw, streamKey(state));
     return `${STATE_FORMAT}.${digest}`;
   };
 
-  const load = async (schema: string, cursor: string): Promise<FeedState> => {
-    if (cursor === EMPTY_CURSOR) return emptyState(schema);
+  const load = async (schema: string, cursor: string, audience: Audience): Promise<FeedState> => {
+    if (cursor === EMPTY_CURSOR) return emptyState(schema, audience);
     const digest = CURSOR_RE.exec(cursor)?.[1];
     if (!digest) throw cursorExpired('not a cursor this source issued');
     const raw = await opts.store.get(digest);
@@ -198,7 +221,12 @@ export function createDocFeed(opts: DocFeedOptions) {
     if (state.v !== STATE_FORMAT || state.schema !== schema) {
       throw cursorExpired('the cursor belongs to another stream');
     }
-    await opts.store.touch(digest, schema);
+    // Checked before anything in the state is used: a resume diffs against the state's served
+    // set, and its deletes would name documents this audience may not read.
+    if (state.audience !== audience.key) {
+      throw cursorExpired('the cursor was issued to a token that may read different ratings');
+    }
+    await opts.store.touch(digest, streamKey(state));
     return state;
   };
 
@@ -251,14 +279,20 @@ export function createDocFeed(opts: DocFeedOptions) {
     return new Map([...latest].map(([key, { doc }]) => [key, doc]));
   }
 
-  /** The stream's state now, from `prev` (null for a snapshot), and the entities to upsert. */
+  /**
+   * The stream's state now, as `audience` sees it, from `prev` (null for a snapshot), and the
+   * entities to upsert. An app whose rating the audience does not admit is, for that audience, a
+   * stream that holds nothing: the documents it was sent arrive as deletes, and they arrive again
+   * as upserts once the app is visible to it again (a re-rating, either way).
+   */
   async function advance(
     schema: string,
-    prev: FeedState | null
+    prev: FeedState | null,
+    audience: Audience
   ): Promise<{ next: FeedState; entities: Map<string, Entity> }> {
     const stream = await opts.resolve(schema);
-    if (!stream) {
-      return { next: emptyState(schema), entities: new Map() };
+    if (!stream || !audienceAdmits(audience, stream.contentRating)) {
+      return { next: emptyState(schema, audience), entities: new Map() };
     }
     const { appId, slug, collection, family } = stream;
     if (prev?.appId && prev.appId !== appId) {
@@ -324,6 +358,7 @@ export function createDocFeed(opts: DocFeedOptions) {
       next: {
         v: STATE_FORMAT,
         schema,
+        audience: audience.key,
         appId,
         // Recorded even when nothing is served, so an empty stream reads incrementally.
         seq: head,
@@ -353,14 +388,16 @@ export function createDocFeed(opts: DocFeedOptions) {
     cursor: string,
     loaded: FeedState,
     first: Awaited<ReturnType<typeof advance>>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    audience: Audience
   ): AsyncGenerator<Change> {
     let state = loaded;
     let position = cursor;
     let pending: Awaited<ReturnType<typeof advance>> | null = first;
     while (!signal.aborted) {
       const before = state;
-      const { next, entities } = pending ?? (await guarded(() => advance(schema, before)));
+      const { next, entities } =
+        pending ?? (await guarded(() => advance(schema, before, audience)));
       pending = null;
       if (next === before) {
         await opts.sleep(opts.pollMs, signal);
@@ -390,7 +427,7 @@ export function createDocFeed(opts: DocFeedOptions) {
           yield 'upsert' in c ? { upsert: c.upsert, cursor: at } : { delete: c.delete, cursor: at };
         }
         position = nextCursor;
-      } else if (now() - (lastSaved.get(schema) ?? -Infinity) >= progressEveryMs) {
+      } else if (now() - (lastSaved.get(streamKey(next)) ?? -Infinity) >= progressEveryMs) {
         // A position-only move, and none saved for this stream lately: save it, so the
         // `progress` cursor is one a consumer can resume from. Otherwise `position` stays the
         // last saved cursor, which remains valid: the in-memory state only moved past seqs
@@ -404,9 +441,14 @@ export function createDocFeed(opts: DocFeedOptions) {
     }
   }
 
+  /** The subscription's audience: absent is anonymous, the narrowest. */
+  const audienceOf = (ctx?: Pick<AdapterContext, 'audience'>) =>
+    ctx?.audience ?? ANONYMOUS_AUDIENCE;
+
   return {
-    async snapshot(schema: string) {
-      const { next, entities } = await guarded(() => advance(schema, null));
+    async snapshot(schema: string, ctx?: Pick<AdapterContext, 'audience'>) {
+      const audience = audienceOf(ctx);
+      const { next, entities } = await guarded(() => advance(schema, null, audience));
       const cursor = await save(next);
       noteSaved(next);
       return { cursor, entities: [...entities.values()] };
@@ -417,10 +459,11 @@ export function createDocFeed(opts: DocFeedOptions) {
      * history checks of {@link advance} (a re-created app, a seq reset, a purge) are cursor
      * checks too, so each of them rejects before `live` rather than after it.
      */
-    async changes(schema: string, cursor: string, { signal }: AdapterContext) {
-      const state = await guarded(() => load(schema, cursor));
-      const first = await guarded(() => advance(schema, state));
-      return follow(schema, cursor, state, first, signal);
+    async changes(schema: string, cursor: string, ctx: AdapterContext) {
+      const audience = audienceOf(ctx);
+      const state = await guarded(() => load(schema, cursor, audience));
+      const first = await guarded(() => advance(schema, state, audience));
+      return follow(schema, cursor, state, first, ctx.signal, audience);
     },
   };
 }
