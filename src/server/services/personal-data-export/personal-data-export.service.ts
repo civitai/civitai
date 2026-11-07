@@ -11,6 +11,7 @@ import {
 } from '~/server/email/templates/personalDataExport.email';
 import { logToAxiom } from '~/server/logging/client';
 import { accountHoldSql, getAccountLegalHold } from '~/server/services/legal-hold.service';
+import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import {
   RELEASE_WINDOW_SECONDS,
@@ -502,8 +503,25 @@ async function emailRequester(
   try {
     const requester = await dbWrite.user.findUnique({
       where: { id: row.requestedById },
-      select: { email: true },
+      select: {
+        email: true,
+        isModerator: true,
+        deletedAt: true,
+        bannedAt: true,
+        roles: { select: { role: true } },
+      },
     });
+    // A build can finish hours after it was queued: the link goes only to someone who may still
+    // queue exports. Otherwise the row says why, and another holder can take it over.
+    const mayQueue =
+      !!requester?.isModerator &&
+      !requester.deletedAt &&
+      !requester.bannedAt &&
+      (await hasModeratorGrant(
+        { roles: requester.roles.map((r) => r.role) },
+        'user.personalDataExport.queue'
+      ));
+    if (!mayQueue) throw new Error('the requester may no longer queue exports');
     const to = exportRecipient('built', {
       requester: { email: requester?.email ?? null },
       owner: { email: null },

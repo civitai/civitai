@@ -27,8 +27,11 @@ const m = vi.hoisted(() => ({
   put: vi.fn(),
   stream: vi.fn(),
   pg: vi.fn(),
+  grant: vi.fn(),
   manifest: null as unknown,
 }));
+
+vi.mock('~/server/services/moderator-grants', () => ({ hasModeratorGrant: m.grant }));
 
 vi.mock('~/server/services/legal-hold.service', () => ({
   getAccountLegalHold: m.holds,
@@ -104,9 +107,34 @@ const deps = {
   stripe: undefined,
 };
 
-const users: Record<number, { id: number; username: string; email: string; customerId: null }> = {
-  [OWNER_ID]: { id: OWNER_ID, username: 'owner', email: 'owner@example.com', customerId: null },
-  [STAFF_ID]: { id: STAFF_ID, username: 'ModBob', email: 'staff@civitai.com', customerId: null },
+type TestUser = {
+  id: number;
+  username: string;
+  email: string;
+  customerId: null;
+  isModerator: boolean;
+  deletedAt: Date | null;
+  bannedAt: Date | null;
+  roles: { role: string }[];
+};
+const person = { customerId: null, deletedAt: null, bannedAt: null } as const;
+const users: Record<number, TestUser> = {
+  [OWNER_ID]: {
+    ...person,
+    id: OWNER_ID,
+    username: 'owner',
+    email: 'owner@example.com',
+    isModerator: false,
+    roles: [],
+  },
+  [STAFF_ID]: {
+    ...person,
+    id: STAFF_ID,
+    username: 'ModBob',
+    email: 'staff@civitai.com',
+    isModerator: true,
+    roles: [{ role: 'moderator:support' }],
+  },
 };
 const sqlOf = (c: unknown[]) => (c[0] as unknown as string[]).join('?');
 const writes = () => vi.mocked(dbMock.dbWrite.$executeRaw).mock.calls;
@@ -119,7 +147,8 @@ const uploadsDeleted = () =>
 beforeEach(() => {
   for (const f of [m.holds, m.builtSend, m.readySend, m.heldSend, m.refusedSend, m.del, m.put])
     f.mockReset();
-  for (const f of [m.stream, m.pg]) f.mockReset();
+  for (const f of [m.stream, m.pg, m.grant]) f.mockReset();
+  m.grant.mockResolvedValue(true);
   m.manifest = null;
   m.holds.mockResolvedValue({ legs: [], markerView: true });
   m.pg.mockImplementation(async ({ onNote }: { onNote: (n: unknown) => void }) => {
@@ -163,7 +192,35 @@ describe('buildExport', () => {
     const sent = writes().findIndex((c) => sqlOf(c).includes('"sentAt" = now()'));
     expect(recorded).toBeGreaterThanOrEqual(0);
     expect(sent).toBeGreaterThan(recorded);
+    // Checked at send time, on the requester's own roles.
+    expect(m.grant).toHaveBeenCalledWith(
+      { roles: ['moderator:support'] },
+      'user.personalDataExport.queue'
+    );
   });
+
+  it.each([
+    ['lost the queue permission', () => m.grant.mockResolvedValue(false)],
+    ['is no longer a moderator', () => (users[STAFF_ID].isModerator = false)],
+    ['was banned', () => (users[STAFF_ID].bannedAt = new Date())],
+  ])(
+    'keeps the archive but sends no link when the requester %s, and says so on the row',
+    async (_case, revoke) => {
+      const saved = { ...users[STAFF_ID] };
+      revoke();
+      try {
+        expect(await buildExport(row, deps)).toBe('built');
+        expect(m.builtSend).not.toHaveBeenCalled();
+        expect(writes().some((c) => sqlOf(c).includes('"sentAt" = now()'))).toBe(false);
+        const noted = writes().find((c) => sqlOf(c).includes('SET error ='));
+        expect(String(noted?.[1])).toBe(
+          'built; requester email failed: the requester may no longer queue exports'
+        );
+      } finally {
+        users[STAFF_ID] = saved;
+      }
+    }
+  );
 
   /**
    * 🔴 Ruled by Legal and the Moderation Lead: an account under a hold gets NO archive. Nothing is
