@@ -260,6 +260,19 @@ describe('syncProfilePictureForImage', () => {
     expect(await holds(OWNER)).toEqual([{ imageId: avatar(OWNER), reason: 'flagged' }]);
   });
 
+  it.each(['minor', 'poi', 'newUser', 'appeal'])(
+    "takes an avatar under %s review off its user, as 'flagged'",
+    async (needsReview) => {
+      await review(avatar(OWNER), needsReview);
+      await runProfilePictureSync();
+      expect(await pointer(OWNER)).toBeNull();
+      expect(await holds(OWNER)).toEqual([{ imageId: avatar(OWNER), reason: 'flagged' }]);
+      await review(avatar(OWNER), null);
+      await runProfilePictureSync();
+      expect(await pointer(OWNER)).toBe(avatar(OWNER));
+    }
+  );
+
   it("records a soft-deleted owner's blocked avatar too", async () => {
     await block(avatar(DELETED_OWNER));
     await runProfilePictureSync();

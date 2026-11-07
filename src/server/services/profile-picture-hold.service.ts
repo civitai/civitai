@@ -20,9 +20,6 @@ import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 // 🔴 Every read of "ProfilePictureHold" goes through dbWrite: no read-replica role is granted the
 // table, so a read-replica query naming it fails with a permission error.
 
-/** The needsReview kinds that take an avatar off its user, as Blocked does. */
-export const AVATAR_REMOVING_REVIEWS: readonly string[] = ['csam'];
-
 export const PROFILE_PICTURE_SYNC_OVERDUE_MINUTES = 15;
 export const PROFILE_PICTURE_SYNC_HEARTBEAT = 'profile-picture-sync-heartbeat';
 export const PROFILE_PICTURE_SYNC_OVERDUE = 'profile-picture-sync-overdue';
@@ -65,7 +62,9 @@ export async function syncProfilePictureForImage(
   if (!claimed) return { action: 'unclaimed' };
   if (!image) return { action: 'none' };
 
-  const flagged = image.needsReview !== null && AVATAR_REMOVING_REVIEWS.includes(image.needsReview);
+  // Any review, not only csam: no one else sees an image under review, so no one sees it as an
+  // avatar either, and which kind it is stays unreadable from the outside.
+  const flagged = image.needsReview !== null;
   if (image.ingestion === 'Blocked' || flagged) {
     // No deletedAt test: a deleted account's blocked avatar is recorded too.
     const [user] = await tx.$queryRaw<{ id: number }[]>`
