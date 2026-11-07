@@ -91,14 +91,27 @@ export function exportRecipient(
 }
 
 /** Back to queued for another attempt, or failed once the attempts are used. */
-export async function recordFailure(row: Pick<ExportRow, 'id' | 'attempts'>, error: string) {
+/** What the row says about a failed attempt: fixed text, since moderators read the row. */
+export type FailureCategory = 'build failed' | 'build abandoned' | 'hold check failed';
+
+export async function recordFailure(
+  row: Pick<ExportRow, 'id' | 'attempts'>,
+  category: FailureCategory,
+  /** The underlying error, for the log and the alert only: it can carry data the row must not. */
+  cause?: unknown
+) {
   const next: ExportStatus = row.attempts >= MAX_ATTEMPTS ? 'failed' : 'queued';
   // `attempts` pins the attempt: a run recovered as stale must not touch a later attempt's row.
   const moved = await dbWrite.$executeRaw`
-    UPDATE "PersonalDataExport" SET status = ${next}, error = ${error.slice(0, 2000)}
+    UPDATE "PersonalDataExport" SET status = ${next}, error = ${category}
     WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
   `;
-  if (next === 'failed' && moved === 1) alertFailed(row.id, row.attempts, error);
+  if (next === 'failed' && moved === 1)
+    alertFailed(
+      row.id,
+      row.attempts,
+      cause === undefined ? category : `${category}: ${errorMessage(cause)}`
+    );
   return next;
 }
 
@@ -353,7 +366,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
     }
   } catch (e) {
     await discard();
-    const status = await recordFailure(row, errorMessage(e));
+    const status = await recordFailure(row, 'build failed', e);
     logToAxiom({
       type: 'error',
       name: LOG,
@@ -829,7 +842,7 @@ export async function runPersonalDataExports({
       await build(row, deps);
     } catch (e) {
       // Anything buildExport did not handle itself: never leave the row building until it goes stale.
-      await recordFailure(row, errorMessage(e)).catch(() => undefined);
+      await recordFailure(row, 'build failed', e).catch(() => undefined);
       logToAxiom({
         type: 'error',
         name: LOG,

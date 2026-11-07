@@ -151,17 +151,33 @@ describe('export queue lifecycle, run', () => {
     expect(await rowOf(1)).toEqual({
       status: 'failed',
       attempts: MAX_ATTEMPTS,
-      error: 'pg read failed mid-stream',
+      error: 'build failed',
     });
     expect(alerted()).toEqual([1]);
+    // The read's own error is in the alert, never on the row moderators read.
+    expect(JSON.stringify(vi.mocked(logToAxiom).mock.calls)).toContain('pg read failed mid-stream');
     // Nothing is left to claim, and no later tick alerts again.
     await tick();
     expect(alerted()).toEqual([1]);
   });
 
+  /** Ruled by the Moderation Lead: moderators read the row, so it carries fixed text only. */
+  it("keeps a build error's text off the row, and puts it in the log", async () => {
+    const marker = 'ERR-MARKER-7 owner@corp.example';
+    await insert(1, 10, 'queued');
+    await runPersonalDataExports({
+      resolveDeps: async () => ({} as ExportDeps),
+      build: async () => {
+        throw new Error(marker);
+      },
+    });
+    expect(await rowOf(1)).toEqual({ status: 'queued', attempts: 1, error: 'build failed' });
+    expect(JSON.stringify(vi.mocked(logToAxiom).mock.calls)).toContain(marker);
+  });
+
   it('raises no alert when the attempt that reached the limit no longer owns the row', async () => {
     await insert(1, 10, 'building', MAX_ATTEMPTS + 1);
-    expect(await recordFailure({ id: 1, attempts: MAX_ATTEMPTS }, 'late')).toBe('failed');
+    expect(await recordFailure({ id: 1, attempts: MAX_ATTEMPTS }, 'build failed')).toBe('failed');
     expect(await rowOf(1)).toMatchObject({ status: 'building' });
     expect(alerted()).toEqual([]);
   });
@@ -172,7 +188,7 @@ describe('export queue lifecycle, run', () => {
     const second = await claimNextExport(); // attempt 2 takes it
     expect(second).toMatchObject({ id: 1, attempts: 2, status: 'building' });
     // Attempt 1 finally finishes and records its failure: it must not touch attempt 2's row.
-    expect(await recordFailure({ id: 1, attempts: 1 }, 'late')).toBe('queued');
+    expect(await recordFailure({ id: 1, attempts: 1 }, 'build failed')).toBe('queued');
     expect(await rowOf(1)).toMatchObject({ status: 'building', attempts: 2 });
   });
 
@@ -185,6 +201,6 @@ describe('export queue lifecycle, run', () => {
         throw new Error('unexpected');
       },
     });
-    expect(await rowOf(1)).toMatchObject({ status: 'queued', attempts: 1, error: 'unexpected' });
+    expect(await rowOf(1)).toMatchObject({ status: 'queued', attempts: 1, error: 'build failed' });
   });
 });
