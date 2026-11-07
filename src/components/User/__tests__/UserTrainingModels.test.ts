@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { enrichTrainingData, sumBuzzByAccount } from '~/components/User/UserTrainingModels';
+import {
+  enrichTrainingData,
+  sumBuzzByAccount,
+  trainingStatusLabel,
+} from '~/components/User/UserTrainingModels';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { MyTrainingModelGetAll } from '~/types/router';
 
 describe('sumBuzzByAccount', () => {
@@ -87,5 +92,12 @@ describe('enrichTrainingData cost derivation', () => {
     ]);
     expect(row.refundInfo?.blueBuzz).toBe(3839);
     expect(row.refundInfo?.yellowBuzz).toBeUndefined();
+  });
+});
+
+describe('trainingStatusLabel', () => {
+  it('reads a paused run as pending review only when the live workflow holds it for review', () => {
+    expect(trainingStatusLabel(TrainingStatus.Paused, true)).toBe('Pending review');
+    expect(trainingStatusLabel(TrainingStatus.Paused)).toBe('Paused');
   });
 });

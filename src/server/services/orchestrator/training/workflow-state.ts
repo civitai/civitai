@@ -62,6 +62,11 @@ export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
 export type DerivedTrainingWorkflowState = {
   modelFileId: number;
   trainingStatus: TrainingStatus;
+  /**
+   * The step is held for review. A moderator can also set `Paused` by hand, so this, not the
+   * status, is what says a paused run is waiting on review. Never stored: only the live workflow knows.
+   */
+  underReview: boolean;
   epochs: TrainingResultsV2['epochs'];
   sampleImagesPrompts: string[];
   workflowId: string | null;
@@ -149,7 +154,8 @@ export function deriveTrainingWorkflowState(
     throw new PermanentTrainingWebhookError(`Unsupported step type: ${stepType}`);
   }
 
-  if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
+  const underReview = moderationStatus === 'underReview';
+  if (underReview) trainingStatus = TrainingStatus.Paused;
   else if (moderationStatus === 'rejected') {
     // If the workflow expired, the rejection was due to timeout, not a moderator decision
     if (trainingStatus !== TrainingStatus.Expired) {
@@ -160,6 +166,7 @@ export function deriveTrainingWorkflowState(
   return {
     modelFileId,
     trainingStatus,
+    underReview,
     epochs: epochs.map((e) => ({
       epochNumber: e.epochNumber ?? -1,
       modelUrl: e.blobUrl ?? '',
@@ -233,15 +240,19 @@ type OverlayableVersion = {
 export function applyTrainingWorkflowOverlay<T extends OverlayableVersion>(
   version: T,
   overlay: TrainingWorkflowOverlay
-): T {
+): T & { trainingUnderReview?: boolean } {
   if (overlay.byModelFileId.size === 0) return version;
   if (version.trainingStatus && CIVITAI_OWNED_STATUSES.has(version.trainingStatus)) return version;
 
   let liveStatus: TrainingStatus | undefined;
+  let liveUnderReview = false;
   const files = version.files.map((file) => {
     const derived = overlay.byModelFileId.get(file.id);
     if (!derived) return file;
-    liveStatus ??= derived.trainingStatus;
+    if (liveStatus === undefined) {
+      liveStatus = derived.trainingStatus;
+      liveUnderReview = derived.underReview;
+    }
 
     const metadata = (file.metadata ?? {}) as FileMetadata;
     const stored = (metadata.trainingResults ?? {}) as Partial<TrainingResultsV2>;
@@ -265,7 +276,7 @@ export function applyTrainingWorkflowOverlay<T extends OverlayableVersion>(
   });
 
   if (!liveStatus) return version;
-  return { ...version, trainingStatus: liveStatus, files };
+  return { ...version, trainingStatus: liveStatus, files, trainingUnderReview: liveUnderReview };
 }
 
 /**

@@ -112,11 +112,11 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   costInfo: CostInfo | null;
 };
 
-/** How a training status reads to its owner. */
-const trainingStatusLabel = (status: TrainingStatus) =>
+/** How a training status reads to its owner. Only a live review hold reads as pending review. */
+export const trainingStatusLabel = (status: TrainingStatus, underReview = false) =>
   status === TrainingStatus.InReview
     ? 'Ready'
-    : status === TrainingStatus.Paused
+    : status === TrainingStatus.Paused && underReview
     ? TRAINING_REVIEW_COPY.pendingLabel
     : splitUppercase(status);
 
@@ -479,7 +479,7 @@ export default function UserTrainingModels() {
                 <HoverCard.Target>
                   <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
                     <Group gap={6} wrap="nowrap">
-                      {trainingStatusLabel(mv.trainingStatus)}
+                      {trainingStatusLabel(mv.trainingStatus, mv.trainingUnderReview)}
                       {isRunning && <Loader size={12} />}
                     </Group>
                   </Badge>

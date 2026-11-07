@@ -442,6 +442,8 @@ export default function TrainingSelectFile({
 
   const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;
   const trainingStatus = runState?.trainingStatus ?? modelVersion.trainingStatus;
+  // A moderator can pause a run by hand too; only a live review hold gets the review notice.
+  const heldForReview = trainingStatus === TrainingStatus.Paused && runState?.underReview === true;
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
@@ -812,16 +814,17 @@ export default function TrainingSelectFile({
   // Show alert when NOT paid with yellow buzz (yellow is the only type that guarantees no blur)
   const epochImagesMayBeBlurred = buzzType !== 'yellow';
 
-  const errorMessage =
-    trainingStatus === TrainingStatus.Paused
-      ? TRAINING_REVIEW_COPY.pendingBody
-      : trainingStatus === TrainingStatus.Failed
-      ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
-      : trainingStatus === TrainingStatus.Denied
-      ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
-      : trainingStatus === TrainingStatus.Expired
-      ? 'The training data review was not completed in time. Please submit your training again.'
-      : undefined;
+  const errorMessage = heldForReview
+    ? TRAINING_REVIEW_COPY.pendingBody
+    : trainingStatus === TrainingStatus.Paused
+    ? 'This run is paused.'
+    : trainingStatus === TrainingStatus.Failed
+    ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
+    : trainingStatus === TrainingStatus.Denied
+    ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
+    : trainingStatus === TrainingStatus.Expired
+    ? 'The training data review was not completed in time. Please submit your training again.'
+    : undefined;
   const noEpochs = !epochs || !epochs.length;
   // Allow access to epochs for failed trainings if epochs exist
   const hasFailedWithEpochs = trainingStatus === TrainingStatus.Failed && !noEpochs;
@@ -856,7 +859,7 @@ export default function TrainingSelectFile({
         versionName={modelVersion.name}
         trainingDetails={thisTrainingDetails}
       />
-      {trainingStatus === TrainingStatus.Paused ? (
+      {heldForReview ? (
         <TrainingReviewNotice
           heldSince={trainingHeldSince(tResultsV2?.startedAt, trainingResults?.submittedAt)}
           runId={tResultsV2?.workflowId ?? String(modelVersion.id)}
