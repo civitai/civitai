@@ -415,6 +415,40 @@ describe('csam-realistic votes', () => {
     expect(block).not.toHaveBeenCalled();
   });
 
+  it('a block sweep that claimed the item before the hold vote does not block it', async () => {
+    const it1 = await seedItem(IMAGE);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    // The hold vote commits after the claim: this dep runs between the claim and the block.
+    const voidingCheck = vi.fn(async () => {
+      await pg.query(
+        `UPDATE "ScanLabelItem" SET status = 'void', "voidReason" = 'csam-hold', "actionResult" = 'csam-held' WHERE id = $1`,
+        [it1]
+      );
+      return false;
+    });
+    const block = noop();
+    await applyMajorityBlocks({}, { block, isModerationBlocked: voidingCheck });
+    expect(voidingCheck).toHaveBeenCalledOnce();
+    expect(block).not.toHaveBeenCalled();
+    expect(await item(it1)).toMatchObject({ actionResult: 'csam-held', actionedAt: null });
+  });
+
+  it('a block that finishes after the hold vote leaves the hold’s outcome in place', async () => {
+    const it1 = await seedItem(IMAGE);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    const voidingBlock = vi.fn(async () => {
+      await pg.query(
+        `UPDATE "ScanLabelItem" SET status = 'void', "voidReason" = 'csam-hold', "actionResult" = 'csam-held' WHERE id = $1`,
+        [it1]
+      );
+    });
+    await applyMajorityBlocks({}, deps(voidingBlock));
+    expect(voidingBlock).toHaveBeenCalledOnce();
+    expect(await item(it1)).toMatchObject({ actionResult: 'csam-held' });
+  });
+
   it('counts a hold not yet applied on the metrics page until it lands', async () => {
     const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, CSAM);

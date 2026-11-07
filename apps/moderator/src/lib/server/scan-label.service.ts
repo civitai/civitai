@@ -618,11 +618,14 @@ export async function applyMajorityBlocks(
           .offset(BLOCK_MAJORITY - 1)
           .limit(1)
           .executeTakeFirstOrThrow();
-        await dbWrite
+        // A hold vote may have voided the item since the claim: then it is the hold's, never blocked.
+        const marked = await dbWrite
           .updateTable('ScanLabelItem')
           .set({ actionResult: 'blocked' })
           .where('id', '=', item.id)
-          .execute();
+          .where('status', '!=', 'void')
+          .executeTakeFirst();
+        if (!marked.numUpdatedRows) continue;
         await block({
           imageId: item.imageId,
           userId: actor.userId,
@@ -640,6 +643,8 @@ export async function applyMajorityBlocks(
           actionError: null,
         })
         .where('id', '=', item.id)
+        // Leaves a hold's 'csam-held' in place if one landed while the block ran.
+        .where('status', '!=', 'void')
         .execute();
       if (outcome === 'blocked') result.blocked.push(item.id);
       else result.skipped.push({ itemId: item.id, result: outcome });

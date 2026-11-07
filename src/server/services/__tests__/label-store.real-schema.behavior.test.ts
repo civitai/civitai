@@ -113,4 +113,42 @@ describe('a csam-realistic vote', () => {
     ).toEqual([{ excludedReason: 'safety', snapshot: null, pHash: null }]);
     expect(await rows(`SELECT * FROM label_store.record_failure`)).toEqual([]);
   });
+  it('is excluded even when recording the vote fails, if its scan flag made the image a subject', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Image" ("id", "userId", "url", "pHash", "meta")
+        VALUES (701, 13, 'u-701', 79, '{"prompt": "p"}');
+      INSERT INTO "ScanLabelItem" ("id", "imageId", "firstFlaggedAt") VALUES (9, 701, now());
+      INSERT INTO "ScanLabelFlag" ("itemId", "source", "flaggerVersion", "workflowId", "flaggedAt")
+        VALUES (9, 'orchestrator-scan', 'scanner@1', 'wf-701', now());
+    `);
+    const subject = `SELECT "excludedReason", "snapshot" IS NULL AS "noSnapshot" FROM label_store.subject
+       WHERE "subjectType" = 'image' AND "subjectId" = '701'`;
+    expect(await rows(subject)).toEqual([{ excludedReason: null, noSnapshot: false }]);
+    // A stub that throws, with record_label's own parameter names, rolled back after.
+    await db.pg.exec('BEGIN');
+    let during: unknown;
+    let failures: unknown[];
+    try {
+      await db.pg.exec(`
+        CREATE OR REPLACE FUNCTION label_store.record_label(
+          p_subject_type TEXT, p_subject_id TEXT, p_content_hash TEXT, p_family TEXT, p_question TEXT,
+          p_value TEXT, p_labeller_kind TEXT, p_source_ref TEXT, p_labelled_at TIMESTAMPTZ,
+          p_labeller_user_id INTEGER DEFAULT NULL, p_labeller_ref TEXT DEFAULT NULL,
+          p_question_version INTEGER DEFAULT 1, p_reason TEXT DEFAULT NULL,
+          p_reason_note TEXT DEFAULT NULL, p_ms_on_item INTEGER DEFAULT NULL,
+          p_snapshot JSONB DEFAULT NULL, p_phash BIGINT DEFAULT NULL, p_owner_user_id INTEGER DEFAULT NULL
+        ) RETURNS BIGINT LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'record_label down'; END; $$;
+        INSERT INTO "ScanLabelVote" ("itemId", "userId", "block", "reason", "msOnItem")
+          VALUES (9, 32, true, 'csam-realistic', 500);
+      `);
+      [during] = await rows(subject);
+      failures = await rows(
+        `SELECT 1 FROM label_store.record_failure WHERE "error" LIKE '%record_label down%'`
+      );
+    } finally {
+      await db.pg.exec('ROLLBACK');
+    }
+    expect(during).toEqual({ excludedReason: 'safety', noSnapshot: true });
+    expect(failures).toHaveLength(1);
+  });
 });

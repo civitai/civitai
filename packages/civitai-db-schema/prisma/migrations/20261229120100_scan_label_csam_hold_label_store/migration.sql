@@ -2,7 +2,7 @@
 --
 -- Apply after 20261103120000_label_store and before 20261229120000_scan_label_csam_hold's build ships,
 -- so no such vote is ever recorded unexcluded. The body is the one in 20261103120000_label_store except
--- for the exclusion condition.
+-- for the exclusion condition and the exclusion retried in the error handler.
 
 CREATE OR REPLACE FUNCTION label_store.from_scan_label_vote(v public."ScanLabelVote")
 RETURNS BIGINT
@@ -51,6 +51,15 @@ BEGIN
   RETURN v_id;
 EXCEPTION WHEN OTHERS THEN
   PERFORM label_store.note_failure(v_src, SQLSTATE || ': ' || SQLERRM);
+  -- The image may already be a subject (from its scan flag): exclude it even when recording failed.
+  IF v."reason" = 'csam-realistic' THEN
+    BEGIN
+      PERFORM label_store.exclude('image', i."imageId"::text, 'safety')
+      FROM public."ScanLabelItem" i WHERE i."id" = v."itemId";
+    EXCEPTION WHEN OTHERS THEN
+      PERFORM label_store.note_failure(v_src, 'csam exclusion: ' || SQLSTATE || ': ' || SQLERRM);
+    END;
+  END IF;
   RETURN NULL;
 END;
 $$;

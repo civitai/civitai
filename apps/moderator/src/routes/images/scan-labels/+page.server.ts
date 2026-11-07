@@ -123,10 +123,11 @@ export const actions: Actions = {
       console.error('scan label csam hold sweep failed', e);
       return null;
     });
+    // Failed, not "not held here": a concurrent vote's sweep may be the one that held it.
     const holdFailed =
       input.choice.block &&
       input.choice.reason === CSAM_HOLD_REASON &&
-      !holds?.held.includes(itemId);
+      (!holds || holds.failed.some((f) => f.itemId === itemId));
     // Retry pending majority blocks so a failed one is not stranded. Must not fail the vote, which
     // has already landed.
     await applyMajorityBlocks(

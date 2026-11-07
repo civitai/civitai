@@ -147,6 +147,9 @@ describe('vote action', () => {
     expect(await csamVote()).toMatchObject({ error: expect.stringContaining('failed') });
     applyCsamHolds.mockResolvedValue({ held: [5], failed: [] });
     expect(await csamVote()).toEqual({ voted: true, owner: OWNER });
+    // Held by a concurrent vote's sweep: not in this sweep's results, and not a failure.
+    applyCsamHolds.mockResolvedValue({ held: [], failed: [] });
+    expect(await csamVote()).toEqual({ voted: true, owner: OWNER });
     // Another item's failed hold is not this voter's to hear about.
     applyCsamHolds.mockResolvedValue({ held: [], failed: [{ itemId: 9, error: 'down' }] });
     expect(await actions.vote(event({ token: TOKEN, block: '1', reason: 'bestiality' }))).toEqual({
