@@ -5,6 +5,7 @@ import { issueStrike, removeImages, setImageFlag } from './user-actions.service'
 import type { MediaType } from '$lib/media/edge-url';
 import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
+import { withHeldProfilePictures } from './profile-picture-hold';
 
 // Retool's Bulk Image Manager: find a batch of images by one of five sources, then act on the batch.
 //
@@ -125,7 +126,7 @@ async function batchFrom(
     base.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
   ]);
 
-  const items = rows.slice(0, limit);
+  const items = await withHeldProfilePictures(rows.slice(0, limit));
   const appeals = await getLatestApprovedImageAppeals(
     dbRead,
     items.map((r) => r.id)

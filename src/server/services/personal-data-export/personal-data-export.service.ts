@@ -29,6 +29,7 @@ import { csvLine, type Manifest, type ManifestFile } from './output';
 import { exportClickhouse, type ClickhouseReader } from './sources/clickhouse';
 import { exportWorkflows, type WorkflowCollection } from './sources/mongo';
 import { IMAGE_SAFETY_CONDITION, exportPostgres, type PgNote } from './sources/postgres';
+import { exportRemovedProfilePictures } from './sources/profile-pictures';
 import { exportStripe, type StripeReader } from './sources/stripe';
 
 export const EXPORT_STATUSES = [
@@ -323,6 +324,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
       });
       files.push(...pg.files);
       noteCount = pg.noteCount;
+      files.push(await exportRemovedProfilePictures({ userId: user.id, writer, onError }));
 
       const ch = await exportClickhouse({ userId: user.id, writer, ch: deps.clickhouse, onError });
       files.push(...ch.files);

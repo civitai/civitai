@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from './db';
 import { getModeratorDb } from './moderator-db';
 import { voteOnImageTags } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
+import { withHeldProfilePictures } from './profile-picture-hold';
 
 // Retool's Front Page Audit: a PROACTIVE sweep of newly scanned content at one rating, not a request
 // queue. `/images/ratings` is the reactive twin — images whose rating a user disputed. Same action,
@@ -103,25 +104,29 @@ export async function getSweep(input: {
     // "What is actually on the front page": published posts, ranked by weekly reactions. Expressed as
     // subqueries because `ImageRank` is a production VIEW that schema.full.prisma does not model, so
     // the builder cannot join it — and a join would row-multiply anyway.
-    return (await q
-      .where(
-        sql<boolean>`EXISTS (
+    return withHeldProfilePictures(
+      (await q
+        .where(
+          sql<boolean>`EXISTS (
           SELECT 1 FROM "Post" p
           WHERE p.id = i."postId" AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
         )`
-      )
-      .orderBy(
-        sql`(SELECT ir."reactionCountWeekRank" FROM "ImageRank" ir WHERE ir."imageId" = i.id) ASC NULLS LAST`
-      )
-      .execute()) as SweepImage[];
+        )
+        .orderBy(
+          sql`(SELECT ir."reactionCountWeekRank" FROM "ImageRank" ir WHERE ir."imageId" = i.id) ASC NULLS LAST`
+        )
+        .execute()) as SweepImage[]
+    );
   }
 
   // Oldest-first within the unswept window: the sweep is a queue to drain, so a moderator resumes
   // where the last one stopped rather than re-reading the newest arrivals.
-  return (await q
-    .where('i.createdAt', '>', input.since)
-    .orderBy('i.createdAt', 'asc')
-    .execute()) as SweepImage[];
+  return withHeldProfilePictures(
+    (await q
+      .where('i.createdAt', '>', input.since)
+      .orderBy('i.createdAt', 'asc')
+      .execute()) as SweepImage[]
+  );
 }
 
 /**

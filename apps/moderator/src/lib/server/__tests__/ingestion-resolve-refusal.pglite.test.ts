@@ -38,6 +38,7 @@ CREATE TABLE "User" (
   "bannedAt" TIMESTAMP(3),
   "deletedAt" TIMESTAMP(3)
 );
+CREATE TABLE "ProfilePictureHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL UNIQUE, "reason" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now());
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,

@@ -4,19 +4,22 @@ import { bustCachedObject } from './cache';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbWrite } from './db';
+import { heldProfilePictureUserIds } from './profile-picture-hold';
 
-/** The users whose profile picture is one of `imageIds`. Read before a delete: the relation is set null. */
+/**
+ * The users whose profile picture is one of `imageIds`, or was until the sync job removed it. Read
+ * before a delete: the relation is set null.
+ */
 export async function profilePictureUserIds(
   imageIds: number[],
   db: Kysely<DB> = dbWrite
 ): Promise<number[]> {
   if (!imageIds.length) return [];
-  const rows = await db
-    .selectFrom('User')
-    .select('id')
-    .where('profilePictureId', 'in', imageIds)
-    .execute();
-  return rows.map((x) => x.id);
+  const [rows, held] = await Promise.all([
+    db.selectFrom('User').select('id').where('profilePictureId', 'in', imageIds).execute(),
+    heldProfilePictureUserIds(imageIds, db),
+  ]);
+  return [...new Set([...rows.map((x) => x.id), ...held])];
 }
 
 // The main app caches each user's profile picture for a day, and avatars are shown or hidden on its

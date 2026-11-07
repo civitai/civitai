@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import type { MediaType } from '$lib/media/edge-url';
+import { withHeldProfilePictures } from './profile-picture-hold';
 
 // The suspect's own content, for reviewing a report against an account without leaving the queue
 // (Retool's TOSImages + GetImageCount).
@@ -160,7 +161,7 @@ export async function getSuspectImages(
   ]);
 
   return {
-    items: rows as unknown as SuspectImage[],
+    items: await withHeldProfilePictures(rows as unknown as SuspectImage[]),
     page,
     perPage: limit,
     total: Number(counts?.total ?? 0),

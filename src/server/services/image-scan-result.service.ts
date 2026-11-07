@@ -36,6 +36,7 @@ export async function isExemptFromAiVerification(
   const [result] = await dbWrite.$queryRaw<{ exempt: boolean }[]>`
     SELECT (
       EXISTS(SELECT 1 FROM "User" WHERE "profilePictureId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "ProfilePictureHold" WHERE "imageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId} OR "bannerId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR

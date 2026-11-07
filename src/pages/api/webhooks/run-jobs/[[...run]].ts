@@ -93,6 +93,7 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
+import { profilePictureSync } from '~/server/jobs/profile-picture-sync';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -210,6 +211,7 @@ export const jobs: Job[] = [
   ingestImages,
   removeBlockedImages,
   cdnAccessSync,
+  profilePictureSync,
   cdnAccessReconcile,
   removeReplacedImages,
   retryImageStorageDeletes,

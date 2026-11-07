@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { isUnservableOwnImageUrl } from '~/server/services/profile-picture-hold.service';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -644,7 +645,7 @@ export const updateUserHandler = async ({
     throw throwBadRequestError('Invalid username');
 
   if (data.image) {
-    const valid = verifyAvatar(data.image);
+    const valid = verifyAvatar(data.image) && !(await isUnservableOwnImageUrl(id, data.image));
     if (!valid) throw throwBadRequestError('Invalid avatar URL');
   }
 
@@ -652,7 +653,9 @@ export const updateUserHandler = async ({
   // upload bundle) instead of persisting them. We don't throw here so the rest of
   // the profile still saves — the avatar simply isn't updated with the bad value.
   const profilePicture =
-    inputProfilePicture?.url && !verifyAvatar(inputProfilePicture.url)
+    inputProfilePicture?.url &&
+    (!verifyAvatar(inputProfilePicture.url) ||
+      (await isUnservableOwnImageUrl(id, inputProfilePicture.url)))
       ? undefined
       : inputProfilePicture;
 

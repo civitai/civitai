@@ -11,7 +11,11 @@ vi.mock('../db', () => ({
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
     return dbHandle.current;
   },
-  dbWrite: {},
+  // A removed avatar's record is read on the write connection.
+  get dbWrite() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
 }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({}) }));
 vi.mock('../buzz', () => ({ getBuzz: vi.fn() }));
@@ -36,6 +40,8 @@ beforeEach(async () => {
       "postId" INTEGER, "index" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1,
       "minor" BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false);
     CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "username" TEXT, "profilePictureId" INTEGER);
+    CREATE TABLE "ProfilePictureHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL,
+      "imageId" INTEGER NOT NULL UNIQUE, "reason" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now());
     CREATE TABLE "UserProfile" ("userId" INTEGER PRIMARY KEY, "bio" TEXT, "message" TEXT, "sfwBio" TEXT,
       "sfwMessage" TEXT, "location" TEXT, "coverImageId" INTEGER, "sfwCoverImageId" INTEGER);
     CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "title" TEXT, "publishedAt" TIMESTAMP,

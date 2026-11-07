@@ -72,6 +72,7 @@ const { bustPostGalleryCaches } = await import('../image-moderation-effects');
 
 const SCHEMA = `
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "ProfilePictureHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL UNIQUE, "reason" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now());
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,

@@ -186,6 +186,36 @@ describe('profile picture updates are scoped to the caller', () => {
     });
   });
 
+  describe("the url of one of the caller's own Blocked or csam-flagged images", () => {
+    afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+    // Answers the unservable-url probe true, and every other read as `imageUrlOwnersFake` would.
+    const ownersFake = imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }]);
+    beforeEach(() => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(((
+        strings: TemplateStringsArray,
+        ...v: unknown[]
+      ) =>
+        strings.join('?').includes("ingestion = 'Blocked'")
+          ? Promise.resolve([{ found: true }])
+          : (ownersFake as (...a: unknown[]) => unknown)(strings, ...v)) as never);
+    });
+
+    it('is refused as `image`, with the generic message', async () => {
+      await expect(
+        updateUserHandler({
+          ctx: { user: { id: CALLER_ID } },
+          input: { id: CALLER_ID, image: AVATAR_KEY },
+        } as never)
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Invalid avatar URL' });
+      expect(mockUpdateUserById).not.toHaveBeenCalled();
+    });
+
+    it('is dropped as a new profile picture', async () => {
+      await saveProfilePicture();
+      expect(mockUpdateUserById.mock.calls[0][0].data.profilePicture).toBeUndefined();
+    });
+  });
+
   describe('a new `image` (legacy avatar) whose url is owned', () => {
     afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
     const saveImage = () =>

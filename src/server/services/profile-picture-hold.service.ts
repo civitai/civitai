@@ -1,0 +1,212 @@
+import { Prisma } from '@prisma/client';
+import { profilePictures as eventEngineProfilePictures } from '../../../event-engine-common/caches';
+import type { CacheContext } from '../../../event-engine-common/caches/base';
+import type { IRedisClient } from '../../../event-engine-common/types/package-stubs';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { redis } from '~/server/redis/client';
+import { bountiesSearchIndex } from '~/server/search-index/bounties.search-index';
+import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
+import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
+import { usersSearchIndex } from '~/server/search-index/users.search-index';
+import { keysIn } from '~/server/services/image-url-ownership';
+import { refreshProfilePicturesForUsers } from '~/server/services/user.service';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+
+// 🔴 Every read of "ProfilePictureHold" goes through dbWrite: no read-replica role is granted the
+// table, so a read-replica query naming it fails with a permission error.
+
+export const PROFILE_PICTURE_SYNC_OVERDUE_MINUTES = 15;
+export const PROFILE_PICTURE_SYNC_HEARTBEAT = 'profile-picture-sync-heartbeat';
+export const PROFILE_PICTURE_SYNC_OVERDUE = 'profile-picture-sync-overdue';
+const PROFILE_PICTURE_SYNC_FAILED = 'profile-picture-sync-failed';
+
+type Tx = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
+
+export type ProfilePictureSyncOutcome =
+  | { action: 'held' | 'restored'; userId: number }
+  | { action: 'none' | 'unclaimed' };
+
+/**
+ * Brings one image's avatar pointer in line with the image's state NOW, not with the event that queued
+ * it. Lock order is Image, then JobQueue, then User: a block or unblock still in flight either commits
+ * before the FOR SHARE (and is what we read), or its trigger queues a fresh row after this commits.
+ */
+export async function syncProfilePictureForImage(
+  tx: Tx,
+  imageId: number
+): Promise<ProfilePictureSyncOutcome> {
+  const [image] = await tx.$queryRaw<
+    { url: string; ingestion: string; needsReview: string | null; blockedFor: string | null }[]
+  >`
+    SELECT url, ingestion::text AS ingestion, "needsReview", "blockedFor"
+    FROM "Image" WHERE id = ${imageId}
+    FOR SHARE
+  `;
+  const claimed = await tx.$executeRaw`
+    DELETE FROM "JobQueue"
+    WHERE type = ${JobQueueType.ProfilePictureSync}::"JobQueueType"
+      AND "entityType" = ${EntityType.Image}::"EntityType"
+      AND "entityId" = ${imageId}
+  `;
+  if (!claimed) return { action: 'unclaimed' };
+  if (!image) return { action: 'none' };
+
+  const flagged = image.needsReview === 'csam';
+  if (image.ingestion === 'Blocked' || flagged) {
+    // No deletedAt test: a deleted account's blocked avatar is recorded too.
+    const [user] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "User" WHERE "profilePictureId" = ${imageId} FOR UPDATE
+    `;
+    if (!user) return { action: 'none' };
+    const reason = flagged ? 'flagged' : 'blocked';
+    // DO NOTHING, not an upsert: the write role has no UPDATE on the table.
+    await tx.$executeRaw`
+      INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason)
+      VALUES (${user.id}, ${imageId}, ${reason})
+      ON CONFLICT ("imageId") DO NOTHING
+    `;
+    // The legacy `image` url is the avatar fallback once the pointer is NULL. Exact match only.
+    await tx.$executeRaw`
+      UPDATE "User" u SET
+        "profilePictureId" = NULL,
+        image = CASE
+          WHEN u.image = ${image.url} OR EXISTS (
+            SELECT 1 FROM "Image" bi
+            WHERE bi."userId" = u.id AND bi.url = u.image
+              AND (bi.ingestion = 'Blocked' OR bi."needsReview" = 'csam')
+          ) THEN NULL
+          ELSE u.image
+        END
+      WHERE u.id = ${user.id}
+    `;
+    return { action: 'held', userId: user.id };
+  }
+
+  const clear = image.needsReview === null && image.blockedFor !== 'CSAM';
+  if (!clear) return { action: 'none' };
+
+  const [hold] = await tx.$queryRaw<{ id: number; userId: number; newest: boolean }[]>`
+    SELECT h.id, h."userId", h.id = (
+      SELECT n.id FROM "ProfilePictureHold" n
+      WHERE n."userId" = h."userId"
+      ORDER BY n."createdAt" DESC, n.id DESC
+      LIMIT 1
+    ) AS newest
+    FROM "ProfilePictureHold" h WHERE h."imageId" = ${imageId}
+  `;
+  if (!hold?.newest) return { action: 'none' };
+  const restored = await tx.$executeRaw`
+    UPDATE "User" SET "profilePictureId" = ${imageId}
+    WHERE id = ${hold.userId} AND "profilePictureId" IS NULL AND "deletedAt" IS NULL
+  `;
+  if (!restored) return { action: 'none' };
+  await tx.$executeRaw`DELETE FROM "ProfilePictureHold" WHERE id = ${hold.id}`;
+  return { action: 'restored', userId: hold.userId };
+}
+
+/** Busts the event-engine copy of these users' avatars, read from the same redis the main app uses. */
+async function bustEventEngineProfilePictures(userIds: number[]) {
+  const ctx = { redis: redis as unknown as IRedisClient } as CacheContext;
+  await eventEngineProfilePictures.bust(ctx, userIds);
+}
+
+/** Every search doc that embeds the owner's avatar. The image indexes are retired. */
+async function queueOwnerSearchUpdates(userIds: number[]) {
+  const update = SearchIndexUpdateQueueAction.Update;
+  const [bounties, collections, comics] = await Promise.all([
+    dbWrite.bounty.findMany({ where: { userId: { in: userIds } }, select: { id: true } }),
+    dbWrite.collection.findMany({ where: { userId: { in: userIds } }, select: { id: true } }),
+    dbWrite.comicProject.findMany({ where: { userId: { in: userIds } }, select: { id: true } }),
+  ]);
+  await Promise.all([
+    usersSearchIndex.queueUpdate(userIds.map((id) => ({ id, action: update }))),
+    bountiesSearchIndex.queueUpdate(bounties.map(({ id }) => ({ id, action: update }))),
+    collectionsSearchIndex.queueUpdate(collections.map(({ id }) => ({ id, action: update }))),
+    comicsSearchIndex.queueUpdate(comics.map(({ id }) => ({ id, action: update }))),
+  ]);
+}
+
+/** After the pointer changed: caches and search docs. Never throws; the change has committed. */
+export async function afterProfilePictureSync(userIds: number[]) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  await refreshProfilePicturesForUsers(ids);
+  await Promise.all([bustEventEngineProfilePictures(ids), queueOwnerSearchUpdates(ids)]).catch(
+    (error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'profile-picture-sync-after',
+        message: (error as Error)?.message,
+        userIds: ids.join(','),
+      }).catch(() => undefined)
+  );
+}
+
+export async function runProfilePictureSync({ limit = 1000 }: { limit?: number } = {}) {
+  const queued = await dbWrite.$queryRaw<{ entityId: number; createdAt: Date }[]>`
+    SELECT "entityId", "createdAt" FROM "JobQueue"
+    WHERE type = ${JobQueueType.ProfilePictureSync}::"JobQueueType"
+      AND "entityType" = ${EntityType.Image}::"EntityType"
+    ORDER BY "createdAt"
+    LIMIT ${limit}
+  `;
+  const oldestAgeMinutes = queued.length
+    ? Math.floor((Date.now() - queued[0].createdAt.getTime()) / 60_000)
+    : 0;
+
+  const changed: number[] = [];
+  let processed = 0;
+  let failed = 0;
+  for (const { entityId } of queued) {
+    try {
+      const outcome = await dbWrite.$transaction((tx) => syncProfilePictureForImage(tx, entityId));
+      if (outcome.action !== 'unclaimed') processed++;
+      if (outcome.action === 'held' || outcome.action === 'restored') changed.push(outcome.userId);
+    } catch (error) {
+      // The queue row stays, so the next run retries it.
+      failed++;
+      await logToAxiom({
+        type: 'error',
+        name: PROFILE_PICTURE_SYNC_FAILED,
+        imageId: entityId,
+        message: (error as Error)?.message,
+      }).catch(() => undefined);
+    }
+  }
+  await afterProfilePictureSync(changed);
+
+  const summary = { oldestAgeMinutes, processed, failed, changed: changed.length };
+  await logToAxiom({ type: 'info', name: PROFILE_PICTURE_SYNC_HEARTBEAT, ...summary }).catch(
+    () => undefined
+  );
+  if (oldestAgeMinutes > PROFILE_PICTURE_SYNC_OVERDUE_MINUTES) {
+    await logToAxiom({ type: 'error', name: PROFILE_PICTURE_SYNC_OVERDUE, ...summary }).catch(
+      () => undefined
+    );
+  }
+  return summary;
+}
+
+/** The users with a record for any of `imageIds`. Its image is no longer their profilePictureId. */
+export async function getHeldProfilePictureUserIds(imageIds: number[]): Promise<number[]> {
+  if (!imageIds.length) return [];
+  const rows = await dbWrite.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT "userId" FROM "ProfilePictureHold" WHERE "imageId" IN (${Prisma.join(imageIds)})
+  `;
+  return rows.map((r) => r.userId);
+}
+
+/** Whether `url` is, or carries the key of, one of this user's Blocked or csam-flagged images. */
+export async function isUnservableOwnImageUrl(userId: number, url: string): Promise<boolean> {
+  const urls = [...new Set([url, ...keysIn(url)])];
+  const rows = await dbWrite.$queryRaw<{ found: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "Image"
+      WHERE "userId" = ${userId} AND url = ANY(${urls}::text[])
+        AND (ingestion = 'Blocked' OR "needsReview" = 'csam')
+    ) AS found
+  `;
+  return rows?.[0]?.found === true;
+}

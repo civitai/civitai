@@ -1789,6 +1789,8 @@ export const unusedAuthorImage = (ownerId: number) =>
     article: { is: null },
     articleBanner: { is: null },
     assignedUser: { is: null },
+    // A removed avatar: deleting the image would cascade its record away.
+    profilePictureHold: { is: null },
     connections: { none: {} },
     collectionItems: { none: {} },
     collections: { none: {} },

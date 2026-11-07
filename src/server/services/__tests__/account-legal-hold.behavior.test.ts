@@ -21,7 +21,7 @@ import {
   isLegalHoldAbort,
   LegalHoldError,
 } from '~/server/services/legal-hold.service';
-import { deleteUser } from '~/server/services/user.service';
+import { deleteProfilePictureHoldsSql, deleteUser } from '~/server/services/user.service';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
@@ -91,6 +91,10 @@ beforeAll(async () => {
       "subscriptionId" text
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "ProfilePictureHold" (
+      id serial PRIMARY KEY, "userId" int NOT NULL, "imageId" int NOT NULL UNIQUE,
+      reason text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
     INSERT INTO "Model" VALUES (${CLEAN_MODEL}, ${CLEAN});
   `);
   await holder.db.exec(
@@ -436,6 +440,42 @@ describe('deleteUser under a legal hold', () => {
     await deleteUser({ id: CLEAN, username: 'someone', removeModels: true });
 
     expect(await rows()).toBe(before);
+  });
+
+  describe('ProfilePictureHold records', () => {
+    const holdsOf = async (userId: number) =>
+      (
+        await holder.db.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM "ProfilePictureHold" WHERE "userId" = $1`,
+          [userId]
+        )
+      ).rows[0].n;
+    beforeEach(async () => {
+      await holder.db.exec(`
+        TRUNCATE "ProfilePictureHold";
+        INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason) VALUES
+          (${CLEAN}, ${CLEAN * 100}, 'blocked'),
+          (${PENDING_REPORT}, ${PENDING_REPORT * 100}, 'blocked');
+      `);
+    });
+
+    it("deleteUser deletes the account's ProfilePictureHold records, and no one else's", async () => {
+      await run(CLEAN);
+      expect(await holdsOf(CLEAN)).toBe(0);
+      expect(await holdsOf(PENDING_REPORT)).toBe(1);
+    });
+
+    it("keeps a held account's records: deleteUser refuses, and the delete's own guard holds", async () => {
+      await expect(run(PENDING_REPORT)).rejects.toBeInstanceOf(LegalHoldError);
+      expect(await holdsOf(PENDING_REPORT)).toBe(1);
+      const sql = deleteProfilePictureHoldsSql(PENDING_REPORT, false);
+      await holder.db.query(sql.text, sql.values);
+      expect(await holdsOf(PENDING_REPORT)).toBe(1);
+      // The same statement does delete for an account no hold covers.
+      const control = deleteProfilePictureHoldsSql(CLEAN, false);
+      await holder.db.query(control.text, control.values);
+      expect(await holdsOf(CLEAN)).toBe(0);
+    });
   });
 
   it('deletes an account no hold covers, end to end', async () => {

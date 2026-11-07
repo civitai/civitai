@@ -1142,6 +1142,15 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
+export function deleteProfilePictureHoldsSql(userId: number, markerView: boolean) {
+  const id = Prisma.sql`${userId}::int`;
+  return Prisma.sql`
+    DELETE FROM "ProfilePictureHold"
+    WHERE "userId" = ${id}
+      AND NOT ${accountHoldSql(id, markerView)}
+  `;
+}
+
 export const deleteUser = async ({
   id,
   username,
@@ -1178,6 +1187,9 @@ export const deleteUser = async ({
       // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
+      // The account's ProfilePictureHold records go with it, unless it is held: then the scrub above
+      // fails the transaction, and this statement's guard is the scrub's own test.
+      dbWrite.$executeRaw(deleteProfilePictureHoldsSql(user.id, markerView)),
       ...(removeModels
         ? []
         : [
@@ -2302,13 +2314,17 @@ export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
 }
 
-/** The users whose profile picture is one of `imageIds`, from the primary. */
+/**
+ * The users whose profile picture is one of `imageIds`, or was until the sync job moved it to a
+ * ProfilePictureHold record. From the primary: the record table is not readable from the replica.
+ */
 export async function getProfilePictureUserIds(imageIds: number[]) {
   if (!imageIds.length) return [];
-  const users = await dbWrite.user.findMany({
-    where: { profilePictureId: { in: imageIds } },
-    select: { id: true },
-  });
+  const users = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "User" WHERE "profilePictureId" IN (${Prisma.join(imageIds)})
+    UNION
+    SELECT "userId" FROM "ProfilePictureHold" WHERE "imageId" IN (${Prisma.join(imageIds)})
+  `;
   return users.map((x) => x.id);
 }
 

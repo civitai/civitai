@@ -5,6 +5,8 @@ import { NotificationsClientError } from '@civitai/notifications';
 import { notifications } from '~/server/notifications/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
+import type { NotificationProcessor } from '~/server/notifications/base.notifications';
+import { primaryPrepareQueries } from '~/server/notifications/primary-notification-queries';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -37,7 +39,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     // Run batches
     for (const batch of notificationBatches) {
       e.checkIfCanceled();
-      const promises = batch.map(({ prepareQuery, key, category }) => async () => {
+      const promises = batch.map(({ prepareQuery: processorQuery, key, category }) => async () => {
         try {
           e.checkIfCanceled();
           log('sending', key, 'notifications');
@@ -46,6 +48,9 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             lastRun
           );
 
+          // A processor whose selection reads the primary keeps its query out of the browser bundle.
+          const prepareQuery: NotificationProcessor['prepareQuery'] =
+            primaryPrepareQueries[key] ?? processorQuery;
           let query = prepareQuery?.({
             lastSent: lastSent.toISOString(),
             lastSentDate: lastSent,

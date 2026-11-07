@@ -4,6 +4,7 @@ import { OWNED_REPORT_ENTITIES, chatReportSubject, reportLinkFilter } from './re
 import { strikeCountsByUserIds } from './moderation-memory.service';
 import { legacyStrikeId, legacyStrikeIssuerName } from '$lib/legacy-strike-import';
 import { getModeratorContact, type ModeratorContact } from './user-signals.service';
+import { latestHeldProfilePictures } from './profile-picture-hold';
 
 // The PAGE LOAD half of User Lookup — identity, profile, score, counts, stats, reports, subscription.
 // One file per endpoint is the rule for this page's services; the sibling files are
@@ -524,7 +525,17 @@ export async function getIdentity(userId: number): Promise<UserIdentity | null> 
     ])
     .where('u.id', '=', userId)
     .executeTakeFirst();
-  return (row as UserIdentity | undefined) ?? null;
+  const identity = (row as UserIdentity | undefined) ?? null;
+  if (!identity || identity.profilePictureUrl !== null) return identity;
+  // Off the user since the sync job removed it; a moderator still checks the last one they had.
+  const held = (await latestHeldProfilePictures([userId])).get(userId);
+  if (!held) return identity;
+  return {
+    ...identity,
+    profilePictureUrl: held.url,
+    profilePictureType: held.type,
+    profilePictureNsfwLevel: held.nsfwLevel,
+  };
 }
 
 // Retool's UserBio, including both cover images. Checking a cover or an avatar for ToS content was an
@@ -615,9 +626,13 @@ export async function getProfilePictures(userIds: number[]): Promise<Map<number,
     ])
     .where('u.id', 'in', userIds)
     .execute();
-  return new Map(
+  const pictures = new Map(
     rows.map(({ userId, ...media }) => [userId, media] satisfies [number, ProfileMedia])
   );
+  const missing = userIds.filter((id) => !pictures.has(id));
+  for (const [userId, media] of await latestHeldProfilePictures(missing))
+    pictures.set(userId, media);
+  return pictures;
 }
 
 async function getScores(userId: number): Promise<UserScores | null> {
