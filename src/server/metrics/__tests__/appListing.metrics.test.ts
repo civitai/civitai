@@ -847,10 +847,10 @@ describe('spec ⇄ SQL lockstep', () => {
     expect(insertColumns).toEqual(sqlCounters);
   });
 
-  it('and that set is install_count + open_count', () => {
+  it('and that set is install_count + open_count + visit_count', () => {
     // The literal, so the derived comparison above cannot drift silently in both
     // directions at once (two wrongs agreeing is still a pass for the pair test).
-    expect(sqlCounters).toEqual(['install_count', 'open_count']);
+    expect(sqlCounters).toEqual(['install_count', 'open_count', 'visit_count']);
   });
 });
 
