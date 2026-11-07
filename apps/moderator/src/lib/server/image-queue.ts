@@ -47,8 +47,9 @@ const querySchema = z.object({
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
-const FLAG_ONLY_REASON = 'removed with only the review flag left';
-const FLAG_ONLY_REMEDY = 'Dismiss the flag from its review queue, or restore the image. Reload.';
+const FLAG_ONLY_REASON = 'removed, and a review queue cannot put it back';
+const FLAG_ONLY_REMEDY =
+  'Dismiss a flagged image from its review queue, or restore the image explicitly. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
  *  guarantees the value is one of the enum's. Returns the refusal message on a bad value, like the
@@ -249,7 +250,7 @@ export const imageQueueActions = {
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
 
-    const { held } = await blockImage({
+    const { held, skipped } = await blockImage({
       imageId,
       userId: locals.user.id,
       ...violation,
@@ -259,7 +260,7 @@ export const imageQueueActions = {
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
-    if (reportId)
+    if (reportId && !skipped)
       await setReportStatus({
         id: reportId,
         status: ReportStatus.Actioned,
@@ -474,8 +475,14 @@ export const imageQueueActions = {
       )
     );
     const held = results.flatMap((r): HeldRemoval[] => (r.held ? [r.held] : []));
-    // A held image's reports stay open: it is still up, and confirming the hold actions them.
-    const heldReports = new Set(held.flatMap((h) => reportsByImage.get(h.imageId) ?? []));
+    // A held removal's reports stay open: the image is still up, and confirming the hold actions
+    // them. A skipped block's reports stay open too.
+    const heldReports = new Set([
+      ...held.flatMap((h) => reportsByImage.get(h.imageId) ?? []),
+      ...imageIds.flatMap((imageId, i) =>
+        results[i].skipped ? reportsByImage.get(imageId) ?? [] : []
+      ),
+    ]);
     await Promise.all(
       reportIds
         .filter((id) => !heldReports.has(id))

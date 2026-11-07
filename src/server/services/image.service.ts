@@ -1367,16 +1367,37 @@ export async function handleUnblockImages({
   return images;
 }
 
-export async function writeModeratorBlock(ids: number[]) {
-  if (!ids.length) return;
-  await dbWrite.$executeRaw`
+/** An image a block leaves held: its owner notice and report actioning do not run. */
+const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM})`;
+
+/**
+ * Returns the ids the block left held (`heldImageSql`), and those under the moderator-only review
+ * flag, read from the UPDATE itself: the row as locked, not as a replica last saw it.
+ */
+export async function writeModeratorBlock(
+  ids: number[]
+): Promise<{ held: Set<number>; underReview: Set<number> }> {
+  if (!ids.length) return { held: new Set(), underReview: new Set() };
+  const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; underReview: boolean }[]>`
     UPDATE "Image" SET
       ingestion = 'Blocked',
       "nsfwLevel" = ${NsfwLevel.Blocked},
       "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
       "updatedAt" = NOW()
     WHERE id = ANY(${ids}::int[])
+    RETURNING id, ${heldImageSql} AS held, "needsReview" = 'csam' AS "underReview"
   `;
+  const idsWhere = (key: 'held' | 'underReview') =>
+    new Set(rows.filter((r) => r[key]).map((r) => r.id));
+  return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+}
+
+/** Logged when an owner notice goes out for an image under the moderator-only review flag. */
+export function logNoticeUnderReview(images: { id: number; userId: number }[]) {
+  for (const { id, userId } of images)
+    logToAxiom({ type: 'warning', name: 'image-notice-under-review', imageId: id, userId }).catch(
+      () => undefined
+    );
 }
 
 export async function handleBlockImages({
@@ -1403,8 +1424,13 @@ export async function handleBlockImages({
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     const invalidateExistence = invalidateManyImageExistence(ids);
 
+    let held = new Set<number>();
+    let underReview = new Set<number>();
     await Promise.all([
       writeModeratorBlock(ids)
+        .then((written) => {
+          ({ held, underReview } = written);
+        })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
 
@@ -1429,19 +1455,26 @@ export async function handleBlockImages({
     if (include?.includes('phash-block')) {
       await bulkAddBlockedImages({
         data: images
-          .map(({ pHash, blockedFor }) => {
+          .map(({ id, pHash, blockedFor }) => {
             if (!pHash) return null;
             return {
               hash: pHash,
-              reason: getReviewTypeToBlockedReason(blockedFor ?? BlockedReason.Moderated),
+              reason:
+                held.has(id) || underReview.has(id)
+                  ? BlockImageReason.CSAM
+                  : getReviewTypeToBlockedReason(blockedFor ?? BlockedReason.Moderated),
             };
           })
           .filter(isDefined),
       });
     }
     if (include?.includes('user-notification')) {
+      const notified = images.filter((img) => !held.has(img.id));
+      logNoticeUnderReview(
+        notified.filter((img) => underReview.has(img.id)).map(({ id, userId }) => ({ id, userId }))
+      );
       await Promise.all(
-        images.map((img) =>
+        notified.map((img) =>
           createNotification({
             userId: img.userId,
             type: 'tos-violation',

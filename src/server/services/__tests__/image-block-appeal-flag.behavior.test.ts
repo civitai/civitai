@@ -152,6 +152,15 @@ beforeEach(async () => {
       return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
+  // `writeModeratorBlock` returns rows; every other raw read here has its own fake.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...v: unknown[]
+  ) => {
+    const flat = Prisma.sql(strings, ...(v as never[]));
+    if (!/"blockedFor" = CASE/.test(flat.text)) return [];
+    return (await run(flat)).rows;
+  }) as never);
   await holder.db.exec(`
     TRUNCATE "Image", "Appeal" CASCADE;
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
