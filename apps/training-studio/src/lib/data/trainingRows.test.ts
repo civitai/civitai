@@ -4,11 +4,13 @@ import {
   ARCHIVE_TOKEN_BUDGET,
   MAX_ARCHIVE_ENTRIES,
   UNKNOWN_BASE,
+  canDeleteRun,
   epochArchiveParts,
   estimateArchiveTokenLength,
   namedDownloadUrl,
   runFileStem,
   workflowToDetail,
+  workflowToRow,
 } from './trainingRows';
 
 const workflow = (over: Record<string, unknown> = {}): Workflow =>
@@ -305,5 +307,55 @@ describe('workflowToDetail dataset', () => {
     expect(workflowToDetail(workflow())!.dataset).toEqual([
       { air: 'https://x/blobs/A.png?sig=1', caption: 'ohwx, 1girl' },
     ]);
+  });
+});
+
+describe('a run held for review', () => {
+  // The orchestrator keeps the workflow `processing` while the gate holds it; only the training
+  // step's output says why it isn't moving.
+  const held = (moderationStatus: string, status = 'processing') =>
+    workflow({
+      status,
+      steps: [
+        {
+          $type: 'training',
+          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10 },
+          output: { moderationStatus, epochs: [] },
+        },
+      ],
+    });
+
+  it('reads as pending review, not training, on the list and the detail', () => {
+    expect(workflowToRow(held('underReview'))?.state).toBe('review');
+    expect(workflowToDetail(held('underReview'))?.state).toBe('review');
+  });
+
+  it('reads the manager API spelling too', () => {
+    expect(workflowToRow(held('UnderReview'))?.state).toBe('review');
+  });
+
+  it('keeps an approved run that is training as training', () => {
+    expect(workflowToRow(held('approved'))?.state).toBe('training');
+  });
+
+  it('reads a rejected run as not approved, not as a crash', () => {
+    expect(workflowToRow(held('rejected', 'failed'))?.state).toBe('rejected');
+    expect(workflowToRow(held('rejected', 'canceled'))?.state).toBe('rejected');
+  });
+
+  it('reads a run that expired at the gate as not reviewed in time, not as a crash', () => {
+    expect(workflowToRow(held('rejected', 'expired'))?.state).toBe('unreviewed');
+    expect(workflowToRow(held('underReview', 'expired'))?.state).toBe('unreviewed');
+  });
+
+  it('leaves a run that failed after it was approved as failed', () => {
+    expect(workflowToRow(held('approved', 'failed'))?.state).toBe('failed');
+    expect(workflowToRow(held('approved', 'expired'))?.state).toBe('failed');
+  });
+
+  it('cannot be deleted while held, and can once it ended at the gate', () => {
+    expect(canDeleteRun({ state: 'review', hasModel: false })).toBe(false);
+    expect(canDeleteRun({ state: 'rejected', hasModel: false })).toBe(true);
+    expect(canDeleteRun({ state: 'unreviewed', hasModel: false })).toBe(true);
   });
 });

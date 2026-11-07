@@ -29,6 +29,10 @@
       // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
       // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
       pricingUrl: `${data.civitaiUrl}/pricing`,
+      // The main app redirects this to the ticket portal (next.config.mjs).
+      // eslint-disable-next-line svelte/no-unused-svelte-ignore -- eslint-plugin-svelte 2 can't see <script> ignores
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      supportUrl: `${data.civitaiUrl}/support-portal`,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),

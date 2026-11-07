@@ -25,6 +25,7 @@ import {
 } from '@tabler/icons-react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { TRAINING_REVIEW_COPY, trainingHeldSince } from '@civitai/shared/training-review';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -48,6 +49,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { getEpochJobAndFileName } from '~/server/utils/model-helpers';
 import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
+import { TrainingReviewNotice } from '~/components/Training/TrainingReviewNotice/TrainingReviewNotice';
 import { TrainingRunSummary } from '~/components/Training/TrainingRunSummary/TrainingRunSummary';
 import { trainingArchitectureKey } from '~/utils/training/run-summary';
 import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
@@ -812,7 +814,7 @@ export default function TrainingSelectFile({
 
   const errorMessage =
     trainingStatus === TrainingStatus.Paused
-      ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
+      ? TRAINING_REVIEW_COPY.pendingBody
       : trainingStatus === TrainingStatus.Failed
       ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
       : trainingStatus === TrainingStatus.Denied
@@ -854,7 +856,12 @@ export default function TrainingSelectFile({
         versionName={modelVersion.name}
         trainingDetails={thisTrainingDetails}
       />
-      {showBlockingError ? (
+      {trainingStatus === TrainingStatus.Paused ? (
+        <TrainingReviewNotice
+          heldSince={trainingHeldSince(tResultsV2?.startedAt, tResultsV2?.submittedAt)}
+          runId={tResultsV2?.workflowId ?? String(modelVersion.id)}
+        />
+      ) : showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
           <Text>{errorMessage}</Text>
