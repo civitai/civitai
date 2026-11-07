@@ -417,6 +417,16 @@ describe('submitVersion — App Storage permission hooks', () => {
     expect(sourceInserts()).toEqual([[[HOOK_SHA], [HOOK_SRC], [Buffer.byteLength(HOOK_SRC)]]]);
   });
 
+  it('records the source append-only: a sha already stored is never updated', async () => {
+    await submit(hooked({ file: HOOK_FILE, sha256: HOOK_SHA }));
+    const statements = (dbMock.dbWrite.$executeRaw.mock.calls as unknown[][])
+      .map(([strings]) => (strings as string[]).join('?').replace(/\s+/g, ' '))
+      .filter((sql) => sql.includes('app_storage_hook_sources'));
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain('ON CONFLICT ("sha256") DO NOTHING');
+    expect(statements[0]).not.toMatch(/DO UPDATE/i);
+  });
+
   it('records one source for one file shared by two collections', async () => {
     await submit({
       collections: {
