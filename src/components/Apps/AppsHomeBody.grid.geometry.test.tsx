@@ -102,8 +102,21 @@ describe('My apps grid', () => {
     for (const vp of [NARROW_PHONE_VIEWPORT, PHONE_VIEWPORT]) {
       const { tiles, doc } = await tilesAt(vp, 7);
       expect(tiles[0].width).toBe(96);
+      expect(tiles[1].left - tiles[0].right).toBe(16);
+      expect(tiles[3].top - tiles[0].bottom).toBeGreaterThanOrEqual(24);
       expect(tiles.filter((t) => t.top === tiles[0].top)).toHaveLength(3);
       expect(doc.scrollWidth).toBeLessThanOrEqual(vp.width);
+      cleanup();
+    }
+  });
+
+  test('the tile width steps at the sm breakpoint, not before or after', async () => {
+    for (const [width, tile] of [
+      [700, 96],
+      [800, 104],
+    ] as const) {
+      const { tiles } = await tilesAt({ width, height: 900 }, 2);
+      expect(tiles[0].width).toBe(tile);
       cleanup();
     }
   });
