@@ -445,9 +445,7 @@ function extractSnapshotStep(
  *
  * 🔴 THE OUTPUT KEY IS PER-`$type` (`NATIVE_STEP_OUTPUT_KEY`): `textToImage` /
  * `imageGen` carry `output.images`, `comfy` / `customComfy` carry
- * `output.blobs`. Both extractors used to read `output.images` for every native
- * type but `customComfy`, so a `comfy` step succeeded, was charged, and
- * delivered no media to the block on either read surface.
+ * `output.blobs`.
  *
  * The availability + non-empty-url filter is `mediaFromBlobs`, the same one the
  * registry entries use, so a blob the orchestrator has not made available

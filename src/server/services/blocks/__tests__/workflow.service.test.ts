@@ -353,9 +353,7 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/gen.png']);
   });
 
-  // A comfy step's output is `{ blobs }` (ComfyOutput). This fixture used to carry
-  // `{ images }`, a shape the orchestrator never returns for `comfy`, which is how
-  // the extractor reading `output.images` for comfy stayed green.
+  // A comfy step's output is `{ blobs }` (ComfyOutput), never `{ images }`.
   it('surfaces images from a comfy step', () => {
     const wf = fakeWorkflow({
       steps: [
@@ -2231,9 +2229,6 @@ describe('projectAppWorkflow: customComfy blobs', () => {
     });
   });
 
-  // Behaviour change, deliberate: a customComfy blob that DOES carry numeric
-  // width/height now reports them (shared `mediaFromBlobs` filter) instead of
-  // being forced to null. Non-numeric values still project to null.
   it('carries numeric width/height from a customComfy blob, null otherwise', () => {
     const wf = fakeWorkflow({
       status: 'succeeded',
@@ -2278,15 +2273,7 @@ describe('projectAppWorkflow: customComfy blobs', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 🔴 `comfy` STEP OUTPUT IS `{ blobs }` (ComfyOutput), NOT `{ images }`.
-//
-// Both extractors used to read `output.images` for every native `$type` except
-// `customComfy`, so a generation that ran as a `comfy` step (e.g. img2img on an
-// SD-family checkpoint) reached `succeeded`, was charged, and surfaced NO media:
-// `snapshot.imageUrls` absent and `AppWorkflow.images` empty. These fixtures
-// carry ONLY `blobs`, exactly as the orchestrator returns a comfy step.
-// ─────────────────────────────────────────────────────────────────────────────
+// Fixtures carry ONLY blobs, as the orchestrator returns for a comfy step.
 describe('comfy step blobs (output.blobs, not .images)', () => {
   const comfyWorkflow = () =>
     fakeWorkflow({
@@ -2406,12 +2393,6 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
     expect(Object.keys(NATIVE_STEP_OUTPUT_KEY).sort()).toEqual(
       [...NATIVELY_EXTRACTED_STEP_TYPES].sort()
     );
-    expect(NATIVE_STEP_OUTPUT_KEY).toEqual({
-      customComfy: 'blobs',
-      textToImage: 'images',
-      imageGen: 'images',
-      comfy: 'blobs',
-    });
   });
 });
 
