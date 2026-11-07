@@ -71,6 +71,18 @@ and trigger words, which .com shows unchanged.
 The .com fields are never fed to the automatic checks that set `Model.nsfw`; those keep reading the
 .red title and description.
 
+## Listing re-check
+
+When the owner edits the .red title, description or trigger words of a model with a .com face, a
+job (`model-com-face-recheck.service.ts`) checks the listing again. A flagged listing takes the face
+off .com: the .com cover is cleared, the .com title and description stay, and
+`meta.comFaceRemoved` records it. The editor shows a notice on the .com tab of a mature model.
+
+The marker goes when the owner sets a .com cover again (through the save checks), turns the face
+off, or edits the .red listing so that it passes. That edit gets one check, once the owner has
+stopped editing for two minutes; no verdict keeps the marker. The old cover is not put back.
+Creator Studio's Make Safe can draft a removed face again.
+
 ## Draft action
 
 "Draft a civitai.com version" (`model.draftSfwFace`) asks the orchestrator's chat completion to
