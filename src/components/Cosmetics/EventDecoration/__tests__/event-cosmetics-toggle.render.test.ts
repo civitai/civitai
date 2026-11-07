@@ -2,7 +2,6 @@
 import { MantineProvider } from '@mantine/core';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
@@ -12,7 +11,7 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
  * and all of Hat Turf, for this viewer only. Viewers complained they could not turn hats off.
  */
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const session = vi.hoisted(() => ({ showEventCosmetics: true }));
@@ -97,11 +96,12 @@ function render(shown: boolean, ...children: React.ReactNode[]) {
 }
 
 const card = () =>
-  React.createElement(
-    TwCosmeticWrapper,
-    { cosmetic: frame, eventDecoration: hat, key: 'card' },
-    React.createElement('div', { 'data-testid': 'card' })
-  );
+  React.createElement(TwCosmeticWrapper, {
+    cosmetic: frame,
+    eventDecoration: hat,
+    key: 'card',
+    children: React.createElement('div', { 'data-testid': 'card' }),
+  });
 const cardHat = () => host!.querySelector('button[data-event-decoration="hat"]');
 const avatarHat = () => host!.querySelector('img[data-name="showcase hat"]');
 
@@ -124,18 +124,19 @@ describe('show event cosmetics', () => {
   });
 
   it('off: a preview of the hat being picked or bought still shows it', () => {
-    render(false, React.createElement(EventCosmeticsPreview, { key: 'p' }, card()));
+    render(false, React.createElement(EventCosmeticsPreview, { key: 'p', children: card() }));
     expect(cardHat()).not.toBeNull();
   });
 
   it('off: no Hat Turf, as if the viewer were not playing', () => {
     render(
       true,
-      React.createElement(
-        TurfSummaryProvider,
-        { imageIds: [1], gate: { event: 'birthday2026' }, key: 't' },
-        React.createElement(FeedProbe)
-      )
+      React.createElement(TurfSummaryProvider, {
+        imageIds: [1],
+        gate: { event: 'birthday2026' },
+        key: 't',
+        children: React.createElement(FeedProbe),
+      })
     );
     expect(feed).not.toBeNull();
     act(() => setShown!(false));
