@@ -25,6 +25,18 @@ export const TIMEOUT_MIN_MS = 1;
 export const TIMEOUT_MAX_MS = 500;
 
 /**
+ * Allowance for the SECOND compile inside the armed evaluation (see `arm` in sandbox.ts): the
+ * deadline is `timeoutMs` plus `COMPILE_ALLOWANCE_FACTOR` times the measured compile-only pass
+ * plus `COMPILE_ALLOWANCE_FLOOR_MS`. The factor absorbs a second compile that runs slower than
+ * the first in proportion to the source (a GC pause over a larger heap, a smaller CPU share); the
+ * floor absorbs fixed-size jitter that does not scale with the source. Kept small because the
+ * pool's backstop (`timeoutMs` + BACKSTOP_MS, from dispatch) does not include it: a looping hook
+ * is interrupted about (1 + factor) x compile + floor + `timeoutMs` after dispatch.
+ */
+export const COMPILE_ALLOWANCE_FACTOR = 1.5;
+export const COMPILE_ALLOWANCE_FLOOR_MS = 5;
+
+/**
  * The worker backstop. The interrupt handler only runs when QuickJS polls it, and a single
  * native operation does not poll: measured, an allocation loop that grows towards the memory cap
  * ran 1.3 s with ONE interrupt poll and a 50 ms deadline. A call still running at

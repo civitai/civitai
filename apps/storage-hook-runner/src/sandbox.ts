@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { newQuickJSWASMModuleFromVariant, newVariant } from 'quickjs-emscripten-core';
 import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten-core';
 import variant from '@jitl/quickjs-ng-wasmfile-release-sync';
-import { MAX_STACK_BYTES, MEMORY_LIMIT_BYTES } from './limits.ts';
+import {
+  COMPILE_ALLOWANCE_FACTOR,
+  COMPILE_ALLOWANCE_FLOOR_MS,
+  MAX_STACK_BYTES,
+  MEMORY_LIMIT_BYTES,
+} from './limits.ts';
 import { fault, validateHookReturn } from './result.ts';
 import type { HookResult } from './result.ts';
 
@@ -150,14 +155,20 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
   // over the hook, so neither the prelude nor compiling the source spends the hook's budget. The
   // compile-only pass runs with the deadline disarmed (compiling runs no hook code; the worker
   // backstop still bounds it). quickjs-emscripten exposes no way to run an already compiled
-  // module, so the real evaluation compiles again: the budget is extended by the measured
-  // compile time to pay for that second compile, leaving `timeoutMs` for evaluation.
+  // module, so the real evaluation compiles again, and that second compile runs under the armed
+  // deadline. Only the first compile's duration is known, and the second can take longer: with an
+  // allowance of exactly the measured compile time, any slowdown of the second compile came out
+  // of the hook's own budget. So the allowance is a multiple of the measured compile plus a fixed
+  // floor (COMPILE_ALLOWANCE_* in limits.ts). It is still a bound derived from the measured
+  // compile, so a hook that runs forever is interrupted soon after `timeoutMs` plus the
+  // allowance, and the worker backstop bounds everything regardless.
   let interrupted = false;
   let start = performance.now();
   let deadline = Number.POSITIVE_INFINITY;
   const arm = (compileMs: number) => {
     start = performance.now();
-    deadline = start + compileMs + args.timeoutMs;
+    deadline =
+      start + COMPILE_ALLOWANCE_FACTOR * compileMs + COMPILE_ALLOWANCE_FLOOR_MS + args.timeoutMs;
   };
   rt.setInterruptHandler(() => {
     if (performance.now() >= deadline) {
@@ -253,7 +264,7 @@ function run(
   const stringify = keep(ctx.getProp(json, 'stringify'));
 
   // Compile-only pass, deadline disarmed: a syntax error is reported from here, and its
-  // duration pays for the second compile inside the armed evaluation below.
+  // duration sizes the allowance for the second compile inside the armed evaluation below.
   const compileStart = performance.now();
   const compiled = ctx.evalCode(args.source, 'hook.js', {
     type: 'module',

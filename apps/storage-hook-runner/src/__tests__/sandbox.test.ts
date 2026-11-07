@@ -1,7 +1,9 @@
 import { Worker } from 'node:worker_threads';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { QuickJSWASMModule } from 'quickjs-emscripten-core';
 import { BACKSTOP_MS } from '../limits.ts';
 import { BackstopError, HookPool, PoolOverloadedError, WorkerCrashedError } from '../pool.ts';
+import { compileQuickJS, evaluateHookOn, instantiate } from '../sandbox.ts';
 import { hookInputJson } from '../test-support/fixtures.ts';
 
 /**
@@ -213,25 +215,81 @@ describe('an interrupt swallowed by the engine still ends the call as a timeout'
 });
 
 describe('the deadline covers evaluation, not compilation', () => {
-  // A ~60 KiB hook that is slow to COMPILE (one long expression in a function it never calls;
-  // measured locally at 11-28 ms to compile) and quick to RUN: a 30,000-iteration loop, long
-  // enough that QuickJS polls the interrupt handler at least once (it polls every ~10,000
-  // operations), short enough to finish well inside 5 ms. With the deadline armed before
-  // compilation, the compile alone used up the 5 ms budget and the loop's first poll interrupted
-  // the hook. A first version of this test (a hook of many small functions and no loop) never
-  // went red: a hook that runs fewer operations than one poll interval is never interrupted.
-  const terms = Array.from({ length: 12_000 }, (_, i) => `x+${i % 97}`).join('+');
-  const big =
-    `function never(x) { return ${terms}; }\n` +
+  // A hook that is quick to RUN: a 30,000-iteration loop, long enough that QuickJS polls the
+  // interrupt handler at least once (it polls every ~10,000 operations). A first version of this
+  // test (no loop) never went red: a hook that runs fewer operations than one poll interval is
+  // never interrupted.
+  const QUICK =
     'export default function check() { let s = 0; for (let i = 0; i < 30000; i++) s += i; return s > 0 ? { allow: true } : { allow: false, reason: "x" }; }';
 
+  // Compile time is simulated on a virtual clock, so the verdict does not depend on how fast the
+  // host compiles or how loaded it is. `performance.now()` returns the virtual time, which moves
+  // ONLY when the sandbox evaluates the hook's source: by `first` ms on the compile-only pass and
+  // by `second` ms on the real evaluation (its second compile). It stands still while the hook
+  // runs, so the interrupt fires only if the deadline was already spent before the hook started.
+  // In-process on a real QuickJS instance, the way instance.test.ts injects faults.
+  const real = instantiate(compileQuickJS());
+  async function evaluateOnVirtualClock(first: number, second: number, timeoutMs: number) {
+    const qjs = await real;
+    const clock = { now: 1_000, hookEvals: 0 };
+    const clocked = {
+      newRuntime: (...a: Parameters<QuickJSWASMModule['newRuntime']>) => {
+        const rt = qjs.newRuntime(...a);
+        const newContext = rt.newContext.bind(rt);
+        rt.newContext = ((...b: Parameters<typeof newContext>) => {
+          const ctx = newContext(...b);
+          const evalCode = ctx.evalCode.bind(ctx);
+          ctx.evalCode = ((code: string, filename?: string, options?: unknown) => {
+            if (filename === 'hook.js') {
+              clock.hookEvals++;
+              const compileOnly =
+                typeof options === 'object' && options !== null && 'compileOnly' in options
+                  ? options.compileOnly === true
+                  : false;
+              clock.now += compileOnly ? first : second;
+            }
+            return evalCode(code, filename, options as Parameters<typeof evalCode>[2]);
+          }) as typeof ctx.evalCode;
+          return ctx;
+        }) as typeof rt.newContext;
+        return rt;
+      },
+    } as unknown as QuickJSWASMModule;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => clock.now);
+    try {
+      const out = evaluateHookOn(clocked, { source: QUICK, inputJson: hookInputJson(), timeoutMs });
+      return { result: out.result, hookEvals: clock.hookEvals };
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  // 20 ms to compile, 30 ms to compile again (the second compile taking half as long again as
+  // the first, as GC or a smaller CPU share can make it), 5 ms budget. With the deadline armed before
+  // compilation the hook is interrupted at its first poll; so it is with an allowance of exactly
+  // the measured compile (20 + 5 < 30).
   it('a hook that is slow to compile and quick to run gets its whole budget, five times in a row', async () => {
-    expect(Buffer.byteLength(big)).toBeGreaterThan(50 * 1024);
-    expect(Buffer.byteLength(big)).toBeLessThanOrEqual(64 * 1024);
-    const results = [];
-    for (let i = 0; i < 5; i++) results.push((await run(big, { timeoutMs: 5 })).result);
-    expect(results).toEqual(Array.from({ length: 5 }, () => ({ allow: true })));
+    const calls = [];
+    for (let i = 0; i < 5; i++) calls.push(await evaluateOnVirtualClock(20, 30, 5));
+    expect(calls).toEqual(
+      Array.from({ length: 5 }, () => ({ result: { allow: true }, hookEvals: 2 }))
+    );
   });
+
+  // Positive control for the virtual clock, and the bound: a second compile far past the
+  // allowance (20 ms measured, 90 ms taken) is not paid for, so the clock does reach the
+  // interrupt handler and the allowance is not unbounded.
+  it('a second compile far beyond the allowance still ends in a timeout', async () => {
+    expect(await evaluateOnVirtualClock(20, 90, 5)).toEqual({
+      result: { allow: false, cause: 'timeout', detail: 'interrupted at the deadline' },
+      hookEvals: 2,
+    });
+  });
+
+  // The syntax-error case runs through the pool on a real clock: a ~60 KiB hook that is slow to
+  // compile (one long expression in a function it never calls).
+  const terms = Array.from({ length: 12_000 }, (_, i) => `x+${i % 97}`).join('+');
+  const big = `function never(x) { return ${terms}; }\n${QUICK}`;
 
   it('a syntax error is still reported (from the compile step)', async () => {
     const { result } = await run(`${big}\n}}}`, { timeoutMs: 5 });

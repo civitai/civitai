@@ -83,8 +83,9 @@ particular, these are runner faults, never `timeout`:
 - a full queue or an app over its share of it (`overloaded`, 503).
 
 The time budget covers the hook's EVALUATION only: the source is compiled once first with the
-deadline disarmed, and the budget is extended by that compile time to pay for the second compile
-inside the evaluation (quickjs-emscripten cannot run an already compiled module).
+deadline disarmed, and the budget is extended by 1.5 times that compile time plus 5 ms to pay for
+the second compile inside the evaluation (quickjs-emscripten cannot run an already compiled
+module), which can run slower than the first.
 
 Non-2xx answers mean the runner did not evaluate. The caller maps every one of them, and any
 transport failure or unverifiable response, to `hook_unavailable` (fail closed):
