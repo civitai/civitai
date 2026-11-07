@@ -1,17 +1,16 @@
 import { createHash } from 'node:crypto';
-import type { Workflow } from '@civitai/orchestration-client';
+import type { Tracker } from '~/server/clickhouse/client';
 import { TRPCError } from '@trpc/server';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
-import {
-  bustQueriedWorkflowsCache,
-  normalizeStepOutput,
-} from '~/server/services/orchestrator/orchestration-new.service';
+import { bustQueriedWorkflowsCache } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { outputImages } from '~/server/services/remix-app-run.service';
 import {
   assertInputsUsable,
   assertWithinQuote,
@@ -34,9 +33,12 @@ import type { RemixSourceImage } from '~/shared/utils/remix-tier';
 
 const targetTag = (target: ArticleReframeTarget) => `${ARTICLE_REFRAME_TAG}:${target}`;
 
-/** The author's own saved image, with the fields the remix refusals read. */
+/**
+ * The author's own saved image, with the fields the remix refusals read. From the primary: the
+ * button shows right after a save, before a replica has the row.
+ */
 async function readOwnSource(imageId: number, userId: number) {
-  const image = await dbRead.image.findFirst({
+  const image = await dbWrite.image.findFirst({
     where: { id: imageId, userId },
     select: {
       id: true,
@@ -120,15 +122,6 @@ export async function submitArticleReframe({
   return { workflowId: result.id as string, cost: result.cost?.total ?? 0 };
 }
 
-/** The predicate of `outputImages` in remix-app-run.service.ts, kept private there; change both. */
-function firstOutputImage(workflow: Workflow) {
-  return (workflow.steps ?? [])
-    .flatMap((step) => normalizeStepOutput(step as Parameters<typeof normalizeStepOutput>[0]))
-    .find(
-      (blob) => blob.type === 'image' && blob.url && blob.available !== false && !blob.blockedReason
-    );
-}
-
 /**
  * Crops the author's own take to the target's shape and stores it. Returns the same shape an
  * upload gives the form, so the article's normal save creates the Image row and scans it.
@@ -149,7 +142,7 @@ export async function keepArticleReframe({
   if (workflow.status !== 'succeeded')
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This take has not finished.' });
 
-  const output = firstOutputImage(workflow);
+  const [output] = outputImages(workflow);
   if (!output?.url)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'This take has no image to keep.' });
   // Fails closed: an output not rated yet is not kept, and a mature one only by a viewer shown it.
@@ -162,13 +155,16 @@ export async function keepArticleReframe({
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This take cannot be used here.' });
 
   const { keepAspect } = ARTICLE_REFRAME[target];
-  return stageGenerationOutputImage({
+  const staged = await stageGenerationOutputImage({
     imageUrl: output.url,
     width: null,
     height: null,
     source: `article-reframe:${target}`,
     transform: (bytes) => cropToAspect(bytes, keepAspect),
   });
+  // The article save takes this as a client upload, and refuses a key not issued to the author.
+  await recordMintedUploadKey(staged.url, caller.user.id, caller.track as Tracker | undefined);
+  return staged;
 }
 
 export async function cropToAspect(bytes: Buffer, aspect: number) {

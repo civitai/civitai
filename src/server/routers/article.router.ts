@@ -56,32 +56,17 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import type { Context } from '~/server/createContext';
-import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { getCaller } from '~/server/routers/remix-app.router';
 import {
   keepArticleReframe,
   quoteArticleReframe,
   submitArticleReframe,
 } from '~/server/services/article-reframe.service';
-import type { RemixAppCaller } from '~/server/services/remix-app.service';
-import type { SessionUser } from '~/types/session';
 
 const reframeTarget = z.enum(['banner', 'cover']);
 const reframeSource = z.object({ imageId: z.number().int().positive(), target: reframeTarget });
 /** Each quote and each submit runs an orchestrator what-if. */
 const reframeRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
-
-/** Mirrors `getCaller` in remix-app.router.ts; change both. */
-async function reframeCaller(ctx: Context & { user: SessionUser }): Promise<RemixAppCaller> {
-  return {
-    user: ctx.user,
-    features: ctx.features,
-    isGreenDomain: ctx.domain === 'green',
-    isApiCaller: ctx.apiKeyId != null,
-    track: ctx.track,
-    token: await getOrchestratorToken(ctx.user.id, ctx),
-  };
-}
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -251,7 +236,7 @@ export const articleRouter = router({
     .use(isFlagProtected('articleTypography'))
     .use(reframeRateLimit)
     .query(async ({ input, ctx }) =>
-      quoteArticleReframe({ ...input, caller: await reframeCaller(ctx) })
+      quoteArticleReframe({ ...input, caller: await getCaller(ctx) })
     ),
   reframeSubmit: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
@@ -264,7 +249,7 @@ export const articleRouter = router({
     .use(isFlagProtected('articleTypography'))
     .use(reframeRateLimit)
     .mutation(async ({ input, ctx }) =>
-      submitArticleReframe({ ...input, caller: await reframeCaller(ctx) })
+      submitArticleReframe({ ...input, caller: await getCaller(ctx) })
     ),
   reframeKeep: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
@@ -272,7 +257,7 @@ export const articleRouter = router({
     .use(isFlagProtected('articleTypography'))
     .use(reframeRateLimit)
     .mutation(async ({ input, ctx }) =>
-      keepArticleReframe({ ...input, caller: await reframeCaller(ctx) })
+      keepArticleReframe({ ...input, caller: await getCaller(ctx) })
     ),
   // Moderator-only, exactly like `model.setOfficial`. This is a provenance claim, so the
   // authority is the procedure, not anything in the payload.

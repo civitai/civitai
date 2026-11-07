@@ -91,7 +91,7 @@ import { getQueryKey } from '@trpc/react-query';
 import { ArticleReframeContent } from '~/components/Article/ArticleReframeModal';
 import { queryClient, trpc } from '~/utils/trpc';
 
-function take(status: string): Item {
+function take(status: string, { width = 2520, height = 1080 } = {}): Item {
   return {
     id: 'wf-1',
     status,
@@ -112,8 +112,8 @@ function take(status: string): Item {
                   url: 'https://example.com/take.png',
                   available: true,
                   nsfwLevel: 'pG',
-                  width: 2520,
-                  height: 1080,
+                  width,
+                  height,
                 },
               ]
             : [],
@@ -185,11 +185,33 @@ describe('ArticleReframeContent', () => {
       />
     );
     await page.getByRole('button', { name: /Generate banner/ }).click();
+    await vi.waitFor(() => expect(h.submit).toHaveBeenCalled());
     await setItems([take('succeeded')]);
     await page.getByRole('button', { name: 'Retry' }).click();
     await expect.element(page.getByRole('button', { name: /Generate banner/ })).toBeVisible();
     await expect.element(page.getByRole('img', { name: 'Generated take' })).not.toBeInTheDocument();
     expect(onKeep).not.toHaveBeenCalled();
     expect(h.keep).not.toHaveBeenCalled();
+  });
+
+  test('says when a take is narrower than the suggested width, and not otherwise', async () => {
+    await renderWithProviders(
+      <ArticleReframeContent
+        source={{ id: 11, url: 'c0ffee00-0000-4000-8000-000000000000' }}
+        target="banner"
+        onKeep={onKeep}
+        onClose={onClose}
+      />
+    );
+    const warning = page.getByText(/narrower than the suggested/);
+    await page.getByRole('button', { name: /Generate banner/ }).click();
+    await vi.waitFor(() => expect(h.submit).toHaveBeenCalled());
+
+    await setItems([take('succeeded')]);
+    await expect.element(page.getByRole('img', { name: 'Generated take' })).toBeVisible();
+    await expect.element(warning).not.toBeInTheDocument();
+
+    await setItems([take('succeeded', { width: 1200, height: 600 })]);
+    await expect.element(warning).toBeVisible();
   });
 });

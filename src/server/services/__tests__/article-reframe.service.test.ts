@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BlockImageUpload from '~/server/services/blocks/block-image-upload.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
+import type * as ImageUploadAction from '~/server/services/image-upload-action.service';
 import type * as OrchestrationNew from '~/server/services/orchestrator/orchestration-new.service';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
 
@@ -22,6 +23,10 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', async (impor
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
   getWorkflow: vi.fn(async () => h.workflow),
+}));
+vi.mock('~/server/services/image-upload-action.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUploadAction>()),
+  recordMintedUploadKey: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
   ...(await importOriginal<typeof InputUrls>()),
@@ -44,6 +49,8 @@ import {
   keepArticleReframe,
   submitArticleReframe,
 } from '~/server/services/article-reframe.service';
+import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
 import { centreCropBox, MATURE_BANNER_REFUSAL } from '~/shared/utils/article-reframe';
@@ -76,15 +83,18 @@ const png = (width: number, height: number) =>
     .png()
     .toBuffer();
 
-const succeeded = (tag: string) => ({
+const succeeded = (
+  tag: string,
+  { nsfwLevel = 'pG' as string | null, status = 'succeeded' } = {}
+) => ({
   id: 'wf-1',
-  status: 'succeeded',
+  status,
   tags: ['article-reframe', tag],
   steps: [
     {
       $type: 'imageGen',
       output: {
-        images: [{ id: 'b1', url: 'https://orchestration.civitai.com/b1', nsfwLevel: 'pG' }],
+        images: [{ id: 'b1', url: 'https://orchestration.civitai.com/b1', nsfwLevel }],
       },
     },
   ],
@@ -105,7 +115,7 @@ function attachWrites() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.image.findFirst.mockResolvedValue(source as never);
+  dbMock.dbWrite.image.findFirst.mockResolvedValue(source as never);
 });
 
 describe('centreCropBox', () => {
@@ -129,6 +139,17 @@ describe('keepArticleReframe', () => {
     h.workflow = succeeded('article-reframe:banner');
     const kept = await keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller });
     expect({ width: kept.width, height: kept.height }).toEqual({ width: 2520, height: 630 });
+  });
+
+  it('records the stored key as issued to the author, so the article save accepts it', async () => {
+    h.takeBytes = await png(2520, 1080);
+    h.workflow = succeeded('article-reframe:banner');
+    const kept = await keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller });
+    expect(vi.mocked(recordMintedUploadKey)).toHaveBeenCalledWith(
+      kept.url,
+      caller.user.id,
+      undefined
+    );
   });
 
   it("reads the take with the author's own orchestrator token", async () => {
@@ -194,7 +215,7 @@ describe('mature sources', () => {
   const shownMature = { ...caller, user: { ...caller.user, showNsfw: true } } as RemixAppCaller;
 
   it('refuses a banner before it prices or charges', async () => {
-    dbMock.dbRead.image.findFirst.mockResolvedValue(mature as never);
+    dbMock.dbWrite.image.findFirst.mockResolvedValue(mature as never);
     await expect(
       submitArticleReframe({
         imageId: 11,
@@ -209,7 +230,7 @@ describe('mature sources', () => {
   });
 
   it('still makes a cover, on the mature engine', async () => {
-    dbMock.dbRead.image.findFirst.mockResolvedValue(mature as never);
+    dbMock.dbWrite.image.findFirst.mockResolvedValue(mature as never);
     await submitArticleReframe({
       imageId: 11,
       target: 'cover',
@@ -233,5 +254,65 @@ describe('mature sources', () => {
     expect(engineOf(h.generateFromGraph.mock.calls[0])).toBe(
       REMIX_ENGINES.edit.safe.modelVersionId
     );
+  });
+});
+
+describe('Keep fails closed on the take', () => {
+  const stage = () => vi.mocked(stageGenerationOutputImage);
+  const asViewer = (user: { showNsfw: boolean }, isGreenDomain = false) =>
+    ({ ...caller, isGreenDomain, user: { ...caller.user, ...user } } as RemixAppCaller);
+
+  beforeEach(async () => {
+    h.takeBytes = await png(2520, 1080);
+  });
+
+  it('refuses a take not rated yet', async () => {
+    h.workflow = succeeded('article-reframe:banner', { nsfwLevel: null });
+    await expect(
+      keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller })
+    ).rejects.toThrow('still being checked');
+    expect(stage()).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mature take to a viewer with mature content off', async () => {
+    h.workflow = succeeded('article-reframe:cover', { nsfwLevel: 'x' });
+    await expect(
+      keepArticleReframe({
+        workflowId: 'wf-1',
+        target: 'cover',
+        caller: asViewer({ showNsfw: false }),
+      })
+    ).rejects.toThrow('cannot be used here');
+    expect(stage()).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mature take on the green domain, even to a viewer shown mature content', async () => {
+    h.workflow = succeeded('article-reframe:cover', { nsfwLevel: 'x' });
+    await expect(
+      keepArticleReframe({
+        workflowId: 'wf-1',
+        target: 'cover',
+        caller: asViewer({ showNsfw: true }, true),
+      })
+    ).rejects.toThrow('cannot be used here');
+    expect(stage()).not.toHaveBeenCalled();
+  });
+
+  it('keeps a mature take for a viewer shown mature content', async () => {
+    h.workflow = succeeded('article-reframe:cover', { nsfwLevel: 'x' });
+    await keepArticleReframe({
+      workflowId: 'wf-1',
+      target: 'cover',
+      caller: asViewer({ showNsfw: true }),
+    });
+    expect(stage()).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a take still processing', async () => {
+    h.workflow = succeeded('article-reframe:banner', { status: 'processing' });
+    await expect(
+      keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller })
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(stage()).not.toHaveBeenCalled();
   });
 });

@@ -76,7 +76,7 @@ function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 't
   };
 }
 
-async function getCaller(ctx: Context & { user: SessionUser }): Promise<RemixAppCaller> {
+export async function getCaller(ctx: Context & { user: SessionUser }): Promise<RemixAppCaller> {
   return { ...callerOf(ctx), token: await getOrchestratorToken(ctx.user.id, ctx) };
 }
 
