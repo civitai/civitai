@@ -160,7 +160,7 @@ function runSourceId(segments: Segment[]) {
 type RunImage = RemixImage & { nsfwLevel?: NsfwLevel };
 
 /** Read through the generator queue's normalizer: an upscale is a comfy step that returns `blobs`, not `images`. */
-function outputImages(workflow: Workflow): RunImage[] {
+export function outputImages(workflow: Workflow): RunImage[] {
   return (workflow.steps ?? [])
     .flatMap((step) => normalizeStepOutput(step as Parameters<typeof normalizeStepOutput>[0]))
     .flatMap((blob) =>

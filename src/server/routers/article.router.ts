@@ -1,3 +1,4 @@
+import * as z from 'zod';
 import {
   router,
   publicProcedure,
@@ -55,6 +56,17 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getCaller } from '~/server/routers/remix-app.router';
+import {
+  keepArticleReframe,
+  quoteArticleReframe,
+  submitArticleReframe,
+} from '~/server/services/article-reframe.service';
+
+const reframeTarget = z.enum(['banner', 'cover']);
+const reframeSource = z.object({ imageId: z.number().int().positive(), target: reframeTarget });
+/** Each quote and each submit runs an orchestrator what-if. */
+const reframeRateLimit = rateLimit({ limit: 30, period: CacheTTL.xs });
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -126,11 +138,15 @@ export const articleRouter = router({
   getShareLinks: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getArticleShareLinksSchema)
-    .query(({ input, ctx }) => getArticleShareLinks({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getArticleShareLinks({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   revokeShareLink: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(getByIdSchema)
-    .mutation(({ input, ctx }) => revokeArticleShareLink({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      revokeArticleShareLink({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   // Called only by the link page's server render, which turns a valid token into a cookie.
   openShareLink: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
@@ -217,6 +233,35 @@ export const articleRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+  reframeQuote: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(reframeSource)
+    .use(isFlagProtected('articleTypography'))
+    .use(reframeRateLimit)
+    .query(async ({ input, ctx }) =>
+      quoteArticleReframe({ ...input, caller: await getCaller(ctx) })
+    ),
+  reframeSubmit: guardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(
+      reframeSource.extend({
+        quote: z.number().int().nonnegative(),
+        nonce: z.string().min(8).max(64),
+      })
+    )
+    .use(isFlagProtected('articleTypography'))
+    .use(reframeRateLimit)
+    .mutation(async ({ input, ctx }) =>
+      submitArticleReframe({ ...input, caller: await getCaller(ctx) })
+    ),
+  reframeKeep: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(z.object({ workflowId: z.string().min(1).max(64), target: reframeTarget }))
+    .use(isFlagProtected('articleTypography'))
+    .use(reframeRateLimit)
+    .mutation(async ({ input, ctx }) =>
+      keepArticleReframe({ ...input, caller: await getCaller(ctx) })
     ),
   // Moderator-only, exactly like `model.setOfficial`. This is a provenance claim, so the
   // authority is the procedure, not anything in the payload.

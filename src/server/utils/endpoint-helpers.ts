@@ -29,6 +29,8 @@ import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
+import { matchProbeToken, matchWebhookToken } from '~/server/utils/webhook-token';
+import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -329,24 +331,32 @@ export function TokenSecuredEndpoint(
 
     // `x-webhook-token` is what the Knights app sends. When it is present it is the only credential
     // read, so a wrong header is refused even if `?token=` is right.
-    // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
-    // `?token=` stays accepted until every caller has moved to the header. Either one passing is
-    // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
-    // arrives as an array and is refused rather than read.
-    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
-    const headerToken = req.headers[TOKEN_HEADER];
-    const hasHeader = typeof headerToken === 'string' && headerToken !== '';
-    const headerOk = hasHeader && timingSafeEqualStrings(token, headerToken);
+    const { bearer, queryToken, header } = presentedTokens(req);
+    const headerOk = header !== undefined && timingSafeEqualStrings(token, header);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
-    if (hasHeader ? !headerOk : !bearerOk && !queryOk) {
+    if (header !== undefined ? !headerOk : !bearerOk && !queryOk) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
 
     await handler(req, res);
   });
+}
+
+/**
+ * `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
+ * `?token=` stays accepted until every caller has moved to the header. Either one passing is
+ * enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
+ * arrives as an array and is refused rather than read.
+ */
+function presentedTokens(req: NextApiRequest) {
+  const header = req.headers[TOKEN_HEADER];
+  return {
+    bearer: req.headers.authorization?.match(/^Bearer (.+)$/)?.[1],
+    queryToken: typeof req.query.token === 'string' ? req.query.token : undefined,
+    header: typeof header === 'string' && header !== '' ? header : undefined,
+  };
 }
 
 const MIN_HEADER_TOKEN_LENGTH = 32;
@@ -387,10 +397,52 @@ export function JobEndpoint(
   return TokenSecuredEndpoint(env.JOB_TOKEN, handler);
 }
 
+/**
+ * `TokenSecuredEndpoint` for the webhook token, also accepting `WEBHOOK_TOKEN_PREVIOUS` when that
+ * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured.
+ */
 export function WebhookEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
-  return TokenSecuredEndpoint(env.WEBHOOK_TOKEN, handler);
+  return webhookTokenEndpoint(handler, false);
+}
+
+/**
+ * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready and /api/health
+ * only (pinned by webhook-endpoint-probe-token.test.ts).
+ */
+export function ProbeEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return webhookTokenEndpoint(handler, true);
+}
+
+function webhookTokenEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  acceptProbeToken: boolean
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    const { bearer, queryToken, header } = presentedTokens(req);
+    // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
+    const slot =
+      header !== undefined
+        ? matchWebhookToken(header)
+        : matchWebhookToken(bearer) ??
+          matchWebhookToken(queryToken) ??
+          (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+    if (!slot) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    recordWebhookTokenMatch(req, slot);
+
+    await handler(req, res);
+  });
 }
 
 const PUBLIC_CACHE_MAX_AGE = 300;

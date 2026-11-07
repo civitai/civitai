@@ -33,10 +33,12 @@ import {
 import {
   patchSchema,
   workflowIdSchema,
+  generatedImagesQuerySchema,
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { getImage } from '~/server/services/image.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
@@ -154,7 +156,7 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
 const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   const result = await next();
   const version = ctx.req?.headers['x-client-version'] as string;
-  if (!version || version === 'unknown') return result;
+  if (!semver.valid(version)) return result;
 
   // Fail open: this middleware runs on every generation tRPC call. A
   // sysRedis outage would otherwise 500 every gen request — defeating
@@ -170,7 +172,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   }
 
   const genVersion = decodeRedisString(genClient.version);
-  if (genVersion && semver.lt(version, genVersion)) {
+  if (semver.valid(genVersion) && semver.lt(version, genVersion as string)) {
     ctx.res?.setHeader('x-generation-update-required', genVersion);
     if (genClient.notes)
       ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));
@@ -375,10 +377,11 @@ export const orchestratorRouter = router({
   // #region [generated images]
   queryGeneratedImages: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(workflowQuerySchema)
-    .query(({ ctx, input }) =>
+    .input(generatedImagesQuerySchema)
+    .query(({ ctx, input: { excludeAppWorkflows, ...input } }) =>
       queryGeneratedImageWorkflows2({
         ...input,
+        excludeTags: excludeAppWorkflows ? [WORKFLOW_TAGS.APP_BLOCK] : undefined,
         token: ctx.token,
         user: ctx.user,
         tags: ctx.domain === 'green' ? [...input.tags, 'green'] : input.tags,

@@ -4,6 +4,7 @@
  * opts the collection in (`registry: "public"`), and the major exists.
  */
 import type { CatalogApp } from '~/server/registry-adapter/entities';
+import { appContentRating } from '~/server/registry-adapter/entities';
 import {
   HEAD_STEP,
   collectionSchemaDocuments,
@@ -60,19 +61,31 @@ export function resolveFromCatalog(
       ref.slug,
       derivation
     ).filter((d) => familyUrns.has(d.urn));
-    return { appId: app.block.id, slug: ref.slug, collection: ref.collection, family };
+    return {
+      appId: app.block.id,
+      slug: ref.slug,
+      collection: ref.collection,
+      // The rating the app entity publishes, which is every document's.
+      contentRating: appContentRating(app),
+      family,
+    };
   };
 }
 
-/** One source: the entity streams, and a document stream for every collection-schema URN. */
+/**
+ * One source: the entity streams (the app, release and schema streams narrowed per audience, as
+ * the document streams are, `cursor.ts`), and a document stream for every collection-schema URN of
+ * this namespace, routed by its shape alone (no entity schema has one, `urn.ts`). Every such URN is
+ * served, since its major may be published later; one not published now streams empty. `end` is
+ * only for a schema this source can never serve.
+ */
 export function composeAdapter(entities: Adapter, docs: ReturnType<typeof createDocFeed>): Adapter {
-  const isDocStream = (schema: string) =>
-    !entities.serves(schema) && parseCollectionSchemaUrn(schema) !== null;
+  const isDocStream = (schema: string) => parseCollectionSchemaUrn(schema) !== null;
   return {
     namespace: entities.namespace,
-    serves: (schema) => entities.serves(schema) || isDocStream(schema),
+    serves: (schema) => isDocStream(schema) || entities.serves(schema),
     snapshot: (schema, ctx) =>
-      isDocStream(schema) ? docs.snapshot(schema) : entities.snapshot(schema, ctx),
+      isDocStream(schema) ? docs.snapshot(schema, ctx) : entities.snapshot(schema, ctx),
     changes: (schema, cursor, ctx) =>
       isDocStream(schema)
         ? docs.changes(schema, cursor, ctx)

@@ -11,6 +11,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
+import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
+import { formatDate } from '~/utils/date-helpers';
 
 export type ServerAvailability = ColorDomain;
 
@@ -372,7 +374,11 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Training Studio',
     badge: 'Beta',
-    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which stops starting new runs on ${formatDate(
+      CLASSIC_TRAINER_RETIRES_AT,
+      'MMMM D, YYYY',
+      true
+    )}.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
@@ -498,6 +504,9 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'creator-services-finals-malware-scan',
   },
+  // Buyers attaching files to a deal. Its own switch because the rows it writes need the migration
+  // applied and every pod on a build that hides unscanned attachments from the seller.
+  creatorServicesAttachments: { availability: [], fliptKey: 'creator-services-attachments' },
   // One flag drives both halves of creator announcements: these surfaces and the
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
@@ -552,6 +561,8 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // Recent written reviews on the model page, between Suggested Resources and Discussion.
+  modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
   // rule (src/server/events/event-access.ts), which adds the preview and launch windows. Do not gate
   // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask

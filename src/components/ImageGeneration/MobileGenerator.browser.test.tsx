@@ -44,6 +44,7 @@ vi.mock('~/components/ImageGeneration/GenerationForm/generation.utils', () => ({
   useGenerationStatus: () => ({ limits: { queue: queueLimit }, available: true, tier }),
 }));
 vi.mock('~/components/ImageGeneration/utils/generationRequestHooks', () => ({
+  GENERATOR_QUEUE_INPUT: { excludeAppWorkflows: true },
   useGetTextToImageRequests: () => ({ data: requests, isLoading: false }),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({

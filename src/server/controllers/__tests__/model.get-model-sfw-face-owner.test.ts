@@ -113,10 +113,10 @@ describe('model.getById .com face', () => {
   });
 
   it.each([
-    ['owner', owner, true, false],
-    ['moderator', moderator, true, true],
-    ['non-owner', stranger, false, false],
-    ['signed-out viewer', undefined, false, false],
+    ['owner', owner, 'detected', false],
+    ['moderator', moderator, 'detected', true],
+    ['non-owner', stranger, null, false],
+    ['signed-out viewer', undefined, null, false],
   ])(
     'the listing re-check removal reaches the %s only as it should',
     async (_, user, told, seesRecord) => {
@@ -124,6 +124,7 @@ describe('model.getById .com face', () => {
         at: '2026-11-05T00:00:00.000Z',
         sfwCoverImageId: 5,
         reason: 'detected',
+        detail: 'CHECK-REASON-TEXT',
       };
       const stored = await getModel();
       getModel.mockResolvedValue({ ...stored, meta: { comFaceRemoved } });
@@ -131,6 +132,8 @@ describe('model.getById .com face', () => {
       const model = await get(user, COM);
 
       expect(model.comFaceRemoved).toBe(told);
+      // The check's reason is for moderators only; the owner is told which fields were read.
+      if (!seesRecord) expect(JSON.stringify(model)).not.toContain('CHECK-REASON-TEXT');
       expect((model.meta as Record<string, unknown> | null)?.comFaceRemoved).toEqual(
         seesRecord ? comFaceRemoved : undefined
       );

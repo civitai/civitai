@@ -336,6 +336,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/users/newest', label: 'Newest Users' },
       { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions', countKey: 'scamRestrictions' },
       { path: '/users/strike-review', label: 'Strike Review', countKey: 'strikeReview' },
+      { path: '/users/data-exports', label: 'Data Exports' },
     ],
   },
   // No path of its own, so each queue is granted on its own: whoever handles account appeals need not

@@ -1394,6 +1394,7 @@ export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof Se
 export const ServiceDealFileKind = {
   Preview: 'Preview',
   Final: 'Final',
+  Attachment: 'Attachment',
 } as const;
 
 export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];

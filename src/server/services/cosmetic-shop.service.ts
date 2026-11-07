@@ -177,17 +177,16 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   if (input.archived === false) {
     // Archiving stamps `archivedAt` without reliably moving `status`, so
     // `archivedAt` is the load-bearing signal; the status guard is belt-and-
-    // suspenders. Placed before the resellable branch so its stricter
+    // suspenders. Placed before the publishedCreatorOnly branch so its stricter
     // `status = Published` still wins when both are set.
     where.archivedAt = null;
     where.status = { not: CosmeticShopItemStatus.Archived };
   } else if (input.archived === true) {
     where.archivedAt = { not: null };
   }
-  if (input.resellable) {
+  if (input.publishedCreatorOnly) {
     where.status = CosmeticShopItemStatus.Published;
     cosmeticWhere.createdById = { not: null };
-    where.meta = { path: ['sellableByOthers'], equals: true };
   }
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -197,8 +196,8 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     take,
     skip,
     select: cosmeticShopItemSelect,
-    // Resellable items are picked for featuring, where newly approved is what's fresh.
-    orderBy: input.resellable
+    // These are picked for featuring, where newly approved is what's fresh.
+    orderBy: input.publishedCreatorOnly
       ? [{ reviewedAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }]
       : { createdAt: 'desc' },
   });
@@ -592,9 +591,8 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
   };
 };
 
-// Creator-listed items may only be featured when published AND opted into
-// resale — a creator who never marked their item sellable-by-others hasn't
-// consented to official-shop placement.
+// `sellableByOthers` is deliberately not checked: it governs other creators reselling an item.
+// A sale through an official section is not a resale and pays the creator their full pool.
 async function assertSectionPlaceable(items: number[]) {
   // The section renders a listing with no cosmetic as a pack, with none of a box's checks.
   const boxes = await dbWrite.cosmeticShopItem.count({
@@ -606,18 +604,13 @@ async function assertSectionPlaceable(items: number[]) {
     where: {
       id: { in: items },
       cosmetic: { createdById: { not: null } },
-      OR: [
-        { status: { not: CosmeticShopItemStatus.Published } },
-        { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
-      ],
+      status: { not: CosmeticShopItemStatus.Published },
     },
     select: { title: true },
   });
   if (ineligible.length)
     throw new Error(
-      `These creator items are not published resellable cosmetics: ${ineligible
-        .map((i) => i.title)
-        .join(', ')}`
+      `These creator items are not published: ${ineligible.map((i) => i.title).join(', ')}`
     );
 }
 
@@ -786,6 +779,28 @@ export const getShopItemEventTags = async ({ shopItemId }: { shopItemId: number 
   return item.eventTags;
 };
 
+/**
+ * Moderator data: the event tags already in use, for one-click adds in the review drawer. Tags a
+ * section sells come first, then the rest by how many items carry them.
+ */
+export const getEventTagSuggestions = async ({ limit = 30 }: { limit?: number } = {}) => {
+  const rows = await dbRead.$queryRaw<{ tag: string }[]>`
+    WITH tags AS (
+      SELECT t AS tag, 0 AS sections, 1 AS items
+      FROM "CosmeticShopItem", unnest("eventTags") t
+      UNION ALL
+      SELECT meta->>'eventTag', 1, 0
+      FROM "CosmeticShopSection"
+      WHERE meta->>'eventTag' IS NOT NULL
+    )
+    SELECT tag FROM tags
+    GROUP BY tag
+    ORDER BY sum(sections) DESC, sum(items) DESC, tag
+    LIMIT ${limit}
+  `;
+  return rows.map((row) => row.tag);
+};
+
 export const setShopItemEventTags = async ({
   shopItemId,
   eventTags,
@@ -911,10 +926,8 @@ async function getSectionEventTags(sectionId?: number) {
 
 /**
  * A tagged section's items are its placed items, in their order, then every shop item carrying the
- * tag that is on sale, newest first. The tag is the placement: a moderator approving and tagging
- * an item is the consent the section editor otherwise asks `sellableByOthers` for, and selling it
- * through the official shop pays the creator their full pool. Tagged items still pass every rule a
- * placed item does for this viewer (`shopItemWhere`).
+ * tag that is on sale, newest first. Tagged items still pass every rule a placed item does for this
+ * viewer (`shopItemWhere`).
  */
 async function withEventTaggedItems<
   S extends {

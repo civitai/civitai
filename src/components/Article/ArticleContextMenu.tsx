@@ -255,20 +255,19 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             >
               Edit
             </Menu.Item>
-            {isOwner &&
-              (article.status === ArticleStatus.Draft ||
-                article.status === ArticleStatus.Unpublished) && (
-                <Menu.Item
-                  leftSection={<IconLink size={14} stroke={1.5} />}
-                  onClick={(e: React.MouseEvent) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    openArticleShareDraftModal(article.id);
-                  }}
-                >
-                  Share draft
-                </Menu.Item>
-              )}
+            {(article.status === ArticleStatus.Draft ||
+              article.status === ArticleStatus.Unpublished) && (
+              <Menu.Item
+                leftSection={<IconLink size={14} stroke={1.5} />}
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openArticleShareDraftModal(article.id, { canCreate: isOwner });
+                }}
+              >
+                {isOwner ? 'Share draft' : 'Draft share links'}
+              </Menu.Item>
+            )}
             {atDetailsPage && features.articleImageScanning && (
               <Menu.Item
                 leftSection={

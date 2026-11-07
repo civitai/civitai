@@ -120,6 +120,20 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
   // key makes `evaluateBoolean` throw and log on every call.
   MODEL_GETBYID_SKIP_OWNER_POSTS = 'model-getbyid-skip-owner-posts',
+  // ON caches "this entity wears no frame" in the per-entity frame caches (`cosmeticEntityCaches`
+  // in ~/server/redis/caches) for an hour, instead of re-querying the primary for every frameless
+  // id on every page. OFF reads them uncached, as before, and ignores any marker
+  // written while it was on. Boolean, evaluated with no entity id, once per frame-cache fetch.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC — a missing
+  // key makes `evaluateBoolean` throw and log on every call, on every feed page.
+  FRAME_CACHE_NEGATIVE = 'frame-cache-negative',
+  // ON serves `getImageContestCollectionDetails` from the shared Redis cache instead of the per-pod
+  // LRU. Boolean, evaluated with no entityId, so a per-user or percentage rollout is all-or-nothing.
+  //
+  // Needs its key in flag state (enabled: false) BEFORE this code serves traffic: a missing key
+  // makes evaluateBoolean throw and log on every call.
+  CONTEST_COLLECTION_ITEMS_REDIS_CACHE = 'contest-collection-items-redis-cache',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
@@ -280,6 +294,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // `metricCountedAt` while already having been counted, so a sweep running
   // first re-emits all of it and roughly doubles those counters permanently.
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
+  // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
+  // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
+  // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
+  // uncached primary read. Global boolean, evaluated with no entity or context. Every other
+  // caller of the space (anything that decides or charges) stays on the primary regardless. See
+  // `resolvePlacementSpaceForDisplay`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it.
+  PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.
@@ -415,6 +439,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // (`createCachedFlagGate`). The key must exist in flag state (enabled: false) before this code
   // serves traffic.
   BOT_HTML_EDGE_CACHE = 'bot-html-edge-cache',
+
+  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
+  // or unreachable: every link answers 404 and no link is minted.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
+  // must exist in flag state (enabled: false) before this code serves traffic.
+  DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

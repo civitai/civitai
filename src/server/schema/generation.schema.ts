@@ -387,6 +387,13 @@ export const resolveResourceFileSchema = z.object({
 export const setEvictableSchema = getByIdSchema.extend({ evictable: z.boolean() });
 export type SetEvictableInput = z.infer<typeof setEvictableSchema>;
 
+export const setPartnerDisclosureSchema = getByIdSchema
+  .extend({ partnerService: z.boolean(), partnerTrains: z.boolean() })
+  .refine((x) => x.partnerService || !x.partnerTrains, {
+    message: 'Partner trains requires partner service',
+  });
+export type SetPartnerDisclosureInput = z.infer<typeof setPartnerDisclosureSchema>;
+
 export const setAdditionalResourceFeeWaivedSchema = getByIdSchema.extend({ waived: z.boolean() });
 export type SetAdditionalResourceFeeWaivedInput = z.infer<
   typeof setAdditionalResourceFeeWaivedSchema

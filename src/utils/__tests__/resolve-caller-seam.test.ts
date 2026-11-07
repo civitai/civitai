@@ -219,6 +219,7 @@ describe('storage-resolver attribution call-site ledger', () => {
       'pages/api/internal/get-presigned-url.ts': ['internal-presigned|internal'],
       'pages/api/mod/training-data/resolve.ts': ['training-data|derived'],
       'server/controllers/model.controller.ts': ['link|derived', 'link|derived'],
+      'server/services/download-link/download-link.service.ts': ['other|internal'],
       'server/services/file.service.ts': ['threaded'],
       'server/services/model3d.service.ts': ['model3d|derived'],
       'server/services/orchestrator/orchestrator.service.ts': [

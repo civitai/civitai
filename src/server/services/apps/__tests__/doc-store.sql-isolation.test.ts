@@ -394,6 +394,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
+    // Reads back the schema major each write stamped, and probes the catalog for the column.
+    'server/services/apps/__tests__/doc-store.schema-major.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
     'server/services/apps/doc-store.ts',
     'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
@@ -405,6 +407,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/migrations/20261102120000_appdata_usage_user_by_user.sql',
     // The registry feed's seq indexes on doc and doc_tomb (DDL only).
     'server/services/apps/migrations/20261106120000_appdata_feed_seq.sql',
+    // The nullable schema_major column on doc, and its rollback (DDL only).
+    'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.down.sql',
+    'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.sql',
   ];
   const PATTERN =
     /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;

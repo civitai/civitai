@@ -1,9 +1,13 @@
 /**
- * The registry source protocol, as the registry's TypeScript SDK speaks it over HTTP with
- * server-sent events: `GET /subscribe?schema=&cursor=&urn=&filter=` streams `upsert`* `live`
- * then `upsert`/`delete` with cursors, and `end` for a schema the source does not serve.
- * Kept wire-identical to that SDK so the adapter can sit behind any registry that speaks it.
+ * The registry source protocol, `Subscribe`, as `civitai/civitai-registry` defines it in
+ * `spec/registry.md` @ 4166f34. It has two bindings, served from one core
+ * (`subscription.ts`): HTTP with server-sent events (`serve.ts`) and gRPC (`grpc.ts`).
+ *
+ * A subscription streams `upsert`* `live`, then `upsert`/`delete` with cursors, and `progress`
+ * when the position moves with nothing to send; `end` answers a schema this source does not
+ * serve.
  */
+import type { Audience } from '~/server/registry-adapter/audience';
 
 export type JsonSchema = Record<string, unknown> | boolean;
 
@@ -14,12 +18,20 @@ export interface Entity {
   body: unknown;
 }
 
-export type Change = { upsert: Entity; cursor: string } | { delete: string; cursor: string };
+/**
+ * What an adapter's change feed yields: an upsert or a delete with the cursor after it, or a
+ * `progress` cursor when the adapter's position moved with no change for the stream.
+ */
+export type Change =
+  | { upsert: Entity; cursor: string }
+  | { delete: string; cursor: string }
+  | { progress: string };
 
 export type StreamEvent =
   | { type: 'upsert'; entity: Entity; cursor: string }
   | { type: 'delete'; urn: string; cursor: string }
   | { type: 'live'; cursor: string }
+  | { type: 'progress'; cursor: string }
   | { type: 'end' };
 
 export interface SubscribeRequest {
@@ -29,18 +41,29 @@ export interface SubscribeRequest {
   filter?: JsonSchema;
 }
 
+/**
+ * The spec's error names (`unknown_schema` is a registry's, never sent here), the auth
+ * extension's two, and `unavailable` for the spec's "anything else", whose consumer reconnects
+ * with backoff.
+ */
 export type ErrorCode =
   | 'cursor_expired'
   | 'unknown_schema'
   | 'bad_request'
+  | 'slow_consumer'
   | 'unavailable'
   | 'invalid_token'
   | 'insufficient_scope';
 
+/**
+ * The HTTP status of an error sent before the stream starts. `slow_consumer` is only ever sent
+ * after it (as an `error` event), so the spec gives it none; 503 is here for completeness.
+ */
 export const HTTP_STATUS: Record<ErrorCode, number> = {
   cursor_expired: 410,
   unknown_schema: 404,
   bad_request: 400,
+  slow_consumer: 503,
   unavailable: 503,
   invalid_token: 401,
   insufficient_scope: 403,
@@ -58,11 +81,22 @@ export const cursorExpired = (why?: string) => new ProtocolError('cursor_expired
 
 export interface AdapterContext {
   signal: AbortSignal;
+  /**
+   * What the subscription's token may read (`audience.ts`). Absent is anonymous, the narrowest.
+   * The document, app, app-release and schema streams narrow by it (`audience.ts`); the
+   * `service` stream is the same for every audience.
+   */
+  audience?: Audience;
 }
 
 export interface Adapter {
   namespace: string;
-  /** Whether a subscription to `schema` is this source's to answer; any other gets `end`. */
+  /**
+   * Whether this source may ever serve `schema`. One it never can (another namespace, a shape its
+   * URNs never take) is answered `end` before anything else; `end` means never. A schema it may
+   * publish later (a major not minted yet, a collection not exported yet) is served, empty until
+   * then.
+   */
   serves(schema: string): boolean;
   snapshot(
     schema: string,
@@ -73,33 +107,30 @@ export interface Adapter {
    * {@link cursorExpired} for a cursor it cannot resume from, so a cursor refused on resume is
    * answered before `live` (HTTP 410). A cursor that goes stale DURING the stream (the document
    * feed's later polls, e.g. its app re-created mid-stream) is thrown by the iterable and still
-   * arrives after `live` as an SSE `cursor_expired` error, so a consumer must handle both.
+   * arrives after `live` as a `cursor_expired` error, so a consumer must handle both.
    */
   changes(schema: string, cursor: string, ctx: AdapterContext): Promise<AsyncIterable<Change>>;
 }
 
-export function parseSubscribeQuery(params: URLSearchParams): SubscribeRequest {
-  const schema = params.get('schema');
-  if (!schema) throw new ProtocolError('bad_request', 'schema is required');
-  const filter = params.get('filter');
-  let parsedFilter: JsonSchema | undefined;
-  if (filter) {
+/**
+ * A request as either binding received it, validated into a {@link SubscribeRequest}. `filter`
+ * is the JSON text (both bindings carry it as a string); empty means none, as an empty `cursor`
+ * does.
+ */
+export function subscribeRequest(raw: {
+  schema: string | null | undefined;
+  cursor: string | null | undefined;
+  urns: readonly string[];
+  filter: string | null | undefined;
+}): SubscribeRequest {
+  if (!raw.schema) throw new ProtocolError('bad_request', 'schema is required');
+  let filter: JsonSchema | undefined;
+  if (raw.filter) {
     try {
-      parsedFilter = JSON.parse(filter) as JsonSchema;
+      filter = JSON.parse(raw.filter) as JsonSchema;
     } catch {
       throw new ProtocolError('bad_request', 'filter is not JSON');
     }
   }
-  return {
-    schema,
-    cursor: params.get('cursor') || undefined,
-    urns: params.getAll('urn'),
-    filter: parsedFilter,
-  };
-}
-
-/** One SSE frame, as the SDK writes it: the event name, then the event minus its `type`. */
-export function sseFrame(event: StreamEvent): string {
-  const { type, ...data } = event;
-  return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  return { schema: raw.schema, cursor: raw.cursor || undefined, urns: [...raw.urns], filter };
 }

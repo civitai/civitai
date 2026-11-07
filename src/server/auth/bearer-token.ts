@@ -133,11 +133,15 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
     subject,
     tokenScope: apiKey.tokenScope,
     buzzLimit,
+    // A cached row went through JSON, so its date may be a string.
+    expiresAt: apiKey.expiresAt ? new Date(apiKey.expiresAt) : null,
   } as Session & {
     apiKeyId: number;
     apiKeyType: ApiKeyType;
     subject: Subject;
     tokenScope: number;
     buzzLimit: BuzzLimit | null;
+    /** When the credential stops being accepted; null for one that never expires. */
+    expiresAt: Date | null;
   };
 }

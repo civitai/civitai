@@ -92,10 +92,14 @@ vi.mock('~/server/services/model-file.service', () => ({
 vi.mock('~/server/services/monetization-rights.service', () => ({
   resolveRightsAffirmation: vi.fn(),
 }));
-const { mockQueueComFaceRecheck } = vi.hoisted(() => ({ mockQueueComFaceRecheck: vi.fn() }));
+const { mockQueueComFaceRecheck, mockQueueComFaceRestore } = vi.hoisted(() => ({
+  mockQueueComFaceRecheck: vi.fn(),
+  mockQueueComFaceRestore: vi.fn(),
+}));
 vi.mock('~/server/services/model-com-face-recheck.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   queueComFaceRecheck: mockQueueComFaceRecheck,
+  queueComFaceRestore: mockQueueComFaceRestore,
 }));
 
 import { upsertModelVersion } from '~/server/services/model-version.service';
@@ -300,6 +304,7 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
     await edit({ trainedWords: ['alpha', 'gamma'] });
 
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceRestore).toHaveBeenCalledWith(MODEL_ID);
   });
 
   it('does not queue it when an owner only reorders or repeats the same words', async () => {
