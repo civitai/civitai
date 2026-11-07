@@ -557,6 +557,28 @@ describe('the personal-data export of removed profile pictures', () => {
     expect(await exported(OWNER)).toEqual([]);
   });
 
+  it('keeps a row an earlier export showed after the owner is held', async () => {
+    await block(avatar(OWNER));
+    await runProfilePictureSync();
+    expect(await exported(OWNER)).toEqual([avatar(OWNER)]);
+    await db.exec(`INSERT INTO "EvidenceHold" VALUES (${OWNER}, NULL, NULL, NULL)`);
+    await db.query(`UPDATE "Image" SET "needsReview" = 'appeal' WHERE id = $1`, [avatar(OWNER)]);
+    expect(await exported(OWNER)).toEqual([avatar(OWNER)]);
+  });
+
+  it('the notice and the export agree on whom they tell', async () => {
+    const owners = [OWNER, HELD_OWNER, REPORTED_OWNER, SECONDARY_OWNER, OTHER];
+    for (const o of owners) await block(avatar(o));
+    await runProfilePictureSync();
+    const noticed = (await getBlockedProfilePictureNotices(new Date(Date.now() - 60_000))).map(
+      (n) => n.userId
+    );
+    const exportedTo: number[] = [];
+    for (const o of owners) if ((await exported(o)).length) exportedTo.push(o);
+    expect(noticed.sort()).toEqual(exportedTo.sort());
+    expect(exportedTo).toEqual([OWNER]);
+  });
+
   it('leaves out a held owner, wholesale', async () => {
     await block(avatar(HELD_OWNER));
     await runProfilePictureSync();

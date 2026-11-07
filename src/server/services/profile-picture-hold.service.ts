@@ -12,11 +12,16 @@ import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
 import { usersSearchIndex } from '~/server/search-index/users.search-index';
 import { keysIn } from '~/server/services/image-url-ownership';
 import { ownerHeldSql } from '~/server/services/legal-hold.service';
+import { IMAGE_SAFETY_CONDITION } from '~/server/services/personal-data-export/sources/postgres';
+import { avatarRemovalUndisclosedSql } from '~/server/services/profile-picture-hold.sql';
 import { refreshProfilePicturesForUsers } from '~/server/services/user.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 // 🔴 Every read of "ProfilePictureHold" goes through dbWrite: no read-replica role is granted the
 // table, so a read-replica query naming it fails with a permission error.
+
+/** The needsReview kinds that take an avatar off its user, as Blocked does. */
+export const AVATAR_REMOVING_REVIEWS: readonly string[] = ['csam'];
 
 export const PROFILE_PICTURE_SYNC_OVERDUE_MINUTES = 15;
 export const PROFILE_PICTURE_SYNC_HEARTBEAT = 'profile-picture-sync-heartbeat';
@@ -54,7 +59,7 @@ export async function syncProfilePictureForImage(
   if (!claimed) return { action: 'unclaimed' };
   if (!image) return { action: 'none' };
 
-  const flagged = image.needsReview === 'csam';
+  const flagged = image.needsReview !== null && AVATAR_REMOVING_REVIEWS.includes(image.needsReview);
   if (image.ingestion === 'Blocked' || flagged) {
     // No deletedAt test: a deleted account's blocked avatar is recorded too.
     const [user] = await tx.$queryRaw<{ id: number }[]>`
@@ -62,10 +67,20 @@ export async function syncProfilePictureForImage(
     `;
     if (!user) return { action: 'none' };
     const reason = flagged ? 'flagged' : 'blocked';
-    // DO NOTHING, not an upsert: the write role has no UPDATE on the table.
+    // `exportable` is decided here and never recomputed, so a later hold or report cannot take a
+    // row out of a later export. DO NOTHING, not an upsert: the write role has no UPDATE.
+    const owner = Prisma.sql`${user.id}::int`;
     await tx.$executeRaw`
-      INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason)
-      VALUES (${user.id}, ${imageId}, ${reason})
+      INSERT INTO "ProfilePictureHold" ("userId", "imageId", reason, exportable)
+      VALUES (${owner}, ${imageId}, ${reason}, (
+        ${reason} = 'blocked'
+        AND NOT EXISTS (
+          SELECT 1 FROM "Image" WHERE "Image".id = ${imageId} AND ${Prisma.raw(
+      IMAGE_SAFETY_CONDITION
+    )}
+        )
+        AND NOT ${avatarRemovalUndisclosedSql(owner)}
+      ))
       ON CONFLICT ("imageId") DO NOTHING
     `;
     // The legacy `image` url is the avatar fallback once the pointer is NULL. Exact match only.
@@ -168,7 +183,12 @@ export async function runProfilePictureSync({ limit = 1000 }: { limit?: number }
     try {
       const outcome = await dbWrite.$transaction((tx) => syncProfilePictureForImage(tx, entityId));
       if (outcome.action !== 'unclaimed') processed++;
-      if (outcome.action === 'held' || outcome.action === 'restored') changed.push(outcome.userId);
+      // Per image, not once per batch: its queue row is gone, so a run that dies later would
+      // leave this user's caches and search docs stale with nothing to retry them.
+      if (outcome.action === 'held' || outcome.action === 'restored') {
+        changed.push(outcome.userId);
+        await afterProfilePictureSync([outcome.userId]);
+      }
     } catch (error) {
       // The queue row stays, so the next run retries it.
       failed++;
@@ -180,7 +200,6 @@ export async function runProfilePictureSync({ limit = 1000 }: { limit?: number }
       }).catch(() => undefined);
     }
   }
-  await afterProfilePictureSync(changed);
 
   const summary = { oldestAgeMinutes, processed, failed, changed: changed.length };
   await logToAxiom({ type: 'info', name: PROFILE_PICTURE_SYNC_HEARTBEAT, ...summary }).catch(

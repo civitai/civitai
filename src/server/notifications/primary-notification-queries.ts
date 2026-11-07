@@ -1,11 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import type { NotificationProcessorRunInput } from '~/server/notifications/base.notifications';
-import { ownerHeldSql } from '~/server/services/legal-hold.service';
+import { avatarRemovalUndisclosedSql } from '~/server/services/profile-picture-hold.sql';
 
 /**
  * Avatars blocked since `lastSent`, whether the sync job has already moved the pointer to a
- * ProfilePictureHold record or not. A held owner, and a CSAM block or flag, gets no notice.
+ * ProfilePictureHold record or not. No notice for a CSAM block or flag, nor for an owner the export
+ * also leaves out (`avatarRemovalUndisclosedSql`).
  * Read from the primary: the record table is not readable from the replica.
  */
 export async function getBlockedProfilePictureNotices(lastSent: Date) {
@@ -25,7 +26,7 @@ export async function getBlockedProfilePictureNotices(lastSent: Date) {
     JOIN "Image" i ON i.id = b."imageId"
     WHERE i."needsReview" IS DISTINCT FROM 'csam'
       AND i."blockedFor" IS DISTINCT FROM 'CSAM'
-      AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}
+      AND NOT ${avatarRemovalUndisclosedSql(Prisma.raw('b."userId"'))}
   `;
 }
 

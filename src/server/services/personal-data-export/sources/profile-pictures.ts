@@ -1,32 +1,20 @@
-import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import { csvFile, type ExportWriter, type ManifestFile } from '../output';
 
 export const REMOVED_PROFILE_PICTURES_FILE = 'data/postgres/ProfilePictureRemoved.csv';
 const COLUMNS = ['imageId', 'removedAt'] as const;
 
 /**
- * The account's profile pictures that were removed, from the primary: the record table is not
- * readable from the replica the rest of the export reads. Never the reason. Only a plain block, and
- * nothing for an owner who is held or named on any CsamReport.
+ * The account's removed profile pictures, from the primary: the record table is not readable from
+ * the replica the rest of the export reads. Only rows the sync job marked `exportable` when it wrote
+ * them, which it decides once; never the reason.
  */
 export async function readRemovedProfilePictures(userId: number) {
-  const owner = Prisma.sql`${userId}::int`;
   return dbWrite.$queryRaw<{ imageId: number; removedAt: Date }[]>`
-    SELECT h."imageId", h."createdAt" AS "removedAt"
-    FROM "ProfilePictureHold" h
-    JOIN "Image" i ON i.id = h."imageId"
-    WHERE h."userId" = ${owner}
-      AND h.reason = 'blocked'
-      AND i."blockedFor" IS DISTINCT FROM 'CSAM'
-      AND i."needsReview" IS DISTINCT FROM 'csam'
-      AND NOT ${ownerHeldSql(owner)}
-      AND NOT EXISTS (
-        SELECT 1 FROM "CsamReport" c
-        WHERE c."userId" = ${owner} OR c.details ->> 'secondaryUserId' = (${owner})::text
-      )
-    ORDER BY h."createdAt"
+    SELECT "imageId", "createdAt" AS "removedAt"
+    FROM "ProfilePictureHold"
+    WHERE "userId" = ${userId}::int AND exportable
+    ORDER BY "createdAt"
   `;
 }
 
