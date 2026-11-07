@@ -212,8 +212,8 @@ export function AnnouncementEditModal({
         : startOfDay(data.startsAt, { utc: true }),
       endsAt: endOfDay(data.endsAt, { utc: true }),
       metadata: {
-        // Keep whatever the row already stores (audience, dismissible, colSpan, index, …);
-        // only the keys this form edits are overwritten below.
+        // Spread first: keys this form doesn't edit must survive a save. The keys below
+        // override it, so undefined clears them.
         ...announcement?.metadata,
         actions:
           data.linkText && data.linkUrl

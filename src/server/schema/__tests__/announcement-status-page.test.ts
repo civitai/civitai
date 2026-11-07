@@ -17,14 +17,13 @@ describe('metadata.statusPage', () => {
     expect(parsed.metadata.statusPage).toBe(false);
   });
 
-  // `.partial()` over `.default(false)` still applies the default on this zod version,
-  // so an absent key is saved as an explicit false.
+  // zod 4 keeps defaults under .partial(), so an absent key saves as false.
   it('saves an absent flag as off', () => {
     const parsed = upsertAnnouncementSchema.parse({ ...base, metadata: {} });
     expect(parsed.metadata.statusPage).toBe(false);
   });
 
-  it('reads stored metadata that predates the flag as off', () => {
+  it('parsing metadata that predates the flag yields off', () => {
     const legacy = announcementMetaSchema.parse({
       dismissible: false,
       targetAudience: 'authenticated',

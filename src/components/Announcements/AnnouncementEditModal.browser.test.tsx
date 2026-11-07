@@ -271,7 +271,7 @@ async function save() {
   await vi.waitFor(() => expect(mocks.mutate).toHaveBeenCalled());
 }
 
-/** Types into a labelled text input the way a user would, so the form sees the change. */
+/** Uses the native value setter so React's value tracking sees the change. */
 async function typeInto(label: string, value: string) {
   const labelEl = await findByText<HTMLLabelElement>('label', label);
   const input = document.getElementById(labelEl.htmlFor) as HTMLInputElement;
