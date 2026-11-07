@@ -53,6 +53,89 @@
   outline-offset: 1px;
 }
 
+/*
+ * The refill timer, a cooldown in a light tint of the team colour: an inset bar along the feed
+ * button's bottom edge, a ring inside the image page's circle. Driven by --period and a negative
+ * --elapsed delay, so it starts part way through and runs with no renders. Stepped: a wait of
+ * minutes needs no per-frame repaint.
+ */
+@keyframes turf-timer-bar {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@keyframes turf-timer-ring {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.timer {
+  --timer-color: color-mix(in srgb, var(--team, var(--mantine-color-gray-5)) 45%, white);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.timerBar {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+.timerBarFill {
+  display: block;
+  /* A round dot at the very start, so a short wait still reads as a bar end. */
+  min-width: 3px;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--timer-color);
+  animation: turf-timer-bar var(--period) steps(60, end) var(--elapsed) forwards;
+}
+
+.timerRing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* From 12 o'clock, clockwise. */
+  transform: rotate(-90deg);
+}
+
+.timerTrack,
+.timerArc {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.timerTrack {
+  stroke: rgba(0, 0, 0, 0.45);
+}
+
+.timerArc {
+  stroke: var(--timer-color);
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  animation: turf-timer-ring var(--period) steps(120, end) var(--elapsed) forwards;
+}
+
+/* One timer per shape: the bar on the feed's rounded square, the ring on the round button. */
+.feed .timerRing,
+.button:not(.feed) .timerBar {
+  display: none;
+}
+
 .tick {
   position: absolute;
   left: -4px;

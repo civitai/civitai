@@ -31,7 +31,9 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   useFeatureFlags: () => features,
 }));
 const h = vi.hoisted(() => ({
-  stock: { available: 3, optedIn: true } as { available: number; optedIn: boolean } | undefined,
+  stock: { available: 3, optedIn: true } as
+    | { available: number; optedIn: boolean; cap?: number; nextAt?: Date | null; perHour?: number }
+    | undefined,
   mutate: vi.fn(),
   optIn: vi.fn(),
   invalidate: vi.fn(async () => undefined),
@@ -141,6 +143,7 @@ import { STICKER_PLACEMENT_MAX_SCALE } from '~/shared/utils/sticker-placement';
 import { useHatTurfStore } from '~/components/HatTurf/hat-turf.store';
 import { renderWithProviders, LOADABLE_IMAGE_DATA_URI } from '../../../../test/component-setup';
 import { cleanup } from 'vitest-browser-react';
+import { useHatStock } from '~/components/HatTurf/useHatTurf';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const PHONE_CARD = 171;
@@ -385,6 +388,115 @@ describe('Hat Turf button on a feed ImageCard', () => {
     expect(document.body.querySelector('[aria-label="No hats left to place"]')).not.toBeNull();
     await press();
     expect(q('hat-turf-draft')).toBeNull();
+  });
+
+  const faceOf = () => q('hat-turf-button')!.querySelector<HTMLElement>('button[aria-pressed]')!;
+  // 12 minutes a hat.
+  const PER_HOUR = 5;
+  const PERIOD = 12 * 60_000;
+
+  test('dual gauge: the background fills with hats held against the cap', async () => {
+    h.stock = { available: 9, cap: 27, optedIn: true, nextAt: null, perHour: PER_HOUR };
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    // A third of the way up: team colour below, the dimmed colour above.
+    expect(Number(faceOf().dataset.fill)).toBeCloseTo(1 / 3);
+    expect(getComputedStyle(faceOf()).backgroundImage).toMatch(
+      /linear-gradient\(to top, .*33\.33\d*%/
+    );
+  });
+
+  test('dual gauge: the timer is how far the wait for the next hat has gone', async () => {
+    h.stock = {
+      available: 9,
+      cap: 27,
+      optedIn: true,
+      nextAt: new Date(Date.now() + PERIOD / 4),
+      perHour: PER_HOUR,
+    };
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-refill-timer')).not.toBeNull());
+    // Three quarters of a hat's wait has passed: the bar is drawn three quarters along its track,
+    // inside the button.
+    const track = q('hat-turf-refill-timer')!.firstElementChild!;
+    const bar = track.firstElementChild!.getBoundingClientRect();
+    const t = track.getBoundingClientRect();
+    const b = faceOf().getBoundingClientRect();
+    expect(bar.width / t.width).toBeCloseTo(0.75, 1);
+    expect(t.bottom).toBeLessThanOrEqual(b.bottom);
+    expect(t.left).toBeGreaterThanOrEqual(b.left);
+    expect(t.right).toBeLessThanOrEqual(b.right);
+  });
+
+  test('at the cap no hat is coming, so no timer', async () => {
+    h.stock = { available: 27, cap: 27, optedIn: true, nextAt: null, perHour: PER_HOUR };
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    expect(Number(faceOf().dataset.fill)).toBe(1);
+    expect(q('hat-turf-refill-timer')).toBeNull();
+  });
+
+  test('out of hats: the timer still shows, since it is what the viewer waits on', async () => {
+    h.stock = {
+      available: 0,
+      cap: 27,
+      optedIn: true,
+      nextAt: new Date(Date.now() + PERIOD / 2),
+      perHour: PER_HOUR,
+    };
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-refill-timer')).not.toBeNull());
+    expect(Number(faceOf().dataset.fill)).toBe(0);
+  });
+
+  test('not joined: no gauges', async () => {
+    h.stock = {
+      available: 9,
+      cap: 27,
+      optedIn: false,
+      nextAt: new Date(Date.now() + PERIOD / 2),
+      perHour: PER_HOUR,
+    };
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    expect(faceOf().dataset.fill).toBeUndefined();
+    expect(q('hat-turf-refill-timer')).toBeNull();
+  });
+
+  // Every card on a feed reads the stock: the reread when a hat is due must happen once, not per card.
+  test('when the next hat is due the stock is reread once, however many cards show it', async () => {
+    h.stock = {
+      available: 9,
+      cap: 27,
+      optedIn: true,
+      nextAt: new Date(Date.now() + 100),
+      perHour: PER_HOUR,
+    };
+    function Reader() {
+      useHatStock();
+      return null;
+    }
+    renderWithProviders(
+      <TurfSummaryContext.Provider
+        value={{
+          event: 'birthday2026',
+          arm: 'control',
+          team: 'blue',
+          images: {},
+          open: {},
+          stickers: {},
+          joined: true,
+          watch: () => () => undefined,
+        }}
+      >
+        <Reader />
+        <Reader />
+        <Reader />
+      </TurfSummaryContext.Provider>
+    );
+    h.invalidate.mockClear();
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(h.invalidate).toHaveBeenCalledTimes(1);
   });
 
   test('the gear opens the panel; a hat picked in its tray is the one placed', async () => {

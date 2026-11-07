@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
@@ -6,14 +7,44 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+// One timer per due time for the whole page, however many cards read the stock: when the next hat
+// is due, the stock is reread once, so every count and timer moves on together.
+const refreshes = new Map<number, { users: number; timer: number }>();
+function useRefreshWhenDue(due: number | undefined, refresh: () => void) {
+  useEffect(() => {
+    if (!due) return;
+    let entry = refreshes.get(due);
+    if (!entry) {
+      const timer = window.setTimeout(() => {
+        refreshes.delete(due);
+        refresh();
+      }, Math.max(0, due - Date.now()) + 500);
+      entry = { users: 0, timer };
+      refreshes.set(due, entry);
+    }
+    entry.users++;
+    return () => {
+      const current = refreshes.get(due);
+      if (!current || --current.users > 0) return;
+      window.clearTimeout(current.timer);
+      refreshes.delete(due);
+    };
+    // The first reader's refresh serves them all; every reader's rereads the same query.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [due]);
+}
+
 /** Undefined while signed out or Hat Turf is off. */
 export function useHatStock() {
   const feed = useTurfFeed();
   const user = useCurrentUser();
+  const utils = trpc.useUtils();
   const { data } = trpc.hatTurf.getStock.useQuery(
     { event: feed?.event ?? '' },
     { enabled: !!feed && !!user, staleTime: 30_000 }
   );
+  const due = data?.nextAt ? new Date(data.nextAt).getTime() : undefined;
+  useRefreshWhenDue(due, () => void utils.hatTurf.getStock.invalidate());
   return data
     ? {
         available: data.available,
@@ -25,6 +56,8 @@ export function useHatStock() {
         creditedPlayers: data.creditedPlayers,
         // The wire may hand back a string; the countdown needs a Date.
         nextAt: data.nextAt ? new Date(data.nextAt) : null,
+        /** Hats per hour, with the team's catch-up applied. */
+        perHour: data.perHour,
       }
     : undefined;
 }
