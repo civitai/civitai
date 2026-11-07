@@ -7,10 +7,14 @@ import { installMediaOverlapDetector } from '~/components/EdgeMedia/media-overla
 import { mediaOverlapSchema } from '~/server/schema/track.schema';
 
 const user = vi.hoisted(() => ({ current: null as { isModerator: boolean } | null }));
+const mutate = vi.hoisted(() => vi.fn());
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => user.current }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
-  return { ...(await importOriginal<typeof TrpcModule>()), trpc: makeTrpcProxy() };
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({ 'track.mediaOverlap': { useMutation: () => ({ mutate }) } }),
+  };
 });
 
 import { MediaOverlapDetectorMount } from '~/components/EdgeMedia/MediaOverlapDetectorMount';
@@ -98,15 +102,26 @@ describe('media overlap detector', () => {
     expect(mediaOverlapSchema.safeParse(reports[0]).error).toBeUndefined();
   });
 
-  test('two elements audible for less than the threshold are not reported', async () => {
+  test('sees an element the autoplay attribute started, with no play() call', async () => {
     const reports = install();
+    const auto = video({ attached: false });
+    auto.autoplay = true;
+    document.body.appendChild(auto);
+    await vi.waitFor(() => expect(auto.paused).toBe(false));
+    await video().play();
+
+    await vi.waitFor(() => expect(reports).toHaveLength(1), { timeout: 2000 });
+  });
+
+  test('two elements audible for less than the threshold are not reported', async () => {
+    const reports = install({ overlapMs: 1000 });
     const first = video();
     await first.play();
     await video().play();
     await wait(100);
     first.pause();
 
-    await wait(600);
+    await wait(1300);
     expect(reports).toHaveLength(0);
   });
 
@@ -135,13 +150,29 @@ describe('media overlap detector', () => {
     expect(reports).toHaveLength(1);
   });
 
-  test('tracks no more elements than it is allowed', async () => {
-    const reports = install({ maxTracked: 1 });
+  // Three play; only the first and third are audible. With room for two, which one is dropped
+  // decides whether that pair is seen.
+  async function threeWithTheMiddleSilenced(maxTracked: number, middle: 'muted' | 'paused') {
+    const reports = install({ maxTracked });
     await video().play();
+    const second = video();
+    if (middle === 'muted') second.muted = true;
+    await second.play();
+    if (middle === 'paused') second.pause();
     await video().play();
+    await wait(800);
+    return reports;
+  }
 
-    await wait(600);
-    expect(reports).toHaveLength(0);
+  test('tracks no more elements than it is allowed: the oldest playing one goes', async () => {
+    expect(await threeWithTheMiddleSilenced(3, 'muted')).toHaveLength(1);
+    uninstall?.();
+    for (const el of elements.splice(0)) el.pause();
+    expect(await threeWithTheMiddleSilenced(2, 'muted')).toHaveLength(0);
+  });
+
+  test('at the limit a paused element is dropped before an older playing one', async () => {
+    expect(await threeWithTheMiddleSilenced(2, 'paused')).toHaveLength(1);
   });
 
   test("leaves play()'s result alone, rejection included", async () => {
@@ -155,23 +186,43 @@ describe('media overlap detector', () => {
 });
 
 describe('MediaOverlapDetectorMount', () => {
-  afterEach(() => {
+  let screen: { unmount: () => unknown } | undefined;
+  afterEach(async () => {
+    await screen?.unmount();
+    screen = undefined;
+    HTMLMediaElement.prototype.play = originalPlay;
     user.current = null;
+    mutate.mockClear();
+    for (const el of elements.splice(0)) {
+      el.pause();
+      el.remove();
+    }
   });
 
   test('installs nothing for someone who is not a moderator', async () => {
     user.current = { isModerator: false };
-    await renderWithProviders(<MediaOverlapDetectorMount />);
+    screen = await renderWithProviders(<MediaOverlapDetectorMount />);
 
     expect(HTMLMediaElement.prototype.play).toBe(originalPlay);
   });
 
-  test('installs for a moderator, and takes it out again on unmount', async () => {
+  test('for a moderator, sends an overlap to the server', async () => {
     user.current = { isModerator: true };
-    const screen = await renderWithProviders(<MediaOverlapDetectorMount />);
+    screen = await renderWithProviders(<MediaOverlapDetectorMount />);
+    await video().play();
+    await video().play();
+
+    await vi.waitFor(() => expect(mutate).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(mediaOverlapSchema.safeParse(mutate.mock.calls[0][0]).error).toBeUndefined();
+  });
+
+  test('takes the wrapper out again on unmount', async () => {
+    user.current = { isModerator: true };
+    screen = await renderWithProviders(<MediaOverlapDetectorMount />);
     expect(HTMLMediaElement.prototype.play).not.toBe(originalPlay);
 
     await screen.unmount();
+    screen = undefined;
     expect(HTMLMediaElement.prototype.play).toBe(originalPlay);
   });
 });

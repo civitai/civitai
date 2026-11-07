@@ -1201,8 +1201,7 @@ export const blockEventBatchSchema = z.object({
     .max(BLOCK_EVENT_BATCH_MAX),
 });
 
-// ── Media overlap (diagnostic) ───────────────────────────────────────────────
-// What `media-overlap-detector` sends when two media elements stay audible together.
+// Removed together with `media-overlap-detector`.
 export type MediaOverlapInput = z.infer<typeof mediaOverlapSchema>;
 export const mediaOverlapSchema = z.object({
   overlapMs: z.number().int().min(0).max(3_600_000),
@@ -1210,7 +1209,10 @@ export const mediaOverlapSchema = z.object({
     .array(
       z.object({
         connected: z.boolean(),
-        media: z.string().uuid().nullable(),
+        media: z
+          .string()
+          .regex(/^[0-9a-f-]{36}$/i)
+          .nullable(),
         tag: z.enum(['video', 'audio']),
         paused: z.boolean(),
         muted: z.boolean(),

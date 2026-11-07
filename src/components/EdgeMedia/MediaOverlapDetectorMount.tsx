@@ -3,7 +3,6 @@ import { installMediaOverlapDetector } from '~/components/EdgeMedia/media-overla
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-/** Moderators only: nobody else gets `play()` wrapped. */
 export function MediaOverlapDetectorMount() {
   const isModerator = useCurrentUser()?.isModerator ?? false;
   const { mutate } = trpc.track.mediaOverlap.useMutation();
@@ -11,7 +10,7 @@ export function MediaOverlapDetectorMount() {
   useEffect(() => {
     if (!isModerator) return;
     return installMediaOverlapDetector({ report: (report) => mutate(report) });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `mutate` is stable for our use
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `mutate` is stable
   }, [isModerator]);
 
   return null;

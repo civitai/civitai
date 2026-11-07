@@ -34,9 +34,8 @@ export type MediaOverlapReport = {
 
 type Options = {
   report: (report: MediaOverlapReport) => void;
-  /** How long two elements must stay audible together before it counts. */
   overlapMs?: number;
-  /** At most one report per this long, per tab. */
+  /** Per tab. */
   cooldownMs?: number;
   maxTracked?: number;
   sampleMs?: number;
@@ -75,7 +74,6 @@ function describe(el: HTMLMediaElement): MediaOverlapElement {
 
 const isAudible = (el: HTMLMediaElement) => !el.paused && !el.ended && !el.muted && el.volume > 0;
 
-/** Installs the detector and returns its uninstall. */
 export function installMediaOverlapDetector({
   report,
   overlapMs = 750,
@@ -121,19 +119,27 @@ export function installMediaOverlapDetector({
     overlapSince ??= now;
     if (now - overlapSince < overlapMs || now - lastReportAt < cooldownMs) return;
     lastReportAt = now;
+    // Within the route's limits, or the whole report is rejected.
     report({
-      overlapMs: Math.round(now - overlapSince),
-      elements: audible.map(describe),
+      overlapMs: Math.min(Math.round(now - overlapSince), 3_600_000),
+      elements: audible.slice(0, 16).map(describe),
       pathnames: [...pathnames],
       visibility: document.visibilityState,
-      userAgent: navigator.userAgent,
+      userAgent: navigator.userAgent.slice(0, 512),
     });
   };
 
   const track = (el: HTMLMediaElement) => {
     if (!tracked.some((ref) => ref.deref() === el)) {
       tracked.push(new WeakRef(el));
-      if (tracked.length > maxTracked) tracked.shift();
+      if (tracked.length > maxTracked) {
+        // A paused one goes first: the oldest may be the stray still playing. Not the one being
+        // added, which is still paused until play() runs.
+        const paused = tracked.findIndex(
+          (ref, i) => i < tracked.length - 1 && (ref.deref()?.paused ?? true)
+        );
+        tracked.splice(paused === -1 ? 0 : paused, 1);
+      }
     }
     notePath();
     timer ??= setInterval(sample, sampleMs);
@@ -141,10 +147,15 @@ export function installMediaOverlapDetector({
 
   const originalPlay = HTMLMediaElement.prototype.play;
   // Returns play()'s own result, rejection included: the detector must not change playback.
-  HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-    track(this);
+  const wrappedPlay = function (this: HTMLMediaElement) {
+    try {
+      track(this);
+    } catch {
+      // never at the cost of playback
+    }
     return originalPlay.call(this);
   };
+  HTMLMediaElement.prototype.play = wrappedPlay;
   // The `autoplay` attribute starts playback without a play() call; `play` doesn't bubble.
   const onPlay = (event: Event) => {
     if (event.target instanceof HTMLMediaElement) track(event.target);
@@ -152,7 +163,9 @@ export function installMediaOverlapDetector({
   document.addEventListener('play', onPlay, true);
 
   return () => {
-    HTMLMediaElement.prototype.play = originalPlay;
+    // Not over a wrapper someone installed after this one.
+    if (HTMLMediaElement.prototype.play === wrappedPlay)
+      HTMLMediaElement.prototype.play = originalPlay;
     document.removeEventListener('play', onPlay, true);
     clearInterval(timer);
   };
