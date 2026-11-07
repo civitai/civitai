@@ -58,7 +58,7 @@
   {#if canRaise}
     <p class="mx-auto mt-4 max-w-md text-sm text-dark-1">{copy.raiseBody}</p>
     <p class="mt-2 font-mono text-xs text-dark-0">
-      Workflow ID: <span class="select-all">{workflowId}</span>
+      Run ID: <span class="select-all">{workflowId}</span>
     </p>
     {#if supportUrl}
       <Button class="mt-4" variant="outline" href={supportUrl} target="_blank" rel="noreferrer">
