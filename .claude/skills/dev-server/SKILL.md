@@ -596,7 +596,7 @@ AUTH_HUB_PORT=5173         # hub dev port (matches AUTH_JWT_ISSUER)
 
 ### One-time env setup
 
-The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It's already been generated for local dev, reusing the main app's dev DB / redis / secret / provider creds, with a fresh EC P-256 (ES256) signing keypair. Two files matter:
+The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It was generated for local dev with the main app's redis / secret / provider creds and a fresh EC P-256 (ES256) signing keypair. **Its `DATABASE_URL` / `DATABASE_REPLICA_URL` are whatever that file says, and nothing syncs or checks them:** they must name the same database as the primary root `.env` (the dev clone), or every session signs in against a different database than the app reads. Check the host before relying on a login (`DATABASE_URL` host:port in both files should match), and restart the hub (`auth restart`) after changing it. Two files matter:
 
 - `apps/auth/.env` — hub signing keypair (`AUTH_JWT_PRIVATE_KEY`/`_PUBLIC_KEY`, PKCS8/SPKI), `AUTH_JWT_ISSUER=http://localhost:5173`, shared `NEXTAUTH_SECRET` + `AUTH_INTERNAL_TOKEN`, DB/redis, providers, email.
 - root `.env` — spoke side: `AUTH_JWT_ISSUER` + `AUTH_JWKS_URI` (→ `localhost:5173`) + a matching `AUTH_INTERNAL_TOKEN`.
