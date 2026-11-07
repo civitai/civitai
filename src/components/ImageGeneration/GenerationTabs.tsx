@@ -1,10 +1,11 @@
-import { Tooltip, CloseButton, SegmentedControl } from '@mantine/core';
+import { CloseButton, SegmentedControl } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconArrowsDiagonal,
   IconBrush,
   IconGridDots,
-  IconClockHour9,
+  IconLayoutList,
   IconWifiOff,
   IconSettings,
 } from '@tabler/icons-react';
@@ -57,7 +58,7 @@ const TABS: Record<
   { Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>; label: string }
 > = {
   generate: { Icon: IconBrush, label: 'Generate' },
-  queue: { Icon: IconClockHour9, label: 'Queue' },
+  queue: { Icon: IconLayoutList, label: 'Queue' },
   feed: { Icon: IconGridDots, label: 'Feed' },
 };
 

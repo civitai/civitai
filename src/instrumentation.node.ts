@@ -17,6 +17,7 @@ import {
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
+import { CredentialRedactingSpanProcessor } from '~/server/otel-redact-span-processor';
 import { trace } from '@opentelemetry/api';
 import {
   buildOtelInstrumentations,
@@ -27,6 +28,7 @@ import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
+import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -50,6 +52,12 @@ if (pgDbWrite) {
     );
   }
 }
+
+// Hand the proxy's API policy to the standalone server (scripts/trpc-server/server.cjs), which
+// applies it before `/api/v1/` routes under its `api` profile because it never runs the proxy.
+// Sets one global and nothing else, so it is a no-op under Next. That server awaits register()
+// before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
+registerStandaloneApiPolicy();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -126,25 +134,6 @@ void import('~/server/warmup')
   .then((m) => m.runWarmup())
   .catch((err) => {
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  });
-
-// Arm the per-instance style hoist in the patched `@mantine/core` `useStyles` (dark until the
-// `ssr-mantine-usestyles-hoist` Flipt flag is on). Unconditional, unlike the withSpan gate: it
-// does not depend on OTel. Dynamic, like the warmer, so the Flipt client stays out of this
-// module's static graph; a failure here must never affect boot, and without a gate Mantine runs
-// its original code. See ~/server/utils/mantine-styles-hoist-gate.
-void import('~/server/utils/mantine-styles-hoist-gate')
-  .then((m) => {
-    m.registerMantineUseStylesHoistGate();
-    console.log(
-      '[instrumentation.node] Mantine useStyles hoist gate armed (flag-controlled: ssr-mantine-usestyles-hoist)'
-    );
-  })
-  .catch((err) => {
-    console.error(
-      '[instrumentation.node] Mantine useStyles gate registration failed (fail-open):',
-      err
-    );
   });
 
 // Attach the OTel sink to the shared structured logger.
@@ -258,7 +247,7 @@ if (!OTEL_ENABLED) {
     const sdk = new NodeSDK({
       resource,
       sampler,
-      spanProcessor: new BatchSpanProcessor(traceExporter),
+      spanProcessor: new CredentialRedactingSpanProcessor(new BatchSpanProcessor(traceExporter)),
       // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
       // the highest-frequency span source (~4 spans/request) and the dominant
       // async_hooks context-propagation cost a CPU pin profile attributed to OTEL

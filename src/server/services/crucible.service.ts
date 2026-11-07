@@ -85,6 +85,22 @@ import {
   publishedImageWhere,
 } from '~/server/selectors/image.selector';
 import {
+  fitCrucibleScoresForPrizes,
+  usesBradleyTerryRanking,
+} from '~/server/services/crucible-bradley-terry';
+import {
+  createPairKey,
+  createVoteOutcome,
+  decidedPairKeys,
+  MAX_CLOSURE_VOTES,
+} from '~/server/services/crucible-judge-closure';
+import {
+  getAnchorVotesKey,
+  getJudgesKey,
+  getVoteOutcomesKey,
+  getVotedPairsKey,
+} from '~/server/services/crucible-redis-keys';
+import {
   getCrucibleJudgingConfig,
   recordSessionVote,
   resolveWatchSeconds,
@@ -93,6 +109,8 @@ import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/
 import { delIfValue } from '~/server/redis/atomic';
 import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
+import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
+import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getEntryElo,
@@ -652,28 +670,6 @@ const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
       ? Prisma.sql`AND NOT c."textNsfw"`
       : Prisma.empty
   }
-`;
-
-/** `enteredImageWhere` for entry image `i`. */
-const enteredEntryImageSql = Prisma.sql`
-  i."needsReview" IS NULL
-  AND NOT i."tosViolation"
-  AND EXISTS (SELECT 1 FROM "Post" ep WHERE ep.id = i."postId" AND ep."publishedAt" IS NOT NULL)
-`;
-
-/**
- * Entry image `i` as someone else may see it: still scanned and published as `submitEntry` required
- * (a review hold, a ToS flag or an unpublished post can come later), still inside the crucible's
- * levels (a re-rating can move it out), and inside the viewer's level.
- */
-const visibleEntryImageSql = (
-  crucibleLevel: number | Prisma.Sql,
-  viewerLevel: number
-) => Prisma.sql`
-  i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-  AND ${enteredEntryImageSql}
-  AND (i."nsfwLevel" & ${crucibleLevel}) <> 0
-  ${viewerLevel > 0 ? Prisma.sql`AND (i."nsfwLevel" & ${viewerLevel}) <> 0` : Prisma.empty}
 `;
 
 /** A viewer always sees their own entries, whatever the image filter hides. */
@@ -2401,10 +2397,19 @@ export const submitEntry = async ({
 };
 
 /**
- * Redis key for tracking voted pairs per user per crucible
+ * `voted`: pairs this judge voted on. `decided`: voted plus pairs their votes settle, which are not
+ * served again. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
  */
-function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+async function getJudgePairKeys(crucibleId: number, userId: number) {
+  const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
+  const [voted = [], outcomeCount = 0] = await Promise.all([
+    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    sysRedis.sCard(outcomesKey),
+  ]);
+  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
+  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return { voted, decided: voted };
+  const outcomes = (await sysRedis.sMembers(outcomesKey)) ?? [];
+  return { voted, decided: decidedPairKeys(voted, outcomes) };
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -2416,6 +2421,21 @@ function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemp
 }
 
 const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * Adds the pair to the judge's voted set and, for a vote against an anchor, records the anchor in
+ * the same script. The Bradley-Terry fit reads the anchor to freeze that side as Elo does, and the
+ * prize guard's count of voted pairs then also accounts for every anchor. Returns 1 when added.
+ */
+export const RECORD_VOTED_PAIR_SCRIPT = `
+local added = redis.call('SADD', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+if added == 1 and ARGV[2] ~= '' then
+  redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
+end
+-- Every vote, so the anchors expire with the voted set; a no-op while no anchor exists.
+redis.call('EXPIRE', KEYS[2], ARGV[3])
+return added`;
 
 /**
  * Counts the vote against both entries before it is processed, so concurrent votes cannot each
@@ -2449,14 +2469,6 @@ async function reserveJudgeEntryVotes(
 }
 
 /**
- * Create a canonical pair key (always sorted so a:b == b:a)
- */
-function createPairKey(entryId1: number, entryId2: number): string {
-  const [smaller, larger] = entryId1 < entryId2 ? [entryId1, entryId2] : [entryId2, entryId1];
-  return `${smaller}:${larger}`;
-}
-
-/**
  * The served pair, plus its anchor when it has one. A vote must name the same anchor: deciding it
  * from the counts at vote time alone would let a concurrent submit push an entry over the cap for a
  * moment and turn a normal vote into one that moves only one side.
@@ -2480,13 +2492,6 @@ export async function markPairVoted(
   await sysRedis.sAdd(key, pairKey);
   // Set TTL to 30 days (for crucible cleanup)
   await sysRedis.expire(key, 30 * 24 * 60 * 60);
-}
-
-/**
- * Redis key for tracking unique judges (voters) per crucible
- */
-function getJudgesKey(crucibleId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGES}:${crucibleId}` as RedisKeyTemplateSys;
 }
 
 /**
@@ -2823,20 +2828,38 @@ export function countUnjudgedRemainingPairs(entryCount: number, maxVotesPerEntry
 }
 
 /**
- * The most pairs this judge can reach in a crucible, for a progress total. Depends only on how many
- * entries they can see, never on how they voted, so a vote can't shrink it the way it shrinks
- * `countRemainingPairs`. Clamped to the pairs already judged so "judged of total" never overflows.
+ * A judge's progress in one crucible. Judged is the pairs they voted on, one per vote: pairs their
+ * votes settle by transitivity are never served, so they are not judged and come off the total.
+ *
+ * The total is the most pairs they can reach by voting (fixed by the entries they see, so a vote
+ * that caps an entry doesn't move it), less the pairs their votes settled, and never less than
+ * judged plus `remainingPairs`: settled pairs ignore the per-entry vote cap, so judged plus settled
+ * can pass the reachable count while pairs are still served.
  */
-export function countTotalPairs({
-  entryCount,
-  judgedPairs,
+export function countJudgingProgress({
+  entryIds,
+  judgeEntryVotes,
+  votedPairKeys,
+  decidedPairKeys,
   maxVotesPerEntry,
 }: {
-  entryCount: number;
-  judgedPairs: number;
+  entryIds: number[];
+  judgeEntryVotes: Record<string, string>;
+  votedPairKeys: string[];
+  decidedPairKeys: string[];
   maxVotesPerEntry: number;
 }) {
-  return Math.max(judgedPairs, countUnjudgedRemainingPairs(entryCount, maxVotesPerEntry));
+  const judgedPairs = countJudgedPairs({ entryIds, votedPairKeys });
+  const remainingPairs = countRemainingPairs({
+    entryIds,
+    judgeEntryVotes,
+    votedPairKeys: decidedPairKeys,
+    maxVotesPerEntry,
+  });
+  const settledPairs = countJudgedPairs({ entryIds, votedPairKeys: decidedPairKeys }) - judgedPairs;
+  const reachable = countUnjudgedRemainingPairs(entryIds.length, maxVotesPerEntry);
+  const toGo = Math.max(remainingPairs, reachable - settledPairs - judgedPairs);
+  return { judgedPairs, remainingPairs, totalPairs: judgedPairs + toGo };
 }
 
 /** Pairs this judge voted on where both entries are still visible to them. */
@@ -2887,16 +2910,14 @@ export async function countJudgingPairs({
 
   const judgeState = await Promise.all(
     uniqueIds.map(async (id) => {
-      const [judgeEntryVotes, votedPairKeys = []] = await Promise.all([
+      const [judgeEntryVotes, { voted, decided }] = await Promise.all([
         sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
-        sysRedis.sMembers(getVotedPairsKey(id, userId)),
+        getJudgePairKeys(id, userId),
       ]);
-      return { id, judgeEntryVotes, votedPairKeys };
+      return { id, judgeEntryVotes, voted, decided };
     })
   );
-  const counted = judgedOnly
-    ? judgeState.filter(({ votedPairKeys }) => votedPairKeys.length > 0)
-    : judgeState;
+  const counted = judgedOnly ? judgeState.filter(({ voted }) => voted.length > 0) : judgeState;
   if (!counted.length) return counts;
 
   const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
@@ -2912,24 +2933,18 @@ export async function countJudgingPairs({
   const entryIds = new Map<number, number[]>(counted.map(({ id }) => [id, []]));
   for (const { crucibleId, id } of entries) entryIds.get(crucibleId)?.push(id);
 
-  for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
+  for (const { id: crucibleId, judgeEntryVotes, voted, decided } of counted) {
     const visible = entryIds.get(crucibleId) ?? [];
-    const judgedPairs = countJudgedPairs({ entryIds: visible, votedPairKeys });
     counts.set(crucibleId, {
-      remainingPairs: countRemainingPairs({
+      ...countJudgingProgress({
         entryIds: visible,
         judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-        votedPairKeys,
-        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
-      }),
-      judgedPairs,
-      totalPairs: countTotalPairs({
-        entryCount: visible.length,
-        judgedPairs,
+        votedPairKeys: voted,
+        decidedPairKeys: decided,
         maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
       }),
       visibleEntries: visible.length,
-      judged: votedPairKeys.length > 0,
+      judged: voted.length > 0,
     });
   }
   return counts;
@@ -3154,13 +3169,13 @@ export const getJudgingPair = async ({
     return null;
   }
 
-  const [redisElos, voteCounts, judgeEntryVotes, votedPairKeys] = await Promise.all([
+  const [redisElos, voteCounts, judgeEntryVotes, { decided }] = await Promise.all([
     getAllEntryElos(crucibleId),
     crucibleEloRedis.getAllVoteCounts(crucibleId),
     sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+    getJudgePairKeys(crucibleId, userId),
   ]);
-  const votedPairs = new Set(votedPairKeys);
+  const votedPairs = new Set(decided);
   const judgeVotesOn = (entry: EntryForJudging) => Number(judgeEntryVotes?.[entry.id] ?? 0);
   const underJudgeCap = (entry: EntryForJudging) =>
     judgeVotesOn(entry) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
@@ -3387,12 +3402,17 @@ export const submitVote = async ({
       );
     }
 
-    // Race condition protection: Atomically mark the pair as voted before processing
-    // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
-    // Note: sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
-    const key = getVotedPairsKey(crucibleId, userId);
-    const addResult = await sysRedis.sAdd(key, pairKey);
-    await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
+    // Marks the pair voted before the rating update; 0 means it already was (a duplicate vote).
+    const addResult = Number(
+      await sysRedis.eval(RECORD_VOTED_PAIR_SCRIPT, {
+        keys: [getVotedPairsKey(crucibleId, userId), getAnchorVotesKey(crucibleId, userId)],
+        arguments: [
+          pairKey,
+          anchorEntryId === null ? '' : String(anchorEntryId),
+          String(JUDGE_KEY_TTL_SECONDS),
+        ],
+      })
+    );
 
     if (addResult === 0) {
       // User has already voted on this pair
@@ -3400,7 +3420,6 @@ export const submitVote = async ({
         'You have already voted on this pair. Please wait for the next pair to load.'
       );
     }
-
     ({ winnerElo, loserElo } = await processEloVote(
       crucibleId,
       winnerEntryId,
@@ -3423,7 +3442,25 @@ export const submitVote = async ({
     throw error;
   }
 
+  // Only once the vote has counted: a refused or failed vote must not decide pairs for this judge.
+  const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
   await Promise.all([
+    // A lost outcome only means this judge is served a pair they could have skipped.
+    (async () => {
+      await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+      await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+      // At most once per judge and crucible: concurrent votes can both read past 201 and skip it.
+      if ((await sysRedis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
+        logToAxiom({
+          type: 'info',
+          name: 'crucible-closure-cap',
+          message: `Judge ${userId} passed ${MAX_CLOSURE_VOTES} votes in crucible ${crucibleId}; the judge-side skip is off for them`,
+          crucibleId,
+          userId,
+        }).catch();
+    })().catch((error: unknown) =>
+      log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+    ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
     crucible.minViewSeconds &&
@@ -3655,7 +3692,8 @@ export const getCrucibleJudgesCount = async ({
  *
  * This function:
  * 1. Copies ELO scores from Redis to PostgreSQL CrucibleEntry.score
- * 2. Places entries with enough votes by ELO (entry time breaks ties); the rest stay unplaced
+ * 2. Places entries with enough votes by ELO, or by the Bradley-Terry fit where
+ *    `usesBradleyTerryRanking` (entry time breaks ties); the rest stay unplaced
  * 3. Updates CrucibleEntry records with final positions
  * 4. Calculates prize amounts based on configured percentages
  * 5. Updates crucible status to 'completed'
@@ -3690,6 +3728,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       prizePositions: true,
       startAt: true,
       endAt: true,
+      createdAt: true,
       timeAdjustedPlacement: true,
       nsfwLevel: true,
       _count: {
@@ -3830,8 +3869,11 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${allEntries[0].id}`);
   }
 
+  const fittedScores = usesBradleyTerryRanking(crucible)
+    ? await fitCrucibleScoresForPrizes(crucibleId, { endedAt: crucible.endAt })
+    : null;
   const ranking = rankEntries(allEntries, {
-    redisElos,
+    redisElos: fittedScores ? Object.fromEntries(fittedScores) : redisElos,
     redisVoteCounts,
     prizePositions,
     totalPrizePool,
@@ -4609,6 +4651,7 @@ async function removeEntry(entryId: number, remover: EntryRemover) {
   }
 
   if (entry.imageId) await revealCrucibleEntryPosts({ imageId: entry.imageId });
+  await revokeCrucibleEntry({ entryId, crucibleId, userId: entry.userId });
 
   logToAxiom({
     type: 'info',
@@ -4670,6 +4713,7 @@ export const withdrawCrucibleEntry = async ({
   if (!withdrawn) throw throwNotFoundError('Entry not found');
 
   await revealCrucibleEntryPosts({ imageId });
+  await revokeCrucibleEntry({ entryId, crucibleId, userId });
 
   logToAxiom({
     type: 'info',

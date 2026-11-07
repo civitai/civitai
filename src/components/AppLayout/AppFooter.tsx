@@ -139,6 +139,9 @@ export function AppFooter() {
       // this bar is the other thing that can be. See globals.css for why this
       // zeroes `--safe-area-inset-bottom-page` and pointedly not `…-unpaid`.
       data-app-footer=""
+      // Lets bars outside this tree follow the slide-out: globals.css turns it
+      // into `--app-footer-offset`.
+      data-hidden={!showFooter || undefined}
       // The hide transform has to travel the bar's REAL height, which is now
       // `--footer-height` plus whatever inset the bar pays. Using
       // `--footer-height` alone leaves the "hidden" footer peeking by up to 34px.

@@ -149,15 +149,13 @@ const assertStickerMembersAllowed = (members: ResolvedMember[], stickersEnabled?
 
 /**
  * Who may bundle a member. A creator bundles their own work freely; another
- * creator's only when its listing opted into resale (`sellableByOthers`) — the
- * same consent the official shop enforces in `upsertCosmeticShopSection`. A pack
- * is somebody else selling the item, so an opt-out has to block it here too.
+ * creator's only when its listing opted into resale (`sellableByOthers`). A pack
+ * is somebody else selling the item, so an opt-out has to block it here. An
+ * official shop section is not a resale, so it does not ask.
  *
  * A member with no creator is a platform cosmetic, which the resale-consent rule
- * doesn't govern — the official shop scopes its check to `createdById != null`
- * for the same reason, so this stays in step with it. `resolvePackMembers`
- * already restricts to Published, non-archived listings, so those guards aren't
- * repeated here.
+ * doesn't govern. `resolvePackMembers` already restricts to Published, non-archived
+ * listings, so those guards aren't repeated here.
  */
 export const isBundlableBy = (
   member: { createdById: number | null; sellableByOthers: boolean },

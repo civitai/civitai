@@ -5,14 +5,13 @@ import {
   Button,
   Container,
   CopyButton,
-  Menu,
   SegmentedControl,
   Select,
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useMediaQuery } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {

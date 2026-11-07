@@ -376,6 +376,12 @@
     height: 22px !important;
     padding: 0 6px !important;
   }
+
+  /* !important: Mantine's rules sit in a higher layer than this module. */
+  & .tipEnd > button:not(.infoChip) :global(.mantine-Text-root),
+  & > .reactions :global(.mantine-Badge-label) {
+    font-size: 12px !important;
+  }
 }
 
 .tipEnd {
@@ -414,6 +420,23 @@
   }
 
   .tipEnd {
+    padding-left: 6px;
+  }
+}
+
+/* Footer in a card whose height the masonry fixed: reactions and tip flow as one wrapping line,
+   since a second stacked row would overflow into the picture. */
+.actions.oneLine {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+
+  & .actionRow,
+  & .tipRow {
+    display: contents;
+  }
+
+  & .tipEnd {
     padding-left: 6px;
   }
 }

@@ -56,7 +56,10 @@ vi.mock('embla-carousel-react', async (o) => {
   return { ...actual, default: Object.assign(spied, actual.default) };
 });
 
-import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import {
+  ImageDetailCarousel,
+  shouldHandleHotkey,
+} from '~/components/Image/DetailV2/ImageDetailCarousel';
 
 // The harness loads no Tailwind; embla measures its slides, so give them the layout they have.
 const layout = document.createElement('style');
@@ -214,5 +217,29 @@ describe.each([false, true])('ImageDetailCarousel, loop %s', (loop) => {
     expect(moves).toEqual({ reInitWithOptions: [], scrollTo: [] });
     expect(slideInView()).toBe(1);
     await expect.element(page.getByTestId('state')).toHaveTextContent('1');
+  });
+});
+
+describe('arrow keys', () => {
+  const keyOn = (element: HTMLElement) => {
+    let seen: KeyboardEvent | null = null;
+    const listen = (event: KeyboardEvent) => (seen = event);
+    document.addEventListener('keydown', listen, true);
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    document.removeEventListener('keydown', listen, true);
+    return seen!;
+  };
+
+  test('leave the image alone while a sticker on it is taking them', () => {
+    const sticker = document.createElement('div');
+    sticker.setAttribute('data-arrow-keys', '');
+    const inside = sticker.appendChild(document.createElement('span'));
+    const plain = document.createElement('div');
+    document.body.append(sticker, plain);
+
+    expect(shouldHandleHotkey(keyOn(inside), null)).toBe(false);
+    expect(shouldHandleHotkey(keyOn(plain), null)).toBe(true);
+    sticker.remove();
+    plain.remove();
   });
 });

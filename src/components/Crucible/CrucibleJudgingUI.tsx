@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  Button,
-  Kbd,
-  Paper,
-  Text,
-  Loader,
-  Box,
-  Skeleton,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Button, Kbd, Paper, Text, Loader, Box, Skeleton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { readLocalStorageValue, useHotkeys, useReducedMotion } from '@mantine/hooks';
 import type { HotkeyItem } from '@mantine/hooks';
 import {

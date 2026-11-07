@@ -266,6 +266,8 @@ export type StorylineStatus = "Ongoing" | "Complete";
 
 export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
 
+export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
+
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
@@ -276,7 +278,7 @@ export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevi
 
 export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
 
-export type ServiceDealFileKind = "Preview" | "Final";
+export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
 export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
@@ -676,6 +678,7 @@ export interface User {
   collaboratingOn?: EntityCollaborator[];
   collaborationsCreated?: EntityCollaborator[];
   adTokens?: AdToken[];
+  accessTokens?: AccessToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
@@ -713,6 +716,7 @@ export interface User {
   comicChapterReads?: ComicChapterRead[];
   storylines?: Storyline[];
   storylineCollaborations?: StorylineCollaborator[];
+  storylineFollows?: StorylineFollow[];
   storylineEarlyAccess?: StorylineEarlyAccessSignup | null;
   storylineBranchChoices?: StorylineBranchChoice[];
   storylineCreateClicks?: StorylineCreateClick[];
@@ -1529,17 +1533,6 @@ export interface HeldResourceReview {
   holdReasons: string[];
 }
 
-export interface HeldAnswer {
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -1754,6 +1747,7 @@ export interface Image {
   clubTierCover?: ClubTier[];
   clubPostCoverImage?: ClubPost[];
   article?: Article | null;
+  articleBanner?: Article | null;
   purchasableRewards?: PurchasableReward[];
   tools?: ImageTool[];
   techniques?: ImageTechnique[];
@@ -2926,6 +2920,12 @@ export interface AppUserScopeGrant {
   buzzBudgetPerDay: number | null;
 }
 
+export interface AppDeveloperTermsAcceptance {
+  userId: number;
+  version: string;
+  acceptedAt: Date;
+}
+
 export interface AppDevForgejoIdentity {
   userId: number;
   user?: User;
@@ -2953,6 +2953,26 @@ export interface TrustedSpokeDomain {
   label: string | null;
   enabled: boolean;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AccessToken {
+  id: number;
+  resourceType: string;
+  resourceId: number;
+  tokenHash: string;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+}
+
+export interface ArticleShareCheck {
+  articleId: number;
+  generation: number;
+  workflowId: string | null;
+  textHash: string | null;
   updatedAt: Date;
 }
 
@@ -3808,6 +3828,8 @@ export interface Article {
   cover: string | null;
   coverId: number | null;
   coverImage?: Image | null;
+  bannerId: number | null;
+  bannerImage?: Image | null;
   publishedAt: Date | null;
   scheduledAt: Date | null;
   contentScannedAt: Date | null;
@@ -4261,6 +4283,29 @@ export interface CsamReportArchiveObject {
   namedExpected: number | null;
   namedMissing: number | null;
   uploadedAt: Date;
+}
+
+export interface PersonalDataExport {
+  id: number;
+  userId: number;
+  requestedById: number;
+  status: string;
+  modNotesMode: string;
+  holdReasons: string[];
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  manifest: JsonValue | null;
+  error: string | null;
+  attempts: number;
+  createdAt: Date;
+  startedAt: Date | null;
+  builtAt: Date | null;
+  sentAt: Date | null;
+  linkExpiresAt: Date | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  ticketId: number | null;
+  requestedAt: Date | null;
 }
 
 export interface EvidenceHold {
@@ -5927,6 +5972,7 @@ export interface UserProfile {
   privacySettings: JsonValue;
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
+  showcaseSections: JsonValue;
 }
 
 export interface BountyStat {
@@ -6656,6 +6702,7 @@ export interface Placement {
   placerId: number;
   placer?: User;
   data: JsonValue;
+  track: JsonValue | null;
   status: string;
   removedBy: string | null;
   amount: number;
@@ -6724,6 +6771,7 @@ export interface Storyline {
   chapters?: StorylineChapter[];
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
+  followers?: StorylineFollow[];
   reports?: StorylineReport[];
   coverUploads?: StorylineCoverUpload[];
   thread?: Thread | null;
@@ -6806,6 +6854,15 @@ export interface StorylineCollaborator {
   acceptedAt: Date | null;
 }
 
+export interface StorylineFollow {
+  storylineId: number;
+  storyline?: Storyline;
+  userId: number;
+  user?: User;
+  scope: StorylineFollowScope;
+  createdAt: Date;
+}
+
 export interface StorylineBranchChoice {
   userId: number;
   user?: User;
@@ -6841,10 +6898,12 @@ export interface StorylineCoverUpload {
 }
 
 export interface StorylineReport {
-  storylineId: number;
-  storyline?: Storyline;
   reportId: number;
   report?: Report;
+  storylineId: number | null;
+  storyline?: Storyline | null;
+  heldStorylineId: number | null;
+  storylineTitle: string | null;
 }
 
 export interface ServiceOffering {
@@ -6982,6 +7041,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  attestedAt: Date | null;
+  removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
 }

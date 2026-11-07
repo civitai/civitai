@@ -1,11 +1,12 @@
 import { Anchor, Group, Paper, Stack, Text } from '@mantine/core';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function ServiceOfferingCard({
@@ -19,13 +20,17 @@ export function ServiceOfferingCard({
   footer?: ReactNode;
 }) {
   const domain = useDomainColor();
-  const descriptionRef = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
+  // The card can mount wide and narrow afterwards (a profile row), so re-measure on resize.
+  const descriptionRef = useResizeObserver<HTMLParagraphElement>((entry) => {
+    const el = entry.target;
+    if (!expanded) setClamped(el.scrollHeight > el.clientHeight);
+  });
   useLayoutEffect(() => {
     const el = descriptionRef.current;
     if (el && !expanded) setClamped(el.scrollHeight > el.clientHeight);
-  }, [offering.description, expanded]);
+  }, [offering.description, expanded, descriptionRef]);
   return (
     <Paper withBorder radius="md" p="md" className="flex h-full flex-col">
       <Stack gap={6} className="flex-1">

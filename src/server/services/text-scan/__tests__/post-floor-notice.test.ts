@@ -20,6 +20,11 @@ vi.mock('~/server/services/rating-review.service', async (importOriginal) => ({
   maybeAutoResolveRatingDisputeAfterScan: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+// A rating that lifts a post out of unrated restores its story sparks; the hook's own query is not under test.
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
 // Hand-listed: the real module builds Meilisearch clients and prom collectors at load.
 vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },

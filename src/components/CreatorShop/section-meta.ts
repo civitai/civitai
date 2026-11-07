@@ -55,3 +55,6 @@ export const storefrontSectionKeys = (
 
 /** The storefront section's element id, so a link can jump to it. */
 export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`;
+
+/** A service card's element id; the moderator reports link to it as `/shop#service-<id>`. */
+export const serviceCardId = (offeringId: number) => `service-${offeringId}`;

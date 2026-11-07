@@ -254,7 +254,7 @@ export const deleteUserCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const deleted = await deleteCommentById({ ...input, byAuthor: !ctx.user.isModerator });
+    const deleted = await deleteCommentById(input);
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });

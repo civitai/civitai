@@ -50,6 +50,36 @@ const csamBaseDir = await vi.hoisted(async () => {
   return nodePath.join(dirname, 'csam');
 });
 
+// CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
+const v3 = vi.hoisted(() => ({
+  comments: [] as { id: number; userId: number; content: string }[],
+  calls: [] as { table?: string; userId?: number; afterId?: number; take?: number }[],
+}));
+vi.mock('~/server/db/kyselyDb', () => {
+  type State = {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+  };
+  const query = (state: State): Record<string, unknown> => ({
+    selectAll: () => query(state),
+    orderBy: () => query(state),
+    where: (column: string, _op: string, value: number) =>
+      query({ ...state, [column === 'userId' ? 'userId' : 'afterId']: value }),
+    limit: (take: number) => query({ ...state, take }),
+    execute: async () => {
+      // A cursor that never advances fails here rather than hanging the test.
+      if (v3.calls.length > 50) throw new Error('CommentV3 scan did not end');
+      v3.calls.push(state);
+      return v3.comments
+        .filter(
+          (c) => c.userId === state.userId && (state.afterId === undefined || c.id > state.afterId)
+        )
+        .slice(0, state.take);
+    },
+  });
+  return { kyselyV3Read: { selectFrom: () => query({}) } };
+});
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,
@@ -230,7 +260,10 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 let mockIsFlipt: (...args: unknown[]) => unknown = async () => false;
 let recordedArchiveCalls: Array<[string, string, string]> = [];
 
-import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
+import {
+  archiveCsamDataForReport,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
+} from '~/server/services/csam.service-new';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
@@ -447,6 +480,7 @@ beforeEach(() => {
   storedObjects.clear();
   pendingUploads.clear();
   recordedArchiveCalls = [];
+  v3.calls = [];
   // A regression to the edge copy must fail here, not reach the network.
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async (url: unknown) => {
@@ -636,7 +670,12 @@ describe('csam archive streaming upload', () => {
     ];
     mockIsFlipt = async () => false;
 
-    await archiveCsamDataForReport({ ...report, type: 'GeneratedImage' } as never);
+    // Past the give-up window, so the absent URLs are counted misses rather than failing the pass.
+    await archiveCsamDataForReport({
+      ...report,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
+    } as never);
 
     const stored = storedObjects.get('generated-images.zip');
     expect(

@@ -1,4 +1,5 @@
-import { ActionIcon, Alert, Button, Group, Menu, Stack, Text, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Alert, Button, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,

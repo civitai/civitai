@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
-import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { dbRead } from '~/server/db/client';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -31,10 +31,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const tokenAuthed = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
+  const tokenAuthed = webhookTokenAuthenticates(req, req.query.token);
   if (!tokenAuthed) {
-    const session = await getServerAuthSession({ req, res });
-    if (!session?.user?.isModerator || session.user.bannedAt) {
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
+    if (!session?.user?.isModerator) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     if (!requireFullScopeSession(req, res)) return;

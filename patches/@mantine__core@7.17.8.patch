@@ -1,3 +1,16 @@
+diff --git a/cjs/components/Spoiler/Spoiler.cjs b/cjs/components/Spoiler/Spoiler.cjs
+index 1dfa3ccae807dabc7fd05191eac3366f6c6e289e..1bd500ce597212d57d46caf058bd7aa348832c29 100644
+--- a/cjs/components/Spoiler/Spoiler.cjs
++++ b/cjs/components/Spoiler/Spoiler.cjs
+@@ -99,7 +99,7 @@ const Spoiler = factory.factory((_props, ref) => {
+           "div",
+           {
+             ...getStyles("content", {
+-              style: { maxHeight: !show ? rem.rem(maxHeight) : height ? rem.rem(height) : void 0 }
++              style: { maxHeight: !show ? `${maxHeight}px` : height ? `${height}px` : void 0 }
+             }),
+             "data-reduce-motion": true,
+             role: "region",
 diff --git a/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs b/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
 index f99f78b22530a5589d87873a7d82c910b61bf41e..e12a9edbf90a5f884c48e3aaa9842d6b141ff808 100644
 --- a/cjs/core/Box/style-props/extract-style-props/extract-style-props.cjs
@@ -192,116 +205,6 @@ index cc6b50a6a7226e538c3987128ee7722c1e91d8c9..140070554668ef7dfd7d42dbdf6a00fe
    return sortMediaQueries.sortMediaQueries(
      keys.keys(styleProps).reduce(
        (acc, styleProp) => {
-diff --git a/cjs/core/styles-api/use-styles/use-styles.cjs b/cjs/core/styles-api/use-styles/use-styles.cjs
-index bed93a7a90ddb2575ebc3a61d04171b991b5fc7f..40da05342a081d5ef747ba27955123a1fcc3e112 100644
---- a/cjs/core/styles-api/use-styles/use-styles.cjs
-+++ b/cjs/core/styles-api/use-styles/use-styles.cjs
-@@ -1,6 +1,7 @@
- 'use client';
- 'use strict';
- 
-+var cx = require('clsx');
- require('react');
- require('react/jsx-runtime');
- require('@mantine/hooks');
-@@ -10,9 +11,38 @@ require('../../MantineProvider/MantineProvider.cjs');
- var MantineThemeProvider = require('../../MantineProvider/MantineThemeProvider/MantineThemeProvider.cjs');
- require('../../MantineProvider/MantineCssVariables/MantineCssVariables.cjs');
- var getClassName = require('./get-class-name/get-class-name.cjs');
-+var getGlobalClassNames = require('./get-class-name/get-global-class-names/get-global-class-names.cjs');
-+var getOptionsClassNames = require('./get-class-name/get-options-class-names/get-options-class-names.cjs');
-+var getResolvedClassNames = require('./get-class-name/get-resolved-class-names/get-resolved-class-names.cjs');
-+var getRootClassName = require('./get-class-name/get-root-class-name/get-root-class-name.cjs');
-+var getSelectorClassName = require('./get-class-name/get-selector-class-name/get-selector-class-name.cjs');
-+var getStaticClassNames = require('./get-class-name/get-static-class-names/get-static-class-names.cjs');
-+var getVariantClassName = require('./get-class-name/get-variant-class-name/get-variant-class-name.cjs');
-+var resolveClassNames = require('./get-class-name/resolve-class-names/resolve-class-names.cjs');
- var getStyle = require('./get-style/get-style.cjs');
-+var resolveStyle = require('./get-style/resolve-style/resolve-style.cjs');
-+var resolveStyles = require('./get-style/resolve-styles/resolve-styles.cjs');
-+var mergeVars = require('./get-style/resolve-vars/merge-vars.cjs');
- var useTransformedStyles = require('./use-transformed-styles.cjs');
- 
-+function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
-+
-+var cx__default = /*#__PURE__*/_interopDefault(cx);
-+
-+// Patched (civitai): an opt-in backport of Mantine 9's per-instance hoist in useStyles. Unpatched,
-+// every getStyles(selector) call re-runs the component's vars resolver, re-merges every selector's
-+// vars and re-resolves the theme and component styles/classNames, then keeps one selector's entry;
-+// a Button asks for 3-5 selectors. When the gate is on, those are resolved once per component
-+// instance and getStyles only reads them. The className and style it returns are the same strings
-+// and the same keys in the same order. The gate is a function the host app may install on
-+// globalThis under this symbol; without one (the client, tests, any other process) the original
-+// code below runs unchanged.
-+const HOIST_GATE = Symbol.for('civitai.mantine.useStylesHoist');
-+function isHoistEnabled() {
-+  const gate = globalThis[HOIST_GATE];
-+  return typeof gate === 'function' && gate() === true;
-+}
-+
- function useStyles({
-   name,
-   classes,
-@@ -37,6 +67,58 @@ function useStyles({
-     stylesCtx,
-     themeName
-   });
-+  if (isHoistEnabled()) {
-+    const resolvedClassNames = resolveClassNames.resolveClassNames({ theme, classNames, props, stylesCtx });
-+    const resolvedThemeClassNames = themeName.map(
-+      (n) => resolveClassNames.resolveClassNames({ theme, classNames: theme.components[n]?.classNames, props, stylesCtx })
-+    );
-+    const resolvedComponentStyles = withStylesTransform ? {} : resolveStyles.resolveStyles({ theme, styles, props, stylesCtx });
-+    const resolvedThemeStyles = {};
-+    if (!withStylesTransform) {
-+      for (const n of themeName) {
-+        const resolved = resolveStyles.resolveStyles({ theme, styles: theme.components[n]?.styles, props, stylesCtx });
-+        for (const key of Object.keys(resolved)) {
-+          resolvedThemeStyles[key] = { ...resolvedThemeStyles[key], ...resolved[key] };
-+        }
-+      }
-+    }
-+    const resolvedVars = mergeVars.mergeVars([
-+      headless ? {} : varsResolver?.(theme, props, stylesCtx),
-+      ...themeName.map((n) => theme.components?.[n]?.vars?.(theme, props, stylesCtx)),
-+      vars?.(theme, props, stylesCtx)
-+    ]);
-+    const resolvedRootStyle = resolveStyle.resolveStyle({ style, theme });
-+    return (selector, options) => {
-+      const transformedStyles = getTransformedStyles([options?.styles, styles]);
-+      return {
-+        className: cx__default.default(
-+          getGlobalClassNames.getGlobalClassNames({ theme, options, unstyled: unstyled || headless }),
-+          resolvedThemeClassNames.map((m) => m[selector]),
-+          getVariantClassName.getVariantClassName({ options, classes, selector, unstyled }),
-+          resolvedClassNames[selector],
-+          getResolvedClassNames.getResolvedClassNames({ selector, stylesCtx, theme, classNames: transformedStyles, props }),
-+          getOptionsClassNames.getOptionsClassNames({ selector, stylesCtx, options, props, theme }),
-+          getRootClassName.getRootClassName({ rootSelector, selector, className }),
-+          getSelectorClassName.getSelectorClassName({ selector, classes, unstyled: unstyled || headless }),
-+          withStaticClasses && !headless && getStaticClassNames.getStaticClassNames({
-+            themeName,
-+            classNamesPrefix,
-+            selector,
-+            withStaticClass: options?.withStaticClass
-+          }),
-+          options?.className
-+        ),
-+        style: {
-+          ...resolvedThemeStyles[selector],
-+          ...resolvedComponentStyles[selector],
-+          ...!withStylesTransform && resolveStyles.resolveStyles({ theme, styles: options?.styles, props: options?.props || props, stylesCtx })[selector],
-+          ...resolvedVars[selector],
-+          ...rootSelector === selector ? resolvedRootStyle : null,
-+          ...resolveStyle.resolveStyle({ style: options?.style, theme })
-+        }
-+      };
-+    };
-+  }
-   return (selector, options) => ({
-     className: getClassName.getClassName({
-       theme,
 diff --git a/cjs/core/utils/filter-props/filter-props.cjs b/cjs/core/utils/filter-props/filter-props.cjs
 index d5fa03fe5617f61b979c1e4e7944cd774bf31c7d..2f86eccbadc32a559c3ff24445f667f8e4daab5a 100644
 --- a/cjs/core/utils/filter-props/filter-props.cjs
@@ -328,6 +231,19 @@ index d5fa03fe5617f61b979c1e4e7944cd774bf31c7d..2f86eccbadc32a559c3ff24445f667f8
  }
  
  exports.filterProps = filterProps;
+diff --git a/esm/components/Spoiler/Spoiler.mjs b/esm/components/Spoiler/Spoiler.mjs
+index 7b5195c422ee8975609d9a8113cd00f2e3315426..9a8cad294a75184838e310fdef7ca5e83890d7a7 100644
+--- a/esm/components/Spoiler/Spoiler.mjs
++++ b/esm/components/Spoiler/Spoiler.mjs
+@@ -97,7 +97,7 @@ const Spoiler = factory((_props, ref) => {
+           "div",
+           {
+             ...getStyles("content", {
+-              style: { maxHeight: !show ? rem(maxHeight) : height ? rem(height) : void 0 }
++              style: { maxHeight: !show ? `${maxHeight}px` : height ? `${height}px` : void 0 }
+             }),
+             "data-reduce-motion": true,
+             role: "region",
 diff --git a/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs b/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs
 index aa2d8677d9c4996b26d80163c7e3d51f7bf754f0..5e4e6882508b5a4370448ae3b9078fddc600306f 100644
 --- a/esm/core/Box/style-props/extract-style-props/extract-style-props.mjs
@@ -522,110 +438,6 @@ index 15f35825f74075703e71e1cc7d9270eba104bc7b..b13c56d68a4b5094a44b20c8c9db3c3c
    return sortMediaQueries(
      keys(styleProps).reduce(
        (acc, styleProp) => {
-diff --git a/esm/core/styles-api/use-styles/use-styles.mjs b/esm/core/styles-api/use-styles/use-styles.mjs
-index b82a778a388f0afc4d8f6040076be7444fdb16b0..1ef45b2326b55fc3930781b64f93218cee7e1186 100644
---- a/esm/core/styles-api/use-styles/use-styles.mjs
-+++ b/esm/core/styles-api/use-styles/use-styles.mjs
-@@ -1,4 +1,5 @@
- 'use client';
-+import cx from 'clsx';
- import 'react';
- import 'react/jsx-runtime';
- import '@mantine/hooks';
-@@ -8,9 +9,34 @@ import '../../MantineProvider/MantineProvider.mjs';
- import { useMantineTheme } from '../../MantineProvider/MantineThemeProvider/MantineThemeProvider.mjs';
- import '../../MantineProvider/MantineCssVariables/MantineCssVariables.mjs';
- import { getClassName } from './get-class-name/get-class-name.mjs';
-+import { getGlobalClassNames } from './get-class-name/get-global-class-names/get-global-class-names.mjs';
-+import { getOptionsClassNames } from './get-class-name/get-options-class-names/get-options-class-names.mjs';
-+import { getResolvedClassNames } from './get-class-name/get-resolved-class-names/get-resolved-class-names.mjs';
-+import { getRootClassName } from './get-class-name/get-root-class-name/get-root-class-name.mjs';
-+import { getSelectorClassName } from './get-class-name/get-selector-class-name/get-selector-class-name.mjs';
-+import { getStaticClassNames } from './get-class-name/get-static-class-names/get-static-class-names.mjs';
-+import { getVariantClassName } from './get-class-name/get-variant-class-name/get-variant-class-name.mjs';
-+import { resolveClassNames } from './get-class-name/resolve-class-names/resolve-class-names.mjs';
- import { getStyle } from './get-style/get-style.mjs';
-+import { resolveStyle } from './get-style/resolve-style/resolve-style.mjs';
-+import { resolveStyles } from './get-style/resolve-styles/resolve-styles.mjs';
-+import { mergeVars } from './get-style/resolve-vars/merge-vars.mjs';
- import { useStylesTransform } from './use-transformed-styles.mjs';
- 
-+// Patched (civitai): an opt-in backport of Mantine 9's per-instance hoist in useStyles. Unpatched,
-+// every getStyles(selector) call re-runs the component's vars resolver, re-merges every selector's
-+// vars and re-resolves the theme and component styles/classNames, then keeps one selector's entry;
-+// a Button asks for 3-5 selectors. When the gate is on, those are resolved once per component
-+// instance and getStyles only reads them. The className and style it returns are the same strings
-+// and the same keys in the same order. The gate is a function the host app may install on
-+// globalThis under this symbol; without one (the client, tests, any other process) the original
-+// code below runs unchanged.
-+const HOIST_GATE = Symbol.for('civitai.mantine.useStylesHoist');
-+function isHoistEnabled() {
-+  const gate = globalThis[HOIST_GATE];
-+  return typeof gate === 'function' && gate() === true;
-+}
-+
- function useStyles({
-   name,
-   classes,
-@@ -35,6 +61,58 @@ function useStyles({
-     stylesCtx,
-     themeName
-   });
-+  if (isHoistEnabled()) {
-+    const resolvedClassNames = resolveClassNames({ theme, classNames, props, stylesCtx });
-+    const resolvedThemeClassNames = themeName.map(
-+      (n) => resolveClassNames({ theme, classNames: theme.components[n]?.classNames, props, stylesCtx })
-+    );
-+    const resolvedComponentStyles = withStylesTransform ? {} : resolveStyles({ theme, styles, props, stylesCtx });
-+    const resolvedThemeStyles = {};
-+    if (!withStylesTransform) {
-+      for (const n of themeName) {
-+        const resolved = resolveStyles({ theme, styles: theme.components[n]?.styles, props, stylesCtx });
-+        for (const key of Object.keys(resolved)) {
-+          resolvedThemeStyles[key] = { ...resolvedThemeStyles[key], ...resolved[key] };
-+        }
-+      }
-+    }
-+    const resolvedVars = mergeVars([
-+      headless ? {} : varsResolver?.(theme, props, stylesCtx),
-+      ...themeName.map((n) => theme.components?.[n]?.vars?.(theme, props, stylesCtx)),
-+      vars?.(theme, props, stylesCtx)
-+    ]);
-+    const resolvedRootStyle = resolveStyle({ style, theme });
-+    return (selector, options) => {
-+      const transformedStyles = getTransformedStyles([options?.styles, styles]);
-+      return {
-+        className: cx(
-+          getGlobalClassNames({ theme, options, unstyled: unstyled || headless }),
-+          resolvedThemeClassNames.map((m) => m[selector]),
-+          getVariantClassName({ options, classes, selector, unstyled }),
-+          resolvedClassNames[selector],
-+          getResolvedClassNames({ selector, stylesCtx, theme, classNames: transformedStyles, props }),
-+          getOptionsClassNames({ selector, stylesCtx, options, props, theme }),
-+          getRootClassName({ rootSelector, selector, className }),
-+          getSelectorClassName({ selector, classes, unstyled: unstyled || headless }),
-+          withStaticClasses && !headless && getStaticClassNames({
-+            themeName,
-+            classNamesPrefix,
-+            selector,
-+            withStaticClass: options?.withStaticClass
-+          }),
-+          options?.className
-+        ),
-+        style: {
-+          ...resolvedThemeStyles[selector],
-+          ...resolvedComponentStyles[selector],
-+          ...!withStylesTransform && resolveStyles({ theme, styles: options?.styles, props: options?.props || props, stylesCtx })[selector],
-+          ...resolvedVars[selector],
-+          ...rootSelector === selector ? resolvedRootStyle : null,
-+          ...resolveStyle({ style: options?.style, theme })
-+        }
-+      };
-+    };
-+  }
-   return (selector, options) => ({
-     className: getClassName({
-       theme,
 diff --git a/esm/core/utils/filter-props/filter-props.mjs b/esm/core/utils/filter-props/filter-props.mjs
 index 97772aac871a157e7327e0d394594b4c24ce6aa2..3f1066954439ef280b42a214660a25c4621ca242 100644
 --- a/esm/core/utils/filter-props/filter-props.mjs

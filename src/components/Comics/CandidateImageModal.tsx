@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Button, Group, Loader, Modal, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Button, Group, Loader, Modal, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconExternalLink, IconEye, IconZoomIn } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

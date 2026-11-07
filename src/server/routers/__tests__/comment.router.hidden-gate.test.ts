@@ -4,10 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as CommentController from '~/server/controllers/comment.controller';
 
-/**
- * An author's own delete can keep a legacy comment for a hold by hiding it for ToS. To its author it
- * is gone: an edit of it, a reply to it and another delete answer as for a missing comment.
- */
+/** A legacy comment hidden for ToS is gone to its author too: an edit, a reply and a delete answer as for a missing comment. */
 
 const { upsertCommentHandler, deleteUserCommentHandler } = vi.hoisted(() => ({
   upsertCommentHandler: vi.fn(async () => ({ id: 1 })),

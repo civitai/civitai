@@ -9,9 +9,9 @@ export default defineModeratorEndpoint('user.clearProfile', {
   input: z.object({
     userId,
     fields: z
-      .array(z.enum(['location', 'bio', 'message']))
+      .array(z.enum(['location', 'bio', 'message', 'showcaseSections']))
       .optional()
-      .describe('Which fields to clear. Omit to clear all three.'),
+      .describe('Which fields to clear. Omit to clear all of them.'),
   }),
   async handler(input) {
     const result = await clearUserProfileFields({ userId: input.userId, fields: input.fields });

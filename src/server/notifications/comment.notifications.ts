@@ -33,6 +33,16 @@ export const legacyId = (alias: string) => `${alias}."legacyV1Id"`;
 export const isV1Shaped = (alias: string) =>
   `(${alias}."entityType" = 'model' AND ${alias}."legacyV1Id" IS NOT NULL)`;
 
+/**
+ * A comment on an unpublished article is shared only with its owner and link holders; a notification
+ * can reach someone who never held the link. `ownerMay` is the recipient, when the owner may still hear.
+ */
+export const notOnUnpublishedArticle = (alias: string, ownerMay?: string) => `NOT EXISTS (
+            SELECT 1 FROM "Article" da
+            WHERE ${alias}."entityType" = 'article' AND da.id = ${alias}."entityId"
+              AND da.status <> 'Published'${ownerMay ? ` AND da."userId" <> ${ownerMay}` : ''}
+          )`;
+
 /** The comment a reply answers: the depth clamp keeps it in `replyToId` when it is not the parent. */
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
@@ -244,8 +254,9 @@ export const commentDedupeKeyByShape = `concat('comment:', case when details->>'
  *
  * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
  * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
- * key deliberately (see `comics.router.ts`), and is inserted synchronously at comment-creation, so its
- * `PendingNotification` is drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
+ * key deliberately (see `notifyComicOwner` in `commentv3/surfaces.ts`), and is queued at comment
+ * creation (after the commit, not awaited), ahead of the cron sweeps, so its `PendingNotification`
+ * is normally drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
  * gets the one deep-linked comic notification; a non-owner thread participant, whom `new-comic-comment`
  * never targets, gets this working `/comics/<project>` link instead of the dead one it used to render.
  *
@@ -445,6 +456,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE NOT ${isV1Shaped('c')}
           AND ${liveV3Since(lastSent)}
           AND c."userId" != pc."userId"
+          AND ${notOnUnpublishedArticle('c', 'pc."userId"')}
           AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
           AND ${notCommentMuted('pc."userId"', 'c')}
           AND ${v3AppListingResolved('c')}
@@ -513,6 +525,7 @@ export const commentNotifications = createNotificationProcessor({
         ${v3EntityJoins('c')}
         WHERE ${liveV3Since(lastSent)}
           AND (NOT ${isV1Shaped('c')} OR c."parentId" IS NOT NULL)
+          AND ${notOnUnpublishedArticle('c')}
           AND ${v3AppListingResolved('c')}
       )
       SELECT

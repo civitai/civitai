@@ -1,11 +1,16 @@
 import { SignalTopic } from '~/server/common/enums';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
+import type { TurfHatArt } from '~/server/schema/turf.schema';
 import {
-  STICKER_PLACEMENT_MAX_SCALE,
-  STICKER_PLACEMENT_MIN_SCALE,
+  normalizeStickerPlacement,
+  STICKER_PLACEMENT_DEFAULT_SCALE,
 } from '~/shared/utils/sticker-placement';
 
 export type TurfCounted = Record<string, number>;
+
+/** A team colour the theme does not know. */
+export const FALLBACK_COLOR = 'var(--mantine-color-gray-6)';
 
 export type TurfSummary = {
   shown: TurfCounted;
@@ -13,6 +18,8 @@ export type TurfSummary = {
   leader: string | null;
   leaderCosmeticId: number | null;
   hatted: boolean;
+  /** The team whose hat protects the image; null when none does. */
+  hattedTeam: string | null;
 };
 
 /** Radius of the ring's circle in the badge's 44-unit box; the arcs are drawn on it. */
@@ -53,16 +60,6 @@ export function badgeLeader(summary: Pick<TurfSummary, 'counted' | 'leader'>): s
   return null;
 }
 
-/** The viewer's standing when their team is not the leader; null when they lead or are not on a team. */
-export function viewerBehind(
-  summary: Pick<TurfSummary, 'counted' | 'leader'>,
-  viewerTeam: string | null | undefined
-): { team: string; count: number } | null {
-  const lead = badgeLeader(summary);
-  if (!lead || !viewerTeam || viewerTeam === lead) return null;
-  return { team: viewerTeam, count: summary.counted[viewerTeam] ?? 0 };
-}
-
 /** The spoken form of the badge: who leads, every team's count, and where the viewer stands. */
 export function standingsLabel(
   summary: Pick<TurfSummary, 'counted' | 'leader'>,
@@ -76,13 +73,67 @@ export function standingsLabel(
   }`;
 }
 
-/** A placed hat's width as a fraction of the drawn image (the sticker system's own default). */
-export const HAT_DEFAULT_SCALE = 0.22;
+export type BadgeFigure = {
+  /** What the image earns per action: the leader's hats, capped at the players the event credits. */
+  points: number;
+  /** The team earning them, whose colour the disc takes; null when no team has hats here. */
+  pointsTeam: string | null;
+  /**
+   * The viewer's team's position in hats: ahead of the next-closest team (positive), behind the
+   * leader (negative), or level (0). Null for a viewer on no team, or an image with no hats.
+   */
+  margin: number | null;
+};
 
-/** Keeps a dragged hat's centre on the picture, a little inside the edge so the whole hat shows. */
-export function clampSpot(spot: { x: number; y: number }) {
-  const clamp = (n: number) => Math.min(0.92, Math.max(0.08, Number.isFinite(n) ? n : 0.5));
-  return { x: clamp(spot.x), y: clamp(spot.y) };
+/** The numbers in the badge: points in the dial, the viewer's margin beside it. */
+export function badgeFigure(
+  summary: Pick<TurfSummary, 'counted' | 'leader' | 'hatted' | 'hattedTeam'>,
+  viewerTeam: string | null | undefined,
+  creditedPlayers: number | null | undefined
+): BadgeFigure {
+  const lead = badgeLeader(summary);
+  const leadCount = lead ? summary.counted[lead] ?? 0 : 0;
+  let margin: number | null = null;
+  if (lead && viewerTeam) {
+    const mine = summary.counted[viewerTeam] ?? 0;
+    if (viewerTeam === lead) {
+      const others = Object.entries(summary.counted)
+        .filter(([team]) => team !== lead)
+        .map(([, n]) => n);
+      margin = mine - Math.max(0, ...others);
+    } else {
+      margin = mine - leadCount;
+    }
+  }
+  if (summary.hatted) return { points: 1, pointsTeam: summary.hattedTeam ?? lead, margin };
+  return {
+    points: creditedPlayers != null ? Math.min(leadCount, creditedPlayers) : leadCount,
+    pointsTeam: lead,
+    margin,
+  };
+}
+
+/** "+3", "\u22123", "0". */
+export const formatMargin = (margin: number) =>
+  margin > 0 ? `+${margin}` : margin < 0 ? `\u2212${-margin}` : '0';
+
+/**
+ * Every team with hats here, plus the viewer's, most hats first. `toTake` is how many more the
+ * viewer's team needs to lead outright: a tie stays with the current leader.
+ */
+export function teamStandings(
+  summary: Pick<TurfSummary, 'counted' | 'leader'>,
+  viewerTeam: string | null | undefined
+) {
+  const counted = { ...summary.counted };
+  if (viewerTeam && !(viewerTeam in counted)) counted[viewerTeam] = 0;
+  const rows = orderedTeams(counted)
+    .map((team) => ({ team, count: counted[team] }))
+    .sort((a, b) => b.count - a.count);
+  const lead = badgeLeader(summary);
+  const toTake =
+    lead && viewerTeam && viewerTeam !== lead ? counted[lead] - counted[viewerTeam] + 1 : null;
+  return { rows, total: rows.reduce((sum, row) => sum + row.count, 0), lead, toTake };
 }
 
 export type HatSticker = {
@@ -91,13 +142,17 @@ export type HatSticker = {
   team: string;
   cosmeticId: number;
   data: unknown;
+  /** The hat's art; absent from an older server's push, which draws the team cone instead. */
+  art?: TurfHatArt | null;
+  /** When it was placed. Absent from an older server's push. */
+  createdAt?: Date | string | null;
 };
 
-export type HatPose = { x: number; y: number; scale: number; rotation: number; flip: boolean };
+export type HatPose = ReturnType<typeof normalizeStickerPlacement>;
 
 /**
  * A sticker's stored geometry, or null when it is unusable (it is JSON on a row, so nothing
- * guarantees its shape). Position is clamped onto the picture; size into what a hat may be.
+ * guarantees its shape). Clamped by the same rules as a sticker.
  */
 export function readHatPose(data: unknown): HatPose | null {
   if (!data || typeof data !== 'object') return null;
@@ -106,38 +161,47 @@ export function readHatPose(data: unknown): HatPose | null {
   const nx = num(x);
   const ny = num(y);
   if (nx === null || ny === null) return null;
-  return {
-    x: Math.min(1, Math.max(0, nx)),
-    y: Math.min(1, Math.max(0, ny)),
-    scale: Math.min(
-      STICKER_PLACEMENT_MAX_SCALE,
-      Math.max(STICKER_PLACEMENT_MIN_SCALE, num(scale) ?? HAT_DEFAULT_SCALE)
-    ),
+  return normalizeStickerPlacement({
+    x: nx,
+    y: ny,
+    scale: num(scale) ?? STICKER_PLACEMENT_DEFAULT_SCALE,
     rotation: num(rotation) ?? 0,
     flip: flip === true,
-  };
+    // Hats are always opaque, whatever a row says.
+    opacity: 1,
+  });
 }
 
-export function hatTone(team: string, leader: string | null): 'lead' | 'dim' | 'plain' {
+/** A viewer's own hat never dims: on a pale picture a dimmed hat reads as missing. */
+export function hatTone(
+  team: string,
+  leader: string | null,
+  own = false
+): 'lead' | 'dim' | 'plain' {
   if (!leader) return 'plain';
-  return team === leader ? 'lead' : 'dim';
+  if (team === leader) return 'lead';
+  return own ? 'plain' : 'dim';
 }
 
 /**
- * A push replaces the image's counts; the push does not carry `hatted`, so that stays what the
- * last read said. `null` counts (the last sticker is gone) removes the image's turf.
+ * A push replaces the image's counts; the push does not carry `hatted` or `hattedTeam`, so those stay
+ * what the last read said. `null` counts (the last sticker is gone) removes the image's turf.
  */
 export function applyTurfPush(
   images: Record<number, TurfSummary>,
   imageId: number,
-  counts: Omit<TurfSummary, 'hatted'> | null
+  counts: Omit<TurfSummary, 'hatted' | 'hattedTeam'> | null
 ): Record<number, TurfSummary> {
   if (!counts) {
     if (!(imageId in images)) return images;
     const { [imageId]: _gone, ...rest } = images;
     return rest;
   }
-  return { ...images, [imageId]: { ...counts, hatted: images[imageId]?.hatted ?? false } };
+  const prev = images[imageId];
+  return {
+    ...images,
+    [imageId]: { ...counts, hatted: prev?.hatted ?? false, hattedTeam: prev?.hattedTeam ?? null },
+  };
 }
 
 /** Reads a turf push off the wire; null for anything not for this event or not shaped like one. */
@@ -188,15 +252,51 @@ function readPushedStickers(raw: unknown): HatSticker[] | undefined {
     );
   });
   if (!ok) return undefined;
-  return raw.map(({ id, userId, team, cosmeticId, data }) => ({
+  return raw.map(({ id, userId, team, cosmeticId, data, art, createdAt }) => ({
     id,
     userId,
     team,
     cosmeticId,
     data,
+    ...(readHatArt(art) && { art: readHatArt(art) }),
+    ...(typeof createdAt === 'string' && !isNaN(Date.parse(createdAt)) && { createdAt }),
   }));
+}
+
+/** A hat's art from a push: a url, with the fit's canvas and bounds only when well-formed. */
+function readHatArt(raw: unknown): TurfHatArt | undefined {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  if (typeof r.url !== 'string') return undefined;
+  const nums = (v: unknown, n: number) =>
+    Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number');
+  return {
+    url: r.url,
+    canvas: nums(r.canvas, 2) ? (r.canvas as [number, number]) : null,
+    bounds: nums(r.bounds, 4) ? (r.bounds as [number, number, number, number]) : null,
+  };
 }
 
 /** The signal topic a card listens on for one image's counts; must match the server's `eventTurfTopic`. */
 export const turfTopic = (event: string, imageId: number) =>
   `${SignalTopic.EventPoints}:${event}:turf:${imageId}` as const;
+
+/** Hat counts beside contest entries could sway judging, so no contest collection shows Hat Turf. */
+export const collectionHidesHatTurf = (collection?: { mode?: CollectionMode | null } | null) =>
+  collection?.mode === CollectionMode.Contest;
+
+/**
+ * How long between new hats, compact enough for a phone tile: "30 s", "4 min", "2h 30m". Null when
+ * nothing refills. A duration, not a rate: "15/hr" reads as a batch at the end of the hour.
+ */
+export function formatRefillCadence(perHour: number) {
+  if (!Number.isFinite(perHour) || perHour <= 0) return null;
+  const seconds = Math.round(3600 / perHour);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const [h, m] = [Math.floor(minutes / 60), minutes % 60];
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+/** "1.5", "0.75": at most two decimals, none trailing. */
+export const formatMultiplier = (multiplier: number) => String(Number(multiplier.toFixed(2)));

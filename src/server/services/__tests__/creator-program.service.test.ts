@@ -134,6 +134,11 @@ import {
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  decidePayoutReview,
+  openPayoutHold,
+} from '~/server/services/creator-program-prepayout-review/hold';
+import { installPayoutReviewTable } from '~/server/services/creator-program-prepayout-review/__tests__/payout-review-fake';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -1174,6 +1179,53 @@ describe('withdrawCash', () => {
     });
 
     await expect(withdrawCash(userId, 10000)).rejects.toThrow('not payable');
+  });
+
+  describe('with a payout-review hold', () => {
+    let table: ReturnType<typeof installPayoutReviewTable>;
+    beforeEach(() => {
+      table = installPayoutReviewTable();
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: userId });
+      mockCachedObject.fetch.mockResolvedValue({
+        [userId]: {
+          id: userId,
+          status: 'ready',
+          ready: 100000,
+          pending: 0,
+          withdrawn: 0,
+          paymentMethod: 'ACH',
+        },
+      });
+      // WITHDRAWAL_FEES has no 'Wire' entry, so the success half needs a supported method.
+      mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+        userId,
+        tipaltiPaymentsEnabled: true,
+        tipaltiWithdrawalMethod: 'ACH',
+      });
+      mockPayToTipaltiAccount.mockResolvedValue({ paymentBatchId: 'b-1', paymentRefCode: 'r-1' });
+    });
+    afterEach(() => table.uninstall());
+
+    it('refuses while the hold is open and pays out once it is cleared', async () => {
+      const hold = await openPayoutHold(
+        { userId, ground: 'investigation', reason: 'test hold' },
+        'user:1'
+      );
+
+      await expect(withdrawCash(userId, 10000)).rejects.toThrow('on hold');
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+      expect(mockDbWrite.cashWithdrawal.create).not.toHaveBeenCalled();
+      expect(mockPayToTipaltiAccount).not.toHaveBeenCalled();
+
+      await decidePayoutReview(
+        { id: hold.id, userId, period: hold.period, action: 'clear', version: hold.version },
+        'user:1'
+      );
+
+      await withdrawCash(userId, 10000);
+      expect(mockDbWrite.cashWithdrawal.create).toHaveBeenCalledTimes(1);
+      expect(mockPayToTipaltiAccount).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('when the Tipalti payment fails after the burn', () => {

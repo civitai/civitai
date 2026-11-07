@@ -4,7 +4,6 @@ import {
   Group,
   List,
   Paper,
-  Popover,
   ScrollArea,
   SegmentedControl,
   Skeleton,
@@ -12,6 +11,7 @@ import {
   Switch,
   Text,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {

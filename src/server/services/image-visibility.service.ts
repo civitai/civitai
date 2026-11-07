@@ -53,7 +53,7 @@ export function imageVisibilityConditions({
     // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
     // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
     // `Image` separates that from a never-posted upload, so a postless image is owner-only unless
-    // it is the cover of an article the viewer could read (getArticleById's non-owner rule), or
+    // it is the cover or banner of an article the viewer could read (getArticleById's non-owner rule), or
     // shown on a bounty or bounty entry whose bounty the viewer could open (canViewBounty).
     Prisma.sql`(
       p."publishedAt" < now()
@@ -61,7 +61,7 @@ export function imageVisibilityConditions({
       OR (i."postId" IS NULL AND i."userId" = ${userId})
       OR (i."postId" IS NULL AND EXISTS (
         SELECT 1 FROM "Article" a
-        WHERE a."coverId" = i.id
+        WHERE (a."coverId" = i.id OR a."bannerId" = i.id)
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'

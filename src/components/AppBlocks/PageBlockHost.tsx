@@ -27,6 +27,7 @@ import {
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
+import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
@@ -70,6 +71,7 @@ import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   classifyEntityReactionError,
   createReactionReplyLatch,
+  entityReactionRefusedScopes,
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
@@ -156,7 +158,11 @@ import {
   withDeadline,
 } from './resourceFileParse';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
   resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveSourcePublishConsentRequest,
@@ -852,6 +858,15 @@ export interface PageBlockHostProps {
    */
   canOpenPage?: boolean;
   /**
+   * Where this run was launched from, for the chrome's way out (breadcrumb + mobile back
+   * chevron): `home` → "My apps" (`/apps`), otherwise "Marketplace" (`/apps/store`). Only
+   * the `/apps/run` route sets it (from `?from=home`, in `getServerSideProps`); every other
+   * mounter leaves the store default. Never put on the iframe `src` or in BLOCK_INIT; its
+   * one use outside the chrome is re-stamping `?from=home` on the URL a block NAVIGATE
+   * pushes, so a reload keeps the way out. See `apps-run-origin.ts`.
+   */
+  launchOrigin?: AppsRunOrigin;
+  /**
    * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
    * it is spelled out rather than inferred from `surface`.
    *
@@ -950,6 +965,7 @@ export function PageBlockHost({
   reviewMode = false,
   reviewRunForReal = false,
   canOpenPage = false,
+  launchOrigin = 'store',
   fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
@@ -986,7 +1002,10 @@ export function PageBlockHost({
    * `key`, the run page renders `<PageBlockHost` unkeyed, and
    * `IframeHost.tsx:642` links each "Recently run" item to `/apps/run/<id>`.
    */
-  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
+  //
+  // The dismissal also ends early when the app has a request refused for a permission
+  // the viewer can still grant — `reviveConsentNoticeOnRefusal` below.
+  const [consentNotice, setConsentNotice] = useState(CONSENT_NOTICE_NOT_DISMISSED);
   // Mirror of `status`, read by the Retry handler (for the prior terminal state,
   // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
   // which React may double-invoke under StrictMode → a double re-mint) AND by the
@@ -1973,6 +1992,30 @@ export function PageBlockHost({
   // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
   // gets its own budget, and the notification ids are mode-specific to match.
   const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
+
+  // A request the app made was refused for `refusedScopes`. Whether that brings a
+  // dismissed missing-permissions notice back is decided ONLY by
+  // `resolveConsentNoticeAfterRefusal`, shared with IframeHost; this is the wiring.
+  // A functional update, so it never reads a stale dismissal; `missingScopes` through a
+  // render-body mirror, so it reads the set current when the refusal LANDS (the server
+  // path resolves after an await, possibly across a token refresh) and the reaction
+  // listener does not re-subscribe on every refresh because of it.
+  const missingScopesRef = useRef(missingScopes);
+  missingScopesRef.current = missingScopes;
+  const reviveConsentNoticeOnRefusal = useCallback(
+    (refusedScopes: readonly string[]) => {
+      if (refusedScopes.length === 0) return;
+      setConsentNotice((current) =>
+        resolveConsentNoticeAfterRefusal(current, {
+          appBlockId,
+          refusedScopes,
+          missingScopes: missingScopesRef.current,
+        })
+      );
+    },
+    [appBlockId]
+  );
+
   /**
    * Open the host's consent UI for a set of withheld scopes.
    *
@@ -2273,6 +2316,10 @@ export function PageBlockHost({
         base: BLOCK_HOST_DEEP_LINK_BASE[surface],
         slug,
         siteNavigation: BLOCK_HOST_SITE_NAVIGATION[surface],
+        // Keeps `?from=home` on the pushed URL of a home-launched run, so a reload after the
+        // app navigates still leads back to "My apps"; the host's value beats any `from` in
+        // the block's own path (see `resolveNavigateRequest`).
+        launchOrigin,
       });
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
@@ -2321,7 +2368,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode, surface]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
@@ -4960,6 +5007,10 @@ export function PageBlockHost({
       });
       if (gate.kind === 'drop') return;
       if (gate.kind === 'refuse') {
+        // A reaction refused for the missing `social:react:self` grant brings a
+        // dismissed notice back. SET only: GET_ENTITY_REACTIONS is a background read an
+        // app can make on every image, and reviving on it would undo every dismissal.
+        reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(gate.error));
         send('ENTITY_REACTION_RESULT', { requestId: gate.requestId, error: gate.error });
         return;
       }
@@ -4981,7 +5032,9 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          const error = classifyEntityReactionError(err);
+          reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
+          latch.reply({ error });
         }
       })();
     });
@@ -4996,6 +5049,7 @@ export function PageBlockHost({
     grantedScopes,
     trpcUtils,
     reportNoToken,
+    reviveConsentNoticeOnRefusal,
   ]);
 
   useEffect(() => {
@@ -5687,6 +5741,17 @@ export function PageBlockHost({
     return () => clearTimeout(t);
   }, [autoRetry]);
 
+  // The missing-permissions notice's scopes for this render, or null for no notice —
+  // see the comment where it renders below.
+  const consentNoticeScopes = resolveHostConsentNotice({
+    status: toHostGateStatus(status),
+    needsConsent,
+    missingScopes,
+    dismissedFor: consentNotice.dismissedFor,
+    appBlockId,
+    suppressed: reviewMode,
+  });
+
   return (
     <Box
       style={{
@@ -5809,6 +5874,7 @@ export function PageBlockHost({
         slotId={PAGE_SLOT_ID}
         hostSurface={surface}
         canOpenPage={canOpenPage}
+        launchOrigin={launchOrigin}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`
@@ -5842,16 +5908,11 @@ export function PageBlockHost({
           decides how it maps. A cast here would have compiled and silently
           disagreed with every other gate. (`pnpm typecheck` caught exactly that —
           the first version of this passed `status` raw.) */}
-      {resolveHostConsentNotice({
-        status: toHostGateStatus(status),
-        needsConsent,
-        missingScopes,
-        dismissedFor: consentNoticeDismissedFor,
-        appBlockId,
-        suppressed: reviewMode,
-      }) != null && (
+      {consentNoticeScopes != null && (
         <BlockConsentNotice
           appName={appName}
+          missingScopes={consentNoticeScopes}
+          highlight={consentNotice.revived}
           onReview={() => {
             // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
             // between the two can shrink the missing set, and granting a scope the
@@ -5859,7 +5920,8 @@ export function PageBlockHost({
             const scopes = resolveRequestConsent(toHostGateStatus(status), missingScopes ?? []);
             if (scopes != null) openConsentModal(scopes);
           }}
-          onDismiss={() => setConsentNoticeDismissedFor(appBlockId)}
+          onDismiss={() => setConsentNotice((current) => dismissConsentNotice(current, appBlockId))}
+          onHighlightPlayed={() => setConsentNotice(consentNoticeHighlightPlayed)}
         />
       )}
       {/* The per-viewer storage allowance notice (`AppStorageNearLimitNotice`): one read when

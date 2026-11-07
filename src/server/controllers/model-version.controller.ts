@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import {
   coverageAudience,
   coveragePairForUser,
@@ -50,7 +51,6 @@ import type {
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { readModelVersionOwnerViaKysely } from '~/server/services/hot-reads-6.reads';
 import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
@@ -92,6 +92,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -364,6 +365,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      flags: ctx?.user?.isModerator ? version.flags : toPublicApiVersionFlags(version.flags),
       // A .com face has no per-version description; the .red one is not shown in its place.
       description: withSfwFace ? null : version.description,
       model: {
@@ -1341,13 +1343,13 @@ export const modelVersionDonationGoalHandler = async ({
 };
 
 export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+  // No Kysely row (a missing version, or an orphaned model or user) runs the Prisma read, so a
+  // missing version is still NOT_FOUND and an orphan still throws as Prisma throws.
   const version =
-    ((await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-      ? await readModelVersionOwnerViaKysely(
-          await getKyselyWithoutLag('modelVersion', input.id),
-          input.id
-        )
-      : undefined) ??
+    (await readModelVersionOwnerViaKysely(
+      await getKyselyWithoutLag('modelVersion', input.id),
+      input.id
+    )) ??
     (await getVersionById({
       ...input,
       select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
@@ -1487,6 +1489,7 @@ export async function publishPrivateModelVersionHandler({
   if (!selectedEpochUrl) {
     throw throwBadRequestError('No selected epoch found');
   }
+  await assertNoFailedScanFiles({ id: version.id });
 
   if (!version.posts.length) {
     const post = await createModelVersionPostFromTraining({

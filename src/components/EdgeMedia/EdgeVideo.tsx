@@ -1,4 +1,5 @@
-import { HoverCard, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import {
   IconMaximize,
   IconMinimize,
@@ -336,7 +337,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
-      } else if (!isSelfFullscreen) {
+      } else if (standby || !isCurrentStack || !isSelfFullscreen) {
         // Fullscreen moves the element to the top layer, so it stops intersecting the
         // observer's scroll-area root and canPlay goes false. Pausing on that would stop
         // the video the moment it is maximized.

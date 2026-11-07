@@ -10,6 +10,7 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { hasScanLabelFlag, recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
+import { queueUploadPromptRetry } from '~/server/services/upload-prompt-retry.service';
 
 /** The orchestrator's image scan never sees an upload's prompt, so ingestion labels it here. */
 export const UPLOAD_PROMPT_SCAN_LABELS = ['young'] as const;
@@ -111,17 +112,22 @@ export async function scanUploadPrompt({
  * Labels an NSFW upload whose prompt the scan flags, for moderators to verify. A label only: it
  * never changes the image. Scans nothing while the label queue writer is off, and nothing for an
  * image that already has a prompt label, so a redelivered webhook does not scan twice.
+ *
+ * A scan with no verdict is queued to run again (`attempt` is the retry this call is, 0 for the
+ * scan at ingestion), up to `UPLOAD_PROMPT_MAX_RETRIES` times.
  */
 export async function labelUploadPrompt({
   imageId,
   userId,
   prompt,
   negativePrompt,
+  attempt = 0,
 }: {
   imageId: number;
   userId: number;
   prompt: string;
   negativePrompt?: string;
+  attempt?: number;
 }) {
   try {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_LABEL_QUEUE_WRITER, String(imageId)))) return;
@@ -133,9 +139,15 @@ export async function labelUploadPrompt({
       message: error instanceof Error ? error.message : 'Unknown error',
       imageId,
     }).catch(() => null);
+    // The checks failed, not the prompt: try again later rather than lose the scan.
+    await queueUploadPromptRetry({ imageId, attempt: attempt + 1 });
     return;
   }
   const scan = await scanUploadPrompt({ imageId, userId, prompt, negativePrompt });
+  if (scan.verdict === 'unknown') {
+    await queueUploadPromptRetry({ imageId, attempt: attempt + 1 });
+    return;
+  }
   // The workflow id is the flag's idempotency key; a scan without one has nothing to record.
   if (scan.verdict !== 'flagged' || !scan.workflowId) return;
 

@@ -125,6 +125,9 @@ type Outcome = {
   action: 'accept' | 'reject' | 'stamp';
   message?: string;
   minorReview?: boolean;
+  // The level this outcome was decided on; see the claim in applyOutcomes.
+  nsfwLevel: number;
+  levelReject?: boolean;
 };
 
 async function classifyItem({
@@ -141,6 +144,7 @@ async function classifyItem({
   let decision: AiReviewDecision;
   let reason = '';
   let rejectionMessage: string | undefined;
+  let levelReject = false;
   let usage = { promptTokens: 0, completionTokens: 0 };
 
   if (isUnavailableImage(item)) {
@@ -150,6 +154,7 @@ async function classifyItem({
   } else if (!isNsfwLevelAllowed(item.nsfwLevel, config.allowedNsfwLevels)) {
     decision = { decision: 'reject', violations: ['sexual/adult content'], escalations: [] };
     reason = `Rated outside the levels this collection allows (nsfwLevel ${item.nsfwLevel}).`;
+    levelReject = true;
   } else {
     const imageUrl = getEdgeUrl(item.url, {
       width: 512,
@@ -195,7 +200,12 @@ async function classifyItem({
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
       // retried, and re-billed, on every run for the life of the collection.
       if (attempts < MAX_REVIEW_ATTEMPTS) return undefined;
-      return { collectionItemId: item.collectionItemId, imageId: item.imageId, action: 'stamp' };
+      return {
+        collectionItemId: item.collectionItemId,
+        imageId: item.imageId,
+        action: 'stamp',
+        nsfwLevel: item.nsfwLevel,
+      };
     }
   }
 
@@ -237,6 +247,8 @@ async function classifyItem({
     action,
     message,
     minorReview: applied && needsMinorReview(decision),
+    nsfwLevel: item.nsfwLevel,
+    levelReject,
   };
 }
 
@@ -374,14 +386,31 @@ async function applyOutcomes({
   // Minutes can pass between selecting an item and writing its outcome. Claiming the row only
   // while it is still untouched means a moderator who decided it in the meantime keeps their
   // decision and their attribution — and the status write below skips whatever we did not claim.
+  // A decision that rests on the image's rating is also left for the next run if the image was
+  // re-rated in that window, so nothing is accepted or rejected on a level it no longer has.
+  const levelBound = outcomes.filter(
+    (o) => o.action === 'accept' || (o.action === 'reject' && o.levelReject)
+  );
   const claimed = await dbWrite.$queryRaw<{ id: number }[]>`
-    UPDATE "CollectionItem"
+    UPDATE "CollectionItem" ci
     SET "reviewedById" = ${SYSTEM_USER_ID}, "reviewedAt" = now(), "updatedAt" = now()
-    WHERE "collectionId" = ${collectionId}
-      AND id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
-      AND status = 'REVIEW'
-      AND "reviewedById" IS NULL
-    RETURNING id
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci.id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
+      AND ci.status = 'REVIEW'
+      AND ci."reviewedById" IS NULL
+      ${
+        levelBound.length
+          ? Prisma.sql`AND NOT EXISTS (
+              SELECT 1
+              FROM (VALUES ${Prisma.join(
+                levelBound.map((o) => Prisma.sql`(${o.collectionItemId}::int, ${o.nsfwLevel}::int)`)
+              )}) AS decided(id, "nsfwLevel")
+              JOIN "Image" i ON i.id = ci."imageId"
+              WHERE decided.id = ci.id AND i."nsfwLevel" IS DISTINCT FROM decided."nsfwLevel"
+            )`
+          : Prisma.empty
+      }
+    RETURNING ci.id
   `;
   if (!claimed.length) return;
 

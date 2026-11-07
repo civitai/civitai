@@ -23,9 +23,7 @@ const WEBHOOK_ROUTES = [
   'adjust-tag-level',
   'ban-user',
   'custom-challenge',
-  'daily-challenge/backfill-theme-elements',
   'daily-challenge/cycle',
-  'daily-challenge/re-review',
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
@@ -193,6 +191,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'download/vault/[vaultItemId]':
+    'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
     'site search: moderators skip the POI and private-model filters, not the site’s browsing-level cap',
   'service-deals/files/[fileId]/download':
@@ -525,6 +525,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'testing/model3d-seed',
   'user/orchestrator-key',
   'v1/block-tokens/index',
+  // A creator's own engagement counts and tipped Buzz: no read scope maps to them yet.
+  'v1/creator/engagement',
 ];
 
 describe('routes under src/pages/api outside the moderator wrappers', () => {

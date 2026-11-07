@@ -109,6 +109,7 @@ const ownerUser = { id: 7, isModerator: false, tier: 'free', username: 'owner' }
 const otherUser = { id: 99, isModerator: false, tier: 'free', username: 'intruder' };
 
 const findUnique = dbRead.appBlock.findUnique as ReturnType<typeof vi.fn>;
+const acceptedTerms = new Set<number>();
 
 beforeEach(() => {
   mockIsAppBlocksEnabled.mockReset();
@@ -121,6 +122,16 @@ beforeEach(() => {
   mockAddCollaborator.mockReset();
   mockAddCollaborator.mockResolvedValue(undefined);
   findUnique.mockReset();
+  acceptedTerms.clear();
+  acceptedTerms.add(ownerUser.id);
+  dbMock.dbWrite.appDeveloperTermsAcceptance.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { userId_version: { userId: number } };
+  }) =>
+    acceptedTerms.has(where.userId_version.userId)
+      ? { userId: where.userId_version.userId }
+      : null) as never);
 });
 
 describe('blocks.getMyAppRepo — Phase 3 git-push credential', () => {
@@ -215,5 +226,40 @@ describe('blocks.getMyAppRepo — Phase 3 git-push credential', () => {
     // Instructions carry the credentialed clone + the no-trust-on-push notice.
     expect(result.instructions).toContain(result.cloneUrl);
     expect(result.instructions).toMatch(/moderator approves/i);
+  });
+});
+
+describe('blocks.getMyAppRepo: App Developer Terms gate the push credential', () => {
+  const collaborator = { id: 42, isModerator: false, tier: 'free', username: 'collab' };
+
+  beforeEach(() => {
+    findUnique.mockResolvedValue({
+      id: 'ab_1',
+      blockId: 'my-app',
+      status: 'approved',
+      app: { userId: ownerUser.id },
+    });
+    dbMock.dbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_1' } as never);
+    dbMock.dbRead.appCollaborator.findFirst.mockResolvedValue({ userId: collaborator.id } as never);
+  });
+
+  it('an accepted collaborator who has not accepted the terms gets no write credential', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(collaborator) as never);
+    const err = await caller.getMyAppRepo({ appBlockId: 'ab_1' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'FORBIDDEN' });
+    expect((err as Error).message).toContain('/content/app-developer-terms');
+    expect(mockEnsureForgejoIdentity).not.toHaveBeenCalled();
+    expect(mockAddCollaborator).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same collaborator gets the write credential once they accept', async () => {
+    acceptedTerms.add(collaborator.id);
+    const caller = blocksRouter.createCaller(fakeCtx(collaborator) as never);
+    const result = await caller.getMyAppRepo({ appBlockId: 'ab_1' });
+    expect(result.notYetAvailable).toBe(false);
+    expect(mockEnsureForgejoIdentity).toHaveBeenCalledWith(collaborator.id);
+    expect(mockAddCollaborator).toHaveBeenCalledWith(
+      expect.objectContaining({ permission: 'write' })
+    );
   });
 });

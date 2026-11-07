@@ -1863,6 +1863,29 @@ describe('blocks.submitWorkflow', () => {
       expect(result.snapshot.workflowId).toBe('wf_real');
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
+
+    it('a dev-tunnel submit carries the tag the generator Queue leaves out', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ buzzBudget: 100, dev: true, appId: 'ephemeral-demo' })
+      );
+      happyVersionLookup();
+      happyUser();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 8 }, steps: [] })
+        .mockResolvedValueOnce({
+          id: 'wf_dev',
+          status: 'unassigned',
+          cost: { total: 8 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(mockSubmitWorkflow.mock.calls[1][0].body.tags).toEqual(
+        // The literal, not WORKFLOW_TAGS.APP_BLOCK: the Queue excludes runs by this exact wire value.
+        expect.arrayContaining(['app-block', 'app-block:ephemeral-demo'])
+      );
+    });
   });
 
   // ---- G6: persistent block output queue (fire-and-forget write) ----------

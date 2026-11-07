@@ -1,37 +1,37 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconDotsVertical } from '@tabler/icons-react';
 import { useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import type { SectionMuteInput } from '~/server/schema/commentv2.schema';
+import type { CommentSectionInput } from '~/server/schema/commentv3.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * The whole-section control, which mutes the entity's root thread rather than a conversation under
- * one comment. Only rendered on the top-level composer: on a reply box the enclosing comment's own
+ * The whole-section control: mutes the entity's comment section, not one conversation under a
+ * comment. Only rendered on the top-level composer: on a reply box the enclosing comment's own
  * menu is the right place, and two mute controls a few pixels apart would mean different things.
  */
 export function useSectionMute({
   target,
   enabled,
 }: {
-  target?: SectionMuteInput;
+  target?: CommentSectionInput;
   enabled: boolean;
 }) {
   const queryUtils = trpc.useUtils();
   const [opened, setOpened] = useState(false);
 
   // Fetched on menu open only, so a page of comments costs no extra requests.
-  const { data } = trpc.commentv2.getSectionMuted.useQuery(target ?? ({} as SectionMuteInput), {
+  const { data } = trpc.commentv3.getSectionMuted.useQuery(target ?? ({} as CommentSectionInput), {
     enabled: !!target && enabled && opened,
   });
 
-  const toggle = trpc.commentv2.toggleSectionMute.useMutation({
+  const toggle = trpc.commentv3.toggleSectionMute.useMutation({
     onSuccess(result) {
       if (!target) return;
-      queryUtils.commentv2.getSectionMuted.setData(target, {
+      queryUtils.commentv3.getSectionMuted.setData(target, {
         muted: result.muted,
-        hasThread: result.hasThread,
+        exists: result.exists,
       });
       showSuccessNotification({
         // States the action, not the outcome: a sub-thread muted separately keeps suppressing after
@@ -65,11 +65,11 @@ export function useSectionMute({
       </Menu.Target>
       <Menu.Dropdown>
         {/*
-          Nothing to mute until the first comment creates the thread. Disabled rather than hidden,
-          and it says why: firing the mutation there writes nothing and would report success.
+          Disabled rather than hidden while the entity does not resolve: firing the mutation there
+          writes nothing and would report success.
         */}
         <Menu.Item
-          disabled={!data || !data.hasThread || toggle.isPending}
+          disabled={!data || !data.exists || toggle.isPending}
           leftSection={
             data?.muted ? (
               <IconBell size={14} stroke={1.5} />
@@ -81,8 +81,8 @@ export function useSectionMute({
         >
           {!data
             ? 'Mute this discussion'
-            : !data.hasThread
-            ? 'No comments to mute yet'
+            : !data.exists
+            ? 'Nothing to mute'
             : data.muted
             ? 'Unmute this discussion'
             : 'Mute this discussion'}

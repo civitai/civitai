@@ -11,8 +11,7 @@ import {
 import { Prisma } from '@prisma/client';
 import {
   afterCommentsV3Deleted,
-  deleteCommentsV3UnlessHeld,
-  heldCommentV3OnArticleSql,
+  deleteCommentsV3,
   setUserCommentsV3Tos,
 } from '~/server/services/commentv3/moderation.service';
 import { hasV3SurfaceTwinSql, v3WriteSurfaceSql } from '~/server/services/commentv3/write.service';
@@ -34,14 +33,6 @@ import {
   openUnpaidBountyAwardSql,
   payoutPendingSql,
 } from '~/server/services/bounty-payout-lock';
-import {
-  bountyThreadParents,
-  detachHeldThreadsCte,
-  heldLegacyCommentOnModelSql,
-  heldLegacyReplyBelowSql,
-  modelThreadParents,
-  type ThreadParents,
-} from '~/server/services/comment-thread-hold';
 import {
   KEPT_MODEL_STATUS,
   notRemovedWithOwnerSql,
@@ -69,15 +60,16 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { contestBannedAtSql, contestBannedSql } from '~/server/services/contest-ban';
-import { onModelReviewsChanged } from '~/server/events/points/hooks';
+import {
+  onModelReviewsChanged,
+  onStorySparkPostsHidden,
+  onStorySparkPostsRestored,
+} from '~/server/events/points/hooks';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readModelVersionEngagementsViaKysely,
-  readModelVersionEngagementsViaPrisma,
-} from '~/server/services/hot-reads-6.reads';
+import { readModelVersionEngagementsViaKysely } from '~/server/services/hot-reads-6.reads';
 import {
   readUserCosmeticsViaKysely,
   readUserCosmeticsViaPrisma,
@@ -457,7 +449,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
 export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
- * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
+ * Mod-driven: clear public profile fields (location/bio/message/showcaseSections) on UserProfile.
  * No-op if no UserProfile row exists yet.
  *
  * Clearing bio/message also clears its SFW (civitai.com) override — otherwise the
@@ -465,10 +457,10 @@ export { isUsernamePermitted } from '~/server/services/username-permitted';
  */
 export async function clearUserProfileFields({
   userId,
-  fields = ['location', 'bio', 'message'],
+  fields = ['location', 'bio', 'message', 'showcaseSections'],
 }: {
   userId: number;
-  fields?: Array<'location' | 'bio' | 'message'>;
+  fields?: Array<'location' | 'bio' | 'message' | 'showcaseSections'>;
 }) {
   if (fields.length === 0) return { updated: false };
   const data: Prisma.UserProfileUpdateInput = {};
@@ -482,6 +474,7 @@ export async function clearUserProfileFields({
     data.sfwMessage = null;
     data.sfwMessageAddedAt = null;
   }
+  if (fields.includes('showcaseSections')) data.showcaseSections = [];
   const result = await dbWrite.userProfile.updateMany({ where: { userId }, data });
   return { updated: result.count > 0 };
 }
@@ -758,12 +751,10 @@ export async function getUserEngagedModelVersions({
 }) {
   const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
 
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
-    return readModelVersionEngagementsViaKysely(kyselyRead, {
-      userId,
-      modelVersionIds: versionIds,
-    });
-  return readModelVersionEngagementsViaPrisma(dbRead, { userId, modelVersionIds: versionIds });
+  return readModelVersionEngagementsViaKysely(kyselyRead, {
+    userId,
+    modelVersionIds: versionIds,
+  });
 }
 
 export async function getUserDownloadedModelVersions({
@@ -1254,6 +1245,7 @@ export const deleteUser = async ({
 
   await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
   await runStep('revoke-user-tokens', () => revokeUserTokens(user.id));
+  await runStep('story-spark-points', () => onStorySparkPostsHidden({ authorId: user.id }));
   await runStep('cancel-stripe-subscription', () =>
     cancelSubscription({ userId: user.id, removeRecord: true })
   );
@@ -1779,7 +1771,6 @@ export const removeAllContent = async ({
       AND (${payoutPendingSql} OR (NOT b.complete AND NOT b.refunded
         AND EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id)))`;
   const keptBountyIds: number[] = [];
-  const keptArticleIds: number[] = [];
   if (owing.length) {
     const { claimBountyRefundForDelete, settleBountyPayout, refundUnpayableBountyAward } =
       await import('~/server/services/bounty.service');
@@ -1828,23 +1819,15 @@ export const removeAllContent = async ({
   await dbWrite.collection.deleteMany({ where: { userId: id } });
 
   // Evidence: each delete repeats the hold, so one that lands after the check above deletes nothing
-  // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries
-  // and reviews are here because each cascades its comment thread.
+  // here. The rows above stay deleted in that case; they are not evidence.
   const unlessHeld = Prisma.sql`NOT ${held}`;
-  const softDeleteFailed: { modelId: number; message: string }[] = [];
-  const softDeleteRefundFailures: BidRefundFailure[] = [];
   let stopped: boolean;
   try {
-    // A parent's delete cascades into its comment threads, other people's comments included; a
-    // thread holding a held author's comment is detached from it first.
-    const detach = (parents: ThreadParents) => detachHeldThreadsCte(parents, markerView);
     const doomedEntries = Prisma.sql`SELECT be.id FROM "BountyEntry" be
       WHERE be."userId" = ${id}
         AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."awardedToId" = be.id)
         AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`
-      WITH ${detach({ bountyEntryId: doomedEntries })}
-      DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
+    await dbWrite.$executeRaw`DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
     // A held entrant, or an award recorded for manual resolution, keeps the bounty hidden.
     const awardTable = await bountyUnpaidAwardTableExists(dbWrite);
     const keepsBounty = Prisma.sql`(${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}
@@ -1854,8 +1837,7 @@ export const removeAllContent = async ({
         AND NOT ${keepsBounty}`;
     // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
     await dbWrite.$executeRaw`
-      WITH ${detach(bountyThreadParents(doomedBounties))},
-      gone AS (DELETE FROM "Bounty" WHERE id IN (${doomedBounties}) RETURNING id),
+      WITH gone AS (DELETE FROM "Bounty" WHERE id IN (${doomedBounties}) RETURNING id),
       hidden AS (
         UPDATE "Bounty" b
         SET availability = 'Private'::"Availability",
@@ -1872,97 +1854,42 @@ export const removeAllContent = async ({
       Prisma.sql`SELECT o.id FROM ${Prisma.raw(
         `"${table}"`
       )} o WHERE o."userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`
-      WITH ${detach({ reviewId: owned('ResourceReview') })}
-      DELETE FROM "ResourceReview" WHERE id IN (${owned('ResourceReview')})`;
-    // Batched so no transaction outlives its timeout; the moderator bulk delete's rules
-    // (placeholders, kept for a held reply).
+    await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${owned(
+      'ResourceReview'
+    )})`;
+    // Batched so no transaction outlives its timeout; one with replies stays as a placeholder.
     const v3Ids = (
       await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "CommentV3"
         WHERE "userId" = ${id} AND "deletedAt" IS NULL
-          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))} AND ${unlessHeld}`
+          AND ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}`
     ).map((r) => r.id);
     for (let i = 0; i < v3Ids.length; i += REMOVE_V3_COMMENTS_BATCH) {
       const batch = v3Ids.slice(i, i + REMOVE_V3_COMMENTS_BATCH);
-      await afterCommentsV3Deleted(
-        await dbWrite.$transaction((tx) =>
-          deleteCommentsV3UnlessHeld(tx, batch, markerView, { byAuthor: true })
-        )
-      );
+      afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
-    // Not the rows the CommentV3 pass handled: one it kept for a held reply would be blanked by the
-    // mirror's delete.
+    // Not the rows the CommentV3 pass handled: the mirror's delete would blank a placeholder it left.
     await dbWrite.$executeRaw`
       DELETE FROM "CommentV2" c2
-      WHERE c2."userId" = ${id} AND ${unlessHeld} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
-    // A legacy reply goes with its parent; a comment with a held reply below it is kept, hidden.
+      WHERE c2."userId" = ${id} AND NOT ${Prisma.raw(hasV3SurfaceTwinSql('c2'))}`;
+    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id}`;
+    // CommentV3 first, as every write on a surface that writes it locks it, before the cascade
+    // reaches CommentV2.
     await dbWrite.$executeRaw`
-      DELETE FROM "Comment" c
-      WHERE c."userId" = ${id} AND ${unlessHeld}
-        AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}`;
-    await dbWrite.$executeRaw`
-      UPDATE "Comment" SET "tosViolation" = true, "removedByAuthor" = true, "updatedAt" = now()
-      WHERE "userId" = ${id} AND ${unlessHeld}`;
-    // An article with a held author's comment that exists only in CommentV3 is kept, unpublished:
-    // deleting it would delete that comment.
-    const doomedArticles = Prisma.sql`${owned('Article')}
-      AND NOT ${heldCommentV3OnArticleSql(Prisma.raw('o.id'), markerView)}`;
-    // CommentV3 first, as every write on these comments locks it, before the cascade reaches CommentV2.
-    await dbWrite.$executeRaw`
-      DELETE FROM "CommentTopic" WHERE "entityType" = 'article' AND "entityId" IN (${doomedArticles})`;
-    await dbWrite.$executeRaw`
-      WITH ${detach({ articleId: doomedArticles })}
-      DELETE FROM "Article" WHERE id IN (${doomedArticles})`;
-    // Taken down as a moderator would, so neither its owner nor a pending scan or schedule
-    // publishes it again; the record says what it was.
-    keptArticleIds.push(
-      ...(
-        await dbWrite.$queryRaw<{ id: number }[]>`
-          UPDATE "Article" a
-          SET status = 'UnpublishedViolation'::"ArticleStatus", "scheduledAt" = NULL,
-              "updatedAt" = now(),
-              metadata = ${asJsonbObjectSql('a.metadata')} || jsonb_build_object(
-                'removedWithOwner', true, 'statusBeforeRemoval', a.status
-              )
-          WHERE a.id IN (${owned('Article')})
-            AND (a.status IN ('Published', 'Processing') OR (a.status = 'Draft' AND a."scheduledAt" IS NOT NULL))
-          RETURNING a.id`
-      ).map((r) => r.id)
-    );
-    await dbWrite.$executeRaw`
-      WITH ${detach({ postId: owned('Post') })}
-      DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
+      DELETE FROM "CommentTopic"
+      WHERE ${Prisma.raw(v3WriteSurfaceSql('"entityType"'))}
+        AND (("entityType" = 'article' AND "entityId" IN (${owned('Article')}))
+          OR ("entityType" = 'post' AND "entityId" IN (${owned('Post')})))`;
+    await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     const formerOwnerHeld = heldModelIdsSql(
       Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
       markerView
     );
-    // A model with a held legacy comment is soft-deleted, as a moderator's delete does. One an
-    // earlier owner's hold keeps is hidden below instead, with the record a restore reads.
-    const commentHeld = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT m.id FROM "Model" m
-      WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}
-        AND m.id NOT IN (${formerOwnerHeld})`;
-    if (commentHeld.length) {
-      const { deleteModelById } = await import('~/server/services/model.service');
-      for (const { id: modelId } of commentHeld)
-        await deleteModelById({
-          id: modelId,
-          userId: actorUserId,
-          isModerator: true,
-          onBidRefundFailed: (failure) =>
-            softDeleteRefundFailures.push(...alertBidRefundFailures([failure], alertedBy)),
-        }).catch((e: unknown) =>
-          softDeleteFailed.push({ modelId, message: (e as Error)?.message })
-        );
-    }
-    // A model is also kept while any owner it had before is held.
-    const doomedModels = Prisma.sql`${owned('Model')}
-      AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}
-      AND o.id NOT IN (${formerOwnerHeld})`;
+    // A model is kept while any owner it had before is held.
+    const doomedModels = Prisma.sql`${owned('Model')} AND o.id NOT IN (${formerOwnerHeld})`;
     await dbWrite.$executeRaw`
-      WITH ${detach(modelThreadParents(doomedModels))},
-      ${keepHeldReviewsCte(reviewsOnModelsSql(doomedModels), markerView)}
+      WITH ${keepHeldReviewsCte(reviewsOnModelsSql(doomedModels), markerView)}
       DELETE FROM "Model" WHERE id IN (${doomedModels})`;
     // Status only: the unpublish flow stamps meta.unpublishedAt, which notifies the owner.
     await dbWrite.$executeRaw`
@@ -1998,9 +1925,7 @@ export const removeAllContent = async ({
       true,
       { onlyWhere: unlessHeld }
     );
-    await dbWrite.$executeRaw`
-      WITH ${detach({ imageId: owned('Image') })}
-      DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.
@@ -2018,7 +1943,6 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold placed during the wipe',
       userId: id,
-      ...(softDeleteFailed.length && { softDeleteFailed }),
     }).catch(() => undefined);
     await unindexDeleted([
       [articlesSearchIndex, 'Article', articles],
@@ -2026,13 +1950,6 @@ export const removeAllContent = async ({
       [bountiesSearchIndex, 'Bounty', bounties],
     ])
       .then(async () => {
-        if (keptArticleIds.length)
-          await articlesSearchIndex.queueUpdate(
-            keptArticleIds.map((articleId) => ({
-              id: articleId,
-              action: SearchIndexUpdateQueueAction.Delete,
-            }))
-          );
         const hidden = await hiddenKeptBounties([...keptBountyIds, ...bounties.map((b) => b.id)]);
         if (hidden.length)
           await bountiesSearchIndex.queueUpdate(
@@ -2068,9 +1985,7 @@ export const removeAllContent = async ({
           userId: id,
         }).catch(() => undefined)
       );
-    throw new LegalHoldStoppedError(
-      refundFailures.length || softDeleteRefundFailures.length ? ['bid-refunds'] : []
-    );
+    throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
   }
 
   // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
@@ -2087,8 +2002,6 @@ export const removeAllContent = async ({
       ...details,
     }).catch(() => undefined);
   };
-  for (const { modelId, message } of softDeleteFailed)
-    failed('model-soft-delete', message, { modelId });
   const runStep = async (step: string, fn: () => Promise<unknown>) => {
     try {
       await fn();
@@ -2139,8 +2052,7 @@ export const removeAllContent = async ({
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
   const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
-  if (refundFailures.length || softDeleteRefundFailures.length)
-    failed('bid-refunds', 'some bids were not refunded');
+  if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
@@ -2892,6 +2804,7 @@ export const toggleBan = async ({
     : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
   void syncEventRosterMember(id);
+  void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
 
@@ -3470,8 +3383,7 @@ export async function toggleReview({
       }`;
     const markerView = await holdMarkerViewExists();
     await dbWrite.$executeRaw`
-      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)},
-      ${keepHeldReviewsCte(doomed, markerView)}
+      WITH ${keepHeldReviewsCte(doomed, markerView)}
       DELETE FROM "ResourceReview" WHERE id IN (${doomed})`;
     modelMetrics.queueUpdate(modelId);
     // Use the actual modelVersionId from the existing review row when input was
@@ -4092,10 +4004,12 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
  *                      two `tourSettings.welcome` writes), because it replaces
  *                      `tourSettings.welcome` wholesale; this composes the two
  *                      writers' fields instead. Only `tourSettings` uses this today.
+ *  - `removeFrom`    — delete these SUB-keys from a top-level object key (e.g. one
+ *                      slug from `hiddenApps`), leaving its other sub-keys alone.
  *  - `remove`        — delete these top-level keys.
  *
  * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key, and neither
- * does `deepMergeInto` with either of them. All three read `settings->key` — the
+ * does `deepMergeInto` or `removeFrom` with any of them. All of them read `settings->key` — the
  * STORED column — not the partially-built expression, so combining ops on one key
  * makes the later op win over the earlier op's in-progress result rather than
  * compose with it. No caller does this today; if one ever needs to, make the ops
@@ -4114,6 +4028,8 @@ export type UserSettingsPatch = {
   mergeInto?: Record<string, Record<string, unknown>>;
   /** One level deeper than `mergeInto`: top-level key -> sub-key -> patch. */
   deepMergeInto?: Record<string, Record<string, Record<string, unknown>>>;
+  /** Top-level object key -> the sub-keys to delete from it. */
+  removeFrom?: Record<string, string[]>;
   remove?: string[];
   /** `userUpdateCounter` label, so consolidating the writers does not collapse the
    *  per-call-site attribution the metric already carried. */
@@ -4159,6 +4075,9 @@ export async function patchUserSettings(
         ] as const
     )
     .filter(([, subEntries]) => subEntries.length);
+  const removeFrom = Object.entries(patch.removeFrom ?? {}).filter(
+    ([, subKeys]) => subKeys && subKeys.length
+  );
   const remove = patch.remove?.length ? patch.remove : undefined;
 
   const client = tx ?? dbWrite;
@@ -4172,7 +4091,7 @@ export async function patchUserSettings(
   // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
   // see it. Reading the row also keeps the return value consistent with the write
   // path below, which returns `RETURNING settings` rather than a cached blob.
-  if (!set && !mergeInto.length && !deepMergeInto.length && !remove) {
+  if (!set && !mergeInto.length && !deepMergeInto.length && !removeFrom.length && !remove) {
     const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
       `SELECT settings FROM "User" WHERE id = $1`,
       userId
@@ -4231,6 +4150,15 @@ export async function patchUserSettings(
         `|| ${bind(JSON.stringify(value))}::jsonb))`;
     }
     expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
+  }
+  for (const [key, subKeys] of removeFrom) {
+    // Same stored-column read and the same non-object guard as `mergeInto`: a malformed
+    // value under `key` becomes `{}` (self-healing) rather than raising on `jsonb - text[]`
+    // over a scalar. `jsonb - text[]` drops every listed sub-key in one go.
+    const k = bind(key);
+    expr =
+      `(${expr} || jsonb_build_object(${k}::text, ` +
+      `${asJsonbObject(`settings->${k}::text`)} - ${bind(subKeys)}::text[]))`;
   }
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;

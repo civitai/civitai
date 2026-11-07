@@ -1,5 +1,6 @@
 import type { ModelVersionPricingSignal } from '@civitai/buzz';
-import { Badge, Tooltip } from '@mantine/core';
+import { Badge } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt } from '@tabler/icons-react';
 import { versionIsPaidToGenerate } from '~/shared/search/model-pricing-filter';
 

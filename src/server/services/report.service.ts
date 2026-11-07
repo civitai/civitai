@@ -68,6 +68,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import {
   APPEAL_ALREADY_PENDING,
+  getAppealRefusal,
   IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   OrphanedAppealReason,
@@ -1258,8 +1259,39 @@ export async function isAppealBlockedByHoldMarker({
 }
 
 /**
- * The rule `createEntityAppealHandler` refuses an image appeal on, so the owner's page offers one
- * only when it would be accepted. Anyone else's image reads as no.
+ * The images whose appealable-looking block is refused anyway: a hold marker keeps them, or the
+ * appeal flow excludes the image or its owner. The endpoint, the owner's image page and the
+ * removed-images list all read this. The owner query runs even with no images.
+ */
+export async function getAppealRefusedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  const [held, excluded] = await Promise.all([
+    getHoldMarkerBlockedImageIds({ imageIds, userId }),
+    getAppealExcludedIds({ imageIds, userIds: [userId] }),
+  ]);
+  if (excluded.users.has(userId)) return new Set(imageIds);
+  return new Set(imageIds.filter((id) => held.has(id) || excluded.images.has(id)));
+}
+
+export async function isImageAppealRefused({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}) {
+  return (await getAppealRefusedImageIds({ imageIds: [imageId], userId })).has(imageId);
+}
+
+/**
+ * Whether the owner's page shows the appeal prompt. An image with a pending or decided appeal shows
+ * it; the prompt then says the appeal is under review or the decision stands, as the endpoint's
+ * refusal does. Anyone else's image reads as no.
  */
 export async function canAppealOwnImage({ imageId, userId }: { imageId: number; userId: number }) {
   const [image] = await dbWrite.$queryRaw<
@@ -1268,7 +1300,9 @@ export async function canAppealOwnImage({ imageId, userId }: { imageId: number; 
     SELECT "blockedFor", "needsReview" FROM "Image" WHERE id = ${imageId} AND "userId" = ${userId}
   `;
   if (!image || !isAppealableImage(image)) return false;
-  return !(await isAppealBlockedByHoldMarker({ imageId, userId }));
+  const latest = await getLatestAppeal({ entityType: EntityType.Image, entityId: imageId, userId });
+  if (getAppealRefusal(EntityType.Image, latest)) return true;
+  return !(await isImageAppealRefused({ imageId, userId }));
 }
 
 // Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
@@ -1541,6 +1575,22 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
+  // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
+  // Pending. Read on the primary just before the claim, so a CSAM block landing between this read
+  // and the claim is not seen. The only live Image-approval caller is `handleUnblockImages`, after
+  // an explicit unblock.
+  if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
+    const held = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
+    `;
+    if (held.length)
+      throw throwBadRequestError(
+        `Image ${held
+          .map((h) => h.id)
+          .join(', ')} is removed, and approving its appeal cannot put it back`
+      );
+  }
+
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({

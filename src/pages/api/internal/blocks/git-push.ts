@@ -9,9 +9,15 @@ import {
   BlockManifestValidator,
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
+import { userIdForForgejoUsername } from '~/server/services/blocks/dev-git-access.service';
 import { FORGEJO_ORG, getRawFile, setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 import { recordPendingFromPush } from '~/server/services/blocks/publish-request.service';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import {
+  APP_DEVELOPER_TERMS_ACCEPT_PATH,
+  AppDeveloperTermsNotAcceptedError,
+} from '~/shared/constants/app-developer-terms.constants';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -403,8 +409,35 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       appBlockId: appBlock.id,
       manifest: manifest as object,
       version: reviewVersion,
+      pusherUserId: userIdForForgejoUsername(payload.pusher?.login ?? payload.pusher?.username),
     });
   } catch (e) {
+    // A refused permission hook (gate closed, or the pushed file does not match its sha256) is the
+    // author's to fix, like a manifest-validation failure: say why on the commit, record nothing.
+    const { isStorageHookRefusal } = await import('~/server/services/apps/storage-hooks');
+    if (isStorageHookRefusal(e)) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/manifest-validation',
+        description: e.message.slice(0, 240),
+      });
+      res.status(400).json({ error: 'Storage hook refused', storageHookErrors: e.problems });
+      return;
+    }
+    if (e instanceof AppDeveloperTermsNotAcceptedError) {
+      await setCommitStatusSafe({
+        slug,
+        sha,
+        state: 'failure',
+        context: 'civitai/review',
+        description: e.message, // setCommitStatus truncates to Forgejo's 140
+        targetUrl: `${getBaseUrl()}${APP_DEVELOPER_TERMS_ACCEPT_PATH}`,
+      });
+      res.status(403).json({ error: 'App Developer Terms not accepted' });
+      return;
+    }
     notifyModsOfWebhookFailure({
       slug,
       sha,

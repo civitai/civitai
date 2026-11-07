@@ -6,13 +6,25 @@ name: tRPC server parity
 # CMD) and once as the standalone tRPC server (`node -- trpc-server/server.cjs`). Then it sends the
 # same requests to both and fails on any response difference that is not declared in
 # `scripts/trpc-server/parity/cases.mjs`. It also:
+#   - seeds a few `Image` rows and runs the image-delivery cases (`--cases image-delivery`), with
+#     the route's own counter checked on both servers (`--route-counter`), so the candidate must
+#     have run the route for every case it answered;
+#   - runs the browser-beacon cases (`--cases beacons`) with every tracker row each server's route
+#     sent captured by a stub tracker (`tracker-stub.mjs`, `--tracker`), so the candidate must have
+#     run the route and sent the same rows as Next for every case;
 #   - checks the standalone server registered instrumentation at BOOT (liveness heartbeat written
 #     and the instrumentation log lines present before it received any request);
 #   - fails if the standalone server stops emitting the request span an external latency alert
 #     keys on by name (`assert-spans.mjs`), with Next's own export as the positive control;
 #   - runs the same requests against a copy of the standalone server with its internal-header
 #     strip removed, and fails unless that break shows up as a red case — the negative control
-#     that proves this harness can see a broken server at all.
+#     that proves this harness can see a broken server at all;
+#   - boots the standalone server once more under its `api` profile (`STANDALONE_SERVER_PROFILE=api`:
+#     `/api/v1/**` and `/api/auth/**` added) and runs the tRPC cases and the `--cases api` cases
+#     against it, with a copy whose proxy-policy call is removed as that profile's negative control
+#     (the 451 for a blocked region must go red), and checks an `/api/v1/` request span is emitted;
+#   - boots the api profile once more on an image whose `/api/v1/enums` route module throws at load,
+#     and requires that server to come up, answer that route 500 and serve the others.
 #
 # Runs when anything that can change either server's answers changes: the server itself, the
 # image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
@@ -49,10 +61,20 @@ on:
       - 'pnpm-lock.yaml'
       - 'patches/**'
       - 'src/pages/api/trpc/**'
+      # The api profile (STANDALONE_SERVER_PROFILE=api) serves every /api/v1/ route.
+      - 'src/pages/api/v1/**'
       - 'src/pages/api/live.ts'
       - 'src/pages/api/health.ts'
       - 'src/pages/api/ready.ts'
       - 'src/pages/api/metrics.ts'
+      - 'src/pages/api/internal/image-delivery/**'
+      - 'src/server/services/image-delivery.service.ts'
+      - 'src/pages/api/internal/ping.ts'
+      - 'src/pages/api/internal/pulse.ts'
+      - 'src/pages/api/track/batch.ts'
+      - 'src/server/clickhouse/**'
+      - 'src/server/schema/track.schema.ts'
+      - 'src/server/utils/endpoint-helpers.ts'
       - 'src/proxy.ts'
       - 'src/server/middleware/**'
       - 'src/instrumentation.ts'
@@ -298,6 +320,9 @@ jobs:
       # Dispatch and status runs: the commit under test, which the status is posted on.
       SHA: ${{ needs.gate.outputs.sha }}
       MUTANT_IMAGE: trpc-server-parity:mutant
+      API_MUTANT_IMAGE: trpc-server-parity:api-mutant
+      BROKEN_ROUTE_IMAGE: trpc-server-parity:broken-route
+      CANDIDATE_IMAGE: trpc-server-parity:candidate
       STATUS_CONTEXT: tRPC parity
     steps:
       # A dispatch or status run's check is not listed on the PR (a status run's is not even on
@@ -357,8 +382,24 @@ jobs:
         run: |
           nohup node scripts/trpc-server/parity/otlp-stub.mjs --port 4318 --out "$WORK/spans.json" \
             --watch 'executing api route (pages) /api/trpc/[trpc]' --watch 'test-span' \
+            --watch 'GET /api/internal/image-delivery/[id]' \
+            --watch 'POST /api/internal/ping' --watch 'POST /api/internal/pulse' \
+            --watch 'POST /api/track/batch' \
+            --watch 'GET /api/v1/enums' \
             > "$WORK/otlp-stub.log" 2>&1 &
           echo $! > "$WORK/otlp-stub.pid"
+
+      # Every server's CLICKHOUSE_TRACKER_URL (`make-env.mjs`): records the tracker rows the
+      # beacon routes send, per sending container.
+      - name: Start the tracker stub
+        run: |
+          nohup node scripts/trpc-server/parity/tracker-stub.mjs --port 4319 \
+            > "$WORK/tracker-stub.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -fsS -o /dev/null http://127.0.0.1:4319/__events && break
+            sleep 0.2
+          done
+          curl -fsS http://127.0.0.1:4319/__events
 
       # The negative control: the standalone server with ONE line removed — the strip of
       # client-sent internal headers. The anchor must match exactly once, or the control would
@@ -376,16 +417,56 @@ jobs:
           # The same image with only that file replaced: no app rebuild.
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/mutant/Dockerfile"
           docker build -q -t "$MUTANT_IMAGE" "$WORK/mutant"
-          # The image's own copy must be the PR's file, or the "candidate" is not this commit.
-          docker run --rm --entrypoint cat "$IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
           docker run --rm --entrypoint cat "$MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/mutant/server.cjs"
+          # The api profile's negative control: the same, with the proxy-policy call removed instead.
+          mkdir -p "$WORK/api-mutant"
+          cp scripts/trpc-server/server.cjs "$WORK/api-mutant/server.cjs"
+          anchor='^    if (applyApiPolicy(req, res)) return;$'
+          n=$(grep -c "$anchor" "$WORK/api-mutant/server.cjs" || true)
+          if [ "$n" != 1 ]; then echo "api mutation anchor matched $n lines, expected 1"; exit 2; fi
+          sed -i "s|$anchor|  // MUTANT: proxy API policy not applied|" "$WORK/api-mutant/server.cjs"
+          if cmp -s scripts/trpc-server/server.cjs "$WORK/api-mutant/server.cjs"; then echo "api mutant is identical"; exit 2; fi
+          printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/api-mutant/Dockerfile"
+          docker build -q -t "$API_MUTANT_IMAGE" "$WORK/api-mutant"
+          docker run --rm --entrypoint cat "$API_MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/api-mutant/server.cjs"
+          # The candidate: the image with this checkout's server.cjs. A pull_request or status run
+          # tests its own commit's image, so the copy must already be the image's (the run fails if
+          # not). A dispatch run may test a branch's copy on top of an older image, which is how a
+          # deliberately broken copy is tested without an image build; it says so in the log.
+          mkdir -p "$WORK/candidate"
+          cp scripts/trpc-server/server.cjs "$WORK/candidate/server.cjs"
+          if ! docker run --rm --entrypoint cat "$IMAGE" /app/trpc-server/server.cjs | cmp -s - scripts/trpc-server/server.cjs; then
+            if [ "${{ github.event_name }}" != workflow_dispatch ]; then
+              echo "the image is not this commit's: its server.cjs differs from the checkout"; exit 1
+            fi
+            echo "::warning::dispatch: testing this checkout's server.cjs on top of $IMAGE"
+            # Only server.cjs is overlaid (next-compat.cjs, served-pages.cjs and the route modules
+            # are the image's),
+            # so this run is NOT a verdict on the head commit: the verdict step below never posts
+            # success for it.
+            echo "PARITY_OVERLAY=1" >> "$GITHUB_ENV"
+          fi
+          printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/candidate/Dockerfile"
+          docker build -q -t "$CANDIDATE_IMAGE" "$WORK/candidate"
+          docker run --rm --entrypoint cat "$CANDIDATE_IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
+          # The candidate with ONE route module that throws at load: /api/v1/enums.
+          mkdir -p "$WORK/broken"
+          rel=$(docker run --rm --entrypoint node "$CANDIDATE_IMAGE" -e "process.stdout.write(require('/app/.next/server/pages-manifest.json')['/api/v1/enums'] || '')")
+          [ -n "$rel" ] || { echo "/api/v1/enums is not in the image's pages-manifest"; exit 2; }
+          echo "throw new Error('parity: this route module fails to load on purpose');" > "$WORK/broken/broken.js"
+          printf 'FROM %s\nCOPY --chown=1001:1001 broken.js /app/.next/server/%s\n' "$CANDIDATE_IMAGE" "$rel" > "$WORK/broken/Dockerfile"
+          docker build -q -t "$BROKEN_ROUTE_IMAGE" "$WORK/broken"
+          docker run --rm --entrypoint cat "$BROKEN_ROUTE_IMAGE" "/app/.next/server/$rel" | cmp - "$WORK/broken/broken.js"
 
       - name: Start the servers
         run: |
           common=(--detach --add-host host.docker.internal:host-gateway --env-file "$WORK/parity.env")
           docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE"
-          docker run "${common[@]}" --name trpc -p 3001:3000 "$IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" --name trpc -p 3001:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api -p 3003:3000 "$CANDIDATE_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name api-mutant -p 3004:3000 "$API_MUTANT_IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" -e STANDALONE_SERVER_PROFILE=api --name broken -p 3005:3000 "$BROKEN_ROUTE_IMAGE" node -- trpc-server/server.cjs
 
       # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
       #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
@@ -419,7 +500,18 @@ jobs:
             running trpc || { echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; }
             sleep 2
           done
-          check trpc '[trpc-server] instrumentation registered' '[trpc-server] ready'
+          check trpc '[trpc-server] instrumentation registered' '[trpc-server] ready (profile trpc,'
+
+          for _ in $(seq 1 180); do
+            docker logs api 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running api || { echo "api exited"; docker logs api 2>&1 | tail -100; exit 1; }
+            sleep 2
+          done
+          check api '[trpc-server] instrumentation registered' '[trpc-server] ready (profile api,' '/api/v1/models/[id]'
+          # /api/auth/ is not in the api profile.
+          if docker logs api 2>&1 | grep -F '[trpc-server] ready (profile api,' | grep -qF '/api/auth/'; then
+            echo "api: the ready line lists an /api/auth/ page"; exit 1
+          fi
 
           ok=
           for _ in $(seq 1 150); do
@@ -434,7 +526,7 @@ jobs:
       - name: Wait for all three to answer
         run: |
           token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
-          for port in 3000 3001 3002; do
+          for port in 3000 3001 3002 3003 3004; do
             ok=
             for _ in $(seq 1 150); do
               if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
@@ -456,6 +548,86 @@ jobs:
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
             --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
 
+      - name: Seed the image-delivery rows
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/seed-image-delivery.mjs \
+            --database-url postgresql://postgres:postgres@127.0.0.1:5432/postgres
+
+      - name: Image-delivery parity (Next vs standalone)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/image-delivery.json" \
+            --cases image-delivery --route-counter
+
+      - name: Image-delivery negative control (Next vs mutant must be red)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/image-delivery-mutant.json" \
+            --cases image-delivery \
+            --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
+
+      - name: Beacon parity (Next vs standalone)
+        if: ${{ !cancelled() }}
+        run: |
+          ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/beacons.json" \
+            --cases beacons --tracker http://127.0.0.1:4319 \
+            --tracker-a-ip "$(ip next)" --tracker-b-ip "$(ip trpc)"
+
+      - name: Beacon negative control (Next vs mutant must be red)
+        if: ${{ !cancelled() }}
+        run: |
+          ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/beacons-mutant.json" \
+            --cases beacons --tracker http://127.0.0.1:4319 \
+            --tracker-a-ip "$(ip next)" --tracker-b-ip "$(ip mutant)" \
+            --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
+
+      - name: api profile, tRPC cases (Next vs standalone api profile)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3003 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-trpc.json"
+
+      - name: api profile parity (Next vs standalone api profile)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3003 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api.json" \
+            --cases api
+
+      - name: api profile negative control (Next vs api mutant must be red)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3004 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/api-mutant.json" \
+            --cases api --expect-red v1-blocked-region --expect-red-diff 'pinned 451 '
+
+      - name: A route module that fails to load does not take the server down
+        if: ${{ !cancelled() }}
+        run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          running() { [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ]; }
+          for _ in $(seq 1 180); do
+            docker logs broken 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running broken || { echo "broken: the server exited"; docker logs broken 2>&1 | tail -60; exit 1; }
+            sleep 2
+          done
+          docker logs broken 2>&1 | grep -F '[trpc-server] failed to load /api/v1/enums' \
+            || { echo "broken: no load-failure line for /api/v1/enums"; docker logs broken 2>&1 | tail -60; exit 1; }
+          code() { curl -s -o /dev/null -w '%{http_code}' -A 'python-requests/2.32.3' -H 'cf-connecting-ip: 198.51.100.23' "http://127.0.0.1:$1$2"; }
+          # Positive control: the unbroken api profile serves the route.
+          [ "$(code 3003 /api/v1/enums)" = 200 ] || { echo "api: /api/v1/enums is not 200"; exit 1; }
+          b=$(code 3005 /api/v1/enums); echo "broken /api/v1/enums -> $b"; [ "$b" = 500 ] || exit 1
+          a=$(code 3003 /api/v1/me); b=$(code 3005 /api/v1/me); echo "/api/v1/me: api $a, broken $b"; [ "$a" = "$b" ] || exit 1
+          b=$(code 3005 "/api/live?token=$token"); echo "broken /api/live -> $b"; [ "$b" = 200 ] || exit 1
+          running broken || { echo "broken exited after serving"; exit 1; }
+
       - name: The alerted span is still emitted
         if: ${{ !cancelled() }}
         run: |
@@ -466,11 +638,26 @@ jobs:
           ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
           node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
             --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)"
+          # Pins the image-delivery request span's NAME: span-name-keyed alerting and dashboards
+          # read it, and a renamed span would read as the route having no traffic.
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)" \
+            --span 'GET /api/internal/image-delivery/[id]'
+          # The beacons' request spans, by the same rule.
+          for span in 'POST /api/internal/ping' 'POST /api/internal/pulse' 'POST /api/track/batch'; do
+            node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+              --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)" --span "$span"
+          done
+          # The api profile: its tRPC span and an /api/v1/ request span, by the same rule.
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip api)"
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip api)" --span 'GET /api/v1/enums'
 
       - name: Server logs
         if: always()
         run: |
-          for c in next trpc mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+          for c in next trpc mutant api api-mutant broken; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -479,6 +666,7 @@ jobs:
           path: |
             ${{ runner.temp }}/parity/*.json
             ${{ runner.temp }}/parity/otlp-stub.log
+            ${{ runner.temp }}/parity/tracker-stub.log
           if-no-files-found: ignore
 
       - name: Report the verdict on the head commit
@@ -492,6 +680,12 @@ jobs:
             failure) state=failure; desc="Parity failed: see the run" ;;
             *) state=error; desc="Run $JOB_STATUS before a verdict" ;;
           esac
+          # An overlay run tested this checkout's server.cjs on an OLDER image, not this commit's
+          # build. It must never green the head commit's status.
+          if [ "${PARITY_OVERLAY:-}" = 1 ]; then
+            state=error
+            desc="Overlay run ($JOB_STATUS): server.cjs tested on another image; not a verdict on this commit"
+          fi
           gh api "repos/${{ github.repository }}/statuses/$SHA" \
             -f state="$state" -f context="$STATUS_CONTEXT" -f description="$desc" \
             -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null

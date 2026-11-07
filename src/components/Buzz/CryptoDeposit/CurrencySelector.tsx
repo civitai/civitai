@@ -1,4 +1,5 @@
-import { Badge, Group, Menu, Skeleton, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Group, Skeleton, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import React, { useCallback, useMemo, useState } from 'react';
 import { getFiatDisplay } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';

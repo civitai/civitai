@@ -1,4 +1,5 @@
-import { Button, Loader, Menu, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
+import { Button, Loader, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
@@ -108,7 +109,7 @@ export function CommentItem({
   const badge = author && badges.find((b) => b.userId === author.id);
 
   // Fetched only while the menu is open: one query per comment on every page would cost more.
-  const { data: threadMute } = trpc.commentv2.getThreadMuted.useQuery(
+  const { data: threadMute } = trpc.commentv3.getThreadMuted.useQuery(
     { commentId: comment.id },
     { enabled: menuOpened && !!currentUser }
   );
@@ -293,10 +294,7 @@ export function CommentItem({
                       leftSection={<IconFlag size={14} stroke={1.5} />}
                       onClick={() =>
                         openReportModal({
-                          // Reports on a CommentV3-write surface are filed against CommentV3.
-                          entityType: constants.comments.v3WriteSurfaces.includes(entityType)
-                            ? ReportEntity.CommentV3
-                            : ReportEntity.CommentV2,
+                          entityType: ReportEntity.CommentV3,
                           entityId: comment.id,
                         })
                       }

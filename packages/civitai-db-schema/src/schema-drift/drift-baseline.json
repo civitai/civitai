@@ -535,6 +535,19 @@
       "ref": "#6323"
     },
     {
+      "fingerprint": "nullability|StorylineReport|storylineId|StorylineReport|storylineId|optional",
+      "kind": "nullability",
+      "tier": "enforced",
+      "table": "StorylineReport",
+      "columns": [
+        "storylineId"
+      ],
+      "model": "StorylineReport",
+      "field": "storylineId",
+      "reason": "civitai/civitai#7684: a storyline report outlives its storyline; the migration 20261222120000_held_storyline makes storylineId nullable with ON DELETE SET NULL, applied by hand before the deploy",
+      "ref": "#7684"
+    },
+    {
       "fingerprint": "nullability|TagMetric|updatedAt|TagMetric|updatedAt|required",
       "kind": "nullability",
       "tier": "enforced",
@@ -1430,6 +1443,19 @@
       "field": "promoter",
       "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
       "ref": "#6323"
+    },
+    {
+      "fingerprint": "referential-action|StorylineReport|storylineId|StorylineReport|storyline|ON DELETE SetNull ON UPDATE Cascade|ON DELETE Cascade ON UPDATE Cascade",
+      "kind": "referential-action",
+      "tier": "enforced",
+      "table": "StorylineReport",
+      "columns": [
+        "storylineId"
+      ],
+      "model": "StorylineReport",
+      "field": "storyline",
+      "reason": "civitai/civitai#7684: a storyline report outlives its storyline; the migration 20261222120000_held_storyline makes storylineId nullable with ON DELETE SET NULL, applied by hand before the deploy",
+      "ref": "#7684"
     },
     {
       "fingerprint": "uniqueness|AnnouncementSpend|announcementId|AnnouncementSpend|",

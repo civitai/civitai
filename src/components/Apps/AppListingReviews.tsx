@@ -1,6 +1,6 @@
-import { Badge, Divider, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Button, Divider, Group, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconThumbDown, IconThumbUp } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -9,6 +9,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { AppListingReviewListItem } from '~/server/schema/blocks/app-listing-review.schema';
 import { trpc } from '~/utils/trpc';
 
+/** Reviews shown before "Show all reviews", so a long thread does not bury the rest of the page. */
+const COLLAPSED_REVIEW_COUNT = 4;
+
 /**
  * App Store Listings (W13) — the recent-reviews LIST for a store listing (thumbs
  * / recommend). Keyset/infinite over `appListings.listReviews` (which already
@@ -16,10 +19,23 @@ import { trpc } from '~/utils/trpc';
  * TEXT via React's default escaping — NEVER dangerouslySetInnerHTML (`details` is
  * only length-capped/trimmed server-side, so the escaping is the XSS control).
  *
- * DARK: mounted only under the mod-only store-preview detail body today.
+ * Not mounted in preview: a shadow listing has no reviews.
  */
-export function AppListingReviews({ appListingId }: { appListingId: string }) {
+export function AppListingReviews({
+  appListingId,
+  onLeaveReview,
+}: {
+  appListingId: string;
+  /**
+   * Opens the caller's review modal. Pass it ONLY for a viewer `useCanReviewListing`
+   * admits — this component applies no gate; without it the empty state stays plain text.
+   */
+  onLeaveReview?: () => void;
+}) {
   const currentUser = useCurrentUser();
+  // Keyed by listing so a client-side navigation to another app (body stays mounted) starts collapsed.
+  const [expandedFor, setExpandedFor] = useState<string | null>(null);
+  const expanded = expandedFor === appListingId;
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.appListings.listReviews.useInfiniteQuery(
       { appListingId },
@@ -27,6 +43,12 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
     );
 
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
+  const visible = expanded ? items : items.slice(0, COLLAPSED_REVIEW_COUNT);
+  const hasHidden =
+    items.length > COLLAPSED_REVIEW_COUNT ||
+    (!!hasNextPage && items.length === COLLAPSED_REVIEW_COUNT);
+  // Collapsed, keep paging only until there is a full first screen to show.
+  const canLoadMore = !!hasNextPage && (expanded || items.length < COLLAPSED_REVIEW_COUNT);
 
   if (isLoading) {
     return (
@@ -37,6 +59,23 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
   }
 
   if (items.length === 0) {
+    // For an eligible viewer the empty-state copy IS the call to action.
+    if (onLeaveReview) {
+      return (
+        <Group>
+          <Button
+            variant="subtle"
+            size="compact-sm"
+            px={0}
+            leftSection={<IconThumbUp size={14} />}
+            onClick={onLeaveReview}
+            data-testid="apps-listing-reviews-empty-cta"
+          >
+            Be the first to review this app.
+          </Button>
+        </Group>
+      );
+    }
     return (
       <Text c="dimmed" size="sm">
         Be the first to review this app.
@@ -46,13 +85,20 @@ export function AppListingReviews({ appListingId }: { appListingId: string }) {
 
   return (
     <Stack gap="md">
-      {items.map((review) => (
+      {visible.map((review) => (
         <div key={review.id}>
           <ReviewRow review={review} isViewer={review.user?.id === currentUser?.id} />
           <Divider mt="md" />
         </div>
       ))}
-      {hasNextPage && (
+      {!expanded && hasHidden && (
+        <Group justify="center">
+          <Button variant="light" onClick={() => setExpandedFor(appListingId)}>
+            Show all reviews
+          </Button>
+        </Group>
+      )}
+      {canLoadMore && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
           <Group justify="center" data-testid="apps-reviews-loading-more">
             <Loader size="sm" />

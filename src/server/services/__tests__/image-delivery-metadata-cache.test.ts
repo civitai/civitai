@@ -24,6 +24,7 @@ import { respondWithRows, statementOf } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 const redisDel = redisMock.redis.del;
 const redisPackedGet = redisMock.redis.packed.get;
 const redisPackedSet = redisMock.redis.packed.set;
@@ -215,6 +216,25 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     const result = await getCachedImageDeliveryMetadata(URL);
     expect(result).toEqual(IMAGE_ROW); // primary fallback resolved
     expect(dbWriteQueryRaw).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
+      [{ entity: 'image', caller: 'imageDelivery' }],
+    ]);
+  });
+
+  it('treats an empty replica answer as a not-found: the primary is NOT asked', async () => {
+    dbReadQueryRaw.mockImplementation(respondWithRows([]));
+
+    expect(await getCachedImageDeliveryMetadata(URL)).toBeNull();
+    expect(dbWriteQueryRaw).not.toHaveBeenCalled();
+    expect(dbReadFallbackCounter.inc).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the primary error when replica and primary both fail, caching nothing', async () => {
+    dbReadQueryRaw.mockRejectedValueOnce(new Error('replica down'));
+    dbWriteQueryRaw.mockRejectedValueOnce(new Error('primary down'));
+
+    await expect(getCachedImageDeliveryMetadata(URL)).rejects.toThrow('primary down');
+    expect(redisPackedSet).not.toHaveBeenCalled();
   });
 });
 

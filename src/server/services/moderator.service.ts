@@ -24,6 +24,8 @@ type ModelModActivity = {
     | 'dismissPoiHashMatch'
     | 'approveLockReview'
     | 'rejectLockReview'
+    // A ruling on a restricted-verdict lead in Needs review (`restrictedNsfwVerdict:keep`).
+    | `restrictedNsfwVerdict:${'keep' | 'dismiss' | 'rateNsfw' | 'autoApply'}`
     // A moderator's model save added or removed one locked property (`lockProperty:poi`).
     | `lockProperty:${string}`
     | `unlockProperty:${string}`;
@@ -89,6 +91,8 @@ type UserModActivity = {
     | 'undoMembershipCancel'
     // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
     | 'resyncMembership'
+    // A moderator released a built personal-data export to the account owner (personal-data-export.service).
+    | 'releasePersonalDataExport'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -183,9 +187,15 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type CsamReportModActivity = {
+  entityType: 'csamReport';
+  activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
   | ImageTagModActivity

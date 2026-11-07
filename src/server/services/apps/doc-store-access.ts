@@ -41,6 +41,10 @@ import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/blo
 import { PUBLISHED_NS, reviewNamespace } from '~/server/services/apps/doc-store';
 import type { DocStoreContext } from '~/server/services/apps/doc-store.types';
 import {
+  enforcedManifestOf,
+  type EnforcedManifest,
+} from '~/server/services/apps/doc-store-schema-major';
+import {
   docStoreDependency,
   docStoreUnavailable,
   DocStoreError,
@@ -53,13 +57,12 @@ import {
 import { getGrantedScopes } from '~/server/services/blocks/scope-grant.service';
 import {
   APP_STORAGE_BASE_SCOPE,
-  APP_STORAGE_ENABLED_FEATURES,
+  APP_STORAGE_ALL_FEATURES_ON,
   APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_PUBLISH_SCOPE,
   isCollectionExportable,
   parseManifestStorage,
-  type AppStorageFeature,
   type DeclaredStorageCollections,
   type DeclaredStorageImports,
 } from '~/shared/constants/block-storage.constants';
@@ -86,6 +89,13 @@ export type StorageAccess = {
   importedFrom?: string;
   /** With `importedFrom`: the import's access. A `read` import refuses every write. */
   importAccess?: 'read' | 'readwrite';
+  /**
+   * The approved app's enforced manifest (`app_blocks.manifest`) that `collections` were parsed
+   * from, with its row's revision — the source app's, through an import. What a production
+   * write's schema major is derived against (`doc-store-schema-major.ts`). Unset for a review
+   * token.
+   */
+  enforcedManifest?: EnforcedManifest;
 };
 
 const notEligible = (reason: string, message: string) =>
@@ -94,15 +104,6 @@ const notEligible = (reason: string, message: string) =>
 const unavailable = docStoreUnavailable;
 const dependency = docStoreDependency;
 
-/**
- * Every phased feature ON: a reviewed manifest is parsed for SHAPE only, so what was approved
- * stays declared even when a feature it uses is switched off today. The store and the route
- * refuse an unsupported collection per collection, at use, and the others keep working.
- */
-const ALL_FEATURES = Object.fromEntries(
-  Object.keys(APP_STORAGE_ENABLED_FEATURES).map((f) => [f, true])
-) as Record<AppStorageFeature, boolean>;
-
 const loggedUnparseable = new Set<string>();
 
 /** The declared storage, or a retryable 503 (logged once per app, counted every time). */
@@ -110,7 +111,7 @@ export function declaredStorage(
   appId: string,
   manifest: unknown
 ): { collections: DeclaredStorageCollections; imports: DeclaredStorageImports } {
-  const parsed = parseManifestStorage(manifest, ALL_FEATURES);
+  const parsed = parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON);
   if (parsed.errors.length === 0) {
     return { collections: parsed.collections, imports: parsed.imports };
   }
@@ -226,7 +227,7 @@ export async function resolveStorageAccess(
   const row = await dependency(
     dbRead.appBlock.findUnique({
       where: { id: approval.appBlockId },
-      select: { manifest: true },
+      select: { manifest: true, updatedAt: true },
     })
   );
   return {
@@ -234,6 +235,7 @@ export async function resolveStorageAccess(
     tokenKind: claims.dev === true ? 'dev' : isHubTokenClaims(claims) ? 'hub' : 'app',
     ctx: { appId: approval.appBlockId, ns, viewerUid },
     ...declaredStorage(approval.appBlockId, row?.manifest),
+    enforcedManifest: enforcedManifestOf(row),
   };
 }
 
@@ -287,7 +289,7 @@ export async function resolveImportAccess(
   const source = await dependency(
     dbRead.appBlock.findUnique({
       where: { blockId: from },
-      select: { id: true, status: true, manifest: true },
+      select: { id: true, status: true, manifest: true, updatedAt: true },
     })
   );
   if (!source || source.status !== 'approved') {
@@ -371,5 +373,6 @@ export async function resolveImportAccess(
     maxBrowsingLevel: consumer.maxBrowsingLevel,
     importedFrom: from,
     importAccess: declared.access,
+    enforcedManifest: enforcedManifestOf(source),
   };
 }

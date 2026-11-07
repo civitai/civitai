@@ -351,43 +351,6 @@ export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Pris
   `;
 }
 
-/** Authors one call logs at most; a bulk delete can retain rows from every author it touched. */
-const HOLD_LOG_AUTHORS = 200;
-
-/**
- * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
- * goes no further than here. An author with no hold of their own had a row kept for a held reply
- * below it.
- */
-export async function logHoldRetained(action: string, userIds: number[]) {
-  const authors = [...new Set(userIds)];
-  const logged = authors.slice(0, HOLD_LOG_AUTHORS);
-  const holds = await getAccountLegalHolds(logged).catch((e: unknown) => {
-    logToAxiom({
-      type: 'error',
-      name: 'account-legal-hold-check-failed',
-      message: (e as Error).message,
-      details: { userIds: logged },
-    }).catch(() => undefined);
-    return null;
-  });
-  for (const userId of logged) {
-    const legs = holds?.get(userId) ?? null;
-    logToAxiom({
-      type: 'info',
-      name: 'account-legal-hold',
-      message: legs?.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
-      details: { userId, legs },
-    }).catch(() => undefined);
-  }
-  if (authors.length > logged.length)
-    logToAxiom({
-      type: 'info',
-      name: 'account-legal-hold',
-      message: `${action}: rows retained for ${authors.length - logged.length} more authors`,
-    }).catch(() => undefined);
-}
-
 export type AccountLegalHold = {
   legs: AccountHoldLeg[];
   /** The marker view exists, so a statement may name it. */
@@ -401,12 +364,6 @@ export type AccountLegalHold = {
 export async function getAccountLegalHold(userId: number): Promise<AccountLegalHold> {
   const { legs, markerView } = (await readAccountHolds([userId]))[0];
   return { legs, markerView };
-}
-
-/** `getAccountLegalHold` for many accounts, in one statement (two when the marker view exists). */
-async function getAccountLegalHolds(userIds: number[]): Promise<Map<number, AccountHoldLeg[]>> {
-  if (!userIds.length) return new Map();
-  return new Map((await readAccountHolds(userIds)).map((h) => [h.userId, h.legs]));
 }
 
 async function readAccountHolds(

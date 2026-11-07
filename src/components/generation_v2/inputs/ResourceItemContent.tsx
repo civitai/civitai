@@ -11,7 +11,8 @@
  * - Strength slider for LoRA/LoCon/DoRA resources
  */
 
-import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Badge, Group, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { defaultStrength } from '~/shared/utils/resource.utils';
@@ -27,6 +28,7 @@ import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResidency';
+import { PartnerDisclosureIcons } from '~/components/generation_v2/PartnerDisclosureIcons';
 
 // =============================================================================
 // Types
@@ -248,6 +250,10 @@ export function ResourceItemContent({
               </Badge>
             )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
+            <PartnerDisclosureIcons
+              partnerService={resource.partnerService}
+              partnerTrains={resource.partnerTrains}
+            />
             {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>

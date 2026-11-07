@@ -20,6 +20,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
+import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -129,6 +130,7 @@ function RenderFilters() {
         attribute="baseModel"
         limit={SEARCH_FACET_LIMIT}
         searchable
+        remoteSearch={false}
         renderOption={renderBaseModelOption}
       />
     </>
@@ -228,10 +230,7 @@ function ImagesHitList() {
               const height = data?.height ?? 450;
               return { width, height };
             }}
-            adjustHeight={({ height }) => {
-              const imageHeight = Math.max(Math.min(height, 600), 150);
-              return imageHeight;
-            }}
+            adjustHeight={(args) => adjustImagesCardHeight(args)}
             maxItemHeight={600}
             render={ImagesCardMemoized}
             itemId={(data) => data.id}

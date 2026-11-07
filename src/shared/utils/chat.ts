@@ -31,9 +31,9 @@ export function chatBucketFor(member: {
 
 /**
  * The statuses an unfiltered membership can hold and still be in the inbox.
- * The header badge counts inbox conversations, so its query has to select on
- * the same thing the rail buckets on — it selected `Joined` alone, and an
- * unfiltered invitation then lit a badge no tab could account for.
+ * The header badge counts inbox and request conversations, so its query has to
+ * select on the same statuses the rail buckets on — it selected `Joined` alone,
+ * and an unfiltered invitation then lit a badge no tab could account for.
  *
  * `chatBucketFor` stays the definition; a test pins this list to it.
  */

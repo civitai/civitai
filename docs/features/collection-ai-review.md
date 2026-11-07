@@ -148,7 +148,9 @@ collection. Lifting that restriction means fixing the notification path first.
   so an ambiguous age matters there even where the image is otherwise wholesome.
 - **Items a moderator has already decided are left alone.** The job claims rows only while they are
   still `REVIEW` with no reviewer, so a human decision made mid-run keeps both its outcome and its
-  attribution.
+  attribution. An accept, or a rejection for a level outside `allowedNsfwLevels`, is claimed only
+  while the image still has the level it was decided on; a re-rated image is reviewed again on the
+  next run.
 - **`escalationAction: 'leaveForHuman'`** stamps `reviewedById` without changing status, so the job
   does not reclassify (and re-bill) the item on the next run.
 - The job acts as system user `-1` via an in-process `isSystem` flag on

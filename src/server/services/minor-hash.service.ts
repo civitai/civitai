@@ -1173,7 +1173,8 @@ export async function rollbackMinorHashAutoFlags({
   const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
     SELECT m.id AS "modelId",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevMinor')::boolean AS "prevMinor",
-           COALESCE(m.meta->'ownerFlagOverride'->'flags' ? 'minor', false) AS "ownerDeclaredMinor",
+           COALESCE(m.meta->'ownerFlagOverride'->'flags' ? 'minor', false)
+             OR COALESCE(m.meta->'ownerDeclaredFlags'->'flags' ? 'minor', false) AS "ownerDeclaredMinor",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
            (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",

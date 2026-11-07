@@ -271,6 +271,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'tag.getHomeExcluded',
   'technique.getAll',
   'tool.getAll',
+  'training.getPublicStatus',
   'training.getStatus',
   'user.getCreator',
 ]);

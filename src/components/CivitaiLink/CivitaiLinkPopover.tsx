@@ -1,7 +1,6 @@
 import type { GroupProps, StackProps } from '@mantine/core';
 import {
   Group,
-  Popover,
   Stack,
   Text,
   Progress,
@@ -12,13 +11,12 @@ import {
   Center,
   CopyButton,
   Button,
-  Tooltip,
   List,
   Loader,
-  Menu,
   Modal,
   TextInput,
 } from '@mantine/core';
+import { Popover, Tooltip, Menu } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import classes from './civitai-link.module.scss';
 import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';

@@ -271,6 +271,7 @@ async function callTool(
       truncated: result.truncated || trimmed,
       ms: now() - started,
       error: null,
+      ...(result.emailsShown === undefined ? {} : { emailsShown: result.emailsShown }),
     };
     input.emit({ type: 'tool-done', name, rows: result.rows, error: null, ms: log.ms });
     return { id: call.id, content: json, log, sources: result.sources };

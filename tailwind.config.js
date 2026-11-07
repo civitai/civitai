@@ -189,6 +189,12 @@ module.exports = {
             transform: 'scale3d(1, 1, 1)',
           },
         },
+        // The missing-permissions notice coming back after a refusal
+        // (`BlockConsentNotice`): two short yellow pulses, then nothing.
+        'attention-flash': {
+          '0%, 100%': { boxShadow: 'inset 0 0 0 0 var(--mantine-color-yellow-filled)' },
+          '50%': { boxShadow: 'inset 0 0 0 2px var(--mantine-color-yellow-filled)' },
+        },
         glowPulse: {
           '0%': {
             boxShadow: '0 0 0px rgba(0,255,0,0)',
@@ -235,6 +241,7 @@ module.exports = {
         wiggle: 'wiggle 1s ease-in-out infinite',
         jello: 'jello 2s 1s ease-in-out',
         glowPulse: 'glowPulse 1.2s ease-in-out 3',
+        'attention-flash': 'attention-flash 0.6s ease-in-out 2',
         'border-chase': 'border-chase 3s linear infinite',
         'gradient-shift': 'gradient-shift 8s ease infinite',
         shimmer: 'shimmer 6s ease-in-out infinite',

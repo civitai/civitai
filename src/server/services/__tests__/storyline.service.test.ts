@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -16,6 +20,15 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { STORYLINE_GRAPH_LIMIT } from '~/shared/utils/storyline';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import type { StorylineRootHiddenReason } from '~/shared/utils/storyline';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 const {
   enforceBlockedBrowsingTags,
@@ -106,6 +119,9 @@ import {
   removePendingChapter,
   removeStorylineCollaborator,
   acceptStorylineInvite,
+  followStoryline,
+  getStorylineFollow,
+  unfollowStoryline,
   assertCanContinueStoryline,
   assertStorylineVisible,
   setCanonChapter,
@@ -203,6 +219,7 @@ beforeEach(() => {
   // The shared db mock is otherwise reset only between files; these tests must not share call
   // counts or implementations.
   resetSharedMocks();
+  for (const hook of Object.values(sparkHooks)) hook.mockClear();
   getBlockedPairIds.mockReset();
   getBlockedPairIds.mockResolvedValue([]);
   hiddenUsersCached.mockReset();
@@ -1670,6 +1687,34 @@ describe('reading', () => {
       });
       expect(hasEarlier).toBe(true);
     });
+
+    // The owner may not remove a chapter someone paid to add, so their menu disables it. No one
+    // else is told which chapters were paid for, not even that none were.
+    it('tells only the owner which chapters someone paid to add', async () => {
+      const route = [
+        { id: 1, postId: 101, depth: 0, parentIds: [] },
+        { id: 4, postId: 104, depth: 1, parentIds: [] },
+      ];
+      r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+        Promise.resolve(
+          Prisma.sql(strings, ...(values as Prisma.Sql[])).sql.includes('"Placement"')
+            ? [{ id: 4 }]
+            : route
+        )) as never);
+      const path = (viewer: { id: number; isModerator?: boolean }) =>
+        getStorylinePath({ chapterId: 4, viewer, browsingLevel: NsfwLevel.PG | NsfwLevel.R });
+
+      const { chapters: asOwner } = await path({ id: OWNER });
+      expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+        [1, false],
+        [4, true],
+      ]);
+      for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+        const { chapters } = await path(viewer);
+        expect(chapters.map((c) => c.chapterId)).toEqual([1, 4]);
+        for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+      }
+    });
   });
 
   describe('a storyline hidden from the reader', () => {
@@ -2089,6 +2134,28 @@ describe('getStoryline: page fields', () => {
     r.storylineChapterEdge.groupBy.mockResolvedValue([
       { parentChapterId: 1, _count: { _all: 3 } },
     ] as never);
+  });
+
+  // Others are not told even that none were.
+  it("tells only the owner which of the main route's chapters someone paid to add", async () => {
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      sqlOfRaw(strings, values).includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const page = (viewer: { id: number; isModerator?: boolean }) =>
+      getStoryline({ id: 10, viewer, browsingLevel: NsfwLevel.PG });
+
+    const asOwner = await page({ id: OWNER });
+    expect(asOwner.mainPath.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: COLLABORATOR }, { id: MODERATOR, isModerator: true }]) {
+      const { mainPath } = await page(viewer);
+      expect(mainPath.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of mainPath) expect(chapter).not.toHaveProperty('paid');
+    }
   });
 
   it('gives counts, roles, the main route with tombstones, and the viewer’s role', async () => {
@@ -3868,6 +3935,35 @@ describe('covers and cast', () => {
     });
   });
 
+  it("tells only the owner which of the map's chapters someone paid to add", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([
+      { chapterId: 2, parentChapterId: 1, canon: true },
+    ] as never);
+    answerRaw([]);
+    const answer = r.$queryRaw.getMockImplementation()!;
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      composed([strings, ...values]).text.includes('JOIN "Placement" p ON p.id = c."placementId"')
+        ? Promise.resolve([{ id: 2 }])
+        : answer(strings, ...values)) as never);
+    const graph = (viewer: { id: number; isModerator?: boolean }) =>
+      getStorylineGraph({ id: 10, viewer, browsingLevel: PG });
+
+    const { chapters: asOwner } = await graph({ id: OWNER });
+    expect(asOwner.map((c) => [c.chapterId, c.paid])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+    for (const viewer of [{ id: STRANGER }, { id: MODERATOR, isModerator: true }]) {
+      const { chapters } = await graph(viewer);
+      expect(chapters.map((c) => c.chapterId)).toEqual([1, 2]);
+      for (const chapter of chapters) expect(chapter).not.toHaveProperty('paid');
+    }
+  });
+
   it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
     r.storylineChapter.findMany.mockResolvedValue([
       { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
@@ -4468,16 +4564,15 @@ describe('title moderation', () => {
         TemplateStringsArray,
         ...unknown[]
       ];
-      const { sql, values: bound } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      const { sql } = Prisma.sql(strings, ...(values as Prisma.Sql[]));
       const text = sql.replace(/\s+/g, ' ');
       const level =
         `OR ((SELECT ${raiseNsfwLevelText('lv.l', 'lv.f')} ` +
-        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ?), st."maxNsfwLevel") AS l, ` +
+        // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does. Blocked is
+        // written into the shared SQL text (storyline-visibility.sql), no longer bound.
+        `FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${NsfwLevel.Blocked}), st."maxNsfwLevel") AS l, ` +
         `COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv) & ?::int) <> 0)`;
       expect(text).toContain(level);
-      // A wholly Blocked chapter 1 falls back to the ceiling, as an unrated one does.
-      const at = text.slice(0, text.indexOf(level) + level.indexOf('?')).split('?').length - 1;
-      expect(bound[at]).toBe(NsfwLevel.Blocked);
     });
   });
 
@@ -4858,6 +4953,7 @@ describe('the title scan’s minor finding, beyond the scan', () => {
           details: { storylineId: 10, takenDown: true, title: 'T' },
         })
       );
+      expect(sparkHooks.onStorySparkLost).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('takes nothing down below R, and says nothing when nothing was taken down', async () => {
@@ -4972,6 +5068,20 @@ describe('a storyline started from an image', () => {
         targetId: 77,
       });
       expect(w.storylineChapter.create).not.toHaveBeenCalled();
+      expect(sparkHooks.onStorySparked).not.toHaveBeenCalled();
+    });
+
+    it('tells event points once chapter 1 is written with the spark', async () => {
+      w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+      w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+      await createStoryline({
+        sparkImageId: 77,
+        postId: 500,
+        title: 't',
+        maxNsfwLevel: NsfwLevel.R,
+        userId: OWNER,
+      });
+      expect(sparkHooks.onStorySparked).toHaveBeenCalledExactlyOnceWith(10);
     });
 
     it('refuses a ceiling below the image rating, and accepts one above it', async () => {
@@ -5008,6 +5118,25 @@ describe('a storyline started from an image', () => {
         spark({ post: { publishedAt: new Date(0), availability: 'Private', tosViolation: false } }),
       ],
       ['by a banned account', spark({ user: { bannedAt: new Date(), deletedAt: null } })],
+      ['by a deleted account', spark({ user: { bannedAt: null, deletedAt: new Date() } })],
+      [
+        'scheduled',
+        spark({
+          post: {
+            publishedAt: new Date(Date.now() + 86_400_000),
+            availability: 'Public',
+            tosViolation: false,
+          },
+        }),
+      ],
+      [
+        'on a taken-down post',
+        spark({ post: { publishedAt: new Date(0), availability: 'Public', tosViolation: true } }),
+      ],
+      ['an acceptable minor', spark({ acceptableMinor: true })],
+      ['blocked at ingestion', spark({ ingestion: 'Blocked' })],
+      ['failed at ingestion', spark({ ingestion: 'Error' })],
+      ['missing at ingestion', spark({ ingestion: 'NotFound' })],
     ])('refuses an image that is %s', async (_name, image) => {
       w.image.findUnique.mockResolvedValue(image as never);
       await expect(start()).rejects.toMatchObject({ message: STORYLINE_SPARK_REFUSALS.cannotUse });
@@ -5142,5 +5271,123 @@ describe('a storyline started from an image', () => {
       r.$queryRaw.mockResolvedValue([] as never);
       expect((await read()).spark).toBeNull();
     });
+  });
+});
+
+/**
+ * Follow rows, written as raw SQL into an in-process Postgres built from the follow migration (on
+ * stub "Storyline", "User" and "StorylineCollaborator" tables), so each test reads the row itself.
+ */
+describe('following a storyline', () => {
+  const pg = { db: null as unknown as PGlite };
+  const scopeOf = async (userId: number) =>
+    (
+      await pg.db.query<{ scope: string }>(
+        `SELECT scope FROM "StorylineFollow" WHERE "storylineId" = 10 AND "userId" = $1`,
+        [userId]
+      )
+    ).rows[0]?.scope ?? null;
+
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TABLE "User" (id integer PRIMARY KEY);
+      CREATE TABLE "Storyline" (id integer PRIMARY KEY, "userId" integer);
+      CREATE TABLE "StorylineCollaborator" ("storylineId" integer, "userId" integer, "acceptedAt" timestamp(3));
+      INSERT INTO "User" (id) VALUES (1), (2), (3);
+    `);
+    await pg.db.exec(
+      readFileSync(
+        path.resolve(
+          __dirname,
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261224120000_storyline_follow/migration.sql'
+        ),
+        'utf8'
+      )
+    );
+  });
+  afterAll(() => pg.db.close());
+
+  beforeEach(async () => {
+    await pg.db.exec(`
+      DELETE FROM "StorylineFollow"; DELETE FROM "Storyline";
+      INSERT INTO "Storyline" (id, "userId") VALUES (10, 1);
+    `);
+    const raw = pgliteRaw(pg.db);
+    w.$executeRaw.mockImplementation(raw.executeRaw as never);
+    r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('?').includes('"StorylineFollow"')
+        ? raw.queryRaw(strings, ...values)
+        : Promise.resolve([])) as never);
+    r.storyline.findUnique.mockResolvedValue(storylineRow() as never);
+    w.storyline.findUnique.mockResolvedValue({ userId: OWNER, tosViolation: false } as never);
+  });
+
+  const follow = (scope: 'Canon' | 'Endorsed' | 'Everything', userId = STRANGER) =>
+    followStoryline({
+      storylineId: 10,
+      scope,
+      viewer: { id: userId },
+      browsingLevel: NsfwLevel.PG,
+    });
+
+  it('has the owner follow the storyline they start', async () => {
+    w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
+    w.storyline.create.mockResolvedValue({ id: 10 } as never);
+    w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
+    await createStoryline({ postId: 500, title: 't', maxNsfwLevel: NsfwLevel.R, userId: OWNER });
+    expect(await scopeOf(OWNER)).toBe('Canon');
+  });
+
+  it('has a collaborator follow on accepting, again after an unfollow, keeping a chosen scope', async () => {
+    w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Canon');
+
+    await unfollowStoryline({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBeNull();
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Canon');
+
+    await follow('Everything', COLLABORATOR);
+    await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+    expect(await scopeOf(COLLABORATOR)).toBe('Everything');
+  });
+
+  it('follows nothing when there was no open invitation', async () => {
+    w.storylineCollaborator.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(
+      acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(COLLABORATOR)).toBeNull();
+  });
+
+  it('follows at a scope, changes it, reads it back and unfollows', async () => {
+    await expect(getStorylineFollow({ storylineId: 10, userId: STRANGER })).resolves.toEqual({
+      scope: null,
+    });
+    await follow('Endorsed');
+    expect(await scopeOf(STRANGER)).toBe('Endorsed');
+    await follow('Canon');
+    await expect(getStorylineFollow({ storylineId: 10, userId: STRANGER })).resolves.toEqual({
+      scope: 'Canon',
+    });
+    await unfollowStoryline({ storylineId: 10, userId: STRANGER });
+    expect(await scopeOf(STRANGER)).toBeNull();
+  });
+
+  it('refuses a taken-down storyline and writes no row', async () => {
+    r.storyline.findUnique.mockResolvedValue(storylineRow({ tosViolation: true }) as never);
+    await expect(follow('Everything')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(STRANGER)).toBeNull();
+  });
+
+  it('refuses a storyline whose chapter 1 is hidden, and writes no row', async () => {
+    const [root] = storylineRow().chapters;
+    r.storyline.findUnique.mockResolvedValue(
+      storylineRow({ chapters: [{ ...root, post: { ...root.post, publishedAt: null } }] }) as never
+    );
+    await expect(follow('Everything')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await scopeOf(STRANGER)).toBeNull();
   });
 });

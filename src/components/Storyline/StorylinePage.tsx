@@ -33,6 +33,7 @@ import {
 } from '~/components/Storyline/StorylineChips';
 import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
+import { StorylineFollowButton } from '~/components/Storyline/StorylineFollowButton';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
 import {
   StorylineInviteAlert,
@@ -44,6 +45,7 @@ import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read
 import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
+import { StorylineSparkCredit } from '~/components/Storyline/StorylineSparkCredit';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
@@ -251,6 +253,7 @@ function StorylineHeader({
               Continue the story
             </Button>
           )}
+          <StorylineFollowButton storylineId={storyline.id} />
           {(storyline.viewerRole === 'owner' || currentUser?.isModerator) && (
             <ActionIcon
               variant="default"
@@ -314,6 +317,7 @@ function Section({
 function StorylineChapters({ storyline }: { storyline: Storyline }) {
   return (
     <Section icon={<IconBook2 size={20} />} title="Chapters" id="storyline-chapters">
+      {storyline.spark && <StorylineSparkCredit spark={storyline.spark} />}
       <StorylineChapterLanes storyline={storyline} />
     </Section>
   );
