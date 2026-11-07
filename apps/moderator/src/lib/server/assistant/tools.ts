@@ -16,8 +16,10 @@ import {
 } from '../ip-links.service';
 import {
   getInflationActors,
+  getReactorsPage,
   getSharedIpCoverage,
   isClickhouseTimeout,
+  REACTOR_PAGE_CAP,
   type SharedIpAccount,
 } from '../reactor-lookup.service';
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
@@ -72,6 +74,8 @@ export type ToolResult = {
   rows: number;
   truncated: boolean;
   sources: TurnSource[];
+  /** Whether registration emails went to the model, for the audit. */
+  emailsShown?: boolean;
 };
 
 type Tool<S extends z.ZodType> = {
@@ -613,6 +617,75 @@ export const TOOLS = [
           ...unmeasuredLinks.flat().map((u) => userSource(u, byId.get(u)?.a.username)),
           ...breadth.top.map((t) => userSource(t.userId)),
         ],
+      };
+    },
+  }),
+
+  tool({
+    name: 'reactors_page',
+    description:
+      `Every reactor on this creator over the floor, a page at a time, ranked exactly as reactors_of ranks them (by concentration), with user id breaking ties. Use it when reactors_of's top 20 is not enough: to read the whole list, or to find an account past the top. \`rank\` is each account's place in the full list; \`overFloor\` is how many there are in all; \`nextOffset\` is where the next page starts, null at the end. Ranks past ${REACTOR_PAGE_CAP.toLocaleString(
+        'en-US'
+      )} are not paged: a call reaching past that is refused, and then say so rather than that the list ends there. The window is the last \`days\` days counted back from each call, so it slides: between two calls a reactor can move, enter or leave, and a page can repeat or skip an account. Keep days and minCount the same across the pages of one list. No address check; use reactors_of for clusters. ` +
+      EMAILS_NOTE,
+    input: z.object({
+      userId,
+      days: z.number().int().min(1).max(MAX_REACTION_DAYS).default(30),
+      minCount: z.number().int().min(1).max(1000).default(5),
+      offset: z.number().int().min(0).max(REACTOR_PAGE_CAP).default(0),
+      limit: z.number().int().min(1).max(100).default(100),
+    }),
+    requires: [REACTOR_LOOKUP, LOOKUP],
+    run: async ({ userId: id, days, minCount, offset, limit }, ctx) => {
+      const pastCap = offset + limit > REACTOR_PAGE_CAP;
+      // Past the cap only the counts are read, so the refusal still says how long the list is.
+      const page = await getReactorsPage(id, {
+        days,
+        minCount,
+        offset: pastCap ? 0 : offset,
+        limit: pastCap ? 0 : limit,
+      });
+      const emails = await emailFields(
+        ctx,
+        page.actors.map((a) => a.userId)
+      );
+      const actors = page.actors.map((a, i) => ({
+        rank: offset + i + 1,
+        userId: a.userId,
+        username: a.username,
+        reactions: a.count,
+        distinctItems: a.entities,
+        concentration: a.concentration,
+        creatorsReactedTo: a.owners,
+        status: a.status,
+        strikes: a.strikes,
+        createdAt: day(a.createdAt),
+        instantVerify: a.instantVerify,
+        ...emails(a.userId),
+      }));
+      const end = offset + actors.length;
+      return {
+        data: {
+          days,
+          minCount,
+          overFloor: page.overFloor,
+          belowFloor: page.belowFloor,
+          offset,
+          ...(pastCap
+            ? {
+                refused: `Only the first ${REACTOR_PAGE_CAP} ranks are paged; offset + limit was ${
+                  offset + limit
+                }.`,
+              }
+            : {}),
+          nextOffset: !pastCap && end < page.overFloor && end < REACTOR_PAGE_CAP ? end : null,
+          actors,
+        },
+        rows: actors.length,
+        truncated: pastCap || end < page.overFloor,
+        // Read off what was sent, so the audit cannot disagree with the answer.
+        emailsShown: actors.some((a) => 'email' in a),
+        sources: [userSource(id), ...page.actors.map((a) => userSource(a.userId, a.username))],
       };
     },
   }),
