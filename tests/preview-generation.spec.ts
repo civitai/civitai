@@ -117,19 +117,24 @@ test.describe('generation cost quote (gold)', () => {
   }
 
   /**
-   * The tRPC error messages carried in a raw response body, for a failure message.
-   * A batched response is HTTP 200 even when one procedure in it failed, so a whatIf
-   * that the server refused still matches the 200 wait; without this the failure only
-   * says "no cost", not why. Collects every `message` string that sits beside a
-   * `code` (the tRPC error shape, at whatever depth the wire format puts it), and
-   * nothing else, so the sibling procedures' data never reaches the log.
+   * The whatIf's tRPC error messages carried in a raw response body. A batched
+   * response is HTTP 200 even when one procedure in it failed, so a whatIf that the
+   * server refused still arrives as a 200; this says why it had no cost. Collects every
+   * `message` string that sits beside a `code` (the tRPC error shape, at whatever depth
+   * the wire format puts it), and nothing else, so the sibling procedures' data never
+   * reaches the log. An error whose `data.path` names a DIFFERENT procedure (a sibling
+   * sharing the batch) is skipped; one without a `data.path` is kept, so a wire shape
+   * that drops the path can still explain the whatIf.
    */
   function errorMessages(raw: string): string[] {
     const messages: string[] = [];
     const walk = (value: unknown) => {
       if (value === null || typeof value !== 'object') return;
       const node = value as Record<string, unknown>;
-      if (typeof node.message === 'string' && 'code' in node) messages.push(node.message);
+      if (typeof node.message === 'string' && 'code' in node) {
+        const path = (node.data as { path?: unknown } | undefined)?.path;
+        if (typeof path !== 'string' || path === WHATIF_PROCEDURE) messages.push(node.message);
+      }
       for (const child of Object.values(node)) walk(child);
     };
     for (const line of raw.split('\n')) {
@@ -145,6 +150,18 @@ test.describe('generation cost quote (gold)', () => {
   /** One whatIf the route handler saw, with its buffered body. */
   type Quote = { status: number; body: string };
 
+  /**
+   * The server's refusal of a gated ecosystem — the ONLY reason a quote before the
+   * costed one may fail (see the test's comment on the first-200 trap).
+   */
+  const GATE_REFUSAL = 'Ecosystem is currently unavailable';
+
+  /** Whether a quote was a whatIf refused only because its ecosystem is gated. */
+  const isGateRefusal = (q: Quote) => {
+    const errors = errorMessages(q.body);
+    return q.status === 200 && errors.length > 0 && errors.every((m) => m.includes(GATE_REFUSAL));
+  };
+
   /** What the captured whatIfs were, for a failure message. */
   const describeQuotes = (quotes: Quote[]) =>
     JSON.stringify(quotes.map((q) => ({ status: q.status, errors: errorMessages(q.body) })));
@@ -155,9 +172,10 @@ test.describe('generation cost quote (gold)', () => {
     // pod the load+hydrate can exceed the whatIf wait, and Playwright's test-level
     // retries fire within seconds — too fast to outlast a load spike. Retry the whole
     // navigate+wait with backoff so a transient spike is ridden out (the assertion
-    // must still pass; a sustained failure surfaces after the attempts). Extend the
-    // per-test timeout to fit ~2 attempts of the whatIf wait + navigation + backoff.
-    test.setTimeout(200_000);
+    // must still pass; a sustained failure surfaces after the attempts). The per-test
+    // timeout fits both attempts in full, so attempt 2 gets its whole wait and its
+    // diagnostic: 2 x (90s navigationTimeout + 65s whatIf wait) + 6s backoff = 316s.
+    test.setTimeout(330_000);
 
     // 🔴 Buffer the whatIf body OURSELVES instead of reading `response.text()` later.
     // Under `httpBatchStreamLink` the app reads the whole jsonl stream (cost included)
@@ -177,6 +195,8 @@ test.describe('generation cost quote (gold)', () => {
     // open default and quotes again. (A STORED gated selection, by contrast, stays
     // selected on purpose — the product never switches it behind the user's back.)
     // The server refuses gated ecosystems, so a quote with a cost proves it was open.
+    // Only that gate refusal is tolerated before the costed quote; any other failure
+    // ahead of it (non-200, a different error, no cost and no error) fails the test.
     const quotes: Quote[] = [];
     await page.route(
       (url) => isWhatIfResponse(url.toString()),
@@ -216,8 +236,26 @@ test.describe('generation cost quote (gold)', () => {
           // Read the body the route handler buffered, NOT `response.text()` (see above).
           // Raw text, not `.json()`: under batching the body is newline-delimited JSON
           // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
-          const hit = quotes.find((q) => q.status === 200 && extractCostTotal(q.body) !== null);
-          if (hit) return hit.body;
+          const hitIndex = quotes.findIndex(
+            (q) => q.status === 200 && extractCostTotal(q.body) !== null
+          );
+          if (hitIndex >= 0) {
+            const before = quotes.slice(0, hitIndex);
+            const unexpected = before.filter((q) => !isGateRefusal(q));
+            if (unexpected.length) {
+              throw new Error(
+                `whatIfFromGraph failed for a reason other than "${GATE_REFUSAL}" before ` +
+                  `the costed quote: ${describeQuotes(unexpected)}`
+              );
+            }
+            if (before.length) {
+              console.log(
+                `[cost-quote] skipped ${before.length} gate-refused whatIf(s) ` +
+                  `("${GATE_REFUSAL}") before the costed quote`
+              );
+            }
+            return quotes[hitIndex].body;
+          }
           if (Date.now() > deadline) {
             throw new Error(
               `No whatIfFromGraph response with a numeric cost.total within 65s; ` +
@@ -230,14 +268,9 @@ test.describe('generation cost quote (gold)', () => {
       { attempts: 2 }
     ).finally(() => page.unrouteAll({ behavior: 'ignoreErrors' }));
 
+    // The wait above only returns a body with a numeric cost.total (a timeout throws
+    // with every quote's errors), so this asserts the quote's value, not its presence.
     const total = extractCostTotal(body);
-    expect(
-      total,
-      `cost.total parsed from whatIfFromGraph response (errors in it: ${JSON.stringify(
-        errorMessages(body)
-      )})`
-    ).not.toBeNull();
-    expect(typeof total, 'cost.total is numeric').toBe('number');
     expect(total as number, 'cost.total is a non-negative quote').toBeGreaterThanOrEqual(0);
   });
 
