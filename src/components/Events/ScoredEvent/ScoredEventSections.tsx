@@ -13,7 +13,11 @@ import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
 import { useMyTeamHatUrl } from '~/components/Events/ScoredEvent/useMyTeamHatUrl';
-import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
+import {
+  TeamStandings,
+  TopHats,
+  TopTurfPlayers,
+} from '~/components/Events/ScoredEvent/TeamStandings';
 import { RosterOptIn, useSetRosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
 import { ShowEventHomeBlock } from '~/components/HomeBlocks/ShowEventHomeBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -107,11 +111,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
             </Button>
           </div>
         )}
-        <div className="mt-4 empty:hidden">
-          <HatTurfEventSection event={event} team={team} teams={data.teams} />
-        </div>
       </div>
     ),
+    turf: <HatTurfEventSection event={event} team={team} teams={data.teams} />,
     hats: joined && hats.length > 0 && (
       <div ref={hatsView.ref}>
         <MyHatsLivePoints
@@ -150,6 +152,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         <TopHats standings={standings} />
       </div>
     ),
+    turfPlayers: standings?.turfLive && <TopTurfPlayers standings={standings} />,
     rules: <EventRules data={data} />,
   };
 

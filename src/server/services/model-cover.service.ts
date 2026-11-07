@@ -2,7 +2,8 @@ import { dbRead } from '~/server/db/client';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
+import type { ComCoverState } from '~/shared/utils/model-sfw-face';
+import { comCoverState, isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import { isDefined } from '~/utils/type-guards';
 
 /**
@@ -123,5 +124,46 @@ export async function getCoverCandidates({ modelId }: { modelId: number }) {
       nsfwLevel,
       modelVersionId: version.id,
     }))
+  );
+}
+
+/**
+ * Why a mature model's saved .com cover does not list it on .com, for its owner; null when it does
+ * or when there is no .com cover to judge. Mirrors the cover conditions in `updateModelNsfwLevels`.
+ */
+export async function getComCoverState(model: {
+  id: number;
+  userId: number;
+  nsfw: boolean;
+  sfwName: string | null;
+  sfwCoverImageId: number | null;
+}): Promise<ComCoverState | null> {
+  if (!model.nsfw || !model.sfwName || !model.sfwCoverImageId) return null;
+  const image = await dbRead.image.findUnique({
+    where: { id: model.sfwCoverImageId },
+    select: {
+      nsfwLevel: true,
+      needsReview: true,
+      tosViolation: true,
+      acceptableMinor: true,
+      blockedFor: true,
+      ingestion: true,
+      post: {
+        select: {
+          userId: true,
+          publishedAt: true,
+          modelVersion: { select: { modelId: true, status: true } },
+        },
+      },
+    },
+  });
+  return comCoverState(
+    image && {
+      ...image,
+      ownPost: image.post?.userId === model.userId,
+      postPublished: image.post?.publishedAt != null,
+      sameModel: image.post?.modelVersion?.modelId === model.id,
+      versionPublished: image.post?.modelVersion?.status === 'Published',
+    }
   );
 }

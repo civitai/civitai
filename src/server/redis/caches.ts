@@ -318,12 +318,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<ContentDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
-      // Almost no entity wears a frame, so without a marker every frameless id on every feed page
-      // is a miss and the page pays a primary query for it. FRAME_CACHE_NEGATIVE caches that
-      // miss for an hour (as eventDecorationEntityCaches does), not the day a frame is cached. A
-      // frame put on, taken off or moved reaches the cache through refresh(), which overwrites or
-      // removes the marker: every writer that puts a frame on content must refresh (equip, the
-      // holiday event, the daily-challenge grant); the hour bounds a writer that does not.
+      // Caches "no frame" for an hour while FRAME_CACHE_NEGATIVE is on. Every writer that puts a frame on content must call refresh(), which overwrites or removes the marker; one that does not stays hidden up to an hour.
       cacheNotFound: () => isFlipt(FLIPT_FEATURE_FLAGS.FRAME_CACHE_NEGATIVE),
       notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,

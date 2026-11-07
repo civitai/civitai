@@ -90,7 +90,16 @@ CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
-ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int;
+ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int,
+  -- Read by new-mention's article branch; no article here names anyone.
+  ADD COLUMN title text NOT NULL DEFAULT '', ADD COLUMN content text NOT NULL DEFAULT '',
+  ADD COLUMN "publishedAt" timestamp, ADD COLUMN "updatedAt" timestamp,
+  ADD COLUMN "contentScannedAt" timestamp, ADD COLUMN ingestion text NOT NULL DEFAULT 'Scanned',
+  ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false,
+  ADD COLUMN unlisted boolean NOT NULL DEFAULT false,
+  ADD COLUMN availability text NOT NULL DEFAULT 'Public', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+ALTER TABLE "User" ADD COLUMN "bannedAt" timestamp, ADD COLUMN "deletedAt" timestamp,
+  ADD COLUMN muted boolean NOT NULL DEFAULT false, ADD COLUMN "browsingLevel" int NOT NULL DEFAULT 1;
 INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
 UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;

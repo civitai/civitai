@@ -278,7 +278,7 @@ export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevi
 
 export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
 
-export type ServiceDealFileKind = "Preview" | "Final";
+export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
 export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
@@ -7018,6 +7018,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  attestedAt: Date | null;
+  removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
 }

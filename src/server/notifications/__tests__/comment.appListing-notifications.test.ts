@@ -681,9 +681,53 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND (m."publishedAt" > '2026-01-01T00:00:00.000Z' OR m."updatedAt" > '2026-01-01T00:00:00.000Z')
       AND m.description LIKE '%"mention:%'
       AND m.status = 'Published'
+      UNION
+      SELECT
+      am."ownerId",
+      a."userId" "actorId",
+      JSONB_BUILD_OBJECT(
+      'mentionedIn', 'article',
+      'articleId', a.id,
+      'articleTitle', a.title,
+      'username', u.username
+      ) "details"
+      FROM "Article" a
+      JOIN "User" u ON u.id = a."userId"
+      CROSS JOIN LATERAL (
+      SELECT x.id "ownerId"
+      FROM (
+      SELECT CAST(r.m[1] AS INT) id, MIN(r.ord) first_at
+      FROM regexp_matches(a.content, '"mention:(\\d+)"', 'g') WITH ORDINALITY r(m, ord)
+      GROUP BY 1
+      ) x
+      JOIN "User" ru ON ru.id = x.id
+      WHERE x.id <> a."userId"
+      AND ru."bannedAt" IS NULL
+      AND ru."deletedAt" IS NULL
+      AND (a."nsfwLevel" & ru."browsingLevel") <> 0
+      AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = ru.id AND type = 'new-mention')
+      AND NOT EXISTS (
+      SELECT 1 FROM "UserEngagement" blk
+      WHERE (blk."userId" = ru.id AND blk."targetUserId" = a."userId" AND blk.type IN ('Block', 'Hide'))
+      OR (blk."userId" = a."userId" AND blk."targetUserId" = ru.id AND blk.type = 'Block')
+      )
+      ORDER BY x.first_at
+      LIMIT 10
+      ) am
+      WHERE GREATEST(a."publishedAt", a."updatedAt", a."contentScannedAt") > '2026-01-01T00:00:00.000Z'
+      AND a.status = 'Published'
+      AND a.ingestion = 'Scanned'
+      AND a."publishedAt" > now() - interval '30 days'
+      AND a."publishedAt" <= now()
+      AND NOT a."tosViolation"
+      AND NOT a.unlisted
+      AND a.availability <> 'Private'
+      AND a.content LIKE '%"mention:%'
+      AND u."bannedAt" IS NULL
+      AND NOT u.muted
       )
       SELECT
-      concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+      concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'mentionedIn' = 'article' then 'article:' when details->>'threadType' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId', details->>'articleId')) "key",
       case
       when details->>'mentionedIn' <> 'comment' then null
       when details->>'threadType' is not null then

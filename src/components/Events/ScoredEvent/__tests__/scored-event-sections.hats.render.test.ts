@@ -88,13 +88,14 @@ vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
 }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: () => null }));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () => null }));
-// Inside the standings section; its own browser test covers it.
+// Its own browser test covers it.
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
   HatTurfEventSection: () => null,
 }));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: () => null,
   TopHats: () => null,
+  TopTurfPlayers: () => null,
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');

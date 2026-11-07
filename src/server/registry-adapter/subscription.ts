@@ -8,8 +8,8 @@
  *   2. a schema this source can never serve is answered `end` first (rule 4), before any cursor
  *      state is read or written (`Adapter.serves`: `end` means never);
  *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
- *      auth extension; {@link unbindCursor}), then by the adapter, which for a document stream
- *      also checks the token's audience, all before `live`, so a refused cursor is
+ *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
+ *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is
  *      `cursor_expired` with no event;
  *   4. a snapshot (no cursor) is sent with empty cursors, since a snapshot cannot be continued
  *      (rule 2), then `live`, then each change, and a `progress` whenever the position moves
@@ -69,10 +69,11 @@ export function requestBinding(
  * matching request anyway.
  *
  * The binding is a public digest, so it is not what keeps one token's view from another: a
- * holder of someone else's cursor can re-bind it. What does is that a document stream's stored
- * state names the audience it was served to (`doc-feed.ts`), and a resume by another audience is
- * `cursor_expired` before anything is read from that state. The entity streams are the same for
- * every principal, so re-binding one of their cursors gains nothing.
+ * holder of someone else's cursor can re-bind it. What does is that the stored state of a stream
+ * narrowed per audience (a document stream, `doc-feed.ts`; an app, release or schema stream,
+ * `cursor.ts`) names the audience it was served to, and a resume by another audience is
+ * `cursor_expired` before anything is read from that state. The one other entity stream
+ * (`service`) is the same for every principal, so re-binding its cursor gains nothing.
  */
 export function bindCursor(cursor: string, binding: string): string {
   return `b1.${binding}.${cursor}`;

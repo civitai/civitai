@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ImageVisibility from '~/server/services/image-visibility.service';
 
 // `getImageContestCollectionDetails` behind `contest-collection-items-redis-cache`: the shared Redis
 // cache must answer every viewer exactly as the per-pod LRU does, must never hold the rejection
@@ -19,6 +20,11 @@ const { isFliptMock, createNotificationMock } = vi.hoisted(() => ({
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: isFliptMock,
+}));
+// The add paths check the viewer can see the image; that is not what these tests are about.
+vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageVisibility>()),
+  assertImagesVisibleToViewer: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: createNotificationMock,
@@ -57,11 +63,20 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 
 const { getImageContestCollectionDetails } = await import('~/server/services/image.service');
-const { updateCollectionItemsStatus } = await import('~/server/services/collection.service');
+const {
+  updateCollectionItemsStatus,
+  setItemScore,
+  setCollectionItemsTag,
+  bulkSaveItems,
+  saveItemInCollections,
+  removeCollectionItem,
+  removeEntityFromAllCollections,
+} = await import('~/server/services/collection.service');
 
 const COLLECTION_ID = 10;
 const COLLECTION_OWNER_ID = 900;
@@ -350,5 +365,283 @@ describe('contest collection items: bust on a status write', () => {
 
     const [after] = await getImageContestCollectionDetails({ id });
     expect(after.status).toBe('REJECTED');
+  });
+});
+
+// What a Prisma `select` returns: only the selected fields, so a writer that stops selecting the
+// field its bust needs (imageId) gets undefined, as it would from Prisma.
+type Select = { [key: string]: boolean | { select: Select } };
+function project(row: Record<string, unknown>, select?: Select): Record<string, unknown> {
+  if (!select) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, v]) => v)
+      .map(([k, v]) => [
+        k,
+        typeof v === 'object' ? project(row[k] as Record<string, unknown>, v.select) : row[k],
+      ])
+  );
+}
+
+// 'warm': the shared cache holds an answer for the image (entries or the no-entries marker).
+// 'busted': it holds the bust's debounce marker. 'absent': nothing.
+function cacheState(imageId: number) {
+  const key = [...store.keys()].find((k) => k.endsWith(`contest-collection-items:${imageId}`));
+  const value = key ? (store.peek(key) as { debounce?: boolean } | null) : null;
+  if (!value) return 'absent';
+  return value.debounce ? 'busted' : 'warm';
+}
+
+/**
+ * Each image writer, driven for real: the cache is warmed, the writer runs, and the mocked
+ * database write both applies the change to `rows` and records the cache state AT THE MOMENT OF
+ * THE WRITE. 'warm' there proves two things: the cache was serving (so the read afterwards would be
+ * stale without a bust — the control), and the bust had not run yet (a bust moved ahead of its
+ * write leaves a window in which a read caches the pre-write value). The read afterwards proves the
+ * bust ran, for the right image.
+ *
+ * The fake Redis writes synchronously, so an un-awaited bust would still land before the writer
+ * returns. Each test therefore defers the bust's marker write by a macrotask: 'busted' straight
+ * after `await writer()` then holds only if the writer awaited its bust.
+ */
+describe('contest collection items: every image writer busts after its write', () => {
+  beforeEach(() => {
+    const set = redisMock.redis.packed.set as unknown as Mock<(...args: unknown[]) => unknown>;
+    const write = set.getMockImplementation()!;
+    set.mockImplementation(async (...args: unknown[]) => {
+      if ((args[1] as { debounce?: boolean } | null)?.debounce)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      return write(...args);
+    });
+  });
+
+  it('setItemScore: a new score shows on the next read', async () => {
+    const id = nextImageId++;
+    rows = [{ ...entriesFor(id)[1], addedById: null }];
+    flag(true);
+    expect((await getImageContestCollectionDetails({ id }))[0].scores).toEqual([
+      { userId: 3, score: 8 },
+    ]);
+
+    dbMock.dbRead.collectionItem.findUnique.mockImplementation((async ({
+      select,
+    }: {
+      select?: Select;
+    }) =>
+      project(
+        { id: 78, imageId: id, collection: { id: COLLECTION_ID, mode: 'Contest' } },
+        select
+      )) as never);
+    let stateAtWrite: string | undefined;
+    dbMock.dbWrite.collectionItemScore.upsert.mockImplementation((async () => {
+      stateAtWrite = cacheState(id);
+      rows[0].scores = [...rows[0].scores, { userId: MODERATOR_ID, score: 3 }];
+      return { userId: MODERATOR_ID, collectionItemId: 78, score: 3 };
+    }) as never);
+
+    await setItemScore({ collectionItemId: 78, userId: MODERATOR_ID, score: 3 });
+
+    expect(stateAtWrite).toBe('warm');
+    // Busted by the time the writer returns: an un-awaited bust can still be in flight here.
+    expect(cacheState(id)).toBe('busted');
+    const [after] = await getImageContestCollectionDetails({ id });
+    expect(after.scores).toEqual([
+      { userId: 3, score: 8 },
+      { userId: MODERATOR_ID, score: 3 },
+    ]);
+  });
+
+  it('setCollectionItemsTag: a re-tag shows on the next read, for every image tagged', async () => {
+    const id = nextImageId++;
+    const otherId = nextImageId++;
+    rows = [
+      { ...entriesFor(id)[1], addedById: null },
+      { ...entriesFor(otherId)[1], id: 79, addedById: null },
+    ];
+    flag(true);
+    await getImageContestCollectionDetails({ id });
+    await getImageContestCollectionDetails({ id: otherId });
+
+    dbMock.dbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      tags: [
+        { tagId: 5, filterableOnly: false },
+        { tagId: 6, filterableOnly: false },
+      ],
+    } as never);
+    dbMock.dbWrite.collectionItem.findMany.mockImplementation((async ({
+      select,
+    }: {
+      select?: Select;
+    }) =>
+      rows.map((r) =>
+        project(
+          { id: r.id, imageId: r.imageId, modelId: null, postId: null, articleId: null, tagId: 5 },
+          select
+        )
+      )) as never);
+    const stateAtWrite: string[] = [];
+    dbMock.dbWrite.collectionItem.updateMany.mockImplementation((async () => {
+      stateAtWrite.push(cacheState(id), cacheState(otherId));
+      for (const r of rows) r.tag = { id: 6, name: 'portrait' };
+      return { count: rows.length };
+    }) as never);
+
+    await setCollectionItemsTag({
+      collectionId: COLLECTION_ID,
+      items: { type: 'image', ids: [id, otherId] },
+      tagId: 6,
+    });
+
+    expect(stateAtWrite).toEqual(['warm', 'warm']);
+    expect([cacheState(id), cacheState(otherId)]).toEqual(['busted', 'busted']);
+    for (const imageId of [id, otherId]) {
+      const [after] = await getImageContestCollectionDetails({ id: imageId });
+      expect(after.tag).toEqual({ id: 6, name: 'portrait' });
+    }
+  });
+
+  it('bulkSaveItems: a newly added image shows its entry on the next read', async () => {
+    const id = nextImageId++;
+    const otherId = nextImageId++;
+    rows = [];
+    flag(true);
+    expect(await getImageContestCollectionDetails({ id })).toEqual([]);
+    expect(await getImageContestCollectionDetails({ id: otherId })).toEqual([]);
+
+    // Not a Contest collection, so the entry-fee and contest gates (same module, unmockable here)
+    // stay out of it; the bust does not depend on the mode.
+    dbMock.dbRead.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      type: 'Image',
+      mode: null,
+      userId: COLLECTION_OWNER_ID,
+      name: 'Board',
+      metadata: {},
+      tags: [],
+    } as never);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([]);
+    const stateAtWrite: string[] = [];
+    dbMock.dbWrite.collectionItem.createMany.mockImplementation((async ({
+      data,
+    }: {
+      data: { imageId: number }[];
+    }) => {
+      stateAtWrite.push(cacheState(id), cacheState(otherId));
+      for (const d of data)
+        rows.push({ ...entriesFor(d.imageId)[1], id: d.imageId, addedById: COLLECTION_OWNER_ID });
+      return { count: data.length };
+    }) as never);
+
+    await bulkSaveItems({
+      input: { userId: COLLECTION_OWNER_ID, collectionId: COLLECTION_ID, imageIds: [id, otherId] },
+      permissions: { isOwner: true, write: true, manage: true } as never,
+    });
+
+    expect(stateAtWrite).toEqual(['warm', 'warm']);
+    expect([cacheState(id), cacheState(otherId)]).toEqual(['busted', 'busted']);
+    for (const imageId of [id, otherId]) {
+      const after = await getImageContestCollectionDetails({ id: imageId });
+      expect(after.map((e) => e.id)).toEqual([imageId]);
+    }
+  });
+
+  it('saveItemInCollections: removing an image from a contest drops its entry on the next read', async () => {
+    const id = nextImageId++;
+    rows = [{ ...entriesFor(id)[1], addedById: COLLECTION_OWNER_ID }];
+    flag(true);
+    expect(await getImageContestCollectionDetails({ id })).toHaveLength(1);
+
+    dbMock.dbRead.collection.findMany.mockResolvedValue([]);
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 78, collectionId: COLLECTION_ID, tagId: 5, addedById: COLLECTION_OWNER_ID, note: null },
+    ] as never);
+    dbMock.dbWrite.collectionItem.deleteMany.mockImplementation(((args: unknown) => ({
+      deleteMany: args,
+    })) as never);
+    let stateAtWrite: string | undefined;
+    dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown[]) => {
+      stateAtWrite = cacheState(id);
+      for (const op of ops as { deleteMany?: { where: { id: { in: number[] } } } }[]) {
+        const ids = op.deleteMany?.where.id.in ?? [];
+        rows = rows.filter((r) => !ids.includes(r.id));
+      }
+      return ops.map(() => ({ count: 1 }));
+    }) as never);
+
+    await saveItemInCollections({
+      input: {
+        type: 'Image',
+        imageId: id,
+        collections: [],
+        removeFromCollectionIds: [COLLECTION_ID],
+        userId: COLLECTION_OWNER_ID,
+      } as never,
+    });
+
+    expect(stateAtWrite).toBe('warm');
+    expect(cacheState(id)).toBe('busted');
+    expect(rows).toEqual([]);
+    expect(await getImageContestCollectionDetails({ id })).toEqual([]);
+  });
+
+  it('removeCollectionItem: removing an image drops its entry on the next read', async () => {
+    const id = nextImageId++;
+    rows = [{ ...entriesFor(id)[1], addedById: COLLECTION_OWNER_ID }];
+    flag(true);
+    expect(await getImageContestCollectionDetails({ id })).toHaveLength(1);
+
+    // The collection's type ('Image') and the image's owner both come from the permissions row the
+    // harness answers unknown SQL with; the owner is the caller, so the removal is allowed.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { id: 78, addedById: COLLECTION_OWNER_ID, note: null },
+    ] as never);
+    let stateAtWrite: string | undefined;
+    dbMock.dbWrite.collectionItem.deleteMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) => {
+      stateAtWrite = cacheState(id);
+      rows = rows.filter((r) => !where.id.in.includes(r.id));
+      return { count: 1 };
+    }) as never);
+
+    await removeCollectionItem({
+      collectionId: COLLECTION_ID,
+      itemId: id,
+      userId: COLLECTION_OWNER_ID,
+    });
+
+    expect(stateAtWrite).toBe('warm');
+    expect(cacheState(id)).toBe('busted');
+    expect(rows).toEqual([]);
+    expect(await getImageContestCollectionDetails({ id })).toEqual([]);
+  });
+
+  it('removeEntityFromAllCollections: a deleted image drops its entries on the next read', async () => {
+    const id = nextImageId++;
+    rows = entriesFor(id);
+    flag(true);
+    expect(await getImageContestCollectionDetails({ id })).toHaveLength(2);
+
+    let stateAtWrite: string | undefined;
+    dbMock.dbWrite.collectionItem.deleteMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { imageId?: number };
+    }) => {
+      stateAtWrite = cacheState(id);
+      const before = rows.length;
+      rows = rows.filter((r) => r.imageId !== where.imageId);
+      return { count: before - rows.length };
+    }) as never);
+
+    await removeEntityFromAllCollections('image', id);
+
+    expect(stateAtWrite).toBe('warm');
+    expect(cacheState(id)).toBe('busted');
+    expect(rows).toEqual([]);
+    expect(await getImageContestCollectionDetails({ id })).toEqual([]);
   });
 });

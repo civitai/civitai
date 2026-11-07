@@ -773,11 +773,37 @@ describe('reactors_page', () => {
 
   it('refuses past the cap, says so, and still gives the true count', async () => {
     serve(7_000);
-    const { data, truncated, rows } = await page({ offset: 4_950, limit: 100 });
-    expect(data.refused).toBe('Only the first 5000 ranks are paged; offset + limit was 5050.');
+    const { data, truncated, rows } = await page({ offset: 5_000, limit: 100 });
+    expect(data.refused).toBe('Only the first 5000 ranks are paged; offset was 5000.');
     expect(data).toMatchObject({ overFloor: 7_000, actors: [], nextOffset: null });
     expect(getReactorsPage).toHaveBeenCalledWith(1, expect.objectContaining({ limit: 0 }));
     expect([rows, truncated]).toEqual([0, true]);
+  });
+
+  it('serves a short last page when the limit does not divide the cap', async () => {
+    serve(7_000);
+    const { data, truncated, rows } = await page({ offset: 4_980, limit: 30 });
+    expect(data.refused).toBeUndefined();
+    expect(getReactorsPage).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ offset: 4_980, limit: 20 })
+    );
+    expect(data.actors.map((a) => a.rank)).toEqual(Array.from({ length: 20 }, (_, i) => 4_981 + i));
+    expect(data).toMatchObject({ overFloor: 7_000, nextOffset: null });
+    expect([rows, truncated]).toEqual([20, true]);
+  });
+
+  it('follows nextOffset to the cap at a limit that does not divide it', async () => {
+    serve(7_000);
+    const ranks: number[] = [];
+    let offset: number | null = 4_900;
+    while (offset !== null) {
+      const { data } = await page({ offset, limit: 30 });
+      expect(data.refused).toBeUndefined();
+      ranks.push(...data.actors.map((a) => a.rank));
+      offset = data.nextOffset;
+    }
+    expect(ranks).toEqual(Array.from({ length: 100 }, (_, i) => 4_901 + i));
   });
 
   it('pages up to the cap and stops there', async () => {

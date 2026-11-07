@@ -79,6 +79,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery, parseNumericString } from '~/utils/query-string-helpers';
 import { getArticleUrl, removeTags, slugit } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
@@ -321,7 +322,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     </Group>
   );
 
-  const articleBodyText = removeTags(article.content);
+  const articleBodyText = removeTags(removeSpoilers(article.content));
   const articleSchema = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -330,7 +331,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // articleBody intentionally omitted — Google reads the page body
     // directly for ranking. Embedding the full text in JSON-LD bloats
     // <head> on long articles without adding meaningful SEO signal.
-    image: safeSchemaImageUrl(article.coverImage, { width: 1200 }),
+    image: safeSchemaImageUrl(article.coverImage ?? article.bannerImage, { width: 1200 }),
     author:
       article.user.username && !article.user.deletedAt
         ? {
@@ -601,7 +602,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       meta={{
         title: `${article.title} | Civitai`,
         description: truncate(articleBodyText, { length: 150 }),
-        images: article?.coverImage,
+        images: article?.coverImage ?? article?.bannerImage,
         ogEndpoint: `/api/og?type=article&id=${article.id}`,
         canonical: getArticleUrl({ id: article.id, title: article.title }),
         alternate: `/articles/${article.id}`,

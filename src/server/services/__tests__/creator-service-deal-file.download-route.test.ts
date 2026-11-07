@@ -11,6 +11,8 @@ const service = vi.hoisted(() => ({
   getServiceDealFileDownloadUrl: vi.fn(),
 }));
 vi.mock('~/server/services/creator-service-deal-file.service', () => service);
+const flags = vi.hoisted(() => ({ getFeatureFlags: vi.fn(() => ({ csamReports: false })) }));
+vi.mock('~/server/services/feature-flags.service', () => flags);
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
@@ -88,6 +90,7 @@ describe('download route', () => {
       fileId: 12,
       userId: 7,
       isModerator: false,
+      canReviewCsam: false,
     });
   });
 
@@ -102,7 +105,17 @@ describe('download route', () => {
       fileId: 12,
       userId: 9,
       isModerator: true,
+      canReviewCsam: false,
     });
+  });
+
+  it("passes the caller's csamReports permission through", async () => {
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    flags.getFeatureFlags.mockReturnValueOnce({ csamReports: true });
+    await call('12', { id: 9, isModerator: true });
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 9, canReviewCsam: true })
+    );
   });
 
   it('answers a refusal with the same 404 as a file that does not exist, and signs nothing', async () => {
