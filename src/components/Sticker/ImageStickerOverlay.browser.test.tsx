@@ -46,6 +46,13 @@ vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   useStickerPlacements: () => ({ byImage: new Map([[IMAGE_ID, [placement]]]) }),
 }));
 
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useFeatureFlags: () => ({ stickerVideoTracks: false }),
+}));
+
+vi.mock('~/components/Sticker/useTrackHiddenIds', () => ({ useTrackHiddenIds: () => new Set() }));
+
 vi.mock('~/components/Sticker/treatments/useStickerTreatment', () => ({
   useStickerTreatment: () => 'none',
 }));

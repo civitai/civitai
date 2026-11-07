@@ -7,12 +7,15 @@
  * from error text, so neither can grow with what an app or the orchestrator says.
  */
 
+import { ECOSYSTEM_UNAVAILABLE } from '~/shared/generation/gates';
+
 /**
- * The message the generation graph's ecosystem field refuses with when the chosen ecosystem is
- * hidden or disabled. Defined here, and imported by the graph, so the classifier below matches the
- * string the graph actually throws rather than a copy of it.
+ * The stable text the generation graph's ecosystem field refuses with when the chosen ecosystem is
+ * hidden or disabled (a disabled rule's own copy is APPENDED to it, `gateRefusalText`). Taken from
+ * the graph's own constant, so the classifier below matches the string the graph actually throws
+ * rather than a copy of it.
  */
-export const ECOSYSTEM_UNAVAILABLE_MESSAGE = 'Ecosystem is currently unavailable';
+export const ECOSYSTEM_UNAVAILABLE_MESSAGE = ECOSYSTEM_UNAVAILABLE;
 
 export const APP_SUBMIT_FAILURE_REASONS = [
   'validation',

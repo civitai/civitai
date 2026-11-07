@@ -107,6 +107,7 @@ function HatButton({ imageId }: { imageId: number }) {
             empty={empty}
             active={!!card.draft}
             placed={placed}
+            stock={stock}
             className={classes.hat}
             data-testid="hat-turf-detail-hat"
             aria-label={joined ? 'Place your cap' : 'Join Hat Turf'}

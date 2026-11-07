@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { cachedFactory, defFamily, defineGraph, rootScope, type Scope } from 'form-graph';
 import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
-import { ECOSYSTEM_UNAVAILABLE_MESSAGE } from '~/shared/constants/app-telemetry.constants';
 import { resolveCompatibleEcosystem } from './ecosystem-gates';
+import { ECOSYSTEM_UNAVAILABLE, gateRefusalText } from '~/shared/generation/gates';
 
 import type { GenerationCtx } from '~/shared/generation/context';
 import {
@@ -281,11 +281,15 @@ export const promptOnlyTextBlock = makeTextBlock({ negativePrompt: false });
 export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchemas(
   workflow: string,
   hiddenEcosystems: readonly string[],
-  disabledKeys: readonly string[],
+  disabled: readonly { key: string; message?: string }[],
   usableEcosystems: readonly string[]
 ) {
   const hiddenSet = new Set(hiddenEcosystems);
-  const disabledSet = new Set(disabledKeys);
+  // Shown-but-gated (disabled / memberOnly) → its refusal, carrying the rule's
+  // copy so an API caller can say WHY. Hidden keys keep the bare text.
+  const disabledRefusals = new Map(
+    disabled.map((e) => [e.key, gateRefusalText(ECOSYSTEM_UNAVAILABLE, e.message)])
+  );
   return {
     input: z
       .string()
@@ -300,9 +304,10 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
         return v;
       }),
     output:
-      hiddenSet.size || disabledSet.size
-        ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
-            message: ECOSYSTEM_UNAVAILABLE_MESSAGE,
+      hiddenSet.size || disabledRefusals.size
+        ? z.string().superRefine((v, ctx) => {
+            const refusal = hiddenSet.has(v) ? ECOSYSTEM_UNAVAILABLE : disabledRefusals.get(v);
+            if (refusal) ctx.addIssue({ code: 'custom', message: refusal });
           })
         : z.string(),
     // This used to be an effect keyed on `workflow`, so a one-shot parse that

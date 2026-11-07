@@ -372,6 +372,8 @@ export const hiddenAppsSettingSchema = z
   });
 
 export const userSettingsSchema = z.object({
+  /** Off hides every event cosmetic (worn hats) and all of Hat Turf, for this viewer only. */
+  showEventCosmetics: z.boolean().optional(),
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   navigation: navigationSettingsSchema.optional(),
   userMenu: userMenuSettingsSchema.optional(),
@@ -644,6 +646,7 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+  showEventCosmetics: z.boolean().optional(),
 });
 
 /** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */

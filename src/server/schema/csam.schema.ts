@@ -43,6 +43,12 @@ export const csamReportDetails = z.object({
   // userActivity: userActivitySchema.array().optional(),
 });
 
+export type CsamContextSources = z.infer<typeof csamContextSourcesSchema>;
+export const csamContextSourcesSchema = z.object({
+  postIds: z.number().int().positive().array().max(100),
+  commentIds: z.number().int().positive().array().max(500),
+});
+
 export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;
 export const createCsamReportSchema = z.object({
   userId: z.number(),
@@ -51,6 +57,13 @@ export const createCsamReportSchema = z.object({
   type: z.enum(CsamReportType),
   /** A sent image report on the same user that this one supplements. */
   supplementalOf: z.number().int().positive().optional(),
+  contextSources: csamContextSourcesSchema.optional(),
+});
+
+export type GetCsamContextCandidatesSchema = z.infer<typeof getCsamContextCandidatesSchema>;
+export const getCsamContextCandidatesSchema = z.object({
+  userId: z.number().int(),
+  imageIds: z.number().int().positive().array().max(1000),
 });
 
 export type GetCsamSupplementalPreviewSchema = z.infer<typeof getCsamSupplementalPreviewSchema>;

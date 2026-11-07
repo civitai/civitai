@@ -22,6 +22,14 @@ describe('classifyAppSubmitFailure', () => {
         message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
       })
     ).toBe('ecosystem_unavailable');
+    // A disabled ecosystem's rule copy is APPENDED to the stable text (`gateRefusalText`).
+    expect(
+      classifyAppSubmitFailure({
+        code: 'BAD_REQUEST',
+        message:
+          'Validation failed: ecosystem: Ecosystem is currently unavailable. Back after maintenance.',
+      })
+    ).toBe('ecosystem_unavailable');
     // Also when it is one of several field errors.
     expect(
       classifyAppSubmitFailure({

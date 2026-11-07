@@ -16,6 +16,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
+import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
 import { HoverCard, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue, useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -110,6 +111,14 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   refundInfo: RefundInfo | null;
   costInfo: CostInfo | null;
 };
+
+/** How a training status reads to its owner. */
+const trainingStatusLabel = (status: TrainingStatus) =>
+  status === TrainingStatus.InReview
+    ? 'Ready'
+    : status === TrainingStatus.Paused
+    ? TRAINING_REVIEW_COPY.pendingLabel
+    : splitUppercase(status);
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -470,9 +479,7 @@ export default function UserTrainingModels() {
                 <HoverCard.Target>
                   <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
                     <Group gap={6} wrap="nowrap">
-                      {splitUppercase(
-                        mv.trainingStatus === TrainingStatus.InReview ? 'Ready' : mv.trainingStatus
-                      )}
+                      {trainingStatusLabel(mv.trainingStatus)}
                       {isRunning && <Loader size={12} />}
                     </Group>
                   </Badge>
@@ -889,7 +896,7 @@ export default function UserTrainingModels() {
               {Object.values(TrainingStatus).map((s) => (
                 <Checkbox
                   key={s}
-                  label={s === TrainingStatus.InReview ? 'Ready' : splitUppercase(s)}
+                  label={trainingStatusLabel(s)}
                   checked={statusFilter.includes(s)}
                   onChange={(e) => {
                     if (e.currentTarget.checked) {

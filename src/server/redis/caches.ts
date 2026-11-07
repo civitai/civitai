@@ -40,6 +40,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 import {
   type ImageTagComposite,
   type ModelTagComposite,
@@ -276,7 +277,7 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
   ttl: CacheTTL.day,
 });
 
-/** A user whose profile picture is Blocked gets no entry, the same as a user with none. */
+/** A user whose profile picture may not be served gets no entry, the same as a user with none. */
 export async function lookupProfilePictures(ids: (number | undefined)[], fromWrite?: boolean) {
   const goodIds = ids.filter(isDefined);
   if (!goodIds.length) return {};
@@ -297,7 +298,7 @@ export async function lookupProfilePictures(ids: (number | undefined)[], fromWri
     FROM "User" u
     JOIN "Image" i ON i.id = u."profilePictureId"
     WHERE u.id IN (${Prisma.join(goodIds)})
-      AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+      AND ${servableProfilePictureSql}
   `;
   return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
 }
