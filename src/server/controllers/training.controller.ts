@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
   throwBadRequestError,
@@ -175,11 +176,13 @@ const moderateTrainingData = async ({
   approve,
   workflowId,
   status,
+  moderatorId,
 }: {
   modelVersionId: number;
   approve: boolean;
   workflowId: string;
   status?: WorkflowStatus;
+  moderatorId: number;
 }) => {
   if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
 
@@ -203,6 +206,20 @@ const moderateTrainingData = async ({
       // resolved gate as a failed deny and invite the caller to repeat it. The callback out of our
       // own database is the half that can still fail, and `webhookFailed` is how the caller hears.
       let webhookFailed = false;
+
+      // Same row the moderator app writes for a ruling there.
+      try {
+        await trackModActivity(moderatorId, {
+          entityType: 'modelVersion',
+          entityId: modelVersionId,
+          activity: approve ? 'trainingData:approve' : 'trainingData:deny',
+        });
+      } catch (e) {
+        logWebhook({
+          message: 'Gate released but the moderator activity was not recorded',
+          data: { modelVersionId, workflowId, important: true, error: (e as Error)?.message },
+        });
+      }
 
       if (!status) {
         webhookFailed = true;
@@ -269,8 +286,20 @@ const moderateTrainingData = async ({
   }
 };
 
-export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
+export async function handleDenyTrainingData({
+  input,
+  moderatorId,
+}: {
+  input: GetByIdInput;
+  moderatorId: number;
+}) {
   const modelVersionId = input.id;
   const { workflowId, status } = await getWorkflowFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, workflowId, status, approve: false });
+  return await moderateTrainingData({
+    modelVersionId,
+    workflowId,
+    status,
+    approve: false,
+    moderatorId,
+  });
 }
