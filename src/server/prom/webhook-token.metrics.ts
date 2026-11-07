@@ -2,11 +2,11 @@ import client from 'prom-client';
 import type { NextApiRequest } from 'next';
 import { logToAxiom } from '~/server/logging/client';
 import { reconstructApiRoute } from '~/server/prom/http-errors';
-import { matchWebhookToken, type WebhookTokenSlot } from '~/server/utils/webhook-token';
+import { matchWebhookToken, type TokenMatchSlot } from '~/server/utils/webhook-token';
 
-// Which webhook token slot authenticated each request, so a change of value can be watched: the
-// `current` series rises as callers move over, and `previous` falling to 0 is what retiring
-// WEBHOOK_TOKEN_PREVIOUS is gated on.
+// Which token slot authenticated each request, so a change of value can be watched: the `current`
+// series rises as callers move over, and `previous` falling to 0 is what retiring
+// WEBHOOK_TOKEN_PREVIOUS is gated on. `probe` is PROBE_TOKEN, which only the health routes accept.
 //
 // Labels: `slot` and `route` (from `reconstructApiRoute`: params collapsed, no query string). Only
 // a request that already matched a configured token is counted, so an unauthenticated caller
@@ -26,20 +26,21 @@ export const webhookTokenMatchCounter: client.Counter<string> =
   globalThis.__civitaiWebhookTokenMatchCounter ??
   (globalThis.__civitaiWebhookTokenMatchCounter = new client.Counter({
     name: 'civitai_webhook_token_match_total',
-    help: 'Requests authenticated by the webhook token, by which configured value matched (slot=current|previous) and normalized route. UNSAMPLED.',
+    help: 'Requests authenticated by a configured token, by which value matched (slot=current|previous for the webhook token, probe for PROBE_TOKEN on the health routes) and normalized route. UNSAMPLED.',
     labelNames: ['slot', 'route'],
   }));
 
-// The liveness probe authenticates this way every few seconds on every pod, so a line per request
-// would flood the logs. One line per route per minute per process says which callers still send the
-// previous value; the counter carries the exact numbers.
+// Probes call the health routes (/api/live, /api/ready, /api/health) every few seconds on every pod,
+// so while they still send the previous value a line per request would flood the logs. One line
+// per route per minute per process says which callers still send it; the counter carries the
+// exact numbers.
 const PREVIOUS_LOG_INTERVAL_MS = 60_000;
 const previousLoggedAt = (globalThis.__civitaiWebhookTokenPreviousLoggedAt ??= new Map());
 
 /** Never throws, and never records the token itself. */
 export function recordWebhookTokenMatch(
   req: Pick<NextApiRequest, 'method' | 'url' | 'query' | 'headers'>,
-  slot: WebhookTokenSlot
+  slot: TokenMatchSlot
 ): void {
   try {
     const route = reconstructApiRoute(req as NextApiRequest);

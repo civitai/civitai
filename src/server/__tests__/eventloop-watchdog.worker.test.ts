@@ -191,6 +191,19 @@ describe('event-loop watchdog worker', () => {
     expect(body).toContain('civitai_app_watchdog_token_match_total{slot="previous"} 1');
   });
 
+  it('accepts the token as Authorization: Bearer, and refuses a wrong Bearer', async () => {
+    const h = await startWorker({ previousToken: 'test-watchdog-previous' });
+    const bearer = async (value: string) =>
+      (await fetch(`http://127.0.0.1:${h.port}/metrics`, { headers: { authorization: value } }))
+        .status;
+
+    expect(await bearer(`Bearer ${TOKEN}`)).toBe(200);
+    expect(await bearer('Bearer test-watchdog-previous')).toBe(200);
+    expect(await bearer(`Bearer ${'x'.repeat(TOKEN.length)}`)).toBe(401);
+    expect(await bearer(TOKEN)).toBe(401);
+    expect(await bearer('Bearer ')).toBe(401);
+  });
+
   it('a blank previous token never lets an empty token through', async () => {
     const h = await startWorker({ previousToken: '' });
 

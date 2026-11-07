@@ -404,6 +404,9 @@ export const serverSchema = z
     // Accepted alongside WEBHOOK_TOKEN while callers move to a new value. Unset or blank: only
     // WEBHOOK_TOKEN is accepted (~/server/utils/webhook-token).
     WEBHOOK_TOKEN_PREVIOUS: z.string().optional(),
+    // Also accepted by /api/live, /api/ready and /api/health only, so probes need not carry
+    // WEBHOOK_TOKEN. Unset or blank matches nothing.
+    PROBE_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
     SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
@@ -694,6 +697,17 @@ export const serverSchema = z
     CSAM_BUCKET_NAME: z.string().default(''),
     CSAM_UPLOAD_REGION: z.string().default(''),
     CSAM_UPLOAD_ENDPOINT: z.string().default(''),
+    // Personal-data export archives: a private bucket of their own (short lifecycle), never a
+    // prefix of another. All optional: the export job logs an error and builds nothing without them.
+    PERSONAL_DATA_EXPORT_ENDPOINT: z.string().default(''),
+    PERSONAL_DATA_EXPORT_REGION: z.string().default(''),
+    PERSONAL_DATA_EXPORT_BUCKET: z.string().default(''),
+    PERSONAL_DATA_EXPORT_KEY: z.string().default(''),
+    PERSONAL_DATA_EXPORT_SECRET: z.string().default(''),
+    // Read-only connection to the stored generation workflow documents; reads from a secondary only.
+    PERSONAL_DATA_EXPORT_MONGO_URL: z.string().default(''),
+    // Where a refused export for a held account is reported; Legal's intake reads this inbox.
+    PERSONAL_DATA_EXPORT_LEGAL_EMAIL: z.string().default('compliance@civitai.com'),
     NCMEC_URL: z.string().optional(),
     NCMEC_USERNAME: z.string().default(''),
     NCMEC_PASSWORD: z.string().default(''),
