@@ -31,9 +31,11 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 const { createNotification, applyReward, clickhouseInsert } = vi.hoisted(() => ({
-  createNotification: vi.fn(async () => undefined),
-  applyReward: vi.fn(async () => undefined),
-  clickhouseInsert: vi.fn(async () => undefined),
+  createNotification: vi.fn(async (_n: { details: { url: string } }) => undefined),
+  applyReward: vi.fn(async (_a: { userId: number; reportId: number }, _o?: unknown) => undefined),
+  clickhouseInsert: vi.fn(
+    async (_a: { table: string; values: { hash: string; reason: string }[] }) => undefined
+  ),
 }));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
