@@ -6,6 +6,7 @@ import {
   selectSql,
   transformRow,
 } from '../sources/postgres';
+import { CH_TABLES, USER_BUZZ_ACCOUNT_TYPES, chWheres } from '../sources/clickhouse';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -143,6 +144,31 @@ describe('export WHERE clauses, run', () => {
     ]);
     // The owner looked up is read, never written.
     expect(out.every((r) => !('entityOwnerId' in r))).toBe(true);
+  });
+
+  it('reads both sides of the Buzz ledger, a self-transfer once, and never a club', async () => {
+    const buzz = CH_TABLES.find((t) => t.table === 'default.buzzTransactions')!;
+    const types = USER_BUZZ_ACCOUNT_TYPES.map((t) => `'${t}'`).join(', ');
+    // The ClickHouse predicates, with their parameters bound, run as SQL.
+    const bind = (w: string) =>
+      w.replaceAll('{uid:Int64}', String(ME)).replaceAll('{buzzTypes:Array(String)}', `(${types})`);
+    await db.exec(`
+      -- Unquoted, as ClickHouse writes them, so they fold to one case here.
+      CREATE TABLE buzz (id int, fromAccountId int, fromAccountType text,
+        toAccountId int, toAccountType text);
+      INSERT INTO buzz VALUES
+        (1, ${ME}, 'yellow', ${OTHER}, 'yellow'),   -- sent
+        (2, ${OTHER}, 'yellow', ${ME}, 'blue'),     -- received
+        (3, ${ME}, 'yellow', ${ME}, 'blue'),        -- between my own accounts
+        (4, ${OTHER}, 'yellow', ${OTHER}, 'blue'),  -- not mine
+        (5, ${ME}, 'club', ${OTHER}, 'yellow'),     -- a club keyed by my id
+        (6, ${OTHER}, 'yellow', ${ME}, 'club');
+    `);
+    const wheres = chWheres(buzz, 'false');
+    expect(wheres.length).toBe(2);
+    const read: unknown[] = [];
+    for (const w of wheres) read.push(...(await ids('buzz', bind(w))));
+    expect(read.sort()).toEqual([1, 2, 3]);
   });
 
   it('matches a row on any of several subject columns', async () => {

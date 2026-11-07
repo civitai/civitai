@@ -43,8 +43,12 @@ export const USER_BUZZ_ACCOUNT_TYPES = [
 type ChTable = {
   file: string;
   table: string;
-  /** Over `{uid:Int64}` / `{uidText:String}`; picked by the user column's type when null. */
-  where: string | null;
+  /**
+   * Over `{uid:Int64}` / `{uidText:String}`; picked by the user column's type when null. A list is
+   * read as one query per predicate, each skipping the rows an earlier one matched, so each can use
+   * its own projection where an OR of them would scan the whole table.
+   */
+  where: string | readonly string[] | null;
   description: string;
   /** Kept keys; every other key is dropped. Unset: every key except credentials and classifier. */
   keep?: RegExp;
@@ -86,8 +90,10 @@ export const CH_TABLES: ChTable[] = [
   {
     file: 'data/clickhouse/buzz-transactions.jsonl',
     table: 'default.buzzTransactions',
-    where:
-      '(fromAccountId = {uid:Int64} AND fromAccountType IN {buzzTypes:Array(String)}) OR (toAccountId = {uid:Int64} AND toAccountType IN {buzzTypes:Array(String)})',
+    where: [
+      'fromAccountId = {uid:Int64} AND fromAccountType IN {buzzTypes:Array(String)}',
+      'toAccountId = {uid:Int64} AND toAccountType IN {buzzTypes:Array(String)}',
+    ],
     description: 'Your Buzz transactions, in and out, for every account type.',
     // A money record: the ledger is exported even though its key starts with the date.
     required: true,
@@ -169,6 +175,15 @@ export function reduceChRow(table: ChTable, row: Record<string, unknown>) {
   return table.redact ? table.redact(kept) : kept;
 }
 
+/** The WHERE of each query a table is read with: a row matched by an earlier one is not read again. */
+export function chWheres(table: ChTable, userWhere: string): string[] {
+  if (table.where == null) return [userWhere];
+  if (typeof table.where === 'string') return [table.where];
+  return table.where.map((w, i) =>
+    [`(${w})`, ...table.where!.slice(0, i).map((prev) => `NOT (${prev})`)].join(' AND ')
+  );
+}
+
 /** How the user column compares: `orchestration` stores user ids as strings in some tables. */
 async function userColumnTypes(ch: ClickhouseReader) {
   const rs = await ch.query({
@@ -230,14 +245,17 @@ export async function exportClickhouse({
       entry.status = 'unavailable';
       continue;
     }
-    let rs: Awaited<ReturnType<ClickhouseReader['query']>>;
-    try {
-      rs = await ch.query({
-        query: `SELECT * FROM ${table.table} WHERE ${table.where ?? userWhere(table.table)}`,
+    const open = (where: string) =>
+      ch.query({
+        query: `SELECT * FROM ${table.table} WHERE ${where}`,
         query_params: params,
         format: 'JSONEachRow',
         clickhouse_settings: settings,
       });
+    const wheres = chWheres(table, userWhere(table.table));
+    let first: Awaited<ReturnType<ClickhouseReader['query']>>;
+    try {
+      first = await open(wheres[0]);
     } catch (e) {
       entry.status = 'unavailable';
       onError(table.table, e);
@@ -247,8 +265,11 @@ export async function exportClickhouse({
     // records already written and marks the file partial; it never fails the whole export.
     const records = async function* () {
       try {
-        for await (const rows of rs.stream())
-          for (const row of rows) yield reduceChRow(table, row.json<Record<string, unknown>>());
+        for (let i = 0; i < wheres.length; i++) {
+          const rs = i === 0 ? first : await open(wheres[i]);
+          for await (const rows of rs.stream())
+            for (const row of rows) yield reduceChRow(table, row.json<Record<string, unknown>>());
+        }
       } catch (e) {
         entry.status = 'partial';
         onError(table.table, e);

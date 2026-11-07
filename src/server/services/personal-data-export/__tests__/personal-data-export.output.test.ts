@@ -311,7 +311,10 @@ describe('ClickHouse', () => {
     expect(queries.some((q) => q.query.includes('FROM default.views'))).toBe(false);
     expect(result.counts.find((c) => c.name === 'views')?.count).toBeNull();
     expect(result.counts.find((c) => c.name === 'userModelDownloads')?.count).toBe(3);
-    const buzzQuery = queries.find((q) => q.query.includes('FROM default.buzzTransactions'))!;
-    expect(buzzQuery.params?.buzzTypes).toEqual(USER_BUZZ_ACCOUNT_TYPES);
+    const buzzQueries = queries.filter((q) => q.query.includes('FROM default.buzzTransactions'));
+    expect(buzzQueries[0].params?.buzzTypes).toEqual(USER_BUZZ_ACCOUNT_TYPES);
+    // One query per side, so each reads its own projection: an OR of the two scans the ledger.
+    expect(buzzQueries.length).toBe(2);
+    expect(buzzQueries.filter((q) => / OR /i.test(q.query))).toEqual([]);
   });
 });
