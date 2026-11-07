@@ -66,6 +66,7 @@ export const modelQueryParamSchema = z
     earlyAccess: booleanString().optional(),
     paidAccess: booleanString().optional(),
     hidePaid: booleanString().optional(),
+    onSale: booleanString().optional(),
     types: z
       .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),
@@ -132,6 +133,7 @@ const MODEL_BROWSE_FILTER_KEYS = [
   'earlyAccess',
   'paidAccess',
   'hidePaid',
+  'onSale',
   'fromPlatform',
   'isFeatured',
 ] as const satisfies readonly (keyof ModelFilterSchema & keyof ModelQueryParams)[];

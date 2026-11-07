@@ -268,6 +268,10 @@ export async function createRealPgHarness(): Promise<Harness> {
   await su.query(readFileSync(MIGRATION_UP, 'utf8'));
   await su.query(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
   const open = new Set<Client>();
+  // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
+  // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,
+  // which Vitest reports as an unhandled error.
+  const ending = new Set<Promise<void>>();
 
   async function newClient(role: string | null): Promise<Client> {
     const c = new Client({ connectionString: dbUrl });
@@ -290,7 +294,9 @@ export async function createRealPgHarness(): Promise<Harness> {
           },
           release() {
             open.delete(c);
-            void c.end();
+            const done = c.end().catch(() => undefined);
+            ending.add(done);
+            void done.then(() => ending.delete(done));
           },
         };
         return recording(inner, h);
@@ -322,6 +328,7 @@ export async function createRealPgHarness(): Promise<Harness> {
     },
     async close() {
       await Promise.all([...open].map((c) => c.end().catch(() => undefined)));
+      await Promise.all(ending);
       await su.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.end();

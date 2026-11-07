@@ -53,6 +53,7 @@ const modelFilterSchema = z.object({
   earlyAccess: z.boolean().optional(),
   paidAccess: z.boolean().optional(),
   hidePaid: z.boolean().optional(),
+  onSale: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),

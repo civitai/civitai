@@ -21,6 +21,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useRouter } from 'next/router';
 import { formatDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -95,7 +96,7 @@ function SharedArticleView({ article }: { article: SharedArticle }) {
       suppressAds
       meta={{
         title: `${article.title} | Draft preview | Civitai`,
-        description: removeTags(article.content ?? '').slice(0, 150),
+        description: removeTags(removeSpoilers(article.content ?? '')).slice(0, 150),
         deIndex: true,
       }}
     >

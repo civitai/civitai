@@ -1,0 +1,49 @@
+import { PGlite } from '@electric-sql/pglite';
+import type { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { writtenReviewSql } from '~/server/services/resourceReview.service';
+
+// The model page's review row asks `getPaged` for `writtenOnly`; this is the filter it adds.
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+let db: PGlite;
+let queryRaw: ReturnType<typeof pgliteRaw>['queryRaw'];
+
+beforeAll(async () => {
+  db = new PGlite();
+  queryRaw = pgliteRaw(db).queryRaw;
+  await db.exec(`
+    CREATE TABLE "ResourceReview" (
+      id int PRIMARY KEY,
+      details text,
+      exclude boolean NOT NULL DEFAULT false,
+      nsfw boolean NOT NULL DEFAULT false,
+      "tosViolation" boolean NOT NULL DEFAULT false
+    );
+    INSERT INTO "ResourceReview" (id, details, exclude, nsfw, "tosViolation") VALUES
+      (1, NULL, false, false, false),
+      (2, '', false, false, false),
+      (3, '<p></p>', false, false, false),
+      (4, '<p>&nbsp; </p>', false, false, false),
+      (5, '<p>Works best with the turbo base.</p>', false, false, false),
+      (6, 'plain text review', false, false, false),
+      (7, '<p>excluded by a moderator</p>', true, false, false),
+      (8, '<p>flagged nsfw</p>', false, true, false),
+      (9, '<p>tos violation</p>', false, false, true);
+  `);
+});
+afterAll(() => db.close());
+
+const idsMatching = async (filter: Prisma.Sql) => {
+  const rows = (await queryRaw`
+    SELECT id FROM "ResourceReview" rr WHERE ${filter} ORDER BY id
+  `) as { id: number }[];
+  return rows.map((r) => r.id);
+};
+
+describe('writtenReviewSql', () => {
+  it('keeps reviews with text and drops bare thumbs, empty editor HTML and hidden reviews', async () => {
+    expect(await idsMatching(writtenReviewSql)).toEqual([5, 6]);
+  });
+});
