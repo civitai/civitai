@@ -64,7 +64,8 @@ export const actions: Actions = {
       body: JSON.stringify({ user_code: userCode }),
     });
     if (!res.ok) {
-      const refused = res.status === 403;
+      const body = (await res.json().catch(() => null)) as { error_description?: string } | null;
+      const refused = body?.error_description === 'Not available while impersonating';
       return fail(400, {
         step: 'enter' as const,
         error: refused

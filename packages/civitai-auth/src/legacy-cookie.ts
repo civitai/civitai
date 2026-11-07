@@ -22,7 +22,7 @@ export async function decodeLegacySessionCookie(
 ): Promise<SessionClaims | null> {
   try {
     const { payload } = await jwtDecrypt(token, derivedKey(secret), { clockTolerance: 15 });
-    // A legacy session always carried `exp` and never the hub's impersonation or lineage claims.
+    // A legacy session always carried `exp` and never the hub's impersonation claims.
     if (payload.exp == null) return null;
     if ('impersonatedBy' in payload || 'impExp' in payload) return null;
     return payload as SessionClaims;

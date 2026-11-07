@@ -16,9 +16,12 @@ describe('device verification page', () => {
   });
 
   it.each([
-    [403, 'Devices cannot be approved while impersonating. Exit impersonation first.'],
-    [400, 'Could not approve that code — it may have expired. Try again.'],
-  ])('says why approval failed with a %s', async (status, message) => {
+    [
+      { error: 'access_denied', error_description: 'Not available while impersonating' },
+      'Devices cannot be approved while impersonating. Exit impersonation first.',
+    ],
+    [{ error: 'forbidden' }, 'Could not approve that code — it may have expired. Try again.'],
+  ])('says why approval was refused', async (body, message) => {
     const form = new FormData();
     form.set('user_code', 'ABCD-EFGH');
     const result = await actions.approve({
@@ -26,7 +29,7 @@ describe('device verification page', () => {
         method: 'POST',
         body: form,
       }),
-      fetch: async () => new Response('{}', { status }),
+      fetch: async () => new Response(JSON.stringify(body), { status: 403 }),
     } as never);
     expect(result).toMatchObject({ data: { error: message } });
   });

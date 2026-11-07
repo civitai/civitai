@@ -10,11 +10,6 @@ import type { SessionClaims } from './types';
 // that's the app's model (resolveUser), see the package README/types.
 
 /** Minimal redis surface needed — satisfied by @civitai/redis's client (or any compatible one). */
-/** The marker that ends a moderator's impersonations; `userCut` is the registry's `keys.userCut`. */
-export function impersonatorCutKey(userCut: string, moderatorId: number): string {
-  return `${userCut}:impersonator:${moderatorId}`;
-}
-
 export interface SessionRegistryRedis {
   hSet(key: string, field: string, value: string | number): Promise<unknown>;
   hGet(key: string, field: string): Promise<string | null | undefined>;
@@ -117,6 +112,11 @@ const DEFAULT_MIN_EVICTION_AGE_SECONDS = 3 * 24 * 60 * 60;
 const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;
 // Concurrency bound for the ban fan-out (individual commands, not a Lua batch).
 const INVALIDATE_BATCH = 100;
+
+/** The marker that ends a moderator's impersonations; `userCut` is the registry's `keys.userCut`. */
+export function impersonatorCutKey(userCut: string, moderatorId: number): string {
+  return `${userCut}:impersonator:${moderatorId}`;
+}
 
 export function createSessionRegistry(config: SessionRegistryConfig): SessionRegistry {
   const { keys } = config;

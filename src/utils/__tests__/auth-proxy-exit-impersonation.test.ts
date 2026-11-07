@@ -10,13 +10,13 @@ const respond = (status: number) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe('authProxy.exitImpersonation', () => {
-  it('resolves on a 403, as the hub has already ended the session', async () => {
-    respond(403);
+  it('resolves on a 410', async () => {
+    respond(410);
     await expect(authProxy.exitImpersonation()).resolves.toBeUndefined();
   });
 
-  it('still throws on any other failure', async () => {
-    respond(500);
+  it.each([403, 500])('throws on a %s', async (status) => {
+    respond(status);
     await expect(authProxy.exitImpersonation()).rejects.toThrow();
   });
 });

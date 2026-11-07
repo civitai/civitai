@@ -358,8 +358,8 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     impExp: hubSession?.impExp,
     proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
   });
-  // Without its context the code would mint an ordinary session for the impersonated user.
-  if (!stored && hubSession?.impersonatedBy != null) {
+  // A first-party code is redeemed only with its context, so none is sent without it.
+  if (!stored && isFirstParty) {
     return failToClient('temporarily_unavailable', 'Try again', 503);
   }
 

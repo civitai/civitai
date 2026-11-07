@@ -62,14 +62,14 @@ export async function storeOidcContext(code: string, ctx: OidcCodeContext): Prom
   }
 }
 
-/** Single-use: reads and deletes the context for a code. `null` when it could not be read. */
+/** Single-use: reads and deletes the context for a code. `null` when it is missing or could not be read. */
 export async function consumeOidcContext(code: string): Promise<OidcCodeContext | null> {
   const redis = getRedis();
   if (!redis) return null;
   try {
     const f = field(code);
     const data = await redis.packed.hGet<OidcCodeContext>(REDIS_KEYS.OAUTH.OIDC_CONTEXT, f);
-    if (!data) return {};
+    if (!data) return null;
     await redis.hDel(REDIS_KEYS.OAUTH.OIDC_CONTEXT, f);
     return data;
   } catch {

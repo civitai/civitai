@@ -66,4 +66,11 @@ describe('/token authorization_code', () => {
     expect(res.status).toBe(200);
     expect(h.token).toHaveBeenCalledTimes(1);
   });
+
+  it('leaves the exchange to the library when the code lookup fails', async () => {
+    h.getAuthorizationCode.mockRejectedValue(new Error('redis down'));
+    const res = await exchange();
+    expect(res.status).toBe(200);
+    expect(h.token).toHaveBeenCalledTimes(1);
+  });
 });

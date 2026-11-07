@@ -111,7 +111,7 @@ export const POST: RequestHandler = async ({ request }) => {
   // civ-device — so e.g. civitai.red joins the SAME device set as civitai.com and the switcher matches across
   // domains. Best-effort: a missing/redis-less device id just means no switcher entry, never a failed login.
   const ctx = await consumeOidcContext(code);
-  // An unreadable context may have carried an impersonation; never mint without it.
+  // A first-party code always has a context; a session is minted only with it.
   if (!ctx) return bad('temporarily_unavailable', 'Try again', 503);
   const { deviceId } = ctx;
   // Minted for the hub session's own user: the same family, sign-in time and impersonation. Otherwise a new

@@ -304,11 +304,10 @@ describe('authorize — family', () => {
     expect(res).toEqual({ status: 503 });
   });
 
-  it('still signs in an ordinary hub session whose context could not be stored', async () => {
+  it('sends no code back to any first-party hand-off whose context cannot be stored', async () => {
     vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
     const session = { sub: '7', jti: 'j', sid: 'family-a', iat0: 5 };
-    const res = await start({}, { user: { id: 7 }, session });
-    expect(res.location).toContain('code=the-code');
+    expect(await start({}, { user: { id: 7 }, session })).toEqual({ status: 503 });
   });
 });
 

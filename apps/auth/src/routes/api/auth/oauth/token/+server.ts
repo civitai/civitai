@@ -149,8 +149,9 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   // A first-party code is exchanged at /api/auth/oauth/session for a session, never here for a token.
-  if (body.grant_type === 'authorization_code' && body.code) {
-    const authCode = await oauthModel.getAuthorizationCode(body.code);
+  if (body.grant_type === 'authorization_code' && typeof body.code === 'string' && body.code) {
+    // A failed lookup falls through: the library reads the code again and reports its own error.
+    const authCode = await oauthModel.getAuthorizationCode(body.code).catch(() => undefined);
     if ((authCode && (authCode.client as { isFirstParty?: boolean }).isFirstParty) === true) {
       const headers = new Headers();
       setWildcardCors(headers);
