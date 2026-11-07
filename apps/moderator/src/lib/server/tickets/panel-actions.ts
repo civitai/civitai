@@ -1,4 +1,5 @@
 import { ticketAccountActions } from './account-actions';
+import { ticketExportActions } from './export-actions';
 import { ticketAppealActions } from './appeal-actions';
 import { ticketFlagAppealActions } from './appeal-flag-actions';
 import { ticketQueueAppealActions } from './appeal-queue-actions';
@@ -12,6 +13,7 @@ import { ticketRatingActions } from './rating-actions';
  */
 export const moderationPanelActions = {
   ...ticketAccountActions,
+  ...ticketExportActions,
   ...ticketAppealActions,
   ...ticketQueueAppealActions,
   ...ticketFlagAppealActions,
@@ -22,4 +24,5 @@ export const moderationPanelActions = {
 export const supportPanelActions = {
   ...ticketGeneratorActions,
   ...ticketLoraActions,
+  ...ticketExportActions,
 };

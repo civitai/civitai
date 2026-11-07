@@ -1,5 +1,5 @@
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { GateRule } from './gates';
+import type { GateRuleView } from './gates';
 import type { ModelSubstitutionCollector } from './model-substitution';
 
 export type GenerationCtx = {
@@ -41,7 +41,7 @@ export type GenerationCtx = {
    * in their own output schema; the model node keeps `disabled` versions
    * selectable, so only those reach `validateInput`'s `gatedSelectionRefusal`.
    */
-  gateRules?: GateRule[];
+  gateRules?: GateRuleView[];
   /**
    * Per-REQUEST side channel recording silent checkpoint substitutions the
    * `modelLocked` clamp performs (issue #3520). Purely observational — see

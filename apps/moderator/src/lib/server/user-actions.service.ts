@@ -297,6 +297,7 @@ export type ModEndpoint =
   | 'user/membership-extend'
   | 'user/membership-resync'
   | 'user/message-as-civitai'
+  | 'user/personal-data-export-release'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'

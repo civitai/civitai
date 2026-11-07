@@ -4285,6 +4285,29 @@ export interface CsamReportArchiveObject {
   uploadedAt: Date;
 }
 
+export interface PersonalDataExport {
+  id: number;
+  userId: number;
+  requestedById: number;
+  status: string;
+  modNotesMode: string;
+  holdReasons: string[];
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  manifest: JsonValue | null;
+  error: string | null;
+  attempts: number;
+  createdAt: Date;
+  startedAt: Date | null;
+  builtAt: Date | null;
+  sentAt: Date | null;
+  linkExpiresAt: Date | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  ticketId: number | null;
+  requestedAt: Date | null;
+}
+
 export interface EvidenceHold {
   id: number;
   userId: number;

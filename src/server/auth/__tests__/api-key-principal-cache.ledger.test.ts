@@ -80,6 +80,7 @@ const {
   deleteApiKey,
   deleteApiKeys,
   expireGenerationCredentials,
+  expireClientTokens,
   expireUserApiKeys,
   setApiKeyBuzzLimit,
 } = await import('~/server/services/api-key.service');
@@ -108,10 +109,10 @@ const LEDGER: Record<string, { count: number; why: string }> = {
     why: 'lastUsedAt only; nothing the bearer path decides on. Throttled per key per hour.',
   },
   'src/server/services/api-key.service.ts': {
-    count: 7,
+    count: 8,
     why:
       'create: a new key, and misses are never cached. setApiKeyBuzzLimit update, and the ' +
-      'deleteApiKeys, expireUserApiKeys and expireGenerationCredentials helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
+      'deleteApiKeys, expireUserApiKeys, expireGenerationCredentials and expireClientTokens helpers: evict (tested below). getTemporaryUserApiKey x2: housekeeping of the ' +
       "caller's own rotated generation keys, not a revocation; the first only removes keys within " +
       '30 s of their own expiry (entries never outlive expiresAt), the second a legacy key name. ' +
       'Accepted: such a key can keep working for at most the cache TTL after the clean-up.',
@@ -407,6 +408,24 @@ describe('writes that evict the bearer cache', () => {
     vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
     expect(await getSessionFromBearerToken('orchestrator')).toBeNull();
     expect((await getSessionFromBearerToken('personal'))?.apiKeyId).toBe(51);
+  });
+
+  it("expireClientTokens stops that client's tokens on the next request, not another client's", async () => {
+    const token = (id: number, clientId: string) => ({
+      ...seed()[0],
+      id,
+      key: `hash-of-${clientId}-access`,
+      clientId,
+      type: 'Access',
+    });
+    rows.push(token(61, 'minter'), token(62, 'other-client'));
+    const opts = { allowClientCredentialsOnly: true };
+    expect((await getSessionFromBearerToken('minter-access', opts))?.apiKeyId).toBe(61); // control
+    await expect(expireClientTokens('minter')).resolves.toEqual({ expired: 1 });
+    vi.setSystemTime(new Date(T0.getTime() + 1000)); // the next request
+    expect(await getSessionFromBearerToken('minter-access', opts)).toBeNull();
+    expect((await getSessionFromBearerToken('other-client-access', opts))?.apiKeyId).toBe(62);
+    expect(rows.find((r) => r.id === 61)?.expiresAt).toEqual(T0);
   });
 
   it('expireGenerationCredentials retries the eviction of a key an earlier pass expired', async () => {
