@@ -177,6 +177,8 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   function withinLineageLimits(claims: SessionClaims): boolean {
     const t = cfg.clock();
     if (claims.impExp != null && t >= claims.impExp) return false;
+    // Every impersonation is minted with an end time; one without it predates that rule.
+    if (claims.impersonatedBy != null && claims.impExp == null) return false;
     if (claims.iat0 == null) return !cfg.requireIat0;
     return t < claims.iat0 + SESSION_LINEAGE_MAX_AGE_MS;
   }
