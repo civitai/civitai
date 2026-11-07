@@ -11,6 +11,7 @@ import {
 } from '~/server/services/image.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
@@ -333,6 +334,9 @@ async function blockUserImages(
     };
   } catch (error) {
     return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false, error };
+  } finally {
+    // Every exit: a later run skips the rows this one already blocked.
+    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
   }
 }
 
