@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { BlockedReason } from '~/server/common/enums';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -147,7 +148,8 @@ beforeEach(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
-    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"/.test(flat.text)) return 0;
+    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"|"blockedFor" = CASE/.test(flat.text))
+      return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`
@@ -286,6 +288,75 @@ describe('setTosViolationHandler', () => {
     } as never);
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  });
+});
+
+describe('a re-block keeps the original block reason', () => {
+  const BLOCKED_WITH_REASON = 45;
+  const OTHER_REASON = 46;
+  const blockedFor = async (id: number) =>
+    (
+      await holder.db.query<{ blockedFor: string | null }>(
+        `SELECT "blockedFor" FROM "Image" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0].blockedFor;
+  const tosBlock = async (id: number) => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 32,
+      userId: 11,
+      postId: null,
+      pHash: null,
+      post: null,
+    } as never);
+    await setTosViolationHandler({
+      input: { id },
+      ctx: { user: { id: 2, isModerator: true }, ip: '127.0.0.1', track: { images: vi.fn() } },
+    } as never);
+  };
+
+  beforeEach(async () => {
+    await holder.db.query(
+      `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        ($1, 11, 'Blocked', $2, 32), ($3, 11, 'Blocked', $4, 32)`,
+      [BLOCKED_WITH_REASON, BlockedReason.CSAM, OTHER_REASON, BlockedReason.AiNotVerified]
+    );
+  });
+
+  it('handleBlockImages', async () => {
+    await handleBlockImages({ ids: [BLOCKED_WITH_REASON, OTHER_REASON, FLAGGED] });
+
+    expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
+    expect(await blockedFor(FLAGGED)).toBe(BlockedReason.Moderated);
+  });
+
+  it('handleBlockImages over a whole account', async () => {
+    dbMock.dbRead.image.findMany.mockImplementationOnce(
+      (async () =>
+        (
+          await holder.db.query(
+            `SELECT id, "userId", NULL::bigint AS "pHash", NULL::int AS "postId", "nsfwLevel", "blockedFor", "needsReview" FROM "Image" WHERE "userId" = 11`
+          )
+        ).rows) as never
+    );
+
+    await handleBlockImages({ userId: 11 });
+
+    expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
+  });
+
+  it('setTosViolationHandler', async () => {
+    await tosBlock(BLOCKED_WITH_REASON);
+
+    expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+  });
+
+  it('setTosViolationHandler still blocks any other image as moderated', async () => {
+    await tosBlock(OTHER_REASON);
+
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
   });
 });
 
