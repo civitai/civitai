@@ -235,8 +235,7 @@ export type ProfilePictureData = {
 };
 
 /**
- * Cache for user profile pictures. A picture that is Blocked or held for csam review is cached as
- * no picture.
+ * Cache for user profile pictures. A picture that may not be served is looked up as no picture.
  */
 export const profilePictures = createCache<ProfilePictureData>({
   redisKey: 'user:profilePicture',

@@ -5,8 +5,8 @@ import { profilePictures } from '../common/caches/imageData.cache';
 
 const CLEAN_USER = 1;
 const BLOCKED_USER = 2;
-const CSAM_USER = 3;
-const MINOR_USER = 4;
+const FLAGGED_USER = 3;
+const PENDING_USER = 4;
 
 let pg: PGlite;
 
@@ -39,26 +39,26 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, url, ingestion, "needsReview") VALUES
       (10, 'clean', 'Scanned', NULL),
       (20, 'blocked', 'Blocked', NULL),
-      (30, 'csam-held', 'Scanned', 'csam'),
-      (40, 'minor-held', 'Scanned', 'minor');
+      (30, 'flagged', 'Scanned', 'csam'),
+      (40, 'pending', 'Pending', NULL);
     INSERT INTO "User" (id, "profilePictureId") VALUES
-      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${CSAM_USER}, 30), (${MINOR_USER}, 40);
+      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40);
   `);
 });
 afterAll(() => pg.close());
 
 describe('profilePictures cache', () => {
-  it('serves no picture for a user whose picture is Blocked or held for csam review', async () => {
+  it('serves no picture for a user whose picture may not be served', async () => {
     const result = await profilePictures.fetch(ctx(), [
       CLEAN_USER,
       BLOCKED_USER,
-      CSAM_USER,
-      MINOR_USER,
+      FLAGGED_USER,
+      PENDING_USER,
     ]);
 
     expect(result[CLEAN_USER]).toMatchObject({ id: 10, url: 'clean' });
-    expect(result[MINOR_USER]).toMatchObject({ id: 40, url: 'minor-held' });
+    expect(result[PENDING_USER]).toMatchObject({ id: 40, url: 'pending' });
     expect(result).not.toHaveProperty(String(BLOCKED_USER));
-    expect(result).not.toHaveProperty(String(CSAM_USER));
+    expect(result).not.toHaveProperty(String(FLAGGED_USER));
   });
 });
