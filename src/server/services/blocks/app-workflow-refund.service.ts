@@ -1,0 +1,871 @@
+import { createHash } from 'crypto';
+import { TRPCError } from '@trpc/server';
+import {
+  APP_BUZZ_REFUND_TYPE,
+  appBuzzRefundNotifications,
+  type AppBuzzRefundDetails,
+} from '~/server/notifications/app-buzz-refund.notifications';
+import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
+import { getTransactionByExternalId } from '~/server/services/buzz.service';
+import { STATUS_ACCRUED } from '~/server/services/blocks/author-fee-accrual.service';
+import {
+  blockAuthorFeeChargeKey,
+  blockAuthorFeeReversalKey,
+  refundBlockAuthorFee,
+  reverseBlockAuthorFee,
+} from '~/server/services/blocks/author-fee-charge.service';
+import { isSettlementEligible } from '~/server/services/blocks/author-fee-settlement.service';
+import {
+  getAppFeedbackForRefund,
+  modResolveAppFeedbackWithRefund,
+} from '~/server/services/blocks/app-feedback.service';
+import {
+  getAppNames,
+  getAppWorkflowRecords,
+  getOrchestratorWorkflowCharges,
+  listAppWorkflowIdsForUser,
+  voidSpendAttributionsForRefund,
+  type AppWorkflowRecords,
+} from '~/server/services/blocks/app-workflow-refund.data';
+import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
+import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODERATOR REFUND OF APP BLOCKS SPEND
+//
+// An App Blocks generation can succeed on the orchestrator and still deliver nothing to the user,
+// because of a fault on our side. The automatic refunds only cover a workflow that FAILED (the
+// orchestrator credits it back, and the author-fee observers reverse the fee), so a succeeded one has
+// no way back. This gives a moderator one.
+//
+// WHERE A WORKFLOW'S MONEY IS — two kinds of charge, found two different ways:
+//
+//   1. The generation itself. The ORCHESTRATOR debits the viewer, as a Buzz multi-transaction made
+//      with NO external id prefix, so it cannot be listed by prefix. Each leg's Buzz transaction id
+//      (one per colour drained) is on the workflow's own `transactions.list` as a `debit`, and the
+//      orchestrator's own refunds of that workflow are `credit` entries beside them. Refunding a leg
+//      is `refundTransaction(<leg id>)`, which Buzz records as `refund-<leg id>` and refuses twice.
+//   2. The app author's fee. civitai debits it itself, under `block-author-fee-charge-<workflowId>`,
+//      and returns it under `block-author-fee-reversal-<workflowId>` — one key for every path that
+//      returns it, so it is returned at most once.
+//
+// 🔴 A LEG IS REFUNDED IN FULL OR NOT AT ALL — Buzz has no partial refund of a transaction. So a
+// colour the orchestrator has already PARTLY credited cannot be squared by refunding legs, and that
+// workflow is refused rather than over-refunded. One the orchestrator credited IN FULL is done.
+//
+// 🔴 THE AUTHOR IS NEVER CLAWED BACK. A fee whose accrual day is still open is reversed — the accrual
+// row goes, so the author is never paid it. A fee whose day has closed may already have been minted to
+// the author; the viewer is still refunded it, and the platform absorbs it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const APP_REFUND_CAP_BUZZ = 5_000;
+export const APP_REFUND_MAX_WORKFLOWS = 50;
+/** The Buzz transaction description. Shown in the user's own history, so never the moderator's text. */
+export const APP_REFUND_DESCRIPTION = 'Refund: App generation not delivered';
+
+/** A workflow still running can still be charged, credited or refunded by the orchestrator. */
+const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
+/** A Buzz transaction id. A fund-backed workflow records `fund-<id>` instead, which is no ledger row. */
+const BUZZ_TRANSACTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INSPECT_CONCURRENCY = 5;
+
+export type SkipReason =
+  | 'not-app-blocks'
+  | 'workflow-not-found'
+  | 'mixed-users'
+  | 'not-terminal'
+  | 'unsupported-charge'
+  | 'orchestrator-partial-refund'
+  | 'no-charges'
+  | 'lookup-failed';
+
+export type ChargeLeg = {
+  /** The Buzz transaction id the orchestrator recorded for this debit. */
+  transactionId: string;
+  amount: number;
+  buzzType: string;
+  /**
+   * `moderator`: `refund-<transactionId>` is on the ledger. `orchestrator`: the orchestrator's own
+   * credits cover this leg's colour in full. `null`: still charged.
+   */
+  refundedBy: 'moderator' | 'orchestrator' | null;
+  refundTransactionId: string | null;
+};
+
+export type AuthorFeeState = 'none' | 'unsettled' | 'settled' | 'unaccrued' | 'reversed';
+
+export type AuthorFeeInfo = {
+  /**
+   * `unsettled`: the accrual day is still open, so the fee can be reversed. `settled`: the day has
+   * closed (whether or not the settlement run has flipped the row), so the author may have been paid.
+   * `unaccrued`: the viewer was debited and no accrual says who is owed it. `reversed`: already
+   * returned to the viewer.
+   */
+  state: AuthorFeeState;
+  feeBuzz: number;
+  buzzType: string | null;
+  accruedAt: Date | null;
+  refundTransactionId: string | null;
+};
+
+export type AuthorFeeTreatment =
+  | 'none'
+  | 'reversed'
+  | 'platform-absorbed'
+  | 'refunded'
+  | 'already-refunded';
+
+type Inspection =
+  | {
+      kind: 'skip';
+      workflowId: string;
+      reason: SkipReason;
+      detail?: string;
+      userId: number | null;
+      appBlockId: string | null;
+      recordedStatus: string | null;
+      submittedAt: Date | null;
+    }
+  | {
+      kind: 'ok';
+      workflowId: string;
+      userIds: number[];
+      appBlockId: string | null;
+      recordedStatus: string | null;
+      submittedAt: Date | null;
+      orchestratorStatus: string;
+      legs: ChargeLeg[];
+      unsupportedLegs: number;
+      partiallyCreditedColours: string[];
+      authorFee: AuthorFeeInfo;
+    };
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function mapInBatches<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>) {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size)
+    out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
+  return out;
+}
+
+function recordFacts(workflowId: string, records: AppWorkflowRecords) {
+  const workflows = records.workflows.filter((r) => r.workflowId === workflowId);
+  const spends = records.spends.filter((r) => r.workflowId === workflowId);
+  const fees = records.fees.filter((r) => r.workflowId === workflowId);
+  const userIds = new Set<number>([
+    ...workflows.map((r) => r.userId),
+    ...spends.map((r) => r.userId),
+    ...fees.map((r) => r.viewerUserId),
+  ]);
+  const appBlockId =
+    workflows[0]?.appBlockId ?? spends[0]?.appBlockId ?? fees[0]?.appBlockId ?? null;
+  const submittedAt =
+    workflows[0]?.submittedAt ?? spends[0]?.attributedAt ?? fees[0]?.accruedAt ?? null;
+  return {
+    found: workflows.length + spends.length + fees.length > 0,
+    userIds,
+    appBlockId,
+    recordedStatus: workflows[0]?.status ?? null,
+    submittedAt,
+    accrual: fees[0] ?? null,
+  };
+}
+
+/**
+ * Everything the platform and the ledger say about one workflow's money. Read-only; a failure to
+ * read anything is reported as `lookup-failed`, never guessed past.
+ */
+async function inspectWorkflow(
+  workflowId: string,
+  records: AppWorkflowRecords,
+  now: Date
+): Promise<Inspection> {
+  const facts = recordFacts(workflowId, records);
+  const base = {
+    workflowId,
+    appBlockId: facts.appBlockId,
+    recordedStatus: facts.recordedStatus,
+    submittedAt: facts.submittedAt,
+  };
+  const onlyUser = () => (facts.userIds.size === 1 ? [...facts.userIds][0] : null);
+  if (!facts.found)
+    return { kind: 'skip', ...base, reason: 'not-app-blocks', userId: null, appBlockId: null };
+
+  try {
+    const [feeCharge, feeReversal, orchestrator] = await Promise.all([
+      getTransactionByExternalId(blockAuthorFeeChargeKey(workflowId)),
+      getTransactionByExternalId(blockAuthorFeeReversalKey(workflowId)),
+      getOrchestratorWorkflowCharges(workflowId),
+    ]);
+    if (feeCharge) facts.userIds.add(feeCharge.fromAccountId);
+    if (feeReversal) facts.userIds.add(feeReversal.toAccountId);
+    if (!orchestrator.found)
+      return { kind: 'skip', ...base, reason: 'workflow-not-found', userId: onlyUser() };
+
+    const debits = orchestrator.transactions.filter((t) => t.type === 'debit' && t.amount > 0);
+    const credits = orchestrator.transactions.filter((t) => t.type === 'credit' && t.amount > 0);
+    const unsupportedLegs = debits.filter((t) => !t.id || !BUZZ_TRANSACTION_ID.test(t.id)).length;
+
+    const legs: ChargeLeg[] = [];
+    for (const debit of debits) {
+      if (!debit.id || !BUZZ_TRANSACTION_ID.test(debit.id)) continue;
+      const refundId = `refund-${debit.id}`;
+      const refund = await getTransactionByExternalId(refundId);
+      if (refund) facts.userIds.add(refund.toAccountId);
+      legs.push({
+        transactionId: debit.id,
+        amount: debit.amount,
+        buzzType: debit.accountType,
+        refundedBy: refund ? 'moderator' : null,
+        refundTransactionId: refund ? refundId : null,
+      });
+    }
+
+    // The orchestrator's own credits, per colour. In full: every leg of that colour is settled. In
+    // part: refusing is the only answer that cannot over-refund — see the header.
+    const partiallyCreditedColours: string[] = [];
+    const colours = new Set(credits.map((c) => c.accountType));
+    for (const colour of colours) {
+      const credited = credits
+        .filter((c) => c.accountType === colour)
+        .reduce((sum, c) => sum + c.amount, 0);
+      const debited = debits
+        .filter((d) => d.accountType === colour)
+        .reduce((sum, d) => sum + d.amount, 0);
+      if (credited >= debited) {
+        for (const leg of legs)
+          if (leg.buzzType === colour && !leg.refundedBy) leg.refundedBy = 'orchestrator';
+      } else partiallyCreditedColours.push(colour);
+    }
+
+    let authorFee: AuthorFeeInfo = {
+      state: 'none',
+      feeBuzz: 0,
+      buzzType: null,
+      accruedAt: null,
+      refundTransactionId: null,
+    };
+    if (feeReversal) {
+      authorFee = {
+        state: 'reversed',
+        feeBuzz: feeReversal.amount,
+        buzzType: feeReversal.toAccountType,
+        accruedAt: facts.accrual?.accruedAt ?? null,
+        refundTransactionId: blockAuthorFeeReversalKey(workflowId),
+      };
+    } else if (facts.accrual) {
+      // The day, not the status word, decides — the same guard `reverseBlockAuthorFee` applies.
+      const reversible =
+        facts.accrual.status === STATUS_ACCRUED &&
+        !isSettlementEligible(facts.accrual.accruedAt, now);
+      authorFee = {
+        state: reversible ? 'unsettled' : 'settled',
+        feeBuzz: facts.accrual.feeBuzz,
+        buzzType: facts.accrual.buzzType,
+        accruedAt: facts.accrual.accruedAt,
+        refundTransactionId: null,
+      };
+    } else if (feeCharge) {
+      authorFee = {
+        state: 'unaccrued',
+        feeBuzz: feeCharge.amount,
+        buzzType: feeCharge.fromAccountType,
+        accruedAt: null,
+        refundTransactionId: null,
+      };
+    }
+
+    return {
+      kind: 'ok',
+      ...base,
+      userIds: [...facts.userIds],
+      orchestratorStatus: orchestrator.status,
+      legs,
+      unsupportedLegs,
+      partiallyCreditedColours,
+      authorFee,
+    };
+  } catch (error) {
+    return {
+      kind: 'skip',
+      ...base,
+      reason: 'lookup-failed',
+      detail: errorMessage(error),
+      userId: onlyUser(),
+    };
+  }
+}
+
+// ─── Lookup ──────────────────────────────────────────────────────────────────
+
+export type RefundState = 'none' | 'partial' | 'full';
+
+function refundState(legs: ChargeLeg[], fee: AuthorFeeInfo): RefundState {
+  const items = [
+    ...legs.map((l) => l.refundedBy !== null),
+    ...(fee.state === 'none' ? [] : [fee.state === 'reversed']),
+  ];
+  if (items.length === 0 || items.every((done) => !done)) return 'none';
+  return items.every((done) => done) ? 'full' : 'partial';
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const WORKFLOW_CHARGES_DEFAULT_DAYS = 30;
+export const WORKFLOW_CHARGES_MAX_DAYS = 90;
+
+/**
+ * `[from, to)`: `to` defaults to now and `from` to 30 days before `to`. Refuses an empty or inverted
+ * window and one wider than 90 days — the lookup reads the orchestrator once per workflow, so the
+ * window is what bounds it alongside `limit`.
+ */
+export function resolveChargesWindow(input: { from?: Date; to?: Date }, now: Date) {
+  const to = input.to ?? now;
+  const from = input.from ?? new Date(to.getTime() - WORKFLOW_CHARGES_DEFAULT_DAYS * DAY_MS);
+  if (from.getTime() >= to.getTime())
+    throw new TRPCError({ code: 'BAD_REQUEST', message: '`from` must be before `to`' });
+  if (to.getTime() - from.getTime() > WORKFLOW_CHARGES_MAX_DAYS * DAY_MS)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `The window may span at most ${WORKFLOW_CHARGES_MAX_DAYS} days`,
+    });
+  return { from, to };
+}
+
+export async function lookupAppWorkflowCharges(input: {
+  userId: number;
+  appBlockId?: string;
+  from: Date;
+  to: Date;
+  limit: number;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const workflowIds = await listAppWorkflowIdsForUser(input);
+  const records = await getAppWorkflowRecords(workflowIds);
+  const inspections = await mapInBatches(workflowIds, INSPECT_CONCURRENCY, (id) =>
+    inspectWorkflow(id, records, now)
+  );
+  const names = await getAppNames([
+    ...new Set(inspections.map((i) => i.appBlockId).filter((id): id is string => !!id)),
+  ]);
+
+  return {
+    userId: input.userId,
+    from: input.from.toISOString(),
+    to: input.to.toISOString(),
+    workflows: inspections.map((i) => {
+      const app = i.appBlockId ? { id: i.appBlockId, name: names.get(i.appBlockId) ?? null } : null;
+      const common = {
+        workflowId: i.workflowId,
+        app,
+        submittedAt: i.submittedAt?.toISOString() ?? null,
+        recordedStatus: i.recordedStatus,
+      };
+      if (i.kind === 'skip')
+        return { ...common, lookupError: i.detail ?? i.reason, orchestratorStatus: null };
+      return {
+        ...common,
+        orchestratorStatus: i.orchestratorStatus,
+        charges: i.legs,
+        authorFee: {
+          ...i.authorFee,
+          accruedAt: i.authorFee.accruedAt?.toISOString() ?? null,
+        },
+        refundState: refundState(i.legs, i.authorFee),
+        refundTransactionIds: [
+          ...i.legs.map((l) => l.refundTransactionId),
+          i.authorFee.refundTransactionId,
+        ].filter((id): id is string => !!id),
+        // Anything that would stop a refund, so the moderator sees it before calling one.
+        refundBlockers: [
+          ...(i.userIds.length > 1 ? ['mixed-users'] : []),
+          ...(TERMINAL_STATUSES.has(i.orchestratorStatus) ? [] : ['not-terminal']),
+          ...(i.unsupportedLegs > 0 ? ['unsupported-charge'] : []),
+          ...(i.partiallyCreditedColours.length > 0 ? ['orchestrator-partial-refund'] : []),
+        ],
+      };
+    }),
+  };
+}
+
+// ─── Plan ────────────────────────────────────────────────────────────────────
+
+type FeePlan = {
+  state: AuthorFeeState;
+  treatment: AuthorFeeTreatment;
+  /** What the viewer gets back for the fee in this call: 0 unless the treatment returns money. */
+  refundBuzz: number;
+  feeBuzz: number;
+  buzzType: string | null;
+};
+
+type SkipPlan = {
+  outcome: 'skip';
+  workflowId: string;
+  reason: SkipReason;
+  detail?: string;
+  userId: number | null;
+  appBlockId: string | null;
+};
+
+type RefundablePlan = {
+  /** `already-refunded`: nothing left to return — every leg and the fee are back already. */
+  outcome: 'refund' | 'already-refunded';
+  workflowId: string;
+  userId: number;
+  appBlockId: string | null;
+  orchestratorStatus: string;
+  legs: ChargeLeg[];
+  legsToRefund: ChargeLeg[];
+  authorFee: FeePlan;
+  refundBuzz: number;
+};
+
+export type WorkflowPlan = SkipPlan | RefundablePlan;
+
+function planFee(fee: AuthorFeeInfo): FeePlan {
+  const base = { state: fee.state, feeBuzz: fee.feeBuzz, buzzType: fee.buzzType };
+  switch (fee.state) {
+    case 'none':
+      return { ...base, treatment: 'none', refundBuzz: 0 };
+    case 'reversed':
+      return { ...base, treatment: 'already-refunded', refundBuzz: 0 };
+    case 'unsettled':
+      return { ...base, treatment: 'reversed', refundBuzz: fee.feeBuzz };
+    case 'settled':
+      return { ...base, treatment: 'platform-absorbed', refundBuzz: fee.feeBuzz };
+    case 'unaccrued':
+      return { ...base, treatment: 'refunded', refundBuzz: fee.feeBuzz };
+  }
+}
+
+function planWorkflow(inspection: Inspection): WorkflowPlan {
+  if (inspection.kind === 'skip')
+    return {
+      outcome: 'skip',
+      workflowId: inspection.workflowId,
+      reason: inspection.reason,
+      ...(inspection.detail ? { detail: inspection.detail } : {}),
+      userId: inspection.userId,
+      appBlockId: inspection.appBlockId,
+    };
+  const skip = (reason: SkipReason): WorkflowPlan => ({
+    outcome: 'skip',
+    workflowId: inspection.workflowId,
+    reason,
+    userId: inspection.userIds.length === 1 ? inspection.userIds[0] : null,
+    appBlockId: inspection.appBlockId,
+  });
+  // Order matters only for which reason is reported; every one of these refuses.
+  if (inspection.userIds.length !== 1) return skip('mixed-users');
+  if (!TERMINAL_STATUSES.has(inspection.orchestratorStatus)) return skip('not-terminal');
+  if (inspection.unsupportedLegs > 0) return skip('unsupported-charge');
+  if (inspection.partiallyCreditedColours.length > 0) return skip('orchestrator-partial-refund');
+  if (inspection.legs.length === 0 && inspection.authorFee.state === 'none')
+    return skip('no-charges');
+
+  const legsToRefund = inspection.legs.filter((leg) => leg.refundedBy === null);
+  const authorFee = planFee(inspection.authorFee);
+  const refundBuzz = legsToRefund.reduce((sum, leg) => sum + leg.amount, 0) + authorFee.refundBuzz;
+  return {
+    outcome: refundBuzz > 0 ? 'refund' : 'already-refunded',
+    workflowId: inspection.workflowId,
+    userId: inspection.userIds[0],
+    appBlockId: inspection.appBlockId,
+    orchestratorStatus: inspection.orchestratorStatus,
+    legs: inspection.legs,
+    legsToRefund,
+    authorFee,
+    refundBuzz,
+  };
+}
+
+export async function planAppWorkflowRefunds(workflowIds: string[], now = new Date()) {
+  const records = await getAppWorkflowRecords(workflowIds);
+  const inspections = await mapInBatches(workflowIds, INSPECT_CONCURRENCY, (id) =>
+    inspectWorkflow(id, records, now)
+  );
+  const plans = inspections.map(planWorkflow);
+  const byColour: Record<string, number> = {};
+  for (const plan of plans) {
+    if (plan.outcome !== 'refund') continue;
+    for (const leg of plan.legsToRefund)
+      byColour[leg.buzzType] = (byColour[leg.buzzType] ?? 0) + leg.amount;
+    if (plan.authorFee.refundBuzz > 0 && plan.authorFee.buzzType)
+      byColour[plan.authorFee.buzzType] =
+        (byColour[plan.authorFee.buzzType] ?? 0) + plan.authorFee.refundBuzz;
+  }
+  const totalBuzz = Object.values(byColour).reduce((sum, n) => sum + n, 0);
+  return { plans, byColour, totalBuzz };
+}
+
+export type AppWorkflowRefundPlan = Awaited<ReturnType<typeof planAppWorkflowRefunds>>;
+
+// ─── Feedback ────────────────────────────────────────────────────────────────
+
+/**
+ * Refuses a feedback link that does not describe these refunds: a report that is not App feedback,
+ * that another user filed, or that names a different app. Runs on the plan, before any money moves.
+ */
+export async function assertFeedbackMatchesPlan(feedbackId: number, plan: AppWorkflowRefundPlan) {
+  const feedback = await getAppFeedbackForRefund(feedbackId);
+  if (!feedback)
+    throw new TRPCError({ code: 'NOT_FOUND', message: `Feedback ${feedbackId} not found` });
+  if (feedback.area !== APP_BLOCK_FEEDBACK_AREA)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Feedback ${feedbackId} is not App feedback (area "${feedback.area}")`,
+    });
+  for (const p of plan.plans) {
+    if (p.userId !== null && p.userId !== feedback.userId)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Workflow ${p.workflowId} belongs to user ${p.userId}, not to the user who filed feedback ${feedbackId}`,
+      });
+    if (feedback.appBlockId && p.appBlockId && p.appBlockId !== feedback.appBlockId)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Workflow ${p.workflowId} ran in a different app than the one feedback ${feedbackId} is about`,
+      });
+  }
+  return feedback;
+}
+
+// ─── Execute ─────────────────────────────────────────────────────────────────
+
+export type LegResult = {
+  transactionId: string;
+  amount: number;
+  buzzType: string;
+  status: 'would-refund' | 'refunded' | 'already-refunded' | 'failed';
+  refundTransactionId: string | null;
+  error?: string;
+};
+
+export type WorkflowRefundResult = {
+  workflowId: string;
+  userId: number | null;
+  app: { id: string; name: string | null } | null;
+  outcome: 'would-refund' | 'refunded' | 'already-refunded' | 'failed' | 'skipped';
+  reason?: SkipReason;
+  detail?: string;
+  orchestratorStatus?: string;
+  legs: LegResult[];
+  authorFee?: {
+    state: AuthorFeeState;
+    treatment: AuthorFeeTreatment;
+    feeBuzz: number;
+    buzzType: string | null;
+    status: 'would-apply' | 'done' | 'failed' | 'not-applicable';
+    error?: string;
+  };
+  /** Buzz this call returned (execute) or would return (dry run). */
+  refundBuzz: number;
+  spendAttributionsVoided?: number;
+  errors: string[];
+};
+
+function legResults(plan: RefundablePlan) {
+  return plan.legs.map<LegResult>((leg) => ({
+    transactionId: leg.transactionId,
+    amount: leg.amount,
+    buzzType: leg.buzzType,
+    status: leg.refundedBy ? 'already-refunded' : 'would-refund',
+    refundTransactionId: leg.refundTransactionId,
+  }));
+}
+
+/** The author fee, in the treatment the plan chose. Returns an error message, or null when done. */
+async function applyFee(
+  workflowId: string,
+  userId: number,
+  fee: FeePlan
+): Promise<{ treatment: AuthorFeeTreatment; error: string | null }> {
+  const giveBack = async (treatment: AuthorFeeTreatment) => {
+    const landed = await refundBlockAuthorFee({
+      workflowId,
+      viewerUserId: userId,
+      buzzType: fee.buzzType as BuzzAccountType,
+      feeBuzz: fee.feeBuzz,
+    });
+    return { treatment, error: landed ? null : 'author fee refund did not land' };
+  };
+
+  if (fee.treatment === 'platform-absorbed' || fee.treatment === 'refunded')
+    return giveBack(fee.treatment);
+  if (fee.treatment !== 'reversed') return { treatment: fee.treatment, error: null };
+
+  const reversal = await reverseBlockAuthorFee({ workflowId, terminalStatus: 'moderator-refund' });
+  if (reversal.reversed) return { treatment: 'reversed', error: null };
+  // The accrual day closed between the plan and now: the author may be paid it, so it is absorbed.
+  if (reversal.reason === 'settlement-eligible' || reversal.reason === 'already-settled')
+    return giveBack('platform-absorbed');
+  // Another reverser claimed the row first. Done only if its refund is on the ledger.
+  if (reversal.reason === 'no-accrual') {
+    const onLedger = await getTransactionByExternalId(blockAuthorFeeReversalKey(workflowId));
+    return onLedger
+      ? { treatment: 'already-refunded', error: null }
+      : { treatment: 'reversed', error: 'author fee reversal is in progress elsewhere; re-run' };
+  }
+  // `refund-failed`: the accrual row is gone and the refund did not land. A re-run reads the fee
+  // as `unaccrued` and returns it under the same key.
+  return { treatment: 'reversed', error: 'author fee reversal did not land; re-run to retry' };
+}
+
+async function executeWorkflow(plan: RefundablePlan, reasonDetails: Record<string, unknown>) {
+  const legs = legResults(plan);
+  const errors: string[] = [];
+  let refundBuzz = 0;
+  for (const leg of legs) {
+    if (leg.status !== 'would-refund') continue;
+    try {
+      await refundTransactionOnce(leg.transactionId, APP_REFUND_DESCRIPTION, {
+        workflowId: plan.workflowId,
+        ...reasonDetails,
+      });
+      leg.status = 'refunded';
+      leg.refundTransactionId = `refund-${leg.transactionId}`;
+      refundBuzz += leg.amount;
+    } catch (error) {
+      leg.status = 'failed';
+      leg.error = errorMessage(error);
+      errors.push(`leg ${leg.transactionId}: ${leg.error}`);
+    }
+  }
+
+  let feeStatus: 'done' | 'failed' | 'not-applicable' = 'not-applicable';
+  let feeTreatment = plan.authorFee.treatment;
+  let feeError: string | undefined;
+  if (plan.authorFee.refundBuzz > 0) {
+    try {
+      const applied = await applyFee(plan.workflowId, plan.userId, plan.authorFee);
+      feeTreatment = applied.treatment;
+      if (applied.error) {
+        feeStatus = 'failed';
+        feeError = applied.error;
+      } else {
+        feeStatus = 'done';
+        if (applied.treatment !== 'already-refunded') refundBuzz += plan.authorFee.refundBuzz;
+      }
+    } catch (error) {
+      feeStatus = 'failed';
+      feeError = errorMessage(error);
+    }
+    if (feeError) errors.push(`author fee: ${feeError}`);
+  }
+
+  // Only a workflow whose money all came back stops counting as spend.
+  let spendAttributionsVoided: number | undefined;
+  if (errors.length === 0) {
+    try {
+      spendAttributionsVoided = await voidSpendAttributionsForRefund(plan.workflowId);
+    } catch (error) {
+      errors.push(`spend attribution: ${errorMessage(error)}`);
+    }
+  }
+
+  return {
+    legs,
+    errors,
+    refundBuzz,
+    spendAttributionsVoided,
+    authorFee: {
+      state: plan.authorFee.state,
+      treatment: feeTreatment,
+      feeBuzz: plan.authorFee.feeBuzz,
+      buzzType: plan.authorFee.buzzType,
+      status: feeStatus,
+      ...(feeError ? { error: feeError } : {}),
+    },
+  };
+}
+
+function notificationKey(userId: number, refundIds: string[]) {
+  const digest = createHash('sha256')
+    .update([...refundIds].sort().join(','))
+    .digest('hex');
+  return `${APP_BUZZ_REFUND_TYPE}:${userId}:${digest.slice(0, 24)}`;
+}
+
+async function notifyRefundedUsers(results: WorkflowRefundResult[]) {
+  const byUser = new Map<number, WorkflowRefundResult[]>();
+  for (const result of results) {
+    if (result.userId === null || result.refundBuzz <= 0) continue;
+    byUser.set(result.userId, [...(byUser.get(result.userId) ?? []), result]);
+  }
+  const notified: number[] = [];
+  const { createNotification } = await import('~/server/services/notification.service');
+  for (const [userId, rows] of byUser) {
+    const apps = new Map(rows.filter((r) => r.app).map((r) => [r.app!.id, r.app!.name]));
+    const details: AppBuzzRefundDetails = {
+      amount: rows.reduce((sum, r) => sum + r.refundBuzz, 0),
+      appName: apps.size === 1 ? [...apps.values()][0] ?? null : null,
+      appCount: apps.size,
+    };
+    const refundIds = rows.flatMap((r) => [
+      r.workflowId,
+      ...r.legs.filter((l) => l.status === 'refunded').map((l) => l.transactionId),
+    ]);
+    await createNotification({
+      userId,
+      category: appBuzzRefundNotifications[APP_BUZZ_REFUND_TYPE].category,
+      type: APP_BUZZ_REFUND_TYPE,
+      key: notificationKey(userId, refundIds),
+      details,
+    });
+    notified.push(userId);
+  }
+  return notified;
+}
+
+export async function refundAppWorkflows(input: {
+  plan: AppWorkflowRefundPlan;
+  execute: boolean;
+  moderatorId: number;
+  reason: string;
+  feedbackId?: number;
+}) {
+  const { plan, execute } = input;
+  const names = await getAppNames([
+    ...new Set(plan.plans.map((p) => p.appBlockId).filter((id): id is string => !!id)),
+  ]);
+  const appOf = (appBlockId: string | null) =>
+    appBlockId ? { id: appBlockId, name: names.get(appBlockId) ?? null } : null;
+
+  const results: WorkflowRefundResult[] = [];
+  for (const p of plan.plans) {
+    if (p.outcome === 'skip') {
+      results.push({
+        workflowId: p.workflowId,
+        userId: p.userId,
+        app: appOf(p.appBlockId),
+        outcome: 'skipped',
+        reason: p.reason,
+        ...(p.detail ? { detail: p.detail } : {}),
+        legs: [],
+        refundBuzz: 0,
+        errors: [],
+      });
+      continue;
+    }
+    const common = {
+      workflowId: p.workflowId,
+      userId: p.userId,
+      app: appOf(p.appBlockId),
+      orchestratorStatus: p.orchestratorStatus,
+    };
+    const feeView = (status: 'would-apply' | 'not-applicable') => ({
+      state: p.authorFee.state,
+      treatment: p.authorFee.treatment,
+      feeBuzz: p.authorFee.feeBuzz,
+      buzzType: p.authorFee.buzzType,
+      status,
+    });
+    if (p.outcome === 'already-refunded') {
+      results.push({
+        ...common,
+        outcome: 'already-refunded',
+        legs: legResults(p),
+        authorFee: feeView('not-applicable'),
+        refundBuzz: 0,
+        errors: [],
+      });
+      continue;
+    }
+    if (!execute) {
+      results.push({
+        ...common,
+        outcome: 'would-refund',
+        legs: legResults(p),
+        authorFee: feeView(p.authorFee.refundBuzz > 0 ? 'would-apply' : 'not-applicable'),
+        refundBuzz: p.refundBuzz,
+        errors: [],
+      });
+      continue;
+    }
+    const done = await executeWorkflow(p, { moderatorRefund: true });
+    results.push({
+      ...common,
+      outcome: done.errors.length > 0 ? 'failed' : 'refunded',
+      legs: done.legs,
+      authorFee: done.authorFee,
+      refundBuzz: done.refundBuzz,
+      ...(done.spendAttributionsVoided !== undefined
+        ? { spendAttributionsVoided: done.spendAttributionsVoided }
+        : {}),
+      errors: done.errors,
+    });
+  }
+
+  /** Returned by this call (execute), or what it would return (dry run). */
+  const refundBuzz = results.reduce((sum, r) => sum + r.refundBuzz, 0);
+  const failed = results.filter((r) => r.outcome === 'failed').length;
+
+  let notifiedUserIds: number[] = [];
+  let feedback: { feedbackId: number; resolved: boolean; reason?: string } | undefined;
+  if (execute) {
+    // After the money, and never able to undo it: a failed notification is a missing message, not a
+    // failed refund.
+    try {
+      notifiedUserIds = await notifyRefundedUsers(results);
+    } catch {
+      notifiedUserIds = [];
+    }
+    if (input.feedbackId !== undefined) {
+      const settled = results.filter(
+        (r) => r.outcome === 'refunded' || r.outcome === 'already-refunded'
+      );
+      const userId = settled[0]?.userId ?? null;
+      if (failed > 0 || settled.length === 0 || userId === null) {
+        feedback = {
+          feedbackId: input.feedbackId,
+          resolved: false,
+          reason: failed > 0 ? 'some refunds failed' : 'nothing was refunded',
+        };
+      } else {
+        const refundIds = settled.flatMap((r) => [
+          ...r.legs.map((l) => l.refundTransactionId),
+          ...(r.authorFee && r.authorFee.treatment !== 'none'
+            ? [blockAuthorFeeReversalKey(r.workflowId)]
+            : []),
+        ]);
+        const note = [
+          `[App Buzz refund] ${refundBuzz} Buzz refunded by this call across ${
+            settled.length
+          } workflow(s): ${settled.map((r) => r.workflowId).join(', ')}.`,
+          `Refund transactions: ${refundIds.filter(Boolean).join(', ') || 'none'}.`,
+          `Reason: ${input.reason}`,
+        ]
+          .join(' ')
+          .slice(0, 4000);
+        const resolved = await modResolveAppFeedbackWithRefund({
+          moderatorId: input.moderatorId,
+          feedbackId: input.feedbackId,
+          reporterUserId: userId,
+          note,
+        });
+        feedback = { feedbackId: input.feedbackId, resolved };
+      }
+    }
+  }
+
+  return {
+    execute,
+    totals: {
+      plannedBuzz: plan.totalBuzz,
+      plannedByColour: plan.byColour,
+      refundBuzz,
+      workflows: results.length,
+      refunded: results.filter((r) => r.outcome === 'refunded').length,
+      alreadyRefunded: results.filter((r) => r.outcome === 'already-refunded').length,
+      skipped: results.filter((r) => r.outcome === 'skipped').length,
+      failed,
+    },
+    workflows: results,
+    notifiedUserIds,
+    ...(feedback ? { feedback } : {}),
+  };
+}

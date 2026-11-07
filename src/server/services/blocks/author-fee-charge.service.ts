@@ -1013,8 +1013,13 @@ export async function reverseBlockAuthorFee(args: {
  * line is the only recovery handle. The alternative ordering — refund, then
  * delete — trades it for the worse failure, a refunded viewer whose row settles
  * and pays the author out of platform funds.
+ *
+ * Exported for the moderator App refund (`app-workflow-refund.service.ts`), which gives a viewer back
+ * a fee that can no longer be reversed — the author keeps it, the platform pays the viewer. It goes
+ * under the SAME reversal key, so a fee is returned to the viewer at most once whichever path
+ * returns it.
  */
-async function refundBlockAuthorFee(args: {
+export async function refundBlockAuthorFee(args: {
   workflowId: string;
   viewerUserId: number;
   buzzType: BuzzAccountType;

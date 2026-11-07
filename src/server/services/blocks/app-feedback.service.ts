@@ -713,3 +713,71 @@ export async function modSetAppFeedbackHidden({
     return { id: input.id, hidden: input.hidden };
   });
 }
+
+export type AppFeedbackForRefund = {
+  id: number;
+  area: string;
+  userId: number;
+  /** The app block the report was filed on, when its listing still exists and hosts one. */
+  appBlockId: string | null;
+};
+
+/** The columns the moderator App refund checks before it moves money against a report. */
+export async function getAppFeedbackForRefund(id: number): Promise<AppFeedbackForRefund | null> {
+  const row = await dbWrite.feedback.findUnique({
+    where: { id },
+    select: { id: true, area: true, userId: true, appListing: { select: { appBlockId: true } } },
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    area: row.area,
+    userId: row.userId,
+    appBlockId: row.appListing?.appBlockId ?? null,
+  };
+}
+
+/**
+ * Close a report a moderator just refunded: moderator status `actioned` — the triage vocabulary's
+ * "a moderator acted on it" — stamped with who and when, and the refund appended to the triage note
+ * so the queue shows what was done without a second lookup. The developer's own `ownerStatus` is
+ * left alone: it is theirs to set, and setting it would notify the reporter in the developer's name.
+ *
+ * Appended, never overwritten: the note may already hold another moderator's text, and nothing
+ * restores an overwritten note. Scoped on the area and the reporter, so a refund cannot close a
+ * report it was not checked against. Returns whether a row was updated.
+ */
+export async function modResolveAppFeedbackWithRefund({
+  moderatorId,
+  feedbackId,
+  reporterUserId,
+  note,
+}: {
+  moderatorId: number;
+  feedbackId: number;
+  reporterUserId: number;
+  note: string;
+}): Promise<boolean> {
+  return dbWrite.$transaction(async (tx) => {
+    const count = await tx.$executeRaw`
+      UPDATE "Feedback"
+      SET "status" = 'actioned',
+          "handledById" = ${moderatorId},
+          "handledAt" = now(),
+          "triageNote" = CASE
+            WHEN COALESCE("triageNote", '') = '' THEN ${note}
+            ELSE "triageNote" || E'\n' || ${note}
+          END
+      WHERE "id" = ${feedbackId}
+        AND "area" = ${APP_BLOCK_FEEDBACK_AREA}
+        AND "userId" = ${reporterUserId}
+    `;
+    if (count === 0) return false;
+    await trackModActivity(
+      moderatorId,
+      { entityType: 'feedback', activity: 'refundAppBuzz', entityId: feedbackId },
+      tx
+    );
+    return true;
+  });
+}
