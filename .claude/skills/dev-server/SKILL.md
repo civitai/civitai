@@ -192,6 +192,7 @@ node .claude/skills/dev-server/scripts/db-host.selftest.mjs            # the DB 
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs          # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD watching + the restart decision
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
+node .claude/skills/dev-server/scripts/loopback-bind.selftest.mjs      # apps answer on 127.0.0.1 and [::1], nothing else
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
 node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new`/`wt env` never overwrite a credential a tree already has
@@ -550,15 +551,15 @@ anyone in without it. The **main app is not** started: the apps reach it over RE
 and a cold Next.js compile is not something to trigger on someone's behalf. Start it yourself if the
 page you are looking at needs it.
 
-### They bind `::`, deliberately
+### They listen on loopback only, under both spellings
 
-The daemon starts every vite sidecar with `--host ::`. Bound to `127.0.0.1` they answered on v4 and
-nothing on `[::1]`; Windows resolves `localhost` to `::1` first, so the browser got
-connection-refused while curl — which falls back to v4 — reported the server perfectly healthy.
-`--host localhost` is **not** the fix either: it resolves to `::1` only, moving the outage onto every
-caller that hardcodes `127.0.0.1`. `::` accepts v4-mapped addresses, so `localhost`, `127.0.0.1` and
-`[::1]` all answer, and it matches what `next dev` already binds on 3000. Tradeoff: `::` also listens
-on LAN interfaces, where the old bind was loopback-only.
+The daemon starts every vite sidecar with `--host 127.0.0.1` and serves `[::1]` on the same port with
+a forward that opens and closes with the app. Both are needed: Windows resolves `localhost` to `::1`
+first, while other callers hardcode `127.0.0.1`, and vite accepts a single `--host`. Without the
+`[::1]` side, the browser got connection-refused while curl, which falls back to v4, reported the
+server healthy. `localhost`, `127.0.0.1` and `[::1]` all answer where the machine has IPv6 loopback;
+otherwise the daemon logs that `[::1]` is not served. Apps see `[::1]` clients as `127.0.0.1` in
+`getClientAddress()`.
 
 ### First request is slow
 
