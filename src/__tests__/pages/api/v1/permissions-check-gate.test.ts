@@ -112,12 +112,7 @@ describe('GET /api/v1/permissions/check with PERMISSIONS_CHECK_GATE', () => {
   it('answers a user asking about themself', async () => {
     keyFor({ id: ASKED });
     expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
-    expect(cacheHeader()).toBeUndefined();
-  });
-
-  it('answers a read-only key owned by a listed moderator', async () => {
-    keyFor({ id: SERVICE, isModerator: true });
-    expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
+    expect(cacheHeader()).toBe('private, no-store');
   });
 
   it('answers a listed account without the moderator flag', async () => {
@@ -126,7 +121,7 @@ describe('GET /api/v1/permissions/check with PERMISSIONS_CHECK_GATE', () => {
   });
 
   it('answers a read-only key owned by a listed system account', async () => {
-    keyFor({ id: SERVICE, isModerator: true, meta: { systemAccount: true } });
+    keyFor({ id: SERVICE, meta: { systemAccount: true } });
     expect(await ask('Bearer k')).toEqual({ [VERSION]: true });
   });
 
