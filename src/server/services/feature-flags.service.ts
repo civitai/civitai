@@ -688,6 +688,8 @@ const featureFlags = createFeatureFlags({
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   giftMemberships: { availability: ['public'], fliptKey: 'gift-memberships' },
+  // Dark until Flipt turns it on: docs/features/model-gift-links.md.
+  modelGiftLinks: { availability: [], fliptKey: 'model-gift-links' },
   buzzMemberships: { availability: ['mod'], fliptKey: 'buzz-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: [],

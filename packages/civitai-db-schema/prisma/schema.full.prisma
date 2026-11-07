@@ -673,6 +673,8 @@ model User {
   mysteryBoxesSold                   ItemDefinition[]           @relation("ItemDefinitionSeller")
 
   gameFrameGames          GameFrameGame[]
+  giftLinksCreated        ModelVersionGiftLink[]
+  giftRedemptions         ModelVersionGiftRedemption[]
 
   @@index([deletedAt])
   /// Partial in the database (WHERE "bannedAt" IS NOT NULL), as it exists in prod; Prisma cannot
@@ -1357,6 +1359,7 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   licensingRoot           LicensingRoot?
+  giftLinks               ModelVersionGiftLink[]
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
@@ -7180,6 +7183,42 @@ model EntityAccess {
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+// A free claim of a gated model version. The code is never stored, only its hash; a claim grants
+// EntityAccess with meta.giftLinkId. See docs/features/model-gift-links.md.
+model ModelVersionGiftLink {
+  id              Int                          @id @default(autoincrement())
+  modelVersionId  Int
+  modelVersion    ModelVersion                 @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  createdById     Int
+  createdBy       User                         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  codeHash        String                       @unique
+  codeHint        String
+  label           String?
+  batchId         String?
+  /// null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+  maxRedemptions  Int?
+  redemptionCount Int                          @default(0)
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  revokedById     Int?
+  createdAt       DateTime                     @default(now())
+  redemptions     ModelVersionGiftRedemption[]
+
+  @@index([modelVersionId, createdAt(sort: Desc)])
+  @@index([batchId])
+}
+
+model ModelVersionGiftRedemption {
+  giftLinkId Int
+  giftLink   ModelVersionGiftLink @relation(fields: [giftLinkId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  claimedAt  DateTime             @default(now())
+
+  @@id([giftLinkId, userId])
+  @@index([userId])
 }
 
 enum PaidAccessEntityType {

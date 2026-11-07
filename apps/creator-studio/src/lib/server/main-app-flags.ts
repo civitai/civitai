@@ -18,3 +18,13 @@ export async function modFallbackFlagEnabled(flag: string, user: SessionUser): P
   const evaluated = flipt.isEnabledSync(flag, String(user.id), fliptContext(user));
   return evaluated ?? user.isModerator === true;
 }
+
+/**
+ * For a Flipt key that drives a main-app flag declared `availability: []` + `fliptKey` (dark, fails
+ * closed). Same posture: only an evaluation of true turns it on, so Flipt being down hides it in both apps.
+ */
+export async function darkFlagEnabled(flag: string, user: SessionUser): Promise<boolean> {
+  const flipt = getFlipt();
+  await flipt.ensureInitialized();
+  return flipt.isEnabledSync(flag, String(user.id), fliptContext(user)) === true;
+}

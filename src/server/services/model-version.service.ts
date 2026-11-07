@@ -140,6 +140,10 @@ import {
 } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
+  getModelVersionAccessPermissions,
+  grantModelVersionAccess,
+} from '~/server/services/model-version-access.service';
+import {
   checkDonationGoalComplete,
   ensureDonationGoal,
   getDonationGoals,
@@ -2867,14 +2871,14 @@ export const earlyAccessPurchase = async ({
   const sales = await getFreshSalesForPermanentGate(modelVersionId, permanent, paidAccess.ownerId);
   const amount = discountedPrice(storedPrice, sales);
 
-  const accessRecord = await dbWrite.entityAccess.findFirst({
-    where: {
-      accessorId: userId,
-      accessorType: 'User',
-      accessToId: modelVersionId,
-      accessToType: 'ModelVersion',
-    },
-  });
+  // Whatever the grant came from (a purchase or a gift), a user who already holds it is not charged.
+  const heldPermissions = await getModelVersionAccessPermissions(userId, modelVersionId);
+  const requestedPermissions =
+    type === 'generation'
+      ? EntityAccessPermission.EarlyAccessGeneration
+      : EntityAccessPermission.EarlyAccessGeneration + EntityAccessPermission.EarlyAccessDownload;
+  if ((heldPermissions & requestedPermissions) === requestedPermissions)
+    throw throwBadRequestError('You already have access to this model version.');
 
   try {
     // A timed early-access window and a permanent paid-access sale are different products and must be
@@ -2911,40 +2915,12 @@ export const earlyAccessPurchase = async ({
     // statement on purpose: the previous interactive transaction's client-side timeout
     // could fire while the COMMIT was still in flight on the server, so the catch
     // refunded buyers who ended up keeping access (see ClickUp 868k97v07).
-    await dbWrite.entityAccess.upsert({
-      where: {
-        accessToId_accessToType_accessorId_accessorType: {
-          accessToId: modelVersionId,
-          accessToType: 'ModelVersion',
-          accessorId: userId,
-          accessorType: 'User',
-        },
-      },
-      create: {
-        accessToId: modelVersionId,
-        accessToType: 'ModelVersion',
-        accessorId: userId,
-        accessorType: 'User',
-        permissions:
-          type === 'generation'
-            ? EntityAccessPermission.EarlyAccessGeneration
-            : EntityAccessPermission.EarlyAccessGeneration +
-              EntityAccessPermission.EarlyAccessDownload,
-        meta: { [buzzTransactionKey]: buzzTransactionId },
-        addedById: userId, // Since it's a purchase
-      },
-      // An existing row means the user previously acquired partial access
-      // (e.g. generation-only) and is now upgrading.
-      update: {
-        permissions: Math.max(
-          EntityAccessPermission.EarlyAccessDownload + EntityAccessPermission.EarlyAccessGeneration,
-          accessRecord?.permissions ?? 0
-        ),
-        meta: {
-          ...((accessRecord?.meta as Prisma.JsonObject | null) ?? {}),
-          [buzzTransactionKey]: buzzTransactionId,
-        },
-      },
+    await grantModelVersionAccess({
+      userId,
+      modelVersionId,
+      permissions: requestedPermissions,
+      meta: { [buzzTransactionKey]: buzzTransactionId },
+      addedById: userId, // Since it's a purchase
     });
 
     // Post-grant side effects: failures here must not trigger a refund,

@@ -4308,6 +4308,29 @@ export type ModelVersionExploration = {
   prompt: string;
   modelVersionId: number;
 };
+export type ModelVersionGiftLink = {
+  id: Generated<number>;
+  modelVersionId: number;
+  createdById: number;
+  codeHash: string;
+  codeHint: string;
+  label: string | null;
+  batchId: string | null;
+  /**
+   * null = uncapped. CHECKs (> 0, redemptionCount <= maxRedemptions) live only in the migration.
+   */
+  maxRedemptions: number | null;
+  redemptionCount: Generated<number>;
+  expiresAt: Timestamp | null;
+  revokedAt: Timestamp | null;
+  revokedById: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type ModelVersionGiftRedemption = {
+  giftLinkId: number;
+  userId: number;
+  claimedAt: Generated<Timestamp>;
+};
 export type ModelVersionMetric = {
   modelVersionId: number;
   downloadCount: Generated<number>;
@@ -6785,6 +6808,8 @@ export type DB = {
   ModelVersion: ModelVersion;
   ModelVersionEngagement: ModelVersionEngagement;
   ModelVersionExploration: ModelVersionExploration;
+  ModelVersionGiftLink: ModelVersionGiftLink;
+  ModelVersionGiftRedemption: ModelVersionGiftRedemption;
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
   ModelVersionSale: ModelVersionSale;

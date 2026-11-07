@@ -1,294 +1,115 @@
-# Model gift links (draft plan)
+# Model gift links
 
-Status: **plan, not built.** Decisions still open are marked `@ai:`.
-
-A creator who gates a model version (permanent paid access or a timed early-access window) can hand out
-access to that version for free. The creator does this with a gift link or with single-use codes. A
+A creator who gates a model version (permanent paid access or a timed early-access window) can hand
+out access to it for free. They do this with a shareable gift link or with bulk single-use codes. A
 signed-in recipient claims one and gets the same access a buyer gets. No Buzz moves.
 
-## Scope
+Behind the `modelGiftLinks` feature flag (Flipt key `model-gift-links`). It is dark by default and
+fails closed, in the main app and in Creator Studio alike.
 
-- **Gift link.** One code, shareable, with an optional expiry and an optional cap on redemptions.
-- **Bulk single-use codes.** The creator's API token mints N codes for one gated version, each claimable
-  once. This is for creators who hand out codes from their own tooling (Patreon, Discord bots).
-- **Claim.** Done on the site (tRPC) or over REST with the recipient's API token. Either way the claim
-  grants access through the existing `EntityAccess` grant path.
-- **Revoke.** The creator, or a moderator, revokes a link or a code batch. A revoked code cannot be claimed.
+## What it does
 
-Out of scope: gifting free versions, gifting comics (`PaidAccessEntityType.ComicChapter`), buying a gift
-for someone else with Buzz (that is a purchase and goes through the money path), and transferring a claim.
+- **Gift link:** one code, with an optional expiry and an optional cap on claims.
+- **Single-use codes:** up to `GIFT_MINT_MAX_PER_CALL` (500) per call, minted from Creator Studio or the
+  API. A version can hold at most `GIFT_LIVE_CODES_MAX_PER_VERSION` (5000) live, unclaimed codes
+  (`src/server/services/model-version-gift.constants.ts`). That ceiling is checked before the insert,
+  not atomically, so it is a soft limit.
+- **Claim:** done on the site (`/gift/<code>`, an explicit click) or over the API with the recipient's
+  token.
+- **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
+  immediately, including a claim already in flight. **People who already claimed keep their access.**
+  Each grant records `meta.giftLinkId`, so a later change could find a link's grants.
 
-## How access is granted today (what this reuses)
+Out of scope:
 
-- `PaidAccess` (config side): a row means the version is gated. `isPaidAccessActive` decides whether the
-  gate is live. `terms` says what is sold (download and/or generation).
-- `EntityAccess` (grant side): one row per `(accessToId, accessToType, accessorId, accessorType)`, with a
-  `permissions` bitmask (`EntityAccessPermission.EarlyAccessGeneration` / `EarlyAccessDownload`) and a
-  `meta` json. `hasEntityAccess` (`src/server/services/common.service.ts`) reads it.
-- The only model-version writer is `earlyAccessPurchase` (`src/server/services/model-version.service.ts`).
-  It charges Buzz, upserts the `EntityAccess` row with `meta.{download,generation}-buzzTransactionId`,
-  then runs `bustMvCache(versionId, modelId, userId)`.
+- Gifting free versions or comics.
+- Gifting generation only on a version that sells download.
+- Buying a gift for someone else.
+- Claimer usernames: creators see counts only.
+- An owner-menu entry on the model page (a follow-up).
 
-**Reuse:** move the upsert and the cache bust out of `earlyAccessPurchase` into one helper,
-`grantModelVersionAccess({ userId, modelVersionId, permissions, meta, addedById, tx? })`. The purchase
-calls it as it does today, with no behaviour change. The gift claim calls it with
-`meta.giftLinkId` and no transaction id. That keeps one place that writes a model-version grant.
+## How access is granted
 
-Why a gift grant needs no special-casing elsewhere:
+`EntityAccess` holds a user's grant on a version: a `permissions` bitmask
+(`EntityAccessPermission.EarlyAccessGeneration` / `EarlyAccessDownload`) and a `meta` json.
+`grantModelVersionAccess` (`src/server/services/model-version-access.service.ts`) is the one writer,
+used by both the purchase (`earlyAccessPurchase`) and the gift claim. It is a single upsert that ORs
+permissions and merges `meta` keys inside the database. A purchase's `*-buzzTransactionId`, which the
+early-access refund reads, therefore survives a gift claim on the same row, and the other way round.
 
-- `model-early-access-refund.service.ts` refunds only rows that carry a `*-buzzTransactionId`. A gift row
-  carries none, so it is never refunded. It is also never deleted by the refund loop, which deletes only
-  the buyers it refunded.
-- Nothing else in `src/server` reads `"EntityAccess"` as a sales count. A gift therefore does not show up
-  as a sale, does not feed a donation goal, and does not set `meta.hadEarlyAccessPurchase`.
+A gift grants what a buyer of the version would get: download plus generation when the version sells
+download, and generation alone for a generation-only gate. A gift row carries no transaction id, so the
+early-access refund never refunds it or deletes it.
 
-`RedeemableCode` (`redeemableCode.service.ts`) was considered and rejected. Its codes are Buzz/membership
-value stored in plaintext as the primary key, consumed once, with no per-entity target or cap. Bending it
-to fit would change a money table's semantics.
+A user who already holds access is not charged again.
 
 ## Schema
 
-One migration, `packages/civitai-db-schema/prisma/migrations/<ts>_model_version_gift_link/migration.sql`,
-mirrored in `schema.full.prisma`, then `pnpm run db:generate`.
+The migration is `packages/civitai-db-schema/prisma/migrations/20261229120000_model_version_gift_link/`.
 
-```prisma
-model ModelVersionGiftLink {
-  id              Int       @id @default(autoincrement())
-  modelVersionId  Int
-  modelVersion    ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  createdById     Int
-  createdBy       User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
-  codeHash        String    @unique          // hash of the code; the code itself is never stored
-  codeHint        String                     // last 4 chars, so the creator can tell links apart
-  label           String?                    // creator's note ("Patreon tier 2")
-  batchId         String?                    // set on bulk-minted single-use codes
-  maxRedemptions  Int?                       // null = uncapped; 1 for bulk codes
-  redemptionCount Int       @default(0)
-  expiresAt       DateTime?
-  revokedAt       DateTime?
-  revokedById     Int?
-  createdAt       DateTime  @default(now())
-  redemptions     ModelVersionGiftRedemption[]
+- `ModelVersionGiftLink`: `codeHash` (unique), `codeHint` (last 4 characters), `label`, `batchId` (bulk
+  codes), `maxRedemptions` (null = uncapped, 1 for bulk codes), `redemptionCount`, `expiresAt`,
+  `revokedAt`/`revokedById`. It cascades from the version and from the creator.
+- `ModelVersionGiftRedemption`: primary key `(giftLinkId, userId)`, so a user redeems a link at most once.
+- Two `CHECK`s live only in the migration SQL: `maxRedemptions > 0`, and `redemptionCount <=
+maxRedemptions`. The second is a backstop behind the claim's conditional update.
 
-  @@index([modelVersionId, createdAt(sort: Desc)])
-  @@index([batchId])
-}
+**Applying it.** It is hand-applied, never `prisma migrate deploy`. For each writable environment,
+apply it before the code deploys:
 
-model ModelVersionGiftRedemption {
-  giftLinkId Int
-  giftLink   ModelVersionGiftLink @relation(fields: [giftLinkId], references: [id], onDelete: Cascade)
-  userId     Int
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  claimedAt  DateTime @default(now())
-
-  @@id([giftLinkId, userId])
-  @@index([userId])
-}
-```
-
-A `CHECK ("maxRedemptions" IS NULL OR "maxRedemptions" > 0)` and a
-`CHECK ("maxRedemptions" IS NULL OR "redemptionCount" <= "maxRedemptions")` go in the migration SQL only.
-The second is a backstop: the claim's conditional update is what enforces the cap, and the check turns
-any bug in it into a failed claim rather than an overshoot.
-
-`@ai:` Should deleting a version cascade its gift links (as above), or keep them for audit? `EntityAccess`
-is polymorphic and the version delete already cleans it by hand (`model-version.service.ts`, the
-"EntityAccess and PaidAccess are polymorphic" block). Gift links have a real FK, so cascade is the simple
-default.
-
-No new enum values, so there is no deploy-before-migrate ordering.
-
-**Applying (by hand, per writable environment).** Never `prisma migrate deploy`.
-
-1. Dry run: run the migration inside `BEGIN; … ROLLBACK;` against the target.
+1. Dry run: run the file inside `BEGIN; … ROLLBACK;`.
 2. Apply it.
-3. Scoped drift check, read-only:
-   `DATABASE_URL=<target, read-only role> pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql`.
-4. Clean, or fix it. The drift check does not cover indexes or check constraints, so confirm the two
-   `CHECK`s and both indexes directly with `\d "ModelVersionGiftLink"`.
-
-The migration must be applied before the code that reads the tables deploys.
+3. Run the scoped drift check, read-only:
+   `DATABASE_URL=<target, read-only role> pnpm --filter @civitai/db-schema drift --migration prisma/migrations/20261229120000_model_version_gift_link/migration.sql`.
+4. The drift check covers neither `CHECK`s nor indexes. Confirm them with `\d "ModelVersionGiftLink"`.
 
 ## Codes
 
-- The server generates the code from a CSPRNG with enough entropy that guessing is not practical. It stores
-  only `codeHash` (a SHA-256 of the code). A random, high-entropy code needs no slow hash, and a plain
-  digest keeps lookup a single unique-index hit. The plaintext is returned once, in the create/mint
-  response, and is never readable again. A lost link is revoked and re-minted.
-- Link URL: `https://civitai.com/gift/<code>`. That page claims on click once the user signs in. The code
-  sits in the path, not the query string, and the page sets `Referrer-Policy: no-referrer`.
-- `@ai:` Code format. Proposal: a prefix such as `cvg_` plus base32 without ambiguous characters, so a code
-  pasted into the API is easy to recognise and a leaked code is easy to find in a secret scanner.
+A code is `cvg_` followed by 26 Crockford base32 characters from a CSPRNG, which is 130 bits of
+entropy. Only a SHA-256 of the normalised code is stored. The plaintext is returned once, by the create
+or mint call. Input is normalised before hashing: case-insensitive, hyphens ignored, and `I`/`L` read as
+`1`, `O` as `0`. The claim page sets `Referrer-Policy: no-referrer`.
 
-## Services (`src/server/services/model-version-gift.service.ts`)
+## Claim
 
-- `createGiftLink({ userId, modelVersionId, maxRedemptions?, expiresAt?, label? })` returns `{ id, code }`.
-- `mintGiftCodes({ userId, modelVersionId, count, expiresAt?, label? })` returns `{ batchId, codes[] }`.
-  It inserts `count` rows with `maxRedemptions = 1` in one `createMany`, with a per-call cap on `count`.
-  `@ai:` Proposal: 500 per call, plus a ceiling on the live unredeemed codes per version, so one leaked
-  token cannot mint without bound.
-- `listGiftLinks({ userId, modelVersionId })`: hint, label, counts, expiry, revoked state. Never the code.
-- `revokeGiftLink({ userId, id })` and `revokeGiftBatch({ userId, batchId })` set `revokedAt`. The update is
-  scoped `WHERE id = ? AND "createdById" = ?` (moderators bypass the owner clause), and 0 rows is an error.
-- `claimGift({ userId, code })` returns `{ modelVersionId, modelId, alreadyHadAccess }`.
+`claimGift` (`src/server/services/model-version-gift.service.ts`) runs these steps in order:
 
-**Who may create or mint.** The model's owner (the same check `assertMonetizationWrite` makes), and only
-while `PaidAccess` for the version is active. A version that is not gated has nothing to gift.
-
-**Claim, in order:**
-
-1. Hash the code and look the row up. If there is no row, or it is revoked or expired, return one generic
-   "invalid or expired gift" error. The response does not say which case applied.
-2. Load the version and its `PaidAccess`. Refuse when the claimer owns the model. Refuse when the version
-   is not `Published`. `@ai:` Allow claims on a scheduled or unpublished version, so a creator can seed
-   testers before launch? The grant would sit unused until publish, so the default is to refuse.
-3. If the gate is no longer active (a timed window lapsed), return `alreadyHadAccess: true` and **consume
-   nothing**. The version is free now.
-4. If the claimer already has the permissions the gift would grant (a buyer, or an earlier gift), return
-   `alreadyHadAccess: true` and **consume nothing**. A cap is not spent on someone who gains nothing.
-5. In one `dbWrite.$transaction`, with database work only (per `no-io-in-transaction`):
-   - `INSERT INTO "ModelVersionGiftRedemption" … ON CONFLICT DO NOTHING RETURNING 1`. If no row comes back,
-     this user already claimed this link, and the transaction stops without incrementing.
-   - The cap and liveness check is a single conditional update:
-     ```sql
-     UPDATE "ModelVersionGiftLink"
-        SET "redemptionCount" = "redemptionCount" + 1
-      WHERE id = $1
-        AND "revokedAt" IS NULL
-        AND ("expiresAt" IS NULL OR "expiresAt" > now())
-        AND ("maxRedemptions" IS NULL OR "redemptionCount" < "maxRedemptions")
-     RETURNING id
-     ```
-     If no row comes back, throw, which rolls back the redemption insert. Postgres re-evaluates the `WHERE`
-     on the row lock, so two concurrent claims on the last slot serialise: one gets the row, and the other
-     sees the incremented count and gets 0 rows. That makes the cap atomic without `SERIALIZABLE`.
-   - `grantModelVersionAccess({ tx, permissions, meta: { giftLinkId }, addedById: link.createdById })`.
-6. After commit, bust the caches (`bustMvCache`) and fire the recipient notification, both outside the
-   transaction.
-
-**Permissions granted.** Whatever the version sells: `EarlyAccessGeneration + EarlyAccessDownload` when
-`terms.download` is set, `EarlyAccessGeneration` alone for a generation-only gate. An existing row is
-merged with `Math.max`, as the purchase does, so a gift never downgrades a buyer.
-`@ai:` Should a creator be able to gift generation-only on a version that sells download? That would add a
-`permissions` column to the link. Left out until someone asks for it.
-
-**Interaction with purchase.** `earlyAccessPurchase`'s "already purchased" check looks for a
-`*-buzzTransactionId`. A gift row has none, so a gifted user is not blocked from buying. The buy button
-is already hidden on `hasAccess`, so this is reachable only by calling the API directly, and it would
-charge someone for access they already hold. Plan: extend that check to refuse when the existing
-permissions already cover the requested type, whatever the source.
-
-## Revocation semantics
-
-Revoking stops new claims immediately. That holds even for a claim in flight, because the conditional
-update re-reads `revokedAt` under the row lock.
-
-**Access already granted is kept.** A recipient who claimed in good faith keeps what they claimed, the same
-way a buyer keeps a purchase. The `EntityAccess` row carries `meta.giftLinkId`, so revoking a link's
-grants could be added later as a separate, explicit, moderator-visible action.
-
-`@ai:` **Justin's call.** Is "keep granted access" the product rule? The alternative is
-revoke-and-remove: delete the `EntityAccess` rows whose `meta.giftLinkId` matches, but only when they
-carry no transaction id, so a buyer who also claimed a gift is not stripped.
+1. A per-user rate limit, applied before the lookup.
+2. Hash the code and look it up. An unknown, revoked or expired code gets the same message.
+3. Refuse the model's owner. Refuse a version or model that is not `Published`.
+4. If the gate has ended, or the claimer already holds what the gift grants, return
+   `alreadyHadAccess: true` and spend no claim.
+5. `redeemGiftLink` runs one transaction: insert the redemption (`ON CONFLICT DO NOTHING`), then a
+   conditional `UPDATE … SET "redemptionCount" + 1 WHERE` not revoked, not expired and under the cap,
+   then the grant. If the update takes no row, the transaction rolls back. Postgres re-checks the
+   `WHERE` on the row it locks, so racing claims for the last slot serialise.
+6. Bust the version caches.
 
 ## Surfaces
 
-### tRPC (`model-version.router.ts`, or a small `model-version-gift.router.ts`)
+- **tRPC** (`modelVersionGift`): `list`, `create`, `revoke` and `claim`. `create` and `claim` are
+  session-only (`blockApiKeys`).
+- **REST**, under `/api/v1/model-versions`. Every route goes through `GiftEndpoint`
+  (`src/server/utils/model-gift-endpoint.ts`), which requires `ModelsWrite` (a cookie session or a
+  full-access key also passes), answers 404 while the flag is off, and sends `private, no-store`.
+  - `POST gifts/claim` with `{ code }`.
+  - `GET [id]/gifts` lists links (never codes).
+  - `POST [id]/gifts` with `{ count, expiresAt?, label? }` mints single-use codes.
+  - `POST [id]/gifts/link` with `{ maxRedemptions?, expiresAt?, label? }` creates a gift link.
+  - `DELETE [id]/gifts/[giftId]` and `DELETE [id]/gifts/batch/[batchId]` revoke.
+- **Creator Studio:** `/models/gifts/[versionId]`, linked from a gated version's row on `/models`. It
+  calls the REST routes with the creator's session. Codes appear once, in the action result, with copy
+  and CSV download. A mature model's link points at civitai.red.
 
-| Procedure                         | Kind                                             | Meta                                               |
-| --------------------------------- | ------------------------------------------------ | -------------------------------------------------- |
-| `giftLink.create`                 | `protectedProcedure` mutation                    | `requiredScope: ModelsWrite`, `blockApiKeys: true` |
-| `giftLink.list`                   | `protectedProcedure` query                       | `requiredScope: ModelsRead`                        |
-| `giftLink.revoke` / `revokeBatch` | `protectedProcedure` mutation                    | `requiredScope: ModelsWrite`                       |
-| `giftLink.claim`                  | `protectedProcedure` mutation + `rateLimit(...)` | `requiredScope: ModelsWrite`, `blockApiKeys: true` |
+## Tests
 
-`create` and the site claim are session-only (`blockApiKeys`). Token callers use the REST routes below,
-which keeps the scope decision for token callers in one place per action.
-
-### REST (`src/pages/api/v1/model-versions/gifts/`)
-
-- `POST /api/v1/model-versions/gifts/claim` with body `{ code }`. The caller is the recipient's API token.
-- `POST /api/v1/model-versions/[id]/gifts` with body `{ count, expiresAt?, label? }` bulk-mints single-use
-  codes. The caller is the creator's API token.
-- `GET /api/v1/model-versions/[id]/gifts` lists links (never codes). `DELETE …/gifts/[giftId]` and
-  `DELETE …/gifts/batch/[batchId]` revoke.
-
-`AuthedEndpoint` checks no scope by itself. Each handler calls `matchedScope` from
-`src/server/services/oauth/enforce-token-scope.ts`, the same way `src/pages/api/v1/me/limits.ts` does, and
-returns 403 before any read. A cookie session and a full-scope key pass.
-`@ai:` Which scope? `ModelsWrite` fits both: a claim changes what the recipient can do with a model, and a
-mint changes the creator's model. A dedicated scope bit would be cleaner for creators handing a
-mint-only key to a bot, but adding a `TokenScope` bit touches `packages/civitai-auth`, the consent screen
-and the developer docs. Proposal: `ModelsWrite` now, and a dedicated bit if creators ask.
-
-These are public endpoints. Per `.claude/rules/public-api.md`, each one gets a page in the developer-docs
-repo, opened as a PR alongside this one and merged only after release.
-
-### Creator Studio (`apps/creator-studio`)
-
-Creator Studio writes paid access through the main app (`$lib/server/main-app.ts` `callMainApp`, which
-forwards the creator's session cookie) rather than through Kysely, because the write's side effects live
-in the main app. Gift links follow the same route: the REST routes above, called with the cookie session.
-
-- A "Gift links" panel on the version's monetization editor, next to the paid-access settings in
-  `src/routes/(app)/models/`. It is a sibling component of the page, per `docs/svelte-app-standard.md`.
-- The `load` reads the list. Form `actions` handle create, mint and revoke, each validated with zod. A
-  newly created code is shown once in the action result, with a copy button and a "you won't see this
-  again" note. It is never put in page data that survives a reload.
-- Mint offers a CSV download of the codes from the same action result.
-- `@ai:` Should the panel also show who claimed each link, by username? It is useful for creators, but it
-  exposes recipients' identities to the creator. The default is to show counts only.
-
-### Site (`src/`)
-
-- `src/pages/gift/[code].tsx` is the claim page. Signed out, it sends the user to sign in and back.
-  Signed in, it shows the model card and a Claim button (an explicit click, not an auto-claim on load), then
-  links to the model.
-- `@ai:` The model page could also get a "Gift links" entry in the owner's version menu, linking to Creator
-  Studio. Is it needed at launch?
-
-## Rate limiting
-
-- Site claim: the tRPC `rateLimit` middleware, keyed per user.
-- REST claim and mint: a per-user bucket from `src/server/utils/rate-limit-bucket.ts`, plus the per-call
-  mint count cap above.
-- The numbers live in code, not in this doc. Failed claims count against the limit as well as successful
-  ones, so guessing gets slower with each attempt.
-
-## Tests that must fail if the guard breaks
-
-Each test below names what it catches. Each needs a positive control: revert the guard, run the test, and
-quote the failure.
-
-1. **Cap overshoot, concurrent** (`model-version-gift.claim.pg.test.ts`, against real Postgres, not
-   mocks). A mock cannot race. It follows the `doc-store.pg.test.ts` pattern: a throwaway Postgres
-   provided by the unit CI job, and a test that **fails** when the URL is unset, so a skipped run cannot
-   read as a pass. A link with `maxRedemptions = 3`, and 10 distinct users claiming at once through
-   `Promise.all` on separate connections. Assert exactly 3 grants, `redemptionCount === 3`, and 7
-   refusals. Control: drop the `"redemptionCount" < "maxRedemptions"` clause, and the count should come
-   back above 3. `@ai:` This needs the gift tables created in that throwaway database (a fixture
-   migration), and a new environment variable in `lint.yml`'s unit job.
-2. **Same user, double claim, concurrent.** One user, 5 parallel claims on an uncapped link. Assert 1
-   redemption row and `redemptionCount === 1`.
-3. **Revoked or expired, mid-flight.** Revoke between lookup and update (inject the revoke through a
-   transaction hook). The claim fails and no `EntityAccess` row exists.
-4. **No consume when already entitled.** A buyer claims a capped link, and `redemptionCount` stays 0.
-5. **Scope bypass, REST.** For each new `/api/v1` route, a token without `ModelsWrite` gets 403 and no
-   database write happens. A `ModelsWrite` token and a cookie session pass. Control: remove the
-   `matchedScope` call, and the 403 test should fail on the status, naming 200.
-6. **Scope, tRPC.** `giftLink.create` and `giftLink.claim` refuse an API key (`blockApiKeys`), and `list`
-   refuses a token without `ModelsRead`.
-7. **Ownership.** A non-owner cannot create, mint, list or revoke (403 or 404), and revoking someone
-   else's link affects 0 rows and errors.
-8. **Plaintext never stored.** After create, no column of the row contains the returned code.
-9. **Purchase unchanged.** The existing `earlyAccessPurchase` tests still pass through the extracted
-   `grantModelVersionAccess`, plus one new case: a gifted user's purchase call is refused before any
-   charge.
-10. **Refund unaffected.** The refund service, run over a version that has a gift grant, refunds nothing
-    for that user and leaves the row in place.
-
-## Rollout
-
-Behind a Flipt flag (`model-gift-links`) on the tRPC, REST and Creator Studio surfaces until the proof
-in the task holds on prod: a second account claims a link, an API claim works, and a revoke stops new
-claims.
+- `src/server/services/__tests__/model-version-gift.claim.pg.test.ts` runs the claim's SQL on a real
+  Postgres (`APPDATA_TEST_DATABASE_URL`, the unit CI job's throwaway server; the suite fails in CI without it):
+  - 10 concurrent claims on a 3-claim link grant exactly 3.
+  - One user's 5 concurrent claims count once.
+  - A revoked link leaves no grant.
+  - A gift merges into a buyer's row without dropping the transaction id.
+- `src/server/__tests__/api-v1-model-version-gifts.test.ts` checks every REST route: a token without
+  `ModelsWrite` gets 403 before the service runs, and the flag gates every route.
+- `src/server/services/__tests__/model-version-gift.service.test.ts` covers codes, ownership, mint caps,
+  no-spend claims, uniform refusals and the rate limit.

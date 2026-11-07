@@ -1,0 +1,2 @@
+export const GIFT_MINT_MAX_PER_CALL = 500;
+export const GIFT_LIVE_CODES_MAX_PER_VERSION = 5000;

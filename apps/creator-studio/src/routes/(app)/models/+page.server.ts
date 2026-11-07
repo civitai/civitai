@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
+import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
+import { darkFlagEnabled } from '$lib/server/main-app-flags';
 import { getModelsView } from '$lib/server/models-view';
 import {
   resolveMembership,
@@ -127,6 +129,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
       canSetGenerationOnly: await canSetGenerationOnlyFresh(locals.user),
     },
+    giftLinksEnabled: await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, locals.user),
   };
 };
 

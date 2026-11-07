@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModelVersionAccessService from '~/server/services/model-version-access.service';
 
 // `~/server/redis/client` and `~/server/logging/client` are covered by the canonical
 // shared mocks (`redisMock` / `loggingMock`) that `src/__tests__/setup.ts` registers for
@@ -19,6 +20,7 @@ const {
   mockGetOwnerDonationGoals,
   mockHasEntityAccess,
   mockCheckDonationGoalComplete,
+  mockGrantModelVersionAccess,
 } = vi.hoisted(() => ({
   mockCreateMultiAccountBuzzTransaction: vi.fn(),
   mockGetPaidAccess: vi.fn(),
@@ -27,6 +29,7 @@ const {
   mockGetOwnerDonationGoals: vi.fn(),
   mockHasEntityAccess: vi.fn(),
   mockCheckDonationGoalComplete: vi.fn(),
+  mockGrantModelVersionAccess: vi.fn(),
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
@@ -63,6 +66,10 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundMultiAccountTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
+vi.mock('~/server/services/model-version-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelVersionAccessService>()),
+  grantModelVersionAccess: mockGrantModelVersionAccess,
+}));
 vi.mock('~/server/services/donation-goal.service', () => ({
   checkDonationGoalComplete: mockCheckDonationGoalComplete,
   ensureDonationGoal: vi.fn(),
@@ -127,6 +134,7 @@ const seed = ({
   dbMock.dbRead.entityAccess.findFirst.mockResolvedValue(null);
   dbMock.dbRead.entityAccess.upsert.mockResolvedValue({});
   dbMock.dbWrite.entityAccess.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.entityAccess.findUnique.mockResolvedValue(null);
   dbMock.dbWrite.entityAccess.upsert.mockResolvedValue({});
   mockCreateMultiAccountBuzzTransaction.mockResolvedValue({
     transactionCount: 1,
@@ -301,7 +309,41 @@ describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, n
     ).rejects.toThrow();
 
     expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.entityAccess.upsert).not.toHaveBeenCalled();
+    expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('earlyAccessPurchase — a user who already holds access is not charged again', () => {
+  it('refuses before any charge when the held grant (e.g. a gift, no transaction id) covers it', async () => {
+    seed();
+    dbMock.dbWrite.entityAccess.findUnique.mockResolvedValue({ permissions: 3 });
+
+    await expect(
+      earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType: 'yellow',
+      })
+    ).rejects.toThrow('You already have access to this model version.');
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+
+  it('still charges a generation-only holder who upgrades to download', async () => {
+    seed();
+    dbMock.dbWrite.entityAccess.findUnique.mockResolvedValue({ permissions: 1 });
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: BUYER, modelVersionId: VERSION_ID, permissions: 3 })
+    );
   });
 });
 
