@@ -432,8 +432,11 @@ async function refuseHeld(
               "modNotesKey" = NULL, error = NULL
           WHERE id = ${row.id} AND status = 'built'
         `;
+  // A build attempt's uploads have keys of their own, so they go even when the row has moved on. At
+  // release they are the row's, and a lost claim can mean a racing press just released them: keep them.
+  if (bucket && (recorded === 1 || from.status === 'building'))
+    await deleteObjects(bucket, uploaded);
   if (recorded !== 1) return 'failed' as const;
-  if (bucket) await deleteObjects(bucket, uploaded);
   logToAxiom({
     type: 'info',
     name: LOG,

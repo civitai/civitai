@@ -232,6 +232,20 @@ describe('buildExport', () => {
     expect(sqlOf(held)).toContain('"archiveKey" = NULL');
   });
 
+  it("deletes a held account's upload even when this attempt no longer owns the row", async () => {
+    m.holds
+      .mockResolvedValueOnce({ legs: [], markerView: true })
+      .mockResolvedValue({ legs: ['report'], markerView: true });
+    // Recovered as stale while this ran: the refusal's guarded UPDATE matches nothing.
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0 as never);
+    expect(await buildExport(row, deps)).toBe('failed');
+    expect(m.del).toHaveBeenCalledTimes(1);
+    const [, keys] = m.del.mock.calls[0] as [unknown, (string | null)[]];
+    expect(keys[0]).toMatch(/^exports\/5\/.+\.zip$/);
+    // The row is another attempt's now: it, not this one, tells Legal.
+    expect(m.refusedSend).not.toHaveBeenCalled();
+  });
+
   it('writes the notes file with staff redacted, and never puts a note count in the archive', async () => {
     await buildExport(row, deps);
     expect(m.put).toHaveBeenCalledTimes(1);
