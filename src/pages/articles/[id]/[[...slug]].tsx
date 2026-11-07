@@ -330,7 +330,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // articleBody intentionally omitted — Google reads the page body
     // directly for ranking. Embedding the full text in JSON-LD bloats
     // <head> on long articles without adding meaningful SEO signal.
-    image: safeSchemaImageUrl(article.coverImage, { width: 1200 }),
+    image: safeSchemaImageUrl(article.coverImage ?? article.bannerImage, { width: 1200 }),
     author:
       article.user.username && !article.user.deletedAt
         ? {
@@ -601,7 +601,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       meta={{
         title: `${article.title} | Civitai`,
         description: truncate(articleBodyText, { length: 150 }),
-        images: article?.coverImage,
+        images: article?.coverImage ?? article?.bannerImage,
         ogEndpoint: `/api/og?type=article&id=${article.id}`,
         canonical: getArticleUrl({ id: article.id, title: article.title }),
         alternate: `/articles/${article.id}`,

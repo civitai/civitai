@@ -31,6 +31,7 @@ import {
 } from '~/server/services/creator-milestone-share.service';
 import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
 import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
+import { servableBanner } from '~/shared/utils/article-card-image';
 
 // --- Schema & Types ---
 
@@ -305,6 +306,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
         content: true,
         user: { select: { username: true } },
         coverImage: { select: ogImageSelect },
+        bannerImage: { select: { ...ogImageSelect, ingestion: true, needsReview: true } },
       },
     }),
     dbRead.articleMetric
@@ -337,7 +339,7 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
     title: article.title,
     description: cleanDescription(article.content ?? ''),
     creator: article.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(article.coverImage)),
+    ...buildEntityImage(getSafeImage(article.coverImage ?? servableBanner(article.bannerImage))),
     stats,
   };
 }

@@ -480,7 +480,12 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
-        a."coverId",
+        -- A banner stands in for a missing cover on cards, once it is servable.
+        COALESCE(
+          a."coverId",
+          (SELECT b.id FROM "Image" b
+            WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
+        ) AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -663,7 +668,11 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      "coverId",
+      COALESCE(
+          a."coverId",
+          (SELECT b.id FROM "Image" b
+            WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
+        ) AS "coverId",
       title,
       content,
       "publishedAt",

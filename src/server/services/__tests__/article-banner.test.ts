@@ -286,3 +286,34 @@ describe('getArticleById banner visibility', () => {
     });
   });
 });
+
+describe('getArticleById on a banner-only article', () => {
+  // The edit form seeds coverImage from this read and saves it back, so a banner standing in for
+  // the cover here would save coverId = bannerId (refused by the unique index) or give the article
+  // a cover it never had. Cards fall back to the banner in their own reads, never in this one.
+  it('does not substitute the banner for the cover, which the edit form would save back', async () => {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: ARTICLE_ID,
+      userId: OWNER,
+      nsfwLevel: NsfwLevel.PG,
+      content: '',
+      tags: [],
+      metadata: null,
+      coverImage: null,
+      bannerImage: {
+        id: BANNER,
+        url: 'banner-key',
+        nsfwLevel: NsfwLevel.PG,
+        ingestion: 'Scanned',
+        needsReview: null,
+        meta: null,
+        metadata: null,
+        tags: [],
+      },
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    const article = await getArticleById({ id: ARTICLE_ID, userId: OWNER });
+    expect(article.coverImage ?? null).toBeNull();
+    expect(article.bannerImage).toMatchObject({ id: BANNER });
+  });
+});

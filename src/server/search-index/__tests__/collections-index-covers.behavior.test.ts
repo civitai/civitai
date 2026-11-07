@@ -109,7 +109,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, cover text, "coverId" int, status text, "publishedAt" timestamp,
-      availability text, ingestion text DEFAULT 'Scanned'
+      availability text, ingestion text DEFAULT 'Scanned', "bannerId" int
     );
     CREATE TABLE "Model3D" (
       id int PRIMARY KEY, "thumbnailImageId" int, status text, "deletedAt" timestamp,

@@ -7643,7 +7643,7 @@ export const getEntityCoverImage = async ({
 	          0 "coverRank"
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
-          JOIN "Image" i ON a."coverId" = i.id
+          JOIN "Image" i ON i.id = COALESCE(a."coverId", a."bannerId")
           WHERE e."entityType" = 'Article'
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')

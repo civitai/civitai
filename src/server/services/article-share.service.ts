@@ -297,13 +297,16 @@ function readSharedArticleRow(id: number) {
       ingestion: true,
       user: { select: { ...userWithCosmeticsSelect, bannedAt: true, muted: true } },
       coverImage: { select: imageSelect },
+      bannerImage: { select: imageSelect },
     },
   });
 }
 
 /** Only what the read-only view renders. */
 function toSharedArticle(article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>) {
-  const { id, title, content, nsfwLevel, updatedAt, coverImage } = article;
+  const { id, title, content, nsfwLevel, updatedAt } = article;
+  // The banner stands in for a missing cover.
+  const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
   const showCover = coverImage?.ingestion === 'Scanned' && !coverImage.needsReview;
   return {
