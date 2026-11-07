@@ -41,6 +41,7 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
@@ -1223,6 +1224,7 @@
                 <Button onclick={() => (confirming = true)}>Train further</Button>
               {/if}
             </div>
+            <BlueFirstNote />
             <div class="font-mono text-xs text-dark-2">
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
