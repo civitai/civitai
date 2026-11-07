@@ -293,6 +293,7 @@ describe('setTosViolationHandler', () => {
 
 describe('a re-block keeps the original block reason', () => {
   const BLOCKED_WITH_REASON = 45;
+  const OTHER_REASON = 46;
   const blockedFor = async (id: number) =>
     (
       await holder.db.query<{ blockedFor: string | null }>(
@@ -316,15 +317,17 @@ describe('a re-block keeps the original block reason', () => {
 
   beforeEach(async () => {
     await holder.db.query(
-      `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES ($1, 11, 'Blocked', $2, 32)`,
-      [BLOCKED_WITH_REASON, BlockedReason.CSAM]
+      `INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        ($1, 11, 'Blocked', $2, 32), ($3, 11, 'Blocked', $4, 32)`,
+      [BLOCKED_WITH_REASON, BlockedReason.CSAM, OTHER_REASON, BlockedReason.AiNotVerified]
     );
   });
 
   it('handleBlockImages', async () => {
-    await handleBlockImages({ ids: [BLOCKED_WITH_REASON, FLAGGED] });
+    await handleBlockImages({ ids: [BLOCKED_WITH_REASON, OTHER_REASON, FLAGGED] });
 
     expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
     expect(await blockedFor(FLAGGED)).toBe(BlockedReason.Moderated);
   });
 
@@ -341,6 +344,7 @@ describe('a re-block keeps the original block reason', () => {
     await handleBlockImages({ userId: 11 });
 
     expect(await blockedFor(BLOCKED_WITH_REASON)).toBe(BlockedReason.CSAM);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
   });
 
   it('setTosViolationHandler', async () => {
@@ -350,9 +354,9 @@ describe('a re-block keeps the original block reason', () => {
   });
 
   it('setTosViolationHandler still blocks any other image as moderated', async () => {
-    await tosBlock(FLAGGED);
+    await tosBlock(OTHER_REASON);
 
-    expect(await blockedFor(FLAGGED)).toBe(BlockedReason.Moderated);
+    expect(await blockedFor(OTHER_REASON)).toBe(BlockedReason.Moderated);
   });
 });
 

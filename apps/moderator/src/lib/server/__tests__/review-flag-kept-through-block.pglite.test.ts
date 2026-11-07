@@ -255,9 +255,16 @@ describe('blockImage and the block reason', () => {
   });
 
   it('records any other block as moderated', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel")
+       VALUES (56, 10, NULL, 'AiNotVerified', 'Blocked', 32)`
+    );
+
     await blockImage({ imageId: FLAGGED, userId: 2 });
+    await blockImage({ imageId: 56, userId: 2 });
 
     expect(await blockedFor(FLAGGED)).toBe('moderated');
+    expect(await blockedFor(56)).toBe('moderated');
   });
 });
 
