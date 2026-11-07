@@ -76,7 +76,7 @@ const INSET_CONSUMERS = [
   'src/components/Ads/AdhesiveAd.tsx',
   // An inline `styles.inner` padding, which outranks the shell's modal rule the same way
   // SupportModal's Tailwind one does — but only while an on-screen keyboard is up, when the
-  // feedback dialog swaps its 10dvh offsets for a small gap. It folds the TOP inset into that
+  // feedback dialog swaps its default vertical offsets for a small gap. It folds the TOP inset into that
   // gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
   'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
