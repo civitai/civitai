@@ -336,6 +336,13 @@ export const ActionType = [
   // Fields ride in `details` (migrations/2026-11-04-experiment-exposure-hat-turf-actions.sql).
   'Experiment_Exposure',
   'HatTurf_Action',
+  // App store acquisition funnel (migrations/2026-11-07-app-store-funnel-actions.sql, plus the
+  // tracker restart in migrations/README.md). `AppStore_Action` is client-postable (impression /
+  // card_click / detail_view / cta_click in `details.action`). `App_Visit` is SERVER-ONLY, like
+  // `App_Open`: one row per followed off-site "Visit", written by the `/apps/go/<listingId>`
+  // redirect, so it has no `trackActionSchema` arm.
+  'AppStore_Action',
+  'App_Visit',
 ] as const;
 
 // Written without ip and userAgent, whoever calls: `actions` has no TTL, and these feed per-user

@@ -11,6 +11,12 @@ import {
 } from '~/components/Apps/appListingCardGeometry';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import {
+  trackAppStoreAction,
+  useAppStoreImpression,
+  type AppStoreTelemetry,
+} from '~/components/Apps/appStoreTelemetry';
+import { withAppSurface } from '~/shared/utils/app-store-telemetry';
 
 /**
  * Where a sub-listing card goes. An off-site item opens on its platform. An on-site item opens
@@ -27,6 +33,11 @@ const EXTERNAL_LINK_PROPS = { target: '_blank', rel: 'noopener noreferrer' } as 
 export interface AppSubListingCardProps {
   card: SubListingCard;
   canOpenPage?: boolean;
+  /**
+   * Acquisition telemetry (`AppStore_Action`, keyed on the SUB-listing id). An in-site launch
+   * link is tagged with the surface; an off-site item link is left as built server-side.
+   */
+  telemetry?: AppStoreTelemetry;
 }
 
 /**
@@ -35,8 +46,23 @@ export interface AppSubListingCardProps {
  * divider, then the creator as the shared `UserAvatar` (hover card). It has no icon of its own,
  * so the title starts at the left edge; the app it lives in is a chip under the title.
  */
-export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCardProps) {
-  const href = getSubListingHref(card, canOpenPage);
+export function AppSubListingCard({
+  card,
+  canOpenPage = false,
+  telemetry,
+}: AppSubListingCardProps) {
+  const rawHref = getSubListingHref(card, canOpenPage);
+  const href =
+    telemetry && !card.external && canOpenPage
+      ? withAppSurface(rawHref, telemetry.surface)
+      : rawHref;
+  const impressionRef = useAppStoreImpression(card.id, telemetry);
+  const onTitleClick = telemetry
+    ? () => trackAppStoreAction('card_click', card.id, telemetry)
+    : undefined;
+  const onCtaClick = telemetry
+    ? () => trackAppStoreAction('cta_click', card.id, telemetry)
+    : undefined;
   const parentHref = getListingDetailHref(card.parent.slug);
   const opensItem = card.external || canOpenPage;
   const title = (
@@ -69,6 +95,7 @@ export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCa
   } as const;
   return (
     <Card
+      ref={impressionRef}
       padding={0}
       radius={0}
       className="h-full rounded-md"
@@ -87,6 +114,7 @@ export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCa
             <Anchor
               href={href}
               {...EXTERNAL_LINK_PROPS}
+              onClick={onTitleClick}
               underline="hover"
               c="inherit"
               className={stretched}
@@ -98,6 +126,7 @@ export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCa
             <Anchor
               component={Link}
               href={href}
+              onClick={onTitleClick}
               underline="hover"
               c="inherit"
               className={stretched}
@@ -107,11 +136,17 @@ export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCa
             </Anchor>
           )}
           {card.external ? (
-            <Button component="a" href={href} {...EXTERNAL_LINK_PROPS} {...ctaProps}>
+            <Button
+              component="a"
+              href={href}
+              {...EXTERNAL_LINK_PROPS}
+              {...ctaProps}
+              onClick={onCtaClick}
+            >
               Open
             </Button>
           ) : (
-            <Button component={Link} href={href} {...ctaProps}>
+            <Button component={Link} href={href} {...ctaProps} onClick={onCtaClick}>
               {opensItem ? 'Open' : 'View'}
             </Button>
           )}

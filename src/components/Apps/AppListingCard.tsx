@@ -57,6 +57,12 @@ import {
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useIsClient } from '~/providers/IsClientProvider';
+import {
+  trackAppStoreAction,
+  useAppStoreImpression,
+  type AppStoreTelemetry,
+} from '~/components/Apps/appStoreTelemetry';
+import { appVisitHref, withAppSurface } from '~/shared/utils/app-store-telemetry';
 
 /**
  * App Store Listings (W13) — the unified store CARD, over BOTH kinds.
@@ -243,6 +249,13 @@ export interface AppListingCardProps {
   embedded?: boolean;
   /** A label pinned over the cover's top-left corner, opposite the `⋮` menu. */
   coverBadge?: ReactNode;
+  /**
+   * Acquisition telemetry: where this card is rendered (and, in the store grid, its position
+   * and the grid's sort / filter / search). With it the card records its impression and its
+   * clicks (`AppStore_Action`) and tags its launch / visit links with the surface. Ignored in
+   * `preview`. Without it nothing is recorded and links are tagged `direct`.
+   */
+  telemetry?: AppStoreTelemetry;
 }
 
 /** An embedded card's CTA keeps its glyph 4px from the label (Mantine's default is 10). */
@@ -254,6 +267,7 @@ export function AppListingCard({
   preview = false,
   embedded = false,
   coverBadge,
+  telemetry,
 }: AppListingCardProps) {
   const currentUser = useCurrentUser();
   // The relative date is client-only, so the whole "Updated …" part waits for the client:
@@ -268,6 +282,32 @@ export function AppListingCard({
   // IconExternalLink, detail → IconEye) — it is a consolidation, not a restyle.
   const CtaGlyph = ACTION_GLYPH_ICONS[cardActionGlyph(cta.action)];
   const detailHref = getListingDetailHref(card.slug);
+  // ACQUISITION TELEMETRY. A moderator `preview` records nothing and keeps the raw links: the
+  // listing it shows is not live, so the visit redirect would 404 for it.
+  const tracked = preview ? undefined : telemetry;
+  const surface = tracked?.surface ?? 'direct';
+  const impressionRef = useAppStoreImpression(card.id, tracked);
+  // An OFF-SITE Visit goes through `/apps/go/<id>`, which records the visit server-side and
+  // 302s to the listing's stored URL; an on-site Open carries its surface into the run route's
+  // `App_Open`. `cta.href` stays the source of truth for WHICH action this is.
+  // An UNTRACKED placement keeps its on-site href untagged (an untagged launch reads as
+  // `direct`, which is what it is).
+  const ctaHref =
+    preview || cta.action === 'detail'
+      ? cta.href
+      : cta.external
+      ? card.kindData.kind === 'offsite'
+        ? appVisitHref(card.id, surface)
+        : cta.href
+      : tracked
+      ? withAppSurface(cta.href, surface)
+      : cta.href;
+  const onCardClick = tracked
+    ? () => trackAppStoreAction('card_click', card.id, tracked)
+    : undefined;
+  const onCtaClick = () => {
+    if (tracked) trackAppStoreAction('cta_click', card.id, tracked);
+  };
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   // 🔴 THE NULL-VS-ZERO DECISION IS **NOT** MADE HERE — `getPlayCountLabel` owns it
   // and returns `null` for an unmeasurable listing. That is deliberate: this
@@ -333,7 +373,7 @@ export function AppListingCard({
   // and every other control (Open, `⋮`, creator link) sits above that layer (`relative z-10`).
   const creator = card.creator;
   return (
-    <Card padding={0} radius={0} className="h-full rounded-md">
+    <Card ref={impressionRef} padding={0} radius={0} className="h-full rounded-md">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
@@ -410,6 +450,7 @@ export function AppListingCard({
           <Anchor
             component={Link}
             href={detailHref}
+            onClick={onCardClick}
             underline="hover"
             c="inherit"
             className="after:absolute after:inset-0 after:content-['']"
@@ -445,7 +486,7 @@ export function AppListingCard({
           {cta.external ? (
             <Button
               component="a"
-              href={cta.href}
+              href={ctaHref}
               target="_blank"
               rel="noopener noreferrer"
               size="compact-sm"
@@ -464,16 +505,18 @@ export function AppListingCard({
               // on-site path is recorded by `/apps/run/<slug>` itself). Recording on a detail
               // VIEW would be wrong: browsing is not opening.
               // 🔴 Stamped with the viewer's account id (#4048) — recents are per-account.
-              onClick={() =>
-                recordRecentlyOpenedApp(toRecentAppFromListing(card), currentUser?.id ?? null)
-              }
+              onClick={() => {
+                recordRecentlyOpenedApp(toRecentAppFromListing(card), currentUser?.id ?? null);
+                onCtaClick();
+              }}
             >
               {cta.label}
             </Button>
           ) : (
             <Button
               component={Link}
-              href={cta.href}
+              href={ctaHref}
+              onClick={onCtaClick}
               size="compact-sm"
               variant="filled"
               className="relative z-10"

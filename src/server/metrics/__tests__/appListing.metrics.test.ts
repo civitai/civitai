@@ -426,15 +426,20 @@ describe('production SQL — ownership contract (regression guard)', () => {
     expect(upsert).not.toContain('thumbs_down_count');
   });
 
-  it('does not write connect/visit/tipped counters (no source; feature not live)', () => {
+  it("does not write connect/visit/tipped counters (not this job's columns)", () => {
     // 🔴 DELIBERATELY NARROWED — and NOT because open_count gained a reader. It has
     // no reader at this ref; its consumer lands in stage 3. What it gained in stage
     // 2 is a trusted server-side SOURCE (the ClickHouse `App_Open` stream) feeding
     // a value that is derived and idempotent, which is what makes writing it ahead
     // of its reader safe. So it moved OUT of this list and INTO the ON CONFLICT
-    // assertion above. The remaining four have no source at all: connect is a
-    // locked-deferred product decision, visit is never recorded server-side, and
-    // AppListing is not a BuzzTip entity. Do not cite open_count to populate them.
+    // assertion above. connect and tipped have no source at all: connect is a
+    // locked-deferred product decision and AppListing is not a BuzzTip entity. Do not
+    // cite open_count to populate them.
+    //
+    // 🔴 visit_count now HAS a writer, and that is exactly why this job must not name it:
+    // the off-site visit redirect (`app-listing-visit.service.ts`) INCREMENTS it, so a
+    // recompute here that wrote the column would reset every listing's visits to
+    // whatever this job computed — 0, as it has no visit source.
     expect(upsert).not.toContain('connect_count');
     expect(upsert).not.toContain('visit_count');
     // `tipped` unqualified, so BOTH tipped_count and tipped_amount_count are

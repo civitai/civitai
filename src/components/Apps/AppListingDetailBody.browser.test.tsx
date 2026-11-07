@@ -1421,13 +1421,13 @@ describe('AppListingDetailBody', () => {
   test('🔴 the in-site Open CTA and the off-site Visit CTA render DIFFERENT glyphs', async () => {
     const { cta: openBtn } = await renderAndSettle(
       <AppListingDetailBody detail={base({})} canOpenPage />,
-      '/apps/run/my-app'
+      '/apps/run/my-app?src=detail'
     );
     const openGlyph = glyphOf(openBtn);
 
     const { cta: visitBtn } = await renderAndSettle(
       <AppListingDetailBody detail={offsite()} />,
-      'https://ext.app'
+      '/apps/go/l1?src=detail'
     );
     const visitGlyph = glyphOf(visitBtn);
 
@@ -1441,14 +1441,14 @@ describe('AppListingDetailBody', () => {
   test('the glyph change does NOT touch link semantics', async () => {
     const { cta: openBtn } = await renderAndSettle(
       <AppListingDetailBody detail={base({})} canOpenPage />,
-      '/apps/run/my-app'
+      '/apps/run/my-app?src=detail'
     );
     expect(openBtn.getAttribute('target')).toBeNull();
     expect(openBtn.getAttribute('rel')).toBeNull();
 
     const { cta: visitBtn } = await renderAndSettle(
       <AppListingDetailBody detail={offsite()} />,
-      'https://ext.app'
+      '/apps/go/l1?src=detail'
     );
     expect(visitBtn.getAttribute('target')).toBe('_blank');
     expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
@@ -1621,7 +1621,7 @@ describe('AppListingDetailBody', () => {
     const el = hero.element() as HTMLElement;
     // Semantics, not a click handler on a box: a real anchor, same-tab.
     expect(el.tagName).toBe('A');
-    expect(el.getAttribute('href')).toBe('/apps/run/my-app');
+    expect(el.getAttribute('href')).toBe('/apps/run/my-app?src=detail');
     expect(el.getAttribute('target')).toBeNull();
     // Accessible NAME — neither the cover `alt` ("… cover image") nor the
     // aria-hidden placeholder can supply one, so it is explicit.
@@ -1632,7 +1632,7 @@ describe('AppListingDetailBody', () => {
     // "Same destination as the CTA" asserted as a fact about the DOM, not by
     // restating the string: exactly two anchors point at the run route — the
     // banner and the button. If the banner ever aims somewhere else this is 1.
-    expect(container.querySelectorAll('a[href="/apps/run/my-app"]')).toHaveLength(2);
+    expect(container.querySelectorAll('a[href="/apps/run/my-app?src=detail"]')).toHaveLength(2);
   });
 
   test('🔴 a listing with NO cover art still gets the launch affordance', async () => {
@@ -1641,7 +1641,7 @@ describe('AppListingDetailBody', () => {
     );
     const hero = within.getByTestId(HERO);
     await expect.element(hero).toBeInTheDocument();
-    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app');
+    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app?src=detail');
     // …and it really is the seeded-gradient placeholder inside, not a cover
     // image — otherwise this test would pass on the wrong branch.
     expect(hero.element().querySelector('[data-listing-cover-placeholder]')).not.toBeNull();
@@ -1668,15 +1668,17 @@ describe('AppListingDetailBody', () => {
     });
     // The browser synthesised an activation click from the keypress, and it came
     // from the banner anchor.
-    expect(activated).toEqual(['/apps/run/my-app']);
+    expect(activated).toEqual(['/apps/run/my-app?src=detail']);
   });
 
   test('off-site (Visit) → the banner is NOT interactive (invariant guard)', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={offsite()} />);
     await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
     expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
-    // Exactly one route off-platform: the labelled button.
-    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(1);
+    // Exactly one route off-platform: the labelled button, through the visit redirect (which
+    // records the visit and 302s to the listing's stored URL). The raw URL is not on the page.
+    expect(container.querySelectorAll('a[href="/apps/go/l1?src=detail"]')).toHaveLength(1);
+    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(0);
   });
 
   test('the on-site raw-origin escape hatch does NOT make the banner interactive (invariant guard)', async () => {
@@ -1760,7 +1762,7 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByTestId(HERO)).toBeInTheDocument();
 
     const links = Array.from(
-      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app"]')
+      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app?src=detail"]')
     );
     expect(links).toHaveLength(2);
     const [heroEl, ctaEl] = links;

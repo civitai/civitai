@@ -7,12 +7,12 @@
 // of that. See appListing.metrics.ts for the full ownership/sourcing rationale.
 //
 // SCOPE: this job populates `install_count` (from Postgres) and `open_count`
-// (from the ClickHouse `App_Open` event stream). Every remaining counter
-// (`connect_count`, `visit_count`, `tipped_count`, `tipped_amount_count`) is left
-// at its schema default 0: each maps to a feature that isn't live yet
-// (OAuth-connect submission is a locked-deferred product decision; visit/tip have
-// no server-side source). Populate each with the PR that ships its consumer, not
-// speculatively.
+// (from the ClickHouse `App_Open` event stream). `connect_count`, `tipped_count` and
+// `tipped_amount_count` are left at their schema default 0: each maps to a feature
+// that isn't live yet (OAuth-connect submission is a locked-deferred product decision;
+// tips have no server-side source). Populate each with the PR that ships its consumer,
+// not speculatively. `visit_count` has its own writer outside this job — the off-site
+// visit redirect (`app-listing-visit.service.ts`) — and this job must never name it.
 //
 // 🔴 `open_count` IS A DELIBERATE EXCEPTION TO THAT LAST SENTENCE, AND IT IS NOT A
 // PRECEDENT FOR THE OTHER FOUR. AT THIS REF NOTHING READS IT. The only non-metrics
@@ -28,10 +28,10 @@
 // is unread, and no backfill to get right when the reader lands. Stage 3 can simply
 // start reading a column that has been correct all along.
 //
-// `connect_count` / `visit_count` / `tipped_count` / `tipped_amount_count` have NO
-// such source: populating any of them would mean inventing one, and an invented
-// counter written for months before anyone looks at it is exactly the drift this
-// file's ownership contract exists to prevent. Do not cite this exception for them.
+// `connect_count` / `tipped_count` / `tipped_amount_count` have NO such source:
+// populating any of them would mean inventing one, and an invented counter written for
+// months before anyone looks at it is exactly the drift this file's ownership contract
+// exists to prevent. Do not cite this exception for them.
 // ---------------------------------------------------------------------------
 
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
@@ -161,8 +161,9 @@ export const AFFECTED_APPROVED_LISTINGS_SQL = `
  * 🔴 The INSERT column list AND the ON CONFLICT DO UPDATE set name ONLY
  * install_count / open_count / updated_at. thumbs_up_count / thumbs_down_count are
  * NEVER touched (ownership contract with app-listing-review.service.ts);
- * connect/visit/tipped stay at their schema default 0 (see the SCOPE note above).
- * Do not add any of them here without a reader to justify it.
+ * visit_count is NEVER touched either (owned by app-listing-visit.service.ts, which
+ * increments it); connect/tipped stay at their schema default 0 (see the SCOPE note
+ * above). Do not add any of them here.
  */
 export const APP_LISTING_METRIC_UPSERT_SQL = `
   INSERT INTO "app_listing_metrics" (

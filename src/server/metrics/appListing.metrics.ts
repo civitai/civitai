@@ -127,15 +127,17 @@ type AffectedListing = { id: string; appBlockId: string | null };
 // block in appListing.metrics.sql.ts. Read it before citing this file to populate
 // anything else; the exception is now spent, not widened.
 //
-// NOT POPULATED (left at their schema default 0 — no reader today, and each maps
-// to a feature that isn't live): `connect_count` (off-site OAuth-connect grants —
-// OAuth-connect submission is a locked-deferred product decision, so there are no
-// connect listings yet and nothing reads the count), `visit_count`, `tipped_count`,
-// `tipped_amount_count` (visit is never recorded server-side; AppListing is not a
-// BuzzTip entity — BuzzTip.entityId is Int, AppListing.id is a string ULID).
-// Populate each with the PR that ships its consumer, not speculatively. None of the
-// four has a source to derive from, so the `open_count` exception does not reach
-// them: populating one would mean inventing the number.
+// NOT POPULATED BY THIS JOB (left at their schema default 0 here): `connect_count`
+// (off-site OAuth-connect grants — OAuth-connect submission is a locked-deferred product
+// decision, so there are no connect listings yet and nothing reads the count),
+// `tipped_count`, `tipped_amount_count` (AppListing is not a BuzzTip entity —
+// BuzzTip.entityId is Int, AppListing.id is a string ULID). Populate each with the PR
+// that ships its consumer, not speculatively.
+//
+// `visit_count` is NOT this job's either, but it is no longer unwritten: the off-site
+// visit redirect (`app-listing-visit.service.ts`) increments it, de-duped per actor per
+// UTC day. This job's upsert does not name the column, so a recompute never touches it —
+// keep it that way.
 //
 // 🔴 MERGE NOTE (#4652 -> #4653, resolved deliberately, NOT by keeping both sides).
 // #4652 landed a block here headed "`open_count` IS THE NEXT ONE, AND ITS SOURCE ROWS

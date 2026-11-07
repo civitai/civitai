@@ -2,6 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as TrackBufferMod from '~/components/TrackView/trackEventBuffer';
 /**
  * 🔴 THE APP'S REAL STYLESHEET CASCADE, imported ON PURPOSE — without it every
  * geometry assertion in this file is a lie.
@@ -107,6 +108,14 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
+}));
+
+// The card's acquisition telemetry is queued on the shared beacon; spied here so a test can read
+// the exact `AppStore_Action` rows a click produces. Spread, not replaced.
+const trackMocks = vi.hoisted(() => ({ enqueue: vi.fn() }));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackBufferMod>()),
+  enqueueTrackEvent: trackMocks.enqueue,
 }));
 
 /**
@@ -420,7 +429,9 @@ describe('AppListingCard', () => {
       />
     );
     const visit = page.getByRole('link', { name: 'Visit' });
-    await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
+    // Through the server-side visit redirect, never the raw URL: `/apps/go/<id>` records the
+    // visit and 302s to the listing's STORED destination. Untracked placement → `direct`.
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=direct');
     await expect.element(visit).toHaveAttribute('target', '_blank');
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
     // The kind signal ("Standalone") is no longer a badge — it's conveyed by the
@@ -473,7 +484,7 @@ describe('AppListingCard', () => {
     );
     await expect.element(page.getByRole('link', { name: 'View details' })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
-    await expect.element(visit).toHaveAttribute('href', 'https://connect.app');
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=direct');
     await expect.element(visit).toHaveAttribute('target', '_blank');
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
   });
@@ -610,7 +621,7 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    expect(ctaGlyph(await waitForCta('https://ext.app'))).toBe('external-link');
+    expect(ctaGlyph(await waitForCta('/apps/go/l1?src=direct'))).toBe('external-link');
   });
 
   test('🔴 S6b: the View-details CTA carries the view glyph, distinct from the other two', async () => {
@@ -1772,5 +1783,84 @@ describe('🔴 AppListingCard — the category and last-updated meta line', () =
     expect(page.getByTestId('apps-listing-card-meta').element().textContent).not.toContain(
       'Updated'
     );
+  });
+});
+
+describe('AppListingCard — acquisition telemetry', () => {
+  beforeEach(() => {
+    trackMocks.enqueue.mockReset();
+  });
+
+  const OFFSITE = {
+    kind: 'offsite' as const,
+    name: 'External App',
+    kindData: { kind: 'offsite' as const, externalUrl: 'https://ext.app' },
+  };
+  const GRID = {
+    surface: 'store_card' as const,
+    position: 3,
+    sort: 'newest' as const,
+    category: 'games',
+    query: 'pixel',
+  };
+
+  function storeActions() {
+    return trackMocks.enqueue.mock.calls
+      .map(([event]) => event)
+      .filter((e: any) => e?.kind === 'action' && e.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+  }
+
+  test('a tracked off-site Visit goes through /apps/go with its surface, never the raw URL', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=store_card');
+    await expect.element(visit).toHaveAttribute('target', '_blank');
+    expect(document.querySelector('a[href="https://ext.app"]')).toBeNull();
+  });
+
+  test('a tracked on-site Open carries its surface into the run route', async () => {
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage telemetry={GRID} />);
+    await expect
+      .element(page.getByRole('link', { name: 'Open' }))
+      .toHaveAttribute('href', '/apps/run/my-app?src=store_card');
+  });
+
+  test('a moderator preview keeps the raw destination and records nothing', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} preview telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('clicking the CTA records ONE cta_click carrying the grid state', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} telemetry={GRID} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toBeInTheDocument();
+    // Keep the test page in place: the anchor would otherwise open a tab.
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([
+      {
+        action: 'cta_click',
+        listingId: 'l1',
+        surface: 'store_card',
+        position: 3,
+        sort: 'newest',
+        category: 'games',
+        query: 'pixel',
+      },
+    ]);
+  });
+
+  test('an untracked card records no click', async () => {
+    renderWithProviders(<AppListingCard card={base(OFFSITE)} />);
+    const visit = page.getByRole('link', { name: 'Visit' });
+    await expect.element(visit).toBeInTheDocument();
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([]);
   });
 });

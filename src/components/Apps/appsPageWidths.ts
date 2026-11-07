@@ -506,4 +506,9 @@ export const APPS_REDIRECT_ONLY_PAGES = [
    * the app.
    */
   '/apps/[appBlockId]',
+  /**
+   * The off-site VISIT redirect. Its `getServerSideProps` always 302s to the listing's stored
+   * external URL or 404s; the component renders nothing.
+   */
+  '/apps/go/[listingId]',
 ] as const;

@@ -142,3 +142,31 @@ describe('AppSubListingCard', () => {
     });
   });
 });
+
+describe('AppSubListingCard — acquisition telemetry', () => {
+  test('a tracked in-site launch carries its surface beside the sub-listing id', async () => {
+    renderWithProviders(
+      <AppSubListingCard
+        card={CARD}
+        canOpenPage
+        telemetry={{ surface: 'sub_listing', position: 2 }}
+      />
+    );
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toHaveTextContent('Open');
+    expect(hrefOf(cta.element())).toBe(`${CARD.runHref}&src=sub_listing`);
+  });
+
+  test('a tracked card that cannot open pages links to the parent detail, untagged', async () => {
+    renderWithProviders(
+      <AppSubListingCard
+        card={CARD}
+        canOpenPage={false}
+        telemetry={{ surface: 'sub_listing', position: 2 }}
+      />
+    );
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toBeInTheDocument();
+    expect(hrefOf(cta.element())).toBe('/apps/store-preview/custom-generators');
+  });
+});
