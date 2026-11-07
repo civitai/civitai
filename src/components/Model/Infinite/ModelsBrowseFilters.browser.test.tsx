@@ -273,4 +273,59 @@ describe('/models filters and the address bar', () => {
     // Otherwise the next bare visit would bring the cleared filter back.
     expect(JSON.parse(localStorage.getItem('model-filters') ?? '{}').types).toBeUndefined();
   });
+
+  test('On Sale picked in the menu is written to the URL and sent with the feed request', async () => {
+    await mount();
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+    await userEvent.click(page.getByText('On Sale', { exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
+
+    await expect.poll(() => router.query.onSale).toBe(true);
+    expect(lastRequest().onSale).toBe(true);
+  });
+
+  test('?onSale=true loads with the chip on and the request carrying it, URL untouched', async () => {
+    router.query = { onSale: 'true' };
+    await mount();
+
+    await expect.poll(() => lastRequest().onSale).toBe(true);
+    expect(router.replace).not.toHaveBeenCalled();
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+    await expect.element(page.getByRole('checkbox', { name: 'On Sale' })).toBeChecked();
+  });
+
+  test('On Sale and Hide Paid clear each other, so the feed never asks for the empty set', async () => {
+    router.query = { onSale: 'true' };
+    await mount();
+    await expect.poll(() => lastRequest().onSale).toBe(true);
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+    await userEvent.click(page.getByText('Hide Paid', { exact: true }));
+    // Staged, not applied: the chips must already show the swap.
+    await expect.element(page.getByRole('checkbox', { name: 'On Sale' })).not.toBeChecked();
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
+    await expect.poll(() => lastRequest().hidePaid).toBe(true);
+    expect(lastRequest().onSale).toBeUndefined();
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters', exact: true }));
+    await userEvent.click(page.getByText('On Sale', { exact: true }));
+    await expect.element(page.getByRole('checkbox', { name: 'Hide Paid' })).not.toBeChecked();
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
+    await expect.poll(() => lastRequest().onSale).toBe(true);
+    expect(lastRequest().hidePaid).toBeUndefined();
+  });
+
+  test('Clear all filters drops On Sale', async () => {
+    router.query = { onSale: 'true' };
+    await mount();
+    await expect.poll(() => lastRequest().onSale).toBe(true);
+
+    await userEvent.click(page.getByRole('button', { name: 'Filters' }));
+    await userEvent.click(page.getByRole('button', { name: 'Clear all filters' }));
+
+    await expect.poll(() => router.query.onSale).toBeUndefined();
+    await expect.poll(() => lastRequest().onSale).toBeUndefined();
+  });
 });
