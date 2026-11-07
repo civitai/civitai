@@ -279,14 +279,14 @@ describe('health', () => {
         const s = p.stats();
         return s.busy === 1 && s.queued === 1;
       });
-      const t0 = performance.now();
       const res = await a.inject({ method: 'GET', url: '/readyz' });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
         ok: true,
         checks: { allow: true, deny: true, interrupt: true },
       });
-      expect(performance.now() - t0).toBeLessThan(200);
+      // Still saturated when /readyz answered, so it did not wait for the pool.
+      expect(p.stats()).toMatchObject({ busy: 1, queued: 1 });
       await Promise.all(inflight);
     } finally {
       await a.close();

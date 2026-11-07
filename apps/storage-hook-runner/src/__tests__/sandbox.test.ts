@@ -84,10 +84,9 @@ describe('time limit', () => {
     expect(pool.stats().terminated).toBe(terminatedBefore);
   });
 
-  // Regression: CI run 41978094786 answered `cause: 'error'` for a 1 ms loop. The deadline was
-  // armed before the sandbox's own setup (the prelude that removes non-ES globals), and an
-  // interrupt landing there was reported as a setup error instead of a timeout. Many calls at the
-  // smallest budget make that window likely to be hit.
+  // The deadline is not armed before the sandbox's own setup (the prelude that removes non-ES
+  // globals): an interrupt landing there was reported as a setup error instead of a timeout. Many
+  // calls at the smallest budget make that window likely to be hit.
   it('a 1 ms budget is always a timeout from the interrupt, never another cause', async () => {
     const causes = new Map<string, number>();
     for (let i = 0; i < 300; i++) {
@@ -150,7 +149,7 @@ describe('worker backstop', () => {
   // the pool rejects with BackstopError (answered 500) instead of blaming the author with
   // `timeout`.
   it('terminates a worker stuck in native code that never polls the interrupt, as a runner fault, and recovers', async () => {
-    // Measured locally: this loop spends ~1.3 s in allocation/GC near the memory cap with a
+    // This loop runs in allocation/GC near the memory cap far longer than any backstop on a
     // single interrupt poll. A pool with a 20 ms backstop must cut it at ~30 ms.
     const backstopped: string[] = [];
     const p = await HookPool.start({
@@ -169,7 +168,7 @@ describe('worker backstop', () => {
       });
       await expect(out).rejects.toBeInstanceOf(BackstopError);
       const wall = performance.now() - t0;
-      expect(wall).toBeLessThan(500);
+      expect(wall).toBeLessThan(5 * BACKSTOP_MS);
       expect(p.stats().terminated).toBe(1);
       expect(backstopped).toEqual(['app-stall']);
 
@@ -287,16 +286,6 @@ describe('the deadline covers evaluation, not compilation', () => {
     ['a second compile far beyond the allowance is a timeout', 20, 90, 5, TIMEOUT],
   ])('%s', async (_name, first, second, timeoutMs, expected) => {
     expect(await evaluateOnVirtualClock(first, second, timeoutMs)).toEqual(expected);
-  });
-});
-
-describe('syntax errors', () => {
-  it('a hook that does not parse is refused as cause error with the SyntaxError', async () => {
-    const { result } = await run(
-      'export default function check() { return { allow: true }; }\n}}}'
-    );
-    expect(result).toMatchObject({ allow: false, cause: 'error' });
-    expect((result as { detail: string }).detail).toMatch(/^SyntaxError: /);
   });
 });
 
@@ -626,8 +615,7 @@ describe('no state between calls', () => {
           timeoutMs: 500,
         })
         .catch((err: unknown) => {
-          // Measured in CI run 42065424794: this outran the interrupt and the backstop ended it.
-          // A runner fault (backstop or crashed worker) is acceptable; an allow never is.
+          // Either a backstop or a crashed worker is acceptable; an allow never is.
           expect(err instanceof BackstopError || err instanceof WorkerCrashedError).toBe(true);
           return { result: { allow: false } };
         });

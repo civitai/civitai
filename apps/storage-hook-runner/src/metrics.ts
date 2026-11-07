@@ -30,7 +30,7 @@ export function createMetrics() {
   });
   const refused = new Counter({
     name: 'storage_hook_runner_requests_refused_total',
-    help: 'Requests refused without an answer (bad request, sha mismatch, overload, worker faults). `app` is empty until the request is authenticated and validated.',
+    help: 'Requests refused with a non-2xx error (bad request, sha mismatch, overload, worker faults). `app` is empty until the request is authenticated and validated.',
     labelNames: ['reason', 'app'],
     registers: [registry],
   });

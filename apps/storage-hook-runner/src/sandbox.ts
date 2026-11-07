@@ -150,9 +150,8 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
   // name: hook code cannot fake a timeout (or hide one) by throwing a look-alike.
   //
   // `run` arms the deadline after a compile-only pass. quickjs-emscripten cannot run an already
-  // compiled module, so the real evaluation compiles again under the armed deadline, and the
-  // budget is extended to cover that second compile, which can run slower than the first: a
-  // multiple of the measured compile plus a fixed floor (COMPILE_ALLOWANCE_* in limits.ts).
+  // compiled module, so the evaluation compiles again, and the budget is extended to cover that
+  // second compile: see COMPILE_ALLOWANCE_* in limits.ts.
   let interrupted = false;
   let start = performance.now();
   let deadline = Number.POSITIVE_INFINITY;
@@ -255,7 +254,7 @@ function run(
   const stringify = keep(ctx.getProp(json, 'stringify'));
 
   // Compile-only pass, deadline disarmed: a syntax error is reported from here, and its
-  // duration sizes the allowance for the second compile inside the armed evaluation below.
+  // duration sizes the compile allowance (COMPILE_ALLOWANCE_* in limits.ts).
   const compileStart = performance.now();
   const compiled = ctx.evalCode(args.source, 'hook.js', {
     type: 'module',
