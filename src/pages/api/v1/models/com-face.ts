@@ -4,6 +4,7 @@ import { createContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { appRouter } from '~/server/routers';
 import { createCallerFactory } from '~/server/trpc';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isJsonRequest } from '~/server/utils/origin-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -55,6 +56,7 @@ export default AuthedEndpoint(
         sfwName: true,
         sfwDescription: true,
         sfwCoverImageId: true,
+        meta: true,
       },
     });
     if (!model || model.deletedAt) return res.status(404).json({ error: 'Model not found' });
@@ -65,7 +67,13 @@ export default AuthedEndpoint(
         .status(409)
         .json({ error: "This model can't get a civitai.com version.", code: 'skipped' });
     // Bulk only fills a missing face: an existing one may be hand-written, and the editor owns it.
-    if (model.sfwName != null || model.sfwDescription != null || model.sfwCoverImageId != null)
+    // A face the listing re-check removed is the exception: bulk may draft it again.
+    const faceRemoved =
+      model.sfwCoverImageId == null && !!(model.meta as ModelMeta | null)?.comFaceRemoved;
+    if (
+      !faceRemoved &&
+      (model.sfwName != null || model.sfwDescription != null || model.sfwCoverImageId != null)
+    )
       return res.status(409).json({
         error: 'Already has a civitai.com version. Edit it in the model editor.',
         code: 'skipped',

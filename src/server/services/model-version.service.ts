@@ -153,7 +153,10 @@ import {
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
-import { queueComFaceRecheck } from '~/server/services/model-com-face-recheck.service';
+import {
+  queueComFaceRecheck,
+  queueComFaceRestore,
+} from '~/server/services/model-com-face-recheck.service';
 import {
   bustOrchestratorAirs,
   bustOrchestratorModelCache,
@@ -1043,7 +1046,10 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
+    if (!isModerator && trainedWordsChanged) {
+      await queueComFaceRecheck(version.modelId);
+      await queueComFaceRestore(version.modelId);
+    }
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
@@ -1299,7 +1305,10 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) await queueComFaceRecheck(version.modelId);
+    if (!isModerator && trainedWordsChanged) {
+      await queueComFaceRecheck(version.modelId);
+      await queueComFaceRestore(version.modelId);
+    }
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     const keptGate = await writeModelVersionGateAndGoal(

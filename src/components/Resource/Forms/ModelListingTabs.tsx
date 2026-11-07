@@ -140,7 +140,8 @@ export function ModelListingTabs({
           </Tabs.Panel>
 
           <Tabs.Panel value="com" pt="md">
-            {comFaceRemoved && (
+            {/* Not mature: the model is listed on .com by its images, so the banner would be false. */}
+            {comFaceRemoved && nsfw && (
               <Alert color="red" p="xs" mb="md">
                 <Text size="xs">{COM_FACE_REFUSED_MESSAGE}</Text>
               </Alert>

@@ -172,11 +172,146 @@ async function finishRemoval(modelId: number) {
   await bustPublicModelResponseCache(modelId);
 }
 
+/** A model whose face the re-check removed waits here, after a listing edit, for one restore check. */
+const RESTORE_KEY_PREFIX = 'com-face-restore:';
+/** The restore check runs once the owner has stopped editing this long: one check per burst. */
+export const COM_FACE_RESTORE_QUIET_MS = 2 * 60_000;
+const restoreKey = (modelId: number) => `${RESTORE_KEY_PREFIX}${modelId}`;
+
+/**
+ * Arms the restore check after an owner edit to a model's .red title, description or trigger words.
+ * Writes nothing unless the re-check took the model's face off .com. Each edit pushes the check
+ * back. Call after the write commits; it never throws.
+ */
+export async function queueComFaceRestore(modelId: number) {
+  const value = JSON.stringify({ editAt: new Date().toISOString() });
+  await dbWrite
+    .$executeRaw(
+      Prisma.sql`
+        INSERT INTO "KeyValue" (key, value)
+        SELECT ${restoreKey(modelId)}, ${value}::jsonb
+        WHERE EXISTS (
+          SELECT 1 FROM "Model" WHERE id = ${modelId} AND meta->'comFaceRemoved' IS NOT NULL
+        )
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      `
+    )
+    .catch((error) => logError('restore enqueue failed', modelId, error));
+}
+
+type ArmedRow = { key: string; value: unknown };
+
+/** Drops the removal marker, only while nothing the verdict rests on has changed since the read: no
+ *  cover picked, the same marker, the same title and description, and no newer edit armed. */
+export const comFaceRestoreSql = (
+  modelId: number,
+  marker: NonNullable<ModelMeta['comFaceRemoved']>,
+  listing: { name: string; description: string | null },
+  armed: ArmedRow
+) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = meta - 'comFaceRemoved'
+  WHERE id = ${modelId}
+    AND "sfwCoverImageId" IS NULL
+    AND jsonb_typeof(meta) = 'object'
+    AND meta->'comFaceRemoved' = ${JSON.stringify(marker)}::jsonb
+    AND name = ${listing.name}
+    AND description IS NOT DISTINCT FROM ${listing.description}::text
+    AND EXISTS (
+      SELECT 1 FROM "KeyValue" WHERE key = ${armed.key} AND value = ${JSON.stringify(
+  armed.value
+)}::jsonb
+    )
+`;
+
+type RestoreResult = 'skipped' | 'restored' | 'kept' | 'unavailable';
+
+/**
+ * Re-runs the intent check on a model the re-check took off .com. An allowed listing drops the
+ * marker; the old cover is not put back, so the owner picks one again through the save gate.
+ * Detected or no verdict keeps the marker.
+ */
+export async function restoreComFace(modelId: number, armed: ArmedRow): Promise<RestoreResult> {
+  const model = await readModel(modelId);
+  const marker = (model?.meta as ModelMeta | null)?.comFaceRemoved;
+  if (!model || !marker || model.sfwCoverImageId != null) return 'skipped';
+
+  const triggerWords = await getOwnTriggerWords({ modelId, userId: model.userId, db: dbWrite });
+  const result = await checkComFaceIntent({
+    name: model.name,
+    description: model.description,
+    triggerWords,
+  });
+  if (result === 'unavailable') return 'unavailable';
+  if (result === 'detected') return 'kept';
+
+  const restored = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.$executeRaw(
+      comFaceRestoreSql(
+        modelId,
+        marker,
+        { name: model.name, description: model.description },
+        armed
+      )
+    );
+    if (updated)
+      await tx.modActivity.create({
+        data: { activity: 'restoreComFace', entityType: 'model', entityId: modelId },
+      });
+    return updated > 0;
+  });
+  if (!restored) return 'skipped';
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+  await bustPublicModelResponseCache(modelId);
+  return 'restored';
+}
+
+/**
+ * Runs the restore checks whose burst of edits has gone quiet. Each runs once: whatever the
+ * result, the row goes, and only a new edit arms it again.
+ */
+export async function processComFaceRestores(now = new Date(), budgetMs = COM_FACE_RUN_BUDGET_MS) {
+  const startedAt = Date.now();
+  const counts: Record<RestoreResult | 'failed', number> = {
+    skipped: 0,
+    restored: 0,
+    kept: 0,
+    unavailable: 0,
+    failed: 0,
+  };
+  const rows = await dbWrite.keyValue.findMany({
+    where: { key: { startsWith: RESTORE_KEY_PREFIX } },
+  });
+  for (const row of rows) {
+    if (Date.now() - startedAt > budgetMs) break;
+    const modelId = Number(row.key.slice(RESTORE_KEY_PREFIX.length));
+    if (!Number.isInteger(modelId) || restoreKey(modelId) !== row.key) continue;
+    const editAt = Date.parse((row.value as { editAt?: string } | null)?.editAt ?? '');
+    if (now.getTime() - editAt < COM_FACE_RESTORE_QUIET_MS) continue;
+
+    const result = await restoreComFace(modelId, row).catch((error) => {
+      logError('restore threw', modelId, error);
+      return 'failed' as const;
+    });
+    counts[result]++;
+    // An edit since the read rewrote the row: it stays for its own check.
+    await dbWrite
+      .$executeRaw(
+        Prisma.sql`DELETE FROM "KeyValue" WHERE key = ${row.key} AND value = ${JSON.stringify(
+          row.value
+        )}::jsonb`
+      )
+      .catch((error) => logError('restore row delete failed', modelId, error));
+  }
+  return counts;
+}
+
 const retryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
 const retryDelay = (attempt: number) =>
   Math.min(COM_FACE_RECHECK_FIRST_DELAY_MS * 2 ** (attempt - 1), COM_FACE_RECHECK_MAX_DELAY_MS);
-/** A run stops taking new models after this, inside the job lock; the rest wait for the next run. */
-const RUN_BUDGET_MS = 4 * 60_000;
+/** A run stops taking new models after this, inside the job lock; the rest wait for the next run.
+ *  The re-checks and the restore checks share it. */
+export const COM_FACE_RUN_BUDGET_MS = 4 * 60_000;
 
 function logError(message: string, modelId: number, error?: unknown) {
   logToAxiom({
@@ -241,7 +376,7 @@ export async function processComFaceRechecks(now = new Date()) {
 
   const requeue: number[] = [];
   for (const [modelId, state] of work) {
-    if (Date.now() - startedAt > RUN_BUDGET_MS) {
+    if (Date.now() - startedAt > COM_FACE_RUN_BUDGET_MS) {
       if (fresh.has(modelId)) requeue.push(modelId);
       continue;
     }
