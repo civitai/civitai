@@ -21,12 +21,9 @@
 -- ("ProfilePictureHold_id_seq") from every other role that holds one, then grant:
 --   GRANT SELECT, INSERT, DELETE ON "ProfilePictureHold" TO <app_write_role>;
 --   GRANT USAGE ON SEQUENCE "ProfilePictureHold_id_seq" TO <app_write_role>;
---   GRANT SELECT ON "ProfilePictureHold" TO <app_read_role>;
---   GRANT SELECT ON "ProfilePictureHold" TO <moderator_read_role>;
--- where:
---   - <app_write_role> is the role the main app's primary (write) client connects as;
---   - <app_read_role> is the role the main app's read client connects as;
---   - <moderator_read_role> is the role the moderator app connects as.
+-- where <app_write_role> is the role the primary (write) connection of the main app and of the
+-- moderator app connects as. Every read of this table goes through that connection; no read-replica
+-- role is granted anything.
 -- Then check every role, counting inherited membership and built-in roles, not only the ACL:
 --   SELECT rolname,
 --     has_table_privilege(oid, '"ProfilePictureHold"', 'SELECT') AS can_read,
@@ -35,8 +32,9 @@
 --   FROM pg_roles
 --   WHERE has_table_privilege(oid, '"ProfilePictureHold"', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
 --      OR has_sequence_privilege(oid, '"ProfilePictureHold_id_seq"', 'USAGE, SELECT, UPDATE');
--- Expected: the three roles above, the owner, superusers, and roles that are members of one of
--- them; any other row is a role to revoke from (or to take out of that membership).
+-- Expected: the role above, the owner, superusers, and roles that are members of the role above.
+-- A member of the built-in pg_read_all_data role also reads it; report that as an exception rather
+-- than a pass. Any other row is a role to revoke from (or to take out of that membership).
 
 ALTER TYPE "JobQueueType" ADD VALUE IF NOT EXISTS 'ProfilePictureSync';
 
