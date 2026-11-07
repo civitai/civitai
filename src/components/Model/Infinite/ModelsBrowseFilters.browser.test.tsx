@@ -328,4 +328,12 @@ describe('/models filters and the address bar', () => {
     await expect.poll(() => router.query.onSale).toBeUndefined();
     await expect.poll(() => lastRequest().onSale).toBeUndefined();
   });
+
+  test('a stored On Sale applies to a bare /models', async () => {
+    localStorage.setItem('model-filters', JSON.stringify({ onSale: true }));
+
+    await mount();
+
+    await expect.poll(() => lastRequest().onSale).toBe(true);
+  });
 });
