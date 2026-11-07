@@ -161,10 +161,20 @@ const POST_CLOSE_COUNT = Prisma.sql`(CASE
 END)`;
 
 /**
+ * `context.server` with `reporterIds` always removed, plus `extra` (fixed literals, never input).
+ * The one place reporter ids are stripped, for every read in this file.
+ */
+function serverStateWithout(extra: 'samples' | 'fingerprint') {
+  return Prisma.sql`CASE WHEN jsonb_typeof(f."context"->'server') = 'object' THEN (f."context"->'server') - 'reporterIds' - ${Prisma.raw(
+    `'${extra}'`
+  )} END`;
+}
+
+/**
  * `context.server` without the two fields only moderators read. Every read here selects this, so
  * reporter ids and sample text never leave the database on a path that answers a reporter.
  */
-const SERVER_STATE = Prisma.sql`CASE WHEN jsonb_typeof(f."context"->'server') = 'object' THEN (f."context"->'server') - 'reporterIds' - 'samples' END`;
+const SERVER_STATE = serverStateWithout('samples');
 
 /**
  * The first 300 UTF-16 units, minus a surrogate pair the cut split: a lone surrogate is not valid
@@ -479,7 +489,7 @@ const CHANGED_MS = Prisma.sql`GREATEST(
  * `context.server` without `reporterIds` or `fingerprint`. A free-text report's fingerprint hashes
  * its reporter's id beside text the feed returns, so the id could be searched for from it.
  */
-const FEED_SERVER_STATE = Prisma.sql`CASE WHEN jsonb_typeof(f."context"->'server') = 'object' THEN (f."context"->'server') - 'reporterIds' - 'fingerprint' END`;
+const FEED_SERVER_STATE = serverStateWithout('fingerprint');
 
 type ChangeRow = {
   id: number;
@@ -586,7 +596,6 @@ export async function listPlatformFeedbackChanges(input: ListPlatformFeedbackCha
       reopenOf: state.reopenOf ?? null,
       resolution: state.resolution
         ? {
-            // A component with no version (a docs fix) is kept: it says what was changed.
             fixedIn: fixedIn
               ? { component: fixedIn.component, version: fixedIn.version.trim() || null }
               : null,
