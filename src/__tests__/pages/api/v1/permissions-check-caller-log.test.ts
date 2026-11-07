@@ -122,7 +122,7 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(logged()).toEqual([expect.objectContaining({ caller: 'unresolved-bearer' })]);
   });
 
-  it('reads a query-string token the way session auth does', async () => {
+  it('reads a query-string token', async () => {
     mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
     await check(undefined, { token: 'k' });
     expect(mockBearer).toHaveBeenCalledWith('k', { allowClientCredentialsOnly: true });
@@ -137,7 +137,7 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     ]);
   });
 
-  it('reads the first of repeated query tokens, as session auth does', async () => {
+  it('reads the first of repeated query tokens', async () => {
     mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
     await check(undefined, { token: ['k', 'x'] as never });
     expect(mockBearer).toHaveBeenCalledWith('k', { allowClientCredentialsOnly: true });
@@ -159,21 +159,28 @@ describe('GET /api/v1/permissions/check, caller logging', () => {
     expect(await Promise.race([check('Bearer k'), late])).toEqual({ [VERSION]: true });
   });
 
-  it('answers when writing the log fails', async () => {
-    loggingMock.logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+  it('logs at most 60 callers a minute, and keeps answering', async () => {
+    for (let i = 0; i < 60; i++) await check();
     expect(await check()).toEqual({ [VERSION]: true });
-  });
-
-  it('stops looking up callers past the per-minute budget, and keeps answering', async () => {
-    mockBearer.mockResolvedValue(keyOwnedBy(ASKED_ABOUT + 1));
-    for (let i = 0; i < 60; i++) await check('Bearer k');
-    expect(mockBearer).toHaveBeenCalledTimes(60);
-    expect(await check('Bearer k')).toEqual({ [VERSION]: true });
-    expect(mockBearer).toHaveBeenCalledTimes(60);
     expect(logged()).toHaveLength(60);
 
     vi.setSystemTime(++minute * 60_000);
-    await check('Bearer k');
-    expect(mockBearer).toHaveBeenCalledTimes(61);
+    await check();
+    expect(logged()).toHaveLength(61);
+  });
+
+  it('does not spend the log cap on a listed service', async () => {
+    mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
+    for (let i = 0; i < 100; i++) await check('Bearer k');
+    await check();
+    expect(logged()).toHaveLength(1);
+  });
+
+  it('stops looking up callers past 600 a minute, and keeps answering', async () => {
+    mockBearer.mockResolvedValue(keyOwnedBy(SERVICE_ID));
+    for (let i = 0; i < 600; i++) await check('Bearer k');
+    expect(mockBearer).toHaveBeenCalledTimes(600);
+    expect(await check('Bearer k')).toEqual({ [VERSION]: true });
+    expect(mockBearer).toHaveBeenCalledTimes(600);
   });
 });

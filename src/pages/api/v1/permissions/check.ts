@@ -19,19 +19,20 @@ const schema = z.object({
   permission: z.enum(['Generate']).default('Generate'),
 });
 
-// shortcut: per-pod cap on caller lookups, reset each minute. Move it to Redis if one pod's share
-// of the log proves too thin.
-const CALLER_LOG_BUDGET_PER_MINUTE = 60;
-const callerLogBudget = { minute: 0, used: 0 };
+// shortcut: per-pod caps, reset each minute, so the log is a sample. Lookups get the larger cap because a
+// listed service's own calls need one too. Move them to Redis if one pod's share proves too thin.
+const CALLER_LOOKUPS_PER_MINUTE = 600;
+const CALLER_LOGS_PER_MINUTE = 60;
+const callerBudget = { minute: 0, lookups: 0, logs: 0 };
 
-function takeCallerLogBudget() {
+function takeCallerBudget(kind: 'lookups' | 'logs') {
   const minute = Math.floor(Date.now() / 60_000);
-  if (minute !== callerLogBudget.minute) Object.assign(callerLogBudget, { minute, used: 0 });
-  return callerLogBudget.used++ < CALLER_LOG_BUDGET_PER_MINUTE;
+  if (minute !== callerBudget.minute) Object.assign(callerBudget, { minute, lookups: 0, logs: 0 });
+  const limit = kind === 'lookups' ? CALLER_LOOKUPS_PER_MINUTE : CALLER_LOGS_PER_MINUTE;
+  return callerBudget[kind]++ < limit;
 }
 
 async function logCaller(req: NextApiRequest, userId: number | undefined, count: number) {
-  if (!takeCallerLogBudget()) return;
   const header = req.headers.authorization;
   const rawQueryToken = req.query.token;
   const queryToken = Array.isArray(rawQueryToken) ? rawQueryToken[0] : rawQueryToken;
@@ -39,6 +40,7 @@ async function logCaller(req: NextApiRequest, userId: number | undefined, count:
   const bearer =
     (header ? header.split(' ')[1] : matchWebhookToken(queryToken) ? undefined : queryToken) ||
     undefined;
+  if (bearer && !takeCallerBudget('lookups')) return;
   const session = bearer
     ? await getSessionFromBearerToken(bearer, { allowClientCredentialsOnly: true }).catch(
         () => null
@@ -47,6 +49,7 @@ async function logCaller(req: NextApiRequest, userId: number | undefined, count:
   const callerUserId = session?.user?.id;
   if (callerUserId != null && env.PERMISSIONS_CHECK_SERVICE_USER_IDS.includes(callerUserId)) return;
   if (callerUserId != null && callerUserId === userId) return;
+  if (!takeCallerBudget('logs')) return;
 
   logToAxiom({
     type: 'info',
