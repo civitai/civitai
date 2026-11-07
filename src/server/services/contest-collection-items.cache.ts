@@ -85,7 +85,7 @@ export function toSharedContestCollectionItem({
  * entries that has the image ids in hand busts (see `bustContestCollectionItemsCache` and the
  * ledger in `__tests__/contest-collection-items-writers.test.ts`); what remains are
  * collection-wide job updates and collection-level edits (name, metadata, delete), which this
- * bounds. Shorter than the per-pod LRU's 30 minutes, which no write ever busted.
+ * bounds.
  */
 export const CONTEST_COLLECTION_ITEMS_TTL = CacheTTL.md;
 
@@ -100,13 +100,9 @@ function createContestCollectionItemsCache() {
     // No stale-while-revalidate: after a bust the cached entry is gone, not served while a
     // revalidation runs.
     staleWhileRevalidate: false,
-    // What a bust guarantees. bust() writes a debounce marker for `debounceTime` seconds; inside it
-    // every read goes to the lookup (the replica) and writes nothing back. A fill whose lookup began
-    // BEFORE the bust is a SET NX (`fillIfAbsent`), so it loses to the marker instead of caching the
-    // pre-write value. Not guaranteed: a read inside the window can still show the replica's lagging
-    // state (uncached), and a fill whose lookup plus replica lag outlasts the window can still cache
-    // a pre-write value, until the TTL. 10s rather than the helper's 2s default for that margin; each
-    // busted image costs one replica read per view for those 10s.
+    // 10s, not the helper default: a fill (SET NX) only loses to the bust marker while it lives, so
+    // the window must outlast lookup + replica lag. A longer fill can still cache a pre-write value
+    // until the TTL.
     fillIfAbsent: true,
     debounceTime: 10,
     // Most images are in no contest; those are cached as notFound markers (the default) for the

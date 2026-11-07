@@ -278,7 +278,7 @@ export type ServiceDealStatus = "Requested" | "Accepted" | "Delivered" | "InRevi
 
 export type ServiceDealEventType = "Requested" | "Accepted" | "Declined" | "Expired" | "Delivered" | "RevisionRequested" | "Completed" | "CancellationRequested" | "CancellationAccepted" | "CancellationDeclined" | "Cancelled" | "Disputed" | "DisputeResolved" | "DeadlineExtended" | "Held" | "Released" | "Refunded";
 
-export type ServiceDealFileKind = "Preview" | "Final";
+export type ServiceDealFileKind = "Preview" | "Final" | "Attachment";
 
 export type ServiceDealFileStatus = "Uploading" | "Processing" | "Ready" | "Failed";
 
@@ -1527,17 +1527,6 @@ export interface HeldResourceReview {
   nsfw: boolean;
   tosViolation: boolean;
   metadata: JsonValue | null;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
-export interface HeldAnswer {
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
   createdAt: Date;
   updatedAt: Date;
   heldAt: Date;
@@ -4296,6 +4285,29 @@ export interface CsamReportArchiveObject {
   uploadedAt: Date;
 }
 
+export interface PersonalDataExport {
+  id: number;
+  userId: number;
+  requestedById: number;
+  status: string;
+  modNotesMode: string;
+  holdReasons: string[];
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  manifest: JsonValue | null;
+  error: string | null;
+  attempts: number;
+  createdAt: Date;
+  startedAt: Date | null;
+  builtAt: Date | null;
+  sentAt: Date | null;
+  linkExpiresAt: Date | null;
+  releasedAt: Date | null;
+  releasedById: number | null;
+  ticketId: number | null;
+  requestedAt: Date | null;
+}
+
 export interface EvidenceHold {
   id: number;
   userId: number;
@@ -4334,22 +4346,6 @@ export interface EvidenceHoldPost {
   modelVersionId: number | null;
   collectionId: number | null;
   metadata: JsonValue | null;
-  keptAt: Date;
-}
-
-export interface EvidenceHoldComment {
-  commentId: number;
-  userId: number;
-  threadId: number | null;
-  content: string;
-  createdAt: Date | null;
-  updatedAt: Date | null;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  hidden: boolean | null;
-  metadata: JsonValue | null;
-  thread: JsonValue | null;
-  source: string;
   keptAt: Date;
 }
 
@@ -7045,6 +7041,8 @@ export interface ServiceDealFile {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Date | null;
+  attestedAt: Date | null;
+  removedAt: Date | null;
   createdAt: Date;
   entries?: ServiceDealFileEntry[];
 }

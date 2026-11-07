@@ -34,7 +34,11 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  bustOrchestratorAirs,
+  bustOrchestratorModelCache,
+  getOrchestratorVersionAirs,
+} from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
@@ -264,10 +268,12 @@ export async function updateFile({
   if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
 
   const { count } = await dbWrite.modelFile.updateMany({
-    where: { id },
+    // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
+    // tab would otherwise change it back with no bust.
+    where: { id, ...(inputData.type !== undefined && { type: modelFile.type }) },
     data: { ...inputData, metadata },
   });
-  // Replaced or deleted since the lookup above: nothing was written.
+  // Replaced, deleted or retyped since the lookup above: nothing was written.
   if (count === 0) throw throwNotFoundError();
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
   // GenerationCoverage decides by file type, so the version's cached coverage is stale.
@@ -360,6 +366,10 @@ async function replaceFileContent({
   });
   const fileName = prepared.name;
 
+  // The new file's type can change the version's AIR kind, and the bust after the write derives only
+  // the new one. Every time rather than on a type change: the type read above can be stale.
+  const oldAirs = await getOrchestratorVersionAirs([file.modelVersionId]);
+
   const created = await dbWrite.$transaction(async (tx) => {
     // Lock the version so a training submit or a publish cannot interleave with the swap: both
     // write this row, so they either finish first (and the re-check refuses) or wait for us.
@@ -438,10 +448,12 @@ async function replaceFileContent({
 
   // The orchestrator resolves a version's files by AIR and caches what it resolved, and
   // resourceDataCache holds the version's coverage (and linked components) for an hour; all of it
-  // still describes the old file.
+  // still describes the old file, as does the old file's own pinned AIR.
   await Promise.all([
     resourceDataCache.bust([file.modelVersionId, ...created.linkedSourceIds]),
     bustOrchestratorModelCache(file.modelVersionId),
+    bustOrchestratorAirs(oldAirs),
+    bustVersionScannedFileAirs(file.modelVersionId, file.modelVersion, [file.id]),
   ]).catch((error) =>
     logToAxiom({
       type: 'error',

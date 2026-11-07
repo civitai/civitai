@@ -138,11 +138,15 @@ export const articleRouter = router({
   getShareLinks: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getArticleShareLinksSchema)
-    .query(({ input, ctx }) => getArticleShareLinks({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getArticleShareLinks({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   revokeShareLink: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(getByIdSchema)
-    .mutation(({ input, ctx }) => revokeArticleShareLink({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      revokeArticleShareLink({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   // Called only by the link page's server render, which turns a valid token into a cookie.
   openShareLink: publicProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })

@@ -96,6 +96,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { removeTags } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
@@ -195,6 +196,16 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
 export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
+/**
+ * The image a card shows for an article `a`: its cover, else its banner once servable. The article
+ * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ */
+export const articleCardCoverIdSql = Prisma.sql`COALESCE(
+  a."coverId",
+  (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
+)`;
+
 export const getArticles = async ({
   limit,
   cursor,
@@ -480,7 +491,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
-        a."coverId",
+        ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
         a."nsfwLevel",
@@ -663,7 +674,7 @@ export const getCivitaiNews = async () => {
     SELECT
       c.name as "collection",
       a.id,
-      "coverId",
+      ${articleCardCoverIdSql} AS "coverId",
       title,
       content,
       "publishedAt",
@@ -700,7 +711,8 @@ export const getCivitaiNews = async () => {
     return {
       ...article,
       user: user ?? null,
-      summary: article.summary ?? truncate(removeTags(article.content), { length: 200 }),
+      summary:
+        article.summary ?? truncate(removeTags(removeSpoilers(article.content)), { length: 200 }),
       coverImage: coverImage
         ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
         : undefined,

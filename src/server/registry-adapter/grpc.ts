@@ -9,6 +9,10 @@
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
  *     the error's name, in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
+ *   - Auth (`auth.ts`): the token is the `authorization` metadata (`Bearer {token}`); without one
+ *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
+ *     `invalid_token`, before the stream or at the token's expiry / revocation after it; a user
+ *     whose ratings changed mid-stream gets OUT_OF_RANGE / `cursor_expired`.
  *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
  *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
  *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).
@@ -27,6 +31,14 @@ import * as grpc from '@grpc/grpc-js';
 import type { ServerHttp2Stream } from 'node:http2';
 import { constants as http2Constants } from 'node:http2';
 import * as protobuf from 'protobufjs';
+import type { ResourceConfig, VerifyToken } from '~/server/registry-adapter/auth';
+import {
+  authenticate,
+  isAuthError,
+  resourceMetadataUrl,
+  watchPrincipal,
+  wwwAuthenticate,
+} from '~/server/registry-adapter/auth';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
 import type { EventSink } from '~/server/registry-adapter/subscription';
@@ -271,8 +283,15 @@ export const SOURCE_SERVICE: grpc.ServiceDefinition = {
   },
 };
 
-/** The trailers of an error: its status, and `ErrorInfo` naming it. */
-export function errorStatus(code: ErrorCode, message: string): Partial<grpc.StatusObject> {
+/**
+ * The trailers of an error: its status, and `ErrorInfo` naming it. An auth error also carries
+ * `www-authenticate`, as over HTTP, naming the metadata document when one is configured.
+ */
+export function errorStatus(
+  code: ErrorCode,
+  message: string,
+  resourceMetadata?: string
+): Partial<grpc.StatusObject> {
   const info = types.errorInfo
     .encode(types.errorInfo.fromObject({ reason: code, domain: ERROR_DOMAIN }))
     .finish();
@@ -287,6 +306,9 @@ export function errorStatus(code: ErrorCode, message: string): Partial<grpc.Stat
     .finish();
   const metadata = new grpc.Metadata();
   metadata.set('grpc-status-details-bin', Buffer.from(status));
+  if (isAuthError(code)) {
+    metadata.set('www-authenticate', wwwAuthenticate(code, message, resourceMetadata));
+  }
   return { code: GRPC_STATUS[code], details: message, metadata };
 }
 
@@ -343,13 +365,23 @@ function resetSlowConsumer(call: Call): boolean {
   return true;
 }
 
-function openCall(call: Call, slowConsumerMs: number): EventSink & { ended(): boolean } {
+function openCall(
+  call: Call,
+  slowConsumerMs: number
+): EventSink & { ended(): boolean; fail(status: Partial<grpc.StatusObject>): void } {
   const abort = new AbortController();
   let ended = false;
   call.on('cancelled', () => abort.abort());
   return {
     signal: abort.signal,
     ended: () => ended,
+    /** Ends the call now with `status`, stopping the subscription behind it. */
+    fail(status) {
+      if (ended || abort.signal.aborted) return;
+      ended = true;
+      abort.abort();
+      call.emit('error', status);
+    },
     async send(event) {
       if (abort.signal.aborted || ended) return;
       const flushed = call.write(event);
@@ -363,11 +395,27 @@ function openCall(call: Call, slowConsumerMs: number): EventSink & { ended(): bo
   };
 }
 
+/** The `authorization` metadata of a call: its last string value. */
+function authorizationOf(call: Call): string | undefined {
+  const values = call.metadata
+    .get('authorization')
+    .filter((v): v is string => typeof v === 'string');
+  return values[values.length - 1];
+}
+
 export function createGrpcServer(
   adapter: Adapter,
-  opts: { onError?: (err: unknown) => void; slowConsumerMs?: number } = {}
+  opts: {
+    onError?: (err: unknown) => void;
+    slowConsumerMs?: number;
+    /** As for HTTP (`serve.ts`): without it, any token is `invalid_token`. */
+    verifyToken?: VerifyToken;
+    resource?: ResourceConfig;
+    tokenRecheckMs?: number;
+  } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
+  const metadataUrl = resourceMetadataUrl(opts.resource);
   const server = new grpc.Server({
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,
     'grpc.keepalive_timeout_ms': GRPC_KEEPALIVE_TIMEOUT_MS,
@@ -376,17 +424,22 @@ export function createGrpcServer(
     Subscribe: (call: Call) => {
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
+        let unwatch: (() => void) | undefined;
         try {
           const r = call.request;
-          await subscribe(
-            subscribeRequest({
-              schema: r.schema,
-              cursor: r.cursor,
-              urns: r.urns,
-              filter: r.filter,
-            }),
-            sink
+          const request = subscribeRequest({
+            schema: r.schema,
+            cursor: r.cursor,
+            urns: r.urns,
+            filter: r.filter,
+          });
+          const principal = await authenticate(authorizationOf(call), opts.verifyToken);
+          unwatch = watchPrincipal(
+            principal,
+            (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
+            { recheckMs: opts.tokenRecheckMs }
           );
+          await subscribe(request, sink, principal);
         } catch (err) {
           if (sink.ended() || sink.signal.aborted) return;
           if (
@@ -400,12 +453,14 @@ export function createGrpcServer(
           // a fixed message, since its own text can name a database or a host.
           let status: Partial<grpc.StatusObject>;
           if (err instanceof ProtocolError) {
-            status = errorStatus(err.code, err.message);
+            status = errorStatus(err.code, err.message, metadataUrl);
           } else {
             opts.onError?.(err);
             status = errorStatus('unavailable', 'unavailable');
           }
           call.emit('error', status);
+        } finally {
+          unwatch?.();
         }
       };
       void run();

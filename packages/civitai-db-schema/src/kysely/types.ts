@@ -3263,21 +3263,6 @@ export type EvidenceHold = {
   releasedById: number | null;
   releaseReason: string | null;
 };
-export type EvidenceHoldComment = {
-  commentId: number;
-  userId: number;
-  threadId: number | null;
-  content: string;
-  createdAt: Timestamp | null;
-  updatedAt: Timestamp | null;
-  nsfw: boolean | null;
-  tosViolation: boolean | null;
-  hidden: boolean | null;
-  metadata: unknown | null;
-  thread: unknown | null;
-  source: string;
-  keptAt: Generated<Timestamp>;
-};
 export type EvidenceHoldImage = {
   imageId: number;
   userId: number;
@@ -3420,22 +3405,6 @@ export type GenerationSizePreset = {
   width: number;
   height: number;
   createdAt: Generated<Timestamp>;
-};
-export type HeldAnswer = {
-  /**
-   * The original Answer id.
-   */
-  id: number;
-  questionId: number;
-  userId: number;
-  content: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-  heldAt: Generated<Timestamp>;
-  /**
-   * The holds on the author when it was copied.
-   */
-  holdReasons: string[];
 };
 export type HeldResourceReview = {
   /**
@@ -4520,6 +4489,49 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type PersonalDataExport = {
+  id: Generated<number>;
+  userId: number;
+  requestedById: number;
+  /**
+   * queued | building | built | held | failed | released
+   */
+  status: Generated<string>;
+  /**
+   * Always text-redacted-separate-file: the notes file beside the archive.
+   */
+  modNotesMode: Generated<string>;
+  /**
+   * Neutral codes for the holds found when the archive was built; re-checked at release.
+   */
+  holdReasons: Generated<string[]>;
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  /**
+   * Per-source row counts and notes: what the archive's manifest.json holds, without data.
+   */
+  manifest: unknown | null;
+  error: string | null;
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  startedAt: Timestamp | null;
+  builtAt: Timestamp | null;
+  /**
+   * When the requester was emailed the link.
+   */
+  sentAt: Timestamp | null;
+  linkExpiresAt: Timestamp | null;
+  releasedAt: Timestamp | null;
+  releasedById: number | null;
+  /**
+   * The help-desk ticket the request came in on, when it did.
+   */
+  ticketId: number | null;
+  /**
+   * The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+   */
+  requestedAt: Timestamp | null;
+};
 export type Placement = {
   id: Generated<number>;
   surface: string;
@@ -5398,7 +5410,7 @@ export type ServiceDealFile = {
   mimeType: string;
   size: number;
   /**
-   * Uploading until the seller confirms the object is in the bucket.
+   * Uploading until the uploader confirms the object is in the bucket.
    */
   status: Generated<ServiceDealFileStatus>;
   failReason: string | null;
@@ -5434,6 +5446,15 @@ export type ServiceDealFile = {
   deliveryKey: string | null;
   deliverySize: number | null;
   repackedAt: Timestamp | null;
+  /**
+   * An Attachment only: when the buyer confirmed the rights and likeness attestations for it.
+   */
+  attestedAt: Timestamp | null;
+  /**
+   * Set when the uploader removed the file but its row and objects must stay; only moderators
+   * see it after that. Null is a live file.
+   */
+  removedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
 export type ServiceDealFileEntry = {
@@ -6685,7 +6706,6 @@ export type DB = {
   EventTurfStock: EventTurfStock;
   EvidenceHeldUser: EvidenceHeldUser;
   EvidenceHold: EvidenceHold;
-  EvidenceHoldComment: EvidenceHoldComment;
   EvidenceHoldImage: EvidenceHoldImage;
   EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;
@@ -6699,7 +6719,6 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
-  HeldAnswer: HeldAnswer;
   HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
@@ -6782,6 +6801,7 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  PersonalDataExport: PersonalDataExport;
   Placement: Placement;
   PlacementSpace: PlacementSpace;
   PlacementSuspension: PlacementSuspension;

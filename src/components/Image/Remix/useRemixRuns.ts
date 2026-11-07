@@ -84,6 +84,15 @@ export function groupRemixRuns(
   return runs;
 }
 
+/** The viewer's remix-app workflows, newest first: the tray's runs and the menu's recents. */
+export function useRemixWorkflows({ enabled = true }: { enabled?: boolean } = {}) {
+  return useGetTextToImageRequests(QUERY_INPUT, {
+    enabled,
+    includeTags: false,
+    ignoreFilters: true,
+  });
+}
+
 // Module scope: every mounted tray shares one signal stream, so each id is refetched for once.
 const signaledWorkflowIds = new Set<string>();
 
@@ -92,11 +101,7 @@ const signaledWorkflowIds = new Set<string>();
  * current), plus any run started elsewhere that the queue has not listed yet.
  */
 export function useRemixRuns({ enabled = true }: { enabled?: boolean } = {}) {
-  const { data, isLoading } = useGetTextToImageRequests(QUERY_INPUT, {
-    enabled,
-    includeTags: false,
-    ignoreFilters: true,
-  });
+  const { data, isLoading } = useRemixWorkflows({ enabled });
   const apps = useRemixAppList();
   const runs = useMemo(() => groupRemixRuns(data, apps), [data, apps]);
   const inProgress = runs.filter((run) => run.status === 'running').length;

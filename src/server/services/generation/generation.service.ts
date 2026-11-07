@@ -34,6 +34,7 @@ import type {
   ResolveImageMetaInput,
   SetEvictableInput,
   SetAdditionalResourceFeeWaivedInput,
+  SetPartnerDisclosureInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -67,10 +68,12 @@ import type { GenerationResource, GenerationResourceValue } from '~/shared/types
 
 import {
   applicableRulesFor,
+  toGateRuleViews,
   canGenerateBlockedTargets,
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
+  type GateRuleView,
 } from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
@@ -82,6 +85,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  getPartnerDisclosure,
   isAdditionalResourceFeeWaived,
   isEvictable,
   isGenerationDisabled,
@@ -921,13 +925,8 @@ export type GenerationConfig = {
    * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
    */
   selfHostedMode: GenerationStatusMode;
-  /**
-   * The gate rules that apply to THIS user (already audience-filtered server
-   * side). Ride into `GenerationCtx` so the graph nodes resolve them to per-item
-   * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
-   * the server.
-   */
-  gateRules: GateRule[];
+  /** Applicable rules for THIS user, reduced to what the client renders (`toGateRuleViews`). */
+  gateRules: GateRuleView[];
   /**
    * Mod-authored messages for THIS user (audience-filtered server side, so copy
    * aimed at one tier never ships in another's payload). Rendered above the
@@ -987,11 +986,13 @@ export async function getGenerationConfig(
       isMember,
       isModerator: user.isModerator,
     }),
-    gateRules: applicableRulesFor(gateRules, {
-      isModerator: !!user.isModerator,
-      isMember,
-      hasTestingAccess,
-    }),
+    gateRules: toGateRuleViews(
+      applicableRulesFor(gateRules, {
+        isModerator: !!user.isModerator,
+        isMember,
+        hasTestingAccess,
+      })
+    ),
     generatorMessages: applicableMessagesFor(generatorMessages, {
       isMember,
       tier: user.tier ?? 'free',
@@ -1059,6 +1060,26 @@ export async function setAdditionalResourceFeeWaived({
       : Prisma.sql`flags & ~(${ModelVersionFlag.NoAdditionalResourceFee}::int)`
   );
   return { id, waived: isAdditionalResourceFeeWaived(flags) };
+}
+
+export async function setPartnerDisclosure({
+  id,
+  partnerService,
+  partnerTrains,
+  isModerator,
+}: SetPartnerDisclosureInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  if (partnerTrains && !partnerService)
+    throw throwBadRequestError('Partner trains requires partner service');
+  const mask = ModelVersionFlag.PartnerService | ModelVersionFlag.PartnerTrains;
+  const bits =
+    (partnerService ? ModelVersionFlag.PartnerService : 0) |
+    (partnerTrains ? ModelVersionFlag.PartnerTrains : 0);
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`(flags & ~(${mask}::int)) | ${bits}::int`
+  );
+  return { id, ...getPartnerDisclosure(flags) };
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
@@ -1530,7 +1551,15 @@ export async function getResourceData(
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
-    return { ...resource, fileSizeKB, additionalResourceCost, epochDetails, air };
+    const { flags, ...rest } = resource;
+    return {
+      ...rest,
+      ...getPartnerDisclosure(flags),
+      fileSizeKB,
+      additionalResourceCost,
+      epochDetails,
+      air,
+    };
   }
 
   function getSubstituteData(

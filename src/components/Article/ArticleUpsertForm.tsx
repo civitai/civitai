@@ -42,8 +42,8 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { upsertArticleInput } from '~/server/schema/article.schema';
-import { imageSchema, type ImageSchema } from '~/server/schema/image.schema';
+import { articleFormSchema } from '~/components/Article/article-form.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
 import { getReframeRefusal, type ArticleReframeTarget } from '~/shared/utils/article-reframe';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
@@ -55,22 +55,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const schema = upsertArticleInput
-  .omit({
-    coverImage: true,
-    bannerImage: true,
-    userNsfwLevel: true,
-    moderatorNsfwLevel: true,
-    lockedProperties: true,
-  })
-  .extend({
-    categoryId: z.number().min(0, 'Please select a valid category'),
-    coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
-    bannerImage: imageSchema.nullish(),
-    userNsfwLevel: z.string().optional(),
-    moderatorNsfwLevel: z.string().optional(),
-    lockedProperties: z.string().array().optional(),
-  });
+const schema = articleFormSchema(true);
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
 });
@@ -103,6 +88,10 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
+  const formSchema = useMemo(
+    () => articleFormSchema(!!features.articleTypography),
+    [features.articleTypography]
+  );
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
@@ -113,7 +102,7 @@ export function ArticleUpsertForm({ article }: Props) {
     : true;
 
   const form = useForm({
-    schema,
+    schema: formSchema,
     shouldUnregister: false,
     defaultValues: {
       ...article,
@@ -130,7 +119,7 @@ export function ArticleUpsertForm({ article }: Props) {
     } as any,
   });
   const clearStorage = useFormStorage({
-    schema,
+    schema: formSchema,
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
@@ -376,6 +365,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'formatting',
                 'list',
                 'link',
+                'mentions',
                 'media',
                 'video',
                 'polls',
@@ -385,6 +375,7 @@ export function ArticleUpsertForm({ article }: Props) {
                 'imageSize',
                 'align',
                 'civitaiEmbed',
+                'spoiler',
               ]}
               withAsterisk
               stickyToolbar
@@ -521,8 +512,12 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
-              withAsterisk
+              description={
+                features.articleTypography
+                  ? `Shown on cards. Optional if you add a banner, which is then used on cards instead. Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`
+                  : `Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`
+              }
+              withAsterisk={!features.articleTypography}
             />
             {features.articleTypography && (
               <ReframeButton

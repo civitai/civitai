@@ -7,8 +7,10 @@
  *   1. the filter is compiled (`bad_request` for one that is not a schema);
  *   2. a schema this source can never serve is answered `end` first (rule 4), before any cursor
  *      state is read or written (`Adapter.serves`: `end` means never);
- *   3. a resume's cursor is checked against the request (rule 2, {@link unbindCursor}), then by
- *      the adapter, all before `live`, so a refused cursor is `cursor_expired` with no event;
+ *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
+ *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
+ *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is
+ *      `cursor_expired` with no event;
  *   4. a snapshot (no cursor) is sent with empty cursors, since a snapshot cannot be continued
  *      (rule 2), then `live`, then each change, and a `progress` whenever the position moves
  *      with nothing sent for it (rule 9): a change of another URN, a change the filter excluded,
@@ -17,6 +19,8 @@
  * stream has started.
  */
 import type { EventEmitter } from 'node:events';
+import type { Principal } from '~/server/registry-adapter/auth';
+import { ANONYMOUS_PRINCIPAL } from '~/server/registry-adapter/auth';
 import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
 import type { Adapter, StreamEvent, SubscribeRequest } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
@@ -38,12 +42,21 @@ const BOUND_CURSOR_RE = /^b1\.([0-9a-f]{24})\.(.+)$/;
  * canonical JSON (keys sorted, array order kept), so neither the order of `urn` parameters nor
  * the key order of a filter changes it.
  */
-export function requestBinding(req: Pick<SubscribeRequest, 'schema' | 'urns' | 'filter'>): string {
+export function requestBinding(
+  req: Pick<SubscribeRequest, 'schema' | 'urns' | 'filter'>,
+  subject: string | null = null
+): string {
   const urns = [...new Set(req.urns)].sort();
-  return sha256Hex(sortedKeyJson({ schema: req.schema, urns, filter: req.filter ?? null })).slice(
-    0,
-    24
-  );
+  return sha256Hex(
+    sortedKeyJson({
+      schema: req.schema,
+      urns,
+      filter: req.filter ?? null,
+      // The auth extension ties an authorized stream's cursor to its token's subject. Anonymous
+      // adds nothing, so its bindings are what they were before tokens.
+      ...(subject !== null ? { subject } : {}),
+    })
+  ).slice(0, 24);
 }
 
 /**
@@ -54,6 +67,13 @@ export function requestBinding(req: Pick<SubscribeRequest, 'schema' | 'urns' | '
  * filter and multiply the writes. The check also costs no read, and covers the cursors that name
  * no stored state. A forged binding only misleads its own sender, who could have sent the
  * matching request anyway.
+ *
+ * The binding is a public digest, so it is not what keeps one token's view from another: a
+ * holder of someone else's cursor can re-bind it. What does is that the stored state of a stream
+ * narrowed per audience (a document stream, `doc-feed.ts`; an app, release or schema stream,
+ * `cursor.ts`) names the audience it was served to, and a resume by another audience is
+ * `cursor_expired` before anything is read from that state. The one other entity stream
+ * (`service`) is the same for every principal, so re-binding its cursor gains nothing.
  */
 export function bindCursor(cursor: string, binding: string): string {
   return `b1.${binding}.${cursor}`;
@@ -107,14 +127,18 @@ export function drained(
 export function createSubscriber(adapter: Adapter) {
   const compileFilter = createFilterCompiler();
 
-  return async function subscribe(req: SubscribeRequest, sink: EventSink): Promise<void> {
+  return async function subscribe(
+    req: SubscribeRequest,
+    sink: EventSink,
+    principal: Principal = ANONYMOUS_PRINCIPAL
+  ): Promise<void> {
     const { signal } = sink;
     const filter = compileFilter(req.filter);
     const matches = filter ?? (() => true);
-    const ctx = { signal };
+    const ctx = { signal, audience: principal.audience };
     if (!adapter.serves(req.schema)) return sink.send({ type: 'end' });
 
-    const binding = requestBinding(req);
+    const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);
     let position = req.cursor === undefined ? undefined : unbindCursor(req.cursor, binding);
     const wanted = (urn: string) => req.urns.length === 0 || req.urns.includes(urn);

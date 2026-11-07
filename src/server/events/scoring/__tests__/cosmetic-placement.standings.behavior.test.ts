@@ -262,6 +262,7 @@ const zeroStandings = {
   history: event.teams.map((team) => ({ team, scores: [] })),
   topCosmetics: [],
   topUsers: {},
+  topTurfPlayers: [],
   updatedAt: new Date(0),
 };
 
@@ -587,6 +588,51 @@ describe('standings', () => {
 
 // The preview's days stay in the table after launch. Every read counts only days from scoreFrom
 // (the start by default), so they never reach the public standings or anyone's score.
+// Hat Turf credits each player its own row (claimKey 'turf', the team hat's cosmeticId), so the turf
+// board ranks people and the hat board ranks hats; neither shows the other's rows.
+describe('top turf players', () => {
+  const TEAM_HAT = 90;
+  beforeEach(async () => {
+    await insertDays([
+      // A hat outscoring every turf player: never on the turf board.
+      day('2026-11-02', 1, 21, 'claimed', 'Yellow', 500),
+      day('2026-11-02', 1, TEAM_HAT, 'turf', 'Yellow', 30),
+      day('2026-11-03', 1, TEAM_HAT, 'turf', 'Yellow', 12),
+      day('2026-11-02', 2, TEAM_HAT + 1, 'turf', 'Blue', 50),
+      day('2026-11-02', 8, TEAM_HAT + 1, 'turf', 'Blue', 0),
+      day('2026-11-02', BANNED, TEAM_HAT + 2, 'turf', 'Pink', 900),
+    ]);
+  });
+
+  it('ranks people by their turf points summed over days, leaving hats and hidden users out', async () => {
+    await settle();
+    const { topTurfPlayers } = await getEventStandings(event);
+    expect(topTurfPlayers).toEqual([
+      { userId: 2, team: 'Blue', points: 50 },
+      { userId: 1, team: 'Yellow', points: 42 },
+    ]);
+  });
+
+  it('keeps turf rows out of the top hats', async () => {
+    await settle();
+    const { topCosmetics } = await getEventStandings(event);
+    expect(topCosmetics.map((c) => [c.userId, c.claimKey, c.points])).toEqual([
+      [1, 'claimed', 500],
+    ]);
+  });
+
+  it('stops at ten people', async () => {
+    await insertDays(
+      Array.from({ length: 12 }, (_, i) =>
+        day('2026-11-04', 100 + i, TEAM_HAT, 'turf', 'Yellow', 1)
+      )
+    );
+    await settle();
+    const { topTurfPlayers } = await getEventStandings(event);
+    expect(topTurfPlayers).toHaveLength(10);
+  });
+});
+
 describe('scoreFrom', () => {
   const PREVIEW_FROM = new Date('2026-10-09T00:00:00.000Z');
   const preview = { ...event, scoreFrom: PREVIEW_FROM };

@@ -779,6 +779,28 @@ export const getShopItemEventTags = async ({ shopItemId }: { shopItemId: number 
   return item.eventTags;
 };
 
+/**
+ * Moderator data: the event tags already in use, for one-click adds in the review drawer. Tags a
+ * section sells come first, then the rest by how many items carry them.
+ */
+export const getEventTagSuggestions = async ({ limit = 30 }: { limit?: number } = {}) => {
+  const rows = await dbRead.$queryRaw<{ tag: string }[]>`
+    WITH tags AS (
+      SELECT t AS tag, 0 AS sections, 1 AS items
+      FROM "CosmeticShopItem", unnest("eventTags") t
+      UNION ALL
+      SELECT meta->>'eventTag', 1, 0
+      FROM "CosmeticShopSection"
+      WHERE meta->>'eventTag' IS NOT NULL
+    )
+    SELECT tag FROM tags
+    GROUP BY tag
+    ORDER BY sum(sections) DESC, sum(items) DESC, tag
+    LIMIT ${limit}
+  `;
+  return rows.map((row) => row.tag);
+};
+
 export const setShopItemEventTags = async ({
   shopItemId,
   eventTags,

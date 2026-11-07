@@ -98,8 +98,17 @@ describe('resolveFromCatalog', () => {
       appId: 'ab_orbit_31',
       slug: 'orbit-notes',
       collection: 'notes',
+      contentRating: 'pg',
       family: [V('notes', 1), V('notes', 2)],
     });
+  });
+
+  it('the stream carries its app’s rating: the listing’s, else its block’s', async () => {
+    const listed = app(OPTED_IN, { contentRating: 'pg13' });
+    listed.listing.contentRating = 'x';
+    expect((await resolve([listed])(V('notes', 1)))?.contentRating).toBe('x');
+    listed.listing.contentRating = null;
+    expect((await resolve([listed])(V('notes', 1)))?.contentRating).toBe('pg13');
   });
 
   it('a major past the newest is not published', async () => {

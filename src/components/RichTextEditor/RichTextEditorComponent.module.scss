@@ -126,6 +126,31 @@
     > :first-child {
       margin-top: 0;
     }
+
+    // The author sees what they hid, marked rather than masked.
+    span[data-type='spoiler'] {
+      border-radius: var(--mantine-radius-xs);
+      background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+      outline: 1px dashed light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+    }
+
+    div[data-type='spoiler'] {
+      position: relative;
+      margin: var(--mantine-spacing-sm) 0;
+      border: 1px dashed light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+      border-radius: var(--mantine-radius-sm);
+      padding: var(--mantine-spacing-lg) var(--mantine-spacing-sm) var(--mantine-spacing-xs);
+
+      &::before {
+        content: 'Spoiler';
+        position: absolute;
+        top: 2px;
+        left: var(--mantine-spacing-xs);
+        font-size: var(--mantine-font-size-xs);
+        font-weight: 600;
+        color: var(--mantine-color-dimmed);
+      }
+    }
   }
 
   iframe {
@@ -223,4 +248,45 @@
     background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
     border: 0;
   }
+}
+
+.spoilerText {
+  border-radius: var(--mantine-radius-xs);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background-color 150ms ease;
+}
+
+// Masked rather than blurred: a blur of short text is often still legible. `visibility` rather
+// than a transparent colour, because it also hides an inline image and beats an inline colour.
+.spoilerTextHidden {
+  cursor: pointer;
+  user-select: none;
+  background-color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-3));
+
+  > * {
+    visibility: hidden;
+  }
+
+  &:hover {
+    background-color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--mantine-primary-color-filled);
+    outline-offset: 1px;
+  }
+}
+
+.spoilerBlock {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--mantine-radius-sm);
+  margin-bottom: var(--mantine-spacing-md);
+}
+
+.spoilerBlockHidden {
+  filter: blur(32px);
+  pointer-events: none;
+  user-select: none;
 }

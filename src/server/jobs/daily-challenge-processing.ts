@@ -112,6 +112,7 @@ import {
 import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
+import { cosmeticEntityCaches } from '~/server/redis/caches';
 import { writeJudgeReview } from '~/server/services/challenge-judge-review.service';
 import {
   refundUserChallengeFunds,
@@ -2134,6 +2135,10 @@ export async function startScheduledChallenge(
       FROM "Model"
       WHERE id = ${challenge.modelId};
     `;
+    // The grant puts a frame on the model; refresh the frame cache, which may hold a "no frame" marker (FRAME_CACHE_NEGATIVE).
+    await cosmeticEntityCaches.Model.refresh(challenge.modelId).catch((e) =>
+      log('Frame cache refresh failed:', e instanceof Error ? e.message : e)
+    );
     log('Cosmetic given');
   }
 

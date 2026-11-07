@@ -1,3 +1,4 @@
+import { mentionHref } from '~/components/RenderHtml/mention-href';
 import type { TypographyStylesProviderProps } from '@mantine/core';
 import { useComputedColorScheme, lighten, darken } from '@mantine/core';
 import { useEffect, useMemo, useRef } from 'react';
@@ -164,7 +165,7 @@ export function RenderHtml({
                 tagName: 'a',
                 attribs: {
                   ...attribs,
-                  href: `/user/${encodeURIComponent(attribs['data-label'] ?? attribs['data-id'])}`,
+                  href: mentionHref({ id: attribs['data-id'], label: attribs['data-label'] }),
                 },
               }
             : {

@@ -416,8 +416,7 @@ export async function buildGenerationContext(
         isModerator: user?.isModerator,
       }),
       selfHostedMode: status.selfHostedMode,
-      // Server-side enforcement of gate rules: the same applicable rules the
-      // client got, so the graph nodes reject hidden/disabled targets on submit.
+      // Server-side enforcement of gate rules: graph nodes reject hidden/disabled targets on submit.
       gateRules: applicableRulesFor(gateRules, {
         isModerator: !!user?.isModerator,
         isMember: userTier !== 'free',
