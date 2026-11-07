@@ -208,8 +208,7 @@ function TakeWithCrop({
   const box = width && height ? centreCropBox(width, height, aspect) : undefined;
   return (
     <div className="relative w-full overflow-hidden rounded-md">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={url} alt="Generated take" className="block w-full" />
+      <EdgeMedia src={url} type="image" alt="Generated take" className="block w-full" />
       {box && (
         <div
           className="pointer-events-none absolute border-2 border-white"

@@ -47,13 +47,19 @@ vi.mock('~/server/services/blocks/block-image-upload.service', async (importOrig
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   keepArticleReframe,
+  quoteArticleReframe,
   submitArticleReframe,
 } from '~/server/services/article-reframe.service';
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import type { RemixAppCaller } from '~/server/services/remix-app.service';
-import { centreCropBox, MATURE_BANNER_REFUSAL } from '~/shared/utils/article-reframe';
+import {
+  centreCropBox,
+  getReframeRefusal,
+  MATURE_BANNER_REFUSAL,
+  UNRATED_BANNER_REFUSAL,
+} from '~/shared/utils/article-reframe';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 
 const USER_ID = 7;
@@ -314,5 +320,63 @@ describe('Keep fails closed on the take', () => {
       keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller })
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(stage()).not.toHaveBeenCalled();
+  });
+});
+
+describe("the source must be the author's own image", () => {
+  it("looks the image up by id and the caller's own user id", async () => {
+    await submitArticleReframe({
+      imageId: source.id,
+      target: 'cover',
+      quote: 40,
+      nonce: 'nonce-0006',
+      caller,
+    });
+    expect(dbMock.dbWrite.image.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: source.id, userId: USER_ID } })
+    );
+  });
+
+  it("refuses an image that is not the author's before it prices or charges", async () => {
+    dbMock.dbWrite.image.findFirst.mockResolvedValue(null as never);
+    await expect(
+      submitArticleReframe({ imageId: 99, target: 'cover', quote: 40, nonce: 'nonce-0007', caller })
+    ).rejects.toThrow('Image not found');
+    await expect(quoteArticleReframe({ imageId: 99, target: 'cover', caller })).rejects.toThrow(
+      'Image not found'
+    );
+    expect(h.whatIfFromGraph).not.toHaveBeenCalled();
+    expect(h.generateFromGraph).not.toHaveBeenCalled();
+  });
+});
+
+describe('Keep never takes an output the take did not deliver', () => {
+  const withOutput = (image: Record<string, unknown>) => ({
+    ...succeeded('article-reframe:banner'),
+    steps: [{ $type: 'imageGen', output: { images: [image] } }],
+  });
+
+  it.each([
+    ['a blocked output', { blockedReason: 'Moderated' }],
+    ['an output no longer available', { available: false }],
+  ])('refuses %s', async (_label, extra) => {
+    h.workflow = withOutput({
+      id: 'b1',
+      url: 'https://orchestration.civitai.com/b1',
+      nsfwLevel: 'pG',
+      ...extra,
+    });
+    await expect(
+      keepArticleReframe({ workflowId: 'wf-1', target: 'banner', caller })
+    ).rejects.toThrow('no image to keep');
+    expect(vi.mocked(stageGenerationOutputImage)).not.toHaveBeenCalled();
+  });
+});
+
+describe('getReframeRefusal', () => {
+  it('does not offer a banner from an image with no rating yet', () => {
+    expect(getReframeRefusal('banner', { nsfwLevel: undefined })).toBe(UNRATED_BANNER_REFUSAL);
+    expect(getReframeRefusal('banner', { nsfwLevel: 1 })).toBeUndefined();
+    expect(getReframeRefusal('cover', { nsfwLevel: undefined })).toBeUndefined();
   });
 });

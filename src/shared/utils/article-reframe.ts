@@ -61,16 +61,18 @@ export const ARTICLE_REFRAME: Record<ArticleReframeTarget, ReframeSpec> = {
 };
 
 export const MATURE_BANNER_REFUSAL = "Banner generation isn't available for mature images yet.";
+export const UNRATED_BANNER_REFUSAL =
+  'Banner generation is available once this image has been checked.';
 
 /** Why this source cannot be reframed to `target`, before any engine rule; undefined if it can. */
 export function getReframeRefusal(
   target: ArticleReframeTarget,
   source: { nsfwLevel?: number | null }
 ) {
-  if (
-    target === 'banner' &&
-    getRemixTier({ nsfwLevel: source.nsfwLevel ?? 0 } as RemixSourceImage) === 'mature'
-  )
+  if (target !== 'banner') return undefined;
+  // A form value may carry no rating; it is not shown as safe before the server has checked it.
+  if (source.nsfwLevel == null) return UNRATED_BANNER_REFUSAL;
+  if (getRemixTier({ nsfwLevel: source.nsfwLevel } as RemixSourceImage) === 'mature')
     return MATURE_BANNER_REFUSAL;
   return undefined;
 }
