@@ -269,12 +269,9 @@ describe('gate rules — an ecosystem/workflow refusal says why', () => {
     expect(message).not.toContain('Workflow is currently unavailable.');
   });
 
-  it('a hidden ecosystem never surfaces its message', async () => {
-    const message = await refusalOf([
-      rule({ presentation: 'hidden', message: SECRET, ecosystems: ['Qwen'] }),
-    ]);
-    expect(message ?? '').not.toContain(SECRET);
-  });
+  // No hidden-ecosystem case here: a hidden ecosystem falls back to the default
+  // at the input boundary, so this path never refuses it. Its refusal and the
+  // stripped message are pinned at the unit level in `gate-refusal-reason.test.ts`.
 });
 
 describe('whatIfFromGraph — reply carries the substitution (mutant F)', () => {
