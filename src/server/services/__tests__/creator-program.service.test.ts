@@ -135,6 +135,7 @@ import {
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   decidePayoutReview,
   openPayoutHold,
@@ -1284,30 +1285,6 @@ describe('withdrawCash', () => {
       expect(canceled()).toBe(true);
     });
 
-    // A send that times out after Tipalti accepted it is refunded here and marked Canceled;
-    // Tipalti can still report that payment canceled or failed later.
-    it('refunds a withdrawal once when Tipalti cancels it after the send failed', async () => {
-      mockRefundTransaction.mockResolvedValue({ transactionId: 'tx-burn' });
-      await expect(withdrawCash(userId, 10000)).rejects.toThrow('tipalti down');
-
-      mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue({
-        id: 'withdrawal-1',
-        userId,
-        status: 'Canceled',
-        transactionId: 'tx-burn',
-        amount: 9500,
-        metadata: {},
-      });
-      await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }).catch(
-        () => null
-      );
-
-      const webhookRefunds = mockCreateBuzzTransaction.mock.calls.filter(
-        ([input]) => (input as { type?: TransactionType }).type === TransactionType.Refund
-      );
-      expect(mockRefundTransaction.mock.calls.length + webhookRefunds.length).toBe(1);
-    });
-
     it('does not cancel when a 409 has no refund on the ledger behind it', async () => {
       mockRefundTransaction.mockRejectedValue(conflict());
 
@@ -1319,7 +1296,14 @@ describe('withdrawCash', () => {
 });
 
 // ─── updateCashWithdrawal refunds ─────────────────────────────────────────────────
+// A burn is refunded at most once, whichever path gets there first: withdrawCash when the send
+// fails, or a later Rejected/Canceled from a Tipalti event or a moderator. These tests fake the
+// Buzz ledger (by external id) and the refund claim stored on the row.
 describe('updateCashWithdrawal refunds', () => {
+  let ledger: Set<string>;
+  let claimed: boolean;
+  const sql = (strings: unknown) => (strings as string[]).join('?');
+
   const row = (status: string) => ({
     id: 'withdrawal-1',
     userId,
@@ -1328,32 +1312,140 @@ describe('updateCashWithdrawal refunds', () => {
     amount: 9500,
     metadata: {},
   });
+  const refunds = () =>
+    mockCreateBuzzTransaction.mock.calls.filter(
+      ([input]) => (input as { type?: TransactionType }).type === TransactionType.Refund
+    );
+  const recordedStatus = () =>
+    mockDbWrite.$executeRaw.mock.calls
+      .filter(([strings]) => sql(strings).includes('::"CashWithdrawalStatus"'))
+      .map(([, status]) => status);
 
-  // withdrawCash's failure path refunds the same burn through Buzz's refund endpoint, recorded
-  // as refund-<transactionId>. Both paths must use that one id so Buzz sees a second refund of
-  // the burn as a duplicate. Do not change this id without changing that path too.
-  it('refunds under the same external id as the withdrawCash failure path', async () => {
-    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('InternalValue'));
-    mockCreateBuzzTransaction.mockResolvedValueOnce({ transactionId: 'tx-refund' });
+  beforeEach(() => {
+    ledger = new Set();
+    claimed = false;
+    mockGetTransactionByExternalId
+      .mockReset()
+      .mockImplementation(async (id: string) =>
+        ledger.has(id) ? { externalTransactionId: id } : null
+      );
+    mockCreateBuzzTransaction.mockImplementation(
+      async (input: { type?: TransactionType; externalTransactionId?: string }) => {
+        if (input.type !== TransactionType.Refund) return { transactionId: 'tx-burn' };
+        if (input.externalTransactionId) ledger.add(input.externalTransactionId);
+        return { transactionId: 'tx-refund' };
+      }
+    );
+    mockDbWrite.$executeRaw.mockImplementation(async (strings: unknown) => {
+      const text = sql(strings);
+      if (text.includes("'refundClaimedAt', now()")) {
+        if (claimed) return 0;
+        claimed = true;
+        return 1;
+      }
+      if (text.includes("- 'refundClaimedAt'")) claimed = false;
+      return 1;
+    });
+  });
+
+  it('refunds once when a send that failed is later errored by Tipalti', async () => {
+    // The send times out; withdrawCash refunds through Buzz's refund endpoint, which records
+    // refund-<transactionId>.
+    mockCachedObject.fetch.mockResolvedValue({
+      [userId]: { id: userId, status: 'ready', ready: 100000, pending: 0, withdrawn: 0 },
+    });
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
+    mockDbWrite.userPaymentConfiguration.findUnique.mockResolvedValue({
+      userId,
+      tipaltiPaymentsEnabled: true,
+      tipaltiWithdrawalMethod: 'ACH',
+    });
+    mockDbWrite.cashWithdrawal.create.mockResolvedValue({ id: 'withdrawal-1' });
+    mockPayToTipaltiAccount.mockRejectedValueOnce(new Error('timeout'));
+    mockRefundTransaction.mockImplementation(async (id: string) => {
+      ledger.add(`refund-${id}`);
+      return { transactionId: id };
+    });
+    await expect(withdrawCash(userId, 10000)).rejects.toThrow('timeout');
+    expect(ledger.has('refund-tx-burn')).toBe(true);
+    // Tipalti had accepted the payment after all, approved and scheduled it, then it failed.
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Scheduled'));
 
     await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
 
-    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: TransactionType.Refund,
-        externalTransactionId: 'refund-tx-burn',
-      })
-    );
+    expect(refunds()).toEqual([]);
+    expect(recordedStatus()).toEqual(['Rejected']);
   });
 
-  it.each(['Rejected', 'Canceled'])('refuses to refund a withdrawal already %s', async (status) => {
-    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row(status));
+  it('does not refund again a burn refunded under the id this path used before', async () => {
+    ledger.add('tx-burn');
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Paid'));
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+
+    expect(refunds()).toEqual([]);
+    expect(recordedStatus()).toEqual(['Canceled']);
+  });
+
+  it('records a move from Rejected to Canceled without a second refund', async () => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Scheduled'));
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Rejected'));
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+
+    expect(refunds()).toHaveLength(1);
+    expect(recordedStatus()).toEqual(['Rejected', 'Canceled']);
+  });
+
+  it('refunds once when two cancels arrive together', async () => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Scheduled'));
+
+    await Promise.all([
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }),
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' }),
+    ]);
+
+    expect(refunds()).toHaveLength(1);
+  });
+
+  it('releases the claim when the refund fails, so a retry can refund', async () => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Scheduled'));
+    mockCreateBuzzTransaction.mockRejectedValueOnce(new Error('buzz down'));
 
     await expect(
-      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' })
-    ).rejects.toThrow('cannot be refunded again');
-    expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
-    expect(mockDbWrite.cashWithdrawal.update).not.toHaveBeenCalled();
+      updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' })
+    ).rejects.toThrow('buzz down');
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Canceled' });
+
+    expect(refunds()).toHaveLength(2);
+    expect(ledger.has('refund-tx-burn')).toBe(true);
+  });
+
+  // withdrawCash's failure path refunds the same burn through Buzz's refund endpoint, recorded
+  // as refund-<transactionId>. Both paths must use that one id. Do not change it without
+  // changing that path and isWithdrawalBurnRefunded too.
+  it('refunds under the same external id as the withdrawCash failure path', async () => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('InternalValue'));
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Rejected' });
+
+    expect(
+      refunds().map(([input]) => (input as { externalTransactionId: string }).externalTransactionId)
+    ).toEqual(['refund-tx-burn']);
+  });
+
+  it('logs an error when a refunded withdrawal is later reported paid', async () => {
+    mockDbWrite.cashWithdrawal.findUniqueOrThrow.mockResolvedValue(row('Canceled'));
+
+    await updateCashWithdrawal({ withdrawalId: 'withdrawal-1', status: 'Paid' });
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'cash-withdrawal-paid-after-refund',
+        withdrawalId: 'withdrawal-1',
+      })
+    );
+    expect(recordedStatus()).toEqual(['Paid']);
   });
 });
 
