@@ -29,6 +29,8 @@ import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
+import { matchWebhookToken } from '~/server/utils/webhook-token';
+import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -325,12 +327,7 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    // `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
-    // `?token=` stays accepted until every caller has moved to the header. Either one passing is
-    // enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
-    // arrives as an array and is refused rather than read.
-    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+    const { bearer, queryToken } = presentedTokens(req);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
     if (!bearerOk && !queryOk) {
@@ -340,6 +337,19 @@ export function TokenSecuredEndpoint(
 
     await handler(req, res);
   });
+}
+
+/**
+ * `Authorization: Bearer` keeps the token out of URLs and the access logs that record them;
+ * `?token=` stays accepted until every caller has moved to the header. Either one passing is
+ * enough: some callers send their own unrelated Bearer alongside `?token=`. A repeated `?token=`
+ * arrives as an array and is refused rather than read.
+ */
+function presentedTokens(req: NextApiRequest) {
+  return {
+    bearer: req.headers.authorization?.match(/^Bearer (.+)$/)?.[1],
+    queryToken: typeof req.query.token === 'string' ? req.query.token : undefined,
+  };
 }
 
 const MIN_HEADER_TOKEN_LENGTH = 32;
@@ -380,10 +390,29 @@ export function JobEndpoint(
   return TokenSecuredEndpoint(env.JOB_TOKEN, handler);
 }
 
+/**
+ * `TokenSecuredEndpoint` for the webhook token, also accepting `WEBHOOK_TOKEN_PREVIOUS` when that
+ * is set. Only `WEBHOOK_TOKEN` decides whether the endpoint is configured.
+ */
 export function WebhookEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
-  return TokenSecuredEndpoint(env.WEBHOOK_TOKEN, handler);
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    const { bearer, queryToken } = presentedTokens(req);
+    const slot = matchWebhookToken(bearer) ?? matchWebhookToken(queryToken);
+    if (!slot) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    recordWebhookTokenMatch(req, slot);
+
+    await handler(req, res);
+  });
 }
 
 const PUBLIC_CACHE_MAX_AGE = 300;

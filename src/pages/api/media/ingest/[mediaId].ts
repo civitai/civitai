@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
-import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { dbRead } from '~/server/db/client';
@@ -31,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const tokenAuthed = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
+  const tokenAuthed = webhookTokenAuthenticates(req, req.query.token);
   if (!tokenAuthed) {
     const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
     if (session === false) return;

@@ -36,8 +36,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
 import * as z from 'zod';
 import type { Prisma } from '@prisma/client';
-import { env } from '~/env/server';
-import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { createImage } from '~/server/services/image.service';
@@ -95,7 +94,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Dual auth: WEBHOOK_TOKEN query OR session moderator
-  const tokenOk = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
+  const tokenOk = webhookTokenAuthenticates(req, req.query.token);
   let sessionUserId: number | null = null;
 
   if (!tokenOk) {

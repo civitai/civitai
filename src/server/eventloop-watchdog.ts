@@ -460,7 +460,8 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 
-const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, starvedRatio } = workerData;
+const { sab, thresholdMs, port, token, previousToken, heartbeatIntervalMs, pollMs, cap, starvedRatio } =
+  workerData;
 const beat = new BigInt64Array(sab);
 
 const BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600];
@@ -711,6 +712,13 @@ if (!token) {
   process.exit(78);
 }
 
+function sameToken(given, expected) {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// WEBHOOK_TOKEN_PREVIOUS is accepted too, as the main app's WebhookEndpoint does.
 function tokenAccepted(url) {
   let given = '';
   try {
@@ -718,9 +726,8 @@ function tokenAccepted(url) {
   } catch (err) {
     return false;
   }
-  const a = Buffer.from(given);
-  const b = Buffer.from(token);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const previous = typeof previousToken === 'string' ? previousToken : '';
+  return sameToken(given, token) || (previous.trim() !== '' && sameToken(given, previous));
 }
 
 const server = http.createServer(function (req, res) {
@@ -895,6 +902,7 @@ export function registerEventLoopWatchdog(): void {
         // Same ?token= posture as /api/metrics. Absent token => unauthenticated,
         // which is only acceptable because the port is never added to a Service.
         token: process.env.WEBHOOK_TOKEN ?? '',
+        previousToken: process.env.WEBHOOK_TOKEN_PREVIOUS ?? '',
         heartbeatIntervalMs,
         pollMs: Math.min(DEFAULT_POLL_MS, heartbeatIntervalMs),
         // Resolved on the MAIN thread at spawn, so a bad config is a boot-time fact
