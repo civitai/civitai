@@ -167,7 +167,8 @@ describe('a hidden rule’s message never reaches a refusal', () => {
     expect(outputRefusals(['SDXL'], [], 'SDXL')).toEqual([ECOSYSTEM_UNAVAILABLE]);
   });
 
-  it('hidden is checked first: a gated entry for the same key never adds its message', () => {
+  // Unreachable through getEcosystemStates today (a key is hidden OR gated); pins hidden-first ordering as hardening.
+  it('invariant guard: hidden is checked first: a gated entry for the same key never adds its message', () => {
     expect(outputRefusals(['SDXL'], [{ key: 'SDXL', message: SECRET }], 'SDXL')).toEqual([
       ECOSYSTEM_UNAVAILABLE,
     ]);
@@ -188,7 +189,8 @@ describe('a hidden rule’s message never reaches a refusal', () => {
     ]);
   });
 
-  it('hidden is checked first: a gated entry for the same workflow key never adds its message', () => {
+  // Unreachable through mergeGateStates today (a key is hidden OR gated); pins hidden-first ordering as hardening.
+  it('invariant guard: hidden is checked first: a gated entry for the same workflow key never adds its message', () => {
     expect(workflowRefusals(['txt2img'], [{ key: 'txt2img', message: SECRET }], 'txt2img')).toEqual(
       [WORKFLOW_UNAVAILABLE]
     );
