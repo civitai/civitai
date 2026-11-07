@@ -29,7 +29,7 @@ import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
-import { matchWebhookToken } from '~/server/utils/webhook-token';
+import { matchProbeToken, matchWebhookToken } from '~/server/utils/webhook-token';
 import { recordWebhookTokenMatch } from '~/server/prom/webhook-token.metrics';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
@@ -397,6 +397,23 @@ export function JobEndpoint(
 export function WebhookEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
+  return webhookTokenEndpoint(handler, false);
+}
+
+/**
+ * `WebhookEndpoint` that also accepts `PROBE_TOKEN`, for /api/live, /api/ready and /api/health
+ * only (pinned by webhook-endpoint-probe-token.test.ts).
+ */
+export function ProbeEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return webhookTokenEndpoint(handler, true);
+}
+
+function webhookTokenEndpoint(
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  acceptProbeToken: boolean
+) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!isConfiguredSecret(env.WEBHOOK_TOKEN)) {
       res.status(503).json({ error: 'Endpoint not configured' });
@@ -404,7 +421,10 @@ export function WebhookEndpoint(
     }
 
     const { bearer, queryToken } = presentedTokens(req);
-    const slot = matchWebhookToken(bearer) ?? matchWebhookToken(queryToken);
+    const slot =
+      matchWebhookToken(bearer) ??
+      matchWebhookToken(queryToken) ??
+      (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
     if (!slot) {
       res.status(401).json({ error: 'Unauthorized' });
       return;

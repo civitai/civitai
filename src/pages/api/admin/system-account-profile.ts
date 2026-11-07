@@ -95,7 +95,12 @@ const asObject = (value: unknown): Record<string, unknown> =>
 function profileToken() {
   const token = env.SYSTEM_ACCOUNT_PROFILE_TOKEN;
   return token &&
-    [env.SYSTEM_ACCOUNT_KEY_TOKEN, ...webhookTokenValues(), env.JOB_TOKEN].includes(token)
+    [
+      env.SYSTEM_ACCOUNT_KEY_TOKEN,
+      ...webhookTokenValues(),
+      env.PROBE_TOKEN,
+      env.JOB_TOKEN,
+    ].includes(token)
     ? undefined
     : token;
 }
