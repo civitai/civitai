@@ -32,7 +32,9 @@ describe('release endpoint handler', () => {
       linkExpiresAt: '2026-11-08T00:00:00.000Z',
     });
     expect(release).toHaveBeenCalledWith({ exportId: 5, actorId: 9 });
-    expect(m.audit).toHaveBeenCalledWith(9, expect.objectContaining({ entityId: 42 }));
+    expect(m.audit.mock.calls).toEqual([
+      [9, { entityType: 'user', entityId: 42, activity: 'releasePersonalDataExport' }],
+    ]);
   });
 
   it('answers a held export with the neutral wording, and an unreadable check with try again', async () => {

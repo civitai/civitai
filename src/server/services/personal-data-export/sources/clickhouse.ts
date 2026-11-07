@@ -160,15 +160,26 @@ export const CH_COUNT_TABLES = [
 export const CH_DENY_RE =
   /(moderat|blocked|nsfw|verdict|flag|scan|score|label|rule|reason|internal|review|minor|poi|By$|ById$)/i;
 
+/** Each table's keep/drop decision per column name, made once instead of once per row. */
+const keptColumns = new WeakMap<ChTable, Map<string, boolean>>();
+
+function keepsColumn(table: ChTable, k: string) {
+  let decided = keptColumns.get(table);
+  if (!decided) keptColumns.set(table, (decided = new Map()));
+  let keep = decided.get(k);
+  if (keep === undefined) {
+    keep = table.keep
+      ? table.keep.test(k)
+      : columnDecision(`ch:${table.table}`, k) === 'read' && !CH_DENY_RE.test(k);
+    decided.set(k, keep);
+  }
+  return keep;
+}
+
 export function reduceChRow(table: ChTable, row: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
-    if (
-      table.keep
-        ? !table.keep.test(k)
-        : columnDecision(`ch:${table.table}`, k) !== 'read' || CH_DENY_RE.test(k)
-    )
-      continue;
+    if (!keepsColumn(table, k)) continue;
     out[k] = v;
   }
   const kept = { ...out, ...table.add };

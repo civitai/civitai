@@ -125,6 +125,7 @@ export async function claimNextExport(): Promise<ExportRow | null> {
   return row ?? null;
 }
 
+// Export-only, on top of getAccountLegalHold's legs; not part of the delete-path hold.
 function reviewHoldSql(userId: Prisma.Sql) {
   return Prisma.sql`EXISTS (
     SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
