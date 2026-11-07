@@ -443,9 +443,7 @@ function extractSnapshotStep(
  * produced — the ONE read both `extractSnapshotStep` and `projectAppWorkflow`
  * use for those `$type`s.
  *
- * 🔴 THE OUTPUT KEY IS PER-`$type` (`NATIVE_STEP_OUTPUT_KEY`): `textToImage` /
- * `imageGen` carry `output.images`, `comfy` / `customComfy` carry
- * `output.blobs`.
+ * Output key per `$type` comes from `NATIVE_STEP_OUTPUT_KEY`.
  *
  * The availability + non-empty-url filter is `mediaFromBlobs`, the same one the
  * registry entries use, so a blob the orchestrator has not made available
