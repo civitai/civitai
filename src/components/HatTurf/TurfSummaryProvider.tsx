@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useHatTurfFeed } from '~/components/HatTurf/useHatTurfFeed';
 import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
@@ -79,7 +80,9 @@ export function TurfSummaryProvider({
   children: React.ReactNode;
 }) {
   const feedGate = useHatTurfFeed();
-  const gate = gateOverride === undefined ? feedGate : gateOverride;
+  // Event cosmetics off: no Hat Turf at all for this viewer, as if they never joined.
+  const shown = useShowEventCosmetics();
+  const gate = !shown ? null : gateOverride === undefined ? feedGate : gateOverride;
   const event = gate?.event;
   const arm = gateOverride === undefined ? feedGate?.arm ?? null : null;
   const utils = trpc.useUtils();
