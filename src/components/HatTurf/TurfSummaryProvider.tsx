@@ -25,6 +25,9 @@ const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
+// A card back on screen rereads its image when what is drawn is older than this: a change made
+// while it was off screen was pushed to nobody watching it.
+const CATCH_UP_STALE_MS = 30_000;
 // Only for a push that carries no stickers (an older server): every viewer of a hot image reads, so
 // each reads at most this often per image, spread so they do not arrive together.
 const STICKER_REREAD_MIN_MS = 10_000;
@@ -57,8 +60,8 @@ export const TurfSummaryContext = createContext<TurfSummaries | null>(null);
  * Standings and hats for every image on a surface, fetched once for the ids on it: one request per
  * 100 cards for each, never one per card (tRPC request batching is off by default, so a per-card
  * query is a per-card HTTP request). Chunked in arrival order, not sorted, for the reason
- * `StickerPlacementBatchProvider` gives. Pushes can be missed, so a remount after 30s stale rereads
- * the page.
+ * `StickerPlacementBatchProvider` gives. Pushes reach only watched images, so a card that comes back
+ * on screen after 30s rereads its image, batched with its mark.
  */
 export function TurfSummaryProvider({
   imageIds,
@@ -109,6 +112,8 @@ export function TurfSummaryProvider({
   // so loading another chunk never wipes what pushes brought to the chunks already on screen.
   const [pushed, setPushed] = useState<Record<number, Pushed>>({});
   const [reread, setReread] = useState<Record<number, { at: number; stickers: HatSticker[] }>>({});
+  // Counts read for a card back on screen; `summary` undefined means the image has no turf now.
+  const [caught, setCaught] = useState<Record<number, { at: number; summary?: TurfSummary }>>({});
 
   const chunkOf = useMemo(() => {
     const map = new Map<number, number>();
@@ -174,6 +179,52 @@ export function TurfSummaryProvider({
     return () => timers.forEach((timer) => clearTimeout(timer));
   }, []);
 
+  // When each image's drawn counts were last known good: its chunk's read, a push or a catch-up.
+  const freshAt = useRef<(imageId: number) => number>(() => 0);
+  freshAt.current = (imageId) =>
+    Math.max(
+      summaryQueries[chunkOf.get(imageId) ?? -1]?.dataUpdatedAt ?? 0,
+      pushed[imageId]?.at ?? 0,
+      caught[imageId]?.at ?? 0
+    );
+  const catchUp = useCallback(
+    (imageIds: number[]) => {
+      if (!event) return;
+      const now = Date.now();
+      const stale = imageIds.filter((id) => now - freshAt.current(id) > CATCH_UP_STALE_MS);
+      for (const chunk of chunkIds(stale, SUMMARY_CHUNK)) {
+        const started = Date.now();
+        void Promise.all([
+          utils.hatTurf.getSummaries.fetch({ event, imageIds: chunk }),
+          utils.hatTurf.getStickersForImages.fetch({
+            event,
+            imageIds: chunk,
+            perImage: TURF_FEED_STICKERS,
+          }),
+        ])
+          .then(([summaries, stickers]) => {
+            // Stamped when asked: a push that lands while this is in flight is newer and wins.
+            setCaught((current) => {
+              const next = { ...current };
+              for (const id of chunk)
+                if ((current[id]?.at ?? 0) <= started)
+                  next[id] = { at: started, summary: summaries.images[id] };
+              return next;
+            });
+            setReread((current) => {
+              const next = { ...current };
+              for (const id of chunk)
+                if ((current[id]?.at ?? 0) <= started)
+                  next[id] = { at: started, stickers: stickers[id] ?? [] };
+              return next;
+            });
+          })
+          .catch(() => undefined);
+      }
+    },
+    [event, utils]
+  );
+
   const onPush = useCallback(
     (raw: unknown) => {
       const push = event ? readTurfPush(raw, event) : null;
@@ -208,8 +259,17 @@ export function TurfSummaryProvider({
     const stampOf = (queries: { dataUpdatedAt: number }[], imageId: number) =>
       queries[chunkOf.get(imageId) ?? -1]?.dataUpdatedAt ?? 0;
     let images = base.images;
+    for (const [id, read] of Object.entries(caught)) {
+      const imageId = Number(id);
+      if (base.hidden[imageId] || read.at <= stampOf(summaryQueries, imageId)) continue;
+      const { [imageId]: _old, ...rest } = images;
+      images = read.summary ? { ...rest, [imageId]: read.summary } : rest;
+    }
     for (const push of Object.values(pushed))
-      if (!base.hidden[push.imageId] && push.at > stampOf(summaryQueries, push.imageId))
+      if (
+        !base.hidden[push.imageId] &&
+        push.at > Math.max(stampOf(summaryQueries, push.imageId), caught[push.imageId]?.at ?? 0)
+      )
         images = applyTurfPush(images, push.imageId, push.counts);
     const stickers = { ...baseStickers };
     for (const [id, read] of Object.entries(reread))
@@ -233,6 +293,7 @@ export function TurfSummaryProvider({
     joined,
     base,
     pushed,
+    caught,
     baseStickers,
     reread,
     watch,
@@ -246,7 +307,7 @@ export function TurfSummaryProvider({
       {event && joined && (
         <>
           <TurfPushes onPush={onPush} />
-          <TurfWatcher event={event} watching={watching} version={watchVersion} />
+          <TurfWatcher event={event} watching={watching} version={watchVersion} onAdded={catchUp} />
         </>
       )}
       {children}
@@ -267,10 +328,13 @@ function TurfWatcher({
   event,
   watching,
   version,
+  onAdded,
 }: {
   event: string;
   watching: React.MutableRefObject<Map<number, number>>;
   version: number;
+  /** The cards that came on screen since the last flush, for their catch-up read. */
+  onAdded: (imageIds: number[]) => void;
 }) {
   const { mutate: mark } = trpc.hatTurf.watch.useMutation();
   const marked = useRef(new Set<number>());
@@ -290,9 +354,12 @@ function TurfWatcher({
       const current = [...watching.current.keys()];
       const added = current.filter((id) => !marked.current.has(id));
       marked.current = new Set(current);
-      if (added.length) send(added);
+      if (added.length) {
+        send(added);
+        onAdded(added);
+      }
     }, WATCH_COALESCE_MS);
-  }, [version, watching, send]);
+  }, [version, watching, send, onAdded]);
   useEffect(() => () => clearTimeout(flush.current), []);
 
   useEffect(() => {
