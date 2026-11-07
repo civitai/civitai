@@ -139,7 +139,7 @@ describe('exportPostgres', () => {
     });
     const status = (t: string) =>
       result.files.find((f) => f.file === `data/postgres/${t}.csv`)?.status;
-    expect(status('Comment')).toBe('unavailable');
+    expect(status('Comment')).toBe('not-included');
     expect(status('Article')).toBe('complete');
     expect(statements.some((q) => /CURSOR FOR SELECT .*? FROM "Comment" WHERE/s.test(q))).toBe(
       false

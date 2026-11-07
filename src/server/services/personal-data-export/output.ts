@@ -12,8 +12,11 @@ export type ManifestFile = {
   /** Records written to `file`, counted as they were written. */
   rows: number;
   description: string;
-  /** `partial`: a cap or a time limit stopped the read; `unavailable`: the read failed or was skipped. */
-  status: 'complete' | 'partial' | 'unavailable';
+  /**
+   * `partial`: a cap or a time limit stopped the read. `not-included`: too large to read here, so it
+   * was skipped by design and needs a separate read. `unavailable`: the read was tried and failed.
+   */
+  status: 'complete' | 'partial' | 'not-included' | 'unavailable';
   /** Columns written, in order (CSV files). */
   columns?: string[];
 };

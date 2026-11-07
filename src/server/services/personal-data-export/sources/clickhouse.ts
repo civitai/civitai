@@ -254,7 +254,7 @@ export async function exportClickhouse({
     };
     files.push(entry);
     if (!scannable(table.table, table.required)) {
-      entry.status = 'unavailable';
+      entry.status = 'not-included';
       continue;
     }
     const open = (where: string) =>

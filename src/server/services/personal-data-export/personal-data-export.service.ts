@@ -345,6 +345,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
         excluded: EXCLUDED_CATEGORIES,
         lines: [
           'Activity data (page views, impressions, searches and similar events) is summarized as counts by type in activityCounts. The raw events can be provided on request.',
+          'Not included in this archive: files with status "not-included" were too large to read here and need a separate read. Ask us and we will provide them.',
           'Files with status "unavailable" could not be read when this archive was made; ask us and we will provide them.',
           'Files with status "partial" hit a size or time limit; ask us for the rest.',
           'A table with no records for you has rows: 0 and no file.',

@@ -347,7 +347,7 @@ export async function exportPostgres({
       };
       files.push(entry);
       if (!readable(plan)) {
-        entry.status = 'unavailable';
+        entry.status = 'not-included';
         continue;
       }
       const fetchPage = async () =>

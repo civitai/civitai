@@ -324,6 +324,15 @@ describe('buildExport', () => {
     expect(m.refusedSend).not.toHaveBeenCalled();
   });
 
+  it('tells the reviewer a skipped source is not included and needs a separate read, apart from a failed one', async () => {
+    await buildExport(row, deps);
+    const lines = (m.manifest as { lines: string[] }).lines;
+    expect(lines.find((l) => l.startsWith('Not included in this archive:'))).toContain(
+      'need a separate read'
+    );
+    expect(lines.some((l) => l.includes('"unavailable" could not be read'))).toBe(true);
+  });
+
   it('writes the notes file with staff redacted, and never puts a note count in the archive', async () => {
     await buildExport(row, deps);
     expect(m.put).toHaveBeenCalledTimes(1);

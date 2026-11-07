@@ -305,7 +305,7 @@ describe('ClickHouse', () => {
       onError: () => undefined,
     });
     expect(result.files.find((f) => f.file.endsWith('generation-jobs.jsonl'))?.status).toBe(
-      'unavailable'
+      'not-included'
     );
     expect(queries.some((q) => q.query.includes('FROM orchestration.jobs'))).toBe(false);
     expect(queries.some((q) => q.query.includes('FROM default.views'))).toBe(false);
