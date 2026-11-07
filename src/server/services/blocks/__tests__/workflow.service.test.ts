@@ -2230,6 +2230,52 @@ describe('projectAppWorkflow: customComfy blobs', () => {
       createdAt: '2026-07-17T00:00:00.000Z',
     });
   });
+
+  // Behaviour change, deliberate: a customComfy blob that DOES carry numeric
+  // width/height now reports them (shared `mediaFromBlobs` filter) instead of
+  // being forced to null. Non-numeric values still project to null.
+  it('carries numeric width/height from a customComfy blob, null otherwise', () => {
+    const wf = fakeWorkflow({
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              {
+                id: 'p1',
+                type: 'image',
+                url: 'https://cdn/sized.png',
+                available: true,
+                width: 2048,
+                height: 1024,
+              },
+              {
+                id: 'p2',
+                type: 'image',
+                url: 'https://cdn/unsized.png',
+                available: true,
+                width: '2048',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(
+      projectAppWorkflow(wf as never).images.map(({ url, width, height }) => ({
+        url,
+        width,
+        height,
+      }))
+    ).toEqual([
+      { url: 'https://cdn/sized.png', width: 2048, height: 1024 },
+      { url: 'https://cdn/unsized.png', width: null, height: null },
+    ]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
