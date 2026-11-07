@@ -200,3 +200,6 @@ __pycache__/
 # inside each worktree -- screenshots, REVIEW.md. It must never reach a commit, or
 # one task's artifacts ride a merge into main and seed every later worktree.
 .foreman/
+
+# Pencil (.pen) image assets: generated covers, emoji fills and exports. Local only.
+designs/images/
