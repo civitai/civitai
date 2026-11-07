@@ -1,5 +1,4 @@
 import { Flags } from '~/shared/utils/flags';
-import { toPublicApiVersionFlags } from '~/shared/constants/model-version-flags.constants';
 import { getSponsoredModel } from '~/server/services/promotion.service';
 import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
@@ -2109,7 +2108,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
-          version: { ...version, flags: toPublicApiVersionFlags(version.flags) },
+          version,
         };
       })
       .filter(isDefined);

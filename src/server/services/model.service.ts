@@ -1424,11 +1424,16 @@ export const getModelsRaw = async ({
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
+          // Every public model read (browse feed, associated resources, /api/v1/models) starts here.
+          const publicVersions = data.versions.map((version) => ({
+            ...version,
+            flags: toPublicApiVersionFlags(version.flags),
+          }));
           // A .com face has no per-version description; the .red one is not shown in its place.
           let modelVersions =
             showSfwFace && rawModel.sfwName != null
-              ? data.versions.map((version) => ({ ...version, description: '' }))
-              : data.versions;
+              ? publicVersions.map((version) => ({ ...version, description: '' }))
+              : publicVersions;
 
           // Visibility filters first, so the badge's base-model list reflects only
           // versions the viewer can actually see (no Private/license-restricted leaks).
@@ -2015,7 +2020,7 @@ export const getModelsWithImagesAndModelVersions = async ({
               ? null
               : rank?.[`tippedAmountCount${input.period}`] ?? 0,
           },
-          version: { ...version, flags: toPublicApiVersionFlags(version.flags) },
+          version,
           // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
@@ -6527,7 +6532,6 @@ export async function getModelsWithVersions({
 
               return {
                 ...version,
-                flags: toPublicApiVersionFlags(version.flags),
                 // `modelVersionId` is deliberately PRESERVED on each file. The
                 // `files.push(...vaeFile)` above splices in files that live on
                 // the LINKED VAE version, so "which version owns this file" is

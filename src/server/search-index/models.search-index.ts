@@ -1,10 +1,8 @@
-import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
-import { getPartnerDisclosure } from '~/shared/constants/model-version-flags.constants';
+import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
@@ -12,7 +10,6 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
-import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
   SearchIndexContext,
@@ -28,11 +25,9 @@ import {
   modelsDisplayedAttributes,
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
-import { getVersionAccelerator } from '~/server/search-index/version-accelerator';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsRankingRules } from '~/server/search-index/ranking-rules';
-import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
@@ -46,7 +41,6 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
-import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -182,29 +176,6 @@ type PullDataResult = {
   images: ImagesForModelVersions[];
 };
 
-type VersionMetricRow = {
-  generationCount: number;
-  downloadCount: number;
-  thumbsUpCount: number;
-  thumbsDownCount: number;
-};
-
-// Nested per-version metrics ship in `displayedAttributes`, so they must obey the
-// same model-level hide flags as the card — otherwise the raw hidden number leaks.
-// The search-index version selector carries no earned/tipped (buzz) field, so only
-// downloads + generations are maskable here.
-function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
-  metrics: T,
-  hidden: HiddenModelMetrics
-) {
-  if (!metrics) return metrics;
-  return {
-    ...metrics,
-    downloadCount: hidden.downloads ? null : metrics.downloadCount,
-    generationCount: hidden.generations ? null : metrics.generationCount,
-  };
-}
-
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
@@ -294,8 +265,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const [version] = modelVersions;
       if (!version) return null;
-
-      const { files, flags: versionFlags, ...restVersion } = version;
 
       const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, model.type));
       const canGenerate = eligibility.some((x) => x.canGenerate);
@@ -503,45 +472,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           minor: modelRecord.minor,
           sfwOnly: modelRecord.sfwOnly,
         },
-        version: {
-          ...restVersion,
-          ...getPartnerDisclosure(versionFlags),
-          metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
-          hashes: restVersion.hashes.map((hash) => hash.hash),
-          hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-          settings: restVersion.settings as RecommendedSettingsSchema,
-          baseModel: restVersion.baseModel as BaseModel,
-        },
-        versions: modelVersions.map(
-          (
-            {
-              generationCoverage: _coverage,
-              files,
-              hashes,
-              settings,
-              metrics: vMetrics,
-              usageControl,
-              flags,
-              ...x
-            },
-            i
-          ) => ({
-            ...x,
-            ...getPartnerDisclosure(flags),
-            // Keeps the column's name but holds readiness — the loaded-only filter reads this.
-            generatorLoaded: isGeneratorReady({ generatorLoaded: x.generatorLoaded, usageControl }),
-            // A turbo block on the version is what makes it a turbo variant; the picker filters on this.
-            turbo: !!(settings as RecommendedSettingsSchema | null)?.turbo,
-            accelerator: getVersionAccelerator(settings),
-            pricing: modelVersionPricingSignals({ paidAccess: paidAccessTerms.get(x.id) ?? null }),
-            metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
-            hashes: hashes.map((hash) => hash.hash),
-            hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            ...eligibility[i],
-            settings: settings as RecommendedSettingsSchema,
-            baseModel: x.baseModel as BaseModel,
-          })
-        ),
+        version: toIndexedVersion(version, hidden),
+        versions: toIndexedVersions(modelVersions, { hidden, paidAccessTerms, eligibility }),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],

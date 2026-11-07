@@ -41,7 +41,6 @@ const version = (id: number, name: string, extra: object) => ({
   ...extra,
 });
 
-// Made-up ids.
 const hit = {
   id: 9001,
   name: 'Test Model',
