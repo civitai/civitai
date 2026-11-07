@@ -275,6 +275,34 @@ describe('seeded series', () => {
     expect(has('storage_read', 'consent_unavailable')).toBe(false);
     expect(has('storage_info', 'consent_unavailable')).toBe(false);
     expect(has('storage_tally', 'consent_unavailable')).toBe(false);
+    // The permission hook gates document writes and tallies only.
+    expect(has('storage_write', 'hook_unavailable')).toBe(true);
+    expect(has('storage_tally', 'hook_unavailable')).toBe(true);
+    expect(has('storage_read', 'hook_unavailable')).toBe(false);
+    expect(has('storage_info', 'hook_unavailable')).toBe(false);
+  });
+
+  it('publishes every permission-hook call outcome at 0', async () => {
+    const { seedAppBlockDocStoreMetrics } = await import(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    const reg = new Registry();
+    seedAppBlockDocStoreMetrics(reg);
+    const calls = await values('civitai_app_block_storage_hook_calls_total', reg);
+    expect(calls.map((v) => v.labels.outcome).sort()).toEqual(
+      [
+        'allow',
+        'denied',
+        'error',
+        'timeout',
+        'oom',
+        'stack_overflow',
+        'invalid_result',
+        'unavailable',
+        'offline',
+      ].sort()
+    );
+    expect(calls.every((v) => v.value === 0)).toBe(true);
   });
 
   it('seeding does not reset a series that has already counted', async () => {

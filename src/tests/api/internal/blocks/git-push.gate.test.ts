@@ -107,7 +107,9 @@ vi.mock('~/env/server', () => ({
 // `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
 // `app-blocks-enabled`. Only the pipeline key reflects the toggle; the user flag
 // is hard-false so a regression that repointed back to it would 503.
-vi.mock('~/server/flipt/client', () => ({
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  // The flag-name table is real: the permission-hook cohort gate reads its key from it.
+  ...(await importOriginal<typeof FliptClientModule>()),
   isFlipt: vi.fn(async (flag: string) =>
     flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
   ),
@@ -143,11 +145,21 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
   getBlobContent: vi.fn(),
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: mockNewUlid }));
+// The permission-hook cohort gate resolves its actor through the session hub. Every id resolves to
+// a user of that id, so the id the gate evaluates is visible in the Flipt call.
+vi.mock('~/server/auth/session-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionClientModule>()),
+  sessionClient: {
+    getSessionUserById: vi.fn(async (id: number) => ({ id, username: `u${id}`, onboarding: 0 })),
+  },
+}));
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
 }));
 
 import { isFlipt } from '~/server/flipt/client';
+import type * as SessionClientModule from '~/server/auth/session-client';
+import type * as FliptClientModule from '~/server/flipt/client';
 import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
@@ -486,7 +498,8 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   it('🔴 refuses a pushed permission hook (400 + storageHookErrors), parks nothing and pings no one', async () => {
     // The manifest validator is stubbed valid here, so the refusal is the push-path hook pin's:
-    // the hooks storage feature ships off, so the declaration is not available yet.
+    // the hooks feature is on, but this pusher maps to no user, so the new hook fails the
+    // author cohort gate closed.
     state.manifest = {
       ...validManifest(NEW_SHA),
       storage: {
@@ -503,7 +516,7 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(res._status).toBe(400);
     expect(res._body).toEqual({
       error: 'Storage hook refused',
-      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_available' }],
+      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_in_cohort' }],
     });
     expect(mockSetCommitStatus).toHaveBeenCalledWith(
       expect.objectContaining({ state: 'failure', context: 'civitai/manifest-validation' })
@@ -512,6 +525,42 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockPubReqCreate).not.toHaveBeenCalled();
     expect(mockTriggerBuild).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // 🔴 THE PUSHER-TO-COHORT SEAM. The service tests hand `pusherUserId` in directly, so a handler
+  // (or service) that put the OWNER's id on the cohort gate instead would leave all of them green,
+  // and a pusher outside the cohort could add a hook to an app whose owner is in it. Driven here
+  // from the Forgejo login, through the real handler and the real pin.
+  it('🔴 a pushed hook is cohort-gated on the PUSHER resolved from the dev-<id> login, not the owner', async () => {
+    state.manifest = {
+      ...validManifest(NEW_SHA),
+      storage: {
+        collections: {
+          cards: {
+            visibility: 'private',
+            hook: { file: 'hooks/cards.js', sha256: 'a'.repeat(64) },
+          },
+        },
+      },
+    };
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    const cohortCalls = mockedIsFlipt.mock.calls.filter(
+      ([flag]) => flag === 'app-blocks-storage-hooks'
+    );
+    // Exactly one cohort evaluation, for user 42 (the pusher), never 77 (the owner).
+    expect(cohortCalls.map(([, entityId]) => entityId)).toEqual(['42']);
+    // The cohort answered no (the Flipt mock), so the push is refused as not in the cohort.
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({
+      error: 'Storage hook refused',
+      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_in_cohort' }],
+    });
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
   });
 
   it('ignores non-main branch pushes (200 skipped)', async () => {
