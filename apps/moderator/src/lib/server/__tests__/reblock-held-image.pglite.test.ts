@@ -302,30 +302,39 @@ describe('accepting from a review queue', () => {
 });
 
 describe('a bulk appeal approval over an image blocked for CSAM and another', () => {
-  it('restores the other image and leaves the held one removed with its appeal pending', async () => {
-    await db.query(
-      `INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1), (7, 'Image', $2)`,
-      [HELD, OTHER_REASON]
-    );
-    const form = {
-      imageIds: `${HELD},${OTHER_REASON}`,
-      status: 'Approved',
-      resolvedReason: 'misclassified',
-    };
+  it(
+    'restores the other image and leaves the held one removed with its appeal pending',
+    { timeout: 10_000 },
+    async () => {
+      await db.query(
+        `INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1), (7, 'Image', $2)`,
+        [HELD, OTHER_REASON]
+      );
+      const form = {
+        imageIds: `${HELD},${OTHER_REASON}`,
+        status: 'Approved',
+        resolvedReason: 'misclassified',
+      };
 
-    const result = await imageQueueActions.bulkResolveAppeal(event(form));
+      // Caught, and the rest of the batch let finish: an uncaught refusal would otherwise leave a query
+      // in flight when the client closes, and the run would hang instead of failing.
+      const result = await imageQueueActions
+        .bulkResolveAppeal(event(form))
+        .catch((e: unknown) => e);
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(result).toMatchObject({ status: 409 });
-    expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
-    expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned' });
-    const statuses = (
-      await db.query<{ entityId: number; status: string }>(
-        `SELECT "entityId", status FROM "Appeal" ORDER BY "entityId"`
-      )
-    ).rows;
-    expect(statuses).toEqual([
-      { entityId: HELD, status: 'Pending' },
-      { entityId: OTHER_REASON, status: 'Approved' },
-    ]);
-  });
+      expect(result).toMatchObject({ status: 409 });
+      expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
+      expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned' });
+      const statuses = (
+        await db.query<{ entityId: number; status: string }>(
+          `SELECT "entityId", status FROM "Appeal" ORDER BY "entityId"`
+        )
+      ).rows;
+      expect(statuses).toEqual([
+        { entityId: HELD, status: 'Pending' },
+        { entityId: OTHER_REASON, status: 'Approved' },
+      ]);
+    }
+  );
 });

@@ -1576,7 +1576,9 @@ export async function resolveEntityAppeal({
   modelAppealKind?: 'flag';
 }) {
   // An approval never restores an image blocked for CSAM: refused whole, and every appeal stays
-  // Pending. Read on the primary just before the claim.
+  // Pending. Read on the primary just before the claim, so a CSAM block landing between this read
+  // and the claim is not seen. The only live Image-approval caller is `handleUnblockImages`, after
+  // an explicit unblock.
   if (entityType === EntityType.Image && status === AppealStatus.Approved && ids.length) {
     const held = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT id FROM "Image" WHERE id = ANY(${ids}::int[]) AND "blockedFor" = ${BlockedReason.CSAM}
