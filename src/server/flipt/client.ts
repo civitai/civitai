@@ -283,6 +283,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
   // version declares (that would fail open). See `storage-hooks.ts`.
   APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
+  // OPERATOR LEVER: while on for an app, every write to one of its collections with a permission
+  // hook is refused `hook_unavailable` without calling the storage-hook-runner, exactly as a
+  // runner outage would refuse it. EVALUATED PER APP like the migration hold above (entityId = the
+  // app block id, NO context): switch specific apps with an ENTITY_ID segment. DEFAULT-OFF —
+  // absent or Flipt unreachable takes the normal path (which still fails closed on its own).
+  // 🔴 It can only REFUSE writes: never add the inverse (a flag that skips a hook), which would
+  // fail open. See `doc-store-hook.ts`.
+  APP_BLOCKS_STORAGE_HOOK_RUNNER_OFFLINE = 'app-blocks-storage-hook-runner-offline',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
