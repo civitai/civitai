@@ -29,11 +29,7 @@ port.on('message', (msg: WorkerRequest) => {
         result: out.result,
         elapsedMs: out.elapsedMs,
       } satisfies WorkerResponse),
-    // evaluate classifies every hook-caused failure itself; reaching here is a runner fault (the
-    // instance could not be created, the runtime or context could not be created, or disposing
-    // them failed), which the pool answers as a 500. In every one of those cases evaluate has
-    // already dropped the instance (including a rejected instantiation), so the next call starts
-    // on a new one.
+    // Only runner faults reach here (evaluate answers every hook-caused one); the pool answers 500.
     (err: unknown) =>
       port.postMessage({ id: msg.id, crashed: String(err) } satisfies WorkerResponse)
   );

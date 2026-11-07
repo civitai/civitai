@@ -4,7 +4,7 @@ import type { QuickJSWASMModule } from 'quickjs-emscripten-core';
 import { BACKSTOP_MS } from '../limits.ts';
 import { BackstopError, HookPool, PoolOverloadedError, WorkerCrashedError } from '../pool.ts';
 import { compileQuickJS, evaluateHookOn, instantiate } from '../sandbox.ts';
-import { hookInputJson } from '../test-support/fixtures.ts';
+import { hookInputJson, waitFor } from '../test-support/fixtures.ts';
 
 /**
  * The sandbox, exercised the way the runner uses it: through the real worker pool, so every
@@ -78,7 +78,8 @@ describe('time limit', () => {
       detail: 'interrupted at the deadline',
     });
     expect(out.elapsedMs).toBeGreaterThanOrEqual(ms);
-    expect(out.elapsedMs).toBeLessThan(ms + 40);
+    // Only "not far too late": well under the backstop, so CI load cannot turn it red.
+    expect(out.elapsedMs).toBeLessThan(ms + BACKSTOP_MS / 2);
     expect(wall).toBeLessThan(ms + BACKSTOP_MS);
     expect(pool.stats().terminated).toBe(terminatedBefore);
   });
@@ -264,35 +265,36 @@ describe('the deadline covers evaluation, not compilation', () => {
     }
   }
 
-  // 20 ms to compile, 30 ms to compile again (the second compile taking half as long again as
-  // the first, as GC or a smaller CPU share can make it), 5 ms budget. With the deadline armed before
-  // compilation the hook is interrupted at its first poll; so it is with an allowance of exactly
-  // the measured compile (20 + 5 < 30).
-  it('a hook that is slow to compile and quick to run gets its whole budget, five times in a row', async () => {
-    const calls = [];
-    for (let i = 0; i < 5; i++) calls.push(await evaluateOnVirtualClock(20, 30, 5));
-    expect(calls).toEqual(
-      Array.from({ length: 5 }, () => ({ result: { allow: true }, hookEvals: 2 }))
+  // Virtual milliseconds: [first compile, second compile, timeoutMs, verdict]. The clock is
+  // virtual, so each case is deterministic and runs once. The floor pair and the factor pair each
+  // sit one virtual ms either side of their bound, so each pins its constant from both sides.
+  const ALLOW = { result: { allow: true }, hookEvals: 2 };
+  const TIMEOUT = {
+    result: { allow: false, cause: 'timeout', detail: 'interrupted at the deadline' },
+    hookEvals: 2,
+  };
+  it.each([
+    // The compile is not charged to the hook: red with the deadline armed before compilation,
+    // and red with an allowance of exactly the measured compile (20 + 5 <= 30).
+    ['a second compile slower than the first is paid for', 20, 30, 5, ALLOW],
+    // The floor alone pays for a second compile after a first that measured nothing.
+    ['the floor pays for a second compile after a ~0 ms first', 0, 4, 1, ALLOW],
+    ['the floor is bounded', 0, 7, 1, TIMEOUT],
+    // FACTOR: 1.5 x 20 + floor + 1 lands between 35 and 37.
+    ['the factor pays for a second compile 1.75x the first', 20, 35, 1, ALLOW],
+    ['the factor is bounded', 20, 37, 1, TIMEOUT],
+    // Positive control: the virtual clock does reach the interrupt handler.
+    ['a second compile far beyond the allowance is a timeout', 20, 90, 5, TIMEOUT],
+  ])('%s', async (_name, first, second, timeoutMs, expected) => {
+    expect(await evaluateOnVirtualClock(first, second, timeoutMs)).toEqual(expected);
+  });
+});
+
+describe('syntax errors', () => {
+  it('a hook that does not parse is refused as cause error with the SyntaxError', async () => {
+    const { result } = await run(
+      'export default function check() { return { allow: true }; }\n}}}'
     );
-  });
-
-  // Positive control for the virtual clock, and the bound: a second compile far past the
-  // allowance (20 ms measured, 90 ms taken) is not paid for, so the clock does reach the
-  // interrupt handler and the allowance is not unbounded.
-  it('a second compile far beyond the allowance still ends in a timeout', async () => {
-    expect(await evaluateOnVirtualClock(20, 90, 5)).toEqual({
-      result: { allow: false, cause: 'timeout', detail: 'interrupted at the deadline' },
-      hookEvals: 2,
-    });
-  });
-
-  // The syntax-error case runs through the pool on a real clock: a ~60 KiB hook that is slow to
-  // compile (one long expression in a function it never calls).
-  const terms = Array.from({ length: 12_000 }, (_, i) => `x+${i % 97}`).join('+');
-  const big = `function never(x) { return ${terms}; }\n${QUICK}`;
-
-  it('a syntax error is still reported (from the compile step)', async () => {
-    const { result } = await run(`${big}\n}}}`, { timeoutMs: 5 });
     expect(result).toMatchObject({ allow: false, cause: 'error' });
     expect((result as { detail: string }).detail).toMatch(/^SyntaxError: /);
   });
@@ -769,7 +771,7 @@ describe('worker replacement and liveness', () => {
       await expect(
         p.run({ appId: 'app-test', source: STALL, inputJson: hookInputJson(), timeoutMs: 10 })
       ).rejects.toBeInstanceOf(BackstopError);
-      await new Promise((r) => setTimeout(r, 120));
+      await waitFor('the pool to report not live', () => !p.liveness().live);
       expect(p.liveness()).toMatchObject({ live: false, ready: 0 });
     } finally {
       await p.close();

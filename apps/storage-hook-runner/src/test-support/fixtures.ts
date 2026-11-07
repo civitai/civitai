@@ -55,3 +55,16 @@ export function checkBody(
     input,
   };
 }
+
+/**
+ * Wait until `cond()` holds, polling, and fail with `what` if it has not within `boundMs`. Used
+ * instead of a fixed sleep wherever a test needs the pool in some state (saturated, not live):
+ * a sleep only guesses how long that takes, and under CI load the guess is wrong.
+ */
+export async function waitFor(what: string, cond: () => boolean, boundMs = 5_000): Promise<void> {
+  const t0 = performance.now();
+  while (!cond()) {
+    if (performance.now() - t0 > boundMs) throw new Error(`timed out waiting for: ${what}`);
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}

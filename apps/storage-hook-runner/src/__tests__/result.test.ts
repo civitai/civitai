@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { clampTimeout } from '../contract.ts';
+import { SIG_SKEW_SECONDS } from '../limits.ts';
 import { outcomeOf, validateHookReturn } from '../result.ts';
 import { checkTimestamp } from '../signing.ts';
 
@@ -141,10 +142,10 @@ describe('checkTimestamp', () => {
   const now = 1_800_000_000;
   it.each([
     [now, true],
-    [now - 60, true],
-    [now + 60, true],
-    [now - 61, false],
-    [now + 61, false],
+    [now - SIG_SKEW_SECONDS, true],
+    [now + SIG_SKEW_SECONDS, true],
+    [now - SIG_SKEW_SECONDS - 1, false],
+    [now + SIG_SKEW_SECONDS + 1, false],
     [now + 0.5, false],
     ['1800000000', false],
     [undefined, false],

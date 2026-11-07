@@ -82,10 +82,19 @@ particular, these are runner faults, never `timeout`:
   the call's computed answer is discarded, never returned, so it can never leak an allow;
 - a full queue or an app over its share of it (`overloaded`, 503).
 
-The time budget covers the hook's EVALUATION only: the source is compiled once first with the
-deadline disarmed, and the budget is extended by 1.5 times that compile time plus 5 ms to pay for
-the second compile inside the evaluation (quickjs-emscripten cannot run an already compiled
-module), which can run slower than the first.
+The time budget covers the hook's EVALUATION only. The source is compiled once with the deadline
+disarmed, and the evaluation compiles it again (quickjs-emscripten cannot run an already compiled
+module), which can run slower than the first. So the effective deadline, counted from the end of
+that first compile, is
+
+`timeoutMs + COMPILE_ALLOWANCE_FACTOR × compileMs + COMPILE_ALLOWANCE_FLOOR_MS`
+
+where `compileMs` is the measured first compile (constants in `src/limits.ts`).
+
+**Caller timeout.** A client-side timeout must allow for the compile allowance plus the backstop,
+not just `timeoutMs`. The backstop answers 500 at `timeoutMs + BACKSTOP_MS` after the call reaches
+a worker, which also caps the compile allowance, so size the client timeout as at least
+`timeoutMs + BACKSTOP_MS`, plus time queued behind other calls and the network round trip.
 
 Non-2xx answers mean the runner did not evaluate. The caller maps every one of them, and any
 transport failure or unverifiable response, to `hook_unavailable` (fail closed):

@@ -16,12 +16,12 @@ import type { HookResult } from './result.ts';
  * One hook evaluation, with no state carried between calls.
  *
  * ISOLATION GRANULARITY: a fresh QuickJS RUNTIME (and context) per call, inside ONE WebAssembly
- * instance per worker that is shared by that worker's calls. Chosen for latency: in CI run
- * 41981302173 a fresh instance per call cost p50 3.05 / p99 35.7 ms against 0.71 / 4.96 ms for a
- * fresh runtime (1 KiB hook). Every JS-visible thing (globals, module state, prototypes, heap
- * objects) belongs to the runtime and is freed with it, so nothing a hook can observe carries
- * over. What IS shared is the instance's linear memory and its allocator: the accepted residual
- * risk is a QuickJS memory-safety bug reading freed memory of an earlier call.
+ * instance per worker that is shared by that worker's calls. Chosen for latency: a fresh instance
+ * per call costs several times a fresh runtime (the benchmark measures both). Every JS-visible
+ * thing (globals, module state, prototypes, heap objects) belongs to the runtime and is freed
+ * with it, so nothing a hook can observe carries over. What IS shared is the instance's linear
+ * memory and its allocator: the accepted residual risk is a QuickJS memory-safety bug reading
+ * freed memory of an earlier call.
  *
  * WHEN THE SHARED INSTANCE IS DISCARDED (`QuickJSInstance`): after any call that leaves the VM
  * by a route other than a clean in-VM exception, namely a throw out of the WASM boundary (a WASM
@@ -146,22 +146,13 @@ export function evaluateHookOn(qjs: QuickJSWASMModule, args: EvaluateArgs): Sand
   rt.setMemoryLimit(MEMORY_LIMIT_BYTES);
   rt.setMaxStackSize(MAX_STACK_BYTES);
 
-  // `interrupted` is the authority for `timeout`: it is set only when THIS handler stopped the
-  // VM, so hook code cannot fake a timeout (or hide one) by throwing an error that looks like it.
-  // QuickJS's interrupt exception is uncatchable, and once the deadline passes the handler keeps
-  // answering true, so a `catch` or `finally` cannot keep running either.
+  // `interrupted`, set only when THIS handler stopped the VM, decides `timeout`, never an error's
+  // name: hook code cannot fake a timeout (or hide one) by throwing a look-alike.
   //
-  // The deadline is ARMED by `run` after the sandbox's own setup and after a compile-only pass
-  // over the hook, so neither the prelude nor compiling the source spends the hook's budget. The
-  // compile-only pass runs with the deadline disarmed (compiling runs no hook code; the worker
-  // backstop still bounds it). quickjs-emscripten exposes no way to run an already compiled
-  // module, so the real evaluation compiles again, and that second compile runs under the armed
-  // deadline. Only the first compile's duration is known, and the second can take longer: with an
-  // allowance of exactly the measured compile time, any slowdown of the second compile came out
-  // of the hook's own budget. So the allowance is a multiple of the measured compile plus a fixed
-  // floor (COMPILE_ALLOWANCE_* in limits.ts). It is still a bound derived from the measured
-  // compile, so a hook that runs forever is interrupted soon after `timeoutMs` plus the
-  // allowance, and the worker backstop bounds everything regardless.
+  // `run` arms the deadline after a compile-only pass. quickjs-emscripten cannot run an already
+  // compiled module, so the real evaluation compiles again under the armed deadline, and the
+  // budget is extended to cover that second compile, which can run slower than the first: a
+  // multiple of the measured compile plus a fixed floor (COMPILE_ALLOWANCE_* in limits.ts).
   let interrupted = false;
   let start = performance.now();
   let deadline = Number.POSITIVE_INFINITY;

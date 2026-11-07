@@ -1,7 +1,6 @@
 # storage-hook-runner (apps/storage-hook-runner) — Fastify + worker_threads + QuickJS (WASM).
-# Node 24.22.1: the same release as the repo's .nvmrc, which CI's test runs use. The README's
-# measurements were taken on Node 24 (24.21 locally, 24.22.1 in CI); stack and interrupt
-# behaviour is engine-specific, so bump this and .nvmrc together.
+# Keep the image's Node in step with the repo's .nvmrc (which CI's test runs use): stack and
+# interrupt behaviour depend on the engine, so bump this and .nvmrc together.
 # Mirrors apps/assistant-runner/Dockerfile (multi-stage node-alpine, corepack pnpm, filtered
 # frozen install, tsup build, non-legacy `pnpm deploy --prod` runtime). `--ignore-scripts` skips
 # the root's `db:generate`; safe because this app imports no Prisma client and has no workspace

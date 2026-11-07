@@ -3,19 +3,18 @@
  * this file; change both together.
  */
 
-/** QuickJS heap cap per call (`runtime.setMemoryLimit`). A 32 MiB allocation is refused. */
+/** QuickJS heap cap per call (`runtime.setMemoryLimit`). */
 export const MEMORY_LIMIT_BYTES = 16 * 1024 * 1024;
 
 /**
  * QuickJS stack cap per call (`runtime.setMaxStackSize`).
  *
- * Not 512 KiB: measured on Node 24.21 / quickjs-ng 0.32.0, a 512 KiB QuickJS stack lets the
- * interpreter recurse deeper than the HOST (V8) stack allows, so unbounded recursion surfaces as
- * a host `RangeError` thrown out of `evalCode` instead of a catchable in-VM one. At 64, 128, 256
- * and 384 KiB the in-VM limit fires first (recursion depths 368, 741, 1486 and 2230). 256 KiB
- * keeps a 2x margin under the host limit and still allows ~1,400 frames, far beyond what a
- * permission check needs. The sandbox also maps a host `RangeError` to `stack_overflow`, so a
- * smaller host stack degrades to a refusal, never to a crash.
+ * Not 512 KiB: that lets the interpreter recurse deeper than the HOST (V8) stack allows, so
+ * unbounded recursion surfaces as a host `RangeError` thrown out of `evalCode` instead of a
+ * catchable in-VM one. 256 KiB keeps the in-VM limit firing first with a 2x margin, and still
+ * allows far deeper recursion than a permission check needs. The sandbox also maps a host
+ * `RangeError` to `stack_overflow`, so a smaller host stack degrades to a refusal, never to a
+ * crash.
  */
 export const MAX_STACK_BYTES = 256 * 1024;
 
@@ -38,8 +37,8 @@ export const COMPILE_ALLOWANCE_FLOOR_MS = 5;
 
 /**
  * The worker backstop. The interrupt handler only runs when QuickJS polls it, and a single
- * native operation does not poll: measured, an allocation loop that grows towards the memory cap
- * ran 1.3 s with ONE interrupt poll and a 50 ms deadline. A call still running at
+ * native operation does not poll, so an allocation loop that grows towards the memory cap can run
+ * far past its deadline between two polls. A call still running at
  * `timeoutMs + BACKSTOP_MS` gets its worker terminated and answers 500 (a runner fault, not the
  * author's `timeout`: see BackstopError in pool.ts).
  */

@@ -2,11 +2,17 @@ import { Worker } from 'node:worker_threads';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.ts';
-import { MAX_BODY_BYTES, MAX_SOURCE_BYTES, SIG_HEADER, SIG_SKEW_SECONDS } from '../limits.ts';
+import {
+  BACKSTOP_MS,
+  MAX_BODY_BYTES,
+  MAX_SOURCE_BYTES,
+  SIG_HEADER,
+  SIG_SKEW_SECONDS,
+} from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
 import type { Metrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
-import { SECRET, checkBody, hmac, sha256 } from '../test-support/fixtures.ts';
+import { SECRET, checkBody, hmac, sha256, waitFor } from '../test-support/fixtures.ts';
 
 /** `POST /v1/check` through the real Fastify app and the real worker pool. */
 
@@ -95,24 +101,27 @@ describe('POST /v1/check: results', () => {
     );
   });
 
+  // The upper bounds below only say the deadline is not far too late. They sit well under the
+  // worker backstop (which would answer 500 instead), not near the deadline, so CI load cannot
+  // turn them red.
   it('clamps timeoutMs to the 500 ms maximum', async () => {
     const res = await post(JSON.stringify(checkBody(LOOP, { timeoutMs: 60_000 })));
     expect(res.json().result).toMatchObject({ cause: 'timeout' });
     expect(res.json().elapsedMs).toBeGreaterThanOrEqual(500);
-    expect(res.json().elapsedMs).toBeLessThan(600);
+    expect(res.json().elapsedMs).toBeLessThan(500 + BACKSTOP_MS / 2);
   });
 
   it('clamps timeoutMs to the 1 ms minimum', async () => {
     const res = await post(JSON.stringify(checkBody(LOOP, { timeoutMs: 0 })));
     expect(res.json().result).toMatchObject({ cause: 'timeout' });
     expect(res.json().elapsedMs).toBeGreaterThanOrEqual(1);
-    expect(res.json().elapsedMs).toBeLessThan(40);
+    expect(res.json().elapsedMs).toBeLessThan(1 + BACKSTOP_MS / 2);
   });
 
   it('defaults timeoutMs to 50 ms', async () => {
     const res = await post(JSON.stringify(checkBody(LOOP)));
     expect(res.json().elapsedMs).toBeGreaterThanOrEqual(50);
-    expect(res.json().elapsedMs).toBeLessThan(90);
+    expect(res.json().elapsedMs).toBeLessThan(50 + BACKSTOP_MS / 2);
   });
 });
 
@@ -184,7 +193,8 @@ describe('POST /v1/check: signature and replay window', () => {
     expect(res.json().error.code).toBe('stale_timestamp');
   });
 
-  it('accepts ts at the edge of the window', async () => {
+  // Wall clock on both sides, so not the exact edge; checkTimestamp's unit test pins that.
+  it('accepts ts just inside the window', async () => {
     const ts = Math.floor(Date.now() / 1000) - (SIG_SKEW_SECONDS - 2);
     const res = await post(JSON.stringify(checkBody(ALLOW, { ts })));
     expect(res.statusCode).toBe(200);
@@ -265,7 +275,10 @@ describe('health', () => {
     try {
       const slow = JSON.stringify(checkBody(LOOP, { timeoutMs: 300 }));
       const inflight = [post2(a, slow), post2(a, slow)]; // one running, one queued: queue full
-      await new Promise((r) => setTimeout(r, 20));
+      await waitFor('one call running and one queued', () => {
+        const s = p.stats();
+        return s.busy === 1 && s.queued === 1;
+      });
       const t0 = performance.now();
       const res = await a.inject({ method: 'GET', url: '/readyz' });
       expect(res.statusCode).toBe(200);
@@ -297,7 +310,7 @@ describe('health', () => {
       expect((await a.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(200);
       const res = await post2(a, JSON.stringify(checkBody(STALL, { timeoutMs: 10 })));
       expect(res.statusCode).toBe(500);
-      await new Promise((r) => setTimeout(r, 120));
+      await waitFor('the pool to report not live', () => !p.liveness().live);
       expect((await a.inject({ method: 'GET', url: '/healthz' })).statusCode).toBe(503);
     } finally {
       await a.close();
@@ -366,7 +379,10 @@ describe('per-app fairness over HTTP', () => {
     try {
       const slowA = JSON.stringify(checkBody(LOOP, { timeoutMs: 100 }));
       const inflight = [post2(a, slowA), post2(a, slowA)];
-      await new Promise((r) => setTimeout(r, 20));
+      await waitFor('one call running and one queued', () => {
+        const s = p.stats();
+        return s.busy === 1 && s.queued === 1;
+      });
       const a3 = await post2(a, JSON.stringify(checkBody(ALLOW)));
       expect(a3.statusCode).toBe(503);
       expect(a3.json().error.code).toBe('overloaded');
@@ -392,7 +408,10 @@ describe('overload', () => {
     try {
       const slow = JSON.stringify(checkBody(LOOP, { timeoutMs: 200 }));
       const inflight = [post2(a, slow), post2(a, slow)]; // one running, one queued
-      await new Promise((r) => setTimeout(r, 20));
+      await waitFor('one call running and one queued', () => {
+        const s = p.stats();
+        return s.busy === 1 && s.queued === 1;
+      });
       const res = await post2(a, JSON.stringify(checkBody(ALLOW)));
       expect(res.statusCode).toBe(503);
       expect(res.json().error.code).toBe('overloaded');

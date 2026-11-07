@@ -63,10 +63,10 @@ function clip(s: string, max: number): string {
  * reason is first clipped to 2 x REASON_MAX_CHARS UTF-16 units (so a huge reason costs a bounded
  * amount of work; a high surrogate left dangling at that cut is dropped), then has control and
  * bidi characters stripped, then is TRUNCATED to REASON_MAX_CHARS code points (a cut can split a
- * multi-code-point grapheme such as a ZWJ emoji). Only the first 400 units count, so controls
- * filling them leave less text. If what is left
- * is empty or whitespace only, the result is `invalid_result` ("deny reason is empty"): a refusal
- * must carry something to show the user. Anything else is `invalid_result`.
+ * multi-code-point grapheme such as a ZWJ emoji). Only the first 2 x REASON_MAX_CHARS units
+ * count, so controls filling them leave less text. If what is left is empty or whitespace only,
+ * the result is `invalid_result` ("deny reason is empty"): a refusal must carry something to
+ * show the user. Anything else is `invalid_result`.
  */
 export function validateHookReturn(json: string | undefined): HookResult {
   if (json === undefined) return fault('invalid_result', 'hook returned undefined');

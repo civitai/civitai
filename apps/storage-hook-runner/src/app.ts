@@ -50,8 +50,8 @@ const SELF_TEST_TTL_MS = 5_000;
  *   GET  /readyz    a worker is ready AND the built-in self-test hooks evaluate correctly
  *
  * The request body is read as raw bytes: the HMAC covers the exact bytes the caller sent, and
- * the signature is checked BEFORE the JSON is parsed. Fastify's default logger records method
- * and URL only, never bodies, which carry user documents.
+ * the signature is checked BEFORE the JSON is parsed. Request bodies, which carry user
+ * documents, are never logged.
  */
 export function buildApp(deps: AppDeps): FastifyInstance {
   const nowSec = deps.nowSec ?? (() => Math.floor(Date.now() / 1000));
@@ -104,8 +104,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Readiness: at least one worker is ready, AND the sandbox self-test passes. The self-test
   // runs on a QuickJS instance of its own on this thread, NOT through the pool, so it never
   // queues behind hook work: an overloaded pool is still a ready pod (overload is answered 503
-  // per request). Its result is reused for SELF_TEST_TTL_MS, so a probe costs a few ms at most
-  // once per TTL on the event loop.
+  // per request). Its result is reused for SELF_TEST_TTL_MS.
   const selfTestInstance = QuickJSInstance.fromCompiled(compileQuickJS());
   let selfTest: { at: number; report: Promise<SelfTestReport> } | null = null;
   app.get('/readyz', async (_request, reply) => {
