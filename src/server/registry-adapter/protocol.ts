@@ -83,8 +83,8 @@ export interface AdapterContext {
   signal: AbortSignal;
   /**
    * What the subscription's token may read (`audience.ts`). Absent is anonymous, the narrowest.
-   * The document, app and app-release streams narrow by it (`audience.ts`); the `service` and
-   * schema streams are the same for every audience.
+   * The document, app, app-release and schema streams narrow by it (`audience.ts`); the
+   * `service` stream is the same for every audience.
    */
   audience?: Audience;
 }

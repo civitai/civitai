@@ -4,13 +4,13 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { Principal, Recheck } from '~/server/registry-adapter/auth';
-import { ANONYMOUS_AUDIENCE } from '~/server/registry-adapter/audience';
+import { ANONYMOUS_AUDIENCE, audienceForUser } from '~/server/registry-adapter/audience';
 import { watchPrincipal } from '~/server/registry-adapter/auth';
 import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
-import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
+import { SERVED_SCHEMAS, buildEntities, readableBy } from '~/server/registry-adapter/entities';
 import {
   SOURCE_SERVICE,
   createGrpcServer,
@@ -788,4 +788,220 @@ describe('the re-check is jittered, so streams opened together do not re-check t
       }
     }
   );
+});
+
+const SCHEMAS = 'urn:schema:registry:schema@v1';
+const FIXED_SCHEMA_URNS = [APPS, RELEASES, SERVICES];
+const urnOfApp = (slug: string) => `urn:apps.civitai.com:app/${slug}`;
+const releaseOf = (slug: string) => `urn:apps.civitai.com:app/${slug}@1.0.0`;
+const notesSchemaOf = (slug: string) => `urn:schema:apps.civitai.com:${slug}/notes@v1`;
+
+/** A listed on-site app with one approved release and an exported `notes` collection. */
+function listedApp(slug: string, rating: string, forkOf: string | null = null): CatalogApp {
+  const m = { blockId: slug, storage: { collections: { notes } } };
+  const base = app(rating);
+  return {
+    listing: { ...base.listing, slug, name: slug, forkOf },
+    block: { ...base.block!, id: `ab_${slug}`, blockId: slug, manifest: m },
+    approved: base.approved.map((r) => ({ ...r, id: `pubreq_${slug}`, manifest: m })),
+  };
+}
+
+/** The entity streams alone, over whatever apps `apps()` returns at each read. */
+function catalogSource(apps: () => CatalogApp[]): Adapter {
+  return createPollingAdapter({
+    namespace: 'apps.civitai.com',
+    serves: SERVED_SCHEMAS,
+    read: async () =>
+      buildEntities(apps(), { baseUrl: 'https://civitai.example', features: SWITCH_ON }),
+    store: createMemorySnapshotStore(),
+    pollMs: 5,
+    sleep: abortableSleep,
+  });
+}
+
+type Sent = { event: string; urn: string; body?: Record<string, unknown> };
+/** Every complete event in order, with the URN it names (and an upsert's entity body). */
+const sent = (text: string): Sent[] =>
+  [...text.matchAll(/^event: (\w+)\n(?:id:.*\n)?data: (.*)\n\n/gm)].map((m) => {
+    const data = JSON.parse(m[2]) as {
+      urn?: string;
+      entity?: { urn: string; body: Record<string, unknown> };
+    };
+    return m[1] === 'upsert'
+      ? { event: 'upsert', urn: data.entity!.urn, body: data.entity!.body }
+      : { event: m[1], urn: data.urn ?? '' };
+  });
+const upsertedUrns = (text: string) =>
+  sent(text)
+    .filter((s) => s.event === 'upsert')
+    .map((s) => s.urn)
+    .sort();
+/** What was sent after `live`; nothing while `live` has not been sent. */
+const afterLive = (text: string) => {
+  const all = sent(text);
+  const live = all.findIndex((s) => s.event === 'live');
+  return live < 0 ? [] : all.slice(live + 1);
+};
+
+const X_AUDIENCE = audienceForUser({ showNsfw: true, browsingLevel: ALL_LEVELS });
+
+describe('🔴 two apps of different ratings: each audience is sent exactly the ones it may read', () => {
+  const both = () => [listedApp('sun-notes', 'pg'), listedApp('moon-notes', 'r')];
+
+  it.each([
+    [APPS, null, [urnOfApp('sun-notes')]],
+    [APPS, 'r-token', [urnOfApp('moon-notes'), urnOfApp('sun-notes')]],
+    [RELEASES, null, [releaseOf('sun-notes')]],
+    [RELEASES, 'r-token', [releaseOf('moon-notes'), releaseOf('sun-notes')]],
+  ])('%s, token %s: sent exactly %j', async (schema, token, urns) => {
+    const port = await httpServer(catalogSource(both));
+    const res = await get(port, q(schema), token ? bearer(token) : {});
+    expect(upsertedUrns(res.text)).toEqual(urns);
+    if (token === null) expect(res.text).not.toContain('moon-notes');
+  });
+});
+
+describe('🔴 readableBy fails closed on a release whose app is not in the read', () => {
+  it('a release naming an absent app is not returned, even to the widest audience', () => {
+    const sets = buildEntities([listedApp('sun-notes', 'pg')], {
+      baseUrl: 'https://civitai.example',
+      features: SWITCH_ON,
+    });
+    const ghost = releaseOf('ghost-notes');
+    sets.get(RELEASES)!.push({
+      urn: ghost,
+      schemas: [RELEASES],
+      rev: '0123456789abcdef',
+      body: { app: urnOfApp('ghost-notes'), version: '1.0.0' },
+    });
+    // Positive control: the same set's release of a present app is returned.
+    expect(readableBy(sets, RELEASES, X_AUDIENCE).map((e) => e.urn)).toEqual([
+      releaseOf('sun-notes'),
+    ]);
+    expect(readableBy(sets, RELEASES, ANONYMOUS_AUDIENCE).map((e) => e.urn)).toEqual([
+      releaseOf('sun-notes'),
+    ]);
+  });
+});
+
+describe('🔴 the schema stream carries an app’s collection schemas only to a token that may read its rating', () => {
+  const both = () => [listedApp('sun-notes', 'pg'), listedApp('moon-notes', 'r')];
+
+  it('anonymous: the fixed entity schemas and the pg app’s collection schema, and the r app is never named', async () => {
+    const port = await httpServer(catalogSource(both));
+    const res = await get(port, q(SCHEMAS));
+    expect(upsertedUrns(res.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('sun-notes')].sort()
+    );
+    expect(res.text).not.toContain('moon-notes');
+  });
+
+  it('an R token: both apps’ collection schemas and the fixed ones', async () => {
+    const port = await httpServer(catalogSource(both));
+    const res = await get(port, q(SCHEMAS), bearer('r-token'));
+    expect(upsertedUrns(res.text)).toEqual(
+      [...FIXED_SCHEMA_URNS, notesSchemaOf('moon-notes'), notesSchemaOf('sun-notes')].sort()
+    );
+  });
+
+  it('🔴 an app re-rated from pg to r: its collection schema reaches the anonymous stream as a delete', async () => {
+    const world = { rating: 'pg' };
+    const port = await httpServer(
+      catalogSource(() => [listedApp('sun-notes', 'pg'), listedApp('moon-notes', world.rating)])
+    );
+    const res = await get(port, q(SCHEMAS), {}, (t) => {
+      if (t.includes('event: live')) world.rating = 'r';
+      return t.includes('event: delete');
+    });
+    expect(afterLive(res.text)).toEqual([{ event: 'delete', urn: notesSchemaOf('moon-notes') }]);
+  });
+
+  it('🔴 a schema-stream cursor issued to an R token, re-bound to the anonymous request, is cursor_expired and names no app', async () => {
+    const port = await httpServer(catalogSource(both));
+    const issued = await get(port, q(SCHEMAS), bearer('r-token'));
+    expect(issued.text).toContain(notesSchemaOf('moon-notes'));
+    const inner = liveCursor(issued.text).replace(/^b1\.[0-9a-f]{24}\./, '');
+    const rebound = bindCursor(inner, requestBinding({ schema: SCHEMAS, urns: [] }));
+    const res = await get(port, q(SCHEMAS, `&cursor=${encodeURIComponent(rebound)}`));
+    expect([res.status, JSON.parse(res.text).error]).toEqual([410, 'cursor_expired']);
+    expect(res.text).not.toContain('moon-notes');
+  });
+
+  it('positive control: the R token resumes its own schema-stream cursor', async () => {
+    const port = await httpServer(catalogSource(both));
+    const issued = await get(port, q(SCHEMAS), bearer('r-token'));
+    const res = await get(
+      port,
+      q(SCHEMAS, `&cursor=${encodeURIComponent(liveCursor(issued.text))}`),
+      bearer('r-token')
+    );
+    expect(res.status).toBe(200);
+    expect(events(res.text)).toEqual(['live']);
+  });
+});
+
+describe('🔴 a fork names its parent only to an audience that may read the parent', () => {
+  // The fork's URN sorts before its parent's, so in one poll's batch the fork's change comes
+  // first: reading until the parent's change has been sent has seen the fork's, if there is one.
+  const FORK = urnOfApp('echo-fork');
+  const PARENT = urnOfApp('moon-notes');
+  const world = (parent: string) => ({ parent });
+  const apps = (w: { parent: string }) => () =>
+    [listedApp('echo-fork', 'pg', 'moon-notes'), listedApp('moon-notes', w.parent)];
+  const forkBody = (text: string) =>
+    sent(text).find((s) => s.event === 'upsert' && s.urn === FORK)!.body!;
+
+  it.each([
+    [null, false],
+    ['r-token', true],
+  ])('parent rated r, token %s: forkOf sent = %s', async (token, named) => {
+    const port = await httpServer(catalogSource(apps(world('r'))));
+    const res = await get(port, q(APPS), token ? bearer(token) : {});
+    expect(upsertedUrns(res.text)).toEqual(named ? [FORK, PARENT] : [FORK]);
+    expect(forkBody(res.text).forkOf).toBe(named ? PARENT : undefined);
+    expect(res.text.includes('moon-notes')).toBe(named);
+  });
+
+  it('positive control: a pg parent is named to anonymous', async () => {
+    const port = await httpServer(catalogSource(apps(world('pg'))));
+    const res = await get(port, q(APPS));
+    expect(forkBody(res.text).forkOf).toBe(PARENT);
+  });
+
+  it('🔴 the parent re-rated from pg to r: anonymous is sent the parent’s delete and the fork without forkOf', async () => {
+    const w = world('pg');
+    const port = await httpServer(catalogSource(apps(w)));
+    const res = await get(port, q(APPS), {}, (t) => {
+      if (t.includes('event: live')) w.parent = 'r';
+      return afterLive(t).some((s) => s.event === 'upsert');
+    });
+    const after = afterLive(res.text);
+    expect(after.map((s) => `${s.event} ${s.urn}`)).toEqual([`delete ${PARENT}`, `upsert ${FORK}`]);
+    expect(after[1].body).not.toHaveProperty('forkOf');
+    expect(after[1].body).toMatchObject({ slug: 'echo-fork', contentRating: 'pg' });
+  });
+
+  it('the parent re-rated from r to pg: anonymous is sent the fork with forkOf, and the parent', async () => {
+    const w = world('r');
+    const port = await httpServer(catalogSource(apps(w)));
+    const res = await get(port, q(APPS), {}, (t) => {
+      if (t.includes('event: live')) w.parent = 'pg';
+      return afterLive(t).some((s) => s.urn === PARENT);
+    });
+    const after = afterLive(res.text);
+    expect(after.map((s) => `${s.event} ${s.urn}`)).toEqual([`upsert ${FORK}`, `upsert ${PARENT}`]);
+    expect(after[0].body!.forkOf).toBe(PARENT);
+  });
+
+  it('positive control: the same pg-to-r re-rating re-sends an R token only the parent, whose fork body is unchanged', async () => {
+    const w = world('pg');
+    const port = await httpServer(catalogSource(apps(w)));
+    const res = await get(port, q(APPS), bearer('r-token'), (t) => {
+      if (t.includes('event: live')) w.parent = 'r';
+      return afterLive(t).some((s) => s.urn === PARENT);
+    });
+    expect(afterLive(res.text).map((s) => `${s.event} ${s.urn}`)).toEqual([`upsert ${PARENT}`]);
+    expect(forkBody(res.text).forkOf).toBe(PARENT);
+  });
 });

@@ -8,8 +8,8 @@
  *   - A token is verified by the site's own mechanism ({@link VerifyToken}; `auth.live.ts` wires
  *     it). Anything it does not accept, an expired token included, is `invalid_token`.
  *   - Each subscription is streamed what its token may read (`audience.ts`), and its cursor is
- *     tied to the token's subject (`subscription.ts`) and, for a document, app or release stream,
- *     to its audience (`doc-feed.ts`, `cursor.ts`).
+ *     tied to the token's subject (`subscription.ts`) and, for a document, app, release or
+ *     schema stream, to its audience (`doc-feed.ts`, `cursor.ts`).
  *   - A stream never outlives its token: {@link watchPrincipal} ends it with `invalid_token` at
  *     the token's expiry, or when a re-check finds it no longer active; and a re-check that
  *     finds the user may now read different ratings ends it with `cursor_expired`, so the

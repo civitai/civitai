@@ -20,6 +20,7 @@ import {
   REGISTRY_NAMESPACE,
   REGISTRY_SCHEMA_SCHEMA,
   SERVICE_SCHEMA,
+  parseCollectionSchemaUrn,
   registryUrn,
 } from '~/server/registry-adapter/urn';
 import type { UrnRef } from '~/server/registry-adapter/urn';
@@ -76,10 +77,20 @@ export type EntitySets = Map<string, Entity[]>;
 /**
  * The entity schemas that carry an app's content, and so its rating: each of their streams is
  * narrowed per audience ({@link readableBy}) and its cursors are bound to the audience
- * (`cursor.ts`). The other schemas are the same for every subscription: `service` is the
- * runtime record, which belongs to no app, and `registry:schema` holds schema documents.
+ * (`cursor.ts`). `registry:schema` is one: beside the fixed entity schemas it holds every
+ * collection schema, whose URN names its app and whose body is that app's declared schema. The
+ * one schema left out, `service`, is the runtime record, which belongs to no app.
  */
-export const RATED_SCHEMAS: ReadonlySet<string> = new Set([APP_SCHEMA, APP_RELEASE_SCHEMA]);
+export const RATED_SCHEMAS: ReadonlySet<string> = new Set([
+  APP_SCHEMA,
+  APP_RELEASE_SCHEMA,
+  REGISTRY_SCHEMA_SCHEMA,
+]);
+
+/** The fixed entity schema documents: on the schema stream, and belonging to no app. */
+const ENTITY_SCHEMA_URNS: ReadonlySet<string> = new Set(
+  ENTITY_SCHEMA_DOCUMENTS.map((doc) => doc.$id as string)
+);
 
 const ratingOfBody = (body: unknown): string | null => {
   const rating = (body as { contentRating?: unknown } | null)?.contentRating;
@@ -87,12 +98,28 @@ const ratingOfBody = (body: unknown): string | null => {
 };
 
 /**
- * The entities of `schema` that `audience` may read, from one read of every entity. An app and
- * its releases carry the rating the app entity publishes ({@link appContentRating}, the rating
- * the document streams narrow by) and are admitted by the same predicate ({@link audienceAdmits}),
- * so a subscription is sent an app's entities exactly when it is sent its documents. A release
- * names its app (`app`); one whose app entity is not in the read has no rating to admit, so it
- * is not sent. A schema outside {@link RATED_SCHEMAS} is returned whole.
+ * The app URN an entity of `schema` carries the content of: the app itself, a release's `app`,
+ * a collection schema's app (by its URN). Null for an entity of no app: a fixed entity schema,
+ * which every audience reads, or one this adapter cannot attribute, which none does.
+ */
+function appUrnOf(schema: string, e: Entity): unknown {
+  if (schema === APP_SCHEMA) return e.urn;
+  if (schema === APP_RELEASE_SCHEMA) return (e.body as { app?: unknown } | null)?.app;
+  const parsed = parseCollectionSchemaUrn(e.urn);
+  return parsed ? registryUrn({ kind: 'app', slug: parsed.slug }) : null;
+}
+
+/**
+ * The entities of `schema` that `audience` may read, from one read of every entity. An app, its
+ * releases and its collection schemas carry the rating the app entity publishes
+ * ({@link appContentRating}, the rating the document streams narrow by) and are admitted by one
+ * predicate over it ({@link audienceAdmits}), so a subscription is sent an app's entities exactly
+ * when it is sent its documents. An entity whose app entity is not in the read has no rating to
+ * admit, so it is not sent. On the schema stream the fixed entity schemas are sent to everyone.
+ * An app's `forkOf` names another app: it is dropped from the body sent to an audience that may
+ * not read that app (the entity's `rev` is that body's, so a re-rating of the parent reaches
+ * the fork's subscribers as an upsert with or without it). A schema outside
+ * {@link RATED_SCHEMAS} is returned whole.
  */
 export function readableBy(sets: EntitySets, schema: string, audience: Audience): Entity[] {
   const all = sets.get(schema) ?? [];
@@ -102,15 +129,19 @@ export function readableBy(sets: EntitySets, schema: string, audience: Audience)
   for (const app of sets.get(APP_SCHEMA) ?? []) {
     if (!ratings.has(app.urn)) ratings.set(app.urn, ratingOfBody(app.body));
   }
-  const appUrnOf = (e: Entity): unknown =>
-    schema === APP_SCHEMA ? e.urn : (e.body as { app?: unknown } | null)?.app;
-  return all.filter((e) => {
-    const appUrn = appUrnOf(e);
-    return (
-      typeof appUrn === 'string' &&
-      ratings.has(appUrn) &&
-      audienceAdmits(audience, ratings.get(appUrn))
-    );
+  const admitted = (appUrn: unknown): boolean =>
+    typeof appUrn === 'string' &&
+    ratings.has(appUrn) &&
+    audienceAdmits(audience, ratings.get(appUrn));
+  const readable = all.filter(
+    (e) =>
+      (schema === REGISTRY_SCHEMA_SCHEMA && ENTITY_SCHEMA_URNS.has(e.urn)) ||
+      admitted(appUrnOf(schema, e))
+  );
+  if (schema !== APP_SCHEMA) return readable;
+  return readable.map((e) => {
+    const { forkOf, ...rest } = (e.body ?? {}) as { forkOf?: unknown } & Record<string, unknown>;
+    return forkOf === undefined || admitted(forkOf) ? e : entity(e.urn, APP_SCHEMA, rest);
   });
 }
 

@@ -9,10 +9,12 @@
  * to notice, but it is still in the stored set, so its absence is a delete. A cursor whose set
  * is gone answers `cursor_expired`, never a silent gap.
  *
- * The app and release streams ({@link RATED_SCHEMAS}) are served per AUDIENCE (`audience.ts`), as
- * the document streams are (`doc-feed.ts`): each subscription's served set holds only the
- * entities its token may read ({@link readableBy}), so a re-rating moves an app's entities out of
- * (deletes) or into (upserts) that audience's stream. Such a set records the audience it was
+ * The app, release and schema streams ({@link RATED_SCHEMAS}) are served per AUDIENCE
+ * (`audience.ts`), as the document streams are (`doc-feed.ts`): each subscription's served set
+ * holds only the entities its token may read ({@link readableBy}), so a re-rating moves an app's
+ * entities out of (deletes) or into (upserts) that audience's stream, and an entity whose body
+ * differs per audience (an app's `forkOf`) has a rev per audience, so it is re-sent when its
+ * audience's body changes. Such a set records the audience it was
  * served to, so the same entities served to two audiences name two cursors, a cursor issued to
  * one audience is `cursor_expired` for another (checked before anything in the set is used), and
  * the states and their retention are kept per audience.
