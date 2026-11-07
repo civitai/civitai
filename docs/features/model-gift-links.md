@@ -52,7 +52,7 @@ The migration is `packages/civitai-db-schema/prisma/migrations/20261229120000_mo
 - `ModelVersionGiftLink`: `codeHash` (unique), `codeHint` (last 4 characters), `label`, `batchId` (bulk
   codes), `maxRedemptions` (null = uncapped, 1 for bulk codes), `redemptionCount`, `expiresAt`,
   `revokedAt`/`revokedById`. It cascades from the version and from the creator.
-- `ModelVersionGiftRedemption`: primary key `(giftLinkId, userId)`, so a user redeems a link at most once.
+- `ModelVersionGiftRedemption`: primary key `(giftLinkId, userId)`, so a user takes at most one slot of a link.
 - Two `CHECK`s live only in the migration SQL: `maxRedemptions > 0`, and `redemptionCount <=
 maxRedemptions`. The second is a backstop behind the claim's conditional update.
 
@@ -90,6 +90,8 @@ path segment, which a client-side navigation still puts in the Next data fetch.
    conditional `UPDATE … SET "redemptionCount" + 1 WHERE` not revoked, not expired and under the cap,
    then the grant. If the update takes no row, the transaction rolls back. Postgres re-checks the
    `WHERE` on the row it locks, so racing claims for the last slot serialise.
+   A repeat claim by the same user takes no slot: while the link is live it grants again, since the first
+   grant can be gone (the early-access refund deletes the whole `EntityAccess` row).
 6. Bust the claimer's generator model cache. Access is read from `EntityAccess` per request, so no
    version-wide cache needs refreshing.
 

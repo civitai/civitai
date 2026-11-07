@@ -121,11 +121,34 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
     const id = await newLink(null);
     const outcomes = await Promise.all(Array.from({ length: 5 }, () => claim(id, 2)));
 
-    expect(outcomes.filter((o) => o === 'granted')).toHaveLength(1);
-    expect(outcomes.filter((o) => o === 'already-claimed')).toHaveLength(4);
+    expect(outcomes).toEqual(Array(5).fill('granted'));
     expect(
       await count(`SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${id}`)
     ).toBe(1);
+    expect(await count(`SELECT count(*) AS n FROM "ModelVersionGiftRedemption"`)).toBe(1);
+  });
+
+  it('re-grants a claimer whose grant was removed, without taking another slot', async () => {
+    const id = await newLink(1);
+    expect(await claim(id, 2)).toBe('granted');
+    // What the early-access refund does on unpublish.
+    await sql.query(`DELETE FROM "EntityAccess"`);
+
+    expect(await claim(id, 2)).toBe('granted');
+    expect(await count(`SELECT count(*) AS n FROM "EntityAccess"`)).toBe(1);
+    expect(
+      await count(`SELECT "redemptionCount" AS n FROM "ModelVersionGiftLink" WHERE id = ${id}`)
+    ).toBe(1);
+  });
+
+  it('does not re-grant from a link revoked since the first claim', async () => {
+    const id = await newLink(null);
+    expect(await claim(id, 2)).toBe('granted');
+    await sql.query(`DELETE FROM "EntityAccess"`);
+    await sql.query(`UPDATE "ModelVersionGiftLink" SET "revokedAt" = now() WHERE id = ${id}`);
+
+    expect(await claim(id, 2)).toBe('unavailable');
+    expect(await count(`SELECT count(*) AS n FROM "EntityAccess"`)).toBe(0);
   });
 
   it('refuses a revoked link and leaves no grant behind', async () => {

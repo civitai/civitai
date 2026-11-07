@@ -32,6 +32,7 @@ const VERSION_ID = 555;
 
 function seed({
   versionStatus = 'Published',
+  modelStatus = 'Published',
   gate = { endsAt: null as Date | null, terms: { download: { price: 500 } } as object },
   held = 0,
   link = {
@@ -46,7 +47,7 @@ function seed({
   const version = {
     id: VERSION_ID,
     status: versionStatus,
-    model: { id: 1, userId: OWNER, status: 'Published' },
+    model: { id: 1, userId: OWNER, status: modelStatus },
   };
   dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(version);
   mockGetPaidAccess.mockResolvedValue(
@@ -156,6 +157,7 @@ describe('claimGift', () => {
       JSON.stringify({ giftLinkId: 1 }),
       OWNER,
     ]);
+    expect(mockBustOrchestrator).toHaveBeenCalledTimes(1);
     expect(mockBustOrchestrator).toHaveBeenCalledWith(VERSION_ID, CLAIMER);
   });
 
@@ -238,6 +240,8 @@ describe('claimGift', () => {
     seed();
     await expect(claimGift({ userId: OWNER, code })).rejects.toThrow('your own model');
     seed({ versionStatus: 'Scheduled' });
+    await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow('published models');
+    seed({ modelStatus: 'Unpublished' });
     await expect(claimGift({ userId: CLAIMER, code })).rejects.toThrow('published models');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });

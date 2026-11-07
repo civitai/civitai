@@ -2871,7 +2871,6 @@ export const earlyAccessPurchase = async ({
   const sales = await getFreshSalesForPermanentGate(modelVersionId, permanent, paidAccess.ownerId);
   const amount = discountedPrice(storedPrice, sales);
 
-  // Whatever the grant came from (a purchase or a gift), a user who already holds it is not charged.
   const heldPermissions = await getModelVersionAccessPermissions(userId, modelVersionId);
   const requestedPermissions =
     type === 'generation'

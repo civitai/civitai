@@ -84,7 +84,6 @@ async function getGiftableVersion(modelVersionId: number) {
   const paidAccess = (await getPaidAccess('ModelVersion', [modelVersionId]))[modelVersionId];
   const gateActive = !!paidAccess && isPaidAccessActive(paidAccess);
   const terms = (paidAccess?.terms ?? {}) as ModelVersionTerms;
-  // What a buyer of this version gets: download (which includes generation) when it is sold.
   const permissions = terms.download
     ? EntityAccessPermission.EarlyAccessGeneration + EntityAccessPermission.EarlyAccessDownload
     : EntityAccessPermission.EarlyAccessGeneration;
@@ -299,7 +298,7 @@ export async function revokeGiftLinks({
   return { revoked: count };
 }
 
-export type GiftRedemptionOutcome = 'granted' | 'already-claimed' | 'unavailable';
+export type GiftRedemptionOutcome = 'granted' | 'unavailable';
 
 /**
  * The atomic part of a claim, in one transaction: record the redemption, take a slot under the cap,
@@ -329,16 +328,27 @@ export async function redeemGiftLink(
         VALUES (${giftLinkId}, ${userId})
         ON CONFLICT DO NOTHING
       `;
-      if (inserted === 0) return 'already-claimed' as const;
-
-      const taken = await tx.$executeRaw`
-        UPDATE "ModelVersionGiftLink"
-           SET "redemptionCount" = "redemptionCount" + 1
-         WHERE id = ${giftLinkId}
-           AND "revokedAt" IS NULL
-           AND ("expiresAt" IS NULL OR "expiresAt" > now())
-           AND ("maxRedemptions" IS NULL OR "redemptionCount" < "maxRedemptions")
-      `;
+      // A repeat claim takes no new slot. It re-grants while the link is live, because the first grant
+      // can be gone (the early-access refund deletes the whole EntityAccess row).
+      const taken =
+        inserted === 0
+          ? (
+              await tx.$queryRaw<unknown[]>`
+                SELECT 1 FROM "ModelVersionGiftLink"
+                 WHERE id = ${giftLinkId}
+                   AND "revokedAt" IS NULL
+                   AND ("expiresAt" IS NULL OR "expiresAt" > now())
+                 FOR SHARE
+              `
+            ).length
+          : await tx.$executeRaw`
+              UPDATE "ModelVersionGiftLink"
+                 SET "redemptionCount" = "redemptionCount" + 1
+               WHERE id = ${giftLinkId}
+                 AND "revokedAt" IS NULL
+                 AND ("expiresAt" IS NULL OR "expiresAt" > now())
+                 AND ("maxRedemptions" IS NULL OR "redemptionCount" < "maxRedemptions")
+            `;
       if (taken === 0) throw new GiftUnavailable();
 
       await grantModelVersionAccess({
@@ -392,10 +402,8 @@ export async function claimGift({ userId, code }: { userId: number; code: string
     addedById: link.createdById,
   });
   if (outcome === 'unavailable') throw throwBadRequestError(INVALID_GIFT_MESSAGE);
-  if (outcome === 'already-claimed') return { ...result, alreadyHadAccess: true };
 
-  // Access is read from EntityAccess per request; only the generator's per-user model cache holds it.
-  // Not bustMvCache: those caches are per version, and an uncapped link would refresh them per claim.
+  // Not bustMvCache: its caches are per version, and an uncapped link would refresh them per claim.
   await bustOrchestratorModelCache(version.id, userId);
   return { ...result, alreadyHadAccess: false };
 }
