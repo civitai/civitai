@@ -104,6 +104,11 @@ import { setSessionCookie } from '~/server/auth/civ-cookie';
 // The unit setup replaces this export with a spy (src/__tests__/setup.ts).
 import { logToAxiom } from '~/server/logging/client';
 
+// The bootstrap's log burst bound is per process; each test starts with none spent.
+beforeEach(() => {
+  delete (globalThis as Record<symbol, unknown>)[Symbol.for('civitai.settingsBootstrapLogBursts')];
+});
+
 const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   const json = vi.fn();
   const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
@@ -382,14 +387,11 @@ describe('settings bootstrap during a server render', () => {
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
     // …while the full reason is kept in the structured log.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: 'connect ECONNREFUSED db.internal.example:5432',
-      },
-      'settings'
-    );
+    expect(logToAxiom).toHaveBeenCalledWith({
+      type: 'warning',
+      name: 'settings bootstrap failed',
+      message: 'connect ECONNREFUSED db.internal.example:5432',
+    });
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();
@@ -409,6 +411,34 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(new RegExp(`^${message}$`));
+  });
+
+  it('logs one deadline per member per minute; the next one out says how many it held back', async () => {
+    h.contentSettings.mockReturnValue(new Promise(() => undefined));
+    const render = async () => {
+      const outcome = resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest);
+      await vi.runAllTimersAsync();
+      await outcome;
+    };
+    const deadlines = () =>
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.filter(([data]) => data.name === 'settings bootstrap deadline');
+    const event = {
+      type: 'warning',
+      name: 'settings bootstrap deadline',
+      message: 'getUserContentSettings exceeded 20ms',
+      member: 'getUserContentSettings',
+      timeoutMs: 20,
+    };
+
+    for (let i = 0; i < 5; i++) await render();
+    // No datastream argument: the event goes to the default, provisioned one.
+    expect(deadlines()).toEqual([[event]]);
+
+    vi.setSystemTime(Date.now() + 60_000);
+    await render();
+    expect(deadlines()).toEqual([[event], [{ ...event, suppressed: 4 }]]);
   });
 
   it('keeps the per-read deadlines, so one parked read degrades only its own member', async () => {
