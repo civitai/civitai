@@ -84,6 +84,7 @@ vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
   TopHats: marker('topHats'),
+  TopTurfPlayers: marker('turfPlayers'),
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');
@@ -149,6 +150,7 @@ describe('ScoredEventSections order', () => {
       'catalog',
       'standings',
       'topHats',
+      'turfPlayers',
     ]);
   });
 
@@ -159,6 +161,7 @@ describe('ScoredEventSections order', () => {
       'standings',
       'shop',
       'topHats',
+      'turfPlayers',
       'rules',
     ]);
   });

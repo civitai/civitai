@@ -391,6 +391,7 @@ export async function getEventStandings({
       ...new Set([
         ...standings.topCosmetics.map((x) => x.userId),
         ...Object.values(standings.topUsers).flatMap((x) => x.map((u) => u.userId)),
+        ...(standings.topTurfPlayers ?? []).map((x) => x.userId),
       ]),
     ];
     const [basicUsers, profilePictures, userCosmetics, cosmeticDetails, teamHats] =

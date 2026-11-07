@@ -156,7 +156,7 @@ export const HERO_VIDEO_OPTIONS = {
   original: true,
 } satisfies Omit<EdgeUrlProps, 'src'>;
 
-export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
+export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'turfPlayers' | 'rules';
 
 /**
  * The page's sections below the hero, in the order the viewer needs them: how it works first for a
@@ -170,8 +170,8 @@ export function scoredSectionOrder({
   ended: boolean;
 }): ScoredSection[] {
   if (ended) return ['standings', 'topHats', 'hats'];
-  if (joined) return ['hats', 'standings', 'shop', 'topHats', 'rules'];
-  return ['rules', 'shop', 'standings', 'topHats'];
+  if (joined) return ['hats', 'standings', 'shop', 'topHats', 'turfPlayers', 'rules'];
+  return ['rules', 'shop', 'standings', 'topHats', 'turfPlayers'];
 }
 
 type Settling = { endDate: Date; finalAt?: Date };

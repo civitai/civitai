@@ -95,6 +95,7 @@ vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: () => null,
   TopHats: () => null,
+  TopTurfPlayers: () => null,
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');

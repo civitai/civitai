@@ -67,6 +67,7 @@ vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marke
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
   TopHats: marker('topHats'),
+  TopTurfPlayers: marker('turfPlayers'),
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');
