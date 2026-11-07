@@ -10,8 +10,7 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 /**
  * The display read of a placement space (`resolvePlacementSpaceForDisplay`, behind
  * `placement-space-read-cache`): the same answer as the primary read, from a cache that each space
- * write busts, with space-row misses filled from the primary and the (uncached) target read from
- * the replica.
+ * write busts, with space-row misses and the (uncached) target both read from the primary.
  *
  * Two databases stand behind the Kysely reads — a primary and a replica — so a test can hold the
  * replica behind a write and see which one an answer came from. The space writes go through the
@@ -210,13 +209,13 @@ describe('placement space display read: parity with the primary read', () => {
     const mark = reads.length;
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
     // The warm read took every space row from the cache; only the (uncached) target was read.
-    expect(readsSince(mark)).toEqual([{ db: 'replica', what: 'target' }]);
+    expect(readsSince(mark)).toEqual([{ db: 'primary', what: 'target' }]);
   });
 
-  it('reads the target from the replica and every space-row miss from the primary', async () => {
+  it('reads the target and every space-row miss from the primary', async () => {
     await resolvePlacementSpaceForDisplay(TARGET);
     expect(reads).toEqual([
-      { db: 'replica', what: 'target' },
+      { db: 'primary', what: 'target' },
       { db: 'primary', what: 'rows' },
     ]);
 
@@ -226,7 +225,7 @@ describe('placement space display read: parity with the primary read', () => {
     expect(readsSince(mark).every((read) => read.db === 'primary')).toBe(true);
   });
 
-  it('serves an image the replica does not have yet from the primary rather than refusing it', async () => {
+  it('serves an image the replica does not have yet rather than refusing it', async () => {
     replica().images = [];
     await expect(resolvePlacementSpaceForDisplay(TARGET)).resolves.toEqual(
       await resolvePlacementSpaceFor(TARGET)
@@ -257,6 +256,24 @@ describe('placement space display read: parity with the primary read', () => {
 
     primary().images[0].postId = OTHER_POST;
     replicate();
+
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ mode: 'auto', setPrice: 444 });
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+  });
+
+  // 🔴 The same move with the replica still behind it. A target read from the replica would show the
+  // old post's price while the charge, reading the primary, takes the new one.
+  it('follows an image moved to another post while the replica is still behind the move', async () => {
+    const OTHER_POST = 62;
+    primary().spaces = [
+      space({ entityType: 'user', entityId: OWNER, mode: 'review', price: 120 }),
+      space({ entityType: 'post', entityId: OTHER_POST, mode: 'auto', price: 444 }),
+    ];
+    replicate();
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toMatchObject({ setPrice: 120 });
+
+    primary().images[0].postId = OTHER_POST; // the replica still has the image on POST
 
     const truth = await resolvePlacementSpaceFor(TARGET);
     expect(truth).toMatchObject({ mode: 'auto', setPrice: 444 });
@@ -430,9 +447,9 @@ describe('placement space display read: who calls it', () => {
       .split('\n')
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
 
-  // 🔴 A ledger, failing if the set GROWS or SHRINKS. The display read takes rows from a cache and
-  // the target from a replica, which is only safe for a caller that shows what the primary read would charge; a
-  // second caller has to be added here on purpose.
+  // 🔴 A ledger, failing if the set GROWS or SHRINKS. The display read takes rows from a cache,
+  // which is only safe for a caller that shows what the primary read would charge; a second caller
+  // has to be added here on purpose.
   it('is referenced by exactly one call in the getSpace route and nowhere else', () => {
     const counts: Record<string, number> = {};
     const walk = (dir: string) => {

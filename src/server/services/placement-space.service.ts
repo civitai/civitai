@@ -403,20 +403,20 @@ async function resolveSpaceWith(
  * `resolvePlacementSpaceFor` for SHOWING a space, never for deciding on one. Behind
  * `placement-space-read-cache`, only the public `placement.getSpace` route reaches it.
  *
- * Two changes from the primary read, and only two. The target (owner, post, media type) is read
- * from the replica, uncached, falling back to the primary for a target the replica does not have
- * yet. The space row at each level of the cascade is cached in Redis per row, filled from the
- * primary (see `readSpaceRows`). Everything the comments above call "computed at read" stays live
- * exactly as on the primary path: the price range (score, tier, config) and the reserved free-slot
- * count. The client re-reads this route with `staleTime: 0` after a refused free claim to explain
- * the refusal, and that re-read still sees a live count.
+ * One change from the primary read, and only one: the space row at each level of the cascade is
+ * cached in Redis per row, filled from the primary (see `readSpaceRows`). The target (owner, post,
+ * media type) is the primary read's own, from the primary, uncached, so a cache miss reads only
+ * the primary. Everything the comments above call "computed at read" stays live exactly as on the
+ * primary path: the price range (score, tier, config) and the reserved free-slot count. The client
+ * re-reads this route with `staleTime: 0` after a refused free claim to explain the refusal, and
+ * that re-read still sees a live count.
  *
  * 🔴 What this shows is what a sticker placement is charged. The sticker flow sends no expected
  * price, so the charge is whatever the primary read resolves at that moment: a display that
  * disagrees with it is not refused, it is a price shown and a different one taken. That is why the
- * target is not cached (an image moved to another post would keep the old post's price for the
- * whole TTL) and why a space write is visible to the very next read (see `readSpaceRows`). What is
- * left is replica lag on the target read, which the primary path does not have either way.
+ * target is neither cached (an image moved to another post would keep the old post's price for the
+ * whole TTL) nor read from the replica (it would keep it for as long as the replica lags), and why a
+ * space write is visible to the very next read (see `readSpaceRows`).
  *
  * A storyline chapter (a `post` target) is not served from here: its target row carries the
  * storyline's status, takedown and removal, which have writers all over the storyline service.
@@ -540,25 +540,9 @@ async function readSpaceRows(surface: PlacementSurface, levels: SpaceLevel[]): P
   return rows;
 }
 
-/** Read from the replica, or from the primary for a target the replica does not have yet. */
-async function readDisplayTarget(targetType: 'image' | 'model', targetId: number) {
-  const { kyselyRead, kyselyWrite } = await loadKyselyDb();
-  if (targetType === 'model')
-    return modelTargetFrom(
-      (await getModelPlacementTarget(kyselyRead, targetId)) ??
-        (await getModelPlacementTarget(kyselyWrite, targetId))
-    );
-  return imageTargetFrom(
-    (await getImagePlacementTarget(kyselyRead, targetId)) ??
-      (await getImagePlacementTarget(kyselyWrite, targetId))
-  );
-}
-
+/** The target is the primary read's own (`resolveTarget`); only the space rows differ. */
 const displayReads: SpaceReads = {
-  target: (targetType, targetId) =>
-    targetType === 'post'
-      ? resolveTarget(targetType, targetId)
-      : readDisplayTarget(targetType, targetId),
+  target: resolveTarget,
   rows: readSpaceRows,
 };
 

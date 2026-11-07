@@ -290,7 +290,7 @@ export enum FLIPT_FEATURE_FLAGS {
   PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
   // Serves the public `placement.getSpace` read with its per-level space rows from a Redis cache,
   // filled from the primary on a miss. The target (owner, post, media type) is not cached: it is
-  // read uncached from the replica, falling back to the primary. DEFAULT-OFF:
+  // read from the primary, uncached, as on the flag-off path. DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
   // uncached primary read. Global boolean, evaluated with no entity or context. Every other
   // caller of the space (anything that decides or charges) stays on the primary regardless. See
