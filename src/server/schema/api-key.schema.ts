@@ -117,11 +117,29 @@ export function budgetsToSimpleBuzzLimit(
   return null;
 }
 
+/**
+ * What a personal API key may carry: the ordinary scopes, and the moderator-only opt-in
+ * `ModeratorFeedbackRead` (refused for non-moderators by the add handler). The other opt-in bits are
+ * granted to OAuth clients only. Not `ALL_SCOPES`, which would admit them.
+ */
+export const PERSONAL_KEY_SCOPE_MASK = TokenScope.Full | TokenScope.ModeratorFeedbackRead;
+
+/** Opt-in scopes only a moderator may put on a personal key. */
+export const MODERATOR_ONLY_KEY_SCOPES = TokenScope.ModeratorFeedbackRead;
+
 export const addApiKeyInputSchema = z.object({
   // Server-authoritative bound matching the UI input's maxLength (the name can be
   // seeded via the account deeplink, which bypasses the input's keystroke limit).
   name: z.string().trim().max(64),
-  tokenScope: z.number().int().min(0).max(TokenScope.Full).default(TokenScope.Full),
+  tokenScope: z
+    .number()
+    .int()
+    .min(0)
+    .refine(
+      (scope) => (scope & ~PERSONAL_KEY_SCOPE_MASK) === 0,
+      'Contains a scope a personal API key cannot carry.'
+    )
+    .default(TokenScope.Full),
   buzzLimit: buzzLimitSchema.nullable().optional(),
 });
 export type AddAPIKeyInput = z.input<typeof addApiKeyInputSchema>;

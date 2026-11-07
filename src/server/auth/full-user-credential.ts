@@ -21,3 +21,20 @@ export function isFullScopeUserKey(credential: BearerCredential | null | undefin
     credential.tokenScope === TokenScope.Full
   );
 }
+
+/**
+ * A personal (`User`) API key not issued to an OAuth client that carries `scope`. For the procedures
+ * that take a narrow opt-in key in place of a full one; the caller decides who may hold it.
+ */
+export function isUserKeyWithScope(
+  credential: BearerCredential | null | undefined,
+  scope: number
+): boolean {
+  return (
+    scope !== 0 &&
+    credential?.apiKeyType === ApiKeyType.User &&
+    credential.subject?.type === 'apiKey' &&
+    credential.tokenScope != null &&
+    (credential.tokenScope & scope) === scope
+  );
+}

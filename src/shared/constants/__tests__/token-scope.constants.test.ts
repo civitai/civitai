@@ -23,19 +23,22 @@ describe('TokenScope constants', () => {
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.LinkConnect)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppStoreCatalogWrite)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.WorkerRegister)).toBe(true);
+    expect(Flags.hasFlag(ALL_SCOPES, TokenScope.ModeratorFeedbackRead)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.UserRead)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.VaultWrite)).toBe(true);
     // ALL_SCOPES = Full | the opt-in bits NOT folded into Full: AppBlocksSubmit (25),
-    // AppBlocksDevTunnel (26), LinkConnect (27), AppStoreCatalogWrite (28) and WorkerRegister (29).
+    // AppBlocksDevTunnel (26), LinkConnect (27), AppStoreCatalogWrite (28), WorkerRegister (29)
+    // and ModeratorFeedbackRead (30, the last positive int4 bit).
     expect(ALL_SCOPES).toBe(
       TokenScope.Full |
         TokenScope.AppBlocksSubmit |
         TokenScope.AppBlocksDevTunnel |
         TokenScope.LinkConnect |
         TokenScope.AppStoreCatalogWrite |
-        TokenScope.WorkerRegister
+        TokenScope.WorkerRegister |
+        TokenScope.ModeratorFeedbackRead
     );
-    expect(ALL_SCOPES).toBe(1073741823); // (1 << 30) - 1
+    expect(ALL_SCOPES).toBe(2147483647); // 2 ** 31 - 1, the int4 maximum
   });
 
   it('the Civitai Link desktop grant is UserRead|VaultRead|VaultWrite|LinkConnect = 159383553', () => {
