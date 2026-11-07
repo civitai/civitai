@@ -7,14 +7,14 @@ import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 
 // OIDC `nonce` + `auth_time` capture for the id_token. @node-oauth/oauth2-server doesn't carry these
 // through the code grant, so we stash them in Redis keyed by a hash of the authorization code at
-// /authorize and consume them at /token. Same TTL as the auth code.
+// /authorize and read them at /token and /session. Same TTL as the auth code.
 //
 // Ported from the main app's src/server/oauth/oidc-nonce.ts; the only change is sourcing redis from the
 // hub's getRedis() (null when REDIS_URL is unset → best-effort degrade, the id_token just omits nonce).
 // Mirrors the authorization-code storage in model.ts: a packed hash with sha256(code) as the field, so
 // raw codes never sit in Redis.
 
-// `deviceId` rides the SAME code-keyed context (same TTL, removed once the code is redeemed) for the FIRST-PARTY bridge: /authorize
+// `deviceId` rides the SAME code-keyed context (same TTL; /session removes it once a session is minted) for the FIRST-PARTY bridge: /authorize
 // (a browser nav that CAN read the hub's shared `.civitai.com` civ-device) stashes the family device id here,
 // and /session (a server-to-server call that CANNOT see that cookie) reads it back to register the account +
 // hand the SAME id to the spoke — so every domain shares one device set. First-party codes carry only

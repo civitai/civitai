@@ -72,5 +72,12 @@ describe('/token authorization_code', () => {
     const res = await exchange();
     expect(res.status).toBe(503);
     expect(h.token).not.toHaveBeenCalled();
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  });
+
+  it("leaves an unknown code to the library's own error", async () => {
+    h.getAuthorizationCode.mockResolvedValue(false);
+    await exchange();
+    expect(h.token).toHaveBeenCalledTimes(1);
   });
 });
