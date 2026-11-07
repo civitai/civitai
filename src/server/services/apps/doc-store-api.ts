@@ -884,7 +884,7 @@ async function run(
       // for a shared create or put inside the write reservation but before the moderation scan,
       // so a refusal spends no scan. Its pass pins the store write to the version it was shown.
       const writeOp = route.op;
-      const writeKey = route.op === 'create' ? undefined : route.key;
+      const writeKey = route.op === 'put' || route.op === 'delete' ? route.key : undefined;
       const decide = () =>
         gateHook({
           access,
