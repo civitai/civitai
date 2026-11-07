@@ -70,6 +70,7 @@ export const creatorServiceDealFileRouter = router({
       dealId: input.dealId,
       userId: ctx.user.id,
       isModerator: !!ctx.user.isModerator,
+      canReviewCsam: !!ctx.features?.csamReports,
     })
   ),
 });

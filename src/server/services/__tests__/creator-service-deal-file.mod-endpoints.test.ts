@@ -14,6 +14,8 @@ const service = vi.hoisted(() => ({
 }));
 vi.mock('~/server/services/creator-service-deal-file.service', () => service);
 vi.mock('~/server/services/creator-service-deal-file-access', () => service);
+const flags = vi.hoisted(() => ({ getFeatureFlags: vi.fn(() => ({ csamReports: false })) }));
+vi.mock('~/server/services/feature-flags.service', () => flags);
 vi.mock('~/server/utils/moderator-endpoint', () => ({
   defineModeratorEndpoint: (_name: string, def: unknown) => def,
 }));
@@ -54,7 +56,16 @@ describe('deal-files', () => {
       dealId: 4,
       userId: 99,
       isModerator: true,
+      canReviewCsam: false,
     });
+  });
+
+  it("passes the caller's csamReports permission through", async () => {
+    flags.getFeatureFlags.mockReturnValueOnce({ csamReports: true });
+    await files.handler({ dealId: 4 }, actor);
+    expect(service.listServiceDealFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ canReviewCsam: true })
+    );
   });
 
   it("puts each file's recorded accesses on that file", async () => {
@@ -192,8 +203,18 @@ describe('deal-file-url', () => {
       userId: 99,
       isModerator: true,
       moderatorFetch: true,
+      canReviewCsam: false,
     });
     expect(service.getServiceDealFileDownloadUrl).toHaveBeenCalledWith(expect.anything(), tracker);
+  });
+
+  it("passes the caller's csamReports permission through", async () => {
+    service.resolveServiceDealFileDownload.mockResolvedValue(null);
+    flags.getFeatureFlags.mockReturnValueOnce({ csamReports: true });
+    await expect(url.handler({ fileId: 12 }, actor)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(service.resolveServiceDealFileDownload).toHaveBeenCalledWith(
+      expect.objectContaining({ canReviewCsam: true })
+    );
   });
 
   it('answers an unknown file with not-found and signs nothing', async () => {

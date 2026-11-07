@@ -222,6 +222,7 @@ type FileRecord = {
   malwareScanStatus: string;
   repackedAt: Date | null;
   deliveryKey: string | null;
+  removedAt: Date | null;
   deliverySize: number | null;
 };
 const fileRow = async (id: number) =>
@@ -711,16 +712,16 @@ describe('when the build goes wrong', () => {
     expect((await fileRow(fileId)).deliveryKey).toBeNull();
   });
 
-  it('removes the archive it built when the file was deleted while it worked', async () => {
-    const { dealId, fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
+  it('finishes the archive of a file removed while it worked, on the kept row', async () => {
+    const { fileId } = await unpackedZip([{ name: 'a.txt', data: TEXT('alpha ') }]);
     uploads.beforeDone = async () => {
       await files.deleteServiceDealFile({ fileId, userId: SELLER });
     };
-    expect(await repack.repackFinals()).toBe(0);
-    expect(dealId).toBe(1);
-    expect([...bucket.objects.keys()].some((k) => k.startsWith('service-deals/delivered/'))).toBe(
-      false
-    );
+    expect(await repack.repackFinals()).toBe(1);
+    const row = await fileRow(fileId);
+    expect(row.removedAt).not.toBeNull();
+    // The row owns the archive, so purging the row deletes it.
+    expect(bucket.objects.has(row.deliveryKey!)).toBe(true);
   });
 
   it('removes the archive when the file is deleted afterwards', async () => {

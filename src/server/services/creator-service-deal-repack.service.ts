@@ -1,11 +1,10 @@
 import { Upload } from '@aws-sdk/lib-storage';
-import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import type { Readable } from 'stream';
 import { finished } from 'stream/promises';
 import * as yazl from 'yazl';
 import { dbWrite } from '~/server/db/client';
-import { liveFile, SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
+import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   handOffToScan,
@@ -52,7 +51,7 @@ function claimZip() {
         AND p."status" = 'Ready'::"ServiceDealFileStatus"
         AND p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
         AND p."unpackedAt" IS NOT NULL AND p."repackedAt" IS NULL AND p."failReason" IS NULL
-        AND lower(p."fileName") LIKE '%.zip' AND ${liveFile(Prisma.sql`p`)}
+        AND lower(p."fileName") LIKE '%.zip'
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_UNPACK_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT 1 FOR UPDATE SKIP LOCKED)
@@ -187,10 +186,9 @@ export async function repackFinals({
       SET "deliveryKey" = ${key}::text, "deliverySize" = ${size}::int, "repackedAt" = now(),
         "processingAt" = NULL
       WHERE "id" = ${file.id}::int AND "repackedAt" IS NULL
-        AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND "failReason" IS NULL
-        AND ${liveFile(Prisma.sql`"ServiceDealFile"`)}`;
+        AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND "failReason" IS NULL`;
     if (stored === 0) {
-      // Deleted or removed while it worked: a removed file has no buyer to build this for.
+      // Deleted while it worked.
       await deleteObject(bucket, key).catch(() => null);
       await release(file.id);
       return 0;

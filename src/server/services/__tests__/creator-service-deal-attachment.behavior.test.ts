@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ChatService from '~/server/services/chat.service';
@@ -378,10 +378,15 @@ async function delivered(dealId: number) {
   return finalId;
 }
 
-const list = (dealId: number, userId: number, isModerator = false) =>
-  files.listServiceDealFiles({ dealId, userId, isModerator });
-const download = (fileId: number, userId: number, isModerator = false) =>
-  files.resolveServiceDealFileDownload({ fileId, userId, isModerator });
+/** A moderator here holds the csamReports permission unless `canReviewCsam` says otherwise. */
+const list = (dealId: number, userId: number, isModerator = false, canReviewCsam = isModerator) =>
+  files.listServiceDealFiles({ dealId, userId, isModerator, canReviewCsam });
+const download = (
+  fileId: number,
+  userId: number,
+  isModerator = false,
+  canReviewCsam = isModerator
+) => files.resolveServiceDealFileDownload({ fileId, userId, isModerator, canReviewCsam });
 
 const finalsClear = async (dealId: number) =>
   (
@@ -609,10 +614,26 @@ describe('the scan an attachment goes through', () => {
     expect((await fileRow(fileId)).scanStatus).toBe('Passed');
   });
 
-  it('never passes on a skipped malware scan, though a Final does while the scan is off', async () => {
+  it('is refused while the malware scan is off', async () => {
+    const dealId = await accepted();
     malwareScan.on.mockResolvedValue(false);
+    await expect(
+      files.requestServiceDealAttachment({
+        ...ATTESTED,
+        dealId,
+        userId: BUYER,
+        fileName: 'notes.txt',
+        mimeType: 'text/plain',
+        size: TEXT.byteLength,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
+  });
+
+  it('never passes on a skipped malware scan, though a Final does while the scan is off', async () => {
     const dealId = await accepted();
     const fileId = await attach(dealId, 'notes.txt', TEXT);
+    malwareScan.on.mockResolvedValue(false);
     const finalId = await final(dealId, 'result.txt', TEXT);
     while ((await unpack.unpackFinals()) > 0);
     await q(
@@ -867,6 +888,11 @@ describe('removing a file that must be kept', () => {
       { id: fileId, removedAt: expect.any(Date), canDownload: true },
     ]);
     expect((await download(fileId, STRANGER, true))?.key).toBe(s3Key);
+    // A moderator without the csamReports permission is told it exists, and served nothing.
+    expect(await list(dealId, STRANGER, true, false)).toMatchObject([
+      { id: fileId, canDownload: false },
+    ]);
+    expect(await download(fileId, STRANGER, true, false)).toBeNull();
   });
 
   it('keeps the original of a rejected Final the seller removes', async () => {
@@ -1112,15 +1138,15 @@ describe('a removed file that is kept', () => {
     return fileId;
   }
 
-  it('neither gates delivery or payout, nor is listed, served or worked on for the parties', async () => {
+  it('neither gates delivery or payout, nor is listed or served for the parties', async () => {
     const dealId = await accepted();
     const removedId = await removedFinal(dealId);
     const liveId = await final(dealId, 'new.txt', TEXT);
     await scanned([liveId]);
     expect((await fileRow(liveId)).scanStatus).toBe('Passed');
 
-    // The removed Final was never unpacked, yet the round is ready and clear.
-    expect((await fileRow(removedId)).unpackedAt).toBeNull();
+    // The removed Final is scanned too, so it gets a verdict, but the round does not wait for it.
+    expect((await fileRow(removedId)).unpackedAt).not.toBeNull();
     expect(await readyToDeliver(dealId)).toBe(true);
     expect(await finalsClear(dealId)).toBe(true);
     expect((await list(dealId, SELLER)).map((f) => f.id)).toEqual([liveId]);
@@ -1223,6 +1249,39 @@ describe('a removed file that is kept', () => {
     expect((await fileRow(reportedId)).scanStatus).toBe('Passed');
     expect(await files.purgeRemovedFiles()).toBe(0);
     expect(await keptRows(reportedId)).toHaveLength(1);
+  });
+
+  it('holds nothing when its malware scan is given up after the round was delivered', async () => {
+    const dealId = await accepted();
+    const removedId = await removedInFlight(dealId);
+    await delivered(dealId);
+    await q(
+      `UPDATE "ServiceDealFile" SET "processingAt" = NULL, "malwareScanWorkflowId" = NULL,
+         "malwareScanStartedAt" = NULL, "repackedAt" = now() - interval '2 days' WHERE id = $1`,
+      [removedId]
+    );
+    await unpack.settleMalwareScans();
+    await settle();
+    expect((await fileRow(removedId)).scanStatus).toBe('Failed');
+    expect(await dealStatus(dealId)).toEqual({ status: 'Delivered', disputeReason: null });
+  });
+
+  it('holds nothing when it truly fails after the round was delivered, and logs it', async () => {
+    const dealId = await accepted();
+    const removedId = await removedInFlight(dealId);
+    await delivered(dealId);
+    loggingMock.logToAxiom.mockClear();
+    await verdictLands(removedId, 'Failed');
+    await settle();
+    expect((await fileRow(removedId)).scanStatus).toBe('Failed');
+    expect(await keptRows(removedId)).toHaveLength(1);
+    expect(await dealStatus(dealId)).toEqual({ status: 'Delivered', disputeReason: null });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'service-deal-file-removed-failed',
+        details: expect.objectContaining({ fileId: removedId, dealId }),
+      })
+    );
   });
 });
 

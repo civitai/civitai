@@ -237,6 +237,9 @@ export async function requestServiceDealAttachment({
   // `attestedAt` records both; the input schema requires them too.
   if (rightsAttested !== true || likenessAttested !== true)
     throw throwBadRequestError('Confirm both statements to attach files.');
+  // An Attachment passes only on a malware scan that ran (see `recordFinalScanResult`).
+  if (!(await isFinalsMalwareScanOn()))
+    throw throwBadRequestError('Attaching files is not available right now.');
   // The seller sees the file name once the file passes. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
   assertScannableFile(fileName, size);
@@ -626,7 +629,8 @@ async function keepServerCopy(bucket: string, fileId: number, uploaderKey: strin
  * refused, its malware scan passed (or skipped while the scan is off) and every image passed. A
  * Failed Final sends a delivered deal to the moderators; one not yet delivered cannot be delivered
  * while it stands (see `dealReadyToDeliver`). A Failed Attachment holds nothing: the seller is not
- * answerable for the buyer's file, which simply never reaches them.
+ * answerable for the buyer's file, which simply never reaches them. A removed file holds nothing
+ * either; a Failed one is logged and kept.
  */
 export async function recordFinalScanResult({
   fileId,
@@ -639,7 +643,14 @@ export async function recordFinalScanResult({
   // off, so turning it on stops passing the Finals it skipped until they are scanned (see
   // `settleFinals`). An Attachment always needs a scan that ran.
   const malwareScanOn = verdict === 'Passed' ? await isFinalsMalwareScanOn() : true;
-  const [file] = await dbWrite.$queryRaw<{ dealId: number; kind: ServiceDealFileKind }[]>`
+  const [file] = await dbWrite.$queryRaw<
+    {
+      dealId: number;
+      kind: ServiceDealFileKind;
+      removedAt: Date | null;
+      failReason: string | null;
+    }[]
+  >`
     UPDATE "ServiceDealFile" SET "scanStatus" = ${verdict}::"ServiceDealFileScanStatus"
     WHERE "id" = ${fileId}::int AND "kind"::text IN (${SCANNED_FILE_KINDS})
       AND "scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
@@ -654,8 +665,20 @@ export async function recordFinalScanResult({
           SELECT 1 FROM "ServiceDealFileEntry" e
           WHERE e."fileId" = "ServiceDealFile"."id"
             AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")))
-    RETURNING "dealId", "kind"`;
+    RETURNING "dealId", "kind", "removedAt", "failReason"`;
   if (!file) return { recorded: false, held: false };
+  if (file.removedAt) {
+    // The buyer never had this file and the round no longer counts it, so its verdict says
+    // something about the uploader, not the deal.
+    if (verdict === 'Failed')
+      logToAxiom({
+        type: 'error',
+        name: 'service-deal-file-removed-failed',
+        message: 'a removed deal file failed its scan',
+        details: { fileId, dealId: file.dealId, kind: file.kind, failReason: file.failReason },
+      }).catch(() => null);
+    return { recorded: true, held: false };
+  }
   const held =
     verdict === 'Failed' && file.kind === 'Final'
       ? await holdServiceDealForReview(file.dealId, SERVICE_DEAL_HOLD_REASONS.finalScanFailed)
@@ -770,10 +793,13 @@ export async function listServiceDealFiles({
   dealId,
   userId,
   isModerator,
+  canReviewCsam = false,
 }: {
   dealId: number;
   userId: number;
   isModerator: boolean;
+  /** See `resolveServiceDealFileDownload`. */
+  canReviewCsam?: boolean;
 }) {
   const [deal] = await dbWrite.$queryRaw<DealForFiles[]>`
     SELECT d."id", d."buyerId", d."sellerId", d."status"::text AS "status", d."revisionsUsed",
@@ -814,7 +840,7 @@ export async function listServiceDealFiles({
           failReason: row.failReason,
           scanStatus: row.scanStatus,
           previewUrl: null,
-          canDownload: true,
+          canDownload: canReviewCsam,
           removedAt: row.removedAt,
         },
       ];
@@ -912,11 +938,14 @@ export async function resolveServiceDealFileDownload({
   isModerator,
   delivered = false,
   moderatorFetch = false,
+  canReviewCsam = false,
 }: {
   fileId: number;
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
+  /** The `csamReports` permission: a removed file is served only to a moderator who holds it. */
+  canReviewCsam?: boolean;
   /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
    *  it never counts as the buyer's download. */
   moderatorFetch?: boolean;
@@ -952,7 +981,7 @@ export async function resolveServiceDealFileDownload({
   const party = row.sellerId === userId || row.buyerId === userId;
   const allowed = row.removedAt
     ? // Never bytes the uploader can still write to (see `keepServerCopy`).
-      isModerator && !party && !isUploaderKey(row.s3Key)
+      canReviewCsam && isModerator && !party && !isUploaderKey(row.s3Key)
     : isAttachment
     ? (isModerator && row.sellerId !== userId) ||
       (row.buyerId === userId && ready) ||
