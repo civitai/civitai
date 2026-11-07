@@ -1,6 +1,5 @@
 /**
- * App Storage PERMISSION HOOKS — declaring and pinning (no hook is CALLED here; the write path and
- * the runner client are a later change).
+ * App Storage PERMISSION HOOKS — declaring and pinning (nothing in this module calls a hook).
  *
  * A collection's `hook: { file, sha256, timeoutMs? }` names one ES module of the bundle. Before a
  * version that declares one can be queued or approved, this module:
@@ -238,7 +237,9 @@ function resolveDeclaredHooks(
   return problems.length > 0 ? { kind: 'invalid', problems, details } : { kind: 'unparsed' };
 }
 
-const UTF8 = new TextDecoder('utf-8', { fatal: true });
+// `ignoreBOM`: keep a leading BOM in the text, so the recorded source re-encodes to the exact bytes
+// the sha256 was taken over (the default decoder strips it).
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 function asHookSource(bytes: Buffer): string | null {
   try {

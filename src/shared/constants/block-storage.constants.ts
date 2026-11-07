@@ -441,12 +441,11 @@ export type AppStorageFeature =
  *   - `perAuthorWriteBudget` — `dailyWritesPerAuthor` (a per-collection daily write budget
  *                      in place of the platform default; the storage routes do not read it
  *                      yet, so a declared limit must not read as working).
- *   - `hooks`          — `hook` (a permission hook on a collection's writes). Submit, the push
- *                      path and approve already verify the file against its sha256 and record its
- *                      source, but nothing CALLS a hook yet, so while this is off a declared hook
- *                      is refused rather than read as enforcing anything. Switching it on also
- *                      leaves the per-author Flipt gate `app-blocks-storage-hooks` in charge of
- *                      who may add or change one (`storage-hooks.ts`).
+ *   - `hooks`          — `hook` (a permission hook on a collection's writes). Off: a declared
+ *                      hook is refused, so none reads as enforcing anything. On: the per-author
+ *                      Flipt gate `app-blocks-storage-hooks` decides who may add or change one
+ *                      (`storage-hooks.ts`). Switch it on only with the write path that calls
+ *                      hooks.
  *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
  *                      registries by the registry adapter).
  *
