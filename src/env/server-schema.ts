@@ -694,6 +694,17 @@ export const serverSchema = z
     CSAM_BUCKET_NAME: z.string().default(''),
     CSAM_UPLOAD_REGION: z.string().default(''),
     CSAM_UPLOAD_ENDPOINT: z.string().default(''),
+    // Personal-data export archives: a private bucket of their own (short lifecycle), never a
+    // prefix of another. All optional: the export job logs an error and builds nothing without them.
+    PERSONAL_DATA_EXPORT_ENDPOINT: z.string().default(''),
+    PERSONAL_DATA_EXPORT_REGION: z.string().default(''),
+    PERSONAL_DATA_EXPORT_BUCKET: z.string().default(''),
+    PERSONAL_DATA_EXPORT_KEY: z.string().default(''),
+    PERSONAL_DATA_EXPORT_SECRET: z.string().default(''),
+    // Read-only connection to the stored generation workflow documents; reads from a secondary only.
+    PERSONAL_DATA_EXPORT_MONGO_URL: z.string().default(''),
+    // Where a refused export for a held account is reported; Legal's intake reads this inbox.
+    PERSONAL_DATA_EXPORT_LEGAL_EMAIL: z.string().default('compliance@civitai.com'),
     NCMEC_URL: z.string().optional(),
     NCMEC_USERNAME: z.string().default(''),
     NCMEC_PASSWORD: z.string().default(''),

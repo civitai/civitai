@@ -4489,6 +4489,49 @@ export type Partner = {
   logo: string | null;
   disabled: Generated<boolean>;
 };
+export type PersonalDataExport = {
+  id: Generated<number>;
+  userId: number;
+  requestedById: number;
+  /**
+   * queued | building | built | held | failed | released
+   */
+  status: Generated<string>;
+  /**
+   * Always text-redacted-separate-file: the notes file beside the archive.
+   */
+  modNotesMode: Generated<string>;
+  /**
+   * Neutral codes for the holds found when the archive was built; re-checked at release.
+   */
+  holdReasons: Generated<string[]>;
+  archiveKey: string | null;
+  modNotesKey: string | null;
+  /**
+   * Per-source row counts and notes: what the archive's manifest.json holds, without data.
+   */
+  manifest: unknown | null;
+  error: string | null;
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  startedAt: Timestamp | null;
+  builtAt: Timestamp | null;
+  /**
+   * When the requester was emailed the link.
+   */
+  sentAt: Timestamp | null;
+  linkExpiresAt: Timestamp | null;
+  releasedAt: Timestamp | null;
+  releasedById: number | null;
+  /**
+   * The help-desk ticket the request came in on, when it did.
+   */
+  ticketId: number | null;
+  /**
+   * The date the user asked (the ticket's own date, or as entered): starts the response deadline.
+   */
+  requestedAt: Timestamp | null;
+};
 export type Placement = {
   id: Generated<number>;
   surface: string;
@@ -6758,6 +6801,7 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  PersonalDataExport: PersonalDataExport;
   Placement: Placement;
   PlacementSpace: PlacementSpace;
   PlacementSuspension: PlacementSuspension;
