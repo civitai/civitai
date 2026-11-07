@@ -285,8 +285,6 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
   usableEcosystems: readonly string[]
 ) {
   const hiddenSet = new Set(hiddenEcosystems);
-  // Shown-but-gated (disabled / memberOnly) → its refusal, carrying the rule's
-  // copy so an API caller can say WHY. Hidden keys keep the bare text.
   const disabledRefusals = new Map(
     disabled.map((e) => [e.key, gateRefusalText(ECOSYSTEM_UNAVAILABLE, e.message)])
   );

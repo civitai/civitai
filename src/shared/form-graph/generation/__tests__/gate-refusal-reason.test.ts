@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import type { GenerationCtx } from '~/shared/generation/context';
-import { applicableRulesFor, type GateRule } from '~/shared/generation/gates';
+import { ecosystemFieldSchemas } from '~/shared/form-graph/generation/shared';
+import { applicableRulesFor, rulesToStates, type GateRule } from '~/shared/generation/gates';
 
 /**
  * A gated ecosystem/workflow is refused by its node's OUTPUT schema, and that
- * refusal is all an API caller (an App Blocks app) ever sees. It used to be a
- * constant, so the rule's user-facing copy — which the on-site generator
- * renders — never reached anyone outside the form.
+ * refusal is all an API caller (an App Blocks app) ever sees.
  *
  * The refusal must:
  *   - START with the stable text, since callers match on it;
@@ -78,9 +77,7 @@ describe('gate refusals carry a shown rule’s message', () => {
     expect(errorOf(result, 'ecosystem')).toBe(`${ECOSYSTEM_UNAVAILABLE}. ${USER_COPY}`);
   });
 
-  // The reported theory was that a `moderators` rule's message never reaches
-  // ordinary users. It does: such a rule GATES them, so it is applicable to
-  // them and keeps its message. Pinned through the real filter.
+  // A moderators-only rule gates ordinary users, so it stays applicable to them and keeps its message.
   it('a moderators-only rule reaches an ordinary user with its message', () => {
     const stored = [rule({ availableTo: 'moderators', ecosystems: ['SDXL'] })];
     const forUser = applicableRulesFor(stored, {
@@ -105,17 +102,6 @@ describe('gate refusals carry a shown rule’s message', () => {
     expect(errorOf(result, 'ecosystem')).toBe(ECOSYSTEM_UNAVAILABLE);
   });
 
-  it('a hidden ecosystem never surfaces its message', () => {
-    const result = parse(
-      ext([rule({ presentation: 'hidden', message: SECRET, ecosystems: ['SDXL'] })])
-    );
-    // A hidden value falls back to the default at the input boundary, so it is
-    // normally not refused at all; whichever way it resolves, the copy is absent.
-    expect(JSON.stringify(result)).not.toContain(SECRET);
-    const message = errorOf(result, 'ecosystem');
-    if (message !== undefined) expect(message).toBe(ECOSYSTEM_UNAVAILABLE);
-  });
-
   it('disabled workflow: stable text, then the rule message', () => {
     const result = parse(ext([rule({ workflows: ['txt2img'] })]));
     expect(errorOf(result, 'workflow')).toBe(`${WORKFLOW_UNAVAILABLE}. ${USER_COPY}`);
@@ -127,5 +113,63 @@ describe('gate refusals carry a shown rule’s message', () => {
     );
     expect(errorOf(result, 'workflow')).toBe(WORKFLOW_UNAVAILABLE);
     expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+});
+
+/**
+ * A hidden ecosystem never reaches a refusal through `parse`: the input boundary
+ * drops it and falls back to the default. So the guards below go to the two
+ * places that actually keep a hidden rule's message out: `rulesToStates`, where
+ * it is stripped, and the ecosystem OUTPUT refine, driven directly.
+ */
+describe('a hidden rule’s message never reaches a refusal', () => {
+  it('rulesToStates strips it on every target type, even stacked on a shown rule', () => {
+    const states = rulesToStates([
+      // listed first, so the hidden rule has to win the merge, not just arrive
+      rule({ id: 'shown', ecosystems: ['Flux1', 'SDXL'], workflows: ['img2img'] }),
+      rule({
+        id: 'hidden',
+        presentation: 'hidden',
+        message: SECRET,
+        ecosystems: ['SDXL'],
+        workflows: ['txt2img'],
+        modelVersionIds: [8],
+      }),
+    ]);
+    // The shown rule keeps its copy, so a message is observable in this output.
+    expect([...states.ecosystems]).toEqual([
+      ['Flux1', { state: 'disabled', message: USER_COPY }],
+      ['SDXL', { state: 'hidden', message: undefined }],
+    ]);
+    expect([...states.workflows]).toEqual([
+      ['img2img', { state: 'disabled', message: USER_COPY }],
+      ['txt2img', { state: 'hidden', message: undefined }],
+    ]);
+    expect([...states.modelVersionIds]).toEqual([[8, { state: 'hidden', message: undefined }]]);
+  });
+
+  const outputRefusals = (
+    hidden: string[],
+    gated: { key: string; message?: string }[],
+    value: string
+  ) => {
+    const result = ecosystemFieldSchemas('txt2img', hidden, gated, ['SD1']).output.safeParse(value);
+    return result.success ? [] : result.error.issues.map((issue) => issue.message);
+  };
+
+  it('CONTROL: a gated entry’s message does reach the output refusal', () => {
+    expect(outputRefusals([], [{ key: 'SDXL', message: SECRET }], 'SDXL')).toEqual([
+      `${ECOSYSTEM_UNAVAILABLE}. ${SECRET}`,
+    ]);
+  });
+
+  it('a hidden ecosystem at the output refine is refused with the bare text', () => {
+    expect(outputRefusals(['SDXL'], [], 'SDXL')).toEqual([ECOSYSTEM_UNAVAILABLE]);
+  });
+
+  it('hidden is checked first: a gated entry for the same key never adds its message', () => {
+    expect(outputRefusals(['SDXL'], [{ key: 'SDXL', message: SECRET }], 'SDXL')).toEqual([
+      ECOSYSTEM_UNAVAILABLE,
+    ]);
   });
 });

@@ -109,8 +109,6 @@ const workflowKinds = branch('workflowKind', [
 ] as const);
 
 const WORKFLOW_INPUT = z.string().optional().transform(migrateWorkflowKey);
-// Hidden workflows refuse with the bare text; shown-but-gated ones carry the
-// rule's copy so an API caller can say WHY (`gateRefusalText`).
 const workflowOutput = defFamily(
   (hidden: readonly string[], states: readonly { key: string; message?: string }[]) => {
     const refusals = new Map<string, string>(hidden.map((key) => [key, WORKFLOW_UNAVAILABLE]));
