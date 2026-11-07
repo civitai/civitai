@@ -5,6 +5,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ArchiveModule from '../archive';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -13,7 +14,13 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * the check and the claim. It runs here against Postgres, not as a string.
  */
 
-const m = vi.hoisted(() => ({ readySend: vi.fn(), accountHeld: false }));
+const m = vi.hoisted(() => ({
+  readySend: vi.fn(),
+  refusedSend: vi.fn(),
+  heldSend: vi.fn(),
+  del: vi.fn(),
+  accountHeld: false,
+}));
 vi.mock('~/server/services/legal-hold.service', async () => {
   const { Prisma: P } = await import('@prisma/client');
   return {
@@ -25,6 +32,12 @@ vi.mock('~/server/services/legal-hold.service', async () => {
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportReadyEmail: { send: m.readySend },
   personalDataExportBuiltEmail: { send: vi.fn() },
+  personalDataExportRefusedEmail: { send: m.refusedSend },
+  personalDataExportHeldEmail: { send: m.heldSend },
+}));
+vi.mock('../archive', async (importOriginal) => ({
+  ...(await importOriginal<typeof ArchiveModule>()),
+  deleteObjects: m.del,
 }));
 
 import { exportHoldReasons, releaseExport } from '../personal-data-export.service';
@@ -69,6 +82,9 @@ afterAll(() => db?.close());
 
 beforeEach(async () => {
   m.readySend.mockReset().mockResolvedValue(undefined);
+  m.refusedSend.mockReset().mockResolvedValue(undefined);
+  m.heldSend.mockReset().mockResolvedValue(undefined);
+  m.del.mockReset().mockResolvedValue(undefined);
   m.accountHeld = false;
   await db.exec(
     `DELETE FROM "Image"; DELETE FROM "Report"; DELETE FROM "UserReport"; DELETE FROM "PersonalDataExport";`
@@ -197,6 +213,79 @@ describe('release claim, run', () => {
       ok: true,
     });
     expect(await status()).toBe('released');
+  });
+
+  /**
+   * 🔴 Ruled by the Moderation Lead: a hold found at RELEASE is refused exactly like one found at
+   * build time. The built archive and notes objects are deleted, Legal gets ONE notice, the row stays
+   * (held, both keys NULL), and nothing else the account owns is touched.
+   */
+  describe('a hold that appears after the build', () => {
+    const sources = async () =>
+      JSON.stringify(
+        await Promise.all(
+          ['Image', 'Report', 'UserReport'].map(
+            async (t) => (await db.query(`SELECT * FROM "${t}" ORDER BY 1`)).rows
+          )
+        )
+      );
+
+    beforeEach(async () => {
+      await db.exec(
+        `UPDATE "PersonalDataExport" SET "modNotesKey" = 'exports/5/n-internal-notes.csv',
+           "ticketId" = 555, "requestedAt" = '2026-09-14' WHERE id = 5;
+         INSERT INTO "Image" (id, "userId") VALUES (1, ${OWNER}), (2, ${OWNER});`
+      );
+      await caseAbout(OWNER, 1, 'CSAM', 'Actioned');
+      // The hold check and both row reads run against Postgres.
+      vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (q: Prisma.Sql) => {
+        return (await db.query(q.text, q.values as unknown[])).rows;
+      }) as never);
+      vi.mocked(dbMock.dbWrite.personalDataExport.findUnique).mockImplementation((async () => {
+        const { rows } = await db.query(`SELECT * FROM "PersonalDataExport" WHERE id = 5`);
+        return rows[0] ?? null;
+      }) as never);
+    });
+
+    it('refuses: one Legal notice, both objects deleted, the row kept with its keys cleared', async () => {
+      const before = await sources();
+      expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+        ok: false,
+        reason: 'held',
+      });
+      expect(m.readySend).not.toHaveBeenCalled();
+      expect(m.refusedSend.mock.calls).toEqual([
+        [
+          {
+            to: 'compliance@civitai.com',
+            subject: 'DATA-EXPORT-REFUSED user=42 ticket=555 requested=2026-09-14',
+            lines: ['user=42', 'ticket=555', 'requested=2026-09-14'],
+          },
+        ],
+      ]);
+      expect(m.heldSend.mock.calls).toEqual([[{ to: 'owner@example.com', exportId: 5 }]]);
+      expect(m.del.mock.calls).toEqual([
+        [bucket, ['exports/5/k.zip', 'exports/5/n-internal-notes.csv']],
+      ]);
+      const { rows } = await db.query(
+        `SELECT status, "archiveKey", "modNotesKey", "holdReasons" FROM "PersonalDataExport" WHERE id = 5`
+      );
+      expect(rows).toEqual([
+        { status: 'held', archiveKey: null, modNotesKey: null, holdReasons: ['review'] },
+      ]);
+      // Only the export's own objects go: every source row is exactly as it was.
+      expect(await sources()).toBe(before);
+    });
+
+    it('sends Legal no second notice on another press, or when two presses race', async () => {
+      await Promise.all([
+        releaseExport({ exportId: 5, actorId: 9, bucket, now }),
+        releaseExport({ exportId: 5, actorId: 9, bucket, now }),
+      ]);
+      await releaseExport({ exportId: 5, actorId: 9, bucket, now });
+      expect(m.refusedSend).toHaveBeenCalledTimes(1);
+      expect(m.del).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('clears the error a failed earlier release left on the row', async () => {

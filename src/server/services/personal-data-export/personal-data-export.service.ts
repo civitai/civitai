@@ -260,7 +260,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
   const before = await exportHoldReasons(user.id);
   // A hold that could not be READ is not a hold: retry rather than build or refuse.
   if (before.legs.includes('unconfirmed')) return recordFailure(row, 'hold check failed');
-  if (before.legs.length) return refuseHeld(row, before.legs, []);
+  if (before.legs.length) return refuseHeld(row, before.legs, building(row), []);
 
   const takenAt = new Date();
   const archiveKey = exportObjectKey(row.id, 'archive');
@@ -343,7 +343,7 @@ export async function buildExport(row: ExportRow, deps: ExportDeps) {
   const { legs: holdReasons } = await exportHoldReasons(user.id);
   if (holdReasons.includes('unconfirmed')) return recordFailure(row, 'hold check failed');
   if (holdReasons.length)
-    return refuseHeld(row, holdReasons, [archiveKey, modNotesKey], deps.bucket);
+    return refuseHeld(row, holdReasons, building(row), [archiveKey, modNotesKey], deps.bucket);
   const status: ExportStatus = 'built';
   // Staff-only: the row's copy. The archive's manifest carries no note count.
   const summary = manifest && {
@@ -396,24 +396,44 @@ export function legalRefusalLines(input: {
   return { subject: `DATA-EXPORT-REFUSED ${lines.join(' ')}`, lines };
 }
 
+/** The state a refusal moves the row out of: this build attempt, or a built archive at release. */
+type HeldFrom = { status: 'building'; attempts: number } | { status: 'built' };
+const building = (row: ExportRow): HeldFrom => ({ status: 'building', attempts: row.attempts });
+
 /**
  * A held account: no archive (any already uploaded is deleted), one notice to Legal, and the
- * requesting moderator told only that it was routed to Legal.
+ * requesting moderator told only that it was routed to Legal. The same path whether the hold is
+ * found before the build, during it, or at release. The row is kept, as held, with both keys cleared.
+ *
+ * The guarded UPDATE runs first and only its winner deletes and emails, so a retry or a second press
+ * racing this one cannot send Legal a second notice.
  */
 async function refuseHeld(
-  row: ExportRow,
+  row: Pick<
+    ExportRow,
+    'id' | 'userId' | 'requestedById' | 'createdAt' | 'ticketId' | 'requestedAt'
+  >,
   holdReasons: string[],
+  from: HeldFrom,
   uploaded: (string | null)[],
   bucket?: ExportBucket
 ) {
-  if (bucket) await deleteObjects(bucket, uploaded);
-  const recorded = await dbWrite.$executeRaw`
-    UPDATE "PersonalDataExport"
-    SET status = 'held', "holdReasons" = ${holdReasons}::text[], "archiveKey" = NULL,
-        "modNotesKey" = NULL, error = NULL
-    WHERE id = ${row.id} AND status = 'building' AND attempts = ${row.attempts}
-  `;
+  const recorded =
+    from.status === 'building'
+      ? await dbWrite.$executeRaw`
+          UPDATE "PersonalDataExport"
+          SET status = 'held', "holdReasons" = ${holdReasons}::text[], "archiveKey" = NULL,
+              "modNotesKey" = NULL, error = NULL
+          WHERE id = ${row.id} AND status = 'building' AND attempts = ${from.attempts}
+        `
+      : await dbWrite.$executeRaw`
+          UPDATE "PersonalDataExport"
+          SET status = 'held', "holdReasons" = ${holdReasons}::text[], "archiveKey" = NULL,
+              "modNotesKey" = NULL, error = NULL
+          WHERE id = ${row.id} AND status = 'built'
+        `;
   if (recorded !== 1) return 'failed' as const;
+  if (bucket) await deleteObjects(bucket, uploaded);
   logToAxiom({
     type: 'info',
     name: LOG,
@@ -423,6 +443,7 @@ async function refuseHeld(
       userId: row.userId,
       requestedById: row.requestedById,
       queuedAt: row.createdAt,
+      at: from.status === 'built' ? 'release' : 'build',
     },
   }).catch(() => undefined);
 
@@ -551,11 +572,35 @@ export async function releaseExport({
   // A hold that could not be READ is not a hold: refuse this press, write nothing, let it be retried.
   if (holdReasons.includes('unconfirmed')) return { ok: false, reason: 'unconfirmed' };
   if (holdReasons.length) {
-    await dbWrite.$executeRaw`
-      UPDATE "PersonalDataExport" SET status = 'held', "holdReasons" = ${holdReasons}::text[]
-      WHERE id = ${row.id} AND status = 'built'
-    `;
-    return { ok: false, reason: 'held' };
+    // Refused exactly as at build time: archive and notes deleted, Legal told once. This read is the
+    // only one on the release path that names the notes object, and only so it can be deleted.
+    const stored = await dbWrite.personalDataExport.findUnique({
+      where: { id: row.id },
+      select: {
+        requestedById: true,
+        createdAt: true,
+        ticketId: true,
+        requestedAt: true,
+        modNotesKey: true,
+      },
+    });
+    if (!stored) return { ok: false, reason: 'not-found' };
+    const refused = await refuseHeld(
+      {
+        id: row.id,
+        userId: row.userId,
+        requestedById: stored.requestedById,
+        createdAt: stored.createdAt,
+        ticketId: stored.ticketId,
+        // A DATE comes back as UTC midnight, so its ISO date is the stored date.
+        requestedAt: stored.requestedAt?.toISOString().slice(0, 10) ?? null,
+      },
+      holdReasons,
+      { status: 'built' },
+      [row.archiveKey, stored.modNotesKey],
+      bucket
+    );
+    return { ok: false, reason: refused === 'held' ? 'held' : 'not-releasable' };
   }
 
   const owner = await dbWrite.user.findUnique({

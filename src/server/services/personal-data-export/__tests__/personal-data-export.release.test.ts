@@ -1,12 +1,20 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ArchiveModule from '../archive';
 
 const mocks = vi.hoisted(() => ({
   holds: vi.fn(),
   holdSqlArgs: vi.fn(),
   readySend: vi.fn(),
   builtSend: vi.fn(),
+  refusedSend: vi.fn(),
+  heldSend: vi.fn(),
+  del: vi.fn(),
+}));
+vi.mock('../archive', async (importOriginal) => ({
+  ...(await importOriginal<typeof ArchiveModule>()),
+  deleteObjects: mocks.del,
 }));
 
 vi.mock('~/server/services/legal-hold.service', async () => {
@@ -23,6 +31,8 @@ vi.mock('~/server/services/legal-hold.service', async () => {
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportReadyEmail: { send: mocks.readySend },
   personalDataExportBuiltEmail: { send: mocks.builtSend },
+  personalDataExportRefusedEmail: { send: mocks.refusedSend },
+  personalDataExportHeldEmail: { send: mocks.heldSend },
 }));
 
 import { RELEASE_WINDOW_SECONDS, exportObjectKey, presignDownload } from '../archive';
@@ -82,7 +92,8 @@ describe('releaseExport', () => {
     const sent = JSON.stringify(mocks.readySend.mock.calls[0][0]);
     expect(sent).toContain('exports/5/k.zip');
     expect(sent).not.toContain('internal-notes');
-    // The release never even reads which notes object an export has.
+    // A release that sends never even reads which notes object an export has.
+    expect(dbMock.dbWrite.personalDataExport.findUnique).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.personalDataExport.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.not.objectContaining({ modNotesKey: true }) })
     );
@@ -166,6 +177,8 @@ describe('releaseExport', () => {
     expect(mocks.readySend).not.toHaveBeenCalled();
     expect(writes().some((w) => w.includes(`SET status = 'held'`))).toBe(true);
     expect(writes().some((w) => w.includes(`SET status = 'released'`))).toBe(false);
+    expect(mocks.refusedSend).toHaveBeenCalledTimes(1);
+    expect(mocks.del).toHaveBeenCalledTimes(1);
   });
 
   it('refuses, writing nothing, when the hold check cannot be read, so it can be pressed again', async () => {

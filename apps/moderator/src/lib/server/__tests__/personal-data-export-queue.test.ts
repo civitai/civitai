@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Kysely,
   PostgresAdapter,
@@ -10,14 +13,19 @@ import {
 } from 'kysely';
 
 /**
- * The queue's ON CONFLICT must name the same partial index the migration creates
- * (`"userId" WHERE status IN ('queued', 'building')`), or Postgres finds no arbiter index and every
- * queue fails. The SQL the app sends is captured here and compared against the index predicate.
+ * The queue's ON CONFLICT must match the partial index the migration creates, or Postgres finds no
+ * arbiter index and every queue fails. So the SQL the app compiles runs here against Postgres with
+ * both migrations applied: the real index decides queued or already-queued, not a string compare.
  */
 
+const MIGRATIONS = path.resolve(
+  __dirname,
+  '../../../../../../packages/civitai-db-schema/prisma/migrations'
+);
+
 const sent = vi.hoisted(() => ({
+  pg: undefined as unknown as PGlite,
   queries: [] as CompiledQuery[],
-  insertRows: [] as unknown[],
   failAudit: false,
   tx: [] as string[],
   on: [] as number[],
@@ -36,8 +44,8 @@ vi.mock('../db', () => {
         sent.on.push(id);
         if (sent.failAudit && /^insert into "ModActivity"/i.test(q.sql))
           throw new Error('audit down');
-        if (/^select/i.test(q.sql)) return { rows: [{ id: 7 }] } as never;
-        return { rows: sent.insertRows } as never;
+        const r = await sent.pg.query(q.sql, q.parameters as unknown[]);
+        return { rows: r.rows, numAffectedRows: BigInt(r.affectedRows ?? 0) } as never;
       },
       async *streamQuery() {
         yield* [];
@@ -50,9 +58,16 @@ vi.mock('../db', () => {
     beginTransaction: async (c) => {
       sent.tx.push('begin');
       sent.txConn = (c as unknown as { id: number }).id;
+      await sent.pg.exec('BEGIN');
     },
-    commitTransaction: async () => void sent.tx.push('commit'),
-    rollbackTransaction: async () => void sent.tx.push('rollback'),
+    commitTransaction: async () => {
+      sent.tx.push('commit');
+      await sent.pg.exec('COMMIT');
+    },
+    rollbackTransaction: async () => {
+      sent.tx.push('rollback');
+      await sent.pg.exec('ROLLBACK');
+    },
     releaseConnection: async () => undefined,
     destroy: async () => undefined,
   };
@@ -67,13 +82,29 @@ vi.mock('../db', () => {
   return { dbRead: db, dbWrite: db };
 });
 
+sent.pg = new PGlite();
+// Both migrations, in the order they are applied.
+for (const dir of [
+  '20261225120000_personal_data_export',
+  '20261228120000_personal_data_export_request',
+])
+  await sent.pg.exec(readFileSync(path.join(MIGRATIONS, dir, 'migration.sql'), 'utf8'));
+await sent.pg.exec(`
+  CREATE TABLE "User" (id int PRIMARY KEY);
+  CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "userId" int, "entityType" text,
+    "entityId" int, activity text, "createdAt" timestamp DEFAULT now());
+  INSERT INTO "User" (id) VALUES (7);
+`);
+afterAll(() => sent.pg.close());
+
 const { queuePersonalDataExport } = await import('../personal-data-export.service');
 
-beforeEach(() => {
+beforeEach(async () => {
   sent.queries = [];
   sent.tx = [];
   sent.on = [];
   sent.failAudit = false;
+  await sent.pg.exec(`DELETE FROM "PersonalDataExport"; DELETE FROM "ModActivity";`);
 });
 
 const input = {
@@ -83,23 +114,33 @@ const input = {
   requestedAt: new Date('2026-10-02T15:30:00Z'),
 };
 
+const exportsFor7 = async () =>
+  (
+    await sent.pg.query<{ status: string; ticketId: number; requestedAt: string }>(
+      `SELECT status, "ticketId", "requestedAt"::text AS "requestedAt"
+       FROM "PersonalDataExport" WHERE "userId" = 7 ORDER BY id`
+    )
+  ).rows;
+const audits = async () =>
+  (await sent.pg.query(`SELECT "userId", "entityType", "entityId", activity FROM "ModActivity"`))
+    .rows;
+const existing = (status: string) =>
+  sent.pg.query(
+    `INSERT INTO "PersonalDataExport" ("userId", "requestedById", status) VALUES (7, 4, $1)`,
+    [status]
+  );
+
 describe('queuePersonalDataExport', () => {
-  it('inserts against the in-flight partial index and audits the queue', async () => {
-    sent.insertRows = [{ id: 31 }];
-    expect(await queuePersonalDataExport(input)).toEqual({
-      status: 'queued',
-      id: 31,
-    });
-    const insert = sent.queries.find((q) => /^insert into "PersonalDataExport"/i.test(q.sql))!;
-    expect(insert.sql.replace(/\s+/g, ' ')).toContain(
-      `on conflict ("userId") where status IN ('queued', 'building') do nothing`
-    );
-    // The request is recorded with its ticket and the UTC day the user asked.
-    expect(insert.parameters).toEqual(expect.arrayContaining([555, '2026-10-02']));
-    const auditRow = sent.queries.find((q) => /^insert into "ModActivity"/i.test(q.sql))!;
-    expect(auditRow.parameters).toEqual(
-      expect.arrayContaining([4, 'user', 7, 'queuePersonalDataExport'])
-    );
+  it('queues the export with its ticket and request day, and audits it, in one transaction', async () => {
+    const result = await queuePersonalDataExport(input);
+    expect(result).toEqual({ status: 'queued', id: expect.any(Number) });
+    // The UTC day the user asked.
+    expect(await exportsFor7()).toEqual([
+      { status: 'queued', ticketId: 555, requestedAt: '2026-10-02' },
+    ]);
+    expect(await audits()).toEqual([
+      { userId: 4, entityType: 'user', entityId: 7, activity: 'queuePersonalDataExport' },
+    ]);
     expect(sent.tx).toEqual(['begin', 'commit']);
     // Both inserts ran on the transaction's own connection, not beside it.
     const conn = (re: RegExp) => sent.on[sent.queries.findIndex((q) => re.test(q.sql))];
@@ -107,22 +148,31 @@ describe('queuePersonalDataExport', () => {
     expect(conn(/^insert into "ModActivity"/i)).toBe(sent.txConn);
   });
 
+  it.each(['queued', 'building'])(
+    'answers already-queued while an export is %s, and adds and audits nothing',
+    async (status) => {
+      await existing(status);
+      expect(await queuePersonalDataExport(input)).toEqual({ status: 'already-queued' });
+      expect(await exportsFor7()).toHaveLength(1);
+      expect(await audits()).toEqual([]);
+    }
+  );
+
+  it.each(['built', 'held', 'failed'])(
+    'queues a new export beside one that is %s (no longer in flight)',
+    async (status) => {
+      await existing(status);
+      expect(await queuePersonalDataExport(input)).toMatchObject({ status: 'queued' });
+      expect(await exportsFor7()).toHaveLength(2);
+    }
+  );
+
   it('queues nothing when the audit row cannot be written: both roll back together', async () => {
-    sent.insertRows = [{ id: 33 }];
     sent.failAudit = true;
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await queuePersonalDataExport(input)).toEqual({
-      status: 'error',
-    });
+    expect(await queuePersonalDataExport(input)).toEqual({ status: 'error' });
     expect(sent.tx).toEqual(['begin', 'rollback']);
+    expect(await exportsFor7()).toEqual([]);
     spy.mockRestore();
-  });
-
-  it('answers already-queued when the insert hit the index, and audits nothing', async () => {
-    sent.insertRows = [];
-    expect(await queuePersonalDataExport(input)).toEqual({
-      status: 'already-queued',
-    });
-    expect(sent.queries.some((q) => /^insert into "ModActivity"/i.test(q.sql))).toBe(false);
   });
 });
