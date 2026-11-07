@@ -45,6 +45,46 @@ describe('personal-data-export column policy, over every planned read', () => {
     expect(selected('Session')).toContain('expires');
   });
 
+  /**
+   * Named literally, not through the policy's own lists and patterns: a check that judges the plan
+   * with the same rules that made it moves with them, and stays green when one is weakened.
+   */
+  it('never selects these credential columns, by name', () => {
+    const NEVER = {
+      Session: ['sessionToken'],
+      Account: ['access_token', 'refresh_token', 'id_token'],
+      ApiKey: ['key'],
+      AccessToken: ['tokenHash'],
+      VerificationToken: ['token'],
+      Partner: ['token'],
+      OauthClient: ['secret'],
+    };
+    // These are exported, so their columns are really planned and the absence below means something.
+    for (const table of ['Session', 'Account', 'ApiKey', 'AccessToken'])
+      expect(
+        plans.some((p) => p.model === table),
+        table
+      ).toBe(true);
+    for (const [table, cols] of Object.entries(NEVER))
+      for (const plan of plans.filter((p) => p.model === table)) {
+        const columnList = selectSql(plan).split(' FROM ')[0];
+        for (const col of cols) {
+          expect(selected(plan.name), `${plan.name}.${col}`).not.toContain(col);
+          expect(columnList, `${plan.name}.${col}`).not.toContain(`"${col}"`);
+        }
+      }
+    // No table has these today, so only their names can be checked: a future one is withheld.
+    for (const col of ['password', 'passwordHash', 'sessionToken', 'apiKey', 'clientSecret'])
+      expect(columnDecision('NewTable', col, 'String'), col).toBe('credential');
+    // User has no credential column today; any that appears is not selected.
+    expect(
+      plans
+        .filter((p) => p.model === 'User')
+        .flatMap((p) => p.columns.map((c) => c.field))
+        .filter((f) => /pass|secret|token|hash|salt/i.test(f))
+    ).toEqual([]);
+  });
+
   it('writes no text column an automated check fills, on any table', () => {
     const leaks = plans.flatMap((p) =>
       p.columns
