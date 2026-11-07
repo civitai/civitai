@@ -22,11 +22,6 @@ export const BLOCK_REASONS = [
     help: 'A clearly drawn or cartoon character depicted as under 18 in nudity, sexual activity, or sexualized clothing/poses. Anything not clearly drawn goes under CSAM: realistic minor.',
   },
   {
-    id: 'csam-realistic',
-    label: 'CSAM: realistic minor (hold for report)',
-    help: 'A minor in nudity, sexual activity, or sexualized clothing/poses, shown photographically or so it could pass as a real child. If in doubt (semi-real, 3D render, photo-like anime, can’t tell), choose this. One vote holds the image for CSAM review instead of blocking it.',
-  },
-  {
     id: 'minor-photoreal',
     label: 'Photorealistic minor',
     help: 'A photorealistic depiction of someone under 18, including otherwise nonsexual scenes.',
@@ -60,6 +55,12 @@ export const BLOCK_REASONS = [
     id: 'other',
     label: 'Other ToS violation',
     help: 'Another specific violation (e.g. prohibited bodily waste, incest, hate/extremism, self-harm). Requires a short comment.',
+  },
+  // Last, so the number keys of the reasons above stay where moderators expect them.
+  {
+    id: 'csam-realistic',
+    label: 'CSAM: realistic minor (hold for report)',
+    help: 'A minor in nudity, sexual activity, or sexualized clothing/poses, shown photographically or so it could pass as a real child. If in doubt (semi-real, 3D render, photo-like anime, can’t tell), choose this. One vote holds the image for CSAM review instead of blocking it.',
   },
 ] as const;
 

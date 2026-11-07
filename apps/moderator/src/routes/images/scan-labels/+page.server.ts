@@ -110,10 +110,10 @@ export const actions: Actions = {
     const holds = await applyCsamHolds(
       {},
       {
-        hold: async (imageId) => {
+        hold: async (imageId, voterId) => {
           const held = await callModEndpoint(
             'image/report-csam',
-            { imageIds: [imageId] },
+            { imageIds: [imageId], scanLabelVoterId: voterId },
             'Hold for CSAM review'
           );
           if (!held.ok) throw new Error(held.error);

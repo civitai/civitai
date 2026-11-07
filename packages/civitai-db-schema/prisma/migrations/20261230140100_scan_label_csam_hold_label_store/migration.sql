@@ -1,6 +1,6 @@
 -- A csam-realistic vote is excluded from the label store as it is recorded, before the image is flagged.
 --
--- Apply after 20261103120000_label_store and before 20261229120000_scan_label_csam_hold's build ships,
+-- Apply after 20261103120000_label_store and before 20261230140000_scan_label_csam_hold's build ships,
 -- so no such vote is ever recorded unexcluded. The body is the one in 20261103120000_label_store except
 -- for the exclusion condition and the exclusion retried in the error handler.
 

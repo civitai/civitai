@@ -13,6 +13,12 @@ export default defineModeratorEndpoint('image.reportCsam', {
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({
     imageIds: z.array(imageId).min(1).max(100).describe('The images to hold.'),
+    scanLabelVoterId: z.coerce
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('Audit only: the moderator whose Scan Labels vote asked for the hold.'),
   }),
   async handler(input, ctx) {
     await reportCsamImages({

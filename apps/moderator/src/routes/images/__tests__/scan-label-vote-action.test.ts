@@ -122,14 +122,14 @@ describe('vote action', () => {
     expect(applyCsamHolds).toHaveBeenCalledOnce();
     const { hold } = applyCsamHolds.mock.calls[0][1];
     callModEndpoint.mockResolvedValue({ ok: true, body: {} });
-    await hold(3);
+    await hold(3, 11);
     expect(callModEndpoint).toHaveBeenCalledExactlyOnceWith(
       'image/report-csam',
-      { imageIds: [3] },
+      { imageIds: [3], scanLabelVoterId: 11 },
       'Hold for CSAM review'
     );
     callModEndpoint.mockResolvedValue({ ok: false, error: 'Forbidden' });
-    await expect(hold(3)).rejects.toThrow('Forbidden');
+    await expect(hold(3, 11)).rejects.toThrow('Forbidden');
   });
 
   it('tells the voter when their csam-realistic vote did not get its hold, and not otherwise', async () => {

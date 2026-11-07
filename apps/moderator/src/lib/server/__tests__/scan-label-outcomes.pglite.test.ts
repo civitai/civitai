@@ -76,7 +76,7 @@ beforeEach(async () => {
   await pg.exec(migration('20261022140000_scan_label_outcomes'));
   await pg.exec(migration('20261023130000_scan_label_reasons_copy'));
   await pg.exec(migration('20261128120000_scan_label_claim_token'));
-  await pg.exec(migration('20261229120000_scan_label_csam_hold'));
+  await pg.exec(migration('20261230140000_scan_label_csam_hold'));
   await pg.exec(migration('20260626120000_add_user_roles_and_oauth_access'));
   await pg.exec(migration('20260630140000_add_role_table'));
   await pg.exec(`INSERT INTO "Role" ("id") VALUES ('moderator:scan-labels')`);
@@ -298,7 +298,7 @@ describe('csam-realistic votes', () => {
   // Not the item's id (1): a hold sent the item id instead would hold some other image.
   const IMAGE = 900;
   const holdDeps = () => {
-    const hold = vi.fn(async (_imageId: number) => undefined);
+    const hold = vi.fn(async (_imageId: number, _voterId: number) => undefined);
     return { hold, deps: { hold } };
   };
   const castAs = (itemId: number, userId: number, choice: typeof CSAM | typeof MINOR_SEXUAL) =>
@@ -316,7 +316,7 @@ describe('csam-realistic votes', () => {
     const block = noop();
     const { hold, deps: holding } = holdDeps();
     expect(await applyCsamHolds({}, holding)).toEqual({ held: [it1], failed: [] });
-    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, 11);
     await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
     expect(await item(it1)).toMatchObject({ actionResult: 'csam-held', actionError: null });
@@ -349,7 +349,7 @@ describe('csam-realistic votes', () => {
     expect(block).not.toHaveBeenCalled();
     const { hold, deps: holding } = holdDeps();
     expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
-    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, 12);
   });
 
   it('still holds an item a block majority already acted on', async () => {
@@ -362,7 +362,7 @@ describe('csam-realistic votes', () => {
     await castAs(it1, 13, CSAM);
     const { hold, deps: holding } = holdDeps();
     expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
-    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE, 13);
     expect(await item(it1)).toMatchObject({ status: 'void', actionResult: 'csam-held' });
   });
 
