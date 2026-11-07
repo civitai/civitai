@@ -34,8 +34,15 @@ const PLAIN = 9;
 const EXPIRED_MARKER = 10; // a manual marker past its release date
 // Marker and an unsent report together.
 const MARKER_AND_REPORT = 11;
+// A report's year from sending, alone: each report is archived, so only its send date decides.
+const SENT_RECENT_ARCHIVED = 12; // named on a report sent 30 days ago; its marker released
+const LISTED_RECENT_ARCHIVED = 14; // an image listed in a report sent 30 days ago (no marker: names no one)
+const SENT_13M_ARCHIVED = 13; // named on a report sent 13 months ago
+const LISTED_13M_ARCHIVED = 15; // an image listed in a report sent 13 months ago
 
 const HELD = [
+  SENT_RECENT_ARCHIVED,
+  LISTED_RECENT_ARCHIVED,
   MARKER,
   PENDING,
   SECONDARY,
@@ -46,7 +53,7 @@ const HELD = [
   PLACEHOLDER,
   MARKER_AND_REPORT,
 ];
-const UNHELD = [SENT_OLD_ARCHIVED, PLAIN, EXPIRED_MARKER];
+const UNHELD = [SENT_OLD_ARCHIVED, PLAIN, EXPIRED_MARKER, SENT_13M_ARCHIVED, LISTED_13M_ARCHIVED];
 const OWNERS = [...HELD, ...UNHELD];
 
 // Every owner has a live image in a post; ids are offset from the owner's.
@@ -119,7 +126,9 @@ const FIXTURE = `
   INSERT INTO "Image" (id, "userId", ingestion, "blockedFor") VALUES
     (${holdImage(BLOCKED)}, ${BLOCKED}, 'Blocked', 'CSAM'),
     (${holdImage(SENT_OLD_ARCHIVED)}, ${SENT_OLD_ARCHIVED}, 'Blocked', 'CSAM'),
-    (${holdImage(LISTED)}, ${LISTED}, 'Blocked', 'moderated');
+    (${holdImage(LISTED)}, ${LISTED}, 'Blocked', 'moderated'),
+    (${holdImage(LISTED_RECENT_ARCHIVED)}, ${LISTED_RECENT_ARCHIVED}, 'Blocked', 'moderated'),
+    (${holdImage(LISTED_13M_ARCHIVED)}, ${LISTED_13M_ARCHIVED}, 'Blocked', 'moderated');
 
   INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images, details) VALUES
     (${PENDING}, NULL, NULL, '[]', '{}'),
@@ -128,7 +137,18 @@ const FIXTURE = `
     (${SENT_OLD_ARCHIVED}, now() - interval '2 years', now() - interval '1 year',
       '[{"id": ${holdImage(SENT_OLD_ARCHIVED)}}]', '{}'),
     (NULL, NULL, NULL, '[{"id": ${holdImage(LISTED)}}]', '{}'),
-    (${MARKER_AND_REPORT}, NULL, NULL, '[]', '{}');
+    (${MARKER_AND_REPORT}, NULL, NULL, '[]', '{}'),
+    (${SENT_RECENT_ARCHIVED}, now() - interval '30 days', now(), '[]', '{}'),
+    (${SENT_13M_ARCHIVED}, now() - interval '13 months', now(), '[]', '{}'),
+    (NULL, now() - interval '30 days', now(), '[{"id": ${holdImage(
+      LISTED_RECENT_ARCHIVED
+    )}}]', '{}'),
+    (NULL, now() - interval '13 months', now(), '[{"id": ${holdImage(
+      LISTED_13M_ARCHIVED
+    )}}]', '{}');
+  -- The sent report gave its subject a year-long marker; released, only the report's own year holds.
+  UPDATE "EvidenceHold" SET "releasedAt" = now(), "releasedById" = 1, "releaseReason" = 'test'
+    WHERE "userId" = ${SENT_RECENT_ARCHIVED};
 `;
 
 let db: PGlite;
