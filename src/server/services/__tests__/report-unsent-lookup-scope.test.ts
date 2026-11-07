@@ -4,6 +4,7 @@ import { createCsamReport } from '~/server/services/csam.service';
 import { CSAM_SEND_CLAIM_EXPIRY_SECONDS } from '~/server/services/csam.service-new';
 import { CSAM_SEND_JOB_LOCK_SECONDS } from '~/server/jobs/process-csam';
 import { logToAxiom } from '~/server/logging/client';
+import type { StoredEvidenceBlob } from '~/server/services/generator-evidence/preserve-blob';
 
 type Row = {
   id: number;
@@ -419,7 +420,7 @@ describe('a second report folded into an unsent one', () => {
 
   describe('the producing job id of a generator file', () => {
     const JOB = 'job-1';
-    const filing = (blobs: Record<string, unknown>[]) => ({
+    const filing = (blobs: StoredEvidenceBlob[]) => ({
       userId: 101,
       reportedById: MOD,
       type: 'GeneratedImage' as const,
