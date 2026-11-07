@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
+import type * as UsersService from '../users.service';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
@@ -16,7 +17,7 @@ vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
 }));
 vi.mock('../users.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../users.service')>()),
+  ...(await importOriginal<typeof UsersService>()),
   usersByIds: async () => new Map(),
 }));
 
