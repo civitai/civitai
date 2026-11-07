@@ -12,6 +12,7 @@ import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { logToAxiom } from '~/server/logging/client';
 import {
   countFreeTier,
   reservedFreeSlotsWhere,
@@ -405,9 +406,11 @@ async function resolveSpaceWith(
  *
  * One change from the primary read, and only one: the space row at each level of the cascade is
  * cached in Redis per row, filled from the primary (see `readSpaceRows`). The target (owner, post,
- * media type) is the primary read's own, from the primary, uncached, so a cache miss reads only
- * the primary. Everything the comments above call "computed at read" stays live exactly as on the
- * primary path: the price range (score, tier, config) and the reserved free-slot count. The client
+ * media type) is the primary read's own, from the primary, uncached, so a cache miss reads the
+ * space rows from the primary; the reserved free-slot count reads the replica on both paths
+ * (`displayedReservedFreeSlots`). Everything the comments above call "computed at read" stays live
+ * exactly as on the primary path: the price range (score, tier, config) and the reserved free-slot
+ * count. The client
  * re-reads this route with `staleTime: 0` after a refused free claim to explain the refusal, and
  * that re-read still sees a live count.
  *
@@ -552,9 +555,11 @@ const displayReads: SpaceReads = {
  *
  * Marks the row written (which opens its write window and distrusts every entry read before it),
  * then drops the entry. The mark goes first: a reader between the two sees the mark and ignores the
- * entry.
+ * entry. The two are attempted independently: a failed mark still drops the entry (so the next read
+ * misses and refills from the primary), and a failed drop still leaves the mark (so the entry is not
+ * trusted).
  *
- * Never throws. The write has already committed; a lost mark is bounded by `SPACE_ROW_TTL`.
+ * Never throws. The write has already committed; a lost mark AND drop is bounded by `SPACE_ROW_TTL`.
  *
  * Every writer of the table, so a new one is added here: `setPlacementSpace` and
  * `clearPlacementSpace` below. The only other is the storyline delete's raw `DELETE` of a
@@ -566,13 +571,27 @@ export async function bustPlacementSpaceRow({
   entityId,
 }: { surface: PlacementSurface } & SpaceLevel) {
   const level = { entityType, entityId };
+  const lost = (step: 'mark' | 'drop', e: unknown) =>
+    logToAxiom({
+      type: 'warning',
+      name: 'placement-space-row-bust',
+      message: `could not ${step} a written placement space row`,
+      surface,
+      entityType,
+      entityId,
+      error: e instanceof Error ? e.message : String(e),
+    }).catch(() => undefined);
   try {
     await redis.packed.set(spaceWriteKey(surface, level), Date.now(), {
       EX: SPACE_ROW_WRITE_MARK_TTL,
     });
+  } catch (e) {
+    await lost('mark', e);
+  }
+  try {
     await redis.del(spaceRowKey(surface, level));
-  } catch {
-    // Bounded by the TTL; see above.
+  } catch (e) {
+    await lost('drop', e);
   }
 }
 

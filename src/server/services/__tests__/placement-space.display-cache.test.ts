@@ -418,6 +418,34 @@ describe('placement space display read: a space write busts it', () => {
     expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
     expect(readsSince(mark).filter((read) => read.what === 'rows')).toEqual([]);
   });
+
+  // 🔴 The mark and the drop are two writes. A mark that fails must not take the drop with it: the
+  // cached entry carries no mark to lose to, so it would be served for the whole TTL.
+  it('drops the cached entry even when the write mark cannot be set', async () => {
+    await resolvePlacementSpaceForDisplay(TARGET); // warm: the cache holds the image row at 90
+
+    const set = redisMock.redis.packed.set;
+    const fill = set.getMockImplementation()!;
+    set.mockImplementation((async (key: string, ...rest: unknown[]) => {
+      if (key.includes(':written:')) throw new Error('mark write failed');
+      return (fill as (...args: unknown[]) => unknown)(key, ...rest);
+    }) as never);
+
+    await setPlacementSpace({
+      surface: 'sticker',
+      entityType: 'image',
+      entityId: IMAGE,
+      mode: 'off',
+      price: 333,
+      userId: OWNER,
+    });
+    // The failing mark was really attempted, so the case below is the one it names.
+    expect(set.mock.calls.some(([key]) => String(key).includes(':written:'))).toBe(true);
+
+    const truth = await resolvePlacementSpaceFor(TARGET);
+    expect(truth).toMatchObject({ mode: 'off', setPrice: 333 });
+    expect(await resolvePlacementSpaceForDisplay(TARGET)).toEqual(truth);
+  });
 });
 
 describe('placement space display read: the cache is down', () => {
