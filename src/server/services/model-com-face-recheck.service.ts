@@ -202,7 +202,10 @@ export async function queueComFaceRestore(modelId: number) {
 type ArmedRow = { key: string; value: unknown };
 
 /** Drops the removal marker, only while nothing the verdict rests on has changed since the read: no
- *  cover picked, the same marker, the same title and description, and no newer edit armed. */
+ *  cover picked, the same marker, the same title and description, and no newer edit armed.
+ *  Known gap: a trigger-word save that commits after the verdict but before its edit is armed can
+ *  still be dropped on the old words. That cannot list the model: picking a cover re-runs the
+ *  save gate on the current listing. */
 export const comFaceRestoreSql = (
   modelId: number,
   marker: NonNullable<ModelMeta['comFaceRemoved']>,
