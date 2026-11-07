@@ -810,7 +810,6 @@ export const serverSchema = z
     EXTERNAL_IMAGE_SCANNER: z.string().optional(),
     CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
     MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
-    HIVE_VISUAL_TOKEN: z.string().optional(),
 
     ALT_ORCHESTRATION_ENDPOINT: z.url().optional(),
     ALT_ORCHESTRATION_TOKEN: z.string().optional(),

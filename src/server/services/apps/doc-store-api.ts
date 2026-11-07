@@ -60,6 +60,7 @@ import {
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
 import { assertOwnedModelVersions } from '~/server/services/apps/doc-store-ownership';
 import { validateDocAgainstCollectionSchema } from '~/server/services/apps/doc-store-schema';
+import { resolveSchemaMajor } from '~/server/services/apps/doc-store-schema-major';
 import type {
   DocAuthor,
   DocCollection,
@@ -528,6 +529,21 @@ function collectionOf(access: StorageAccess, name: string): DocCollection {
   return coll;
 }
 
+/**
+ * `coll` with the schema major a write of a document body is stamped with
+ * (`DocCollection.schemaMajor`): the collection's current major in production, derived from the
+ * app's manifest history; `null` when it cannot be. Development and review data are not stamped.
+ */
+async function withSchemaMajor(access: StorageAccess, coll: DocCollection): Promise<DocCollection> {
+  if (access.ctx.ns !== PUBLISHED_NS) return coll;
+  const schemaMajor = await resolveSchemaMajor({
+    appBlockId: access.ctx.appId,
+    head: access.enforcedManifest,
+    collection: coll.name,
+  });
+  return { ...coll, schemaMajor };
+}
+
 function requireViewer(access: StorageAccess): number {
   if (access.ctx.viewerUid === null) {
     throw new DocStoreError('sign_in_required', 'sign in required');
@@ -858,7 +874,7 @@ async function run(
           const afterCommit = user
             ? await moderate(access, user, 'append', '', { data: created.data })
             : nothingAfterCommit;
-          const doc = await store.create(ctx, coll, created.data);
+          const doc = await store.create(ctx, await withSchemaMajor(access, coll), created.data);
           landed();
           afterCommit(doc.key);
           return ok(await presentDoc(doc, decl), 201);
@@ -868,7 +884,9 @@ async function run(
           const afterCommit = user
             ? await moderate(access, user, 'update', route.key, { data, key: route.key })
             : nothingAfterCommit;
-          const doc = await store.put(ctx, coll, route.key, data, { ifVersion });
+          const doc = await store.put(ctx, await withSchemaMajor(access, coll), route.key, data, {
+            ifVersion,
+          });
           landed();
           afterCommit();
           return ok(await presentDoc(doc, decl));
@@ -907,7 +925,9 @@ async function run(
         user && decl.write === 'none'
           ? await moderate(access, user, 'counter', route.key, { key: route.key })
           : nothingAfterCommit;
-      const counted = await store.increment(ctx, coll, route.key, route.name, by);
+      // Only under `write: 'none'` can an increment create (and so stamp) a document.
+      const incremented = decl.write === 'none' ? await withSchemaMajor(access, coll) : coll;
+      const counted = await store.increment(ctx, incremented, route.key, route.name, by);
       afterCommit();
       return ok(counted);
     }

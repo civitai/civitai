@@ -90,7 +90,8 @@ CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
-INSERT INTO "Article" VALUES (10);
+ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int;
+INSERT INTO "Article"(id, "userId") VALUES (10, 1);
 UPDATE "Image" SET "userId" = 1, "postId" = 1 WHERE id = 10;
 UPDATE "Model" SET name = 'M', "userId" = 1 WHERE id = 1;
 UPDATE app_listings SET slug = 'pixel-forge' WHERE serial_id = 9;
@@ -323,6 +324,54 @@ describe('notification queries on CommentV3', () => {
     );
     expect(out.find((r) => r.userId === 9)!.dedupeKey).toBe(
       response.find((r) => r.details.commentId === 101)!.dedupeKey
+    );
+  });
+
+  it('new-mention stays quiet on an unpublished article, so the draft reaches nobody new', async () => {
+    const mentioned = async () =>
+      pairs(await run(mentionNotifications['new-mention'].prepareQuery)).filter(
+        ([commentId]) => commentId === 400
+      );
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+         VALUES (400, 'article', 10, 2, 'see "mention:9"', now())`,
+      `DELETE FROM "CommentV3" WHERE id = 400`,
+      async () => {
+        expect(await mentioned()).toEqual([[400, 9]]);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Draft' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => expect(await mentioned()).toEqual([])
+        );
+      }
+    );
+  });
+
+  it('replies on an unpublished article reach only its owner', async () => {
+    // On article 10 (owner 1): 401 by 2 at the top; 402 by 3 answers 106 (by 10); 403 by the owner
+    // answers 401; 404 by 3 answers the owner's 403, clamped under 401.
+    const ours = (out: Emitted[]) => pairs(out).filter(([commentId]) => commentId >= 401);
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content, "createdAt") VALUES
+         (401, 'article', 10, NULL, NULL, 2, 'a', now()), (402, 'article', 10, 106, NULL, 3, 'b', now()),
+         (403, 'article', 10, 401, NULL, 1, 'c', now()), (404, 'article', 10, 401, 403, 3, 'd', now())`,
+      `DELETE FROM "CommentV3" WHERE id BETWEEN 401 AND 404`,
+      async () => {
+        expect(ours(await emitted('new-comment-reply'))).toEqual([
+          [402, 10],
+          [403, 2],
+          [404, 1],
+        ]);
+        expect(ours(await emitted('new-thread-response')).length).toBeGreaterThan(0);
+        await temporarily(
+          `UPDATE "Article" SET status = 'Unpublished' WHERE id = 10`,
+          `UPDATE "Article" SET status = 'Published' WHERE id = 10`,
+          async () => {
+            expect(ours(await emitted('new-comment-reply'))).toEqual([[404, 1]]);
+            expect(ours(await emitted('new-thread-response'))).toEqual([]);
+          }
+        );
+      }
     );
   });
 
