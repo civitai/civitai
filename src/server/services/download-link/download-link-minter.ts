@@ -1,8 +1,11 @@
 import type { NextApiRequest } from 'next';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
-import { isAllowlistedMinter } from '~/server/services/download-link/download-link.store';
+import {
+  isAllowlistedMinter,
+  secretEpoch,
+} from '~/server/services/download-link/download-link.store';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -39,7 +42,7 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
     // holds the grant.
     const client = await dbRead.oauthClient.findUnique({
       where: { id: credential.id },
-      select: { userId: true, grants: true },
+      select: { userId: true, grants: true, secret: true },
     });
     if (
       !client ||
@@ -47,7 +50,15 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
       !client.grants.includes('client_credentials')
     )
       return { ok: false, status: 403 };
-    return { ok: true, credential };
+    // Read after the secret: a rotation expires the client's tokens before changing it, so a
+    // token still live here was not expired by a rotation whose secret was just read.
+    const now = new Date();
+    const tokenLive = await dbWrite.apiKey.findFirst({
+      where: { id: session.apiKeyId, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+      select: { id: true },
+    });
+    if (!tokenLive) return { ok: false, status: 401 };
+    return { ok: true, credential: { ...credential, epoch: secretEpoch(client.secret) } };
   }
 
   const credential: DownloadLinkCredential = { kind: 'apikey', id: String(session.apiKeyId) };

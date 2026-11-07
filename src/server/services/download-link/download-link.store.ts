@@ -18,13 +18,27 @@ const LINK_ID_RE = /^[0-9A-Za-z]{22}$/;
 /** The credential set outlives every link in it: the longest link lasts this long. */
 export const MAX_LINK_TTL_SECONDS = 24 * 60 * 60;
 
-export type DownloadLinkCredential = { kind: 'client' | 'apikey'; id: string };
+export type DownloadLinkCredential = {
+  kind: 'client' | 'apikey';
+  id: string;
+  /** A client's `secretEpoch` when it minted; a link minted before a secret rotation is dead. */
+  epoch?: string;
+};
+
+/** Fingerprint of an OauthClient's stored secret hash: changes when its secret is rotated. */
+export const secretEpoch = (storedSecret: string | null) =>
+  createHash('sha256')
+    .update(`download-link-epoch:${storedSecret ?? ''}`)
+    .digest('hex')
+    .slice(0, 16);
 export const credentialKey = (credential: DownloadLinkCredential) =>
   `${credential.kind}:${credential.id}`;
 
 export type StoredDownloadLink = {
   credentialKind: DownloadLinkCredential['kind'];
   credentialId: string;
+  /** The minting client's `secretEpoch`; empty for an ApiKey. */
+  credentialEpoch: string;
   /** null for a public link. */
   onBehalfOfUserId: number | null;
   modelVersionId: number;
@@ -84,6 +98,7 @@ function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
   return {
     credentialKind: raw.credentialKind === 'client' ? 'client' : 'apikey',
     credentialId: raw.credentialId,
+    credentialEpoch: raw.credentialEpoch ?? '',
     onBehalfOfUserId: userId,
     modelVersionId: Number(raw.modelVersionId),
     fileId: Number(raw.fileId),
@@ -100,7 +115,10 @@ const readLinkByHash = async (hash: string) =>
   parseLink(await sysRedis.hGetAll<string>(linkKey(hash)));
 
 export async function createLink(
-  input: Omit<StoredDownloadLink, 'linkId' | 'fetches' | 'credentialKind' | 'credentialId'> & {
+  input: Omit<
+    StoredDownloadLink,
+    'linkId' | 'fetches' | 'credentialKind' | 'credentialId' | 'credentialEpoch'
+  > & {
     credential: DownloadLinkCredential;
   }
 ): Promise<{ id: string; linkId: string }> {
@@ -112,6 +130,7 @@ export async function createLink(
   const fields: Record<string, string> = {
     credentialKind: credential.kind,
     credentialId: credential.id,
+    credentialEpoch: credential.epoch ?? '',
     onBehalfOfUserId: link.onBehalfOfUserId == null ? '' : String(link.onBehalfOfUserId),
     modelVersionId: String(link.modelVersionId),
     fileId: String(link.fileId),
@@ -167,6 +186,7 @@ export async function findReusableLink({
     !link ||
     link.credentialKind !== credential.kind ||
     link.credentialId !== credential.id ||
+    link.credentialEpoch !== (credential.epoch ?? '') ||
     link.fileId !== fileId ||
     link.onBehalfOfUserId !== onBehalfOfUserId ||
     link.expiresAt - now < minRemainingMs ||
@@ -262,7 +282,8 @@ export const mayMintPublicLinks = (credential: DownloadLinkCredential) =>
 
 /**
  * Revokes the links of any allowlisted credential among `credentials`, for the paths that revoke
- * or rotate one. Best-effort: the use-time liveness check refuses them anyway.
+ * or rotate one. Best-effort: the use-time liveness check refuses them anyway (a rotation through
+ * the link's `credentialEpoch`).
  */
 export async function revokeLinksOfRevokedCredentials(credentials: DownloadLinkCredential[]) {
   for (const credential of credentials.filter(isAllowlistedMinter)) {

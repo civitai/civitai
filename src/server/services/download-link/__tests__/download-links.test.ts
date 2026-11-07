@@ -37,12 +37,15 @@ const {
     grants: [] as { userId: number; versionId: number; permissions: number }[],
     users: new Map<number, { id: number; bannedAt: Date | null; deletedAt: Date | null }>(),
     apiKeys: new Map<number, { expiresAt: Date | null }>(),
+    /** Client-credentials token rows by id, as the minter's re-check reads them. */
+    clientTokens: new Map<number, { expiresAt: Date | null }>(),
     clients: new Map<
       string,
       {
         userId: number;
         grants: string[];
         allowedScopes: number;
+        secret: string;
         user: { bannedAt: Date | null; deletedAt: Date | null };
       }
     >(),
@@ -440,9 +443,13 @@ function seedWorld() {
     userId: 900,
     grants: ['client_credentials'],
     allowedScopes: TokenScope.UserRead | TokenScope.DownloadLink,
+    secret: 'stored-secret-hash-1',
     user: { bannedAt: null, deletedAt: null },
   });
   world.apiKeys.set(555, { expiresAt: null });
+  world.clientTokens.clear();
+  world.clientTokens.set(1, { expiresAt: null });
+  world.clientTokens.set(2, { expiresAt: null });
   world.apiKeys.set(777, { expiresAt: null });
 
   mockSessions.clear();
@@ -484,6 +491,14 @@ function wireDb() {
     async ({ where }: { where: { id: number } }) => {
       const key = world.apiKeys.get(where.id);
       return key ? { ...key, user: { bannedAt: null, deletedAt: null } } : null;
+    }
+  );
+  dbMock.dbWrite.apiKey.findFirst.mockImplementation(
+    async ({ where }: { where: { id: number } }) => {
+      const token = world.clientTokens.get(where.id);
+      return token && (!token.expiresAt || token.expiresAt.getTime() > Date.now())
+        ? { id: where.id }
+        : null;
     }
   );
   dbMock.dbRead.oauthClient.findUnique.mockImplementation(
@@ -739,6 +754,12 @@ describe('who may mint', () => {
     expect((await mintOne(userItem(PUBLIC_VERSION), 'tok-client')).ok).toBe(true);
   });
 
+  it('401s a client token expired after its bearer lookup, as a rotation in flight does', async () => {
+    world.clientTokens.set(1, { expiresAt: new Date(Date.now() - 1000) });
+    expect((await mint([userItem(PUBLIC_VERSION)], 'tok-client')).status).toBe(401);
+    expect(store.size).toBe(0);
+  });
+
   it('401s no credential', async () => {
     expect((await mint([userItem(PUBLIC_VERSION)], 'unknown')).status).toBe(401);
   });
@@ -938,6 +959,22 @@ describe('revoke', () => {
     const { url } = await mintOne(userItem(PUBLIC_VERSION));
     world.clients.get('orch-client')!.user.bannedAt = new Date();
     expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it("rotating a client's secret kills the links it minted before, even if their revoke never ran", async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    expect((await fetchLink(url)).status).toBe(302);
+    world.clients.get('orch-client')!.secret = 'stored-secret-hash-2';
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('a repeat mint after a rotation mints a new link rather than reusing a dead one', async () => {
+    const first = await mintOne(userItem(PUBLIC_VERSION));
+    world.clients.get('orch-client')!.secret = 'stored-secret-hash-2';
+    const second = await mintOne(userItem(PUBLIC_VERSION));
+    expect(second.reused).toBe(false);
+    expect(second.linkId).not.toBe(first.linkId);
+    expect((await fetchLink(second.url)).status).toBe(302);
   });
 
   it('a client that lost DownloadLink from its allowed scopes kills its links at use', async () => {

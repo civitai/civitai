@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import type { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import type {
@@ -256,6 +256,30 @@ export async function expireUserApiKeys(userId: number) {
   // Even with no live rows: an earlier attempt may have expired them and then failed this call.
   const orchestratorConfirmed = await revokeCivitaiUserTokens({ userId });
   return { expired: live.length, orchestratorConfirmed };
+}
+
+/**
+ * Expires an OauthClient's issued tokens (Access and Refresh rows, kept) and the download links it
+ * minted. Only rotation of a download-link minter calls this; other clients keep their tokens.
+ */
+export async function expireClientTokens(clientId: string) {
+  const now = new Date();
+  const rows = await dbWrite.apiKey.findMany({
+    where: {
+      clientId,
+      type: { in: [ApiKeyType.Access, ApiKeyType.Refresh] },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    select: { id: true, key: true },
+  });
+  if (rows.length) {
+    await dbWrite.apiKey.updateMany({
+      where: { id: { in: rows.map((row) => row.id) } },
+      data: { expiresAt: now },
+    });
+    await evictCachedApiKeys(rows.map((row) => row.key));
+  }
+  return { expired: rows.length };
 }
 
 /**

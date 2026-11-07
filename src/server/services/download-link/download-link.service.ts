@@ -19,6 +19,7 @@ import {
   recordFetch,
   takeMintBudget,
   credentialKey,
+  secretEpoch,
 } from '~/server/services/download-link/download-link.store';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
@@ -273,11 +274,13 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
     select: {
       grants: true,
       allowedScopes: true,
+      secret: true,
       user: { select: { bannedAt: true, deletedAt: true } },
     },
   });
   return (
     !!client &&
+    secretEpoch(client.secret) === credential.epoch &&
     client.grants.includes('client_credentials') &&
     (client.allowedScopes & TokenScope.DownloadLink) !== 0 &&
     !client.user.bannedAt &&
@@ -320,7 +323,11 @@ export async function fetchDownloadLink({
   const { link, fetch } = counted;
   if (now >= link.expiresAt) return refuseUse(link.linkId, 'expired', fetch);
   if (!(fetch <= link.maxFetches)) return refuseUse(link.linkId, 'over-cap', fetch);
-  const credential = { kind: link.credentialKind, id: link.credentialId };
+  const credential = {
+    kind: link.credentialKind,
+    id: link.credentialId,
+    epoch: link.credentialEpoch,
+  };
   if (!(await isCredentialLive(credential, now)))
     return refuseUse(link.linkId, 'credential-dead', fetch);
 
