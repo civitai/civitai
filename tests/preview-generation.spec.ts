@@ -152,7 +152,7 @@ test.describe('generation cost quote (gold)', () => {
 
   /**
    * The server's refusal of a gated ecosystem — the ONLY reason a quote before the
-   * costed one may fail (see the test's comment on the first-200 trap).
+   * costed one may fail.
    */
   const GATE_REFUSAL = 'Ecosystem is currently unavailable';
 
@@ -173,8 +173,8 @@ test.describe('generation cost quote (gold)', () => {
     // retries fire within seconds — too fast to outlast a load spike. Retry the whole
     // navigate+wait with backoff so a transient spike is ridden out (the assertion
     // must still pass; a sustained failure surfaces after the attempts). The per-test
-    // timeout fits both attempts in full, so attempt 2 gets its whole wait and its
-    // diagnostic: 2 x (90s navigationTimeout + 65s whatIf wait) + 6s backoff = 316s.
+    // timeout must fit both attempts in full, so attempt 2 gets its whole wait and its
+    // diagnostic: 2 x (navigationTimeout + whatIf wait) + retry backoff.
     test.setTimeout(330_000);
 
     // 🔴 Buffer the whatIf body OURSELVES instead of reading `response.text()` later.
@@ -196,7 +196,8 @@ test.describe('generation cost quote (gold)', () => {
     // selected on purpose — the product never switches it behind the user's back.)
     // The server refuses gated ecosystems, so a quote with a cost proves it was open.
     // Only that gate refusal is tolerated before the costed quote; any other failure
-    // ahead of it (non-200, a different error, no cost and no error) fails the test.
+    // ahead of it (non-200, a different error, no cost and no error) fails the attempt.
+    // It runs inside retryFlaky, so it fails the TEST only if it recurs on the retry.
     const quotes: Quote[] = [];
     await page.route(
       (url) => isWhatIfResponse(url.toString()),
