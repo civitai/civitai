@@ -18,7 +18,8 @@ fails closed, in the main app and in Creator Studio alike.
   token.
 - **Revoke:** done by the creator or a moderator, for a link or a whole batch. Revoking stops new claims
   immediately, including a claim already in flight. **People who already claimed keep their access.**
-  Each grant records `meta.giftLinkId`, so a later change could find a link's grants.
+  Who claimed which link is `ModelVersionGiftRedemption`; a grant's `meta.giftLinkId` holds only the most
+  recent link that user claimed.
 
 Out of scope:
 
@@ -39,7 +40,8 @@ early-access refund reads, therefore survives a gift claim on the same row, and 
 
 A gift grants what a buyer of the version would get: download plus generation when the version sells
 download, and generation alone for a generation-only gate. A gift row carries no transaction id, so the
-early-access refund never refunds it or deletes it.
+early-access refund never refunds it or deletes it. The refund window runs from `addedAt`, so the first purchase on a row a gift
+created restarts it.
 
 A user who already holds access is not charged again.
 

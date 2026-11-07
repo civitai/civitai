@@ -14,8 +14,8 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Held here, not read from `form`: the next action's result replaces `form`, and these codes can't be
-  // fetched again. Seeded from `form` for a post that ran before hydration (no enhance callback).
+  // Not derived from `form`: the next action replaces it, and the codes can't be fetched again. Seeded
+  // from it for a post made before hydration.
   // svelte-ignore state_referenced_locally
   let created = $state<string[] | null>(form && 'created' in form ? (form.created?.codes ?? null) : null);
   let pending = $state<string | null>(null);

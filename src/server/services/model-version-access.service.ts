@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
@@ -8,6 +8,8 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
  * stored row, so a concurrent purchase and gift claim can't drop each other's
  * `*-buzzTransactionId`, which the early-access refund reads.
  */
+const PURCHASE_KEYS = Prisma.sql`array['download-buzzTransactionId', 'generation-buzzTransactionId']`;
+
 export async function grantModelVersionAccess({
   client = dbWrite,
   userId,
@@ -31,7 +33,14 @@ export async function grantModelVersionAccess({
       (${modelVersionId}, 'ModelVersion', ${userId}, 'User', ${permissions}, ${metaJson}::jsonb, ${addedById})
     ON CONFLICT ("accessToId", "accessToType", "accessorId", "accessorType") DO UPDATE SET
       "permissions" = "EntityAccess"."permissions" | EXCLUDED."permissions",
-      "meta" = ${asJsonbObjectSql('"EntityAccess"."meta"')} || EXCLUDED."meta"
+      "meta" = ${asJsonbObjectSql('"EntityAccess"."meta"')} || EXCLUDED."meta",
+      -- The refund window runs from addedAt: a first purchase on a row a gift created starts it.
+      "addedAt" = CASE
+        WHEN EXCLUDED."meta" ?| ${PURCHASE_KEYS}
+          AND NOT (${asJsonbObjectSql('"EntityAccess"."meta"')} ?| ${PURCHASE_KEYS})
+        THEN now()
+        ELSE "EntityAccess"."addedAt"
+      END
   `;
 }
 

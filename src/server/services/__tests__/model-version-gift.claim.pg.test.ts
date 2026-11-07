@@ -20,6 +20,7 @@ vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: vi.fn()
 const { queryGiftList, redeemGiftLink } = await import(
   '~/server/services/model-version-gift.service'
 );
+const { grantModelVersionAccess } = await import('~/server/services/model-version-access.service');
 
 describe.runIf(!!process.env.CI)('CI provides a real Postgres', () => {
   it('APPDATA_TEST_DATABASE_URL is set', () => {
@@ -183,5 +184,41 @@ describe.skipIf(!URL_BASE)('gift claim on Postgres', () => {
       ['F', true],
       ['E', false],
     ]);
+  });
+
+  it('refuses an expired link and leaves no grant behind', async () => {
+    const id = await newLink(null);
+    await sql.query(
+      `UPDATE "ModelVersionGiftLink" SET "expiresAt" = now() - interval '1 minute' WHERE id = ${id}`
+    );
+
+    expect(await claim(id, 2)).toBe('unavailable');
+    expect(await count(`SELECT count(*) AS n FROM "EntityAccess"`)).toBe(0);
+  });
+
+  it('starts the refund window at the first purchase on a row a gift created', async () => {
+    const id = await newLink(null);
+    expect(await claim(id, 2)).toBe('granted');
+    await sql.query(`UPDATE "EntityAccess" SET "addedAt" = now() - interval '30 days'`);
+
+    const purchase = (key: string, tx: string) =>
+      grantModelVersionAccess({
+        client: prisma,
+        userId: 2,
+        modelVersionId: VERSION,
+        permissions: 3,
+        meta: { [key]: tx },
+        addedById: 2,
+      });
+    const ageDays = async () =>
+      count(`SELECT extract(day FROM now() - "addedAt")::int AS n FROM "EntityAccess"`);
+
+    await purchase('generation-buzzTransactionId', 'tx-1');
+    expect(await ageDays()).toBe(0);
+
+    // A later purchase on a row that already holds one keeps the first purchase's start.
+    await sql.query(`UPDATE "EntityAccess" SET "addedAt" = now() - interval '10 days'`);
+    await purchase('download-buzzTransactionId', 'tx-2');
+    expect(await ageDays()).toBe(10);
   });
 });

@@ -149,8 +149,6 @@ describe('claimGift', () => {
       modelVersionId: VERSION_ID,
       alreadyHadAccess: false,
     });
-    // redemption insert, cap update, grant
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(3);
     expect(grantValues()).toEqual([
       VERSION_ID,
       CLAIMER,

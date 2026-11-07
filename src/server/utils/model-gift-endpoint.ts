@@ -13,7 +13,6 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 
-/** Every /api/v1 gift route: authed, ModelsWrite-scoped, behind `modelGiftLinks`, never cached. */
 export function GiftEndpoint(
   handler: (req: NextApiRequest, res: NextApiResponse, user: SessionUser) => Promise<unknown>,
   allowedMethods: string[]

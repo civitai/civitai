@@ -2920,7 +2920,7 @@ export const earlyAccessPurchase = async ({
       modelVersionId,
       permissions: requestedPermissions,
       meta: { [buzzTransactionKey]: buzzTransactionId },
-      addedById: userId, // Since it's a purchase
+      addedById: userId,
     });
 
     // Post-grant side effects: failures here must not trigger a refund,
