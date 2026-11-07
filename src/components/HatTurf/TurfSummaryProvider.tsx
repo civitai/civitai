@@ -257,7 +257,15 @@ export function TurfSummaryProvider({
     },
     [runCatchUp]
   );
-  useEffect(() => () => clearTimeout(catchUpTimer.current), []);
+  // A catch-up queued for one event never reads for the next.
+  useEffect(
+    () => () => {
+      clearTimeout(catchUpTimer.current);
+      catchUpTimer.current = undefined;
+      pendingCatchUp.current.clear();
+    },
+    [event]
+  );
 
   const onPush = useCallback(
     (raw: unknown) => {
