@@ -23,6 +23,7 @@ import {
 import { getBuzzFlows, MAX_BUZZ_DAYS } from '../buzz-flows.service';
 import { getPlacementFlows } from '../placement-flows.service';
 import { getShopPurchaseSummary, SHOP_PURCHASE_KINDS } from '../shop-purchases.service';
+import { getCrucibleJudging } from '../crucible-judging.service';
 import {
   getReportsOnUser,
   getReportsReceived,
@@ -656,6 +657,44 @@ export const TOOLS = [
         rows: data.accounts.reduce((n, a) => n + a.items.length + a.topUps.length, 0),
         truncated: data.truncated,
         sources: data.accounts.map((a) => userSource(a.userId, a.username)),
+      };
+    },
+  }),
+
+  tool({
+    name: 'crucible_judging',
+    description:
+      "Who judged a crucible and how. Judges never score entries: each vote picks one of two entries, and the ranking is fitted across all judges, so there is no per-judge score or ranking to give. Returns the crucible; its entries (owner, imageId, the model version ids recorded on the image, submittedAt, the stored score, position and voteCount, counted wins and losses, how many judges voted on it, and the top 3 judges by wins for it); and its judges (votes, countedVotes = one per pair as scoring counts, conflictingPairs = pairs voted both ways, first and last vote). With judgeId, the tallies are that judge's alone and `pairs` lists their counted votes (500 at most; the tallies always cover all of them). Read `notes` before answering: they say what can lag and what is hidden from the public while the crucible runs. For judge bias: a judge whose wins concentrate on one owner's entries, judges that vote in the same window, or an entry whose wins come from few judges.",
+    input: z.object({
+      crucibleId: z.number().int().positive().max(MAX_INT4),
+      judgeId: userId.optional(),
+    }),
+    requires: [LOOKUP],
+    run: async ({ crucibleId, judgeId }) => {
+      const data = await getCrucibleJudging(crucibleId, judgeId ?? null);
+      if (!data)
+        return {
+          data: { found: false, crucibleId },
+          rows: 0,
+          truncated: false,
+          sources: [],
+        };
+      const named = new Map<number, string | null>([
+        [data.crucible.ownerId, data.crucible.ownerName],
+      ]);
+      for (const e of data.entries) {
+        named.set(e.ownerId, e.ownerName);
+        for (const j of e.topJudges ?? []) named.set(j.judgeId, j.username);
+      }
+      for (const j of data.judges) named.set(j.judgeId, j.username);
+      return {
+        data,
+        rows: data.entries.length + data.judges.length + (data.pairs?.length ?? 0),
+        truncated: Object.values(data.truncated).some(Boolean),
+        sources: [
+          ...[...named].map(([id, name]) => userSource(id, name)),
+          ...data.entries.flatMap((e) => (e.imageId === null ? [] : [imageSource(e.imageId)])),
+        ],
       };
     },
   }),
