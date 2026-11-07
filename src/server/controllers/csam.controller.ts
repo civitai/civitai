@@ -108,7 +108,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       // The deny is the least certain step (the gate can be already resolved, expired, or the
       // orchestrator briefly down) and the one that is safe to retry, so it must not gate the rest.
       try {
-        const denied = await handleDenyTrainingData({ input: { id: modelVersionId } });
+        const denied = await handleDenyTrainingData({
+          input: { id: modelVersionId },
+          moderatorId: reportedById,
+        });
         // The gate IS released here, so this is not a failed deny — the run is stopped and repeating
         // the action would refuse. Only our own record is behind, which still needs a human.
         denyBookkeepingFailed = denied.webhookFailed;
