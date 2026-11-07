@@ -163,6 +163,20 @@ describe('handleDenyTrainingData', () => {
     );
   });
 
+  it('reports an unreachable callback without failing the deny, because the gate is already released', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('/webhooks/')) throw new TypeError('fetch failed');
+        return { ok: true, status: 200 };
+      })
+    );
+
+    const result = await handleDenyTrainingData({ input: { id: 42 }, moderatorId: 7 });
+
+    expect(result).toEqual({ ok: true, webhookFailed: true });
+  });
+
   it('skips the callback and reports it when the workflow has no status', async () => {
     getWorkflow.mockResolvedValue({ id: 'wf-123', status: undefined, tags: ['modelVersion:42'] });
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));

@@ -229,7 +229,7 @@ const moderateTrainingData = async ({
         });
       } else {
         // The orchestrator does not reliably fire this itself, and without it an approved or denied
-        // run stays Paused in our database.
+        // run stays Paused in our database. A thrown fetch is the same half-done state as a refusal.
         const hook = await fetch(
           `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           {
@@ -239,12 +239,17 @@ const moderateTrainingData = async ({
               'Content-Type': 'application/json',
             },
           }
-        );
-        if (!hook.ok) {
+        ).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+        if (hook instanceof Error || !hook.ok) {
           webhookFailed = true;
           logWebhook({
             message: 'Gate released but the training webhook was refused; version is still Paused',
-            data: { modelVersionId, workflowId, important: true, status: hook.status },
+            data: {
+              modelVersionId,
+              workflowId,
+              important: true,
+              ...(hook instanceof Error ? { error: hook.message } : { status: hook.status }),
+            },
           });
         }
       }
