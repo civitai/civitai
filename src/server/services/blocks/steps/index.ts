@@ -537,7 +537,12 @@ export function containsAirReference(value: unknown, depth = 0): boolean {
 // The extraction primitives live in the leaf module `./output` (see its header
 // for why). Re-exported here so `~/server/services/blocks/steps` stays the one
 // import site for consumers that aren't registry entries.
-export type { StepOutputMedia, TrainedEpoch, TrainingStepType } from './output';
+export type {
+  OrchestratorBlobLike,
+  StepOutputMedia,
+  TrainedEpoch,
+  TrainingStepType,
+} from './output';
 export {
   isTrainingStepType,
   mediaFromBlobs,
@@ -554,12 +559,27 @@ export {
  * `$type` filter: it cannot shadow an existing branch, so `textToImage` /
  * `imageGen` / `comfy` / `customComfy` extraction stays byte-identical.
  */
-export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = [
-  'customComfy',
-  'textToImage',
-  'imageGen',
-  'comfy',
-] as const;
+const NATIVE_STEP_TYPES = ['customComfy', 'textToImage', 'imageGen', 'comfy'] as const;
+export const NATIVELY_EXTRACTED_STEP_TYPES: readonly string[] = NATIVE_STEP_TYPES;
+
+/**
+ * Which `output` key each NATIVELY extracted `$type` carries its media on.
+ *
+ * 🔴 NOT ONE KEY FOR ALL FOUR. `textToImage` / `imageGen` return
+ * `{ images }` (`TextToImageOutput` / `ImageGenOutput`), but `comfy` and
+ * `customComfy` return `{ blobs }` (`ComfyOutput` / `CustomComfyOutput`). Reading
+ * `output.images` off a `comfy` step finds nothing: the workflow succeeds, the
+ * viewer is charged, and the block receives no media. Both `workflow.service`
+ * extractors read THIS map (via `nativeStepOutputMedia`), so the key is decided
+ * in one place. A `$type` added to `NATIVELY_EXTRACTED_STEP_TYPES` without an
+ * entry here is a type error.
+ */
+export const NATIVE_STEP_OUTPUT_KEY = {
+  customComfy: 'blobs',
+  textToImage: 'images',
+  imageGen: 'images',
+  comfy: 'blobs',
+} as const satisfies Record<(typeof NATIVE_STEP_TYPES)[number], 'images' | 'blobs'>;
 
 /**
  * ORCHESTRATOR `$type` → the moderation postures ACCEPTABLE for that type.

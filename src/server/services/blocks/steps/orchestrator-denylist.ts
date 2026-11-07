@@ -143,6 +143,16 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // an API verb meaning "generate an image", resolved through the generation
   // graph, and it stays.
   'textToImage',
+
+  // A RAW comfy graph — denied for the same reason as `textToImage` above: the
+  // platform builds `comfy` steps itself (`kind: 'textToImage'` → the generation
+  // graph → `createComfyInput`, e.g. img2img/hires on an SD-family checkpoint),
+  // and that path never reaches this guard. What this closes is a block naming
+  // `$type: 'comfy'` with an arbitrary ComfyUI graph on the pass-through or
+  // `kind: 'workflow'` arm, which runs no prompt audit, while `workflow.service`
+  // delivers a comfy step's `output.blobs` as media. Arbitrary graphs have their
+  // own reviewed arm (`kind: 'customComfy'`).
+  'comfy',
 ]);
 
 /**

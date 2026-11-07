@@ -10,11 +10,13 @@ import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } fr
 import {
   getStepByOrchestratorType,
   isTrainingStepType,
+  mediaFromBlobs,
+  NATIVE_STEP_OUTPUT_KEY,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
   splitPassThroughStep,
 } from './steps';
-import type { TrainedEpoch } from './steps';
+import type { OrchestratorBlobLike, StepOutputMedia, TrainedEpoch } from './steps';
 import { isRepeatStepType } from './workflow-graph';
 import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -361,22 +363,6 @@ function extractSnapshotStep(
 ): SnapshotStepExtract {
   const media: string[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
-  // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
-  // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
-  // its own extraction, otherwise its rendered panorama is silently dropped.
-  if (step.$type === 'customComfy') {
-    const blobs = (
-      step as unknown as {
-        output?: { blobs?: Array<{ url?: string | null; available?: boolean }> };
-      }
-    ).output?.blobs;
-    for (const blob of blobs ?? []) {
-      if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
-        media.push(blob.url);
-      }
-    }
-    return { media, trainedEpochs, model3d: [] };
-  }
   // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
   // in its registry entry, because the output key is step-type-specific —
   // `convertImage` returns `{ blob }` (SINGULAR). Without this branch the
@@ -448,17 +434,35 @@ function extractSnapshotStep(
       model3d: split.model3d,
     };
   }
-  const stepOutput = (
-    step as unknown as {
-      output?: { images?: Array<{ url?: string | null; available?: boolean }> };
-    }
-  ).output;
-  for (const img of stepOutput?.images ?? []) {
-    if (img.available && typeof img.url === 'string' && img.url.length > 0) {
-      media.push(img.url);
-    }
-  }
+  for (const entry of nativeStepOutputMedia(step)) media.push(entry.url);
   return { media, trainedEpochs, model3d: [] };
+}
+
+/**
+ * The media a NATIVELY extracted step (`NATIVELY_EXTRACTED_STEP_TYPES`)
+ * produced — the ONE read both `extractSnapshotStep` and `projectAppWorkflow`
+ * use for those `$type`s.
+ *
+ * 🔴 THE OUTPUT KEY IS PER-`$type` (`NATIVE_STEP_OUTPUT_KEY`): `textToImage` /
+ * `imageGen` carry `output.images`, `comfy` / `customComfy` carry
+ * `output.blobs`. Both extractors used to read `output.images` for every native
+ * type but `customComfy`, so a `comfy` step succeeded, was charged, and
+ * delivered no media to the block on either read surface.
+ *
+ * The availability + non-empty-url filter is `mediaFromBlobs`, the same one the
+ * registry entries use, so a blob the orchestrator has not made available
+ * (pending, or blocked by its moderation) is dropped identically on every path.
+ */
+function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepOutputMedia[] {
+  const key = (NATIVE_STEP_OUTPUT_KEY as Record<string, 'images' | 'blobs' | undefined>)[
+    step.$type
+  ];
+  if (!key) return [];
+  const output = step.output as
+    | Partial<Record<'images' | 'blobs', OrchestratorBlobLike[] | null>>
+    | null
+    | undefined;
+  return mediaFromBlobs(output?.[key]);
 }
 
 /** True when the workflow carries a training step THIS bridge submitted. */
@@ -587,32 +591,6 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       }
       continue;
     }
-    // A `customComfy` step surfaces its outputs as `output.blobs`
-    // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
-    // rating the image steps carry. Extract it here so the app subqueue read
-    // picks up recipe-generated images (mirrors the snapshotFromWorkflow branch).
-    if (step.$type === 'customComfy') {
-      const blobs = (
-        step as unknown as {
-          output?: {
-            blobs?: Array<{ url?: string | null; available?: boolean; nsfwLevel?: string | null }>;
-          };
-        }
-      ).output?.blobs;
-      for (const blob of blobs ?? []) {
-        if (!blob.available || typeof blob.url !== 'string' || blob.url.length === 0) continue;
-        images.push({
-          url: blob.url,
-          width: null,
-          height: null,
-          nsfwLevel:
-            blob.nsfwLevel && blob.nsfwLevel !== 'na'
-              ? nsfwLevelFromContentRating(blob.nsfwLevel)
-              : null,
-        });
-      }
-      continue;
-    }
     // A REGISTERED step type — same registry-declared extraction the snapshot
     // uses, so a capability is retrievable on BOTH read surfaces from ONE
     // declaration. Without it `queryAppWorkflows` returns `images: []` for a
@@ -675,25 +653,13 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       }
       continue;
     }
-    const stepOutput = (
-      step as unknown as {
-        output?: {
-          images?: Array<{
-            url?: string | null;
-            available?: boolean;
-            width?: number | null;
-            height?: number | null;
-            nsfwLevel?: string | null;
-          }>;
-        };
-      }
-    ).output;
-    for (const img of stepOutput?.images ?? []) {
-      if (!img.available || typeof img.url !== 'string' || img.url.length === 0) continue;
+    // A NATIVE `$type` — `output.images` or `output.blobs` per `$type`; see
+    // `nativeStepOutputMedia`.
+    for (const img of nativeStepOutputMedia(step)) {
       images.push({
         url: img.url,
-        width: typeof img.width === 'number' ? img.width : null,
-        height: typeof img.height === 'number' ? img.height : null,
+        width: img.width,
+        height: img.height,
         // Map the orchestrator's string rating to the numeric civitai browsing-
         // level bitflag via the CANONICAL helper (handles the SFW 'g' the raw map
         // lacks + all of pg/pg13/r/x/xxx, fail-closed to PG for an unexpected
