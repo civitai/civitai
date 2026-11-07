@@ -5,12 +5,10 @@ import { componentFileTypes } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
-import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { ScanResultCode } from '~/shared/utils/prisma/enums';
-import { ModelModifier, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { hasFailedScan } from '~/server/utils/failed-scan';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
@@ -30,6 +28,12 @@ import {
 } from '~/server/services/hot-reads-6.reads';
 import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
+import {
+  getVersionEarlyAccess,
+  isModelArchived,
+  isModelDeleted,
+  isVersionPublished,
+} from '~/server/utils/model-version-gates';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -244,13 +248,10 @@ export const getFileForModelVersion = async ({
   });
 
   // Paid-access gate now sourced from PaidAccess (mirrors the old columns during Phase 1).
-  const paidAccess = (await getPaidAccess('ModelVersion', [modelVersion.id]))[modelVersion.id];
-  const inEarlyAccess = !!paidAccess && isPaidAccessActive(paidAccess);
-  const deadline = paidAccess?.endsAt ?? undefined;
+  const { inEarlyAccess, deadline } = await getVersionEarlyAccess(modelVersion.id);
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
-  const archived = modelVersion.model.mode === ModelModifier.Archived;
-  if (!noAuth && archived) return { status: 'archived' };
+  if (!noAuth && isModelArchived(modelVersion)) return { status: 'archived' };
 
   const isMod = user?.isModerator;
   const userId = user?.id;
@@ -262,14 +263,9 @@ export const getFileForModelVersion = async ({
   // never be served to its owner or anyone else. Owners are otherwise allowed
   // to download their own unpublished work, but a deleted model's owner is
   // frequently the exact party a takedown targets (the uploader).
-  const modelDeleted = modelVersion.model.status === 'Deleted';
-  if (modelDeleted && !isMod) return { status: 'not-found' };
+  if (isModelDeleted(modelVersion) && !isMod) return { status: 'not-found' };
 
-  const canDownload =
-    noAuth ||
-    isMod ||
-    isOwner ||
-    (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
+  const canDownload = noAuth || isMod || isOwner || isVersionPublished(modelVersion);
 
   if (!canDownload) return { status: 'not-found' };
 
@@ -389,9 +385,7 @@ export const getFileForModelVersion = async ({
       isDownloadable,
       // The download endpoint excludes unpublished versions from the download metric — a draft is only
       // reachable by its owner and by internal services, so anything fetching one isn't a download.
-      published:
-        modelVersion.status === ModelStatus.Published &&
-        modelVersion.model.status === ModelStatus.Published,
+      published: isVersionPublished(modelVersion),
     };
   } catch (err) {
     // Both storage-resolver and delivery-worker fallback rejected this file —
