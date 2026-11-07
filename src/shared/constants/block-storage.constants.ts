@@ -426,7 +426,8 @@ export type AppStorageFeature =
   | 'logCollections'
   | 'ttl'
   | 'perAuthorWriteBudget'
-  | 'hooks';
+  | 'hooks'
+  | 'registryExport';
 
 /**
  * 🔴 THE ONE SWITCH for which declared storage features the platform accepts. Everything
@@ -445,7 +446,9 @@ export type AppStorageFeature =
  *                      source, but nothing CALLS a hook yet, so while this is off a declared hook
  *                      is refused rather than read as enforcing anything. Switching it on also
  *                      leaves the per-author Flipt gate `app-blocks-storage-hooks` in charge of
- *                      who may declare one (`storage-hooks.ts`).
+ *                      who may add or change one (`storage-hooks.ts`).
+ *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
+ *                      registries by the registry adapter).
  *
  * Flip one only in the same change that ships the runtime behind it: an accepted
  * declaration with nothing behind it reads as a working feature to the author and the
@@ -459,6 +462,7 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     ttl: false,
     perAuthorWriteBudget: false,
     hooks: false,
+    registryExport: false,
   });
 
 /**
@@ -494,6 +498,11 @@ export type DeclaredStorageCollection = {
    */
   exportable?: boolean;
   /**
+   * Which registries this collection's shared documents are published to. Absent: none — the
+   * default, so nothing leaves the platform without an approved opt-in. Shared collections only.
+   */
+  registry?: AppStorageRegistryAudience;
+  /**
    * The schema every document's `data` must match, exactly as declared (validated by
    * {@link parseCollectionSchema}). Absent: documents are not checked.
    */
@@ -506,6 +515,45 @@ export type DeclaredStorageCollection = {
   /** The permission hook that decides this collection's writes. Absent: none. */
   hook?: DeclaredStorageHook;
 };
+
+/** Who a collection may be published to beyond its app: `public` is every registry. */
+export const APP_STORAGE_REGISTRY_AUDIENCES = ['public'] as const;
+export type AppStorageRegistryAudience = (typeof APP_STORAGE_REGISTRY_AUDIENCES)[number];
+
+/** Whether the registry adapter may publish this collection's shared documents. */
+export function isCollectionRegistryPublic(collection: DeclaredStorageCollection): boolean {
+  return collection.visibility === 'shared' && collection.registry === 'public';
+}
+
+/** The collections a version publishes to registries, against the previous approved version. */
+export type RegistryExportDiff = {
+  /** Published by this version, sorted. */
+  exported: string[];
+  /** Published now and not by the previous version. */
+  added: string[];
+  /** Published by the previous version and not now. */
+  removed: string[];
+};
+
+/**
+ * Which collections `current` publishes to registries, and how that differs from `previous`
+ * (`null` for a first version). Read with every phased feature on, as an approved manifest is,
+ * so a moderator is shown the declaration whether or not the feature is enabled yet.
+ */
+export function registryExportDiff(current: unknown, previous: unknown | null): RegistryExportDiff {
+  const exportedBy = (manifest: unknown) =>
+    [...parseManifestStorage(manifest, APP_STORAGE_ALL_FEATURES_ON).collections]
+      .filter(([, c]) => isCollectionRegistryPublic(c))
+      .map(([name]) => name)
+      .sort();
+  const now = exportedBy(current);
+  const before = previous === null ? [] : exportedBy(previous);
+  return {
+    exported: now,
+    added: now.filter((n) => !before.includes(n)),
+    removed: before.filter((n) => !now.includes(n)),
+  };
+}
 
 /** Whether another app may reach this collection through an import. */
 export function isCollectionExportable(collection: DeclaredStorageCollection): boolean {
@@ -561,6 +609,7 @@ const COLLECTION_KEYS = new Set([
   'dailyWritesPerAuthor',
   'ownedModelVersions',
   'exportable',
+  'registry',
   'schema',
   'migrations',
   'hook',
@@ -896,6 +945,25 @@ function parseCollection(
     errors.push(`${at}.exportable must be a boolean`);
   }
 
+  if (raw.registry !== undefined) {
+    if (!features.registryExport) {
+      errors.push(
+        notYet(
+          `${at}.registry`,
+          'collections published to registries',
+          'remove it to keep the collection on Civitai only'
+        )
+      );
+    } else if (
+      typeof raw.registry !== 'string' ||
+      !(APP_STORAGE_REGISTRY_AUDIENCES as readonly string[]).includes(raw.registry)
+    ) {
+      errors.push(`${at}.registry must be one of ${APP_STORAGE_REGISTRY_AUDIENCES.join(', ')}`);
+    } else if (!shared) {
+      errors.push(`${at}.registry applies to shared collections only`);
+    }
+  }
+
   let schema: AppStorageCollectionSchema | null = null;
   if (raw.schema !== undefined) {
     if (write === 'none') {
@@ -949,6 +1017,7 @@ function parseCollection(
     collection.dailyWritesPerAuthor = raw.dailyWritesPerAuthor as number;
   if (ownedModelVersions) collection.ownedModelVersions = ownedModelVersions;
   if (raw.exportable !== undefined) collection.exportable = raw.exportable as boolean;
+  if (raw.registry !== undefined) collection.registry = raw.registry as AppStorageRegistryAudience;
   if (schema) collection.schema = schema;
   if (migrations) collection.migrations = migrations;
   if (hook) collection.hook = hook;

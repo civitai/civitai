@@ -144,7 +144,11 @@ function HatDraftSticker({
   return (
     <DraftSticker
       draft={draft}
-      artwork={artwork(scale)}
+      artwork={
+        <span style={{ display: 'block', transform: flip ? 'scaleX(-1)' : undefined }}>
+          {artwork(scale)}
+        </span>
+      }
       selected
       dressed={UNDRESSED}
       price={0}
@@ -160,6 +164,9 @@ function HatDraftSticker({
           radius="xl"
           loading={saving}
           disabled={!width}
+          // A placed hat has no move or undo (only a moderator can remove it).
+          aria-label="Place hat (free, can't be moved afterwards)"
+          title="Free. Can't be moved afterwards."
           onClick={() => onSave({ x, y, scale, rotation, flip, opacity: 1 })}
         >
           Place hat
@@ -374,7 +381,12 @@ function HatTurfLayerContent({
   );
 
   return (
-    <div ref={ref} className={classes.layer} data-testid="hat-turf-layer" data-sticker-overlay>
+    <div
+      ref={ref}
+      className={clsx(classes.layer, (source !== 'feed' || draft) && classes.raised)}
+      data-testid="hat-turf-layer"
+      data-sticker-overlay
+    >
       {feed?.joined && <HatTurfLive imageId={imageId} />}
       {/* Until the picture is measured, the frame's corner stands in for the picture's. */}
       {!box && corner && <div className={classes.corner}>{corner}</div>}

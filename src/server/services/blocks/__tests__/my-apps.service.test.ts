@@ -146,6 +146,8 @@ function fakeLoader() {
   );
 }
 
+const noHides = vi.fn(async () => ({}));
+
 const ARGS = {
   scope: 'full' as const,
   floor: 'public' as const,
@@ -157,7 +159,10 @@ describe('listMyApps — reads only the caller’s rows', () => {
   it('🔴 user 1 gets user 1’s apps and none of user 2’s', async () => {
     const { db } = fakeDb();
     const loadCandidates = fakeLoader();
-    const rows = await listMyApps({ ...ARGS, userId: 1 }, { db, loadCandidates, now: () => NOW });
+    const { apps: rows } = await listMyApps(
+      { ...ARGS, userId: 1 },
+      { db, loadCandidates, loadHidden: noHides, now: () => NOW }
+    );
 
     expect(rows.map((r) => r.listingId).sort()).toEqual([
       'apl_blk_u1_good',
@@ -173,9 +178,9 @@ describe('listMyApps — reads only the caller’s rows', () => {
 
   it('user 2 gets exactly user 2’s apps (the mirror — the fixture is not one-sided)', async () => {
     const { db } = fakeDb();
-    const rows = await listMyApps(
+    const { apps: rows } = await listMyApps(
       { ...ARGS, userId: 2 },
-      { db, loadCandidates: fakeLoader(), now: () => NOW }
+      { db, loadCandidates: fakeLoader(), loadHidden: noHides, now: () => NOW }
     );
     expect(rows.map((r) => r.listingId).sort()).toEqual([
       'apl_blk_u2_good',
@@ -187,7 +192,10 @@ describe('listMyApps — reads only the caller’s rows', () => {
 
   it('every read is keyed on the caller and carries a row cap; the invocation read is windowed', async () => {
     const { db, calls } = fakeDb();
-    await listMyApps({ ...ARGS, userId: 1 }, { db, loadCandidates: fakeLoader(), now: () => NOW });
+    await listMyApps(
+      { ...ARGS, userId: 1 },
+      { db, loadCandidates: fakeLoader(), loadHidden: noHides, now: () => NOW }
+    );
 
     expect(calls.map((c) => c.table).sort()).toEqual([
       'appUserScopeGrant',
@@ -211,8 +219,37 @@ describe('listMyApps — reads only the caller’s rows', () => {
   it('a user with no rows issues no listing lookup at all', async () => {
     const { db } = fakeDb();
     const loadCandidates = fakeLoader();
-    const rows = await listMyApps({ ...ARGS, userId: 3 }, { db, loadCandidates, now: () => NOW });
-    expect(rows).toEqual([]);
+    const res = await listMyApps(
+      { ...ARGS, userId: 3 },
+      { db, loadCandidates, loadHidden: noHides, now: () => NOW }
+    );
+    expect(res).toEqual({ apps: [], removedCount: 0, removedSlugsByListingId: {}, hidden: {} });
     expect(loadCandidates).not.toHaveBeenCalled();
+  });
+});
+
+describe('listMyApps — the caller’s hides', () => {
+  it('🔴 reads the CALLER’s hides, drops a hidden row, and returns the hides and the count', async () => {
+    const { db } = fakeDb();
+    // u1's grant app was used 2026-10-02; this hide is after that, so it is in force. The
+    // off-site consent (2026-10-06) is newer than its hide (2026-10-05), so it stays.
+    const hides = {
+      'slug-blk_u1_grant': '2026-10-02T12:00:00.000Z',
+      'slug-cli_u1': '2026-10-05T00:00:00.000Z',
+    };
+    const loadHidden = vi.fn<(userId: number) => Promise<typeof hides>>(async () => hides);
+    const res = await listMyApps(
+      { ...ARGS, userId: 1 },
+      { db, loadCandidates: fakeLoader(), loadHidden, now: () => NOW }
+    );
+    expect(loadHidden.mock.calls).toEqual([[1]]);
+    expect(res.apps.map((r) => r.listingId).sort()).toEqual([
+      'apl_blk_u1_good',
+      'apl_blk_u1_used',
+      'apl_cli_u1',
+    ]);
+    expect(res.removedCount).toBe(1);
+    expect(res.removedSlugsByListingId).toStrictEqual({ apl_blk_u1_grant: 'slug-blk_u1_grant' });
+    expect(res.hidden).toEqual(hides);
   });
 });

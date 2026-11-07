@@ -450,7 +450,7 @@
     "src/server/services/__tests__/feed-primary.service.test.ts": 4,
     "src/server/services/__tests__/feed-shadow.service.test.ts": 1,
     "src/server/services/__tests__/file-download-lookup.test.ts": 18,
-    "src/server/services/__tests__/file-download.hot-reads-6.kysely-flag.test.ts": 4,
+    "src/server/services/__tests__/file-download.hot-reads-6.kysely.test.ts": 4,
     "src/server/services/__tests__/file.service.update-entity-files.behavior.test.ts": 2,
     "src/server/services/__tests__/free-placement.service.test.ts": 3,
     "src/server/services/__tests__/get-recent-training-data-deleted-model.test.ts": 1,

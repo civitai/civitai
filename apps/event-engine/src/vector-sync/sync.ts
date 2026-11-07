@@ -66,14 +66,15 @@ export function staticEmbedBlock({ withoutImageCdc = false } = {}): string | nul
 }
 
 /**
- * Whether the connector streams Image right now. This process's flag says nothing about the
+ * Whether the connector streams `needed` right now. This process's flag says nothing about the
  * connector, which the metrics watcher manages from its own env, so ask Kafka Connect.
  */
 export async function connectorBlock(
-  fetchImpl: typeof fetch = globalThis.fetch
+  fetchImpl: typeof fetch = globalThis.fetch,
+  needed: string[] = ['public.Image']
 ): Promise<string | null> {
   const connectUrl = process.env.DEBEZIUM_CONNECT_URL;
-  if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the Image stream cannot be verified';
+  if (!connectUrl) return 'DEBEZIUM_CONNECT_URL is unset, so the stream cannot be verified';
   try {
     const base = `${connectUrl}/connectors/${CONNECTOR_NAME}`;
     const [configRes, statusRes] = await Promise.all([
@@ -84,9 +85,9 @@ export async function connectorBlock(
       return `the connector could not be read (${configRes.status}/${statusRes.status})`;
     }
     const conf = (await configRes.json()) as Record<string, unknown>;
-    const tables = String(conf['table.include.list'] ?? '');
-    if (!tables.split(',').includes('public.Image'))
-      return 'the connector does not stream public.Image';
+    const tables = String(conf['table.include.list'] ?? '').split(',');
+    const missing = needed.find((t) => !tables.includes(t));
+    if (missing) return `the connector does not stream ${missing}`;
     // Listed is not flowing: a failed task streams nothing.
     const status = (await statusRes.json()) as {
       connector?: { state?: string };

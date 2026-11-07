@@ -36,7 +36,7 @@ import { booleanString } from '~/utils/zod-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
-const modelQueryParamSchema = z
+export const modelQueryParamSchema = z
   .object({
     period: z.enum(MetricTimeframe),
     periodMode: periodModeSchema,
@@ -66,6 +66,7 @@ const modelQueryParamSchema = z
     earlyAccess: booleanString().optional(),
     paidAccess: booleanString().optional(),
     hidePaid: booleanString().optional(),
+    onSale: booleanString().optional(),
     types: z
       .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),
@@ -132,6 +133,7 @@ const MODEL_BROWSE_FILTER_KEYS = [
   'earlyAccess',
   'paidAccess',
   'hidePaid',
+  'onSale',
   'fromPlatform',
   'isFeatured',
 ] as const satisfies readonly (keyof ModelFilterSchema & keyof ModelQueryParams)[];

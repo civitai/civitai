@@ -123,7 +123,8 @@ beforeAll(async () => {
       "permissions" "CollectionContributorPermission"[] NOT NULL
     );
     CREATE TABLE "Article" (
-      "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text
+      "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text,
+      "bannerId" integer
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
     CREATE TABLE "Bounty" ("id" integer PRIMARY KEY, "userId" integer, "availability" text);

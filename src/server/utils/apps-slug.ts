@@ -41,6 +41,8 @@ const RESERVED_BLOCK_ID_PREFIXES: ReadonlyArray<{ prefix: string; usedFor: strin
   { prefix: 'cname-', usedFor: 'DNS ownership records' },
   { prefix: 'dev-', usedFor: 'dev tunnel hosts' },
   { prefix: 'review-', usedFor: 'moderator review previews' },
+  // `app_blocks.block_id` is unique: an app here would take a remix app's slug.
+  { prefix: 'remix-', usedFor: 'the system remix apps (/moderator/remix-apps)' },
 ];
 const RESERVED_BLOCK_IDS: ReadonlyArray<string> = ['www'];
 

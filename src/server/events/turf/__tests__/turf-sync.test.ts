@@ -246,6 +246,8 @@ describe('the stickers a turf push carries', () => {
       cosmeticId: 11,
       data: { x: 0.1 * 6, y: 0.5 },
       art: null,
+      // Carried so a pushed card reveals in placement order, as a read does.
+      createdAt: at(3),
     });
   });
 

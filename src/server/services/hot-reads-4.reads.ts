@@ -16,11 +16,10 @@ export type { PinnedScope, TopLevelCommentsBaseFilter, TopLevelCommentsFilter };
 
 /**
  * The model page's comment reads (comment.service.ts): the visible top-level comment counts and the
- * `comment.getAll` lists, through Kysely. They replaced the Prisma reads (formerly behind a server
- * Flipt flag), except for the list pages Kysely does not serve (a cursor page or a sort other than
- * newest/oldest), which still read through `findTopLevelCommentsViaPrisma`. Each takes the client
- * and the same `TopLevelCommentsFilter`, so __tests__/hot-reads-4.kysely-parity.test.ts runs the
- * very code the service runs.
+ * `comment.getAll` lists, through Kysely, except for the list pages Kysely does not serve (a cursor
+ * page or a sort other than newest/oldest), which read through `findTopLevelCommentsViaPrisma`.
+ * Each takes the client and the same `TopLevelCommentsFilter`, so
+ * __tests__/hot-reads-4.kysely-parity.test.ts runs the very code the service runs.
  */
 
 /** The Prisma where for a `TopLevelCommentsFilter`; the Kysely conditions are its twin. */

@@ -10,6 +10,7 @@ import {
   resolveResourceFileSchema,
   setEvictableSchema,
   setAdditionalResourceFeeWaivedSchema,
+  setPartnerDisclosureSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -32,6 +33,7 @@ import {
   toggleGenerationDisabled,
   setEvictable,
   setAdditionalResourceFeeWaived,
+  setPartnerDisclosure,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -165,6 +167,11 @@ export const generationRouter = router({
     .input(setAdditionalResourceFeeWaivedSchema)
     .mutation(({ input, ctx }) =>
       setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
+    ),
+  setPartnerDisclosure: moderatorProcedure
+    .input(setPartnerDisclosureSchema)
+    .mutation(({ input, ctx }) =>
+      setPartnerDisclosure({ ...input, isModerator: ctx.user.isModerator })
     ),
   getCoverageAudience: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

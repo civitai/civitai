@@ -35,7 +35,6 @@ const routers = {
   collection: () => import('./collection.router').then((m) => m.collectionRouter),
   comment: () => import('./comment.router').then((m) => m.commentRouter),
   contestScore: () => import('./contest-score.router').then((m) => m.contestScoreRouter),
-  commentv2: () => import('./commentv2.router').then((m) => m.commentv2Router),
   commentv3: () => import('./commentv3.router').then((m) => m.commentv3Router),
   common: () => import('~/server/routers/common.router').then((m) => m.commonRouter),
   content: () => import('./content.router').then((m) => m.contentRouter),

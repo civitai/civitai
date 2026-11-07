@@ -143,6 +143,7 @@ const LISTING_PREVIEW = {
     // the real `projectListingDetail` always supplies them; the fixture is a stand-in
     // for that projection and must not be thinner than it.
     installCount: 0,
+    openCount: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
     // 🔴 REQUIRED, and `[]` is not cosmetic here. `AppListingDetailBody` reads

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 import type * as Trpc from '~/utils/trpc';
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
@@ -232,7 +233,9 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
     expect(button.textContent).toBe('');
     const box = button.getBoundingClientRect();
-    expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(2);
+    // The chips' height, so the tip row does not grow.
+    expect(box.height).toBe(22);
+    expect(box.width).toBe(26);
     // The viewer is on blue: the theme's blue at its primary shade (#228be6), not the grey fallback.
     expect(getComputedStyle(button).backgroundColor).toBe('rgb(34, 139, 230)');
     const gear = q('hat-turf-gear')!;
@@ -259,14 +262,25 @@ describe('Hat Turf button on a feed ImageCard', () => {
     const hit = (x: number, y: number) => document.elementFromPoint(x, y)?.closest('button');
 
     expect(hit(g.left + g.width / 2, g.top + g.height / 2)).toBe(gear);
-    // The gear sits on the top-right corner; the centre and the other three corners stay the button's.
+    // The gear sits on the top-right; the centre and the rest of the circle stay the button's.
+    const [cx, cy, r] = [b.left + b.width / 2, b.top + b.height / 2, b.width / 2 - 2];
     for (const [x, y] of [
-      [b.left + b.width / 2, b.top + b.height / 2],
-      [b.left + 2, b.top + 2],
-      [b.left + 2, b.bottom - 2],
-      [b.right - 2, b.bottom - 2],
+      [cx, cy],
+      [cx - r * Math.SQRT1_2, cy - r * Math.SQRT1_2],
+      [cx - r * Math.SQRT1_2, cy + r * Math.SQRT1_2],
+      [cx + r * Math.SQRT1_2, cy + r * Math.SQRT1_2],
     ])
       expect(hit(x, y)).toBe(button);
+  });
+
+  test('the hat button is a rounded square, not a circle', async () => {
+    renderCard();
+    await vi.waitFor(() => expect(q('hat-turf-button')).not.toBeNull());
+    const button = q('hat-turf-button')!.querySelector('button[aria-pressed]') as HTMLElement;
+    // A rounded square still takes a tap 3px in from its corner; a circle does not.
+    const b = button.getBoundingClientRect();
+    const corner = document.elementFromPoint(b.left + 3, b.bottom - 3)?.closest('button');
+    expect(corner).toBe(button);
   });
 
   test('pressing drops a draft hat on the picture without opening the card', async () => {
@@ -530,6 +544,7 @@ describe('hats on a feed ImageCard', () => {
     });
     await vi.waitFor(() => expect(hats().length).toBe(1));
     expect(hats()[0].dataset.tone).toBe('muted');
+    expect(getComputedStyle(hats()[0]).filter).not.toMatch(/grayscale|saturate/);
     expect(q('hat-turf-badge-lock')).not.toBeNull();
     expect(document.body.textContent).not.toMatch(/would take it/);
   });
@@ -559,6 +574,62 @@ describe('hats on a feed ImageCard', () => {
     expect(q('hat-turf-gear')).not.toBeNull();
     expect(q('hat-turf-button')).not.toBeNull();
     expect(actions()).toEqual(['hide_all_hats_on']);
+  });
+
+  // Tester report 2026-11-06: a resting hat on the corner covered the Hat Turf badge. The card's
+  // header and footer are later, unstacked siblings of the hat layer, so the layer must take no
+  // z-index of its own on a feed card; a z-index there lifts every hat over every chip.
+  describe('a resting hat sits under the card chips', () => {
+    // Hats and the control-arm badge take no taps, so hit-testing cannot see them unless forced.
+    let restore: () => void = () => undefined;
+    beforeEach(() => {
+      const style = document.createElement('style');
+      style.textContent =
+        '[data-testid="hat-turf-hat"], [data-testid="hat-turf-hat"] *, [data-testid="hat-turf-badge"] { pointer-events: auto !important; }';
+      document.head.appendChild(style);
+      restore = () => style.remove();
+    });
+    afterEach(() => restore());
+
+    const big = (x: number, y: number) => ({
+      ...sticker(1, 'blue'),
+      data: { x, y, scale: 0.6, rotation: 0, flip: false },
+    });
+    const topAt = (el: HTMLElement) => {
+      const r = el.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    };
+    const hatCovers = (el: HTMLElement) => {
+      const hat = hats()[0].getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+      return x > hat.left && x < hat.right && y > hat.top && y < hat.bottom;
+    };
+
+    // Hovered, the card's zoom transforms the hat layer, which makes it a stacking context.
+    test.each([false, true])('the badge, top left (hovered: %s)', async (hovered) => {
+      renderCard({ images: { 77: summary() }, stickers: { 77: [big(0.15, 0.1)] } });
+      await vi.waitFor(() => expect(hats()[0]?.getBoundingClientRect().width).toBeGreaterThan(0));
+      const badge = await vi.waitFor(() => q('hat-turf-badge')!);
+      if (hovered) {
+        await userEvent.hover(document.body.querySelector<HTMLElement>('[data-card-hover]')!);
+        await vi.waitFor(() =>
+          expect(getComputedStyle(q('hat-turf-layer')!).transform).not.toBe('none')
+        );
+      }
+      expect(hatCovers(badge), 'the hat is not over the badge: the test proves nothing').toBe(true);
+      expect(badge.contains(topAt(badge)), 'a hat paints over the badge').toBe(true);
+    });
+
+    test('the hat button, bottom right', async () => {
+      renderCard({ images: { 77: summary() }, stickers: { 77: [big(0.8, 0.9)] } });
+      await vi.waitFor(() => expect(hats()[0]?.getBoundingClientRect().width).toBeGreaterThan(0));
+      const button = q('hat-turf-button')!.querySelector<HTMLElement>('button[aria-pressed]')!;
+      expect(hatCovers(button), 'the hat is not over the button: the test proves nothing').toBe(
+        true
+      );
+      expect(button.contains(topAt(button)), 'a hat paints over the hat button').toBe(true);
+    });
   });
 
   describe('Show hats off, and the reveal', () => {

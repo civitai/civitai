@@ -24,8 +24,10 @@ export type RestrictedVerdictRow = {
   /** The verdict was applied: at once on an SFW-only model (SFW-only cleared), or when the owner
    *  unticked minor/POI. Keep puts the owner's rating back. */
   autoApplied: boolean;
-  /** Held as minor or POI, and the owner has since unticked both. */
+  /** Held as minor or POI, and the model has since been neither. */
   unticked: boolean;
+  /** Who cleared the flag when it was not the owner's save; such a lead never applies by itself. */
+  liftedBy: 'moderator' | 'appeal' | 'hashRevert' | null;
   heldAt: string | null;
   source: string | null;
   /** The text scan's own verdict row, when the text-scan path raised it. */
@@ -43,3 +45,11 @@ export const RULING_LABEL: Record<RestrictedVerdictRuling, string> = {
   dismiss: 'Dismiss',
   rateNsfw: 'Rate NSFW',
 };
+
+export const LIFTED_NOTE: Record<NonNullable<RestrictedVerdictRow['liftedBy']> | 'owner', string> =
+  {
+    owner: 'owner has since unticked it',
+    moderator: 'a moderator has since cleared it',
+    appeal: 'since cleared on appeal',
+    hashRevert: 'the automatic flag has since been reverted',
+  };

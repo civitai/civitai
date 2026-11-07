@@ -1,11 +1,13 @@
 import type { dbRead as DbRead } from '~/server/db/client';
 import type { getStoreListingCandidates as GetStoreListingCandidates } from '~/server/services/blocks/app-listing.service';
+import type { getMyHiddenApps as GetMyHiddenApps } from '~/server/services/blocks/my-apps-hidden.service';
 import {
   buildMyApps,
   MY_APPS_RECENT_USE_DAYS,
-  type MyAppRow,
+  type MyAppsHome,
   type MyAppsSignals,
 } from '~/server/services/blocks/my-apps.logic';
+import type { HiddenApps } from '~/shared/utils/my-apps-hidden';
 import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
 
@@ -19,7 +21,9 @@ import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope
  *   • `block_good_entitlement` — unique `(user_id, app_block_id, good_id)`, leading `user_id`;
  *   • `block_scope_invocations` — `bsi_user_invoked_idx (user_id, invoked_at DESC, id DESC)`,
  *     read as a range on the recent window with a row cap;
- *   • `"OauthConsent"`         — unique `(userId, clientId)`, leading `userId`.
+ *   • `"OauthConsent"`         — unique `(userId, clientId)`, leading `userId`;
+ *   • the viewer's "Remove from My apps" hides (`getMyHiddenApps`, cached user settings),
+ *     read concurrently with the four above because `buildMyApps` applies them before the cap.
  * Then ONE listing lookup by the resulting App Block / client ids (see
  * `getStoreListingCandidates`).
  *
@@ -43,8 +47,12 @@ type MyAppsDb = Pick<
 export type MyAppsDeps = {
   db: MyAppsDb;
   loadCandidates: typeof GetStoreListingCandidates;
+  loadHidden: typeof GetMyHiddenApps;
   now: () => Date;
 };
+
+/** What `appListings.listMyApps` returns: the home's rows, plus the hides for the client merge. */
+export type MyAppsHomePayload = MyAppsHome & { hidden: HiddenApps };
 
 export type ListMyAppsArgs = {
   userId: number;
@@ -56,8 +64,8 @@ export type ListMyAppsArgs = {
 };
 
 /**
- * The real client and listing loader, imported lazily so a caller that injects both (the
- * unit test) never loads the database client or the listing service's module graph.
+ * The real client and loaders, imported lazily so a caller that injects them (the unit test)
+ * never loads the database client or the listing / settings services' module graphs.
  */
 async function resolveDeps(deps: Partial<MyAppsDeps> = {}): Promise<MyAppsDeps> {
   return {
@@ -65,6 +73,9 @@ async function resolveDeps(deps: Partial<MyAppsDeps> = {}): Promise<MyAppsDeps> 
     loadCandidates:
       deps.loadCandidates ??
       (await import('~/server/services/blocks/app-listing.service')).getStoreListingCandidates,
+    loadHidden:
+      deps.loadHidden ??
+      (await import('~/server/services/blocks/my-apps-hidden.service')).getMyHiddenApps,
     now: deps.now ?? (() => new Date()),
   };
 }
@@ -72,7 +83,7 @@ async function resolveDeps(deps: Partial<MyAppsDeps> = {}): Promise<MyAppsDeps> 
 export async function listMyApps(
   args: ListMyAppsArgs,
   deps?: Partial<MyAppsDeps>
-): Promise<MyAppRow[]> {
+): Promise<MyAppsHomePayload> {
   const resolved = await resolveDeps(deps);
   const { db } = resolved;
   const { userId } = args;
@@ -80,7 +91,7 @@ export async function listMyApps(
     resolved.now().getTime() - MY_APPS_RECENT_USE_DAYS * 24 * 60 * 60 * 1000
   );
 
-  const [grants, entitlements, invocations, consents] = await Promise.all([
+  const [grants, entitlements, invocations, consents, hidden] = await Promise.all([
     db.appUserScopeGrant.findMany({
       where: { userId },
       select: { appBlockId: true, grantedAt: true, revokedAt: true },
@@ -105,6 +116,7 @@ export async function listMyApps(
       orderBy: { updatedAt: 'desc' },
       take: MY_APPS_CONSENT_TAKE,
     }),
+    resolved.loadHidden(userId),
   ]);
 
   const signals: MyAppsSignals = { grants, entitlements, invocations, consents };
@@ -114,18 +126,22 @@ export async function listMyApps(
   for (const e of entitlements) appBlockIds.add(e.appBlockId);
   for (const i of invocations) if (i.appBlockId) appBlockIds.add(i.appBlockId);
   const connectClientIds = new Set(consents.map((c) => c.clientId));
-  if (appBlockIds.size === 0 && connectClientIds.size === 0) return [];
+  if (appBlockIds.size === 0 && connectClientIds.size === 0) {
+    return { apps: [], removedCount: 0, removedSlugsByListingId: {}, hidden };
+  }
 
   const candidates = await resolved.loadCandidates(
     { appBlockIds: [...appBlockIds], connectClientIds: [...connectClientIds] },
     { redCapable: args.redCapable, viewerBrowsingLevel: args.viewerBrowsingLevel }
   );
 
-  return buildMyApps(signals, candidates, {
+  const home = buildMyApps(signals, candidates, {
     scope: args.scope,
     floor: args.floor,
     redCapable: args.redCapable,
     canOpenPage: args.canOpenPage,
     recentSince,
+    hidden,
   });
+  return { ...home, hidden };
 }

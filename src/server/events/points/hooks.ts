@@ -229,29 +229,21 @@ const commentAction = (userId: number, { entityType, entityId }: Entity, time: D
   sourceId: `CommentV2:${entityType}:${entityId}:${userId}`,
 });
 
-/**
- * A new comment. Top-level comments on an Image or Article name their entity directly; a v2 reply
- * (`entityType: 'comment'`) is resolved through its thread to the root entity. A CommentV3 comment,
- * reply or not, names its section's entity.
- */
+/** A new comment, reply or not, named by its section's entity. */
 export async function onCommentCreated({
   userId,
   entityType,
   entityId,
-  threadId,
 }: {
   userId: number;
   entityType: string;
   entityId: number;
-  threadId?: number;
 }): Promise<void> {
   const time = new Date();
   try {
     let target: Entity | undefined;
     if (entityType === 'image') target = { entityType: 'Image', entityId };
     else if (entityType === 'article') target = { entityType: 'Article', entityId };
-    else if (entityType === 'comment' && threadId)
-      target = (await commentRoots([threadId])).get(threadId);
     if (!target || !isHattedEntity(target.entityType, target.entityId)) return;
     await awardEventPoints([commentAction(userId, target, time)]);
   } catch (error) {

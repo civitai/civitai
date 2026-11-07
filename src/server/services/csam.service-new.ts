@@ -114,11 +114,16 @@ import {
 import type { FileDetailsXml } from '~/server/services/ncmec-xml';
 import { cyberTipXmlProblem, xmlText } from '~/server/services/ncmec-xml';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
-import type { OriginalImageRead, OriginalImageSource } from '~/server/services/csam-original-image';
+import type {
+  OriginalImageRead,
+  OriginalImageSource,
+  SpooledImage,
+} from '~/server/services/csam-original-image';
 import {
   extensionForContentType,
   probeOriginalImage,
   readOriginalImage,
+  spoolOriginalImage,
 } from '~/server/services/csam-original-image';
 
 const cybertipClient = new Client({
@@ -197,7 +202,16 @@ type CsamReportDetails = CsamReportFormOutput & {
   /** Opens whose answer could not be read: nothing more is sent until a moderator clears them. */
   unconfirmedOpens?: UnconfirmedOpen[];
   clearedUnconfirmedOpens?: ClearedUnconfirmedOpen[];
+  /**
+   * The case and reason a send run last held this report unsent for a moderator, written when the
+   * case changes and removed when the report is sent.
+   */
+  sendHold?: SendHold;
 };
+
+/** `no-files`: nothing the report names can be sent. `missing-user`: no reporting or reported user. */
+type SendHoldCase = 'no-files' | 'missing-user';
+type SendHold = { case: SendHoldCase; reason: string; at: string };
 
 type StoredObject = { key: string; etag: string | null };
 
@@ -546,6 +560,29 @@ export async function sweepStaleSendDirs(root = baseDir) {
   return stale.map(({ path }) => path);
 }
 
+const ARCHIVE_SCRATCH_ROOTS = ['base', 'images', 'generated-images', 'training-data'];
+
+/**
+ * Removes the archive scratch directories, named by report id alone, that a pass which died left
+ * behind. Run only at the start of the archive job, whose run lock keeps other archive passes out
+ * while it holds; a pass that outlives the lock can lose its directory here and fail. Send directories in the same roots are named `<id>-<claim>` and are left.
+ */
+export async function sweepArchiveScratchDirs(root = baseDir) {
+  const removed: string[] = [];
+  for (const scratch of ARCHIVE_SCRATCH_ROOTS) {
+    const rootDir = `${root}/${scratch}`;
+    const names = await fsAsync.readdir(rootDir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return [];
+      throw e;
+    });
+    for (const name of names.filter((name) => /^\d+$/.test(name))) {
+      await fsAsync.rm(`${rootDir}/${name}`, { recursive: true, force: true });
+      removed.push(`${rootDir}/${name}`);
+    }
+  }
+  return removed;
+}
+
 /** `runStart` is the job's copy of the report; the send works from the row re-read under its claim. */
 export async function processCsamReport(runStart: CsamReportProps) {
   const status = await cybertipClient.getStatus();
@@ -618,7 +655,7 @@ async function getInitialReportData(claim: SendClaim) {
   const reportingUser = await getReportingUser(report.reportedById);
   const reportedUser = report.userId ? await getReportedUser(report.userId) : undefined;
   if (!reportingUser || !reportedUser)
-    return await deleteUnderClaim(claim, 'no reporting or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting or reported user');
 
   const userActivity = await snapshotUserActivity(claim);
   if (!userActivity) return;
@@ -888,35 +925,31 @@ const appendId =
   (key: 'cancelledReportIds' | 'possibleDuplicateReportIds', id: number) =>
   (details: CsamReportDetails) => ({ ...details, [key]: [...(details[key] ?? []), id] });
 
-async function deleteUnderClaim(claim: SendClaim, reason: string) {
-  // A CyberTip left open for it is cancelled first. One that may be with NCMEC keeps the row, its
-  // only record here, for a human to decide on.
-  const stored = await cancelStoredCyberTip(claim);
-  if (stored === 'lost') return;
-  const possibleDuplicates = claim.report.details?.possibleDuplicateReportIds ?? [];
-  const unconfirmed = claim.report.details?.unconfirmedOpens ?? [];
-  if (stored === 'held' || possibleDuplicates.length > 0 || unconfirmed.length > 0)
-    return logSendLine(
-      claim,
-      'send-delete-held',
-      {
-        message: `report ${claim.report.id} not deleted (${reason}): it may have a CyberTip at NCMEC`,
-        ncmecReportId: claim.report.reportId ?? undefined,
-        possibleDuplicateReportIds: possibleDuplicates,
-        unconfirmedOpens: unconfirmed.length,
-      },
-      'error'
-    );
-  const { count } = await dbWrite.csamReport.deleteMany({ where: underClaim(claim) });
-  claim.settled = true;
-  if (count === 0)
-    return logSendLine(
-      claim,
-      'send-delete-refused',
-      { message: `report ${claim.report.id} not deleted (${reason}): claim lost` },
-      'error'
-    );
-  logSendLine(claim, 'send-deleted', { message: reason });
+/**
+ * Keeps a report the send cannot file unsent, marked with why, for a moderator to decide. Any
+ * CyberTip an earlier run left for it stays as it is and is named on the line.
+ */
+async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  const { report } = claim;
+  const possibleDuplicates = report.details?.possibleDuplicateReportIds ?? [];
+  const unconfirmed = report.details?.unconfirmedOpens ?? [];
+  const fields = {
+    message: `report ${report.id} held (${holdCase}): ${reason}`,
+    case: holdCase,
+    hoursPending: hoursSinceFiled(report),
+    ncmecReportId: report.reportId ?? undefined,
+    possibleDuplicateReportIds: possibleDuplicates,
+    unconfirmedOpens: unconfirmed.length,
+  };
+  logSendLine(claim, 'send-held', fields, 'error');
+  logSendLine(claim, 'send-decision-needed', fields, 'error');
+  await recordSendHold(claim, holdCase, reason);
+}
+
+async function recordSendHold(claim: SendClaim, holdCase: SendHoldCase, reason: string) {
+  if (!isProd || claim.report.details?.sendHold?.case === holdCase) return;
+  const sendHold: SendHold = { case: holdCase, reason, at: new Date().toISOString() };
+  await updateUnderClaim(claim, 'send-hold', {}, (details) => ({ ...details, sendHold }));
 }
 
 async function releaseClaim(claim: SendClaim) {
@@ -995,11 +1028,14 @@ async function cancelStoredCyberTip(
   return delivered ? 'held' : 'cancelled';
 }
 
-/** A report naming no file that can be sent opens no CyberTip: it waits, alerted, for a decision. */
-function logNoFiles(claim: SendClaim, message: string) {
+/** A report naming no file that can be sent opens no CyberTip: it waits, alerted and held, for a decision. */
+async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const stored = {
+    case: 'no-files' satisfies SendHoldCase,
+    ncmecReportId: claim.report.reportId ?? undefined,
+  };
   logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
@@ -1012,6 +1048,7 @@ function logNoFiles(claim: SendClaim, message: string) {
       },
       'error'
     );
+  await recordSendHold(claim, 'no-files', message);
 }
 
 /**
@@ -1195,7 +1232,8 @@ async function sendCyberTip(
           sendClaimId: null,
           sendClaimedAt: null,
         },
-        (stored) => ({ ...stored, ...details }),
+        // A hold no longer applies to a report that is sent.
+        ({ sendHold: _cleared, ...stored }) => ({ ...stored, ...details }),
         'send-stamp-lost'
       )
     )
@@ -1216,7 +1254,7 @@ async function reportImages(claim: SendClaim) {
 
   const images = await getImages(report.images.map((x) => x.id));
   if (!images.length)
-    return logNoFiles(claim, `report ${report.id} names no image that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no image that still exists`);
 
   initialReport.incidentSummary.incidentDateTime = images[0].createdAt;
 
@@ -1530,7 +1568,7 @@ async function reportGenerationData(claim: SendClaim) {
   const generatedImages = report.details.generatedImages?.filter((x) => x.blobs.length > 0);
   // A moderator's filing is the record that it was reported, so a report with nothing to send is kept.
   if (!generatedImages?.length)
-    return logNoFiles(claim, `report ${report.id} names no generated image with a file`);
+    return await logNoFiles(claim, `report ${report.id} names no generated image with a file`);
 
   // Named by claim, so two runs never share a scratch directory.
   const dir = `${baseDir}/generated-send/${report.id}-${claim.claimId}`;
@@ -1588,7 +1626,10 @@ async function sendGenerationData(
   for (const { url } of failed) readFailures[url] = (readFailures[url] ?? 0) + 1;
   if (failed.length > 0) await recordReadFailures(claim, readFailures);
   if (!fetched.length)
-    return logNoFiles(claim, `report ${report.id} has no generated image that can be fetched`);
+    return await logNoFiles(
+      claim,
+      `report ${report.id} has no generated image that can be fetched`
+    );
   const sendShort =
     hoursSinceFiled(report) >= CSAM_SEND_SHORT_AFTER_HOURS &&
     failed.every(({ url }) => readFailures[url] >= CSAM_SEND_SHORT_MIN_READ_FAILURES);
@@ -1676,7 +1717,7 @@ async function reportPreservedEvidence(claim: SendClaim) {
 
   const files = evidenceFilesToSend(details);
   if (!files.length)
-    return logNoFiles(claim, `report ${report.id} has no preserved generator file`);
+    return await logNoFiles(claim, `report ${report.id} has no preserved generator file`);
   if (evidenceSizeProblem(details))
     return logSendFailure(
       report,
@@ -1771,7 +1812,7 @@ async function reportTrainingData(claim: SendClaim) {
 
   const version = modelVersions[0];
   if (!version)
-    return logNoFiles(claim, `report ${report.id} names no model version that still exists`);
+    return await logNoFiles(claim, `report ${report.id} names no model version that still exists`);
 
   const dir = `${baseDir}/training-data/${report.id}-${claim.claimId}`;
   const outPath = `${dir}/${report.userId ?? 'unknown'}_training-data.zip`;
@@ -1804,7 +1845,8 @@ async function reportTrainingData(claim: SendClaim) {
       return logSendFailure(report, e, 'archive-data');
     }
     await recordSkippedEntries(claim, inflated);
-    if (!files.length) return logNoFiles(claim, `report ${report.id} training data holds no image`);
+    if (!files.length)
+      return await logNoFiles(claim, `report ${report.id} training data holds no image`);
 
     const fileDetailsOf = (filename: string) =>
       ({ originalFileName: xmlText(filename), fileViewedByEsp: false } satisfies FileDetailsXml);
@@ -1841,7 +1883,7 @@ async function reportExternalLink(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
   if (!reportingUser?.email || !report.userId)
-    return await deleteUnderClaim(claim, 'no reporting user email or reported user');
+    return await holdForDecision(claim, 'missing-user', 'no reporting user email or reported user');
 
   const details = report.details as unknown as ExternalCsamReportDetails;
   const userActivity = await getUserIpInfo(report);
@@ -2927,9 +2969,16 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
         const archiveImage = async (
           image: Parameters<typeof readOriginalImage>[0] & { id: number }
         ) => {
-          let original: OriginalImageRead;
+          let original: OriginalImageRead | SpooledImage;
+          let attempts = 1;
           try {
-            original = await readOriginalImage(image, { reserve: budget.reserve });
+            original = await spoolOriginalImage(image, {
+              reserve: budget.reserve,
+              spoolDir: `${reportDirs.images}/spool`,
+              onRetry: (failedAttempt) => {
+                attempts = Math.max(attempts, failedAttempt + 1);
+              },
+            });
           } catch (e) {
             // A full URL may be on a host we do not control: after a day of retries its failing
             // no longer holds the archive back. A stored object's failure is always retried.
@@ -2945,9 +2994,21 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
               ...errorClass(e),
               fullUrl: isEdgeUrlPassthrough(image.url),
               retried,
+              attempts,
             });
             if (retried) throw e;
             original = { source: 'missing', reason: 'full url unreadable' };
+          }
+          if (attempts > 1) {
+            logToAxiom({
+              name: 'csam-report',
+              type: 'info',
+              subType: 'archive-image-read-retried',
+              message: `report ${report.id}: image ${image.id} read on attempt ${attempts}`,
+              reportId: report.id,
+              imageId: image.id,
+              attempts,
+            });
           }
           if (original.source === 'missing') {
             record({ imageId: image.id, source: 'missing', reason: original.reason });
@@ -2955,9 +3016,17 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
           }
           // Named by id: Image.name is user input.
           const name = `${image.id}.${extensionForContentType(original.contentType)}`;
+          let source: Buffer | Readable | undefined;
           try {
-            await boundedArchive.append(original.data, { name }, original.release);
+            // Opened here, so a failed open throws to this catch rather than from an unwatched stream.
+            source =
+              'path' in original
+                ? (await fsAsync.open(original.path, 'r')).createReadStream()
+                : original.data;
+            await boundedArchive.append(source, { name }, original.release);
           } catch (e) {
+            // An unread stream holds the deleted file's space until it is closed.
+            if (source instanceof Readable) source.destroy();
             original.release();
             throw e;
           }
@@ -2969,7 +3038,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             imageId: image.id,
             source: original.source,
             sha256: original.sha256,
-            bytes: original.data.length,
+            bytes: 'path' in original ? original.bytes : original.data.length,
             contentType: original.contentType,
           });
         };

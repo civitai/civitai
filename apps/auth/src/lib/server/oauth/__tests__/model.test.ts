@@ -484,3 +484,31 @@ describe('first-party resolution requires an https redirect_uri', () => {
     });
   });
 });
+
+describe('the remix apps client (civitai-remix-apps)', () => {
+  /** As the seed migration inserts it: it owns the remix app rows and must never authenticate. */
+  const remixClient = {
+    ...baseClient,
+    id: 'civitai-remix-apps',
+    isConfidential: true,
+    secret: null,
+    grants: [],
+    redirectUris: [],
+    allowedOrigins: [],
+    allowedScopes: 0,
+    accessMode: 'disabled',
+  };
+
+  it('authenticates at the token endpoint with no secret it could match', async () => {
+    const request: any = { headers: {}, body: tokenExchangeBody };
+    for (const secret of ['', 'guess', 'null']) {
+      h.selectResults.push(remixClient);
+      expect(await oauthModel.getClient('civitai-remix-apps', secret, request)).toBe(false);
+    }
+    // POSITIVE CONTROL: the same client with a stored secret authenticates on it.
+    h.selectResults.push({ ...remixClient, secret: 'hash:guess' });
+    expect(await oauthModel.getClient('civitai-remix-apps', 'guess', request)).toMatchObject({
+      id: 'civitai-remix-apps',
+    });
+  });
+});

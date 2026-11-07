@@ -15,11 +15,12 @@
  * Usage:
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
  *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json
- *     [--cases trpc|image-delivery|beacons] [--route-counter]
+ *     [--cases trpc|image-delivery|beacons|api] [--route-counter]
  *     [--tracker <url> --tracker-a-ip <ip> --tracker-b-ip <ip>]
  *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
- * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery` or `beacons`. A case
+ * `--cases` picks the case list (`cases.mjs`): `trpc` (the default), `image-delivery`, `beacons` or
+ * `api` (the standalone server's `api` profile: `/api/v1/**` and `/api/auth/**`). A case
  * with `warm: true` is sent once more to the same server, unmeasured, right before its measured
  * send (after the Redis reset), so the measured request finds what the first one cached.
  *
@@ -49,7 +50,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseArgs } from 'node:util';
-import { buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
+import { buildApiCases, buildBeaconCases, buildCases, buildImageDeliveryCases } from './cases.mjs';
 
 const IGNORED_HEADERS = new Set(['date', 'connection', 'keep-alive']);
 const COOKIE_TIME_TOLERANCE_S = 30;
@@ -92,7 +93,7 @@ const env = Object.fromEntries(
 if (!env.NEXTAUTH_SECRET || !env.WEBHOOK_TOKEN)
   fail2('env file has no NEXTAUTH_SECRET/WEBHOOK_TOKEN');
 
-// --- a legacy session cookie, minted the way tests/preview-auth.setup.ts mints it --------------
+// A legacy session cookie, minted the way tests/preview-auth.setup.ts mints it.
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64url');
@@ -137,8 +138,6 @@ const sessionToken = mintLegacySessionCookie(env.NEXTAUTH_SECRET, {
 });
 const sessionCookie = `civitai-token=${sessionToken}; __Secure-civitai-token=${sessionToken}`;
 
-// --- redis reset ----------------------------------------------------------------------------------
-
 async function flushRedis() {
   const [host, port] = args.redis.split(':');
   await new Promise((resolve, reject) => {
@@ -157,8 +156,6 @@ async function flushRedis() {
     sock.on('error', reject);
   });
 }
-
-// --- sending ----------------------------------------------------------------------------------------
 
 function send(base, c) {
   const url = new URL(base);
@@ -201,8 +198,6 @@ function send(base, c) {
     req.end();
   });
 }
-
-// --- comparing -------------------------------------------------------------------------------------
 
 function headerMultiset(rawHeaders) {
   const out = [];
@@ -325,8 +320,6 @@ function compareToPin(pin, rb) {
   return parts;
 }
 
-// --- the route's own counter (--route-counter) ----------------------------------------------------
-
 const ROUTE_COUNTER = 'civitai_app_image_delivery_request_total';
 
 /** { status: value } for ROUTE_COUNTER on `base` (an absent label set reads as 0). */
@@ -347,8 +340,6 @@ async function readRouteCounter(base) {
   }
   return counts;
 }
-
-// --- the tracker stub (--tracker) ------------------------------------------------------------------
 
 const TRACKER_WAIT_MS = 10_000;
 
@@ -396,12 +387,11 @@ function compareTracked(c, ea, eb) {
   return diffs;
 }
 
-// --- run ----------------------------------------------------------------------------------------------
-
 const suites = {
   trpc: () => buildCases({ sessionCookie }),
   'image-delivery': () => buildImageDeliveryCases({ webhookToken: env.WEBHOOK_TOKEN }),
   beacons: () => buildBeaconCases({ sessionCookie }),
+  api: () => buildApiCases({ sessionCookie }),
 };
 if (!suites[args.cases]) fail2(`--cases ${args.cases}: expected one of ${Object.keys(suites)}`);
 const cases = suites[args.cases]();

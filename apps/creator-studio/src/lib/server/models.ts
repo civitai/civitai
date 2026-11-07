@@ -106,6 +106,9 @@ export type CreatorModel = {
   /** Flagged as depicting a real person — a new price on it is refused (licensingFeeBlockedFor). */
   poi: boolean;
   listing: SiteListing;
+  /** Has its own civitai.com title, which a fresh draft would replace. False for a face the
+   *  listing re-check removed: Make Safe may draft that one again. */
+  hasComFace: boolean;
   versions: CreatorModelVersion[];
 };
 
@@ -330,6 +333,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         'nsfw',
         'nsfwLevel',
         'poi',
+        'sfwName',
         'minor',
         'availability',
         'mode',
@@ -338,6 +342,9 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         hasPublicVersionSql('"Model"').as('hasPublicVersion'),
         hasTagSql('"Model"', peopleBrowsingTagIds).as('hasPeopleTag'),
         hasTagSql('"Model"', childBrowsingTagIds).as('hasChildTag'),
+        sql<boolean>`"Model".meta->'comFaceRemoved' IS NOT NULL AND "Model"."sfwCoverImageId" IS NULL`.as(
+          'comFaceRemoved'
+        ),
       ])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
@@ -507,6 +514,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         hasPeopleTag: !!m.hasPeopleTag,
         hasChildTag: !!m.hasChildTag,
       }),
+      hasComFace: m.sfwName != null && !m.comFaceRemoved,
       versions: byModel.get(m.id) ?? [],
     })),
     total,

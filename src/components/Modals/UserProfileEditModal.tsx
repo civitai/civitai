@@ -48,7 +48,12 @@ import {
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
 import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
-import { dedupeBadgesByImage, getBadgeImageUrl } from '~/shared/utils/badge-visibility';
+import {
+  dedupeBadgesByImage,
+  getBadgeImageUrl,
+  keepOwnedBadgeIds,
+  withUnownedBadgeIds,
+} from '~/shared/utils/badge-visibility';
 import * as z from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -215,19 +220,22 @@ export default function UserProfileEditModal() {
     [user]
   );
 
-  const badges = useMemo(
+  const allBadges = useMemo(
     () =>
       user
-        ? dedupeBadgesByImage(
-            owned.filter(({ cosmetic: c }) => c.type === CosmeticType.Badge),
-            (item) => getBadgeImageUrl(item.cosmetic)
-          ).map(({ cosmetic, cosmeticId, ...c }) => ({
-            ...c,
-            ...cosmetic,
-            data: cosmetic.data as BadgeCosmetic['data'],
-          }))
+        ? owned
+            .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge)
+            .map(({ cosmetic, cosmeticId, ...c }) => ({
+              ...c,
+              ...cosmetic,
+              data: cosmetic.data as BadgeCosmetic['data'],
+            }))
         : [],
     [user, owned]
+  );
+  const badges = useMemo(
+    () => dedupeBadgesByImage(allBadges, (badge) => getBadgeImageUrl(badge)),
+    [allBadges]
   );
 
   const nameplates = useMemo(
@@ -334,6 +342,17 @@ export default function UserProfileEditModal() {
     'creatorCardStatsPreferences',
     'privacySettings',
   ]);
+  // Every owned badge, before the one-per-image dedupe: a duplicate-image badge has no tile but is owned.
+  const ownedBadgeIds = useMemo(
+    () =>
+      owned.filter(({ cosmetic: c }) => c.type === CosmeticType.Badge).map((c) => c.cosmetic.id),
+    [owned]
+  );
+  const highlightedBadgeIds = keepOwnedBadgeIds(
+    privacySettings?.highlightedBadgeIds,
+    ownedBadgeIds
+  );
+  const hiddenBadgeIds = keepOwnedBadgeIds(privacySettings?.hiddenBadgeIds, ownedBadgeIds);
   const displayShowcase = useMemo(() => {
     const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
     return !!sections.find((s) => s.key === 'showcase' && s.enabled);
@@ -639,18 +658,24 @@ export default function UserProfileEditModal() {
               <CollapsibleSection
                 label="Highlighted badges"
                 description="Pin badges to the top of your profile's badge list."
-                count={(privacySettings?.highlightedBadgeIds ?? []).length}
+                count={highlightedBadgeIds.length}
               >
                 <HighlightedBadgesInput
-                  badges={badges}
-                  value={privacySettings?.highlightedBadgeIds ?? []}
-                  onChange={(highlightedBadgeIds) =>
+                  badges={allBadges}
+                  value={highlightedBadgeIds}
+                  onChange={(nextHighlighted) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,
-                      highlightedBadgeIds,
+                      highlightedBadgeIds: withUnownedBadgeIds(
+                        nextHighlighted,
+                        privacySettings?.highlightedBadgeIds,
+                        ownedBadgeIds
+                      ),
                       // A pinned badge can't also be hidden.
-                      hiddenBadgeIds: (privacySettings?.hiddenBadgeIds ?? []).filter(
-                        (id) => !highlightedBadgeIds.includes(id)
+                      hiddenBadgeIds: withUnownedBadgeIds(
+                        hiddenBadgeIds.filter((id) => !nextHighlighted.includes(id)),
+                        privacySettings?.hiddenBadgeIds,
+                        ownedBadgeIds
                       ),
                     })
                   }
@@ -659,19 +684,25 @@ export default function UserProfileEditModal() {
               <CollapsibleSection
                 label="Hidden badges"
                 description="Hidden badges won't be shown on your profile."
-                count={(privacySettings?.hiddenBadgeIds ?? []).length}
+                count={hiddenBadgeIds.length}
               >
                 <HighlightedBadgesInput
                   variant="hide"
-                  badges={badges}
-                  value={privacySettings?.hiddenBadgeIds ?? []}
-                  onChange={(hiddenBadgeIds) =>
+                  badges={allBadges}
+                  value={hiddenBadgeIds}
+                  onChange={(nextHidden) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,
-                      hiddenBadgeIds,
+                      hiddenBadgeIds: withUnownedBadgeIds(
+                        nextHidden,
+                        privacySettings?.hiddenBadgeIds,
+                        ownedBadgeIds
+                      ),
                       // Hiding a badge unpins it.
-                      highlightedBadgeIds: (privacySettings?.highlightedBadgeIds ?? []).filter(
-                        (id) => !hiddenBadgeIds.includes(id)
+                      highlightedBadgeIds: withUnownedBadgeIds(
+                        highlightedBadgeIds.filter((id) => !nextHidden.includes(id)),
+                        privacySettings?.highlightedBadgeIds,
+                        ownedBadgeIds
                       ),
                     })
                   }
@@ -863,6 +894,7 @@ export default function UserProfileEditModal() {
             <InputProfileSectionsSettingsInput
               name="profileSectionsSettings"
               label="Page sections"
+              showcaseSections={user.profile.showcaseSections}
               description="Drag diferent sections on your profile in order of your preference"
             />
           )}

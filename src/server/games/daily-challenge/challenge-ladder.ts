@@ -75,6 +75,9 @@ export const TIE_STAGE_BOUT_DEPTH = 13;
  */
 export const REVIEW_JOB_LOCK_SECONDS = 9 * 60;
 
+/** The review job's name, which is also its lock: a re-judge takes it so no tick runs mid-reset. */
+export const REVIEW_JOB_NAME = 'daily-challenge-process-entries';
+
 /** Ten minutes — the cron interval at which an overrunning run gets a concurrent sibling. */
 export const REVIEW_JOB_INTERVAL_SECONDS = 10 * 60;
 

@@ -441,13 +441,15 @@ describe('a verdict outlives the capped history', () => {
       'relisting it',
       () => setCreatorShopItemListed({ id: 42, userId: CREATOR, listed: true }),
       legacySentBack,
+      { status: 'RequestedChanges', rejectionReason: 'Off-brand' },
     ],
     [
       'a moderator restoring it',
       () => unarchiveCreatorShopItem({ id: 42, userId: MOD, isModerator: true }),
       { ...legacySentBack, status: 'Archived' },
+      { status: 'PendingReview', rejectionReason: null },
     ],
-  ])('%s clears the reason but keeps a sent-back item withheld', async (_, act, listing) => {
+  ])('%s keeps a sent-back item withheld', async (_, act, listing, expected) => {
     storedListing = listingRow(listing);
     dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
       { obtainedAt: new Date(), cosmetic: { type: 'ProfileDecoration', data: { url: 'art' } } },
@@ -455,7 +457,7 @@ describe('a verdict outlives the capped history', () => {
 
     await act();
 
-    expect(storedListing).toMatchObject({ status: 'PendingReview', rejectionReason: null });
+    expect(storedListing).toMatchObject(expected);
     await expect(equipCosmetic({ userId: CREATOR, cosmeticId: COSMETIC })).rejects.toThrow(
       IN_REVIEW
     );

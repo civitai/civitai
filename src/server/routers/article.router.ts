@@ -16,7 +16,21 @@ import {
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
   setArticleOfficialSchema,
+  createArticleShareLinkSchema,
+  getArticleShareLinksSchema,
+  getSharedArticleSchema,
+  openShareLinkSchema,
+  articleShareTokenRateLimits,
+  articleShareCreateRateLimits,
 } from '~/server/schema/article.schema';
+import {
+  createArticleShareLink,
+  getArticleByShareToken,
+  getArticleShareLinks,
+  openArticleShareLink,
+  revokeArticleShareLink,
+} from '~/server/services/article-share.service';
+import { articleShareCookieName } from '~/server/services/article-share.helpers';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
@@ -101,6 +115,48 @@ export const articleRouter = router({
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getByIdSchema)
     .query(({ input }) => isArticleProcessing(input)),
+  // Draft share links. The token is accepted by `openShareLink` (once, to set the cookie) and read
+  // from that cookie by `getShared`; nothing else reads it.
+  createShareLink: guardedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesWrite })
+    .input(createArticleShareLinkSchema)
+    .use(isFlagProtected('articleCreate'))
+    .use(rateLimit(articleShareCreateRateLimits))
+    .mutation(({ input, ctx }) => createArticleShareLink({ ...input, userId: ctx.user.id })),
+  getShareLinks: protectedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getArticleShareLinksSchema)
+    .query(({ input, ctx }) =>
+      getArticleShareLinks({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  revokeShareLink: protectedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesWrite })
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      revokeArticleShareLink({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  // Called only by the link page's server render, which turns a valid token into a cookie.
+  openShareLink: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(openShareLinkSchema)
+    .use(rateLimit(articleShareTokenRateLimits, undefined, { sharedKey: 'article:share-token' }))
+    .query(({ input, ctx }) => {
+      // The token is in this query's input: never let a cache keep the answer.
+      if (ctx.cache) Object.assign(ctx.cache, { skip: true, edgeTTL: 0, browserTTL: 0 });
+      return openArticleShareLink(input.shareToken);
+    }),
+  // The token arrives in its HttpOnly cookie, never in the input. A mutation, so no cache keeps it.
+  getShared: publicProcedure
+    .meta({ requiredScope: TokenScope.ArticlesRead })
+    .input(getSharedArticleSchema)
+    .use(rateLimit(articleShareTokenRateLimits, undefined, { sharedKey: 'article:share-token' }))
+    .mutation(({ input, ctx }) =>
+      getArticleByShareToken({
+        articleId: input.articleId,
+        shareToken: ctx.req?.cookies?.[articleShareCookieName(input.articleId)],
+        viewerId: ctx.user?.id,
+      })
+    ),
   getMyDraftArticles: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesRead })
     .input(getAllQuerySchema)

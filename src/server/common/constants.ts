@@ -65,6 +65,20 @@ const v3PageBudgetOverrides: Record<string, number> = {
   post: 15,
 };
 const v3PageBudget = 40;
+const v3ReadSurfaces: string[] = [
+  'article',
+  'post',
+  'image',
+  'review',
+  'bounty',
+  'bountyEntry',
+  'challenge',
+  'crucible',
+  'storyline',
+  'model3d',
+  'appListing',
+  'comicChapter',
+];
 
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
@@ -408,6 +422,9 @@ export const constants = {
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
+    // 4:1, shown full width across the top of the article page.
+    bannerImageHeight: 600,
+    bannerImageWidth: 2400,
   },
   profanity: {
     thresholds: {
@@ -449,25 +466,12 @@ export const constants = {
      * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
      * it here and mounts `CommentSection`; notifications build their deep links from this list.
      */
-    v3ReadSurfaces: [
-      'article',
-      'post',
-      'image',
-      'review',
-      'bounty',
-      'bountyEntry',
-      'challenge',
-      'crucible',
-      'storyline',
-      'model3d',
-      'appListing',
-      'comicChapter',
-    ] as string[],
+    v3ReadSurfaces,
     /**
      * Surfaces whose comments are written to CommentV3 directly (stage B of a flip): a new comment
-     * on one exists only there.
+     * on one exists only there. A surface read-flipped ahead of its write flip must be left out.
      */
-    v3WriteSurfaces: ['article'] as string[],
+    v3WriteSurfaces: [...v3ReadSurfaces],
     /** Most replies the v3 suite opens up front under one top-level comment. */
     v3RepliesPerRoot: 10,
     /** Replies per "show more" page in the v3 suite. */
@@ -641,6 +645,7 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
+export const POST_TITLE_MAX_LENGTH = 255;
 // The scheduling window lives in @civitai/shared so the planner element and Creator Studio read the
 // same numbers; re-exported here for the many existing importers.
 export {

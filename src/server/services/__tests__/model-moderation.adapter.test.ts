@@ -267,8 +267,13 @@ describe('modelModerationAdapter.applyResult', () => {
   // must lose to the guard in the WHERE, not silently be overwritten.
   it('treats a lock that appears between read and write as a decline', async () => {
     // The lock fails the flip's guard and the restricted-verdict hold's alike; only forensics write.
-    dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
-      /SET nsfw = TRUE|'restriction', CASE WHEN m\.minor/.test(strings.join('?')) ? 0 : 1
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      async (strings: readonly string[], ...values: unknown[]) =>
+        /SET nsfw = TRUE|'restriction', CASE WHEN m\.minor/.test(
+          [strings.join('?'), ...values.map((v) => (v as { sql?: string } | null)?.sql)].join(' ')
+        )
+          ? 0
+          : 1
     );
 
     await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
@@ -863,8 +868,13 @@ describe('apply-stage outcome metric', () => {
 
   it('counts a lock that landed between the read and the write', async () => {
     // The lock fails the flip's guard and the restricted-verdict hold's alike; only forensics write.
-    dbMock.dbWrite.$executeRaw.mockImplementation(async (strings: readonly string[]) =>
-      /SET nsfw = TRUE|'restriction', CASE WHEN m\.minor/.test(strings.join('?')) ? 0 : 1
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      async (strings: readonly string[], ...values: unknown[]) =>
+        /SET nsfw = TRUE|'restriction', CASE WHEN m\.minor/.test(
+          [strings.join('?'), ...values.map((v) => (v as { sql?: string } | null)?.sql)].join(' ')
+        )
+          ? 0
+          : 1
     );
     await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
     expect(outcomeMock).toHaveBeenCalledWith('declined_race');

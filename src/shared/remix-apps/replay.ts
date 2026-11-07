@@ -46,7 +46,11 @@ export async function replayRemixApp(
       throw new RemixReplayError(
         `${app.slug} asked for a ${effect.type} at step ${index}, but the run recorded a ${entry.type}`
       );
-    return entry.type === 'workflow' ? entry.result : entry.answer;
+    if (entry.type === 'workflow') return entry.result;
+    // Recorded answers live in workflow metadata, which its owner can patch.
+    const refusal = remixAnswerRefusal((effect as { spec: RemixAsk }).spec, entry.answer);
+    if (refusal) throw new RemixReplayError(`step ${index} has an answer that does not fit`);
+    return entry.answer;
   };
 
   const ctx: RemixCtx = {
@@ -79,7 +83,11 @@ export function remixAnswerRefusal(spec: RemixAsk, answer: RemixAnswer): string 
         ? undefined
         : 'Not one of the images';
     case 'text':
-      return typeof answer === 'string' && answer.trim() && answer.length <= spec.maxLength
+      if (typeof answer !== 'string' || answer.length > spec.maxLength)
+        return `Enter up to ${spec.maxLength} characters`;
+      if (answer.trim()) return undefined;
+      // A skip is '' exactly, so the app never sees blank text it has to trim.
+      return spec.optional && answer === ''
         ? undefined
         : `Enter up to ${spec.maxLength} characters`;
   }

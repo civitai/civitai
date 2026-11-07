@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 /**
  * The public version endpoints for a Private version (the version itself, or its model): served to
@@ -25,6 +26,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof AuthSession>()),
   getServerAuthSession: vi.fn(async () => (session.user ? { user: session.user } : null)),
+}));
+// The metric-privacy read (`prepareModelVersionResponse`) is a Kysely statement; no row is a version
+// with no privacy inputs, as the Prisma `null` was.
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getModelVersionPrivacyRow: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/model.service', () => ({ getVaeFiles: vi.fn(async () => []) }));
 vi.mock('~/server/services/image.service', () => ({

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import { Button } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
@@ -25,10 +26,20 @@ const COVER_HATS = [
 ];
 
 /** The hat button for the picture on screen. Nothing when Hat Turf is off or the picture is a contest entry. */
-export function HatTurfDetailControls({ imageId }: { imageId: number }) {
+export function HatTurfDetailControls({
+  imageId,
+  large,
+}: {
+  imageId: number;
+  /** A 36px circle, as the phone bottom bar's other buttons are. */
+  large?: boolean;
+}) {
   const feed = useTurfFeed();
   return feed && !feed.hidden?.[imageId] ? (
-    <div className={classes.group} data-testid="hat-turf-detail-controls">
+    <div
+      className={clsx(classes.group, large && classes.large)}
+      data-testid="hat-turf-detail-controls"
+    >
       <HatButton imageId={imageId} />
     </div>
   ) : null;
@@ -54,7 +65,10 @@ function HatButton({ imageId }: { imageId: number }) {
   if (!feed || !card || !user || (closed && stock?.optedIn !== false)) return null;
   const joined = stock?.optedIn === true;
   const snoozed = Date.now() - dismissedAt < INVITE_SNOOZE_MS;
-  const showInvite = inviteOpen ?? (!!stock && !joined && !snoozed);
+  // Only someone who never joined is invited unprompted; a leaver rejoins from the button. Owner-off
+  // users are refused on Join, so they are not invited either.
+  const showInvite =
+    inviteOpen ?? (!!stock && !joined && !stock.left && !stock.ownerOff && !snoozed);
   const empty = joined && stock?.available === 0 && !placed;
 
   const press = () => {

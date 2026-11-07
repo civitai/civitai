@@ -5,7 +5,9 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
 import {
+  MASONRY_FILL_LOOKAHEAD,
   MASONRY_GAP,
+  MASONRY_MIN_FILL_ROOM,
   MASONRY_SPAN_MIN_RATIO,
   useMasonryColumns,
 } from '~/components/MasonryColumns/masonry.utils';
@@ -96,6 +98,7 @@ function Gallery({
   );
 }
 
+const hasSpan = (cols: ColumnItem<unknown>[][]) => cols.flat().some((i) => i.span);
 const cards = () => [...document.querySelectorAll<HTMLElement>('[data-testid="card"]')];
 const card = (id: number) => cards().find((c) => c.dataset.id === String(id))!;
 const rect = (el: Element) => el.getBoundingClientRect();
@@ -109,7 +112,7 @@ function Probe({
 }: {
   data: Item[];
   columnCount: number;
-  span?: { minRatio: number; maxHeight: number };
+  span?: { minRatio: number; maxHeight: number; holdTail?: boolean };
 }) {
   latest = useMasonryColumns(
     data,
@@ -354,5 +357,101 @@ describe('MasonryColumnsVirtual landscape span', () => {
     const widths = new Set(cards().map((c) => Math.round(rect(c).width)));
     expect(widths.size).toBe(1);
     expect(cards().some((c) => c.dataset.width === String(WIDE))).toBe(false);
+  });
+
+  describe('gap fill', () => {
+    const portrait = { width: 900, height: 1200 }; // 426
+    const short = { width: 1700, height: 1000 }; // 1.7, 188: too narrow to span
+    // Three cards, then a wide one at index 3 with 238px blank beside it, `lead` portraits that
+    // cannot fill it, then `shorts` that can.
+    const WIDE_INDEX = 3;
+    const gapFeed = (shorts = 6, lead = 0): Item[] =>
+      [
+        portrait,
+        short,
+        portrait,
+        LANDSCAPE,
+        ...Array.from({ length: lead }, () => portrait),
+        ...Array.from({ length: shorts }, () => short),
+      ].map((d, id) => ({ id, ...d }));
+    const feedOfLength = (n: number) => gapFeed(n - WIDE_INDEX - 1 - 4, 4);
+    // Room left blank beside wide items: all spacer height minus what the wide items cover.
+    const blankRoom = (cols: ColumnItem<unknown>[][]) => {
+      const flat = cols.flat();
+      return (
+        flat.filter((i) => i.spacer).reduce((y, i) => y + i.height, 0) -
+        flat.filter((i) => i.span).reduce((y, i) => y + i.height, 0)
+      );
+    };
+    const idOf = (i: ColumnItem<unknown>) => (i.data as { data: Item }).data.id;
+    const ids = (cols: ColumnItem<unknown>[][]) =>
+      cols
+        .flat()
+        .filter((i) => !i.spacer)
+        .map(idOf)
+        .sort((a, b) => a - b);
+    const describeCols = (cols: ColumnItem<unknown>[][]) =>
+      cols.map((column) =>
+        column.map((i) =>
+          i.spacer ? `spacer:${i.height}` : `${idOf(i)}:${i.height}:${i.span ?? 1}`
+        )
+      );
+
+    test('short items fill the room beside a wide one', async () => {
+      const cols = await columnsFor(gapFeed(), 3, SPAN);
+      expect(hasSpan(cols)).toBe(true);
+      expect(blankRoom(cols)).toBeLessThanOrEqual(MASONRY_MIN_FILL_ROOM);
+    });
+
+    test('fillers come from anywhere in the lookahead window', async () => {
+      // The first short sits at lookahead position 5.
+      const feed = gapFeed(2, 4);
+      const cols = await columnsFor(feed, 3, SPAN);
+      expect(hasSpan(cols)).toBe(true);
+      expect(blankRoom(cols)).toBeLessThanOrEqual(MASONRY_MIN_FILL_ROOM);
+    });
+
+    test('every item is placed exactly once', async () => {
+      const feed = gapFeed();
+      const cols = await columnsFor(feed, 3, SPAN);
+      expect(ids(cols)).toEqual(feed.map((i) => i.id));
+    });
+
+    test("nothing that fits keeps the span and today's spacer", async () => {
+      const feed = [portrait, short, portrait, LANDSCAPE, portrait, portrait].map((d, id) => ({
+        id,
+        ...d,
+      }));
+      const cols = await columnsFor(feed, 3, SPAN);
+      expect(hasSpan(cols)).toBe(true);
+      expect(blankRoom(cols)).toBeGreaterThan(200);
+    });
+
+    test('a wide image waits for its full lookahead while more pages are coming', async () => {
+      const held = { ...SPAN, holdTail: true };
+      const lastHeld = feedOfLength(WIDE_INDEX + MASONRY_FILL_LOOKAHEAD);
+      const firstPlaced = feedOfLength(WIDE_INDEX + MASONRY_FILL_LOOKAHEAD + 1);
+      const heldCols = await columnsFor(lastHeld, 3, held);
+      expect(hasSpan(heldCols)).toBe(false);
+      expect(ids(heldCols)).toEqual([0, 1, 2]);
+      expect(hasSpan(await columnsFor(firstPlaced, 3, held))).toBe(true);
+      // The last page: nothing is held.
+      expect(hasSpan(await columnsFor(lastHeld, 3, SPAN))).toBe(true);
+    });
+
+    test('appending a page never moves what is already placed', async () => {
+      const held = { ...SPAN, holdTail: true };
+      const full = feedOfLength(24);
+      const after = describeCols(await columnsFor(full, 3, held));
+      let placedWide = 0;
+      for (let n = 4; n < full.length; n++) {
+        const beforeCols = await columnsFor(full.slice(0, n), 3, held);
+        if (hasSpan(beforeCols)) placedWide++;
+        describeCols(beforeCols).forEach((column, c) =>
+          expect(after[c].slice(0, column.length), `n=${n} column ${c}`).toEqual(column)
+        );
+      }
+      expect(placedWide).toBeGreaterThan(0);
+    });
   });
 });

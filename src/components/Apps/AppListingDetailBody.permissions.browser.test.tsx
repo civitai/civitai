@@ -130,6 +130,7 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     installCount: 4213,
+    openCount: 2718,
     sourceRepoUrl: null,
     betaMessage: null,
     forkable: false,

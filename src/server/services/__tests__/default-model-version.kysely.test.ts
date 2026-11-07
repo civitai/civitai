@@ -3,8 +3,6 @@ import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 
-// Mocked for the invariant guard that no flag check remains on this read (not regression
-// coverage).
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn(),
@@ -95,7 +93,7 @@ describe('getDefaultModelVersion (the model page default version)', () => {
     expect(kyselyRead).not.toBe(kyselyWrite);
   });
 
-  it('reads through Kysely only, in the Prisma shape (invariant: no flag check remains)', async () => {
+  it('reads through Kysely only, in the Prisma shape', async () => {
     givenRows();
     await expect(lookup(VERSION)).resolves.toStrictEqual(expected.modelVersions[0]);
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', MODEL);
@@ -107,7 +105,6 @@ describe('getDefaultModelVersion (the model page default version)', () => {
     expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
     expect(getDbWithoutLag).not.toHaveBeenCalled();
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
   });
 
   it('follows the lag decision to the primary, as the Prisma read did', async () => {
