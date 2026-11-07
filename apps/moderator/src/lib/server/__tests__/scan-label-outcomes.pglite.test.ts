@@ -39,9 +39,8 @@ const { isModerationBlocked } = await import('../image-moderation.service');
 
 const noop = () => vi.fn(async (_args: BlockImageArgs) => undefined);
 const deps = (block: BlockDeps['block'] = noop()): BlockDeps => ({ block, isModerationBlocked });
-const { getQuotaReport, removeFromRoster, setQuota, SCAN_LABEL_ROLE } = await import(
-  '../scan-label-metrics.service'
-);
+const { getActionHealth, getQuotaReport, removeFromRoster, setQuota, SCAN_LABEL_ROLE } =
+  await import('../scan-label-metrics.service');
 const busted = () => ({ invalidateSession: vi.fn(async (_userId: number) => undefined) });
 
 const BLOCK = { block: true, reason: 'real-person', reasonComment: null } as const;
@@ -296,6 +295,8 @@ describe('applyMajorityBlocks', () => {
 });
 
 describe('csam-realistic votes', () => {
+  // Not the item's id (1): a hold sent the item id instead would hold some other image.
+  const IMAGE = 900;
   const holdDeps = () => {
     const hold = vi.fn(async (_imageId: number) => undefined);
     return { hold, deps: { hold } };
@@ -304,7 +305,7 @@ describe('csam-realistic votes', () => {
     castVote({ itemId, userId, choice, msOnItem: 1 }, at('2026-10-13T10:00:00Z'));
 
   it('holds the image on one vote, and the block sweep never touches it', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     expect(await castAs(it1, 11, CSAM)).toMatchObject({ ok: true, decided: false });
     expect(await item(it1)).toMatchObject({
       status: 'void',
@@ -314,8 +315,8 @@ describe('csam-realistic votes', () => {
 
     const block = noop();
     const { hold, deps: holding } = holdDeps();
-    expect(await applyCsamHolds({}, holding)).toEqual({ held: [it1], skipped: [], failed: [] });
-    expect(hold).toHaveBeenCalledExactlyOnceWith(1);
+    expect(await applyCsamHolds({}, holding)).toEqual({ held: [it1], failed: [] });
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE);
     await applyMajorityBlocks({}, deps(block));
     expect(block).not.toHaveBeenCalled();
     expect(await item(it1)).toMatchObject({ actionResult: 'csam-held', actionError: null });
@@ -327,7 +328,7 @@ describe('csam-realistic votes', () => {
   });
 
   it('a minor-sexual majority still blocks as before, with no hold', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, MINOR_SEXUAL);
     await castAs(it1, 12, MINOR_SEXUAL);
     const { hold, deps: holding } = holdDeps();
@@ -339,7 +340,7 @@ describe('csam-realistic votes', () => {
   });
 
   it('one csam-realistic vote among block votes holds instead of blocking', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, MINOR_SEXUAL);
     await castAs(it1, 12, CSAM);
     expect((await item(it1)).blockVotes).toBe(2);
@@ -348,11 +349,11 @@ describe('csam-realistic votes', () => {
     expect(block).not.toHaveBeenCalled();
     const { hold, deps: holding } = holdDeps();
     expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
-    expect(hold).toHaveBeenCalledExactlyOnceWith(1);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE);
   });
 
   it('still holds an item a block majority already acted on', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, MINOR_SEXUAL);
     await castAs(it1, 12, MINOR_SEXUAL);
     await applyMajorityBlocks({}, deps(noop()));
@@ -361,12 +362,12 @@ describe('csam-realistic votes', () => {
     await castAs(it1, 13, CSAM);
     const { hold, deps: holding } = holdDeps();
     expect((await applyCsamHolds({}, holding)).held).toEqual([it1]);
-    expect(hold).toHaveBeenCalledExactlyOnceWith(1);
+    expect(hold).toHaveBeenCalledExactlyOnceWith(IMAGE);
     expect(await item(it1)).toMatchObject({ status: 'void', actionResult: 'csam-held' });
   });
 
   it('takes the item from every other moderator holding it', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     await pg.query(
       `INSERT INTO "ScanLabelClaim" ("itemId", "userId", "expiresAt") VALUES ($1, 11, $2), ($1, 12, $2)`,
       [it1, at('2026-10-13T11:00:00Z')]
@@ -377,14 +378,13 @@ describe('csam-realistic votes', () => {
   });
 
   it('records a failed hold and retries it on the next sweep', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, CSAM);
     const failing = vi.fn(async () => {
       throw new Error('main app down');
     });
     expect(await applyCsamHolds({}, { hold: failing })).toEqual({
       held: [],
-      skipped: [],
       failed: [{ itemId: it1, error: 'main app down' }],
     });
     expect(await item(it1)).toMatchObject({ actionedAt: null, actionError: 'main app down' });
@@ -393,8 +393,38 @@ describe('csam-realistic votes', () => {
     expect(hold).toHaveBeenCalledOnce();
   });
 
+  it('a block sweep that read the item before the hold vote does not block it', async () => {
+    const it1 = await seedItem(IMAGE);
+    await castAs(it1, 11, MINOR_SEXUAL);
+    await castAs(it1, 12, MINOR_SEXUAL);
+    // The hold vote commits between the sweep's read and its claim: pglite runs queries in order, so
+    // the void queued on the clock's second call lands before the claim that follows it.
+    let calls = 0;
+    let voided: Promise<unknown> = Promise.resolve();
+    const clock = () => {
+      if (++calls === 2)
+        voided = pg.query(
+          `UPDATE "ScanLabelItem" SET status = 'void', "voidReason" = 'csam-hold' WHERE id = $1`,
+          [it1]
+        );
+      return new Date();
+    };
+    const block = noop();
+    expect((await applyMajorityBlocks({}, deps(block), clock)).blocked).toEqual([]);
+    await voided;
+    expect(block).not.toHaveBeenCalled();
+  });
+
+  it('counts a hold not yet applied on the metrics page until it lands', async () => {
+    const it1 = await seedItem(IMAGE);
+    await castAs(it1, 11, CSAM);
+    expect((await getActionHealth()).holdsPending).toBe(1);
+    await applyCsamHolds({}, holdDeps().deps);
+    expect((await getActionHealth()).holdsPending).toBe(0);
+  });
+
   it('is left out of the decided-item export', async () => {
-    const it1 = await seedItem(1);
+    const it1 = await seedItem(IMAGE);
     await castAs(it1, 11, MINOR_SEXUAL);
     await castAs(it1, 12, MINOR_SEXUAL);
     await castAs(it1, 13, CSAM);

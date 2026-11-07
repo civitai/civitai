@@ -67,6 +67,8 @@ export type BlockReason = (typeof BLOCK_REASONS)[number]['id'];
 export const BLOCK_REASON_IDS = BLOCK_REASONS.map((r) => r.id) as [BlockReason, ...BlockReason[]];
 /** One vote with this reason holds the image for CSAM review; the item never becomes a plain block. */
 export const CSAM_HOLD_REASON: BlockReason = 'csam-realistic';
+/** `voidReason` of an item a `CSAM_HOLD_REASON` vote took out of labelling. */
+export const CSAM_HOLD_VOID_REASON = 'csam-hold';
 /** The one reason that needs a comment. */
 export const REASON_NEEDING_COMMENT: BlockReason = 'other';
 export const REASON_COMMENT_MAX = 500;

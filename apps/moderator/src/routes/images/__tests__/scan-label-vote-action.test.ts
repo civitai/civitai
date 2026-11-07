@@ -66,7 +66,7 @@ const TOKEN = '00000000-0000-4000-8000-000000000005';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  applyCsamHolds.mockResolvedValue({ held: [], skipped: [], failed: [] });
+  applyCsamHolds.mockResolvedValue({ held: [], failed: [] });
   applyMajorityBlocks.mockResolvedValue({ blocked: [], failed: [] });
   getVotedItemOwner.mockResolvedValue(OWNER);
   itemForToken.mockResolvedValue(5);
@@ -130,6 +130,29 @@ describe('vote action', () => {
     );
     callModEndpoint.mockResolvedValue({ ok: false, error: 'Forbidden' });
     await expect(hold(3)).rejects.toThrow('Forbidden');
+  });
+
+  it('tells the voter when their csam-realistic vote did not get its hold, and not otherwise', async () => {
+    castVote.mockResolvedValue(recorded);
+    const csamVote = () =>
+      actions.vote(event({ token: TOKEN, block: '1', reason: 'csam-realistic' }));
+    applyCsamHolds.mockResolvedValue({ held: [], failed: [{ itemId: 5, error: 'down' }] });
+    expect(await csamVote()).toEqual({
+      voted: true,
+      owner: OWNER,
+      error: expect.stringContaining('holding it for CSAM review failed'),
+    });
+    applyCsamHolds.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await csamVote()).toMatchObject({ error: expect.stringContaining('failed') });
+    applyCsamHolds.mockResolvedValue({ held: [5], failed: [] });
+    expect(await csamVote()).toEqual({ voted: true, owner: OWNER });
+    // Another item's failed hold is not this voter's to hear about.
+    applyCsamHolds.mockResolvedValue({ held: [], failed: [{ itemId: 9, error: 'down' }] });
+    expect(await actions.vote(event({ token: TOKEN, block: '1', reason: 'bestiality' }))).toEqual({
+      voted: true,
+      owner: OWNER,
+    });
   });
 
   it('still reports the vote and runs the block sweep when the hold sweep throws', async () => {

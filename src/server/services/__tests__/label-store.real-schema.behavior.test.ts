@@ -52,6 +52,8 @@ beforeAll(async () => {
   ])
     await db.pg.exec(migration(dir));
   await db.pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
+  await db.pg.exec(migration('20261229120000_scan_label_csam_hold'));
+  await db.pg.exec(migration('20261229120100_scan_label_csam_hold_label_store'));
 });
 
 afterAll(async () => {
@@ -91,5 +93,24 @@ describe('on the real source tables', () => {
     expect(
       await rows(`SELECT "kind" FROM label_store.change WHERE "kind" = 'subject'`)
     ).toHaveLength(2);
+  });
+});
+
+describe('a csam-realistic vote', () => {
+  it('is excluded as it is recorded, with no snapshot, before the image is flagged', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Image" ("id", "userId", "url", "pHash", "meta")
+        VALUES (601, 12, 'u-601', 78, '{"prompt": "p"}');
+      INSERT INTO "ScanLabelItem" ("id", "imageId", "firstFlaggedAt") VALUES (8, 601, now());
+      INSERT INTO "ScanLabelVote" ("itemId", "userId", "block", "reason", "msOnItem")
+        VALUES (8, 31, true, 'csam-realistic', 500);
+    `);
+    expect(
+      await rows(
+        `SELECT "excludedReason", "snapshot", "pHash" FROM label_store.subject
+         WHERE "subjectType" = 'image' AND "subjectId" = '601'`
+      )
+    ).toEqual([{ excludedReason: 'safety', snapshot: null, pHash: null }]);
+    expect(await rows(`SELECT * FROM label_store.record_failure`)).toEqual([]);
   });
 });

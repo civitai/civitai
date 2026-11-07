@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from './db';
 import {
   BLOCK_MAJORITY,
   CSAM_HOLD_REASON,
+  CSAM_HOLD_VOID_REASON,
   dayBounds,
   effectiveQuota,
   LEASE_MS,
@@ -585,6 +586,8 @@ export async function applyMajorityBlocks(
       .set({ actionStartedAt: claimedAt })
       .where('id', '=', item.id)
       .where('actionedAt', 'is', null)
+      // Re-checked here: a hold vote may have voided the item since it was read above.
+      .where('status', '!=', 'void')
       .where(claimableAt(claimedAt))
       .executeTakeFirst();
     if (!claimed.numUpdatedRows) continue;
@@ -629,7 +632,13 @@ export async function applyMajorityBlocks(
       }
       await dbWrite
         .updateTable('ScanLabelItem')
-        .set({ actionedAt: clock(), actionResult: outcome, actionError: null })
+        // The claim is released so a hold voted while this block ran can claim the item at once.
+        .set({
+          actionedAt: clock(),
+          actionStartedAt: null,
+          actionResult: outcome,
+          actionError: null,
+        })
         .where('id', '=', item.id)
         .execute();
       if (outcome === 'blocked') result.blocked.push(item.id);
@@ -649,14 +658,7 @@ export async function applyMajorityBlocks(
   return result;
 }
 
-/** `voidReason` of an item a `CSAM_HOLD_REASON` vote took out of labelling. */
-export const CSAM_HOLD_VOID_REASON = 'csam-hold';
-
-export type HoldSweepResult = {
-  held: number[];
-  skipped: { itemId: number; result: 'image-missing' }[];
-  failed: { itemId: number; error: string }[];
-};
+export type HoldSweepResult = { held: number[]; failed: { itemId: number; error: string }[] };
 
 /**
  * Puts each image a `CSAM_HOLD_REASON` vote voided in the CSAM review queue. `hold` is the main app's
@@ -673,19 +675,14 @@ export async function applyCsamHolds(
     .select(['id', 'imageId'])
     .where('status', '=', 'void')
     .where('voidReason', '=', CSAM_HOLD_VOID_REASON)
-    .where((eb) =>
-      eb.or([
-        eb('actionResult', 'is', null),
-        eb('actionResult', 'not in', ['csam-held', 'image-missing']),
-      ])
-    )
+    .where('actionResult', 'is distinct from', 'csam-held')
     .where(claimableAt(clock()))
     .orderBy(sql`"actionError" IS NOT NULL`)
     .orderBy('id')
     .limit(limit)
     .execute();
 
-  const result: HoldSweepResult = { held: [], skipped: [], failed: [] };
+  const result: HoldSweepResult = { held: [], failed: [] };
   for (const item of pending) {
     const claimedAt = clock();
     const claimed = await dbWrite
@@ -696,26 +693,20 @@ export async function applyCsamHolds(
       .executeTakeFirst();
     if (!claimed.numUpdatedRows) continue;
 
+    // No missing-image case: the item is deleted with its image (FK cascade).
     try {
-      const exists = await dbWrite
-        .selectFrom('Image')
-        .select('id')
-        .where('id', '=', item.imageId)
-        .executeTakeFirst();
-      const outcome = exists ? 'csam-held' : 'image-missing';
-      if (exists) await hold(item.imageId);
+      await hold(item.imageId);
       await dbWrite
         .updateTable('ScanLabelItem')
         .set({
           actionedAt: clock(),
           actionStartedAt: null,
-          actionResult: outcome,
+          actionResult: 'csam-held',
           actionError: null,
         })
         .where('id', '=', item.id)
         .execute();
-      if (exists) result.held.push(item.id);
-      else result.skipped.push({ itemId: item.id, result: 'image-missing' });
+      result.held.push(item.id);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error('scan label csam hold failed', { itemId: item.id, error: message });
