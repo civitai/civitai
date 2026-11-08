@@ -13,6 +13,7 @@ import {
   coverageColumn,
   coveragePair,
   coveredBy,
+  boostRequiredFor,
   coveredForUser,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
@@ -1344,19 +1345,22 @@ export async function getResourceData(
     generation = false,
     withPreview = false,
     browsingLevel,
+    acceptBoostRequired = false,
   }: {
     user?: { id?: number; isModerator?: boolean; tier?: string };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
+    /** See `coverageAudience`. Each admitted-by-boost resource comes back `boostRequired`. */
+    acceptBoostRequired?: boolean;
   } = {}
-): Promise<(GenerationResource & { air: string })[]> {
+): Promise<(GenerationResource & { air: string; boostRequired?: boolean })[]> {
   if (!versionIds.length) return [];
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const { next, member } = await coverageAudience(user);
+  const { next, member, boostAdmits } = await coverageAudience(user, { acceptBoostRequired });
 
   const showSfwFace = showsSfwFace(browsingLevel);
 
@@ -1376,10 +1380,13 @@ export async function getResourceData(
     const isPrivate =
       item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
-    const covered = coveredForUser(item, next, {
+    const coverageAudienceFor = {
       member,
       isCheckpoint: item.model.type === 'Checkpoint',
-    });
+      boostAdmits,
+    };
+    const covered = coveredForUser(item, next, coverageAudienceFor);
+    const boostRequired = boostRequiredFor(item, next, coverageAudienceFor);
     // 🔴 `getResourceCanGenerate` ALONE, deliberately — not the `isGenerationEligible` pair that
     // `resolveCanGenerateForVersions` uses. This path receives every resource in the request, and the
     // helper's third clause is the ecosystem's flat model-TYPE list, which the generator has never
@@ -1448,6 +1455,7 @@ export async function getResourceData(
       epochNumber,
       isOwnedByUser,
       isPrivate,
+      ...(boostRequired && canGenerate ? { boostRequired: true } : {}),
       tipsEnabled:
         !stopsCreatorEarnings(item.baseModel) &&
         isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),

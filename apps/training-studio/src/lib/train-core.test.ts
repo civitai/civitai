@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cardByType } from '$lib/data/trainingModels';
+import { parseServiceStatus } from '$lib/service-status-core';
 import {
   continueTraining,
   continueTrainingWhatIf,
@@ -846,5 +847,158 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(probed.matureCount).toBe(1);
       expect(headBlob).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe('a model that is down', () => {
+  const krea2 = cardByType('krea2')!.versions[0]!;
+  const krea2Run = (): TrainingRunInput => ({ ...baseRun(), ecosystem: krea2.ecosystem });
+  const down = (reason?: unknown) =>
+    parseServiceStatus({
+      available: true,
+      blockedModels: [krea2.key],
+      blockedModelReasons: reason === undefined ? undefined : { [krea2.key]: reason },
+    });
+  const orchestratorCalls = () =>
+    [submitWorkflow, getWorkflow, getResource, headBlob].reduce(
+      (n, f) => n + f.mock.calls.length,
+      0
+    );
+
+  it('refuses the batch before any orchestrator call or trigger word check, with the reason', async () => {
+    vi.clearAllMocks();
+    const check = vi.fn(async () => undefined);
+    await expect(
+      submitTrainingBatch(client, [baseRun(), krea2Run()], {
+        checkText: check,
+        status: down('The provider is down.'),
+      })
+    ).rejects.toThrow('Krea 2 is temporarily unavailable for training. The provider is down.');
+    expect(orchestratorCalls()).toBe(0);
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it('refuses without a note when the reason is missing or not text', async () => {
+    for (const status of [down(), down(42), down('   ')])
+      await expect(
+        submitTrainingBatch(client, [krea2Run()], { checkText, status })
+      ).rejects.toThrow(/^Krea 2 is temporarily unavailable for training\.$/);
+  });
+
+  it('refuses keep-training on it, quote and submit, before anything is charged', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: krea2.ecosystem, epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockClear();
+    const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+    await expect(continueTrainingWhatIf(client, opts, { status: down() })).rejects.toThrow(
+      /Krea 2 is temporarily unavailable/
+    );
+    await expect(continueTraining(client, opts, { checkText, status: down() })).rejects.toThrow(
+      /Krea 2 is temporarily unavailable/
+    );
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('still submits other models, and Krea 2 once it is unblocked', async () => {
+    submitWorkflow.mockResolvedValue({ data: { id: 'wf-ok' } });
+    await submitTrainingBatch(client, [baseRun()], { checkText, status: down() });
+    await submitTrainingBatch(client, [krea2Run()], {
+      checkText,
+      status: parseServiceStatus({ available: true, blockedModels: [] }),
+    });
+    expect(submitWorkflow).toHaveBeenCalledTimes(2);
+    submitWorkflow.mockReset();
+  });
+
+  it('fails open on a malformed status', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ok' } });
+    const status = parseServiceStatus({ blockedModels: 'krea2', blockedModelReasons: [1] });
+    await submitTrainingBatch(client, [krea2Run()], { checkText, status });
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('keep-training a custom-base run while a sibling model is down', () => {
+  const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
+  const source = {
+    data: {
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem: 'sdxl',
+            epochs: 10,
+            steps: 2000,
+            model: customAir,
+          },
+          output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+        },
+      ],
+    },
+  };
+  const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+
+  it('is not refused for one blocked sibling in the ecosystem', async () => {
+    getWorkflow.mockResolvedValue(source);
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    const status = parseServiceStatus({ blockedModels: ['pony'] });
+    await expect(continueTraining(client, opts, { checkText, status })).resolves.toBe('wf-next');
+  });
+
+  it('is refused when its custom base itself is blocked', async () => {
+    getWorkflow.mockResolvedValue(source);
+    const status = parseServiceStatus({ blockedModels: [customAir] });
+    await expect(continueTraining(client, opts, { checkText, status })).rejects.toThrow(
+      'This custom model is blocked from training. Pick another.'
+    );
+  });
+});
+
+describe('the checkpoint a run actually trains', () => {
+  it('refuses a run naming no base when its ecosystem default (SDXL 1.0) is blocked', async () => {
+    submitWorkflow.mockClear();
+    const status = parseServiceStatus({ blockedModels: ['sdxl'] });
+    await expect(submitTrainingBatch(client, [baseRun()], { checkText, status })).rejects.toThrow(
+      /^SDXL.* is temporarily unavailable for training\.$/
+    );
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('lets a run pinned to a sibling base through while the default is blocked', async () => {
+    const illustrious = cardByType('illustrious')!.versions[0]!;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ill' } });
+    const status = parseServiceStatus({ blockedModels: ['sdxl'] });
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), model: illustrious.air }], { checkText, status })
+    ).resolves.toEqual({ workflowIds: ['wf-ill'] });
+  });
+
+  it('checks a custom base by its own AIR, even when the base it overrides is blocked', async () => {
+    const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
+    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
+    const blockedBase = parseServiceStatus({ blockedModels: ['sdxl'] });
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), customModel: customAir }], {
+        checkText,
+        status: blockedBase,
+      })
+    ).resolves.toEqual({ workflowIds: ['wf-custom'] });
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), customModel: customAir }], {
+        checkText,
+        status: parseServiceStatus({ blockedModels: [customAir] }),
+      })
+    ).rejects.toThrow('This custom model is blocked from training. Pick another.');
   });
 });

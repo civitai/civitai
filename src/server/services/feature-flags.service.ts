@@ -318,6 +318,15 @@ const featureFlags = createFeatureFlags({
   siteAppealForm: { availability: ['mod'], fliptKey: 'site-appeal-form' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
+  // Whether the Civitai Link button shows in the top nav. Separate from `civitaiLink`, which gates
+  // who can use Link at all; this one is the user's own opt-in.
+  civitaiLinkNav: {
+    toggleable: true,
+    default: false,
+    displayName: 'Civitai Link',
+    description: 'Show the Civitai Link button in the top navigation bar.',
+    availability: ['public'],
+  },
   imageTraining: { availability: ['user'] },
   videoTraining: { availability: ['public'] },
   aiToolkitSd15: { availability: ['public'], fliptKey: 'ai-toolkit-sd15' },

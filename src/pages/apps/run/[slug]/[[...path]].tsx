@@ -27,6 +27,7 @@ import {
   type HiddenMatureRating,
 } from '~/server/services/blocks/app-listing-store-gate';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
+import { APP_SURFACE_PARAM, resolveAppOpenSurface } from '~/shared/utils/app-store-telemetry';
 import { Page } from '~/components/AppLayout/Page';
 import {
   APPS_RUN_FROM_PARAM,
@@ -357,9 +358,15 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // resolver — the `undefined` is only in the type. Passing an explicit `null` tells the
     // Tracker "known anonymous" so it skips a second JWE decrypt, which is precisely the
     // anonymous case its constructor note calls out.
+    // `from` and `surface` are acquisition attribution: where the launch link was built. Both
+    // are parsed to closed values (`parseAppsRunOrigin` / `resolveAppOpenSurface`), so a
+    // hand-edited query string can mislabel its own row but cannot put text in it.
+    const subListingId = isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null;
     void recordAppListingOpen({
       appBlockId: page.appBlockId,
-      subListingId: isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null,
+      subListingId,
+      launchOrigin,
+      surface: resolveAppOpenSurface(ctx.query?.[APP_SURFACE_PARAM], !!subListingId),
       session: session ?? null,
       ctx,
     });
