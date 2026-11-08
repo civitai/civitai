@@ -572,8 +572,10 @@ describe('a model that is down', () => {
     blockedModelReasons: { [krea2.versions[0]!.key]: 'Provider outage.' },
   });
 
-  it('stays hidden while its rollout flag is off, blocked or not', () => {
-    expect(cardsForMedia('image', new Set()).map((c) => c.type)).not.toContain('krea2');
+  it('is neither offered nor marked unavailable while its rollout flag is off', () => {
+    const off = new Set<string>();
+    expect(cardsForMedia('image', off).map((c) => c.type)).not.toContain('krea2');
+    expect(cardUnavailability(krea2, off, blocked)).toBeNull();
   });
 
   it('shows as unavailable with its note when the flag is on, and blocks a selection on it', () => {
@@ -593,14 +595,17 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
   const klein = cardByType('flux2klein')!;
   const on = new Set([klein.flagKey!]);
 
-  it('does not block a custom base picked under a sibling that is up', () => {
+  it('checks a custom base by its own AIR, not the base it was picked under', () => {
     const status = parseServiceStatus({ blockedModels: ['pony'] });
     const custom = { ...newRun(illustrious, on), versionKey: CUSTOM_VERSION_KEY };
     const run = { ...custom, customAir: 'urn:air:sdxl:checkpoint:civitai:1@2' };
     expect(blockedSelectionMessage([run], status)).toBeNull();
     expect(
       blockedSelectionMessage([run], parseServiceStatus({ blockedModels: ['illustrious'] }))
-    ).toMatch(/^Illustrious is temporarily unavailable/);
+    ).toBeNull();
+    expect(
+      blockedSelectionMessage([run], parseServiceStatus({ blockedModels: [run.customAir] }))
+    ).toBe('This custom model is blocked from training. Pick another.');
   });
 
   it('starts a partly-down card on a version that is up', () => {

@@ -1,4 +1,4 @@
-import { versionsForRun } from '$lib/data/trainingModels';
+import { ecosystemDefaultVersion, findByAir, MODEL_CARDS } from '$lib/data/trainingModels';
 
 // The training service status the main app's moderators set (`training.setStatus`, stored in the sys
 // redis `training:status` hash field). `blockedModels` holds the main app's `trainingDetails.baseModel`
@@ -39,6 +39,23 @@ export function parseServiceStatus(raw: unknown): TrainingServiceStatus {
   };
 }
 
+const CATALOG_KEYS = new Set(MODEL_CARDS.flatMap((c) => c.versions.map((v) => v.key)));
+
+/** The status the browser gets: blocked catalog models and their notes only. Blocked custom-model AIRs
+ *  stay server-side, where the submit refuses them. */
+export function clientServiceStatus(status: TrainingServiceStatus): TrainingServiceStatus {
+  const blockedModels = status.blockedModels.filter((key) => CATALOG_KEYS.has(key));
+  return {
+    ...status,
+    blockedModels,
+    blockedModelReasons: Object.fromEntries(
+      blockedModels
+        .filter((key) => status.blockedModelReasons[key])
+        .map((key) => [key, status.blockedModelReasons[key]!])
+    ),
+  };
+}
+
 /** Whether a catalog key is down, and the note to show under "Temporarily unavailable". */
 export function modelUnavailability(
   status: TrainingServiceStatus | null | undefined,
@@ -63,17 +80,20 @@ export function blockedRunMessage(
   status: TrainingServiceStatus | null | undefined
 ): string | null {
   if (!status) return null;
-  if (run.customModel && status.blockedModels.includes(run.customModel))
-    return 'This custom model is blocked from training. Pick another.';
-  // A run with no catalog AIR matches every version on its ecosystem (a keep-training source that
-  // trained a custom base, say); it is refused only when all of them are down, so one blocked sibling
-  // in a shared ecosystem (sdxl: SDXL, Illustrious, Pony) does not block the rest.
-  const matches = versionsForRun(run);
-  const downs = matches.map(({ version }) => modelUnavailability(status, version.key));
-  if (matches.length === 0 || downs.some((d) => d === null)) return null;
-  const reason = downs[0]!.reason;
-  return `${matches[0]!.card.name} is ${UNAVAILABLE_LABEL.toLowerCase()} for training.${
-    reason ? ` ${reason}` : ''
+  // The checkpoint the run trains, as the submit sends it: a custom base wins over the pinned base AIR,
+  // and a run naming neither trains on the ecosystem's default base.
+  const trained = run.customModel || run.model;
+  const match = trained ? findByAir(trained) : ecosystemDefaultVersion(run);
+  if (!match) {
+    // Not a catalog checkpoint: a custom base, refused only when that AIR itself is blocked.
+    return trained && status.blockedModels.includes(trained)
+      ? 'This custom model is blocked from training. Pick another.'
+      : null;
+  }
+  const down = modelUnavailability(status, match.version.key);
+  if (!down) return null;
+  return `${match.card.name} is ${UNAVAILABLE_LABEL.toLowerCase()} for training.${
+    down.reason ? ` ${down.reason}` : ''
   }`;
 }
 

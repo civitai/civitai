@@ -963,3 +963,42 @@ describe('keep-training a custom-base run while a sibling model is down', () => 
     );
   });
 });
+
+describe('the checkpoint a run actually trains', () => {
+  it('refuses a run naming no base when its ecosystem default (SDXL 1.0) is blocked', async () => {
+    submitWorkflow.mockClear();
+    const status = parseServiceStatus({ blockedModels: ['sdxl'] });
+    await expect(submitTrainingBatch(client, [baseRun()], { checkText, status })).rejects.toThrow(
+      /^SDXL.* is temporarily unavailable for training\.$/
+    );
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('lets a run pinned to a sibling base through while the default is blocked', async () => {
+    const illustrious = cardByType('illustrious')!.versions[0]!;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ill' } });
+    const status = parseServiceStatus({ blockedModels: ['sdxl'] });
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), model: illustrious.air }], { checkText, status })
+    ).resolves.toEqual({ workflowIds: ['wf-ill'] });
+  });
+
+  it('checks a custom base by its own AIR, even when the base it overrides is blocked', async () => {
+    const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
+    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
+    const blockedBase = parseServiceStatus({ blockedModels: ['sdxl'] });
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), customModel: customAir }], {
+        checkText,
+        status: blockedBase,
+      })
+    ).resolves.toEqual({ workflowIds: ['wf-custom'] });
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), customModel: customAir }], {
+        checkText,
+        status: parseServiceStatus({ blockedModels: [customAir] }),
+      })
+    ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+});

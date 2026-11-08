@@ -943,26 +943,24 @@ export const editCards = (enabledFlags?: ReadonlySet<string>): ModelCard[] =>
     (c) => c.pairs && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
   );
 
-/** The catalog versions a run trains on: the one its base AIR names, else every version on its ecosystem,
- *  variant and version selector (a run naming no AIR trains on the ecosystem's default base). */
-export const versionsForRun = (run: {
+/** The catalog version an AI-Toolkit run names no base for trains on: the ecosystem's default base,
+ *  taken as the first catalog version on its ecosystem, variant and version selector (the catalog lists
+ *  each shared ecosystem's default card first: SDXL 1.0 before Illustrious and Pony). */
+export const ecosystemDefaultVersion = (run: {
   ecosystem: string;
   modelVariant?: string;
   version?: string;
-  model?: string;
-}): { card: ModelCard; version: ModelVersionInfo }[] => {
-  const byAir = run.model ? findByAir(run.model) : undefined;
-  if (byAir) return [byAir];
-  return MODEL_CARDS.flatMap((card) =>
-    card.versions
-      .filter(
-        (v) =>
-          v.ecosystem === run.ecosystem &&
-          (v.modelVariant || undefined) === (run.modelVariant || undefined) &&
-          (!run.version || !v.version || v.version === run.version)
-      )
-      .map((version) => ({ card, version }))
-  );
+}): { card: ModelCard; version: ModelVersionInfo } | undefined => {
+  for (const card of MODEL_CARDS) {
+    const version = card.versions.find(
+      (v) =>
+        v.ecosystem === run.ecosystem &&
+        (v.modelVariant || undefined) === (run.modelVariant || undefined) &&
+        (!run.version || !v.version || v.version === run.version)
+    );
+    if (version) return { card, version };
+  }
+  return undefined;
 };
 
 /** True when this AIR is the base of a retired card. */

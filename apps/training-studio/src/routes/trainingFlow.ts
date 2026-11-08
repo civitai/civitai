@@ -12,6 +12,7 @@ import {
   paramsForVersion,
   cardsForMedia,
   findByAir,
+  isCardVisible,
   visibleVersions,
   versionPriceKey,
   ecosystemTakesSampleImages,
@@ -147,6 +148,7 @@ export function cardUnavailability(
   enabledFlags: ReadonlySet<string>,
   status: TrainingServiceStatus | null | undefined
 ): { reason: string | null } | null {
+  if (!isCardVisible(card, enabledFlags)) return null;
   const downs = visibleVersions(card, enabledFlags).map((v) =>
     modelUnavailability(status, versionStatusKey(v))
   );

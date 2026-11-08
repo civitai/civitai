@@ -3,7 +3,10 @@ import { cardByType } from '$lib/data/trainingModels';
 import type { TrainingRunInput } from '$lib/train-core';
 
 // The server half must read the live training status on every submit, or a blocked model trains.
-const status = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+const status = vi.hoisted(() => ({
+  value: {} as Record<string, unknown>,
+  read: null as null | (() => Promise<string | null>),
+}));
 const submitWorkflow = vi.hoisted(() => vi.fn());
 const getWorkflow = vi.hoisted(() => vi.fn());
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
@@ -12,7 +15,9 @@ vi.mock('./orchestrator', () => ({ orchestratorClient: () => ({}) }));
 vi.mock('./signals', () => ({ workflowSignalCallbacks: () => [] }));
 vi.mock('./text-check', () => ({ requestTextCheck: () => async () => undefined }));
 vi.mock('./redis', () => ({
-  getSysRedis: () => ({ hGet: async () => JSON.stringify(status.value) }),
+  getSysRedis: () => ({
+    hGet: () => (status.read ? status.read() : Promise.resolve(JSON.stringify(status.value))),
+  }),
 }));
 vi.mock('@civitai/orchestration-client', () => ({
   Air: { isAir: () => false },
@@ -46,6 +51,7 @@ const run: TrainingRunInput = {
 
 describe('server submit reads the training status', () => {
   beforeEach(() => {
+    status.read = null;
     submitWorkflow.mockReset().mockResolvedValue({ data: { id: 'wf' } });
   });
 
@@ -74,6 +80,30 @@ describe('server submit reads the training status', () => {
       continueTraining('tok', 1, { workflowId: 'wf', fromEpoch: 10, addEpochs: 1 }, null)
     ).rejects.toThrow(/Krea 2 is temporarily unavailable/);
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses while training is switched off', async () => {
+    status.value = { available: false, message: 'Paused for maintenance.' };
+    await expect(submitTrainingBatch('tok', [run], 1, null)).rejects.toThrow(
+      'Paused for maintenance.'
+    );
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('still submits when the status read fails or times out', async () => {
+    status.read = () => Promise.reject(new Error('redis down'));
+    await expect(submitTrainingBatch('tok', [run], 1, null)).resolves.toEqual({
+      workflowIds: ['wf'],
+    });
+    vi.useFakeTimers();
+    try {
+      status.read = () => new Promise(() => {});
+      const pending = submitTrainingBatch('tok', [run], 1, null);
+      await vi.advanceTimersByTimeAsync(2500);
+      await expect(pending).resolves.toEqual({ workflowIds: ['wf'] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('submits when nothing is blocked', async () => {
