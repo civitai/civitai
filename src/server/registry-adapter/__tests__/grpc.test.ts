@@ -264,12 +264,13 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
     ['a number', 4.5, '0a130a0e0a01751201731a01722203342e35120163'],
     // `null`
     ['null', null, '0a140a0f0a01751201731a017222046e756c6c120163'],
-    // `{"a":[1,true,null],"b":"é"}`: key order kept, no spaces, `é` as UTF-8 (c3 a9)
+    // `{"b":"é","a":[1,true,null]}`: keys in the body's own order (not sorted, so a sorting
+    // encoder fails this), no spaces, `é` as UTF-8 (c3 a9)
     [
       'an object',
-      { a: [1, true, null], b: 'é' },
+      { b: 'é', a: [1, true, null] },
       '0a2c0a270a01751201731a0172221c' +
-        '7b2261223a5b312c747275652c6e756c6c5d2c2262223a22c3a9227d' +
+        '7b2262223a22c3a9222c2261223a5b312c747275652c6e756c6c5d7d' +
         '120163',
     ],
     // `[{"q":[]},"x"]`
@@ -325,19 +326,45 @@ describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', ()
           // no changes
         })(),
     });
-    const http = await viaHttp(one(), `/subscribe?schema=${encodeURIComponent(APPS)}`);
-    const [upserted] = http;
-    expect(upserted.type).toBe('upsert');
-    const body = (upserted as { entity: Entity }).entity.body;
-    expect(typeof body).toBe('object');
-    expect(body).toEqual(BODY);
-    // The gRPC bytes are exactly the JSON text of the body the HTTP frame carries.
-    const wire = encodeEvent(upserted);
-    const text = JSON.stringify(BODY);
-    expect(wire.includes(Buffer.from(text, 'utf8'))).toBe(true);
-    expect(text).toBe(
+    // HTTP: the raw SSE text, as the server wrote it.
+    httpServer = createRegistryServer(one());
+    await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve));
+    const { port: httpPort } = httpServer.address() as AddressInfo;
+    const sse = await (
+      await fetch(`http://127.0.0.1:${httpPort}/subscribe?schema=${encodeURIComponent(APPS)}`)
+    ).text();
+    const data = /^event: upsert\nid:.*\ndata: (.*)$/m.exec(sse)![1];
+    // The body is the entity's last field: its text runs to the entity's closing brace.
+    const bodyText = /"body":(.*)\},"cursor":""\}$/.exec(data)![1];
+    expect(bodyText).toBe(
       '{"slug":"alpha","stars":4.5,"listed":true,"retired":null,"tags":["a",1,{"q":[]}]}'
     );
+    // A JSON object, not a string holding one.
+    expect(typeof (JSON.parse(data) as { entity: { body: unknown } }).entity.body).toBe('object');
+
+    // gRPC: the raw bytes of each message, as the server sent them (no decoding).
+    const RawClient = grpc.makeGenericClientConstructor(
+      { Subscribe: { ...SOURCE_SERVICE.Subscribe, responseDeserialize: (b: Buffer) => b } },
+      'Source'
+    );
+    const server = createGrpcServer(one());
+    grpcServers.push(server);
+    const grpcPort = await listenGrpc(server, 0);
+    const client = new RawClient(`127.0.0.1:${grpcPort}`, grpc.credentials.createInsecure());
+    const messages = await new Promise<Buffer[]>((resolve, reject) => {
+      const out: Buffer[] = [];
+      const call = (
+        client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<Buffer>>
+      ).Subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '' });
+      call.on('data', (b: Buffer) => out.push(b));
+      call.on('end', () => resolve(out));
+      call.on('error', reject);
+    });
+    client.close();
+    // Entity.body (field 4, length-delimited): exactly the SSE body's text, byte for byte.
+    const text = Buffer.from(bodyText, 'utf8');
+    const field = Buffer.concat([Buffer.from([0x22, text.length]), text]);
+    expect(messages[0].includes(field)).toBe(true);
   });
 });
 
