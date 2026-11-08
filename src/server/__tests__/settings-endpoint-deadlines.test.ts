@@ -115,6 +115,13 @@ const invoke = (headers: Record<string, string> = { host: 'civitai.com' }) => {
   return { done, json };
 };
 
+// The warning throttle lives on globalThis and outlives each test; start every test without it.
+beforeEach(() => {
+  delete (globalThis as Record<symbol, unknown>)[
+    Symbol.for('civitai.settingsBootstrapLogThrottle')
+  ];
+});
+
 describe('/api/user/settings read deadlines', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -196,6 +203,59 @@ describe('/api/user/settings read deadlines', () => {
     expect(body.liveNow).toBe(false);
     // The member that did reply is unaffected.
     expect(body.settings).toEqual({ showNsfw: true });
+  });
+});
+
+describe('settings bootstrap deadline log', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h.session.mockResolvedValue(null);
+    h.contentSettings.mockResolvedValue({ showNsfw: true });
+    h.announcements.mockResolvedValue([]);
+    h.liveNow.mockReturnValue(new Promise(() => undefined));
+    h.follows.mockResolvedValue([]);
+    h.addons.mockResolvedValue([]);
+    h.navBanners.mockResolvedValue([]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  const liveNowDeadlines = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.filter(
+        ([data]) => data.name === 'settings bootstrap deadline' && data.member === 'getLiveNow'
+      );
+
+  it('goes to the default datastream', async () => {
+    const { json } = invoke();
+    await vi.runAllTimersAsync();
+    expect(json).toHaveBeenCalled();
+    expect(liveNowDeadlines()).toHaveLength(1);
+    expect(liveNowDeadlines()[0]).toHaveLength(1);
+  });
+
+  it('sends one event per member per minute and counts the rest on the next one', async () => {
+    for (let i = 0; i < 5; i++) {
+      invoke();
+      await vi.runAllTimersAsync();
+    }
+    expect(liveNowDeadlines()).toHaveLength(1);
+    expect(liveNowDeadlines()[0][0]).not.toHaveProperty('suppressed');
+
+    vi.setSystemTime(Date.now() + 60_000);
+    invoke();
+    await vi.runAllTimersAsync();
+    expect(liveNowDeadlines()).toHaveLength(2);
+    expect(liveNowDeadlines()[1][0]).toMatchObject({ member: 'getLiveNow', suppressed: 4 });
+
+    vi.setSystemTime(Date.now() + 60_000);
+    invoke();
+    await vi.runAllTimersAsync();
+    expect(liveNowDeadlines()).toHaveLength(3);
+    expect(liveNowDeadlines()[2][0]).not.toHaveProperty('suppressed');
   });
 });
 
@@ -381,15 +441,12 @@ describe('settings bootstrap during a server render', () => {
     await expect(
       resolveSettingsBootstrapForRender(pageRequest() as unknown as RenderRequest)
     ).rejects.toThrow(/^settings bootstrap failed: Error P1001$/);
-    // …while the full reason is kept in the structured log.
-    expect(logToAxiom).toHaveBeenCalledWith(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: 'connect ECONNREFUSED db.internal.example:5432',
-      },
-      'settings'
-    );
+    // …while the full reason goes to the structured log.
+    expect(logToAxiom).toHaveBeenCalledWith({
+      type: 'warning',
+      name: 'settings bootstrap failed',
+      message: 'connect ECONNREFUSED db.internal.example:5432',
+    });
 
     const { done, json } = invoke();
     await vi.runAllTimersAsync();

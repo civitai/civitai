@@ -32,6 +32,31 @@ type AuthArgs = Parameters<typeof getServerAuthSession>[0];
 /** What the route answers with, and what a server render is seeded from. */
 export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
 
+const LOG_WINDOW_MS = 60_000;
+
+// globalThis-pinned: the bundler emits this module several times per build, and per-copy maps
+// would multiply the bound.
+const LOG_THROTTLE = Symbol.for('civitai.settingsBootstrapLogThrottle');
+type LogThrottle = Map<string, { at: number; suppressed: number }>;
+
+/**
+ * At most one event per key per process per minute, so a hung dependency logs once a minute rather
+ * than once per render. `suppressed` counts the events dropped since the previous one sent.
+ */
+function logBootstrapWarning(key: string, data: MixedObject) {
+  const g = globalThis as typeof globalThis & { [LOG_THROTTLE]?: LogThrottle };
+  const throttle = (g[LOG_THROTTLE] ??= new Map());
+  const now = Date.now();
+  const last = throttle.get(key);
+  // A clock that moved backwards opens a new window rather than suppressing until it catches up.
+  if (last && now >= last.at && now - last.at < LOG_WINDOW_MS) {
+    last.suppressed++;
+    return;
+  }
+  throttle.set(key, { at: now, suppressed: 0 });
+  logToAxiom(last?.suppressed ? { ...data, suppressed: last.suppressed } : data).catch();
+}
+
 /**
  * A member that never replies would pin every page on it, and a `.catch` cannot answer a
  * parked read — only a deadline can. Timing out is reported, not swallowed: the incident this
@@ -40,16 +65,13 @@ export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
 function settle<T, F>(promise: Promise<T>, fallback: F, member: string): Promise<T | F> {
   const timeoutMs = env.SETTINGS_READ_DEADLINE_MS;
   return withTimeoutFallback<T | F>(promise, timeoutMs, fallback, () => {
-    logToAxiom(
-      {
-        type: 'warning',
-        name: 'settings bootstrap deadline',
-        message: `${member} exceeded ${timeoutMs}ms`,
-        member,
-        timeoutMs,
-      },
-      'settings'
-    ).catch();
+    logBootstrapWarning(`deadline:${member}`, {
+      type: 'warning',
+      name: 'settings bootstrap deadline',
+      message: `${member} exceeded ${timeoutMs}ms`,
+      member,
+      timeoutMs,
+    });
   }).catch(() => fallback);
 }
 
@@ -288,19 +310,16 @@ export async function resolveSettingsBootstrapForRender(
   // `_app` interpolates the rejection's message into its `console.warn` marker line. Over HTTP the
   // route's own catch swallowed these, so a raw message never reached that line; database clients
   // put connection details in theirs, so only the name and code travel there. The full message
-  // goes through the structured logger instead — the sink the deadline warning above and the
-  // central error handlers use (it writes its own JSON line too) — so the reason is recoverable.
+  // goes to the structured log instead, at most once a minute per process (the rest are counted
+  // in `suppressed`).
   const bootstrap = resolveSettingsBootstrap({ req, res }).catch((e: unknown) => {
     const code = (e as { code?: unknown } | null)?.code;
     const name = e instanceof Error ? e.name : 'unknown';
-    logToAxiom(
-      {
-        type: 'warning',
-        name: 'settings bootstrap failed',
-        message: e instanceof Error ? e.message : String(e),
-      },
-      'settings'
-    ).catch();
+    logBootstrapWarning('failed', {
+      type: 'warning',
+      name: 'settings bootstrap failed',
+      message: e instanceof Error ? e.message : String(e),
+    });
     throw new Error(
       `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
         .filter(Boolean)
