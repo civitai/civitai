@@ -424,6 +424,16 @@ export function cardFromPrice(
   return cardBaseQuote(prices, cardType) ?? null;
 }
 
+/** One run's "from" quote: its own version's, where the sweep quoted it, else the card's. */
+function runFromPrice(prices: Record<string, number>, run: Run): number | null {
+  const card = cardByType(run.cardType);
+  const own =
+    card && run.versionKey !== card.versions[0]?.key
+      ? prices[versionPriceKey(run.cardType, run.versionKey)]
+      : undefined;
+  return own ?? cardFromPrice(prices, run.cardType);
+}
+
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced (callers show "—").
  *  The pre-Review estimate on Select AND Data: the "from" quote is a whatif with no `steps`, so the
  *  orchestrator already priced each card at its own default budget — which is exactly what the
@@ -433,7 +443,7 @@ export function cardFromPrice(
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
-    const runPrice = cardFromPrice(prices, run.cardType);
+    const runPrice = runFromPrice(prices, run);
     if (runPrice == null) return null;
     sum += runPrice;
   }

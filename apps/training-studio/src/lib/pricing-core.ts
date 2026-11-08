@@ -1,7 +1,12 @@
 // Client-safe "from"-price sweep: one whatif per catalog card against a provided client. The shell
 // wraps it in a global redis cache (lib/server/pricing.ts); the web-component backend runs it
 // browser-side, uncached.
-import { MODEL_CARDS, versionPriceKey, type FromPrices } from '$lib/data/trainingModels';
+import {
+  MODEL_CARDS,
+  firstPickVersions,
+  versionPriceKey,
+  type FromPrices,
+} from '$lib/data/trainingModels';
 import { pool } from '$lib/pool';
 import { trainingWhatIf, type OrchestratorClient } from './orchestrator-core';
 
@@ -9,21 +14,22 @@ import { trainingWhatIf, type OrchestratorClient } from './orchestrator-core';
 // without hammering the orchestrator with ~20 at once.
 const WHATIF_CONCURRENCY = 4;
 
+/** What the sweep quotes: each card's first version under the card type, plus every later version that
+ *  can be a viewer's first pick under `versionPriceKey` (`cardFromPrice` reads them back). */
+export const fromPriceQuotes = () =>
+  MODEL_CARDS.flatMap((card) =>
+    firstPickVersions(card).map((version, i) => ({
+      key: i === 0 ? card.type : versionPriceKey(card.type, version.key),
+      version,
+    }))
+  );
+
 /** Per-card "from" prices via live whatif quotes. PARTIAL — a model the orchestrator can't price is
  *  absent (shown as "—"); one model's failure never blanks the rest. */
 export async function computeFromPrices(client: OrchestratorClient): Promise<FromPrices> {
   const prices: FromPrices = {};
   const unpriced: string[] = [];
-  // Each card's first version, plus every later version that can be a viewer's first pick (all before
-  // it gated): `cardFromPrice` prices a viewer who can't see the first version by that one.
-  const quotes = MODEL_CARDS.flatMap((card) =>
-    card.versions
-      .filter((_, i) => card.versions.slice(0, i).every((p) => p.flagKey))
-      .map((version, i) => ({
-        key: i === 0 ? card.type : versionPriceKey(card.type, version.key),
-        version,
-      }))
-  );
+  const quotes = fromPriceQuotes();
   await pool(quotes, WHATIF_CONCURRENCY, async ({ key, version }) => {
     try {
       const cost = await trainingWhatIf(client, {

@@ -899,6 +899,11 @@ export const visibleVersions = (
 ): ModelVersionInfo[] =>
   enabledFlags ? card.versions.filter((v) => isGateOpen(v.flagKey, enabledFlags)) : card.versions;
 
+/** The card's versions that are some viewer's first visible pick: the first, and each later one whose
+ *  predecessors are all gated. Exactly the versions `visibleVersions(...)[0]` can return. */
+export const firstPickVersions = (card: ModelCard): ModelVersionInfo[] =>
+  card.versions.filter((_, i) => card.versions.slice(0, i).every((v) => !!v.flagKey));
+
 /** A card is visible when its own `flagKey` (if any) is enabled for the viewer and at least one of its
  *  versions is. */
 export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
@@ -1652,8 +1657,8 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
  * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
 export type FromPrices = Record<string, number>;
 
-/** The `FromPrices` key for a later version of a card, quoted when every version before it is gated, so a
- *  viewer who can't see a card's first version is priced by the first one they can pick. */
+/** The `FromPrices` key for a later version of a card in `firstPickVersions`, so a viewer who can't see a
+ *  card's first version is priced by the first one they can pick. */
 export const versionPriceKey = (cardType: string, versionKey: string): string =>
   `${cardType}/${versionKey}`;
 
