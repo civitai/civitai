@@ -8,7 +8,12 @@ import { deleteImageRows, finishImageDeletes } from './image-deletion';
 import { syncSearchIndex } from './search-index';
 import { logToAxiom } from './axiom';
 import type { KeptImage } from '$lib/image-kept-reasons';
-import { ArticleStatus, restoreStatus, type ArticleMetadata } from '$lib/articles';
+import {
+  ArticleStatus,
+  canRestoreArticle,
+  restoreStatus,
+  type ArticleMetadata,
+} from '$lib/articles';
 import type { ArticleUnpublishReason } from '$lib/article-unpublish-reasons';
 
 type ModerateResult = { ok: true; kept?: KeptImage[] } | { ok: false; error: string };
@@ -179,6 +184,8 @@ async function restoreArticle(id: number): Promise<void> {
     if (!article) throw new Error(`No article with id ${id}`);
     if (!UNPUBLISHED.includes(article.status as ArticleStatus))
       throw new Error('Article is not unpublished');
+    if (!canRestoreArticle({ ...article, metadata: article.metadata as ArticleMetadata }))
+      throw new Error('The author unpublished this article; only they can republish it.');
 
     const meta = { ...((article.metadata as ArticleMetadata) ?? {}) } as Record<string, unknown>;
     delete meta.unpublishedReason;
@@ -198,6 +205,8 @@ async function restoreArticle(id: number): Promise<void> {
             ? article.publishedAt ?? new Date()
             : article.publishedAt,
         metadata: sql`${JSON.stringify(meta)}::jsonb`,
+        // The author schedules it again: one that lapsed while it was blocked would go live at once.
+        ...(status === ArticleStatus.Draft ? { scheduledAt: null } : {}),
       })
       .where('id', '=', id)
       .execute();

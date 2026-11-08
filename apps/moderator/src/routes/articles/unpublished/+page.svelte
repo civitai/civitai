@@ -21,6 +21,7 @@
     articleStatusFilters,
     articleStatusBadge,
     articleUrl,
+    canRestoreArticle,
   } from '$lib/articles';
   import { articleUnpublishReasonLabel } from '$lib/article-unpublish-reasons';
   import { userUrl } from '$lib/entity-url';
@@ -147,10 +148,12 @@
             </a>
 
             <div class="ml-auto flex shrink-0 items-center gap-2">
-              <form method="POST" action="?/restore" use:enhance>
-                <input type="hidden" name="id" value={article.id} />
-                <Button type="submit" size="sm" variant="outline">Restore</Button>
-              </form>
+              {#if canRestoreArticle(article)}
+                <form method="POST" action="?/restore" use:enhance>
+                  <input type="hidden" name="id" value={article.id} />
+                  <Button type="submit" size="sm" variant="outline">Restore</Button>
+                </form>
+              {/if}
               <form method="POST" action="?/delete" use:enhance={confirmDelete}>
                 <input type="hidden" name="id" value={article.id} />
                 <Button type="submit" size="sm" variant="destructive">Delete</Button>
