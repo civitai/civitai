@@ -13,7 +13,7 @@ import type {
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type { RateLimit } from '~/server/utils/rate-limit-window';
+import { usageLimits, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
   assertCivitaiMediaUrls,
@@ -41,12 +41,12 @@ const CAPTION_TEMPERATURE = 0.7;
  *  (1,133 on 2026-10-26), rounded up. */
 export const STUDIO_AUTO_LABEL_DAILY_ITEMS = 1200;
 /** Per-minute limits on `training.studioAutoLabelSubmit` / `studioAutoLabelPoll` and the standalone
- *  Studio's REST endpoint. `key` names the bucket (each procedure's tRPC path with `:`), so both
- *  surfaces share one quota per user. */
+ *  Studio's REST endpoint, from the usage-limit registry. `key` names the bucket (each procedure's
+ *  tRPC path with `:`), so both surfaces share one quota per user. */
 export const STUDIO_AUTO_LABEL_RATE_LIMITS = {
-  submit: { key: 'training:studioAutoLabelSubmit', rules: [{ limit: 100, period: 60 }] },
-  poll: { key: 'training:studioAutoLabelPoll', rules: [{ limit: 1500, period: 60 }] },
-} satisfies Record<string, { key: string; rules: RateLimit[] }>;
+  submit: { key: 'training:studioAutoLabelSubmit', rules: usageLimits('auto-label.submit') },
+  poll: { key: 'training:studioAutoLabelPoll', rules: usageLimits('auto-label.poll') },
+} satisfies Record<string, { key: string; rules: UsageLimitRef }>;
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 type StudioAutoLabelMetadata = { kind: 'studio-auto-label'; userId: number };
