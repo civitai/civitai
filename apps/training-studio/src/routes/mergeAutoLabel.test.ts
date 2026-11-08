@@ -36,6 +36,23 @@ describe('mergeAutoLabel — caption format (the label is free text)', () => {
     expect(out.caption).toBe('1girl, solo\nA woman stands.');
   });
 
+  it('appends a result that is only part of an existing line', () => {
+    const img = { tags: [], caption: 'a woman stands in a field' };
+    const out = mergeAutoLabel(img, { caption: 'a woman' }, 'caption', 'after', none);
+    expect(out.caption).toBe('a woman stands in a field\na woman');
+  });
+
+  it('keeps the label when the result is empty', () => {
+    expect(mergeAutoLabel(captioned, { caption: '  ' }, 'caption', 'after', none).caption).toBe(
+      captioned.caption
+    );
+  });
+
+  it('replaces the caption with tagger output joined as text', () => {
+    const out = mergeAutoLabel(captioned, { tags: ['1girl', 'solo'] }, 'caption', 'replace', none);
+    expect(out.caption).toBe('1girl, solo');
+  });
+
   it('replace overwrites', () => {
     const out = mergeAutoLabel(captioned, { caption: 'New.' }, 'caption', 'replace', none);
     expect(out.caption).toBe('New.');

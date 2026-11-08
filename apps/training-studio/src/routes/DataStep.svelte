@@ -649,9 +649,7 @@
     Object.assign(img, mergeAutoLabel(img, r, labelMode, position, excludedSet));
   }
 
-  // "Label all": the tagger or the captioner over every uploaded image, merged into the labels they
-  // already have — a dataset that arrived with tags can gain captions, or the reverse. It takes the
-  // drain's slot, so neither starts while the other runs; the drain resumes after.
+  // Shares labelController with the drain, so neither starts while the other runs; the drain resumes after.
   type LabelAllPolicy = LabelPosition | 'skip';
   let labelAllChoice = $state<LabelType | null>(null);
   // WD tagging reads pixels; audio datasets only have the captioner.
@@ -705,7 +703,7 @@
       }
     }
     if (controller.signal.aborted) return;
-    // A refused or failed run must say so — the daily limit and the per-image cap both land here.
+    // Daily-limit and per-image-cap refusals arrive as failed results.
     if (failed > 0)
       labelAllNotice = `${plural(failed, 'image')} not labeled${reason ? `: ${reason}` : ' — use Re-run in the editor.'}`;
     void maybeAutoLabel();

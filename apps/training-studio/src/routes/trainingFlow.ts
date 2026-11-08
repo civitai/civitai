@@ -711,8 +711,9 @@ export function mergeAutoLabel(
   const existing = img.caption.trim();
   if (!incoming) return { tags: img.tags, caption: img.caption };
   if (position === 'replace' || !existing) return { tags: img.tags, caption: incoming };
-  // A retry of the same run must not stack a second copy.
-  if (existing.includes(incoming)) return { tags: img.tags, caption: img.caption };
+  // A retry must not stack a second copy. Whole lines: a new result may be a substring of an old one.
+  if (`\n${existing}\n`.includes(`\n${incoming}\n`))
+    return { tags: img.tags, caption: img.caption };
   const caption = position === 'after' ? `${existing}\n${incoming}` : `${incoming}\n${existing}`;
   return { tags: img.tags, caption };
 }
