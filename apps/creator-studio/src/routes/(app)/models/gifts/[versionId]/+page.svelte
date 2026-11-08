@@ -8,6 +8,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { civitaiUrl } from '$lib/model-url';
+  import ClaimsList from './ClaimsList.svelte';
   import CreatedCodes from './CreatedCodes.svelte';
   import { batchStatus, endOfLocalDay, linkStatus } from '../gift-links';
   import type { ActionData, PageData } from './$types';
@@ -167,6 +168,9 @@
                 />
               </form>
             {/if}
+            {#if link.redemptionCount > 0}
+              <ClaimsList versionId={data.version.id} target={{ giftId: link.id }} />
+            {/if}
           </li>
         {/each}
         {#each data.gifts.batches as batch (`b${batch.batchId}`)}
@@ -189,6 +193,9 @@
                   disabled={!!pending}
                 />
               </form>
+            {/if}
+            {#if batch.claimed > 0}
+              <ClaimsList versionId={data.version.id} target={{ batchId: batch.batchId }} />
             {/if}
           </li>
         {/each}
