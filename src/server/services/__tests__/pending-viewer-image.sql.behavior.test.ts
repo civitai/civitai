@@ -1,7 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { pendingOthersImageConditions } from '~/server/common/image-visibility';
+import {
+  pendingLevelImageSql,
+  pendingOthersImageConditions,
+} from '~/server/common/image-visibility';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 
 // The `pending` filters a signed-in non-moderator's image reads apply, run as SQL over seeded rows.
@@ -138,5 +141,30 @@ describe("the per-image conditions on another user's pending images", () => {
     expect(await passOthersConditions(UPLOADER)).toEqual([
       1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 30,
     ]);
+  });
+});
+
+const passLevel = async (userId: number, ids: number[]) => {
+  const sql = Prisma.sql`SELECT i.id FROM "Image" i
+    WHERE i.id IN (${Prisma.join(ids)}) AND ${pendingLevelImageSql(userId, PG)} ORDER BY i.id`;
+  return (await db.query<{ id: number }>(sql.text, sql.values)).rows.map((r) => r.id);
+};
+
+describe('the level check on a pending image read', () => {
+  it('keeps an image rated within the level, for anyone', async () => {
+    expect(await passLevel(STRANGER, [2])).toEqual([2]);
+  });
+
+  it("keeps the viewer's own unrated image", async () => {
+    expect(await passLevel(UPLOADER, [11])).toEqual([11]);
+  });
+
+  it("drops another user's unrated image", async () => {
+    expect(await passLevel(STRANGER, [11])).toEqual([]);
+  });
+
+  it("drops an image rated outside the level, even the owner's", async () => {
+    expect(await passLevel(STRANGER, [10])).toEqual([]);
+    expect(await passLevel(UPLOADER, [10])).toEqual([]);
   });
 });

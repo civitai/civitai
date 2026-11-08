@@ -75,6 +75,14 @@ export const pendingOthersImageConditions = (
 ];
 
 /**
+ * The level check a signed-in non-moderator's `pending` read applies alongside
+ * `pendingOthersImageConditions`, over `Image` aliased `i`: rated within `browsingLevel`, or unrated
+ * and the viewer's own.
+ */
+export const pendingLevelImageSql = (userId: number, browsingLevel: number) =>
+  Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`;
+
+/**
  * TS twin of `imageReviewedSql`, for rows already fetched. Kept next to it
  * deliberately: the rule is one decision with two encodings, and they have to
  * move together.

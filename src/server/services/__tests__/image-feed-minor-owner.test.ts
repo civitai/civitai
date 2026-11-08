@@ -13,16 +13,23 @@ import type * as ImageVisibility from '~/server/common/image-visibility';
 // Mock recipe follows image-db-unpublished-authorization.test.ts and
 // image-search-scheduled-owner.test.ts.
 
-const { queryWithTimeoutMock, fetchDocumentsAbortableMock, pendingOthersMock } = vi.hoisted(() => ({
-  queryWithTimeoutMock: vi.fn(),
-  fetchDocumentsAbortableMock: vi.fn(),
-  pendingOthersMock: vi.fn(),
-}));
+const { queryWithTimeoutMock, fetchDocumentsAbortableMock, pendingOthersMock, pendingLevelMock } =
+  vi.hoisted(() => ({
+    queryWithTimeoutMock: vi.fn(),
+    fetchDocumentsAbortableMock: vi.fn(),
+    pendingOthersMock: vi.fn(),
+    pendingLevelMock: vi.fn(),
+  }));
 
 vi.mock('~/server/common/image-visibility', async (importOriginal) => {
   const actual = await importOriginal<typeof ImageVisibility>();
   pendingOthersMock.mockImplementation(actual.pendingOthersImageConditions);
-  return { ...actual, pendingOthersImageConditions: pendingOthersMock };
+  pendingLevelMock.mockImplementation(actual.pendingLevelImageSql);
+  return {
+    ...actual,
+    pendingOthersImageConditions: pendingOthersMock,
+    pendingLevelImageSql: pendingLevelMock,
+  };
 });
 
 vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
@@ -213,16 +220,23 @@ describe.each([
       }),
   ],
 ] as const)('%s pending read', (name, read) => {
-  let restore: ReturnType<typeof pendingOthersMock.getMockImplementation>;
+  let restoreOthers: ReturnType<typeof pendingOthersMock.getMockImplementation>;
+  let restoreLevel: ReturnType<typeof pendingLevelMock.getMockImplementation>;
   beforeEach(() => {
-    restore = pendingOthersMock.getMockImplementation();
+    restoreOthers = pendingOthersMock.getMockImplementation();
+    restoreLevel = pendingLevelMock.getMockImplementation();
     pendingOthersMock.mockClear();
+    pendingLevelMock.mockClear();
     pendingOthersMock.mockImplementation((userId: number) => [
       Prisma.sql`pending_others_marker(${userId})`,
     ]);
+    pendingLevelMock.mockImplementation(
+      (userId: number, level: number) => Prisma.sql`pending_level_marker(${userId}, ${level})`
+    );
   });
   afterEach(() => {
-    pendingOthersMock.mockImplementation(restore!);
+    pendingOthersMock.mockImplementation(restoreOthers!);
+    pendingLevelMock.mockImplementation(restoreLevel!);
   });
 
   async function pendingStatement(isModerator = false) {
@@ -237,16 +251,23 @@ describe.each([
       : (first as Prisma.Sql);
   }
 
-  it('applies the per-image conditions for a signed-in non-moderator, bound to the viewer', async () => {
+  it('applies the per-image conditions and the level check for a signed-in non-moderator, bound to the viewer', async () => {
     const stmt = await pendingStatement();
-    const m = stmt.text.match(/pending_others_marker\(\$(\d+)\)/);
-    expect(m, 'the conditions are not in the read').not.toBeNull();
-    expect(stmt.values[Number(m![1]) - 1]).toBe(STRANGER);
+    const others = stmt.text.match(/pending_others_marker\(\$(\d+)\)/);
+    expect(others, 'the conditions are not in the read').not.toBeNull();
+    expect(stmt.values[Number(others![1]) - 1]).toBe(STRANGER);
+    const level = stmt.text.match(/pending_level_marker\(\$(\d+), \$(\d+)\)/);
+    expect(level, 'the level check is not in the read').not.toBeNull();
+    expect(stmt.values[Number(level![1]) - 1]).toBe(STRANGER);
+    expect(stmt.values[Number(level![2]) - 1]).toBe(1);
+    expect(pendingOthersMock).toHaveBeenCalledTimes(1);
+    expect(pendingLevelMock).toHaveBeenCalledTimes(1);
   });
 
   it("gives a moderator's pending read the level check but not the per-image conditions", async () => {
     const stmt = await pendingStatement(true);
     expect(stmt.text).not.toContain('pending_others_marker');
+    expect(stmt.text).not.toContain('pending_level_marker');
     // A moderator's pending read still checks the level.
     expect(stmt.text).toMatch(/\(\(i\."nsfwLevel" & \$\d+\) != 0 OR i\."nsfwLevel" = 0\)/);
   });

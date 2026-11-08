@@ -161,6 +161,7 @@ describe("a collection review's image read", () => {
     withMarker();
     const stmt = await statementFor({ id: REVIEWER }, { pending: true });
     expect(markerViewer(stmt)).toBe(REVIEWER);
+    expect(pendingViewerMock).toHaveBeenCalledTimes(1);
     expect(pendingViewerMock).toHaveBeenCalledWith({
       userId: REVIEWER,
       browsingLevel: 31,
