@@ -90,8 +90,7 @@ export async function claimRateLimitAttempt({
   user: SessionUser | undefined;
   req: NextApiRequest;
 }): Promise<() => Promise<void>> {
-  // Preview runs on the shared dev DB with a small set of CI smoke accounts, so per-account daily
-  // quotas (e.g. the new-post limit) get exhausted across many PR runs — see civitai#2592.
+  // Preview shares a dev DB with a few CI smoke accounts; daily quotas exhaust across PR runs (civitai#2592).
   if (user?.isModerator || isDev || isTest || isPreview) return async () => undefined;
 
   const validLimits = selectRateLimitRules(rules, user);
@@ -113,16 +112,21 @@ export async function claimRateLimitAttempt({
     attempts.push(Date.now());
     const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
-    // Fail-open (PR #2332): a throw during a sysRedis failover would otherwise 500 every rate-limited
-    // call. The request goes through and the window under-counts it until the next good write; a
-    // sustained spike on `rate-limit-write-degraded` means the limits are effectively off.
+    // Fail-open: a sysRedis failover would otherwise 500 every rate-limited call; the window
+    // under-counts until the next good write. A sustained rate-limit-write-degraded spike means
+    // limits are effectively off.
     try {
       await hSetWithTTL(redis, cacheKey, hashKey, pack(updatedAttempts), CacheTTL.day * 1000);
     } catch (error) {
-      logSysRedisFailOpen('rate-limit-write-degraded', 'middleware.trpc.recordAttempt', error, {
-        cacheKey,
-        hashKey,
-      });
+      logSysRedisFailOpen(
+        'rate-limit-write-degraded',
+        'rate-limit-bucket.claimRateLimitAttempt',
+        error,
+        {
+          cacheKey,
+          hashKey,
+        }
+      );
     }
   };
 }

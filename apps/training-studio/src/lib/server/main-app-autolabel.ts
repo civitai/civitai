@@ -77,8 +77,8 @@ export async function mainAppAutoLabelSubmit(
   fail('submit', userId, status, reasonOf(body));
 }
 
-/** Poll one workflow. The main app answers another user's workflow as 404, passed through. A poll
- *  failure has no cap slot to return, so the dev preview's 503 here carries no code. */
+/** Poll one workflow. Another user's workflow answers 404 from the main app, passed through. A poll
+ *  has no cap slot to return, so the 503 carries no code. */
 export async function mainAppAutoLabelPoll(
   cookie: string | null,
   userId: number,

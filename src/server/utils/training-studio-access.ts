@@ -58,10 +58,9 @@ export async function allowTrainingStudio(
 }
 
 /**
- * Whether this user is in the standalone Training Studio's closed beta, decided as that app decides it
- * (apps/training-studio/src/lib/server/flipt.ts): the Flipt segment when the flag can be evaluated,
- * moderators otherwise. For main-app endpoints only the standalone
- * Studio calls, which a session could otherwise reach directly.
+ * Closed-beta check for main-app endpoints only the standalone Studio calls but any session could
+ * reach. Mirrors apps/training-studio/src/lib/server/flipt.ts: the Flipt segment when evaluable, else
+ * moderators.
  */
 export async function isStandaloneStudioAllowed(user: SessionUser): Promise<boolean> {
   try {

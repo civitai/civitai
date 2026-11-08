@@ -94,14 +94,9 @@ describe('/api/training-studio/auto-label', () => {
 
   // The embed's procedures key their buckets on these names, so both surfaces share one quota.
   it.each([
-    ['submit', { method: 'POST', body: submitBody }, 'training:studioAutoLabelSubmit', 100],
-    [
-      'poll',
-      { method: 'GET', query: { workflowId: 'wf-1' } },
-      'training:studioAutoLabelPoll',
-      1500,
-    ],
-  ])("draws a %s from the embed procedure's bucket", async (_l, req, keyName, limit) => {
+    ['submit', { method: 'POST', body: submitBody }, 'training:studioAutoLabelSubmit'],
+    ['poll', { method: 'GET', query: { workflowId: 'wf-1' } }, 'training:studioAutoLabelPoll'],
+  ])("draws a %s from the embed procedure's bucket", async (_l, req, keyName) => {
     await call(req);
     expect(limiter.claim).toHaveBeenCalledWith(
       expect.objectContaining({ keyName, user: { id: 7 } })

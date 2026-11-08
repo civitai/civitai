@@ -1,5 +1,6 @@
-// Client-safe auto-label step builders + poll mapping, against a provided SDK client. The shell's
-// server routes wrap these (lib/server/autolabel.ts); the web-component backend calls them directly.
+// Auto-label types, plus step builders and poll mapping against a provided SDK client. Only the types
+// have callers: the shell's routes call the main app (lib/server/main-app-autolabel.ts), whose
+// service mirrors these step shapes.
 import {
   getWorkflow,
   submitWorkflow,

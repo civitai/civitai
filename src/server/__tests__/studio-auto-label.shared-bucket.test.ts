@@ -49,7 +49,7 @@ const user = { id: 7, isModerator: false } as never;
 const req = { headers: {}, socket: { remoteAddress: '10.0.0.1' } } as unknown as NextApiRequest;
 
 // The procedures in training.router.ts rate-limit with STUDIO_AUTO_LABEL_RATE_LIMITS (rules and
-// sharedKey); that wiring is not tested here. Their paths: the bucket key they had before.
+// sharedKey); that wiring is tested in training.router.studio-auto-label-limit.test.ts.
 const PROCEDURE_PATHS = {
   submit: 'training.studioAutoLabelSubmit',
   poll: 'training.studioAutoLabelPoll',
