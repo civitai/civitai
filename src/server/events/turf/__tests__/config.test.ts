@@ -85,6 +85,8 @@ describe('applyTurfOverride: sticker lifetime and team-relative credit', () => {
     ['a rollout of 0', { rolloutAt: 0 }],
     ['a rollout of "0"', { rolloutAt: '0' }],
     ['a rollout that is only a year', { rolloutAt: '2026' }],
+    // Deliberate: a lifetime with no rollout would expire every older sticker at once.
+    ['a lifetime with no rollout', { rolloutAt: undefined }],
     [
       'a credit catch-up min above 1',
       { creditedCatchUp: [{ from: '2026-11-08T12:00:00Z', max: 2, min: 1.5, gap: 0.25 }] },

@@ -215,7 +215,9 @@ const stockOf = async (userId: number) =>
       userId,
     ])
   ).rows[0]?.stock;
-const ttl = (extra: Record<string, unknown> = {}) => JSON.stringify({ ttlHours: 48, ...extra });
+// A rollout long past, so each sticker's own placement time decides (the override needs one).
+const ttl = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ ttlHours: 48, rolloutAt: '2026-01-01T00:00:00Z', ...extra });
 
 describe('Hat Turf sticker lifetime', () => {
   // Pink's sticker went on first, so with both counting Pink leads a 1-1 image.

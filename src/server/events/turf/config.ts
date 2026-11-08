@@ -79,7 +79,11 @@ const overrideSchema = z
   })
   // Not strict: a key this build no longer knows (one an older build read) is dropped, rather than
   // failing the whole override and silently reverting every field to the event file.
-  .partial();
+  .partial()
+  // Without rolloutAt, turning ttlHours on would expire every sticker older than ttlHours at once.
+  .refine((o) => o.ttlHours === undefined || o.rolloutAt !== undefined, {
+    message: 'ttlHours needs rolloutAt',
+  });
 
 /**
  * The event file's config with the live override applied. An override that does not parse is

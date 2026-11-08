@@ -74,6 +74,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             getStock: { invalidate: h.invalidate },
             getSummaries: { invalidate: h.invalidate },
             getStickersForImages: { invalidate: h.invalidate },
+            getImageStickers: { invalidate: h.invalidate },
           },
         }),
       }
@@ -566,6 +567,14 @@ describe("the viewer's own hat says how long it keeps counting", () => {
     renderHats([hat(2), hat(1)]);
     await vi.waitFor(() => expect(timeLeft()).toHaveLength(1));
     expect(timeLeft()[0].textContent).toBe('45h left');
+  });
+
+  test('an own hat past its lifetime shows nothing and rereads the hats', async () => {
+    h.stock = { ...h.stock, expiry: { ttlHours: 2, rolloutAt: null } };
+    h.invalidate.mockClear();
+    renderHats([hat(1)]);
+    await vi.waitFor(() => expect(h.invalidate).toHaveBeenCalled());
+    expect(timeLeft()).toHaveLength(0);
   });
 
   test('nothing while hats do not expire', async () => {
