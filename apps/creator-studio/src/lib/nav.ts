@@ -9,6 +9,7 @@ import {
   IconSparkles,
   IconShieldLock,
 } from '@tabler/icons-svelte';
+import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
 
 // Single source for both the desktop sidebar and mobile header (plan §3), icon component included so there's no
 // name→component lookup to keep in sync. memberOnly is a display hint only; enforcement is per-action in
@@ -46,6 +47,7 @@ export const NAV: NavItem[] = [
     children: [
       { href: '/models', label: 'Models' },
       { href: '/sales', label: 'Sales', flag: SALES_FLAG },
+      { href: '/models/gifts', label: 'Gift links', flag: MODEL_GIFT_LINKS_FLAG },
     ],
   },
   { href: '/earnings', label: 'Earnings', icon: IconCoin },

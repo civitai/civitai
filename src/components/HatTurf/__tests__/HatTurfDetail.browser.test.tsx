@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   },
   stickers: [] as unknown[],
   nextCursor: null as { createdAt: string; id: string } | null,
+  drawCeiling: undefined as number | undefined,
   fetchPage: vi.fn(),
   place: vi.fn(),
   info: vi.fn(),
@@ -45,7 +46,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'hatTurf.getStock': { useQuery: () => ({ data: h.stock }) },
         'hatTurf.getImageStickers': {
           useQuery: () => ({
-            data: { stickers: h.stickers, mine: h.mine, nextCursor: h.nextCursor },
+            data: {
+              stickers: h.stickers,
+              mine: h.mine,
+              nextCursor: h.nextCursor,
+              drawCeiling: h.drawCeiling,
+            },
             refetch: async () => undefined,
           }),
         },
@@ -182,6 +188,7 @@ beforeEach(() => {
   h.place.mockReset();
   h.info.mockReset();
   h.nextCursor = null;
+  h.drawCeiling = undefined;
   h.fetchPage.mockReset();
   h.optIn.mockReset();
   localStorage.clear();
@@ -317,7 +324,7 @@ describe('Hat Turf on image detail', () => {
     click(q('hat-turf-detail-hat'));
     click(await placeHatButton());
     // The server read (h.stickers) never changes in this test: only the mutation succeeds.
-    h.place.mock.calls[0][1].onSuccess({ reactionEarns: false });
+    h.place.mock.calls[0][1].onSuccess();
     await vi.waitFor(() => expect(q('hat-turf-placed')).not.toBeNull());
     expect(q('hat-turf-draft')).toBeNull();
     expect(hats().length).toBe(3);
@@ -609,6 +616,119 @@ describe('Hat Turf on image detail', () => {
       expect.objectContaining({ imageId: 9, before: h.nextCursor })
     );
     expect(q('hat-turf-more')).toBeNull();
+  });
+
+  describe('the draw ceiling (Justin: "Ceiling at 24 now", changeable by the turf override)', () => {
+    const page = (from: number, team: string, n = 12) =>
+      Array.from({ length: n }, (_, i) => sticker(from + i, team, 0.05 + (i % 6) * 0.15, 0.2));
+    const cursor = (id: number) => ({ createdAt: '2026-11-03T00:00:00.000Z', id: String(id) });
+    const OWN = { ...sticker(999, 'yellow', 0.5, 0.5), userId: 1 };
+    const summary = (shown: Record<string, number>) => ({
+      images: {
+        9: {
+          shown,
+          counted: shown,
+          leader: 'blue',
+          leaderCosmeticId: 11,
+          hatted: false,
+          hattedTeam: null,
+        },
+      },
+    });
+    const forty = summary({ blue: 20, pink: 20 });
+    // The summary counts every live hat on the image, the viewer's own included.
+    const fortyAndMine = summary({ blue: 20, pink: 20, yellow: 1 });
+    const chip = () => q('hat-turf-more');
+    const more = async (calls: number) => {
+      click(chip());
+      await vi.waitFor(() => expect(h.fetchPage).toHaveBeenCalledTimes(calls));
+    };
+
+    test('stops drawing and offering more at 24; the rest is a plain count', async () => {
+      h.stickers = page(1, 'blue');
+      h.nextCursor = cursor(12);
+      h.fetchPage.mockResolvedValue({
+        stickers: page(100, 'pink'),
+        mine: null,
+        nextCursor: cursor(112),
+      });
+      h.drawCeiling = 24;
+      render(forty);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+28 more'));
+      expect(chip()!.tagName).toBe('BUTTON');
+      await more(1);
+      await vi.waitFor(() => expect(hats().length).toBe(24));
+      // Another page exists (nextCursor), yet nothing offers it: the chip is a count, not a button.
+      expect(chip()!.tagName).toBe('DIV');
+      expect(chip()!.textContent).toBe('+16');
+    });
+
+    test('a ceiling that is not a whole number of pages stops part way into a page', async () => {
+      h.stickers = page(1, 'blue');
+      h.nextCursor = cursor(12);
+      h.fetchPage
+        .mockResolvedValueOnce({ stickers: page(100, 'pink'), mine: null, nextCursor: cursor(112) })
+        .mockResolvedValueOnce({
+          stickers: page(200, 'blue'),
+          mine: null,
+          nextCursor: cursor(212),
+        });
+      h.drawCeiling = 30;
+      render(forty);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+28 more'));
+      await more(1);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+16 more'));
+      await more(2);
+      await vi.waitFor(() => expect(hats().length).toBe(30));
+      expect(chip()!.tagName).toBe('DIV');
+      expect(chip()!.textContent).toBe('+10');
+    });
+
+    // Keep: the viewer's own hat is drawn on top of the ceiling, never cut by it (24 + yours).
+    test("the viewer's own hat is drawn on top of the ceiling", async () => {
+      h.mine = OWN;
+      h.stickers = page(1, 'blue');
+      h.nextCursor = cursor(12);
+      h.fetchPage.mockResolvedValue({
+        stickers: page(100, 'pink'),
+        mine: null,
+        nextCursor: cursor(112),
+      });
+      h.drawCeiling = 24;
+      render(fortyAndMine);
+      await vi.waitFor(() => expect(chip()!.textContent).toContain('+28 more'));
+      await more(1);
+      await vi.waitFor(() => expect(hats().length).toBe(25));
+      expect(
+        document.querySelectorAll('[data-testid="hat-turf-hat"][data-team="yellow"]')
+      ).toHaveLength(1);
+      expect(chip()!.textContent).toBe('+16');
+    });
+
+    test('an own hat among the newest still leaves room for 24 others', async () => {
+      h.mine = OWN;
+      // The first page holds the viewer's own hat, so it brings 11 others, not 12.
+      h.stickers = [...page(1, 'blue', 11), OWN];
+      h.nextCursor = cursor(12);
+      h.fetchPage
+        .mockResolvedValueOnce({ stickers: page(100, 'pink'), mine: null, nextCursor: cursor(112) })
+        .mockResolvedValueOnce({
+          stickers: page(200, 'pink'),
+          mine: null,
+          nextCursor: cursor(212),
+        });
+      h.drawCeiling = 24;
+      render(fortyAndMine);
+      await vi.waitFor(() => expect(hats().length).toBe(12));
+      await more(1);
+      // 23 others loaded: one short of the ceiling, so more is still offered.
+      await vi.waitFor(() => expect(hats().length).toBe(24));
+      expect(chip()!.tagName).toBe('BUTTON');
+      await more(2);
+      await vi.waitFor(() => expect(hats().length).toBe(25));
+      expect(chip()!.tagName).toBe('DIV');
+      expect(chip()!.textContent).toBe('+16');
+    });
   });
 
   // Controls render on the first commit (context and mocks are synchronous), so the not-hidden

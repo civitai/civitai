@@ -2205,7 +2205,6 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
-  profilePictureHold ProfilePictureHold?
   sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
@@ -7675,7 +7674,6 @@ enum JobQueueType {
   ImageStorageDelete
   CdnAccessSync
   ImageCdnPersistRetry
-  ProfilePictureSync
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -7726,21 +7724,6 @@ model ImageCdnAccessClaim {
   url          String   @id
   token        String
   claimedUntil DateTime
-}
-
-/// A profile picture taken off its owner's profile while its image is unavailable, kept so it can be
-/// put back once the image is available again. One row per image; an owner can have several.
-/// Written only by the profile-picture-sync job and its backfill.
-model ProfilePictureHold {
-  id         Int      @id @default(autoincrement())
-  userId     Int
-  imageId    Int      @unique
-  image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  reason     String
-  exportable Boolean  @default(false)
-  createdAt  DateTime @default(now())
-
-  @@index([userId, createdAt(sort: Desc)])
 }
 
 model JobQueue {

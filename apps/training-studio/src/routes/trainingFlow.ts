@@ -11,6 +11,8 @@ import {
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  visibleVersions,
+  versionPriceKey,
   ecosystemTakesSampleImages,
   versionStepDefault,
   versionSuffix,
@@ -136,16 +138,20 @@ export function runVersionLabel(run: Run): string {
 }
 
 /** The version choices a card offers on Select: its catalog versions, then Custom where allowed. */
-export function versionOptions(card: ModelCard): { key: string; label: string }[] {
+export function versionOptions(
+  card: ModelCard,
+  enabledFlags?: ReadonlySet<string>
+): { key: string; label: string }[] {
   return [
-    ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+    ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
     ...(allowsCustomBase(card) ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }] : []),
   ];
 }
 
-export function newRun(card: ModelCard): Run {
-  const first = card.versions[0];
-  if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
+/** A run on the card's first version the viewer can see (`enabledFlags` omitted → `versions[0]`). */
+export function newRun(card: ModelCard, enabledFlags?: ReadonlySet<string>): Run {
+  const first = visibleVersions(card, enabledFlags)[0];
+  if (!first) throw new Error(`Base-model card ${card.type} has no version this viewer can pick`);
   return { id: nextRunId(), cardType: card.type, versionKey: first.key };
 }
 
@@ -406,8 +412,26 @@ function cardBaseQuote(prices: Record<string, number>, cardType: string): number
 /** The "from" Buzz quote for one model card; null when unpriced (callers show a muted em-dash).
  *  Single source of truth for the "from" floor shown on Select. A custom base costs the same as the
  *  card's own (whatif-verified — the orchestrator has no custom-model surcharge). */
-export function cardFromPrice(prices: Record<string, number>, cardType: string): number | null {
+export function cardFromPrice(
+  prices: Record<string, number>,
+  cardType: string,
+  enabledFlags?: ReadonlySet<string>
+): number | null {
+  const card = cardByType(cardType);
+  const first = card && visibleVersions(card, enabledFlags)[0];
+  if (card && first && first !== card.versions[0])
+    return prices[versionPriceKey(cardType, first.key)] ?? null;
   return cardBaseQuote(prices, cardType) ?? null;
+}
+
+/** One run's "from" quote: its own version's, where the sweep quoted it, else the card's. */
+function runFromPrice(prices: Record<string, number>, run: Run): number | null {
+  const card = cardByType(run.cardType);
+  const own =
+    card && run.versionKey !== card.versions[0]?.key
+      ? prices[versionPriceKey(run.cardType, run.versionKey)]
+      : undefined;
+  return own ?? cardFromPrice(prices, run.cardType);
 }
 
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced (callers show "—").
@@ -419,7 +443,7 @@ export function cardFromPrice(prices: Record<string, number>, cardType: string):
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
   let sum = 0;
   for (const run of runs) {
-    const runPrice = cardFromPrice(prices, run.cardType);
+    const runPrice = runFromPrice(prices, run);
     if (runPrice == null) return null;
     sum += runPrice;
   }

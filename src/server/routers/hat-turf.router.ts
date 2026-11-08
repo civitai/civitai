@@ -1,5 +1,6 @@
 import {
   getMyStickerHats,
+  getReactionEarns,
   getTurfStickers,
   getTurfStickersForImages,
   getTurfStock,
@@ -19,6 +20,7 @@ import {
   setTurfOwnerOffSchema,
   turfEventSchema,
   turfImageSchema,
+  turfReactionEarnsSchema,
   turfStickersForImagesSchema,
   turfSummariesSchema,
   watchTurfImagesSchema,
@@ -76,6 +78,13 @@ export const hatTurfRouter = router({
     .input(placeTurfStickerSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
     .mutation(({ ctx, input }) => placeTurfSticker({ ...input, userId: ctx.user.id })),
+  // Whether the viewer reacting to an image would pay their team: asked for the reaction nudge after a
+  // placement, so the placement itself never waits on it.
+  reactionEarns: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(turfReactionEarnsSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .query(({ ctx, input }) => getReactionEarns({ ...input, userId: ctx.user.id })),
   setOptIn: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setTurfOptInSchema)

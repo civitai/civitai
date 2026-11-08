@@ -28,6 +28,17 @@ export const studioModelFlagFeatures = {
   'moss-image-training': 'mossImageTraining',
   'flux2-klein-edit-training': 'flux2KleinEditTraining',
   'training-studio-audio-training': 'trainingStudioAudioTraining',
+  'krea2-training': 'krea2Training',
+  'boogu-training': 'booguTraining',
+  'mageflow-training': 'mageflowTraining',
+  'flux2-klein-training': 'fluxTwoKleinTraining',
+  'ernie-training': 'ernieTraining',
+  'hidream-o1-training': 'hidreamO1Training',
+  'anima-training': 'animaTraining',
+  'minimaxh3-training': 'minimaxh3Training',
+  'zimage-turbo-training': 'zimageturboTraining',
+  'ltx25-training': 'ltx25Training',
+  'ltx23-training': 'ltx23Training',
 } as const satisfies Record<string, FeatureFlagKey>;
 
 export function enabledStudioModelFlags(

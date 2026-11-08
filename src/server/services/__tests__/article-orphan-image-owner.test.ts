@@ -369,7 +369,6 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
-  profilePictureHold: 'its profile-picture record, which lives only as long as the image',
 };
 
 describe('unusedAuthorImage', () => {

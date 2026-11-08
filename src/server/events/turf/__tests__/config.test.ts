@@ -39,3 +39,22 @@ describe('applyTurfOverride: catchUp', () => {
     expect(applyTurfOverride(BASE, raw)).toEqual({ config: BASE, invalid: true });
   });
 });
+
+describe('applyTurfOverride: drawCeiling', () => {
+  it('reads the image-detail draw ceiling from the live override', () => {
+    const { config, invalid } = applyTurfOverride(BASE, '{"drawCeiling":36}');
+    expect(invalid).toBe(false);
+    expect(config.drawCeiling).toBe(36);
+    expect(config.renderLimit).toBe(BASE.renderLimit);
+  });
+
+  it.each([
+    ['zero', 0],
+    ['a negative', -4],
+    ['a fraction', 2.5],
+    ['a string', '24'],
+  ])('ignores the whole override for %s ceiling', (_, drawCeiling) => {
+    const raw = JSON.stringify({ mode: 'off', drawCeiling });
+    expect(applyTurfOverride(BASE, raw)).toEqual({ config: BASE, invalid: true });
+  });
+});

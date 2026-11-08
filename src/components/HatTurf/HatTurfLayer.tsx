@@ -350,8 +350,11 @@ function HatTurfLayerContent({
     place.mutate(
       { event: feed.event, imageId, cosmeticId, source, data: { ...pose, opacity: 1 } },
       {
-        onSuccess: (result) => {
-          if (result.reactionEarns && feed.team) armReactionNudge(imageId, feed.team);
+        onSuccess: () => {
+          if (feed.team)
+            armReactionNudge(imageId, feed.team, () =>
+              utils.hatTurf.reactionEarns.fetch({ event: feed.event, imageId }, { staleTime: 0 })
+            );
           setDraft(null);
           setPlaced(pose);
           if (source === 'feed') track('feed_place_save', feed.event);
