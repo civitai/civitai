@@ -62,8 +62,7 @@ import {
 import { generateToken } from '~/utils/string-helpers';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import type { Orchestrator } from '../http/orchestrator/orchestrator.types';
-import { trainingModelInfo } from '~/utils/training';
-import { mergeBlockedModels } from '~/utils/training-blocked-models';
+import { isBaseModelKey, mergeBlockedModels } from '~/utils/training-blocked-models';
 
 export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
@@ -274,7 +273,7 @@ export async function setTrainingServiceStatus(input: {
       ? mergeBlockedModels(
           current.blockedModels,
           { blockedModels: input.blockedModels, blockedModelReasons: input.blockedModelReasons },
-          (key) => Object.hasOwn(trainingModelInfo, key)
+          isBaseModelKey
         )
       : {}),
   };

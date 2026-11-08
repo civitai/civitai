@@ -1,12 +1,19 @@
 // Blocked base models in the training service status (`training:status` in sys redis). Training Studio
 // reads the same list with the same keys (`apps/training-studio/src/lib/service-status-core.ts`).
 
+import { trainingModelInfo } from '~/utils/training';
+
 export const UNAVAILABLE_LABEL = 'Temporarily unavailable';
 
 type BlockedModelsStatus = {
   blockedModels?: string[] | null;
   blockedModelReasons?: Record<string, string> | null;
 };
+
+/** A `trainingModelInfo` key, as opposed to a blocked custom-model AIR. */
+export function isBaseModelKey(key: string): boolean {
+  return Object.hasOwn(trainingModelInfo, key);
+}
 
 /** Whether a base-model key is down, and the note to show under "Temporarily unavailable". */
 export function modelUnavailability(

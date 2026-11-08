@@ -22,6 +22,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trainingModelInfo } from '~/utils/training';
+import { isBaseModelKey } from '~/utils/training-blocked-models';
 import { trpc } from '~/utils/trpc';
 
 const baseModelOptions = Object.entries(trainingModelInfo)
@@ -72,7 +73,7 @@ function TrainingStatusCard() {
     setAvailable(data.available);
     setMessage(data.message ?? '');
     // Only base models are edited here; blocked custom-model AIRs are kept server-side.
-    setBlocked(data.blockedModels.filter((key) => Object.hasOwn(trainingModelInfo, key)));
+    setBlocked(data.blockedModels.filter(isBaseModelKey));
     setReasons(data.blockedModelReasons ?? {});
   }, [data, dirty]);
 
