@@ -11,6 +11,7 @@ import {
   MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
+  findByAir,
   visibleVersions,
   versionPriceKey,
   ecosystemTakesSampleImages,
@@ -24,6 +25,11 @@ import {
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 import type { TrainingItem } from '$lib/train-core';
+import {
+  blockedRunMessage,
+  modelUnavailability,
+  type TrainingServiceStatus,
+} from '$lib/service-status-core';
 import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
@@ -128,6 +134,43 @@ export function isCustom(run: Run): boolean {
 export function runVersion(run: Run): ModelVersionInfo {
   const card = runCard(run);
   return card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+}
+
+/** A card is unavailable when every version this viewer can see is blocked; the note is the first one's.
+ *  A version is looked up by its checkpoint's key, as a submit is (an edit card reuses a base's). */
+export function cardUnavailability(
+  card: ModelCard,
+  enabledFlags: ReadonlySet<string>,
+  status: TrainingServiceStatus | null | undefined
+): { reason: string | null } | null {
+  const downs = visibleVersions(card, enabledFlags).map((v) =>
+    modelUnavailability(status, findByAir(v.air)?.version.key ?? v.key)
+  );
+  return downs.length > 0 && downs.every((d) => d !== null) ? downs[0]! : null;
+}
+
+/** Why the selection can't start: the first run whose model is blocked (a stale tab or restored draft
+ *  can still hold one), or null. */
+export function blockedSelectionMessage(
+  runs: Run[],
+  status: TrainingServiceStatus | null | undefined
+): string | null {
+  for (const run of runs) {
+    const v = runVersion(run);
+    const custom = isCustom(run) ? run.customAir?.trim() || undefined : undefined;
+    const message = blockedRunMessage(
+      {
+        ecosystem: v.ecosystem,
+        modelVariant: v.modelVariant,
+        version: v.version,
+        model: custom ? undefined : v.air,
+        customModel: custom,
+      },
+      status
+    );
+    if (message) return message;
+  }
+  return null;
 }
 
 export function runVersionLabel(run: Run): string {

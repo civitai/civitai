@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cardByType } from '$lib/data/trainingModels';
+import { parseServiceStatus } from '$lib/service-status-core';
 import {
   continueTraining,
   continueTrainingWhatIf,
@@ -846,5 +847,82 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(probed.matureCount).toBe(1);
       expect(headBlob).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+describe('a model that is down', () => {
+  const krea2 = cardByType('krea2')!.versions[0]!;
+  const krea2Run = (): TrainingRunInput => ({ ...baseRun(), ecosystem: krea2.ecosystem });
+  const down = (reason?: unknown) =>
+    parseServiceStatus({
+      available: true,
+      blockedModels: [krea2.key],
+      blockedModelReasons: reason === undefined ? undefined : { [krea2.key]: reason },
+    });
+  const orchestratorCalls = () =>
+    [submitWorkflow, getWorkflow, getResource, headBlob].reduce(
+      (n, f) => n + f.mock.calls.length,
+      0
+    );
+
+  it('refuses the batch before any orchestrator call or trigger word check, with the reason', async () => {
+    vi.clearAllMocks();
+    const check = vi.fn(async () => undefined);
+    await expect(
+      submitTrainingBatch(client, [baseRun(), krea2Run()], {
+        checkText: check,
+        status: down('The provider is down.'),
+      })
+    ).rejects.toThrow('Krea 2 is temporarily unavailable for training. The provider is down.');
+    expect(orchestratorCalls()).toBe(0);
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it('refuses without a note when the reason is missing or not text', async () => {
+    for (const status of [down(), down(42), down('   ')])
+      await expect(
+        submitTrainingBatch(client, [krea2Run()], { checkText, status })
+      ).rejects.toThrow(/^Krea 2 is temporarily unavailable for training\.$/);
+  });
+
+  it('refuses keep-training on it, quote and submit, before anything is charged', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: krea2.ecosystem, epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockClear();
+    const opts = { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 };
+    await expect(continueTrainingWhatIf(client, opts, { status: down() })).rejects.toThrow(
+      /Krea 2 is temporarily unavailable/
+    );
+    await expect(continueTraining(client, opts, { checkText, status: down() })).rejects.toThrow(
+      /Krea 2 is temporarily unavailable/
+    );
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('still submits other models, and Krea 2 once it is unblocked', async () => {
+    submitWorkflow.mockResolvedValue({ data: { id: 'wf-ok' } });
+    await submitTrainingBatch(client, [baseRun()], { checkText, status: down() });
+    await submitTrainingBatch(client, [krea2Run()], {
+      checkText,
+      status: parseServiceStatus({ available: true, blockedModels: [] }),
+    });
+    expect(submitWorkflow).toHaveBeenCalledTimes(2);
+    submitWorkflow.mockReset();
+  });
+
+  it('fails open on a malformed status', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ok' } });
+    const status = parseServiceStatus({ blockedModels: 'krea2', blockedModelReasons: [1] });
+    await submitTrainingBatch(client, [krea2Run()], { checkText, status });
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
   });
 });

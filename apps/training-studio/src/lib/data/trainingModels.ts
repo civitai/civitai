@@ -943,6 +943,28 @@ export const editCards = (enabledFlags?: ReadonlySet<string>): ModelCard[] =>
     (c) => c.pairs && !c.retired && (!enabledFlags || isCardVisible(c, enabledFlags))
   );
 
+/** The catalog versions a run trains on: the one its base AIR names, else every version on its ecosystem,
+ *  variant and version selector (a run naming no AIR trains on the ecosystem's default base). */
+export const versionsForRun = (run: {
+  ecosystem: string;
+  modelVariant?: string;
+  version?: string;
+  model?: string;
+}): { card: ModelCard; version: ModelVersionInfo }[] => {
+  const byAir = run.model ? findByAir(run.model) : undefined;
+  if (byAir) return [byAir];
+  return MODEL_CARDS.flatMap((card) =>
+    card.versions
+      .filter(
+        (v) =>
+          v.ecosystem === run.ecosystem &&
+          (v.modelVariant || undefined) === (run.modelVariant || undefined) &&
+          (!run.version || !v.version || v.version === run.version)
+      )
+      .map((version) => ({ card, version }))
+  );
+};
+
 /** True when this AIR is the base of a retired card. */
 export const isRetiredBaseAir = (air: string): boolean => !!findByAir(air)?.card.retired;
 

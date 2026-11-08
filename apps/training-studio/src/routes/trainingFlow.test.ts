@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseServiceStatus } from '$lib/service-status-core';
 import {
   LORA_TYPES,
   MODEL_CARDS,
@@ -36,6 +37,8 @@ import {
   type Img,
   type Run,
   type SamplePrompt,
+  blockedSelectionMessage,
+  cardUnavailability,
 } from './trainingFlow';
 
 const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
@@ -559,5 +562,28 @@ describe('newRun on a card with no version open to the viewer', () => {
     const zimage = cardByType('zimage')!;
     const turboOnly = { ...zimage, versions: zimage.versions.filter((v) => v.flagKey) };
     expect(() => newRun(turboOnly, new Set())).toThrow();
+  });
+});
+
+describe('a model that is down', () => {
+  const krea2 = cardByType('krea2')!;
+  const blocked = parseServiceStatus({
+    blockedModels: [krea2.versions[0]!.key],
+    blockedModelReasons: { [krea2.versions[0]!.key]: 'Provider outage.' },
+  });
+
+  it('stays hidden while its rollout flag is off, blocked or not', () => {
+    expect(cardsForMedia('image', new Set()).map((c) => c.type)).not.toContain('krea2');
+  });
+
+  it('shows as unavailable with its note when the flag is on, and blocks a selection on it', () => {
+    const on = new Set([krea2.flagKey!]);
+    expect(cardsForMedia('image', on).map((c) => c.type)).toContain('krea2');
+    expect(cardUnavailability(krea2, on, blocked)).toEqual({ reason: 'Provider outage.' });
+    expect(cardUnavailability(cardByType('sdxl')!, on, blocked)).toBeNull();
+    expect(blockedSelectionMessage([newRun(krea2, on)], blocked)).toBe(
+      'Krea 2 is temporarily unavailable for training. Provider outage.'
+    );
+    expect(blockedSelectionMessage([newRun(krea2, on)], parseServiceStatus(null))).toBeNull();
   });
 });
